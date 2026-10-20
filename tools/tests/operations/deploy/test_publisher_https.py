@@ -52,11 +52,24 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.request['https']['history_edge']['before_sha256'] = publisher.sha(old_edge)
         self.ex.install(host, 'caddy.service', '[Service]\nExecStart=/bin/caddy run --config /etc/caddy/Caddyfile\n',
                         files={'/bin/caddy': b'caddy'})
+        for section, key in [('transparent_history', 'publication_root'), ('transaction_details', 'root')]:
+            root = self.request['configuration'][section]['settings'][key]
+            source = root + '/immutable-snapshot'
+            content = '{"production":true}'
+            self.ex.put('coordinator', root + '/active.json',
+                        json.dumps({'directory': source, 'map_sha256': publisher.sha(content)}))
+            name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
+            self.ex.put('coordinator', source + '/' + name, content)
         self.target = self.make_target()
         self.target.serving.binary = self.serving_binary
         self.ex.effects.clear()
         original_run, original_get = self.ex.run, self.ex.http_get
         def run(host, argv, timeout):
+            if argv[0].endswith('/pir-query-server') and '--config' in argv and '--check' not in argv:
+                config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
+                if any(config.get(section, {}).get('settings', {}).get('verify_only') is True
+                       for section in ('transparent_history', 'transaction_details')):
+                    return 0, '{"verified":true}'
             if '--check' in argv and argv[0].endswith('/pir-query-server'):
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 if 'transparent_history' in config or 'transaction_details' in config:
@@ -131,6 +144,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         before = self.target.plan()['plan']
         journal = self.deploy()
         self.assertEqual(journal['phase'], 'committed')
+        self.assertEqual(set(journal['production_snapshots']), {'transparent_history', 'transaction_details'})
         for consumer in before['serving']['https_consumers']:
             self.assertEqual(self.ex.probe_unit(consumer['host'], consumer['unit'])['exe_sha256'],
                              self.request['serving']['binary_sha256'])
@@ -192,6 +206,13 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             with self.assertRaisesRegex(DeployError, 'consumer readiness deadline exceeded'):
                 self.deploy()
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+
+    def test_collected_production_snapshot_refuses_before_stopping_owners(self):
+        root = self.request['configuration']['transparent_history']['settings']['publication_root']
+        self.ex.remove('coordinator', root + '/immutable-snapshot/shards.json')
+        with self.assertRaisesRegex(DeployError, 'snapshot map differs'):
+            self.deploy()
+        self.assertFalse(any(action[0] == 'stop' for action in self.ex.effects))
 
 
 if __name__ == '__main__':

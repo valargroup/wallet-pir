@@ -290,6 +290,15 @@ edge switch and recent startup; all product probes precede commit. Rollback
 restores the previous edges, executable overlays, workers and publisher together,
 while retaining the separate HTTPS state and its observed withdrawals.
 
+Before stopping the publisher, the HTTPS path runs the new query server's
+read-only verifier against both complete active publication snapshots. It checks
+every revision and the runtime capacity while preserving the twenty percent
+memory reserve, and records each source directory, map digest and executable
+digest. This reads immutable publications; it neither copies nor opens a second
+writer on the live journals. Consumer readiness subsequently requires warmed
+HTTPS state. Wallet acceptance still uses the unchanged wallet at its existing
+TLS origin.
+
 Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
 and sustained-service qualification.
 

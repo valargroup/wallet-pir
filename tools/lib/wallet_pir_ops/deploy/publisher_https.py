@@ -208,6 +208,7 @@ class HttpsServing(Serving):
     def stage(self, parent, binary):
         super().stage(parent, binary)
         owner = self.cutover
+        self.verify_production_snapshots(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, target = consumer['host'], consumer['binary']
             owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
@@ -218,6 +219,57 @@ class HttpsServing(Serving):
                          self.write(host, path, json.dumps(config, indent=2, sort_keys=True) + '\n', 0o600))
             code, output = owner.ex.run(host, [target, '--config', config_path, '--check'], 60)
             require(code == 0, 'staged HTTPS consumer rejects its configuration: ' + output[-1000:])
+
+    def verify_production_snapshots(self, parent):
+        """Load both complete immutable publications before stopping any owner.
+
+        These are publication snapshots, not copies of writable journals. The
+        normal loaders check every held revision and the full runtime capacity.
+        Moving or collected inputs refuse the cutover before its service changes.
+        """
+        owner = self.cutover
+        for section, root_key, data_key, map_name, maximum in (
+                ('transparent_history', 'publication_root', 'shard_dir', 'shards.json', 44 << 30),
+                ('transaction_details', 'root', 'publication_dir', 'txid-shards.json', 32 << 30)):
+            root = owner.request['configuration'][section]['settings'][root_key]
+            snapshot = json.loads(owner.read(root + '/active.json'))
+            source, digest = snapshot['directory'], snapshot['map_sha256']
+            require(PurePosixPath(source).is_relative_to(root) and '..' not in PurePosixPath(source).parts,
+                    'production snapshot is outside its publication root')
+            map_path = source + '/' + map_name
+            require(owner.ex.sha256(owner.host, map_path) == digest,
+                    'production snapshot map differs from its active record')
+            resources = owner.resources()
+            budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
+            require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
+                    'production snapshot verification would leave less than 20 percent memory')
+            settings = {data_key: source, 'verify_only': True, 'cache_bytes': budget,
+                        'listen': '127.0.0.1:18990'}
+            if section == 'transaction_details':
+                settings['role'] = 'combined'
+            config = {'management_listen': '127.0.0.1:18991',
+                      section: {'enabled': True, 'settings': settings}}
+            path = '/opt/pir-query-server/transactions/' + parent['id'] + '/snapshot-' + section + '.json'
+            owner.effect(parent, 'stage production snapshot check ' + section,
+                         lambda path=path, config=config: self.write(owner.host, path,
+                             json.dumps(config, sort_keys=True) + '\n', 0o600))
+            target = self.deployer.service.release_binary(self.release['binary_sha256'], 'pir-query-server')
+            code, output = owner.ex.run(owner.host, [target, '--config', path], 300)
+            reports = []
+            for line in output.splitlines():
+                try:
+                    reports.append(json.loads(line))
+                except ValueError:
+                    pass
+            require(code == 0 and any(isinstance(report, dict) and report.get('verified') is True
+                                      for report in reports),
+                    'complete production snapshot failed verification: ' + section + ': ' + output[-1000:])
+            require(owner.ex.sha256(owner.host, map_path) == digest,
+                    'production snapshot changed during verification')
+            parent.setdefault('production_snapshots', {})[section] = {
+                'directory': source, 'map_sha256': digest, 'verified': True,
+                'query_binary_sha256': self.release['binary_sha256'], 'cache_bytes': budget}
+            owner.save(parent)
 
     def stage_binary(self, host, target, binary):
         owner = self.cutover
