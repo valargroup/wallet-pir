@@ -11,9 +11,9 @@ journal and source cache. The publisher reads the coordinator-local Zakura
 cookie; query workers and routers never receive that credential.
 
 The standalone production controller command has been removed. Follow the
-[unified publisher cutover](../publisher.md#expand-the-coordinator-to-enhance-and-status)
-to adopt an existing standalone controller. Rollback uses its captured old
-executable and unit; current source does not rebuild that historical entrypoint.
+[unified publisher operations](../publisher.md#updating-the-unified-coordinator)
+for updates to the deployed shared process. Retained cutover journals can restore
+their captured executables and units; current source does not rebuild standalone controllers.
 
 The publisher never faces wallets. Its private listener serves candidate
 transfer (`/artifact/:id`), `/control/active` (the active manifest, 503 until a

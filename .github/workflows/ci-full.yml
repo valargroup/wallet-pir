@@ -578,7 +578,7 @@ jobs:
           jq '{management_listen, enhance, status, transparent_history, transaction_details}' tools/deploy/publisher/publisher.example.json > "$RUNNER_TEMP/publisher-transparent.json"
           "$CARGO_TARGET_DIR/release/pir-publisher" --config "$RUNNER_TEMP/publisher-transparent.json" --check
           cargo test --locked --release -p pir-publisher --features enhance,status,transparent,native-reinspiring --lib
-          python3 -B tools/tests/operations/deploy/test_publisher_expansion.py
+          python3 -B -m unittest discover -s tools/tests/operations/deploy -p 'test_publisher_*.py'
           python3 -B tools/status/test_status_qualification.py
           python3 -B tools/status/test_publication_capture.py
       - name: Build independent acceptance tools
