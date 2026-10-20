@@ -38,10 +38,13 @@ TRANSPARENT_HOSTS = ['pir-publisher', 'pir-e2e-tests']
 # decoding and fixtures without a runtime, RPC reads of every product against the
 # HTTP node double, and the RocksDB reader. One unified run would hide the first.
 CHAIN_READER = 'zakura-server-chain'
+# Each selection is (features, Cargo target arguments). The RocksDB selection runs
+# only the library and `state`: `rocksdb` implies `transparent`, whose RPC target
+# also uses receiver fixtures and runs in the all-product RPC selection.
 CHAIN_READER_SELECTIONS = (
-    ('transparent', 'enhance', 'status', 'receiver', 'testing'),
-    ('testing-node', 'transparent', 'enhance', 'status', 'receiver'),
-    ('testing-node', 'rocksdb'),
+    (('transparent', 'enhance', 'status', 'receiver', 'testing'), ()),
+    (('testing-node', 'transparent', 'enhance', 'status', 'receiver'), ()),
+    (('testing-node', 'rocksdb'), ('--lib', '--test', 'state')),
 )
 
 
@@ -81,9 +84,9 @@ def commands(group, groups, lint=False, compile_only=False):
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]
     if reader:
-        result.extend([*runner, '--locked', '--profile', 'release-fast', '-p', CHAIN_READER, '--features',
-                       ','.join(f'{CHAIN_READER}/{feature}' for feature in selection)]
-                      for selection in CHAIN_READER_SELECTIONS)
+        result.extend([*runner, '--locked', '--profile', 'release-fast', '-p', CHAIN_READER, *targets,
+                       '--features', ','.join(f'{CHAIN_READER}/{feature}' for feature in selection)]
+                      for selection, targets in CHAIN_READER_SELECTIONS)
     if group == 'transparent':
         # This analysis tool has its own workspace. Its journal-reader identity
         # and compiled-codec contracts run first, so another service test's
