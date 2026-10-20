@@ -25,6 +25,8 @@ from .transaction import new_id
 SCHEMA = 'transparent-publisher-cutover/1'
 EXPANDED_SCHEMA = 'publisher-cutover/2'
 SERVING_SCHEMA = 'publisher-cutover/3'
+HTTPS_SCHEMA = 'publisher-https-cutover/1'
+SERVING_SCHEMAS = (SERVING_SCHEMA, HTTPS_SCHEMA)
 EXPANDED_PRODUCTS = ['enhance', 'status', 'transparent_history', 'transaction_details']
 ADOPTED = ('enhance-pir-coordinator.service', 'status-controller-qualification.service')
 PRODUCTS = ['transparent_history', 'transaction_details']
@@ -54,10 +56,11 @@ def load_request(path, expected, *, recovery=False):
     require(hashlib.sha256(data).hexdigest() == expected, 'publisher request checksum differs')
     request = json.loads(data)
     require(isinstance(request, dict) and set(request) == ({'schema', 'host', 'machine_id', 'release', 'configuration', 'inventory', 'checks'}
-                | ({'serving'} if request.get('schema') == SERVING_SCHEMA else set())),
+                | ({'serving'} if request.get('schema') in SERVING_SCHEMAS else set())
+                | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())),
             'publisher request has unknown or missing fields')
-    require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, SERVING_SCHEMA), 'unsupported publisher cutover schema')
-    require(recovery or request['schema'] == SERVING_SCHEMA,
+    require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
+    require(recovery or request['schema'] in SERVING_SCHEMAS,
             'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
     require(isinstance(request['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', request['machine_id']), 'invalid machine id')
@@ -67,7 +70,7 @@ def load_request(path, expected, *, recovery=False):
             and re.fullmatch('[a-f0-9]{40}', version['git_sha']) and re.fullmatch('[a-f0-9]{64}', version['binary_sha256']),
             'release requires full source and executable digests')
     require(type(version['binary_bytes']) is int and version['binary_bytes'] > 0, 'invalid executable size')
-    products = EXPANDED_PRODUCTS if request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA) else PRODUCTS
+    products = EXPANDED_PRODUCTS if request['schema'] in (EXPANDED_SCHEMA, *SERVING_SCHEMAS) else PRODUCTS
     config = request['configuration']
     require(isinstance(config, dict) and set(config) == {'management_listen', *products} and config['management_listen'] == '127.0.0.1:18080',
             'cutover products must match the schema, with loopback management on 18080')
@@ -78,7 +81,14 @@ def load_request(path, expected, *, recovery=False):
                 'every cutover product must be enabled')
         if name not in PRODUCTS:
             continue
-        require(product['settings'].get('http_only') is False, 'autonomous HTTP publishing is out of scope')
+        settings = product['settings']
+        require(type(settings.get('http_only')) is bool, 'Transparent publishing mode must be explicit')
+        if settings['http_only']:
+            require(settings.get('ship_runtimes') is True
+                    and (name != 'transparent_history' or settings.get('distribute_prepared') is True),
+                    'HTTP publishing requires complete prepared distribution')
+        if request['schema'] == HTTPS_SCHEMA:
+            require(settings['http_only'] is True, 'HTTPS cutover must enable autonomous publishing')
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
@@ -93,17 +103,20 @@ def load_request(path, expected, *, recovery=False):
     require(all(c['host'] in inventory.hosts for c in checks.values()), 'probe host missing from inventory')
     publisher = inventory.services.get('publisher', {})
     require(publisher.get('managed_products') == products, 'managed products differ from configuration')
-    if request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA):
+    if request['schema'] in (EXPANDED_SCHEMA, *SERVING_SCHEMAS):
         require(publisher.get('exact_check') == {'products': checks}, 'inventory and cutover exact checks differ')
         descriptors.exact_check(descriptors.load_descriptors(ROOT / 'tools/deploy/publisher/services.toml')['publisher'], inventory)
     require(publisher.get('roles', {}).get('server') == [{'host': request['host'], 'vars': {'management_listen': '127.0.0.1:18080'}}],
             'publisher must run once on the pinned coordinator')
-    registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA) else ROOT / 'tools/deploy/publisher/transparent-services.toml'
+    registry = ROOT / 'tools/deploy/publisher/all-services.toml' if request['schema'] in (EXPANDED_SCHEMA, *SERVING_SCHEMAS) else ROOT / 'tools/deploy/publisher/transparent-services.toml'
     problems = Fleet(inventory, descriptors.load_descriptors(registry)).problems(complete=True)
     require(not problems, 'candidate inventory is incomplete or has conflicting owners: ' + '; '.join(problems))
-    if request['schema'] == SERVING_SCHEMA:
+    if request['schema'] in SERVING_SCHEMAS:
         from .publisher_serving import validate_request
         validate_request(request, inventory)
+    if request['schema'] == HTTPS_SCHEMA:
+        from .publisher_https import validate
+        validate(request, inventory)
     return request, inventory
 
 
@@ -116,15 +129,19 @@ class Cutover:
     def __init__(self, request, inventory, executor, state_dir, *, clock=time.monotonic, sleep=time.sleep):
         self.request, self.inventory, self.ex = request, inventory, executor
         self.host = request['host']
-        self.expanded = request['schema'] in (EXPANDED_SCHEMA, SERVING_SCHEMA)
+        self.expanded = request['schema'] in (EXPANDED_SCHEMA, *SERVING_SCHEMAS)
         self.old = (*OLD, *ADOPTED) if self.expanded else OLD
         self.state_dir = Path(state_dir) / 'publisher-cutover'
         self.clock, self.sleep = clock, sleep
         self.lock = None
         self.serving = None
-        if request['schema'] == SERVING_SCHEMA:
+        if request['schema'] in SERVING_SCHEMAS:
             from .publisher_serving import Serving
-            self.serving = Serving(self)
+            if request['schema'] == HTTPS_SCHEMA:
+                from .publisher_https import HttpsServing
+                self.serving = HttpsServing(self)
+            else:
+                self.serving = Serving(self)
 
     def read(self, path):
         return self.ex.read(self.host, path)
@@ -155,15 +172,18 @@ class Cutover:
         identifier = json.loads(pointer)['id']
         require(re.fullmatch('publisher-[A-Za-z0-9-]+', identifier), 'invalid publisher transaction pointer')
         value = json.loads(self.read(ROOT_DIR + '/transactions/' + identifier + '/journal.json'))
-        require(value['id'] == identifier and value['schema'] in (SCHEMA, EXPANDED_SCHEMA, SERVING_SCHEMA), 'invalid publisher transaction journal')
+        require(value['id'] == identifier and value['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'invalid publisher transaction journal')
         return value
 
     def capture(self):
-        require(self.request['schema'] == SERVING_SCHEMA,
+        require(self.request['schema'] in SERVING_SCHEMAS,
                 'completed ownership migrations are recovery-only')
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
-        resource = self.resources(self.request['release']['binary_bytes'])
+        extra = self.request['release']['binary_bytes']
+        if self.request['schema'] == HTTPS_SCHEMA:
+            extra += self.request['https']['publisher_budget_bytes']
+        resource = self.resources(extra)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')
@@ -173,7 +193,12 @@ class Cutover:
                 'standalone and unified publishers both own state')
         require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
         config = self.request['configuration']
-        require(config == json.loads(self.read(CONFIG)), 'publisher updates must preserve every product setting')
+        installed = json.loads(self.read(CONFIG))
+        if self.request['schema'] == HTTPS_SCHEMA:
+            from .publisher_https import validate_settings
+            validate_settings(installed, config)
+        else:
+            require(config == installed, 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
             if state['active_state'] == 'active':
@@ -448,6 +473,11 @@ def dispatch(args, executor=None, **_options):
             result['serving_units'] = {t.key: stable_unit(executor.probe_unit(t.host, t.unit))
                                        for t in target.serving.deployer.targets}
             result['wallet_edge_sha256'] = sha(target.read('/etc/caddy/Caddyfile'))
+            if request['schema'] == HTTPS_SCHEMA:
+                result['https_consumers'] = {c['host'] + '/' + c['unit']:
+                    stable_unit(executor.probe_unit(c['host'], c['unit'])) for c in request['https']['consumers']}
+                result['history_edge_sha256'] = sha(executor.read(request['https']['history_edge']['host'],
+                                                                 '/etc/caddy/Caddyfile'))
         return result
     if operation == 'plan':
         return target.plan()

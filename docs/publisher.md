@@ -232,7 +232,7 @@ Prepare a private `publisher-cutover/3` request with the coordinator `host` and
 `machine_id`, `release` (`git_sha`, `binary_sha256`, `binary_bytes`), the installed
 four-product `configuration`, a complete `inventory`, and independent exact-answer
 `checks` for Enhance, Status, Transparent history and transaction details. Both
-Transparent settings retain `http_only: false`. The inventory uses
+Transparent settings preserve their installed distribution mode. The inventory uses
 `tools/deploy/publisher/all-services.toml` and has one publisher server managing
 all four products, with no standalone publisher roles. Its `exact_check.products`
 matches the request checks. Credentials stay in their existing files.
@@ -241,7 +241,7 @@ Private control changes require the publisher, Enhance packing router and query
 ingress to change together. The `serving` object pins the matching query-server
 `git_sha`, `binary_sha256`, `binary_bytes` and installed `caddy_sha256`. Supply
 `--serving-binary` to plan, preflight and deploy. Existing workers retain their
-wallet wire protocol and are not restarted by this command.
+wallet wire protocol. Ordinary publisher updates do not restart Transparent workers.
 
 Run plan and preflight with `--request` and its exact `--request-sha256`;
 preflight also takes the clean `pir-publisher` `--archive`. Review the returned
@@ -266,8 +266,32 @@ schemas remain accepted for status, restart and recovery of retained journals;
 they cannot create new ownership migrations. Keep their original request,
 journals and binaries until their rollback guarantees are retired.
 
-This path does not change DNS, enable HTTPS distribution, deploy GPU artifacts
-or replace native-wallet and sustained-service qualification.
+To switch Transparent distribution, use `publisher-https-cutover/1` with the same
+release, serving and exact-check fields. Only `http_only` and `ship_runtimes` may
+change to true for both Transparent products, plus `distribute_prepared` for
+history. All other installed product settings must match. The additional `https`
+object contains the existing publisher TLS `origin`, a `publisher_budget_bytes`
+staging allowance of at least 32 GiB, and three ordered `consumers`: history
+archive, history recent, and combined transaction details. Each consumer names
+its existing `host` and `unit`, a root-owned `config_path`, its root query-server
+`configuration`, and a disk `budget_bytes`. Consumer configurations use the
+publisher's main-network identity, their existing wallet listeners and separate
+new state directories under `/srv`. The archive holds all shards; recent uses
+the archive's existing TLS origin. Fleet-controlled state cannot be reused.
+
+Pin `https.history_edge` with its `host`, existing archive TLS `origin` and
+installed Caddyfile `before_sha256`. The cutover replaces the frozen shard-number
+routes: the archive TLS origin goes to the full-holdings consumer and the private
+history edge goes to recent. The publisher edge exposes only the two distribution
+prefixes. No DNS change is needed. Both edges and the worker units, including
+managed executable overlays, join the publisher's recovery journal. Resource
+limits and credential references remain intact. Archive readiness precedes the
+edge switch and recent startup; all product probes precede commit. Rollback
+restores the previous edges, executable overlays, workers and publisher together,
+while retaining the separate HTTPS state and its observed withdrawals.
+
+Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
+and sustained-service qualification.
 
 The APM sidecar must match the wallet ownership change: its init and query
 metrics come from query ingress, while publisher health and publication metrics

@@ -1,0 +1,373 @@
+"""Switch the existing Transparent listeners to publisher-owned HTTPS updates.
+
+The publisher transaction owns the lock and recovery journal. Consumer state is
+separate from the fleet's state; rollback keeps it, including observed withdrawals.
+Wallet origins, listener addresses, unit credentials and resource limits stay put.
+"""
+import base64
+import copy
+import json
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit
+
+from ..role_config import directory, render, service_settings
+from . import units
+from .publisher import require, sha, stable_unit
+from .publisher_serving import Serving
+
+KINDS = ('history-archive', 'history-recent', 'transaction-details')
+
+
+def validate(request, inventory):
+    settings = request['https']
+    require(isinstance(settings, dict) and set(settings) == {'origin', 'publisher_budget_bytes', 'consumers', 'history_edge'},
+            'HTTPS cutover needs an origin, publisher storage budget and every consumer')
+    origin = urlsplit(settings['origin'])
+    require(origin.scheme == 'https' and origin.hostname and origin.port in (None, 443)
+            and not origin.username and not origin.password and origin.path in ('', '/')
+            and not origin.query and not origin.fragment, 'publisher must use a trusted HTTPS origin')
+    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] >= 32 << 30,
+            'full prepared publications need at least a 32 GiB publisher staging budget')
+    consumers = settings['consumers']
+    edge = settings['history_edge']
+    require(isinstance(edge, dict) and set(edge) == {'host', 'origin', 'before_sha256'}
+            and edge['host'] in inventory.hosts, 'history TLS edge must be pinned')
+    archive = urlsplit(edge['origin'])
+    require(archive.scheme == 'https' and archive.hostname and archive.port in (None, 443)
+            and not archive.username and not archive.password and archive.path in ('', '/')
+            and not archive.query and not archive.fragment, 'archive requires its existing HTTPS origin')
+    require(isinstance(consumers, list) and len(consumers) == 3
+            and [c.get('kind') for c in consumers if isinstance(c, dict)] == list(KINDS),
+            'HTTPS cutover needs archive, recent and combined transaction-detail consumers')
+    observed = set()
+    for consumer in consumers:
+        require(set(consumer) == {'kind', 'host', 'unit', 'configuration', 'config_path', 'budget_bytes'},
+                'consumer has unknown or missing fields')
+        host, unit = consumer['host'], consumer['unit']
+        require(host in inventory.hosts and isinstance(unit, str) and unit.endswith('.service')
+                and '/' not in unit and (host, unit) not in observed, 'invalid or duplicate HTTPS consumer')
+        observed.add((host, unit))
+        directory(consumer['config_path'])
+        require(consumer['config_path'].startswith('/etc/wallet-pir/'), 'consumer configuration must be root-owned')
+        config = consumer['configuration']
+        section = 'transaction_details' if consumer['kind'] == 'transaction-details' else 'transparent_history'
+        require(set(config) == {'management_listen', section}
+                and config[section].get('enabled') is True, 'consumer must enable only its Transparent product')
+        body = config[section]['settings']
+        require(body.get('publisher') == settings['origin']
+                and body.get('publisher_network') == 'main', 'consumer publisher or network differs')
+        state = body.get('state_dir') if section == 'transaction_details' else body.get('shard_dir')
+        directory(state)
+        require(state.startswith('/srv/') and 'https' in PurePosixPath(state).name,
+                'HTTPS consumer needs distinct state under /srv')
+        require(not any(key in body for key in ('control_socket', 'active_record', 'assignment',
+                                                'worker_id', 'runtime_cache_dir', 'publication_dir')),
+                'HTTPS consumers cannot also receive fleet-controlled state')
+        if section == 'transaction_details':
+            require(body.get('role') == 'combined', 'display HTTPS consumer must hold both tiers')
+        else:
+            require(body.get('full_holdings') is (consumer['kind'] == 'history-archive'),
+                    'history holdings must match its archive or recent role')
+            if consumer['kind'] == 'history-recent':
+                require(body.get('archive_upstream') == edge['origin'], 'recent consumer requires the terminal archive origin')
+            else:
+                require(not body.get('archive_upstream') and host == edge['host'],
+                        'terminal archive must be local to its TLS edge')
+        require(type(consumer['budget_bytes']) is int and consumer['budget_bytes'] > 0,
+                'consumer storage budget must be explicit')
+    expected = set()
+    listeners = {}
+    for service in ('transparent-history', 'transparent-display'):
+        entries = inventory.services[service]['roles'].get('worker', [])
+        for entry in entries:
+            default = ('transparent-shard-server.service' if service == 'transparent-history'
+                       else 'transparent-txid-display-worker.service')
+            key = (entry['host'], entry.get('unit', default))
+            expected.add(key)
+            listeners[key] = entry['vars']['listen']
+    require(observed == expected, 'HTTPS consumers must replace every current Transparent worker exactly once')
+    for consumer in consumers:
+        section = 'transaction_details' if consumer['kind'] == 'transaction-details' else 'transparent_history'
+        body = consumer['configuration'][section]['settings']
+        require(body.get('listen') == listeners[(consumer['host'], consumer['unit'])],
+                'HTTPS cutover must preserve every existing wallet listener')
+
+
+def validate_settings(current, desired):
+    """Permit only the requested distribution change in the installed publisher."""
+    expected = copy.deepcopy(current)
+    for product in ('transparent_history', 'transaction_details'):
+        body = expected[product]['settings']
+        require(body.get('http_only') is False, 'HTTPS cutover requires the fleet-controlled publisher')
+        body.update(http_only=True, ship_runtimes=True)
+        if product == 'transparent_history':
+            body['distribute_prepared'] = True
+    require(desired == expected, 'HTTPS cutover may change only Transparent distribution flags')
+
+
+class HttpsServing(Serving):
+    def history_edge(self):
+        owner = self.cutover
+        specification = owner.request['https']['history_edge']
+        host = specification['host']
+        before = owner.ex.read(host, '/etc/caddy/Caddyfile')
+        require(before is not None and sha(before) == specification['before_sha256'], 'history edge differs from request')
+        origin = urlsplit(specification['origin']).hostname
+        require('\n' + origin + ' {' in '\n' + before, 'archive origin is not served by the history edge')
+        bodies = {c['kind']: c['configuration']['transparent_history']['settings']
+                  for c in owner.request['https']['consumers'] if c['kind'] != 'transaction-details'}
+        archive, recent = bodies['history-archive']['listen'], bodies['history-recent']['listen']
+        require(recent.rsplit(':', 1)[0] == archive.rsplit(':', 1)[0], 'history consumers must share the current edge host')
+        internal = 'http://' + archive.rsplit(':', 1)[0] + ':8080'
+        require('\n' + internal + ' {' in '\n' + before, 'history private listener differs')
+        def site(address, upstream):
+            return (address + ' {\n\trequest_body {\n\t\tmax_size 1MB\n\t}\n'
+                    '\t@wallet path /v1/ready /v2/*\n\thandle @wallet {\n'
+                    '\t\treverse_proxy ' + upstream + '\n\t}\n'
+                    '\thandle {\n\t\trespond 404\n\t}\n}\n')
+        global_options = before.split(origin + ' {', 1)[0]
+        after = global_options + site(origin, archive) + '\n' + site(internal, recent)
+        # Validate on the host whose Caddy version and modules will load it.
+        code, output = owner.ex.run(host, ['python3', '-c',
+            'import base64,subprocess,sys;raise SystemExit(subprocess.run('
+            '["caddy","validate","--config","/dev/stdin","--adapter","caddyfile"],'
+            'input=base64.b64decode(sys.argv[1])).returncode)', base64.b64encode(after.encode()).decode()], 30)
+        require(code == 0, 'history edge validation failed: ' + output[-1000:])
+        state = stable_unit(owner.ex.probe_unit(host, 'caddy.service'))
+        require(state['active_state'] == 'active' and not state['need_daemon_reload'], 'history edge is not active')
+        return {**specification, 'before': before, 'after': after, 'unit': state}
+
+    def edge(self, text):
+        origin = urlsplit(self.cutover.request['https']['origin'])
+        require('\n' + origin.hostname + ' {' in '\n' + text, 'publisher origin is not served by the installed TLS edge')
+        history = self.cutover.request['configuration']['transparent_history']['settings']['listen']
+        detail = self.cutover.request['configuration']['transaction_details']['settings']['status_listen']
+        addition = (f'\thandle /provider/v1/* {{\n\t\treverse_proxy {history}\n\t}}\n'
+                    f'\thandle /provider/txid/v1/* {{\n\t\treverse_proxy {detail}\n\t}}\n')
+        require('/provider/v1/' not in text and '/provider/txid/v1/' not in text,
+                'publisher distribution routes are already owned')
+        marker = '\thandle {\n\t\trespond 404\n\t}'
+        require(text.count(marker) == 1, 'publisher TLS edge has no unique final refusal route')
+        return text.replace(marker, addition + marker)
+
+    def capture(self):
+        plan = super().capture()
+        plan['edge_after'] = self.edge(plan['edge_before'])
+        self.validate_edge(plan['edge_after'])
+        plan['history_edge'] = self.history_edge()
+        consumers = []
+        roots = set()
+        budgets = {}
+        for specification in self.cutover.request['https']['consumers']:
+            host, unit = specification['host'], specification['unit']
+            state = stable_unit(self.cutover.ex.probe_unit(host, unit))
+            require(state['active_state'] == 'active' and state['main_pid'] and not state['need_daemon_reload'],
+                    'Transparent consumer must already be active: ' + unit)
+            source = self.cutover.ex.probe_unit(host, unit)
+            require(source['fragment_path'] == '/etc/systemd/system/' + unit,
+                    'HTTPS cutover needs an operator-owned worker unit')
+            text = source['fragment_text']
+            effective = units.effective([text, *(d['text'] for d in source['drop_ins'])])
+            command = units.exec_start(effective)
+            old_binary = units.split_exec(command)[1]
+            require(self.cutover.ex.sha256(host, old_binary) == state['exe_sha256'],
+                    'consumer rollback executable differs: ' + unit)
+            config = specification['configuration']
+            section = 'transaction_details' if specification['kind'] == 'transaction-details' else 'transparent_history'
+            body = config[section]['settings']
+            root = body.get('state_dir') or body['shard_dir']
+            require(not any(h == host and (PurePosixPath(root).is_relative_to(r)
+                        or PurePosixPath(r).is_relative_to(root)) for h, r in roots),
+                    'HTTPS consumers must have separate durable state')
+            roots.add((host, root))
+            resource = self.cutover.ex.publisher_resources(host, [root])
+            require(resource['files'][root] is None, 'initial HTTPS state must not replace an existing directory')
+            require(resource['memory_available'] >= resource['memory_total'] * .2,
+                    'consumer has less than 20 percent available memory')
+            for disk in resource['disks'].values():
+                budgets[host] = budgets.get(host, 0) + specification['budget_bytes']
+                require(disk['available'] - budgets[host] >= disk['total'] * .2,
+                        'HTTPS consumer staging would leave less than 20 percent disk headroom')
+            binary = '/opt/pir-query-server/releases/' + self.release['binary_sha256'] + '/pir-query-server'
+            path = specification['config_path']
+            require(effective.get('Service', {}).get('User', 'root') == 'root',
+                    'HTTPS cutover supports only the existing root-owned workers')
+            role = render(text, binary, ['--config', path], {path: config}, [root], [path])
+            # The service itself may verify live state only after its old owner stops.
+            candidate = service_settings(role.unit, {'ExecStartPre': '', 'TimeoutStartSec': '900'})
+            for drop in source['drop_ins']:
+                require(PurePosixPath(drop['path']).name == units.MANAGED_DROP_IN
+                        or ('ExecStart' not in drop['text'] and 'ReadWritePaths' not in drop['text']),
+                        'consumer has an unmanaged launch overlay')
+            consumers.append({**specification, 'before': state, 'binary': binary,
+                              'old_binary': old_binary, 'root': root,
+                              'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path)})
+        plan['https_consumers'] = consumers
+        return plan
+
+    def stage(self, parent, binary):
+        super().stage(parent, binary)
+        owner = self.cutover
+        for consumer in parent['plan']['serving']['https_consumers']:
+            host, target = consumer['host'], consumer['binary']
+            owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
+                         self.stage_binary(host, target, binary))
+            config_path = '/opt/pir-query-server/transactions/' + parent['id'] + '/' + consumer['unit'] + '.json'
+            owner.effect(parent, 'stage HTTPS configuration ' + consumer['unit'],
+                         lambda host=host, path=config_path, config=consumer['configuration']:
+                         self.write(host, path, json.dumps(config, indent=2, sort_keys=True) + '\n', 0o600))
+            code, output = owner.ex.run(host, [target, '--config', config_path, '--check'], 60)
+            require(code == 0, 'staged HTTPS consumer rejects its configuration: ' + output[-1000:])
+
+    def stage_binary(self, host, target, binary):
+        owner = self.cutover
+        owner.ex.mkdir(host, str(PurePosixPath(target).parent), 0o755)
+        current = owner.ex.sha256(host, target)
+        require(current in (None, self.release['binary_sha256']), 'immutable query release differs')
+        if current is None:
+            owner.ex.upload(host, binary, target, 0o755)
+        require(owner.ex.sha256(host, target) == self.release['binary_sha256'], 'query release upload differs')
+
+    def write(self, host, path, text, mode):
+        self.cutover.ex.mkdir(host, str(PurePosixPath(path).parent), 0o755)
+        self.cutover.ex.write(host, path, text.encode(), mode)
+
+    def activate(self, parent):
+        super().activate(parent)
+        owner = self.cutover
+        # The distribution prefixes can become reachable while consumers are stopped;
+        # the publisher starts only after its old writer has released every lock.
+        self.route(parent)
+        for consumer in parent['plan']['serving']['https_consumers']:
+            host, unit = consumer['host'], consumer['unit']
+            parent.setdefault('https_started', []).append(unit)
+            owner.save(parent)
+            owner.effect(parent, 'stop HTTPS predecessor ' + unit,
+                         lambda host=host, unit=unit: self.stop(host, unit))
+            for drop in consumer['before']['drop_ins']:
+                if PurePosixPath(drop['path']).name == units.MANAGED_DROP_IN:
+                    owner.effect(parent, 'retire fleet overlay ' + unit,
+                                 lambda host=host, path=drop['path']: owner.ex.remove(host, path))
+            owner.effect(parent, 'create HTTPS state ' + unit,
+                         lambda host=host, root=consumer['root']: owner.ex.mkdir(host, root, 0o700))
+            owner.effect(parent, 'install HTTPS configuration ' + unit,
+                         lambda c=consumer: self.write(c['host'], c['config_path'],
+                             json.dumps(c['configuration'], indent=2, sort_keys=True) + '\n', 0o600))
+            owner.effect(parent, 'install HTTPS unit ' + unit,
+                         lambda c=consumer: self.write(c['host'], '/etc/systemd/system/' + c['unit'], c['unit_text'], 0o644))
+            owner.effect(parent, 'reload HTTPS units ' + unit,
+                         lambda host=host: owner.ex.systemctl(host, 'daemon-reload'))
+
+    def stop(self, host, unit):
+        self.cutover.ex.systemctl(host, 'stop', unit)
+        state = self.cutover.ex.probe_unit(host, unit)
+        require(not state['main_pid'] and state['active_state'] in ('inactive', 'failed'),
+                'Transparent owner did not stop: ' + unit)
+
+    def verify(self, parent, restored=False):
+        super().verify(parent, restored)
+        owner = self.cutover
+        for consumer in parent['plan']['serving']['https_consumers']:
+            host, unit = consumer['host'], consumer['unit']
+            owner.effect(parent, ('restore start ' if restored else 'start HTTPS ') + unit,
+                         lambda host=host, unit=unit: owner.ex.systemctl(host, 'start', unit))
+            deadline = owner.clock() + 900
+            url = 'http://' + consumer['configuration']['management_listen'] + '/ready'
+            while True:
+                owner.lock.verify()
+                state = owner.ex.probe_unit(host, unit)
+                expected = consumer['before']['exe_sha256'] if restored else self.release['binary_sha256']
+                require(state['active_state'] != 'failed', 'consumer failed during HTTPS startup: ' + unit)
+                if restored:
+                    break  # Independent wallet probes verify the restored fleet publication below.
+                status, body = owner.ex.http_get(host, url)
+                try:
+                    ready = status == 200 and json.loads(body).get('ready') is True
+                except (ValueError, TypeError):
+                    ready = False
+                if ready and state['exe_sha256'] == expected:
+                    break
+                require(owner.clock() < deadline, 'HTTPS consumer readiness deadline exceeded: ' + unit)
+                owner.sleep(3)
+            if not restored and consumer['kind'] == 'history-archive':
+                # Recent startup verifies the terminal archive through this TLS
+                # origin, so expose the ready archive before starting recent.
+                self.route_history(parent)
+
+    def route(self, parent):
+        # Called early, before producer startup, then again by the common cutover.
+        if self.cutover.read('/etc/caddy/Caddyfile') == parent['plan']['serving']['edge_after']:
+            return
+        super().route(parent)
+
+    def route_history(self, parent):
+        edge = parent['plan']['serving']['history_edge']
+        owner = self.cutover
+        owner.effect(parent, 'install autonomous history routes',
+                     lambda: self.write(edge['host'], '/etc/caddy/Caddyfile', edge['after'], 0o644))
+        owner.effect(parent, 'reload autonomous history routes',
+                     lambda: owner.ex.systemctl(edge['host'], 'reload', 'caddy.service'))
+
+    def restore_guard(self, parent):
+        super().restore_guard(parent)
+        edge = parent['plan']['serving']['history_edge']
+        require(self.cutover.ex.read(edge['host'], '/etc/caddy/Caddyfile') in (edge['before'], edge['after']),
+                'history edge changed outside the HTTPS transaction')
+        state = self.cutover.ex.probe_unit(edge['host'], 'caddy.service')
+        require(all(state[key] == edge['unit'][key] for key in ('fragment_text', 'drop_ins')),
+                'history edge service changed outside the HTTPS transaction')
+        for consumer in parent['plan']['serving']['https_consumers']:
+            owner = self.cutover
+            state = owner.ex.probe_unit(consumer['host'], consumer['unit'])
+            require(state['fragment_text'] in (consumer['before']['fragment_text'], consumer['unit_text']),
+                    'consumer unit changed outside the HTTPS transaction')
+            require(owner.ex.read(consumer['host'], consumer['config_path']) in
+                    (consumer['config_before'], json.dumps(consumer['configuration'], indent=2, sort_keys=True) + '\n'),
+                    'consumer configuration changed outside the HTTPS transaction')
+            require(owner.ex.sha256(consumer['host'], consumer['old_binary']) == consumer['before']['exe_sha256'],
+                    'consumer rollback executable changed')
+            expected = consumer['before']['drop_ins']
+            require(state['drop_ins'] in (expected, [d for d in expected
+                    if PurePosixPath(d['path']).name != units.MANAGED_DROP_IN]),
+                    'consumer overlays changed outside the HTTPS transaction')
+
+    def restore(self, parent):
+        owner = self.cutover
+        for consumer in reversed(parent['plan']['serving']['https_consumers']):
+            host, unit = consumer['host'], consumer['unit']
+            if not self.touched(parent, unit):
+                continue
+            owner.effect(parent, 'restore stop HTTPS ' + unit, lambda host=host, unit=unit: self.stop(host, unit))
+            owner.effect(parent, 'restore consumer unit ' + unit,
+                         lambda c=consumer: self.write(c['host'], '/etc/systemd/system/' + c['unit'],
+                                                       c['before']['fragment_text'], 0o644))
+            if consumer['config_before'] is None:
+                owner.effect(parent, 'restore remove HTTPS configuration ' + unit,
+                             lambda c=consumer: owner.ex.remove(c['host'], c['config_path']))
+            else:
+                owner.effect(parent, 'restore consumer configuration ' + unit,
+                             lambda c=consumer: self.write(c['host'], c['config_path'], c['config_before'], 0o600))
+            for drop in consumer['before']['drop_ins']:
+                if PurePosixPath(drop['path']).name == units.MANAGED_DROP_IN:
+                    owner.effect(parent, 'restore fleet overlay ' + unit,
+                                 lambda host=host, d=drop: self.write(host, d['path'], d['text'], 0o644))
+            owner.effect(parent, 'restore reload consumer ' + unit,
+                         lambda host=host: owner.ex.systemctl(host, 'daemon-reload'))
+        edge = parent['plan']['serving']['history_edge']
+        if owner.ex.read(edge['host'], '/etc/caddy/Caddyfile') == edge['after']:
+            owner.effect(parent, 'restore history routes',
+                         lambda: self.write(edge['host'], '/etc/caddy/Caddyfile', edge['before'], 0o644))
+            owner.effect(parent, 'reload restored history routes',
+                         lambda: owner.ex.systemctl(edge['host'], 'reload', 'caddy.service'))
+        super().restore(parent)
+        # The fleet-controlled publisher needs its old workers before it can
+        # reactivate a current publication during recovery.
+        for consumer in parent['plan']['serving']['https_consumers']:
+            if not self.touched(parent, consumer['unit']):
+                continue
+            owner.effect(parent, 'restore start predecessor ' + consumer['unit'],
+                         lambda c=consumer: owner.ex.systemctl(c['host'], 'start', c['unit']))
+
+    @staticmethod
+    def touched(parent, unit):
+        return unit in parent.get('https_started', [])

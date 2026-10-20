@@ -77,7 +77,7 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
             self.make_target()
         self.request = original
         self.request['configuration']['transparent_history']['settings']['http_only'] = True
-        with self.assertRaisesRegex(DeployError, 'HTTP publishing is out of scope'):
+        with self.assertRaisesRegex(DeployError, 'HTTP publishing requires complete prepared distribution'):
             self.make_target()
 
     def test_old_ownership_requests_are_recovery_only(self):
