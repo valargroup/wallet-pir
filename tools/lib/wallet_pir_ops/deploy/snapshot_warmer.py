@@ -70,18 +70,18 @@ def completed_runtimes(source):
 
 def reuse(source, destination):
     source, destination = Path(source), Path(destination)
-    if not source.exists() and not source.is_symlink():
-        return {'reused_runtimes': 0}
     if destination.is_symlink() or not destination.is_dir():
         raise ValueError('prepared cache destination must be a regular directory')
     count = 0
-    for entry in completed_runtimes(source):
+    entries = completed_runtimes(source) if source.exists() or source.is_symlink() else []
+    for entry in entries:
         target = destination / entry.name
         if not target.exists():
             os.link(entry, target, follow_symlinks=False)
             count += 1
     sync_directory(destination)
-    return {'reused_runtimes': count}
+    return {'reused_runtimes': count,
+            'runtime_bytes': sum(entry.stat().st_size for entry in completed_runtimes(destination))}
 
 
 def seed(source, record, root):
@@ -218,6 +218,37 @@ def stop_child(child):
             child.wait(timeout=30)
 
 
+def verify_history_capacity(specification):
+    """Check the complete archive's memory and remaining disk needs before warming."""
+    root = Path(specification['work'])
+    budget = specification['verification_cache_bytes']
+    assigned = assignment(specification['identity'], 0, budget)
+    assigned['workers'][0]['shards'] = list(range(specification['identity']['shards']))
+    assigned['unassigned'] = []
+    assignment_path = root / 'capacity-assignment.json'
+    write_json(assignment_path, assigned)
+    settings = {'shard_dir': specification['pin'], 'cache_bytes': budget,
+                'assignment': str(assignment_path), 'worker_id': 'snapshot-validator',
+                'pilot_cold': False, 'build_slots': 1,
+                'runtime_cache_dir': specification['pin'],
+                'runtime_cache_max_bytes': specification['disk_bytes']}
+    path = root / 'capacity-query.json'
+    write_json(path, {'management_listen': '127.0.0.1:18991',
+                      'transparent_history': {'enabled': True, 'settings': settings}})
+    result = subprocess.run([specification['binary'], '--config', str(path), '--verify-only'],
+                            capture_output=True, text=True, timeout=300)
+    output = result.stdout + result.stderr
+    with (root / 'capacity.log').open('w') as log:
+        os.fchmod(log.fileno(), 0o600)
+        log.write(output)
+    if result.returncode:
+        raise RuntimeError('complete history cache does not fit: ' + output[-2000:])
+    report = json.loads(result.stdout)
+    if report.get('verified') is not True or not isinstance(report.get('runtime_cache'), dict):
+        raise RuntimeError('complete history cache verification returned no sizing report')
+    return report['runtime_cache']
+
+
 def warm(specification):
     root = Path(specification['work'])
     section = specification['section']
@@ -226,6 +257,8 @@ def warm(specification):
     result = {'map_sha256': specification['map_sha256'],
               'binary_sha256': specification['binary_sha256'], 'complete': False, 'checks': []}
     deadline = time.monotonic() + WARMUP_SECONDS
+    if history:
+        result['capacity'] = verify_history_capacity(specification)
     for shard in shards:
         shard_deadline = min(deadline, time.monotonic() + SHARD_WARMUP_SECONDS)
         settings = {

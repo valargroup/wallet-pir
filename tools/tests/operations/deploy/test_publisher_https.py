@@ -31,7 +31,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             host, unit = entry['host'], entry['unit']
             section = 'transaction_details' if kind == 'transaction-details' else 'transparent_history'
             body = {'publisher': 'https://example.test', 'publisher_network': 'main',
-                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen'], 'bootstrap_max_bytes': 1 << 30}
+                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen'],
+                    'cache_bytes': 8 << 30, 'bootstrap_max_bytes': 1 << 30}
             root = '/srv/https-' + kind
             if section == 'transaction_details':
                 body.update(role='combined', state_dir=root)
@@ -85,6 +86,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
                 if argv[2] == 'seed':
                     self.assertEqual(self.ex.probe_unit(host, publisher.UNIT)['main_pid'], 0)
                     return 0, '{"linked_runtimes":1,"runtime_bytes":1024}'
+                if argv[2] == 'reuse':
+                    return 0, '{"reused_runtimes":0,"runtime_bytes":1024}'
             if len(argv) > 1 and argv[1] == 'verify-filters':
                 raw = self.ex.read(host, argv[argv.index('--shard-dir') + 1] + '/shards.json')
                 return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':'))), 'schema': 'transparent-shard-v1', 'network': 'main', 'genesis_hash': '0' * 64, 'shards': 1, 'start_height': 0, 'covered_through': 1})
@@ -142,6 +145,21 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT), before)
         self.assertNotIn(('stop', publisher.UNIT), self.ex.effects)
         self.assertFalse(any(name.startswith('pir-snapshot-') for name in self.ex.host('coordinator').units))
+
+    def test_reused_files_do_not_consume_the_additional_staging_allowance(self):
+        self.deploy()
+        snapshots = self.target.latest()['warm_snapshots']
+        for record in snapshots.values():
+            self.assertEqual(record['retained_runtime_bytes'], 1024)
+            self.assertEqual(record['disk_bytes'] - 1024, self.request['https']['publisher_budget_bytes'])
+        archive = self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']
+        self.assertEqual(snapshots['transparent_history']['verification_cache_bytes'], archive['cache_bytes'])
+
+    def test_archive_memory_budget_cannot_be_an_implicit_native_default(self):
+        del self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['cache_bytes']
+        with self.assertRaisesRegex(DeployError, 'archive cache memory budget must be explicit'):
+            self.make_target()
+        self.assertEqual(self.ex.mutations(), [])
 
     def test_plan_captures_consumers_and_scoped_public_routes_without_mutation(self):
         plan = self.target.plan()['plan']

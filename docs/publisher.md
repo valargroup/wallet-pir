@@ -292,7 +292,8 @@ its existing `host` and `unit`, a root-owned `config_path`, its root query-serve
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate
 new state directories under `/srv`. The archive holds all shards; recent uses
-the archive's existing TLS origin. Fleet-controlled serving authority cannot be
+the archive's existing TLS origin. The archive's `cache_bytes` memory budget is
+explicit so complete holdings can be checked before cutover. Fleet-controlled serving authority cannot be
 reused. After stopping each predecessor, the tool hashes its immutable tables
 and runtime files into the new private object cache by hard link. The provider
 still checks every reused object against fresh HTTPS authority; no active-state
@@ -339,6 +340,11 @@ The service and its children stop before staging can finish. A failed warmup
 leaves the existing publisher, workers and edges running; reconciliation cleans
 up the transaction-owned validator. Completed cache files remain reusable by a
 later attempt, with native validation against its fresh snapshot.
+The staging allowance covers additional disk writes. The cache limit includes
+completed files already present through hard links. Before warming history,
+the native verifier checks the complete archive against its actual memory
+budget and the remaining cache space; its sizing report is retained with the
+warmup results.
 
 After the old publisher stops and releases its writer locks, the cutover links
 those prepared cache files into its current publication. It then starts the new

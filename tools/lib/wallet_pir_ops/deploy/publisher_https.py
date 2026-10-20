@@ -116,6 +116,8 @@ def validate(request, inventory):
             if consumer['kind'] == 'history-recent':
                 require(body.get('archive_upstream') == edge['origin'], 'recent consumer requires the terminal archive origin')
             else:
+                require(type(body.get('cache_bytes')) is int and body['cache_bytes'] > 0,
+                        'archive cache memory budget must be explicit')
                 require(not body.get('archive_upstream') and host == edge['host'],
                         'terminal archive must be local to its TLS edge')
         require(type(consumer['budget_bytes']) is int and consumer['budget_bytes'] > 0,

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 import urllib.error
@@ -25,6 +26,7 @@ class SnapshotFilesTests(unittest.TestCase):
             name = 'a' * 64 + '-' + 'b' * 64 + '.runtime'
             (previous / name).write_bytes(b'completed cache file')
             self.assertEqual(warmer.reuse(previous, fresh)['reused_runtimes'], 1)
+            self.assertEqual(warmer.reuse(previous, fresh)['runtime_bytes'], len(b'completed cache file'))
             self.assertTrue((fresh / name).samefile(previous / name))
             self.assertEqual((fresh / 'shards.json').read_text(), 'fresh map')
             self.assertFalse((fresh / 'active.json').exists())
@@ -80,6 +82,47 @@ class SnapshotFilesTests(unittest.TestCase):
                 warmer.pin(source, root / 'pin')
 
 
+class SnapshotCapacityTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        identity = dict.fromkeys(('shard_schema', 'map_sha256', 'network', 'genesis_hash'), 'identity')
+        identity.update(shards=3, start_height=0, covered_through=99, recent_from_shard=3)
+        self.specification = {'work': str(self.root), 'pin': str(self.root),
+                              'section': 'transparent_history', 'identity': identity,
+                              'map_sha256': 'map', 'binary_sha256': 'binary', 'binary': '/query',
+                              'verification_cache_bytes': 44 << 30,
+                              'memory_bytes': 36 << 30, 'disk_bytes': (34 + 32) << 30}
+
+    def test_native_verification_checks_every_shard_with_the_archive_budget(self):
+        sizing = {'used_bytes': 34 << 30, 'missing_bytes': 8 << 30}
+
+        def verify(command, **kwargs):
+            self.assertEqual(command[-1], '--verify-only')
+            config = json.loads(Path(command[command.index('--config') + 1]).read_text())
+            settings = config['transparent_history']['settings']
+            self.assertEqual(settings['cache_bytes'], 44 << 30)
+            self.assertEqual(settings['runtime_cache_max_bytes'], (34 + 32) << 30)
+            assigned = json.loads(Path(settings['assignment']).read_text())
+            self.assertEqual(assigned['workers'][0]['shards'], [0, 1, 2])
+            self.assertEqual(assigned['unassigned'], [])
+            self.assertNotIn('retain_revisions', settings)
+            return subprocess.CompletedProcess(command, 0, json.dumps({'verified': True, 'runtime_cache': sizing}), '')
+
+        with patch.object(warmer.subprocess, 'run', side_effect=verify):
+            self.assertEqual(warmer.verify_history_capacity(self.specification), sizing)
+
+    def test_insufficient_full_cache_stops_before_starting_any_warmer(self):
+        failure = subprocess.CompletedProcess([], 1, '', 'runtime cache budget exhausted')
+        with patch.object(warmer.subprocess, 'run', return_value=failure), \
+                patch.object(warmer.subprocess, 'Popen') as child:
+            with self.assertRaisesRegex(RuntimeError, 'complete history cache does not fit'):
+                warmer.warm(self.specification)
+            child.assert_not_called()
+        self.assertIn('budget exhausted', (self.root / 'capacity.log').read_text())
+
+
 class SnapshotDeadlineTests(unittest.TestCase):
     def run_warmup(self, shards, seconds_per_shard):
         with tempfile.TemporaryDirectory() as directory:
@@ -102,6 +145,7 @@ class SnapshotDeadlineTests(unittest.TestCase):
             with patch.object(warmer.time, 'monotonic', side_effect=lambda: now), \
                     patch.object(warmer.time, 'sleep'), \
                     patch.object(warmer, 'assignment', return_value={}), \
+                    patch.object(warmer, 'verify_history_capacity', return_value={}), \
                     patch.object(warmer, 'ready_report', side_effect=readiness), \
                     patch.object(warmer.subprocess, 'Popen'), \
                     patch.object(warmer, 'stop_child') as stop:

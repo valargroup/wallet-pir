@@ -84,21 +84,25 @@ class SnapshotWarmup:
             self.stop(record)
 
     def reuse_previous(self, journal, section, root, pin, script):
+        source = pin
         previous = journal['plan'].get('previous_transaction')
-        if previous is None:
-            return
-        path = '/opt/pir-publisher/transactions/' + previous + '/journal.json'
-        raw = self.owner.read(path)
-        require(raw is not None, 'previous publisher transaction is missing')
-        prior = json.loads(raw)
-        require(prior['id'] == previous, 'previous publisher transaction identity changed')
-        record = prior.get('warm_snapshots', {}).get(section)
-        if not record or record['binary_sha256'] != self.serving.release['binary_sha256']:
-            return
-        expected = root + '/.cutover-preparation/' + previous + '/' + section + '/publication'
-        require(record['pin'] == expected, 'previous preparation cache is outside its transaction')
-        code, output = self.owner.ex.run(self.owner.host, ['python3', script, 'reuse', expected, pin], 120)
+        if previous is not None:
+            path = '/opt/pir-publisher/transactions/' + previous + '/journal.json'
+            raw = self.owner.read(path)
+            require(raw is not None, 'previous publisher transaction is missing')
+            prior = json.loads(raw)
+            require(prior['id'] == previous, 'previous publisher transaction identity changed')
+            record = prior.get('warm_snapshots', {}).get(section)
+            if record and record['binary_sha256'] == self.serving.release['binary_sha256']:
+                expected = root + '/.cutover-preparation/' + previous + '/' + section + '/publication'
+                require(record['pin'] == expected, 'previous preparation cache is outside its transaction')
+                source = expected
+        code, output = self.owner.ex.run(self.owner.host, ['python3', script, 'reuse', source, pin], 120)
         require(code == 0, 'could not reuse completed preparation cache: ' + output[-1000:])
+        reused = json.loads(output)
+        require(type(reused.get('runtime_bytes')) is int and reused['runtime_bytes'] >= 0,
+                'preparation cache has no retained-byte accounting')
+        return reused['runtime_bytes']
 
     def stage(self, journal):
         owner = self.owner
@@ -113,7 +117,7 @@ class SnapshotWarmup:
                 map_name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
                 require(owner.ex.sha256(owner.host, pin + '/' + map_name) == snapshot['raw_map_sha256'],
                         'pinned production snapshot map changed')
-                self.reuse_previous(journal, section, root, pin, script)
+                retained_bytes = self.reuse_previous(journal, section, root, pin, script)
                 resources = owner.resources()
                 reserve = (resources['memory_total'] + 4) // 5
                 memory = resources['memory_available'] - reserve
@@ -126,11 +130,16 @@ class SnapshotWarmup:
                     self.serving.release['binary_sha256'], 'pir-query-server')
                 specification = {
                     'section': section, 'work': work, 'pin': pin, 'memory_bytes': memory,
-                    'disk_bytes': owner.request['https']['publisher_budget_bytes'],
+                    # Reused hard links already consume disk at capture. The
+                    # reviewed staging allowance bounds additional writes.
+                    'disk_bytes': retained_bytes + owner.request['https']['publisher_budget_bytes'],
+                    'retained_runtime_bytes': retained_bytes,
                     'map_sha256': snapshot['map_sha256'], 'binary': binary,
                     'binary_sha256': self.serving.release['binary_sha256'],
                 }
                 if section == 'transparent_history':
+                    archive = owner.request['https']['consumers'][0]
+                    specification['verification_cache_bytes'] = archive['configuration'][section]['settings']['cache_bytes']
                     identity = snapshot['identity']
                     specification['identity'] = {
                         'shard_schema': identity['schema'], 'map_sha256': snapshot['map_sha256'],
