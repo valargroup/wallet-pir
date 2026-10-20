@@ -75,7 +75,7 @@ def main():
             inventory = root / 'workers.json'
             inventory.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': replicas}]}))
             command = [str(exercise), '--sealed-shards', str(args.sealed_shards), '--isolated-workers', '--profile', 'smoke',
-                       '--data-dir', str(root / 'exercise'), '--worker-config', str(inventory), '--listen', '127.0.0.1:0',
+                       '--data-dir', str(root / 'exercise'), '--worker-config', str(inventory), '--listen', '127.0.0.1:0', '--query-listen', '127.0.0.1:0',
                        '--seconds', str(args.seconds), '--min-publications', str(args.min_publications),
                        '--publication-interval', '1', '--concurrency', '2']
             (args.out / 'command.json').write_text(json.dumps(command, indent=2))

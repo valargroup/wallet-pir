@@ -231,6 +231,46 @@ impl Drop for ClientSlot {
 mod tests {
     use super::*;
 
+    #[test]
+    fn per_client_slots_cap_concurrency_and_evict_idle_keys() {
+        let slots = ClientSlots::new(2);
+        let a1 = slots.try_acquire("1.2.3.4").expect("first slot");
+        let a2 = slots.try_acquire("1.2.3.4").expect("second slot");
+        assert!(slots.try_acquire("1.2.3.4").is_none(), "third is refused");
+        // Another client is independent.
+        let b1 = slots.try_acquire("5.6.7.8").expect("other client");
+        assert_eq!(slots.tracked(), 2);
+        drop(a1);
+        let a3 = slots.try_acquire("1.2.3.4").expect("slot freed by drop");
+        assert!(slots.try_acquire("1.2.3.4").is_none());
+        drop(a2);
+        drop(a3);
+        assert_eq!(slots.tracked(), 1, "zero entries are evicted");
+        drop(b1);
+        assert_eq!(slots.tracked(), 0);
+        // A refused acquisition never leaves a zero entry behind.
+        let c1 = slots.try_acquire("unknown").unwrap();
+        let c2 = slots.try_acquire("unknown").unwrap();
+        assert!(slots.try_acquire("unknown").is_none());
+        drop((c1, c2));
+        assert_eq!(slots.tracked(), 0);
+    }
+
+    #[test]
+    fn client_key_prefers_first_forwarded_address() {
+        let mut h = HeaderMap::new();
+        assert_eq!(client_key(&h, None), "unknown");
+        h.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        assert_eq!(client_key(&h, None), "9.9.9.9");
+        h.insert(
+            "x-forwarded-for",
+            " 1.2.3.4 , 10.0.0.1, 127.0.0.1".parse().unwrap(),
+        );
+        assert_eq!(client_key(&h, None), "1.2.3.4");
+        h.insert("x-forwarded-for", " ".parse().unwrap());
+        assert_eq!(client_key(&h, None), "9.9.9.9");
+    }
+
     #[tokio::test]
     async fn cancelled_blocking_wait_retains_admission_and_prepared_handle() {
         let permits = Arc::new(Semaphore::new(1));

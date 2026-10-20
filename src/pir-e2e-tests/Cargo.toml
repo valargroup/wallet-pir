@@ -22,6 +22,7 @@ enhance-tests = [
     "dep:enhance-publisher",
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
+    "enhance-publisher/local-serving",
     "dep:enhance-query-server",
     "enhance-query-server/client",
     "dep:pir-query-server",

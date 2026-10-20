@@ -1,11 +1,11 @@
 //! Enhance PIR query serving: the wire protocol and client, record encoding,
-//! prepared runtimes, workers, query ingress, packing routers and the public
-//! [`gateway::QueryGateway`].
+//! prepared runtimes, workers, packing routers and the query ingress that
+//! serves wallets.
 //!
 //! This library serves prepared publications. It must not depend on
 //! `enhance-publisher`, chain readers, ingestion or tools; the publisher
-//! composes it and supplies publication state through
-//! [`gateway::PublisherStatus`]. `tools/ci/boundary.py` enforces the boundary.
+//! drives it only through the roles' private control routes.
+//! `tools/ci/boundary.py` enforces the boundary.
 //!
 //! Record types and constants are exported at the crate root. The serving
 //! database layout lives separately in [`types`].
@@ -14,7 +14,6 @@ use pir_control::admission;
 pub mod artifact;
 #[cfg(any(test, feature = "client"))]
 pub mod client;
-pub mod gateway;
 pub mod internal_auth;
 pub mod ipir;
 #[cfg(feature = "native-reinspiring")]

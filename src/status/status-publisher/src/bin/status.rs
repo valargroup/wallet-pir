@@ -1,8 +1,7 @@
-//! Isolated synthetic backend. Uses a declared synthetic source; never enables wallet traffic.
+//! The Status publisher and its diagnostics. Query roles run in `pir-query-server`;
+//! this binary never serves wallets.
 use clap::{Parser, Subcommand};
 use status_publisher::cli;
-use status_query_server as status;
-use status_query_server::protocol::MAX_ENTRIES;
 use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]
@@ -14,11 +13,9 @@ struct Args {
 enum Command {
     /// Open-loop live mined-answer smoke load; publication qualification is assessed separately.
     ProbeLiveLoad {
+        /// The router's wallet origin: init, session and query.
         #[arg(long)]
         origin: String,
-        /// Send encrypted queries directly here; initialization still uses origin.
-        #[arg(long)]
-        query_origin: Option<String>,
         #[arg(long, default_value = "http://127.0.0.1:8232")]
         rpc_url: String,
         #[arg(long)]
@@ -28,7 +25,8 @@ enum Command {
         #[arg(long)]
         report_dir: PathBuf,
     },
-    /// Encrypted oracle validation across real router and worker child processes.
+    /// Encrypted oracle validation across real `pir-query-server` router and
+    /// worker child processes.
     ValidateDistributed {
         #[arg(long, default_value_t = 32)]
         entries: usize,
@@ -36,6 +34,10 @@ enum Command {
         cuda: bool,
         #[arg(long)]
         state_dir: PathBuf,
+        /// `pir-query-server` built with the `status` feature (and `cuda` for
+        /// `--cuda`). Default: beside this executable.
+        #[arg(long)]
+        query_server: Option<PathBuf>,
         /// Validate an already installed synthetic-fixture worker instead of spawning one.
         #[arg(long)]
         existing_worker: Option<String>,
@@ -45,28 +47,6 @@ enum Command {
         /// Diagnostic request deadline, separate from production transport policy.
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..=900))]
         request_timeout_seconds: u64,
-    },
-    /// Independent private role. Loopback endpoints require authenticated SSH forwarding.
-    Role {
-        #[arg(long, value_enum)]
-        role: status::distributed::Role,
-        #[arg(long)]
-        network_hex: String,
-        #[arg(long)]
-        state_dir: PathBuf,
-        #[arg(long)]
-        listen: SocketAddr,
-        /// Router only: serve `/v1/status/query` on this separate loopback
-        /// listener and keep control, artifact, public, evaluate and telemetry
-        /// on `--listen`. Omitted: one merged listener.
-        #[arg(long)]
-        query_listen: Option<SocketAddr>,
-        #[arg(long)]
-        artifact_origin: String,
-        #[arg(long, default_value = "http://127.0.0.1:8381")]
-        worker_origin: String,
-        #[arg(long)]
-        cuda: bool,
     },
     /// Read a consistent live block/mempool window without publishing it.
     ObserveLive {
@@ -87,80 +67,9 @@ enum Command {
         #[arg(long)]
         state_dir: Option<PathBuf>,
     },
-    /// Run the synthetic backend on loopback; use an SSH tunnel for remote probes.
-    Serve {
-        #[arg(long,default_value_t=MAX_ENTRIES)]
-        entries: usize,
-        #[arg(long)]
-        cuda: bool,
-        #[arg(long, default_value = "127.0.0.1:8380")]
-        listen: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8381")]
-        worker: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8382")]
-        router: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8383")]
-        monitoring: SocketAddr,
-        #[arg(long)]
-        state_dir: PathBuf,
-    },
-    /// Experimental live Status serving on loopback. Roles still share this process.
-    ServeLive {
-        #[arg(long, default_value = "http://127.0.0.1:8232")]
-        rpc_url: String,
-        #[arg(long)]
-        cookie: PathBuf,
-        #[arg(long)]
-        salt_hex: String,
-        #[arg(long, default_value_t = 64)]
-        window_blocks: u32,
-        #[arg(long)]
-        cuda: bool,
-        #[arg(long, default_value = "127.0.0.1:8380")]
-        listen: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8381")]
-        worker: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8382")]
-        router: SocketAddr,
-        #[arg(long, default_value = "127.0.0.1:8383")]
-        monitoring: SocketAddr,
-        #[arg(long)]
-        state_dir: PathBuf,
-    },
-    /// Full encrypted HTTP correctness, update/rebuild differential, and failure checks.
-    Validate {
-        #[arg(long,default_value_t=MAX_ENTRIES)]
-        entries: usize,
-        #[arg(long)]
-        cuda: bool,
-        #[arg(long)]
-        state_dir: PathBuf,
-    },
-    /// Probe or load an already running synthetic backend, validating all answers.
-    Probe {
-        #[arg(long, default_value = "http://127.0.0.1:8380")]
-        origin: String,
-        #[arg(long,default_value_t=MAX_ENTRIES)]
-        entries: usize,
-        #[arg(long, default_value_t = 4)]
-        queries: usize,
-        #[arg(long, default_value_t = 1)]
-        concurrency: usize,
-        #[arg(long, default_value_t = 0)]
-        qps: u64,
-        /// Schedule qps * seconds arrivals; intended for long open-loop runs.
-        #[arg(long)]
-        seconds: Option<u64>,
-        /// Optional per-arrival JSONL evidence. Contains no txids or query material.
-        #[arg(long)]
-        report_jsonl: Option<PathBuf>,
-        /// Fail the probe if complete-lookup p99 exceeds this bound.
-        #[arg(long)]
-        max_p99_ms: Option<f64>,
-    },
     /// Check a canonical mined txid through a live encrypted query on loopback.
     ProbeLive {
-        #[arg(long, default_value = "http://127.0.0.1:8380")]
+        #[arg(long, default_value = "http://127.0.0.1:8492")]
         origin: String,
         #[arg(long, default_value = "http://127.0.0.1:8232")]
         rpc_url: String,
@@ -180,18 +89,16 @@ async fn main() -> Result<(), cli::AnyError> {
     match Args::parse().command {
         Command::ProbeLiveLoad {
             origin,
-            query_origin,
             rpc_url,
             cookie,
             seconds,
             report_dir,
-        } => {
-            cli::probe_live_load(origin, query_origin, rpc_url, cookie, seconds, report_dir).await?
-        }
+        } => cli::probe_live_load(origin, rpc_url, cookie, seconds, report_dir).await?,
         Command::ValidateDistributed {
             entries,
             cuda,
             state_dir,
+            query_server,
             existing_worker,
             artifact_listen,
             request_timeout_seconds,
@@ -200,32 +107,11 @@ async fn main() -> Result<(), cli::AnyError> {
                 entries,
                 cuda,
                 state_dir,
+                query_server,
                 existing_worker,
                 artifact_listen,
                 request_timeout_seconds,
             )
-            .await?
-        }
-        Command::Role {
-            role,
-            network_hex,
-            state_dir,
-            listen,
-            query_listen,
-            artifact_origin,
-            worker_origin,
-            cuda,
-        } => {
-            cli::role(cli::RoleConfig {
-                role,
-                network_hex,
-                state_dir,
-                listen,
-                query_listen,
-                artifact_origin,
-                worker_origin,
-                cuda,
-            })
             .await?
         }
         Command::ObserveLive {
@@ -248,74 +134,12 @@ async fn main() -> Result<(), cli::AnyError> {
             )
             .await?
         }
-        Command::Probe {
-            origin,
-            entries,
-            queries,
-            concurrency,
-            qps,
-            seconds,
-            report_jsonl,
-            max_p99_ms,
-        } => {
-            cli::probe(cli::ProbeConfig {
-                origin,
-                entries,
-                queries,
-                concurrency,
-                qps,
-                seconds,
-                report_jsonl,
-                max_p99_ms,
-            })
-            .await?
-        }
         Command::ProbeLive {
             origin,
             rpc_url,
             cookie,
             queries,
         } => cli::probe_live(origin, rpc_url, cookie, queries).await?,
-        Command::Serve {
-            entries,
-            cuda,
-            listen,
-            worker,
-            router,
-            monitoring,
-            state_dir,
-        } => cli::serve(entries, cuda, listen, worker, router, monitoring, state_dir).await?,
-        Command::ServeLive {
-            rpc_url,
-            cookie,
-            salt_hex,
-            window_blocks,
-            cuda,
-            listen,
-            worker,
-            router,
-            monitoring,
-            state_dir,
-        } => {
-            cli::serve_live(cli::LiveConfig {
-                rpc_url,
-                cookie,
-                salt_hex,
-                window_blocks,
-                cuda,
-                listen,
-                worker,
-                router,
-                monitoring,
-                state_dir,
-            })
-            .await?
-        }
-        Command::Validate {
-            entries,
-            cuda,
-            state_dir,
-        } => cli::validate(entries, cuda, state_dir).await?,
     }
     Ok(())
 }

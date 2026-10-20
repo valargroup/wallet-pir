@@ -248,7 +248,7 @@ pub(crate) fn observe_preparation(elapsed: std::time::Duration) {
     PREPARATIONS.fetch_add(1, Relaxed);
     PREPARATION_MICROS.fetch_add(elapsed.as_micros() as u64, Relaxed);
 }
-pub(crate) fn metrics() -> String {
+pub fn metrics() -> String {
     use std::sync::atomic::Ordering::Relaxed;
     format!(
         "enhance_packing_preparations_total {}\nenhance_packing_preparation_seconds_total {}\n",

@@ -1,13 +1,38 @@
-//! Independent wallet client over real Status coordinator/router/worker listeners.
-#![cfg(feature = "native-reinspiring")]
-use ipir_sp::server::MatvecBackend;
-use status_query_server::{fixture, now_ms, Controller, Generation};
+//! Independent wallet client over real Status router and worker listeners.
+use super::*;
+use status_query_server::fixture;
 use std::sync::atomic::{AtomicBool, Ordering};
 use zakura_pir_client::status as wallet;
 
-#[path = "support/status_http.rs"]
+#[path = "../../tests/support/status_http.rs"]
 mod status_http;
 use status_http::{serve, Loopback};
+
+/// Activate `g` on a role through its own fence and activation handlers.
+async fn activated(role: Role, dir: &FsPath, worker_origin: String, g: Generation) -> Service {
+    let s = Service::open(
+        role,
+        g.manifest().network,
+        dir.to_path_buf(),
+        "http://127.0.0.1:1".into(),
+        worker_origin,
+        false,
+    )
+    .unwrap();
+    let binding = Binding {
+        epoch: g.manifest().recovery_epoch,
+        incarnation: s.incarnation.clone(),
+    };
+    let _ = fence(State(s.clone()), Json(binding.clone()))
+        .await
+        .unwrap();
+    let manifest = g.manifest().clone();
+    s.state.lock().await.candidate = Some((g, manifest.public_digest));
+    let _ = activate(State(s.clone()), Json(Activate { binding, manifest }))
+        .await
+        .unwrap();
+    s
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes() {
@@ -16,16 +41,30 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
         Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
     // Preparation may outlast the observation window on a busy host. This
     // immutable synthetic snapshot is still verified immediately before publish.
-    let controller = Controller::new(generation.reobserved(now_ms()));
-    let worker = serve(controller.worker_routes()).await;
-    let router = serve(controller.router_routes(worker.origin.clone())).await;
-    let coordinator = serve(controller.coordinator_routes(router.origin.clone())).await;
+    let generation = generation.reobserved(now_ms());
+    let dirs = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let worker = activated(
+        Role::Worker,
+        dirs.0.path(),
+        "http://127.0.0.1:1".into(),
+        generation.clone(),
+    )
+    .await;
+    let worker = serve(worker.control_routes()).await;
+    let router = activated(
+        Role::Router,
+        dirs.1.path(),
+        worker.origin.clone(),
+        generation,
+    )
+    .await;
+    let router = serve(router.query_routes()).await;
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(Duration::from_secs(10))
         .build()
         .unwrap();
     let transport = Loopback {
-        origin: coordinator.origin.clone(),
+        origin: router.origin.clone(),
         http: http.clone(),
         corrupt_answer: AtomicBool::new(false),
     };
@@ -51,12 +90,10 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
     for (txid, expected) in fixture::cases(32, false) {
         let observation = client.observe(&transport, &txid, coverage).await.unwrap();
         let expected = match expected {
-            status_query_server::protocol::Observation::Mined(height) => {
-                wallet::Observation::Mined(height)
-            }
-            status_query_server::protocol::Observation::Mempool => wallet::Observation::Mempool,
-            status_query_server::protocol::Observation::Forked => wallet::Observation::Forked,
-            status_query_server::protocol::Observation::NotFound => wallet::Observation::NotFound,
+            Observation::Mined(height) => wallet::Observation::Mined(height),
+            Observation::Mempool => wallet::Observation::Mempool,
+            Observation::Forked => wallet::Observation::Forked,
+            Observation::NotFound => wallet::Observation::NotFound,
         };
         assert_eq!(observation, expected);
     }
@@ -68,16 +105,16 @@ async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes()
         Err(wallet::Error::Malformed)
     );
     let malformed = http
-        .post(format!("{}/v1/status/query", coordinator.origin))
+        .post(format!("{}/v1/status/query", router.origin))
         .body(vec![0; 8])
         .send()
         .await
         .unwrap();
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
-    let mut stale = status_query_server::protocol::QUERY_MAGIC.to_vec();
-    stale.resize(status_query_server::protocol::HEADER_BYTES, 0);
+    let mut stale = QUERY_MAGIC.to_vec();
+    stale.resize(HEADER_BYTES, 0);
     let stale = http
-        .post(format!("{}/v1/status/query", coordinator.origin))
+        .post(format!("{}/v1/status/query", router.origin))
         .body(stale)
         .send()
         .await

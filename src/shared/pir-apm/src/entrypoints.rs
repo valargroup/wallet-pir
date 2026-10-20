@@ -1,5 +1,5 @@
 //! Public entrypoint metrics are sampled independently of fleet health probes.
-//! Query ingress targets replace coordinator query metrics to avoid double counting.
+//! Query ingress serves both wallet entrypoints; the coordinator serves neither.
 use crate::{
     config::Config,
     dashboard::{EntrypointData, SharedDashboard},
@@ -27,9 +27,8 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("entrypoint HTTP client");
-    let coordinator = format!("{}{}", config.scrape_url, config.metrics_path);
-    let query_urls = if config.query_scrape_urls.is_empty() {
-        vec![coordinator.clone()]
+    let entry_urls = if config.query_scrape_urls.is_empty() {
+        vec![format!("{}{}", config.scrape_url, config.metrics_path)]
     } else {
         config.query_scrape_urls.clone()
     };
@@ -55,9 +54,10 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
             timing_ok = false;
             previous_routers = router_urls.clone();
         }
-        let desired: std::collections::BTreeSet<_> = std::iter::once(coordinator.clone())
-            .chain(query_urls.iter().cloned())
-            .chain(router_urls.iter().cloned())
+        let desired: std::collections::BTreeSet<_> = entry_urls
+            .iter()
+            .chain(router_urls.iter())
+            .cloned()
             .collect();
         sources.retain(|url, _| desired.contains(url));
         for url in desired {
@@ -104,10 +104,8 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
                     previous.process_start_time_seconds != snapshot.process_start_time_seconds
                         || snapshot.at.duration_since(previous.at).as_secs() > 12
                 }) {
-                    if url == coordinator {
+                    if entry_urls.contains(&url) {
                         init_ok = false;
-                    }
-                    if query_urls.contains(&url) {
                         query_ok = false;
                     }
                     if router_urls.contains(&url) {
@@ -118,11 +116,10 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
                 source.ok = true;
             }
         }
-        let init_sources = vec![&sources[&coordinator]];
-        let query_sources: Vec<_> = query_urls.iter().map(|url| &sources[url]).collect();
+        let entry_sources: Vec<_> = entry_urls.iter().map(|url| &sources[url]).collect();
         let routers: Vec<_> = router_urls.iter().map(|url| &sources[url]).collect();
-        let mut init = summarize(&init_sources, "init");
-        let mut query = summarize(&query_sources, "query");
+        let mut init = summarize(&entry_sources, "init");
+        let mut query = summarize(&entry_sources, "query");
         let timings_available = inventory_ok
             && !routers.is_empty()
             && routers.iter().all(|s| {
@@ -156,11 +153,7 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
                 data.history = previous.history.clone();
             }
             if emit {
-                let (entry_sources, traffic_ok) = if name == "init" {
-                    (&init_sources, init_ok)
-                } else {
-                    (&query_sources, query_ok)
-                };
+                let traffic_ok = if name == "init" { init_ok } else { query_ok };
                 let arrivals = if traffic_ok {
                     entry_sources.iter().try_fold(0.0, |sum, s| {
                         s.rolling.arrivals_period(name, 60).map(|n| sum + n)
@@ -173,7 +166,7 @@ async fn run_with_period(config: Config, dashboard: SharedDashboard, period: std
                     latencies.insert(
                         "total".into(),
                         RollingMetrics::entrypoint_period(
-                            &[&sources[&coordinator].rolling],
+                            &entry_sources.iter().map(|s| &s.rolling).collect::<Vec<_>>(),
                             "init",
                             60,
                         )
@@ -303,7 +296,7 @@ mod tests {
         assert_eq!(failed.last_success, Some(when));
     }
     #[tokio::test]
-    async fn separate_ingress_replaces_coordinator_query_and_failed_source_hides_aggregate() {
+    async fn ingress_replaces_coordinator_entrypoints_and_failed_source_hides_aggregate() {
         use axum::{routing::get, Router};
         use std::sync::{
             atomic::{AtomicBool, AtomicU64, Ordering},
@@ -350,8 +343,8 @@ enhance_http_request_processing_duration_seconds_count{{endpoint="{endpoint}"}} 
             });
             (url, task, failed)
         }
-        // Coordinator deliberately exposes query too: selecting ingress must exclude it.
-        let (coordinator, coord_task, _) = fixture("query", 999999).await;
+        // The coordinator deliberately exposes init: selecting ingress must exclude it.
+        let (coordinator, coord_task, _) = fixture("init", 999999).await;
         let (a, task_a, _) = fixture("query", 1024).await;
         let (b, task_b, failed_b) = fixture("query", 2048).await;
         let mut config = Config::from_map(&std::collections::HashMap::new()).unwrap();

@@ -1644,8 +1644,6 @@ mod tests {
             .insert("enhance_published_anchor_height".into(), 3493673.0);
         data.snapshot_gauges
             .insert("enhance_capacity_remaining_rows".into(), 146120.0);
-        data.snapshot_gauges
-            .insert("enhance_query_rejected_total".into(), 2.0);
         let html = render(&data);
         assert!(html.contains("Published anchor"));
         assert!(html.contains("3493673"));

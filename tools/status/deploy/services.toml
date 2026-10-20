@@ -1,4 +1,6 @@
 # Status PIR role descriptor; templates sit beside it.
+# The worker and router run this release's pir-query-server from operator-installed
+# role configs (status-worker.example.json, status-router.example.json).
 [services.status]
 root = "/opt/status-pir"
 binary = "status-pir"
@@ -8,11 +10,10 @@ min_free_bytes = 1073741824
 order = ["worker", "external-worker", "router"]
 # The supervised control sessions that carry the controller's forwards.
 ancillary = ["supervision"]
-# Supplied by the inventory's services.status.template_vars.
-template_vars = ["NETWORK"]
 
 [services.status.roles.worker]
 unit = "status-worker.service"
+binary = "pir-query-server"
 mode = "template"
 template = "status-worker.service.in"
 # Ready needs a fresh controller heartbeat and manifest.
@@ -22,6 +23,7 @@ ready_timeout = 180
 
 [services.status.roles.external-worker]
 unit = "status-pir-worker.service"
+binary = "pir-query-server"
 mode = "role"
 template = "status-worker.role.service"
 renderer = "tools.status.lib.roles:status_worker"
@@ -34,6 +36,7 @@ ready_timeout = 180
 
 [services.status.roles.router]
 unit = "status-router.service"
+binary = "pir-query-server"
 mode = "template"
 template = "status-router.service.in"
 health = "http://127.0.0.1:8482/control/health"

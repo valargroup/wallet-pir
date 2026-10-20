@@ -1,13 +1,8 @@
-//! Query handlers shared by the single-process fixture and the Status roles:
-//! each one checks authority and freshness before and after admission.
-use super::{admission, profile, telemetry, Controller};
-use crate::protocol::*;
-use axum::{
-    body::Bytes,
-    extract::{Path, State},
-    http::StatusCode,
-    Json,
-};
+//! Wallet-facing and worker query handlers of the Status roles. Each one checks
+//! authority and freshness before and after admission.
+use super::admission;
+use axum::{body::Bytes, extract::State, http::StatusCode};
+use status_query_server::{profile, protocol::*, telemetry, Controller};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -32,8 +27,9 @@ pub struct HttpState {
     pub http: reqwest::Client,
     pub permits: Arc<admission::Admission>,
 }
+#[cfg(test)]
 impl HttpState {
-    pub fn new(controller: Controller, origin: String) -> Self {
+    fn new(controller: Controller, origin: String) -> Self {
         Self {
             controller,
             origin,
@@ -41,11 +37,6 @@ impl HttpState {
             permits: Arc::new(admission::Admission::production()),
         }
     }
-}
-pub async fn init(State(s): State<HttpState>) -> Result<Json<Manifest>, StatusCode> {
-    let g = s.controller.current();
-    s.controller.check(&g)?;
-    Ok(Json(g.manifest().clone()))
 }
 /// Response body over shared immutable material, without copying it.
 struct SharedBytes(Arc<Vec<u8>>);
@@ -56,18 +47,6 @@ impl AsRef<[u8]> for SharedBytes {
 }
 pub fn shared_bytes(bytes: Arc<Vec<u8>>) -> Bytes {
     Bytes::from_owner(SharedBytes(bytes))
-}
-pub async fn session(
-    State(s): State<HttpState>,
-    Path(id): Path<String>,
-) -> Result<Bytes, StatusCode> {
-    let id: Hash = hex::decode(id)
-        .map_err(|_| StatusCode::BAD_REQUEST)?
-        .try_into()
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let g = s.controller.resolve(id)?;
-    s.controller.check(&g)?;
-    Ok(shared_bytes(g.public().clone()))
 }
 pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
     if !response.status().is_success() {
@@ -87,31 +66,6 @@ pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Ve
         out.extend(&chunk);
     }
     Ok(out)
-}
-pub async fn forward(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    match tokio::time::timeout(admission::REQUEST_BUDGET, forward_admitted(s, body)).await {
-        Ok(result) => result,
-        Err(_) => {
-            telemetry::admission_rejected("coordinator", "request_deadline");
-            Err(StatusCode::GATEWAY_TIMEOUT)
-        }
-    }
-}
-async fn forward_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let g = s.controller.for_body(&body)?;
-    s.controller.check(&g)?;
-    let _permit = s.permits.acquire("coordinator").await?;
-    s.controller.check(&g)?;
-    let response = s
-        .http
-        .post(format!("{}/v1/status/query", s.origin))
-        .body(body)
-        .send()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let bytes = bounded(response, 512 * 1024).await?;
-    s.controller.check(&g)?;
-    Ok(bytes)
 }
 pub async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     match tokio::time::timeout(admission::REQUEST_BUDGET, evaluate_admitted(s, body)).await {
@@ -197,4 +151,120 @@ async fn query_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    use status_query_server::{now_ms, Generation};
+
+    fn generation() -> Generation {
+        Generation::public_only(
+            Manifest {
+                protocol: PROTOCOL.into(),
+                network: [1; 32],
+                salt: [2; 32],
+                generation: 1,
+                recovery_epoch: 0,
+                coverage_start: 1,
+                anchor_height: 1,
+                anchor_hash: [3; 32],
+                observed_ms: now_ms(),
+                entries: 0,
+                rows_digest: [4; 32],
+                public_digest: [5; 32],
+            },
+            Arc::new(Vec::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn serving_client_clones_reuse_forwarding_connection() {
+        async fn peer(
+            axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+        ) -> String {
+            peer.to_string()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = Router::new().route("/", get(peer));
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            .unwrap();
+        });
+        let client = serving_http_client().unwrap();
+        let first = client
+            .get(&origin)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let second = client
+            .clone()
+            .get(&origin)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(
+            first, second,
+            "requests must reuse the same TCP/SSH channel"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn authority_is_rechecked_after_admission_wait() {
+        let controller = Controller::new(generation());
+        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(state.permits.acquire("router").await.unwrap());
+        }
+        let mut body = vec![0; HEADER_BYTES];
+        body[..4].copy_from_slice(QUERY_MAGIC);
+        body[4..36].copy_from_slice(&controller.current().manifest().id());
+        let request = query(State(state), Bytes::from(body));
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut request)
+                .await
+                .is_err()
+        );
+        controller.revoke();
+        drop(held);
+        assert_eq!(request.await, Err(StatusCode::GONE));
+    }
+
+    #[tokio::test]
+    async fn source_freshness_is_rechecked_after_admission_wait() {
+        let g = generation().reobserved(now_ms() - MAX_AGE_MS + 100);
+        let controller = Controller::new(g);
+        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(state.permits.acquire("router").await.unwrap());
+        }
+        let mut body = vec![0; HEADER_BYTES];
+        body[..4].copy_from_slice(QUERY_MAGIC);
+        body[4..36].copy_from_slice(&controller.current().manifest().id());
+        let request = query(State(state), Bytes::from(body));
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(120), &mut request)
+                .await
+                .is_err()
+        );
+        drop(held);
+        assert_eq!(request.await, Err(StatusCode::SERVICE_UNAVAILABLE));
+    }
 }

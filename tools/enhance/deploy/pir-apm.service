@@ -9,6 +9,7 @@ User=root
 WorkingDirectory=/opt/enhance-pir
 Environment=PIR_APM_LISTEN=127.0.0.1:3002
 Environment=PIR_APM_SCRAPE_URL=http://127.0.0.1:8080
+Environment=PIR_APM_QUERY_SCRAPE_URLS=http://127.0.0.1:8083/internal/metrics
 EnvironmentFile=-/etc/default/pir-apm
 ExecStart=/usr/local/bin/pir-apm
 Restart=on-failure

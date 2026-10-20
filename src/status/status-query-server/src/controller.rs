@@ -2,20 +2,20 @@
 //! must be refused.
 use super::{now_ms, Generation};
 use crate::protocol::*;
-use axum::http::StatusCode;
+use http::StatusCode;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, RwLock,
 };
 
-pub(super) struct Views {
-    pub(super) active: Arc<Generation>,
-    pub(super) retained: Vec<Arc<Generation>>,
+struct Views {
+    active: Arc<Generation>,
+    retained: Vec<Arc<Generation>>,
 }
 #[derive(Clone)]
 pub struct Controller {
-    pub(super) views: Arc<RwLock<Views>>,
-    pub(super) revoked: Arc<AtomicBool>,
+    views: Arc<RwLock<Views>>,
+    revoked: Arc<AtomicBool>,
 }
 impl Controller {
     pub fn new(g: Generation) -> Self {
@@ -34,10 +34,13 @@ impl Controller {
     pub fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
     }
+    pub fn revoked(&self) -> bool {
+        self.revoked.load(Ordering::SeqCst)
+    }
     pub fn current(&self) -> Arc<Generation> {
         self.views.read().unwrap().active.clone()
     }
-    pub(super) fn resolve(&self, id: Hash) -> Result<Arc<Generation>, StatusCode> {
+    pub fn resolve(&self, id: Hash) -> Result<Arc<Generation>, StatusCode> {
         let views = self.views.read().unwrap();
         std::iter::once(&views.active)
             .chain(views.retained.iter())
@@ -45,7 +48,7 @@ impl Controller {
             .cloned()
             .ok_or(StatusCode::CONFLICT)
     }
-    pub(super) fn for_body(&self, body: &[u8]) -> Result<Arc<Generation>, StatusCode> {
+    pub fn for_body(&self, body: &[u8]) -> Result<Arc<Generation>, StatusCode> {
         if body.len() < HEADER_BYTES || &body[..4] != QUERY_MAGIC {
             return Err(StatusCode::BAD_REQUEST);
         }
@@ -85,7 +88,7 @@ impl Controller {
         views.active = Arc::new(g);
         Ok(evicted)
     }
-    pub(super) fn check(&self, g: &Generation) -> Result<(), StatusCode> {
+    pub fn check(&self, g: &Generation) -> Result<(), StatusCode> {
         if self.revoked.load(Ordering::SeqCst)
             || self.current().manifest().recovery_epoch != g.manifest().recovery_epoch
         {
@@ -100,9 +103,6 @@ impl Controller {
 #[cfg(test)]
 mod controller_tests {
     use super::*;
-    use crate::http::{query, serving_http_client, HttpState};
-    use axum::{body::Bytes, extract::State, routing::get, Router};
-    use std::time::Duration;
 
     fn generation() -> Generation {
         Generation::public_only(
@@ -122,95 +122,6 @@ mod controller_tests {
             },
             Arc::new(Vec::new()),
         )
-    }
-
-    #[tokio::test]
-    async fn serving_client_clones_reuse_forwarding_connection() {
-        async fn peer(
-            axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
-        ) -> String {
-            peer.to_string()
-        }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().route("/", get(peer));
-        let server = tokio::spawn(async move {
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            .unwrap();
-        });
-        let client = serving_http_client().unwrap();
-        let first = client
-            .get(&origin)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        let second = client
-            .clone()
-            .get(&origin)
-            .send()
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        assert_eq!(
-            first, second,
-            "requests must reuse the same TCP/SSH channel"
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn authority_is_rechecked_after_admission_wait() {
-        let controller = Controller::new(generation());
-        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
-        let mut held = Vec::new();
-        for _ in 0..4 {
-            held.push(state.permits.acquire("router").await.unwrap());
-        }
-        let mut body = vec![0; HEADER_BYTES];
-        body[..4].copy_from_slice(QUERY_MAGIC);
-        body[4..36].copy_from_slice(&controller.current().manifest().id());
-        let request = query(State(state), Bytes::from(body));
-        tokio::pin!(request);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(10), &mut request)
-                .await
-                .is_err()
-        );
-        controller.revoked.store(true, Ordering::Release);
-        drop(held);
-        assert_eq!(request.await, Err(StatusCode::GONE));
-    }
-
-    #[tokio::test]
-    async fn source_freshness_is_rechecked_after_admission_wait() {
-        let g = generation().reobserved(now_ms() - MAX_AGE_MS + 100);
-        let controller = Controller::new(g);
-        let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
-        let mut held = Vec::new();
-        for _ in 0..4 {
-            held.push(state.permits.acquire("router").await.unwrap());
-        }
-        let mut body = vec![0; HEADER_BYTES];
-        body[..4].copy_from_slice(QUERY_MAGIC);
-        body[4..36].copy_from_slice(&controller.current().manifest().id());
-        let request = query(State(state), Bytes::from(body));
-        tokio::pin!(request);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(120), &mut request)
-                .await
-                .is_err()
-        );
-        drop(held);
-        assert_eq!(request.await, Err(StatusCode::SERVICE_UNAVAILABLE));
     }
 
     #[test]

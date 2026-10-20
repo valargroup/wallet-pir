@@ -312,13 +312,13 @@ impl Coordinator {
                 let manifest = manifest.clone();
                 let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
                 let mut cache = BTreeMap::new();
-                for snapshot in self.gateway.views().read().await.iter() {
+                for snapshot in self.operator.views().read().await.iter() {
                     for (id, pack) in &snapshot.packing {
                         cache.insert(snapshot.saved.domain_keys[id].clone(), pack.clone());
                     }
                 }
                 let remote_packing = self.serving.is_some();
-                let budget = self.gateway.packing_budget().clone();
+                let budget = self.operator.packing_budget().clone();
                 let restored = tokio::task::spawn_blocking(move || {
                     restore(
                         &root,
@@ -331,7 +331,7 @@ impl Coordinator {
                 })
                 .await
                 .map_err(|e| e.to_string())??;
-                let mut snapshots = self.gateway.views().write().await;
+                let mut snapshots = self.operator.views().write().await;
                 snapshots.insert(0, restored);
                 snapshots.retain(|s| {
                     published

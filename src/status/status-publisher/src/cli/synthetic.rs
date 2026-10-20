@@ -1,164 +1,24 @@
-//! Synthetic-fixture commands: `serve`, `validate`, `validate-distributed` and
-//! `probe`. They serve or check the immutable fixture source, never wallet traffic.
-use super::{backend, require, AnyError};
-use crate::status::{self, fixture, Controller, Generation};
-use enhance_query_server::gateway::QueryGateway;
+//! `validate-distributed`: encrypted oracle validation of the synthetic fixture
+//! across real `pir-query-server` worker and router processes. It never serves
+//! wallets itself.
+use super::{require, AnyError};
+use crate::status::{self, fixture};
 use serde_json::json;
 use status_query_server::protocol::*;
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 
-fn generation(
-    entries: usize,
-    advanced: bool,
-    previous: Option<&Generation>,
-    cuda: bool,
-) -> Result<(Generation, status::index::Snapshot), AnyError> {
-    let began = Instant::now();
-    let snapshot = fixture::snapshot(entries, advanced)?;
-    let index_ms = began.elapsed().as_secs_f64() * 1000.;
-    println!(
-        "{}",
-        json!({"phase":"index","ms":index_ms,"entries":snapshot.entries,"evicted_blocks":snapshot.evicted_blocks,"coverage_start":snapshot.start})
-    );
-    let (generation, stats) = Generation::prepare(
-        &snapshot,
-        if advanced { 2 } else { 1 },
-        0,
-        status::now_ms(),
-        previous,
-        backend(cuda),
-    )?;
-    println!(
-        "{}",
-        json!({"phase":"preparation","advanced":advanced,"stats":stats,"twenty_second_preparation_gate":stats.total_ms<=20_000.})
-    );
-    // A fresh check of the immutable synthetic oracle, not a live node observation.
-    let generation = generation.reobserved(status::now_ms());
-    status::telemetry::preparation(index_ms, &stats, &snapshot, generation.manifest());
-    Ok((generation, snapshot))
-}
-
-// Fixture shutdown must close accepted keepalive connections, not only its listener.
-pub(super) struct FixtureServer {
-    shutdown: tokio::sync::oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<()>,
-}
-impl FixtureServer {
-    fn spawn(listener: TcpListener, routes: axum::Router) -> Self {
-        let (shutdown, receive) = tokio::sync::oneshot::channel();
-        let task = tokio::spawn(async move {
-            axum::serve(listener, routes)
-                .with_graceful_shutdown(async {
-                    let _ = receive.await;
-                })
-                .await
-                .unwrap();
-        });
-        Self { shutdown, task }
+/// Distinct free loopback ports for child listeners, which need fixed ports.
+async fn free_loopback_ports<const N: usize>() -> Result<[SocketAddr; N], AnyError> {
+    let mut held = Vec::new();
+    for _ in 0..N {
+        held.push(TcpListener::bind("127.0.0.1:0").await?);
     }
-    async fn stop(self) -> Result<(), AnyError> {
-        let _ = self.shutdown.send(());
-        tokio::time::timeout(Duration::from_secs(5), self.task).await??;
-        Ok(())
+    let mut ports = [SocketAddr::from(([127, 0, 0, 1], 0)); N];
+    for (port, listener) in ports.iter_mut().zip(&held) {
+        *port = listener.local_addr()?;
     }
-    pub(super) fn abort(self) {
-        let _ = self.shutdown.send(());
-        self.task.abort();
-    }
-}
-
-pub(super) async fn listeners(
-    controller: &Controller,
-    _state_dir: PathBuf,
-    listen: SocketAddr,
-    worker: SocketAddr,
-    router: SocketAddr,
-    monitoring: SocketAddr,
-    live: bool,
-) -> Result<(String, Vec<FixtureServer>), AnyError> {
-    require(
-        listen.ip().is_loopback()
-            && worker.ip().is_loopback()
-            && router.ip().is_loopback()
-            && monitoring.ip().is_loopback(),
-        "Status listeners must be loopback",
-    )?;
-    let w = TcpListener::bind(worker).await?;
-    let waddr = w.local_addr()?;
-    let r = TcpListener::bind(router).await?;
-    let raddr = r.local_addr()?;
-    let c = TcpListener::bind(listen).await?;
-    let caddr = c.local_addr()?;
-    let m = TcpListener::bind(monitoring).await?;
-    // Exercise route coexistence with the real, deliberately unready Enhance
-    // query gateway. No Enhance publication, ingestion or placement runs here.
-    let status_routes = controller.coordinator_routes(format!("http://{raddr}"));
-    let routes = if live {
-        status_routes
-    } else {
-        QueryGateway::unpublished().router().merge(status_routes)
-    };
-    let worker_routes = controller.worker_routes();
-    let router_routes = controller.router_routes(format!("http://{waddr}"));
-    let jobs = vec![
-        FixtureServer::spawn(w, worker_routes),
-        FixtureServer::spawn(r, router_routes),
-        FixtureServer::spawn(c, routes),
-        FixtureServer::spawn(m, status::telemetry::routes()),
-    ];
-    println!(
-        "{}",
-        json!({"phase":"listening","coordinator":caddr.to_string(),"worker":waddr.to_string(),"router":raddr.to_string(),"source":if live {"live canonical RPC"} else {"synthetic immutable fixture"},"single_process":true})
-    );
-    Ok((format!("http://{caddr}"), jobs))
-}
-
-fn reaffirm(controller: Controller, digest: Hash) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            // This fixture's source is immutable. Failed/contended refreshes do not renew age.
-            if controller.reaffirm_fixture(digest).is_ok() {
-                status::telemetry::reaffirmed(status::now_ms());
-            }
-        }
-    })
-}
-
-async fn connect(http: &reqwest::Client, origin: &str, advanced: bool) -> Result<Client, AnyError> {
-    let m: Manifest = http
-        .get(format!("{origin}/v1/status/init"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let height = fixture::START + fixture::BLOCKS as u32 - 1 + u32::from(advanced);
-    // Anchor comes from the independent fixture definition, not the response.
-    let anchor = AcceptedAnchor {
-        network: fixture::NETWORK,
-        height,
-        hash: fixture::block_hash(height),
-    };
-    let public = http
-        .get(format!(
-            "{origin}/v1/status/session/{}",
-            hex::encode(m.id())
-        ))
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-    Ok(Client::new(m, &public, &anchor)?)
+    Ok(ports)
 }
 
 async fn lookup(
@@ -180,488 +40,13 @@ async fn lookup(
     Ok(client.decode(q, &response, status::now_ms())?)
 }
 
-async fn check_cases(
-    http: &reqwest::Client,
-    origin: &str,
-    controller: &Controller,
-    entries: usize,
-    advanced: bool,
-) -> Result<(), AnyError> {
-    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
-    let client = connect(http, origin, advanced).await?;
-    for (id, expected) in fixture::cases(entries, advanced) {
-        let observed = lookup(
-            http,
-            origin,
-            &client,
-            id,
-            Some(client.manifest.anchor_height),
-        )
-        .await?;
-        require(observed == expected, "observation oracle mismatch")?;
-    }
-    // Exercise different buckets rather than repeatedly testing only four txids.
-    for ordinal in 3..19 {
-        controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
-        let sampled = connect(http, origin, advanced).await?;
-        let (id, expected) =
-            fixture::case_at(entries, advanced, sampled.manifest.coverage_start, ordinal);
-        require(
-            lookup(
-                http,
-                origin,
-                &sampled,
-                id,
-                Some(sampled.manifest.anchor_height),
-            )
-            .await?
-                == expected,
-            "sampled oracle mismatch",
-        )?;
-    }
-    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
-    let client = connect(http, origin, advanced).await?;
-    let error = lookup(http, origin, &client, fixture::txid(u64::MAX), None)
-        .await
-        .unwrap_err();
-    require(
-        error.downcast_ref::<Error>() == Some(&Error::CoverageIncomplete),
-        "unknown coverage became absence",
-    )?;
-    let a = client.prepare(&fixture::txid(0), None, status::now_ms())?;
-    let b = client.prepare(&fixture::txid(0), None, status::now_ms())?;
-    require(a.body != b.body, "queries reused randomness")?;
-    require(
-        client.prepare(&[0; 31], None, status::now_ms()).is_err(),
-        "short txid accepted",
-    )?;
-    let mut wrong = a.body.clone();
-    wrong[4] ^= 1;
-    require(
-        http.post(format!("{origin}/v1/status/query"))
-            .body(wrong)
-            .send()
-            .await?
-            .status()
-            == 409,
-        "wrong binding accepted",
-    )?;
-    let mut response = http
-        .post(format!("{origin}/v1/status/query"))
-        .body(a.body.clone())
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?
-        .to_vec();
-    response[36] ^= 1;
-    require(
-        client.decode(a, &response, status::now_ms()) == Err(Error::Malformed),
-        "wrong response request id accepted",
-    )?;
-    require(
-        http.post(format!(
-            "{origin}/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetTransaction"
-        ))
-        .send()
-        .await?
-        .status()
-            == 404,
-        "unexpected payload endpoint",
-    )?;
-    println!(
-        "{}",
-        json!({"phase":"http_cases","advanced":advanced,"passed":true,"cases":["mined","mempool_or_mined_transition","forked","not_found","coverage_incomplete","fresh_randomness","short_txid","wrong_binding","wrong_response","no_payload_route"]})
-    );
-    Ok(())
-}
-
-pub struct ProbeConfig {
-    pub origin: String,
-    pub entries: usize,
-    pub queries: usize,
-    pub concurrency: usize,
-    pub qps: u64,
-    pub seconds: Option<u64>,
-    pub report_jsonl: Option<PathBuf>,
-    pub max_p99_ms: Option<f64>,
-}
-
-pub async fn probe(config: ProbeConfig) -> Result<(), AnyError> {
-    let ProbeConfig {
-        origin,
-        entries,
-        queries,
-        concurrency,
-        qps,
-        seconds,
-        report_jsonl,
-        max_p99_ms,
-    } = config;
-    let queries = match seconds {
-        Some(seconds) if qps > 0 && seconds > 0 => usize::try_from(
-            seconds
-                .checked_mul(qps)
-                .ok_or("load arrival count overflow")?,
-        )?,
-        Some(_) => return Err("--seconds requires positive --qps and duration".into()),
-        None => queries,
-    };
-    require(
-        (4..=MAX_ENTRIES).contains(&entries),
-        "entries must be 4..=75% ceiling",
-    )?;
-    require(
-        concurrency > 0 && concurrency <= 16 && queries > 0,
-        "invalid load configuration",
-    )?;
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-    let permits = Arc::new(tokio::sync::Semaphore::new(concurrency));
-    let mut jobs = tokio::task::JoinSet::new();
-    let began = Instant::now();
-    let mut unstarted = 0;
-    let mut latencies = Vec::new();
-    let mut errors = std::collections::BTreeMap::new();
-    let mut report = report_jsonl
-        .map(|path| File::options().write(true).create_new(true).open(path))
-        .transpose()?
-        .map(BufWriter::new);
-    for i in 0..queries {
-        if qps > 0 {
-            tokio::time::sleep_until(tokio::time::Instant::from_std(
-                began + Duration::from_secs_f64(i as f64 / qps as f64),
-            ))
-            .await;
-        }
-        let permit = if qps > 0 {
-            match permits.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    unstarted += 1;
-                    if let Some(report) = &mut report {
-                        writeln!(report, "{}", json!({"arrival":i,"result":"unstarted"}))?;
-                    }
-                    continue;
-                }
-            }
-        } else {
-            permits.clone().acquire_owned().await?
-        };
-        let http = http.clone();
-        let origin = origin.clone();
-        jobs.spawn(async move {
-            let _permit = permit;
-            let start = Instant::now();
-            let mut generation = None;
-            let mut observation_age_ms = None;
-            // Include init, material download, setup and query in every measured lookup.
-            let result = async {
-                let client = connect(&http, &origin, false).await?;
-                generation = Some(client.manifest.generation);
-                observation_age_ms = status::now_ms().checked_sub(client.manifest.observed_ms);
-                let (txid, expected) =
-                    fixture::case_at(entries, false, client.manifest.coverage_start, i);
-                let actual = lookup(
-                    &http,
-                    &origin,
-                    &client,
-                    txid,
-                    Some(client.manifest.anchor_height),
-                )
-                .await?;
-                observation_age_ms = status::now_ms().checked_sub(client.manifest.observed_ms);
-                require(actual == expected, "oracle mismatch")?;
-                Ok::<_, AnyError>(())
-            }
-            .await;
-            (
-                i,
-                start.elapsed().as_secs_f64() * 1000.,
-                generation,
-                observation_age_ms,
-                result.map_err(|e| e.to_string()),
-            )
-        });
-        // Drain completed tasks while scheduling. A six-hour run must not retain
-        // hundreds of thousands of completed JoinSet entries in memory.
-        while let Some(result) = jobs.try_join_next() {
-            let (arrival, ms, generation, age_ms, result) = result?;
-            if let Some(report) = &mut report {
-                writeln!(
-                    report,
-                    "{}",
-                    json!({"arrival":arrival,"duration_ms":ms,
-                    "generation":generation,"observation_age_ms":age_ms,
-                    "result":result.as_ref().map(|_| "correct").unwrap_or("error"),
-                    "error":result.as_ref().err()})
-                )?;
-            }
-            match result {
-                Ok(()) => latencies.push(ms),
-                Err(e) => *errors.entry(e).or_insert(0usize) += 1,
-            }
-        }
-        if i % 1000 == 0 {
-            if let Some(report) = &mut report {
-                report.flush()?;
-            }
-        }
-    }
-    while let Some(result) = jobs.join_next().await {
-        let (arrival, ms, generation, age_ms, result) = result?;
-        if let Some(report) = &mut report {
-            writeln!(
-                report,
-                "{}",
-                json!({"arrival":arrival,"duration_ms":ms,
-                "generation":generation,"observation_age_ms":age_ms,
-                "result":result.as_ref().map(|_| "correct").unwrap_or("error"),
-                "error":result.as_ref().err()})
-            )?;
-        }
-        match result {
-            Ok(()) => latencies.push(ms),
-            Err(e) => *errors.entry(e).or_insert(0usize) += 1,
-        }
-    }
-    if let Some(report) = &mut report {
-        report.flush()?;
-    }
-    let seconds = began.elapsed().as_secs_f64();
-    latencies.sort_by(f64::total_cmp);
-    let pct = |p: f64| {
-        latencies
-            .get(((latencies.len().saturating_sub(1)) as f64 * p) as usize)
-            .copied()
-    };
-    let p99 = pct(0.99);
-    println!(
-        "{}",
-        json!({"phase":"load","offered":queries,"unstarted":unstarted,"correct":latencies.len(),"errors":errors,
-        "seconds":seconds,"correct_qps":latencies.len() as f64/seconds,"p50_ms":pct(0.5),"p95_ms":pct(0.95),"p99_ms":p99,"includes_material_refresh":true,"source":"synthetic_fixture","protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
-    );
-    require(
-        latencies.len() == queries,
-        "load had errors or unstarted arrivals",
-    )?;
-    if let Some(limit) = max_p99_ms {
-        require(
-            limit.is_finite() && limit > 0. && p99.is_some_and(|value| value <= limit),
-            "complete lookup p99 exceeded limit",
-        )?;
-    }
-    Ok(())
-}
-
-pub async fn serve(
-    entries: usize,
-    cuda: bool,
-    listen: SocketAddr,
-    worker: SocketAddr,
-    router: SocketAddr,
-    monitoring: SocketAddr,
-    state_dir: PathBuf,
-) -> Result<(), AnyError> {
-    require(
-        (4..=MAX_ENTRIES).contains(&entries),
-        "entries must be 4..=75% ceiling",
-    )?;
-    let (g, snapshot) = generation(entries, false, None, cuda)?;
-    let controller = Controller::new(g);
-    let (_origin, _jobs) = listeners(
-        &controller,
-        state_dir,
-        listen,
-        worker,
-        router,
-        monitoring,
-        false,
-    )
-    .await?;
-    let _fresh = reaffirm(controller, snapshot.digest);
-    tokio::signal::ctrl_c().await?;
-    Ok(())
-}
-
-pub async fn validate(entries: usize, cuda: bool, state_dir: PathBuf) -> Result<(), AnyError> {
-    require(
-        (4..=MAX_ENTRIES).contains(&entries),
-        "entries must be 4..=75% ceiling",
-    )?;
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-    let (g, snapshot) = generation(entries, false, None, cuda)?;
-    g.verify_full_hint(&snapshot)?;
-    println!(
-        "{}",
-        json!({"phase":"initial_full_hint_differential","passed":true})
-    );
-    let controller = Controller::new(g);
-    controller.reaffirm_fixture(snapshot.digest)?;
-    let zero = "127.0.0.1:0".parse()?;
-    let (origin, mut jobs) =
-        listeners(&controller, state_dir, zero, zero, zero, zero, false).await?;
-    check_cases(&http, &origin, &controller, entries, false).await?;
-    let previous = controller.current();
-    let old_client = connect(&http, &origin, false).await?;
-    let (next, next_snapshot) = generation(entries, true, Some(&previous), cuda)?;
-    println!(
-        "{}",
-        json!({"phase":"update","changed_rows":next_snapshot.changed_rows(&snapshot)})
-    );
-    next.verify_full_hint(&next_snapshot)?;
-    let rebuilt_router = Generation::prepare_router(next.manifest().clone(), &next.hint_bytes()?)?;
-    require(
-        rebuilt_router.public() == next.public(),
-        "reused packing differs from full reconstruction",
-    )?;
-    drop(rebuilt_router);
-    controller.activate(next)?;
-    drop(previous);
-    check_cases(&http, &origin, &controller, entries, true).await?;
-    let mut wallet = super::http_client::HttpClient::new(&origin, http.clone());
-    let (retry_txid, retry_expected) = fixture::case_at(
-        entries,
-        true,
-        controller.current().manifest().coverage_start,
-        7,
-    );
-    let accepted = |manifest: &Manifest| {
-        Ok(AcceptedAnchor {
-            network: fixture::NETWORK,
-            height: manifest.anchor_height,
-            hash: fixture::block_hash(manifest.anchor_height),
-        })
-    };
-    require(
-        wallet
-            .lookup(
-                retry_txid,
-                Some(controller.current().manifest().anchor_height),
-                accepted,
-            )
-            .await?
-            == retry_expected,
-        "initial wallet lookup failed",
-    )?;
-    for _ in 0..2 {
-        let current = controller.current();
-        let replacement = current.reidentified(
-            current.manifest().generation + 1,
-            current.manifest().recovery_epoch,
-            status::now_ms(),
-        );
-        controller.activate(replacement)?;
-    }
-    require(
-        wallet
-            .lookup(
-                retry_txid,
-                Some(controller.current().manifest().anchor_height),
-                accepted,
-            )
-            .await?
-            == retry_expected,
-        "wallet did not recover from evicted-session conflict",
-    )?;
-    let current = controller.current();
-    let recovered = current.reidentified(
-        current.manifest().generation + 1,
-        current.manifest().recovery_epoch + 1,
-        status::now_ms(),
-    );
-    controller.activate(recovered)?;
-    require(
-        wallet
-            .lookup(
-                retry_txid,
-                Some(controller.current().manifest().anchor_height),
-                accepted,
-            )
-            .await?
-            == retry_expected,
-        "wallet did not recover from recovery-epoch conflict",
-    )?;
-    println!(
-        "{}",
-        json!({"phase":"wallet_session_retry","passed":true,"cases":["evicted_session_409","recovery_epoch_410"]})
-    );
-    controller.reaffirm_fixture(controller.current().manifest().rows_digest)?;
-    let failure_client = connect(&http, &origin, true).await?;
-    let failure_query =
-        failure_client.prepare(&fixture::txid(u64::MAX - 1), None, status::now_ms())?;
-    jobs.remove(0).stop().await?;
-    let failed = http
-        .post(format!("{origin}/v1/status/query"))
-        .body(failure_query.body)
-        .send()
-        .await?;
-    require(
-        failed.status() == 502 || failed.status() == 503,
-        "worker loss did not fail closed",
-    )?;
-    println!(
-        "{}",
-        json!({"phase":"worker_loss","passed":true,"http_status":failed.status().as_u16()})
-    );
-    require(
-        old_client.manifest.id() != controller.current().manifest().id(),
-        "update identity unchanged",
-    )?;
-    let stale_id = hex::encode(old_client.manifest.id());
-    tokio::time::sleep(Duration::from_millis(MAX_AGE_MS + 20)).await;
-    require(
-        !http
-            .get(format!("{origin}/v1/status/session/{stale_id}"))
-            .send()
-            .await?
-            .status()
-            .is_success(),
-        "stale session accepted",
-    )?;
-    require(
-        http.get(format!("{origin}/v1/status/init"))
-            .send()
-            .await?
-            .status()
-            == 503,
-        "stale source served",
-    )?;
-    let current = controller.current();
-    let revoked_id = hex::encode(current.manifest().id());
-    let recovery = current.reidentified(
-        current.manifest().generation + 1,
-        current.manifest().recovery_epoch + 1,
-        status::now_ms(),
-    );
-    controller.activate(recovery)?;
-    require(
-        http.get(format!("{origin}/v1/status/session/{revoked_id}"))
-            .send()
-            .await?
-            .status()
-            == 410,
-        "recovery fence did not revoke old view",
-    )?;
-    println!("{}", json!({"phase":"recovery_epoch_fence","passed":true}));
-    for job in jobs {
-        job.abort();
-    }
-    println!(
-        "{}",
-        json!({"phase":"validation_complete","passed":true,"cuda":cuda,"wallet_changes":false,"incremental_granularity":"bounded coefficient deltas, dense-unit fallback; unchanged packing block reuse","protocol":PROTOCOL,"rows":ROWS,"slots":SLOTS,"slot_bytes":SLOT_BYTES,"columns":ROW_BYTES/2,"row_bytes":ROW_BYTES,"database_bytes":ROWS*ROW_BYTES,"production_qualified":false})
-    );
-    Ok(())
-}
-
+/// Run the worker and router as `pir-query-server` processes, drive them as
+/// the publisher does, and check every answer against the fixture oracle.
 pub async fn validate_distributed(
     entries: usize,
     cuda: bool,
     state_dir: PathBuf,
+    query_server: Option<PathBuf>,
     existing_worker: Option<String>,
     artifact_listen: SocketAddr,
     request_timeout_seconds: u64,
@@ -721,44 +106,53 @@ pub async fn validate_distributed(
         ),
     );
     let artifact_job = tokio::spawn(async move { axum::serve(artifact_listener, artifacts).await });
-    let w = TcpListener::bind("127.0.0.1:0").await?;
-    let r = TcpListener::bind("127.0.0.1:0").await?;
-    let wa = w.local_addr()?;
-    let ra = r.local_addr()?;
-    drop(w);
-    drop(r);
+    let query_server = match query_server {
+        Some(path) => path,
+        None => std::env::current_exe()?
+            .parent()
+            .ok_or("status-pir has no parent directory")?
+            .join("pir-query-server"),
+    };
+    require(
+        query_server.is_file(),
+        "pir-query-server (built with the status feature) not found; pass --query-server",
+    )?;
+    std::fs::create_dir_all(&state_dir)?;
+    let state_dir = state_dir.canonicalize()?;
+    let [wa, ra, worker_management, router_management] = free_loopback_ports().await?;
     let external_worker = existing_worker.is_some();
     let worker = existing_worker.unwrap_or_else(|| format!("http://{wa}"));
     let router = format!("http://{ra}");
     let mut children = Children(Vec::new());
-    for (role, addr, origin) in [
-        ("worker", wa, artifact_origin),
-        ("router", ra, worker.clone()),
+    for (role, addr, management, origin) in [
+        ("worker", wa, worker_management, artifact_origin),
+        ("router", ra, router_management, worker.clone()),
     ] {
         if role == "worker" && external_worker {
             continue;
         }
-        let mut command = std::process::Command::new(std::env::current_exe()?);
-        command
-            .args([
-                "role",
-                "--role",
-                role,
-                "--network-hex",
-                &hex::encode(snapshot.network),
-                "--listen",
-                &addr.to_string(),
-                "--artifact-origin",
-                &origin,
-                "--worker-origin",
-                &worker,
-                "--state-dir",
-            ])
-            .arg(state_dir.join(role));
-        if cuda && role == "worker" {
-            command.arg("--cuda");
-        }
-        children.0.push(command.spawn()?);
+        let config = state_dir.join(format!("{role}.json"));
+        std::fs::write(
+            &config,
+            serde_json::to_vec(&json!({
+                "management_listen": management.to_string(),
+                "status": {"enabled": true, "settings": {
+                    "role": role,
+                    "network_hex": hex::encode(snapshot.network),
+                    "state_dir": state_dir.join(role),
+                    "listen": addr.to_string(),
+                    "artifact_origin": origin,
+                    "worker_origin": worker,
+                    "cuda": cuda && role == "worker",
+                }},
+            }))?,
+        )?;
+        children.0.push(
+            std::process::Command::new(&query_server)
+                .arg("--config")
+                .arg(config)
+                .spawn()?,
+        );
     }
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(request_timeout_seconds))

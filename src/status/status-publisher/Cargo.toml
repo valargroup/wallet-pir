@@ -18,8 +18,8 @@ required-features = ["cli"]
 default = []
 # Standalone diagnostic commands use wallet helpers; the embedded publisher does not.
 cli = ["status-query-server/client"]
-native-reinspiring = ["status-query-server/native-reinspiring", "enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
-cuda = ["status-query-server/cuda", "enhance-query-server/cuda"]
+native-reinspiring = ["status-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
+cuda = ["status-query-server/cuda"]
 # Chain fixtures and the wallet client for host regressions. Production builds leave it off.
 fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 
@@ -27,9 +27,7 @@ fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 thiserror = "2"
 status-query-server = { path = "../status-query-server" }
-# The synthetic listeners serve an empty, unready Enhance query gateway beside Status.
-enhance-query-server = { path = "../../enhance/enhance-query-server" }
-pir-control = { path = "../../shared/pir-control", features = ["admission"] }
+pir-control = { path = "../../shared/pir-control" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
@@ -48,5 +46,7 @@ zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 
 [dev-dependencies]
+# The lifecycle regression drives real worker and router roles.
+pir-query-server = { path = "../../pir-query-server", features = ["status"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

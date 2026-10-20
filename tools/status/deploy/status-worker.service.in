@@ -5,7 +5,8 @@ After=network-online.target
 [Service]
 User=status-pir
 Group=status-pir
-ExecStart=@RELEASE@/status-pir role --role worker --network-hex @NETWORK@ --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native
+# The operator installs the role config; status-worker.example.json shows it.
+ExecStart=@RELEASE@/pir-query-server --config /etc/status-pir/worker.json
 Environment=RAYON_NUM_THREADS=4
 # Candidate preparation has its own pool at nice 10, below query evaluation.
 Environment=STATUS_PREPARATION_THREADS=6

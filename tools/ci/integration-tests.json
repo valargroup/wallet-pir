@@ -36,8 +36,7 @@
   "status-query-server": {
     "fast": [],
     "full": [
-      "status_wallet",
-      "status_wallet_http"
+      "status_wallet"
     ]
   },
   "transparent-query-server": {

@@ -154,9 +154,6 @@
       }
     },
     "status": {
-      "template_vars": {
-        "NETWORK": "<canonical network genesis hash, hex>"
-      },
       "roles": {
         "worker": [
           {
@@ -175,8 +172,6 @@
           "{release_dir}/status-pir",
           "probe-live-load",
           "--origin",
-          "http://127.0.0.1:8480",
-          "--query-origin",
           "http://127.0.0.1:8492",
           "--cookie",
           "/root/.cache/zakura/.cookie",

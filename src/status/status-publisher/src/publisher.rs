@@ -1,19 +1,19 @@
-//! Independently scheduled Status controller hosted by the Enhance coordinator.
-use super::{distributed::*, http::*, *};
-use crate::admission::ClientSlots;
+//! Independently scheduled Status publisher. It never faces wallets: the
+//! router role serves `/v1/status/*`; this process prepares, activates and
+//! heartbeats the roles and keeps only private routes.
+use super::{distributed::*, *};
 use crate::zakura::ZakuraClient;
-use axum::http::HeaderMap;
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
+    response::IntoResponse,
+    routing::get,
     Json, Router,
 };
 use pir_pipeline::Input;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use status_query_server::admission;
 use status_query_server::protocol::*;
 use std::{
     fs::{self, File},
@@ -28,16 +28,6 @@ use std::{
 };
 use tokio::sync::watch;
 
-/// Concurrent forwarded queries admitted per client address.
-pub const PER_CLIENT_CONCURRENCY: usize = 2;
-
-/// First `X-Forwarded-For` address, else `X-Real-IP`, else `unknown`. The
-/// ingress proxy in front of this loopback listener sets these headers; the
-/// loopback peer address carries no client identity.
-fn client_key(headers: &HeaderMap) -> String {
-    crate::admission::client_key(headers, None)
-}
-
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -46,12 +36,7 @@ pub struct Config {
     pub window_blocks: u32,
     pub worker_origin: String,
     pub router_origin: String,
-    /// Optional independently tunneled query path; control remains on router_origin.
-    #[serde(default)]
-    pub query_router_origin: Option<String>,
     pub private_listen: SocketAddr,
-    #[serde(default)]
-    pub public_enabled: bool,
 }
 type SharedArtifact = Arc<RwLock<Option<(Hash, Arc<Vec<u8>>)>>>;
 
@@ -61,20 +46,14 @@ pub struct Publisher {
     controller: Arc<RwLock<Option<Controller>>>,
     artifact: SharedArtifact,
     last_rows: SharedArtifact,
-    permits: Arc<admission::Admission>,
-    clients: Arc<ClientSlots>,
     healthy: Arc<AtomicBool>,
     fenced: Arc<AtomicBool>,
     http: reqwest::Client,
-    serving_http: reqwest::Client,
 }
 impl Publisher {
     pub fn new(config: Config) -> Result<Self, Failure> {
         loopback_origin(&config.worker_origin)?;
         loopback_origin(&config.router_origin)?;
-        if let Some(origin) = &config.query_router_origin {
-            loopback_origin(origin)?;
-        }
         if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 {
             return Err("invalid private Status configuration".into());
         }
@@ -89,48 +68,22 @@ impl Publisher {
             controller: Arc::new(RwLock::new(None)),
             artifact: Arc::new(RwLock::new(None)),
             last_rows: Arc::new(RwLock::new(None)),
-            permits: Arc::new(admission::Admission::coordinator()),
-            clients: Arc::new(ClientSlots::new(PER_CLIENT_CONCURRENCY)),
             healthy: Arc::new(AtomicBool::new(false)),
             fenced: Arc::new(AtomicBool::new(false)),
-            serving_http: serving_http_client()?,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(20))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
         })
     }
-    pub fn routes(&self) -> Router {
+    /// Loopback-only: telemetry, the candidate artifact the worker pulls, and
+    /// the active manifest the host's readiness probe reads.
+    pub fn private_routes(&self) -> Router {
         Router::new()
-            .route("/v1/status/init", get(init))
-            .route("/v1/status/session/:id", get(session))
-            .route("/v1/status/query", post(forward))
-            .layer(axum::middleware::from_fn(|request, next| {
-                telemetry::observe("coordinator", request, next)
-            }))
-            .layer(DefaultBodyLimit::max(512 * 1024))
+            .route("/artifact/:id", get(artifact))
+            .route("/control/active", get(active))
             .with_state(self.clone())
-    }
-    fn http_state(&self) -> Result<HttpState, StatusCode> {
-        if !self.healthy.load(Ordering::SeqCst) || self.fenced.load(Ordering::SeqCst) {
-            telemetry::admission_rejected("coordinator", "publisher_unhealthy");
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        }
-        let c = self.controller.read().unwrap().clone().ok_or_else(|| {
-            telemetry::admission_rejected("coordinator", "no_controller");
-            StatusCode::SERVICE_UNAVAILABLE
-        })?;
-        Ok(HttpState {
-            controller: c,
-            origin: self
-                .config
-                .query_router_origin
-                .as_ref()
-                .unwrap_or(&self.config.router_origin)
-                .clone(),
-            http: self.serving_http.clone(),
-            permits: self.permits.clone(),
-        })
+            .merge(telemetry_routes())
     }
     fn stop(&self) {
         self.healthy.store(false, Ordering::SeqCst);
@@ -424,12 +377,7 @@ impl Publisher {
         let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
         let _fence = Fence(self.clone());
         let mut tasks = pir_pipeline::service::Tasks::default();
-        let private = self.routes().merge(telemetry::routes()).merge(
-            Router::new()
-                .route("/artifact/:id", get(artifact))
-                .with_state(self.clone()),
-        );
-        let server = tokio::spawn(http.serve(self.config.private_listen, private));
+        let server = tokio::spawn(http.serve(self.config.private_listen, self.private_routes()));
         tasks.own(&server);
         let salt: Hash = hex::decode(&self.config.salt_hex)?
             .try_into()
@@ -462,6 +410,7 @@ impl Publisher {
         });
         tasks.own(&observer);
         let mut last_observed = 0;
+        let mut recovering = false;
         loop {
             if shutdown.requested() {
                 return Ok(());
@@ -488,6 +437,11 @@ impl Publisher {
                     continue;
                 }
             };
+            // Roles keep serving the old view until fenced, so recovery backs
+            // off only after the fence.
+            if std::mem::take(&mut recovering) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
             // Heartbeats never change observation freshness or authorize a recovery.
             let (active_tx, active_rx) = watch::channel(None::<Manifest>);
             let heartbeat_owner = self.clone();
@@ -580,7 +534,7 @@ impl Publisher {
             self.stop();
             heartbeat.abort();
             let _ = heartbeat.await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            recovering = true;
         }
     }
 }
@@ -707,28 +661,74 @@ fn same_source(s: &index::Snapshot, m: &Manifest) -> bool {
         && s.anchor == m.anchor_hash
         && s.entries == m.entries
 }
-async fn init(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
-    http::init(State(s.http_state()?)).await
+/// The active manifest while this publisher is healthy and its view is fresh.
+/// Readiness only; wallets read the router.
+async fn active(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
+    if !s.healthy.load(Ordering::SeqCst) || s.fenced.load(Ordering::SeqCst) {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let c = s
+        .controller
+        .read()
+        .unwrap()
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let g = c.current();
+    c.check(&g)?;
+    Ok(Json(g.manifest().clone()))
 }
-async fn session(
-    State(s): State<Publisher>,
-    Path(id): Path<String>,
-) -> Result<axum::body::Bytes, StatusCode> {
-    http::session(State(s.http_state()?), Path(id)).await
+fn telemetry_routes() -> Router {
+    Router::new()
+        .route(
+            "/internal/status-apm",
+            get(|| async {
+                Json(
+                    tokio::task::spawn_blocking(telemetry::snapshot)
+                        .await
+                        .unwrap_or_default(),
+                )
+            }),
+        )
+        .route(
+            "/internal/metrics",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4",
+                    )],
+                    telemetry::prometheus(),
+                )
+                    .into_response()
+            }),
+        )
+        .route("/internal/health", get(|| async { "ok\n" }))
 }
-async fn forward(
-    State(s): State<Publisher>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Vec<u8>, StatusCode> {
-    let http_state = s.http_state()?;
-    let Some(_slot) = s.clients.try_acquire(&client_key(&headers)) else {
-        telemetry::admission_rejected("coordinator", "client_concurrency");
-        return Err(StatusCode::TOO_MANY_REQUESTS);
-    };
-    let result = http::forward(State(http_state), body).await?;
-    s.http_state()?;
-    Ok(result)
+async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
+    if !response.status().is_success() {
+        return Err(
+            StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
+        );
+    }
+    let mut out = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?
+    {
+        if chunk.len() > limit.saturating_sub(out.len()) {
+            return Err(StatusCode::BAD_GATEWAY);
+        }
+        out.extend(&chunk);
+    }
+    Ok(out)
+}
+/// Response body over the shared candidate artifact, without copying it.
+struct SharedBytes(Arc<Vec<u8>>);
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
 }
 async fn artifact(
     State(s): State<Publisher>,
@@ -742,7 +742,7 @@ async fn artifact(
         }
         bytes.clone()
     };
-    Ok(super::shared_bytes(bytes))
+    Ok(Bytes::from_owner(SharedBytes(bytes)))
 }
 
 async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
@@ -762,36 +762,25 @@ mod query_transport_tests {
         .unwrap()
     }
     #[tokio::test]
-    async fn publisher_init_rejections_are_observed_as_http_server_errors() {
-        use axum::{
-            body::{to_bytes, Body},
-            http::Request,
-        };
+    async fn active_manifest_is_unavailable_until_publication() {
+        use axum::{body::Body, http::Request};
         use tower::ServiceExt;
         let publisher = Publisher::new(config()).unwrap();
-        let response = publisher
-            .routes()
-            .oneshot(Request::get("/v1/status/init").body(Body::empty()).unwrap())
+        let routes = publisher.private_routes();
+        let response = routes
+            .clone()
+            .oneshot(Request::get("/control/active").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let response = telemetry::routes()
-            .oneshot(
-                Request::get("/internal/status-apm")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let data: serde_json::Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
-        assert!(
-            data["operations"]["init"]["server_errors"]
-                .as_u64()
-                .unwrap()
-                >= 1
-        );
-        assert!(data["operations"]["init"]["arrivals"].as_u64().unwrap() >= 1);
+        for path in ["/v1/status/init", "/v1/status/query"] {
+            let response = routes
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
     }
     /// Exercise the existing publisher API at its HTTP control/source boundaries:
     /// neither failed refresh preparation nor failed anchor revalidation may advance
@@ -800,6 +789,7 @@ mod query_transport_tests {
     #[tokio::test]
     async fn refresh_preparation_and_source_failures_keep_committed_observation_and_retry() {
         use axum::response::IntoResponse;
+        use axum::routing::post;
         use serde_json::{json, Value};
         let root = tempfile::tempdir().unwrap();
         let (source_rpc, source_service) = source::tests::fixture(false, false).await;
@@ -924,8 +914,8 @@ mod query_transport_tests {
         )));
         publisher.healthy.store(true, Ordering::SeqCst);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let init = format!("http://{}/v1/status/init", listener.local_addr().unwrap());
-        let routes = publisher.routes();
+        let init = format!("http://{}/control/active", listener.local_addr().unwrap());
+        let routes = publisher.private_routes();
         let public_task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
         let mut authority = authority::Authority::open(
             root.path().join("authority"),
@@ -1052,61 +1042,6 @@ mod query_transport_tests {
         public_task.abort();
         source_service.abort();
         let _ = source_service.await;
-    }
-
-    #[test]
-    fn per_client_slots_cap_concurrency_and_evict_idle_keys() {
-        let slots = ClientSlots::new(PER_CLIENT_CONCURRENCY);
-        let a1 = slots.try_acquire("1.2.3.4").expect("first slot");
-        let a2 = slots.try_acquire("1.2.3.4").expect("second slot");
-        assert!(slots.try_acquire("1.2.3.4").is_none(), "third is refused");
-        // Another client is independent.
-        let b1 = slots.try_acquire("5.6.7.8").expect("other client");
-        assert_eq!(slots.tracked(), 2);
-        drop(a1);
-        let a3 = slots.try_acquire("1.2.3.4").expect("slot freed by drop");
-        assert!(slots.try_acquire("1.2.3.4").is_none());
-        drop(a2);
-        drop(a3);
-        assert_eq!(slots.tracked(), 1, "zero entries are evicted");
-        drop(b1);
-        assert_eq!(slots.tracked(), 0);
-        // A refused acquisition never leaves a zero entry behind.
-        let c1 = slots.try_acquire("unknown").unwrap();
-        let c2 = slots.try_acquire("unknown").unwrap();
-        assert!(slots.try_acquire("unknown").is_none());
-        drop((c1, c2));
-        assert_eq!(slots.tracked(), 0);
-    }
-    #[test]
-    fn client_key_prefers_first_forwarded_address() {
-        let mut h = HeaderMap::new();
-        assert_eq!(client_key(&h), "unknown");
-        h.insert("x-real-ip", "9.9.9.9".parse().unwrap());
-        assert_eq!(client_key(&h), "9.9.9.9");
-        h.insert(
-            "x-forwarded-for",
-            " 1.2.3.4 , 10.0.0.1, 127.0.0.1".parse().unwrap(),
-        );
-        assert_eq!(client_key(&h), "1.2.3.4");
-        h.insert("x-forwarded-for", " ".parse().unwrap());
-        assert_eq!(client_key(&h), "9.9.9.9");
-    }
-    #[test]
-    fn optional_query_transport_is_loopback_only() {
-        let mut c = config();
-        assert!(c.query_router_origin.is_none());
-        assert!(Publisher::new(c.clone()).is_ok());
-        c.query_router_origin = Some("http://127.0.0.1:8483".into());
-        assert!(Publisher::new(c.clone()).is_ok());
-        for bad in [
-            "http://example.com",
-            "http://user:pass@127.0.0.1:8483",
-            "http://127.0.0.1:8483/path",
-        ] {
-            c.query_router_origin = Some(bad.into());
-            assert!(Publisher::new(c.clone()).is_err());
-        }
     }
 }
 

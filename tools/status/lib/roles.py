@@ -1,19 +1,25 @@
-"""External Status worker role: real arguments and their sandbox.
+"""External Status worker role: one pir-query-server process and its sandbox.
 
-Settings come from the operator inventory; the template owns the sandbox. A
-Status worker is fenced, prepared and activated by the Status controller and
-pulls its artifact from the router's artifact origin. It has no staged inputs
-of its own, so it has no preflight input check: the product says so rather
-than manufacturing one.
+Settings come from the operator inventory; the template owns the sandbox. The
+renderer writes `/etc/status-pir/external-worker.json` and a unit whose
+command is `{release}/pir-query-server --config` that file. A Status worker is
+fenced, prepared and activated by the Status controller and pulls its artifact
+from the router's artifact origin. It has no staged inputs of its own, so it
+has no preflight input check: the product says so rather than manufacturing
+one.
 """
 from wallet_pir_ops.paths import ROOT
 from wallet_pir_ops.role_config import address, directory, settings_of, worker as render_worker
 
 TEMPLATE = ROOT / 'tools/status/deploy/status-worker.role.service'
+CONFIG = '/etc/status-pir/external-worker.json'
+# Loopback only: the process's own /health and /ready. Deploy health stays on
+# the role's control routes.
+MANAGEMENT = '127.0.0.1:18485'
 
 
 def status_worker(settings, *, release, template=None):
-    """`status-pir role --role worker`, fenced and fed by the Status controller."""
+    """`pir-query-server` Status worker, fenced and fed by the Status controller."""
     s = settings_of(settings, ('network_hex', 'listen', 'artifact_origin', 'state_dir'), ('cuda',))
     network = s['network_hex']
     if not isinstance(network, str) or not network or any(c not in '0123456789abcdef' for c in network):
@@ -23,14 +29,15 @@ def status_worker(settings, *, release, template=None):
         raise ValueError('artifact_origin must be the router\'s private http:// origin')
     address(origin[len('http://'):].rstrip('/'), 'artifact_origin')
     state = directory(s['state_dir'])
-    arguments = ['role', '--role', 'worker', '--network-hex', network, '--state-dir', state,
-                 '--listen', address(s['listen'], 'listen'), '--artifact-origin', origin]
-    if s.get('cuda', False) is not False:
-        if s['cuda'] is not True:
-            raise ValueError('cuda must be a boolean')
-        arguments.append('--cuda')
+    listen = address(s['listen'], 'listen')
+    if s.get('cuda', False) not in (False, True):
+        raise ValueError('cuda must be a boolean')
+    body = {'role': 'worker', 'network_hex': network, 'state_dir': state, 'listen': listen,
+            'artifact_origin': origin, 'worker_origin': 'http://' + listen, 'cuda': s.get('cuda', False)}
+    document = {'management_listen': MANAGEMENT, 'status': {'enabled': True, 'settings': body}}
     template = TEMPLATE.read_text() if template is None else template
-    return render_worker(template, directory(release) + '/status-pir', arguments, writable=[state], settings=s)
+    return render_worker(template, directory(release) + '/pir-query-server', ['--config', CONFIG],
+                         configurations={CONFIG: document}, writable=[state], readonly=[CONFIG], settings=s)
 
 
 def report(service, role, health, ready_status):

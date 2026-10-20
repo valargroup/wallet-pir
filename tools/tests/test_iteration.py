@@ -411,7 +411,7 @@ class IntegrityTests(unittest.TestCase):
         publisher, query = native.split('compile:native-query-server --', 1)
         self.assertNotIn('pir-query-server', publisher)
         self.assertIn('-p pir-query-server --bin pir-query-server', query)
-        self.assertIn('--features enhance,native-reinspiring\n', query)
+        self.assertIn('--features enhance,status,native-reinspiring\n', query)
 
 
 if __name__ == '__main__':

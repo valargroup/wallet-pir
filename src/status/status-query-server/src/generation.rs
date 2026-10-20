@@ -198,10 +198,10 @@ impl Generation {
 
     /// Adopts the manifest a distributed controller assigned to this material.
     ///
-    /// Crate-private: only the distributed roles call it, after checking the
+    /// Only the Status roles call it, after checking the
     /// assigned manifest against their own (same content; only the identity,
     /// observation time and, on workers, the router's public digest differ).
-    pub(crate) fn assign_manifest(&mut self, manifest: Manifest) {
+    pub fn assign_manifest(&mut self, manifest: Manifest) {
         self.manifest = manifest;
     }
 

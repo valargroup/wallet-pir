@@ -424,33 +424,28 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         .as_ref()
         .is_none_or(|c| c.capacity_alert_mode == services::Mode::Shadow);
     let policy = crate::monitoring::Policy::load()?.quality;
-    let mut targets = vec![Target {
-        id: "enhance-init".into(),
-        service: "enhance".into(),
-        role: "init".into(),
-        url: format!("{}{}", config.scrape_url, config.metrics_path),
-        ready: None,
-        status_operation: None,
-        endpoint: Some("init"),
-    }];
-    let queries = if config.query_scrape_urls.is_empty() {
+    let mut targets = Vec::new();
+    // Query ingress serves both wallet entrypoints.
+    let entrypoints = if config.query_scrape_urls.is_empty() {
         vec![format!("{}{}", config.scrape_url, config.metrics_path)]
     } else {
         config.query_scrape_urls.clone()
     };
-    for (i, url) in queries.into_iter().enumerate() {
-        targets.push(Target {
-            id: format!("enhance-query-{i}"),
-            service: "enhance".into(),
-            role: "query".into(),
-            url,
-            ready: None,
-            status_operation: None,
-            endpoint: Some("query"),
-        });
+    for (i, url) in entrypoints.into_iter().enumerate() {
+        for endpoint in ["init", "query"] {
+            targets.push(Target {
+                id: format!("enhance-{endpoint}-{i}"),
+                service: "enhance".into(),
+                role: endpoint.into(),
+                url: url.clone(),
+                ready: None,
+                status_operation: None,
+                endpoint: Some(endpoint),
+            });
+        }
     }
     for (id, url, operation) in [
-        ("status-init", &config.status_apm_url, "init"),
+        ("status-init", &config.status_router_url, "init"),
         ("status-query", &config.status_router_url, "router_query"),
     ] {
         if let Some(url) = url {

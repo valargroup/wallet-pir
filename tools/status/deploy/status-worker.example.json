@@ -1,0 +1,14 @@
+{
+  "management_listen": "127.0.0.1:18481",
+  "status": {
+    "enabled": true,
+    "settings": {
+      "role": "worker",
+      "network_hex": "<canonical network genesis hash, hex>",
+      "state_dir": "/var/lib/status-pir-worker-native",
+      "listen": "127.0.0.1:8481",
+      "artifact_origin": "http://127.0.0.1:8495",
+      "worker_origin": "http://127.0.0.1:8481"
+    }
+  }
+}

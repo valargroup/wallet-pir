@@ -50,7 +50,6 @@ pub(crate) async fn admitted<T: Send + 'static>(
 pub(crate) struct Answer {
     pub coefficients: Vec<u64>,
     pub intermediate_bytes: usize,
-    pub attempts: usize,
     pub worker_time: Option<std::time::Duration>,
 }
 
@@ -60,23 +59,7 @@ pub(crate) async fn evaluate<G>(
     http: &reqwest::Client,
     request: &Evaluate,
     route_count: usize,
-    select: impl FnMut(Option<&str>) -> Result<(String, G), Error>,
-) -> Result<Answer, Error> {
-    evaluate_observed(http, request, route_count, select, |_| {}).await
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum AttemptFailure {
-    Busy,
-    Failed,
-}
-
-pub(crate) async fn evaluate_observed<G>(
-    http: &reqwest::Client,
-    request: &Evaluate,
-    route_count: usize,
     mut select: impl FnMut(Option<&str>) -> Result<(String, G), Error>,
-    mut observe: impl FnMut(AttemptFailure),
 ) -> Result<Answer, Error> {
     let mut excluded = None;
     for attempt in 0..2 {
@@ -89,23 +72,14 @@ pub(crate) async fn evaluate_observed<G>(
             .await;
         match response {
             Err(e) if e.is_connect() && attempt == 0 && route_count > 1 => {
-                observe(AttemptFailure::Failed);
                 excluded = Some(worker);
             }
             Err(e) => {
-                observe(AttemptFailure::Failed);
                 tracing::warn!(error = %e, "worker evaluation transport failed; no replay");
                 return Err(unavailable("evaluation acceptance unknown"));
             }
             Ok(response) => {
                 let status = response.status();
-                if !status.is_success() {
-                    observe(if status == StatusCode::TOO_MANY_REQUESTS {
-                        AttemptFailure::Busy
-                    } else {
-                        AttemptFailure::Failed
-                    });
-                }
                 let rejected = response
                     .headers()
                     .get("x-enhance-evaluation")
@@ -133,26 +107,18 @@ pub(crate) async fn evaluate_observed<G>(
                     .and_then(|h| h.to_str().ok())
                     .and_then(|s| s.parse::<u64>().ok())
                     .map(std::time::Duration::from_micros);
-                let bytes = bounded(response, 1024 * 1024).await.map_err(|error| {
-                    observe(AttemptFailure::Failed);
-                    unavailable(error)
-                })?;
-                let result: Intermediate = serde_json::from_slice(&bytes).map_err(|error| {
-                    observe(AttemptFailure::Failed);
-                    unavailable(error)
-                })?;
+                let bytes = bounded(response, 1024 * 1024).await.map_err(unavailable)?;
+                let result: Intermediate = serde_json::from_slice(&bytes).map_err(unavailable)?;
                 if result.binding != request.binding
                     || result.generation != request.generation
                     || result.shard_id != request.shard_id
                     || result.epoch != request.epoch
                 {
-                    observe(AttemptFailure::Failed);
                     return Err(unavailable("worker binding mismatch"));
                 }
                 return Ok(Answer {
                     coefficients: result.coefficients,
                     intermediate_bytes: bytes.len(),
-                    attempts: attempt + 1,
                     worker_time,
                 });
             }
@@ -353,7 +319,6 @@ mod tests {
             let (result, first, second) = pair(status, true, vec![7]).await;
             let answer = result.unwrap();
             assert_eq!(answer.coefficients, vec![9]);
-            assert_eq!(answer.attempts, 2);
             assert_eq!((first, second), (1, 1));
             let (result, first, second) = pair(status, false, vec![7]).await;
             assert!(result.is_err());
@@ -472,7 +437,6 @@ mod tests {
             })
             .await
             .unwrap();
-            assert_eq!(answer.attempts, 2);
             assert_eq!(answer.worker_time, expected);
             first_task.abort();
             second_task.abort();
@@ -485,30 +449,21 @@ mod tests {
         let unavailable = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         let (available, calls, task) = server(StatusCode::OK, false, vec![7]).await;
-        let mut failures = 0;
-        let result = evaluate_observed(
-            &reqwest::Client::new(),
-            &request(),
-            2,
-            |excluded| {
-                Ok((
-                    if excluded.is_none() {
-                        unavailable.clone()
-                    } else {
-                        available.clone()
-                    },
-                    (),
-                ))
-            },
-            |failure| {
-                assert!(matches!(failure, AttemptFailure::Failed));
-                failures += 1;
-            },
-        )
+        let mut selections = Vec::new();
+        evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+            selections.push(excluded.map(str::to_owned));
+            Ok((
+                if excluded.is_none() {
+                    unavailable.clone()
+                } else {
+                    available.clone()
+                },
+                (),
+            ))
+        })
         .await
         .unwrap();
-        assert_eq!(result.attempts, 2);
-        assert_eq!(failures, 1);
+        assert_eq!(selections, [None, Some(unavailable.clone())]);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         task.abort();
     }

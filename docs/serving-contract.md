@@ -19,7 +19,7 @@ PIR parameter, evaluation and packing integration they share lives in
 | `started_unix` | Process start, seconds | `/internal/health` | `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
 
 A deploy confirms a restart by a changed `incarnation` and the expected
-`binary_sha256`. The Enhance coordinator's public `/v1/health` does not carry
+`binary_sha256`. The Enhance coordinator's private operator `/v1/health` does not carry
 identity; deploys read the executable hash through systemd instead. Status keeps
 identity off `/control/health` because its `Health` type refuses unknown fields,
 so adding one would break an older controller during a rolling deploy.
@@ -142,10 +142,8 @@ keeps its own limits and refusal mapping:
 | | Executing / waiting | Wait | Queue without a free permit | Per-client cap |
 |---|---|---|---|---|
 | Packing router | configured, at most 4 / 16 | 2 s | always takes a waiting slot | — |
-| Coordinator (legacy local serving) | 4 / 16 | 2 s | always takes a waiting slot | — |
 | Query ingress | try-only | — | — | 4 uploads, keyed on forwarded headers then the peer |
-| Status roles | 4 / 32 | 1 s | free permit taken directly | — |
-| Status coordinator routes | 16 / 8 | 250 ms | free permit taken directly | 2, keyed on forwarded headers then `unknown` |
+| Status roles | 4 / 32 | 1 s | free permit taken directly | 2 on the router's query route, keyed on forwarded headers then `unknown` |
 | Receiver query route | 2 / 8 | 2 s | free permit taken directly | 2 queries, uploads included, keyed on forwarded headers then `unknown` |
 
 Receiver reads the upload within 15 seconds, capped at the largest query, before

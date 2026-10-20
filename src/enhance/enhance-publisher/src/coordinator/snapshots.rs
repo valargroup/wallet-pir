@@ -153,12 +153,12 @@ pub(super) fn restore(
                 runtime::rlwe().d,
             )
             .map_err(|e| e.to_string())?;
-            let serving = Packing::new(shard.logical_rows, &blocks, budget)?;
+            let packing = Packing::new(shard.logical_rows, &blocks, budget)?;
             crate::artifact::write_atomic(&root.join("public"), name, |f| {
-                f.write_all(&serving.public)
+                f.write_all(&packing.public)
             })
             .map_err(|e| e.to_string())?;
-            PublishedPacking::new(shard.logical_rows, serving, true)
+            PublishedPacking::metadata(shard.logical_rows, packing.public)
         };
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());

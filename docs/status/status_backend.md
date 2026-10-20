@@ -54,9 +54,12 @@ u64 coefficients on the private loopback API.
 ```sh
 cargo test --locked -p status-query-server --lib protocol::tests
 cargo test --locked -p status-query-server --lib index::tests
+cargo test --locked --profile release-fast -p pir-query-server \
+  --features status,native-reinspiring --lib status::
 cargo build --locked --profile release-fast -p status-publisher --bin status-pir --features cli,cuda
+cargo build --locked --profile release-fast -p pir-query-server --features status,cuda
 RAYON_NUM_THREADS=4 LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64 \
-  target/release-fast/status-pir validate --cuda \
+  target/release-fast/status-pir validate-distributed --cuda \
   --entries 1572864 --state-dir /tmp/status-pir-validation
 ```
 
@@ -65,12 +68,13 @@ without a working GPU/runtime. Build with the intended CPU flags; the reference
 P4000 host supported Haswell, not the newer coordinator's AVX-512 target; the
 CPU Status host uses `x86-64-v3`.
 
-Validation runs encrypted HTTP observations, known/unknown coverage, response
-and request binding rejection, fresh randomness, invalid txid length, absence
-of a transaction-payload route, a mempool-to-mined update, and stale-source
-rejection. It compares both initial and updated composed hints with upstream
-full-database preprocessing. It reports preparation stages and reused units.
-It also tests worker listener loss and recovery-epoch rejection of old views.
+`validate-distributed` starts `pir-query-server` worker and router processes
+beside a fixture publisher and checks encrypted answers and remote fencing. The
+`pir-query-server` Status tests cover the wallet boundary over real HTTP:
+an independent wallet decrypts every fixture case, and corrupt answers,
+malformed envelopes and stale manifests are refused. The `status-query-server`
+tests compare initial and updated composed hints with upstream full-database
+preprocessing and check recovery-epoch rejection of old views.
 
 The unit tests deliberately construct a 257-entry bucket to exercise complete
 block eviction and refusal when mandatory mempool contents alone overflow.
@@ -95,28 +99,10 @@ target/release-fast/status-pir observe-live \
   --samples 60 --interval-ms 1000
 ```
 
-`status-pir serve-live` is an isolated loopback integration path. It opens the
-source checkpoint and durable publication counter, starts a new recovery epoch,
-builds from a live observation, reobserves the source after preparation, and
-publishes only if its anchor remains canonical and its original observation is
-still fresh. If the source changes during preparation, the candidate keeps its
-original timestamp; a newer source observation gets another candidate. Later
-unchanged observations renew the manifest using the committed counter. Failed
-polls and disconnected candidates do not renew freshness. It uses the synthetic protocol identifier and all HTTP roles still
-share one process, so it is not the production service.
-
-```sh
-target/release-fast/status-pir serve-live \
-  --rpc-url http://127.0.0.1:8232 --cookie /path/to/zakura/.cookie \
-  --salt-hex <64-hex-character-public-index-salt> --window-blocks 64 \
-  --state-dir /tmp/status-pir-live
-```
-
 On the coordinator host, `probe-live` selects a txid from a canonical block,
 checks the manifest anchor independently through RPC, and verifies the encrypted
-answer without logging the txid or query body. It can target an isolated
-loopback `serve-live` listener with `--origin` and needs the same local RPC
-cookie path. The [SSH trial](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-live-trial-2026-09-25/README.md)
+answer without logging the txid or query body. Its `--origin` is the router's
+wallet origin, and it needs the same local RPC cookie path. The [SSH trial](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-live-trial-2026-09-25/README.md)
 records the first deployed synthetic load and live encrypted checks.
 
 The 64-block `--window-blocks` default suits source inspection. Every source
@@ -126,39 +112,14 @@ path, including the live controller, is capped at 4,096 blocks
 [Observation window](architecture_status.md#observation-window). This command
 does not establish the production publication cadence.
 
-## Isolated deployment and probes
+## Isolated deployment
 
 The synthetic single-process `status-pir serve` deployment and its APM tunnel
 ran on the Paperspace P4000 and were retired with that host on 2026-09-27; see
-[CPU Status host](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-cpu-host-2026-09-27/README.md). To repeat
-the fixture experiment, run `status-pir serve --entries 1572864 --state-dir <dir>`
-on an isolated host. It listens only on loopback: coordinator/ingress 8380,
-worker 8381, router 8382, and APM 8383. This is not a production template.
-
-In another terminal, run a backend-only probe:
-
-```sh
-target/release-fast/status-pir probe --origin http://127.0.0.1:8380 \
-  --entries 1572864 --queries 40 --concurrency 1
-```
-
-An offered-load test on the host uses:
-
-```sh
-target/release-fast/status-pir probe --entries 1572864 \
-  --queries 1200 --concurrency 4 --qps 20
-```
-
-The probe can schedule a six-hour synthetic run with `--seconds 21600 --qps 20
---concurrency 16 --report-jsonl /tmp/status-load.jsonl --max-p99-ms 1000`.
-It streams one outcome per scheduled arrival and bounds the number of retained
-tasks. This remains a fixture test: it does not qualify live publication.
-
-Each measured lookup includes initialization, public-material download, client
-setup, encrypted query, and validation. Failures and arrivals skipped due to
-client concurrency limits are reported and cause a nonzero exit. This is a
-conservative cold-client workload, not cached-session throughput. A fixed-source
-load run does not qualify concurrent block publication.
+[CPU Status host](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-cpu-host-2026-09-27/README.md).
+The single-process `serve`, `serve-live`, `validate` and `probe` modes are
+removed: wallet routes are served only by `pir-query-server` roles, so fixture
+experiments use `validate-distributed`.
 
 ## Boundaries before rollout
 

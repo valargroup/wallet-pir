@@ -1,8 +1,9 @@
 //! Encrypted publication and restart through real listeners.
 #[path = "support/encrypted.rs"]
 mod encrypted;
-use encrypted::{record, serve, workers};
-use enhance_publisher::{coordinator::Coordinator, store::RecordJournal};
+use encrypted::{record, workers};
+use enhance_publisher::local_serving as serving;
+use enhance_publisher::store::RecordJournal;
 use enhance_query_server::{
     client::EnhancePirClient,
     types::{DatabaseId, ENHANCE_LAYOUT},
@@ -21,7 +22,10 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
         let reject_commit = Arc::new(AtomicBool::new(false));
         let (_listeners, groups) = workers(root.path(), 2, reject_commit.clone()).await;
         let state_dir = root.path().join("coordinator");
-        let coordinator = Coordinator::open(&state_dir, groups.clone()).unwrap();
+        let mut serving = serving::Serving::start(root.path(), &state_dir, groups.clone())
+            .await
+            .unwrap();
+        let coordinator = serving.coordinator();
         let mut journal = RecordJournal::open(
             root.path().join("journal"),
             DatabaseId::Enhance,
@@ -43,7 +47,6 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
             .publish(&journal, 3428143, "01".repeat(32))
             .await
             .unwrap();
-        let http = serve(coordinator.clone().router()).await;
         // Keep one real commit unacknowledged while its healthy peer publishes
         // again. This bridges the small decision-delivery tests to real worker
         // preparation, publication selection and encrypted wallet answers.
@@ -64,7 +67,7 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
             .unwrap();
         assert_eq!(read_state().pending_commits, pending);
         phase.set("querying the new publication");
-        let mut current = EnhancePirClient::connect(&http.url).await.unwrap();
+        let mut current = EnhancePirClient::connect(&serving.origin).await.unwrap();
         assert_eq!(
             current
                 .query_position_with_timing(67)
@@ -82,7 +85,7 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap()
-            .post(format!("{}/v1/enhance/query", http.url))
+            .post(format!("{}/v1/enhance/query", serving.origin))
             .body(vec![0; 8])
             .send()
             .await
@@ -90,33 +93,11 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
         assert!(malformed.status().is_client_error());
         let _ = malformed.bytes().await.unwrap();
         drop(current);
-        http.stop().await;
         drop(coordinator);
-        // A real process restart waits for every old request-owned view to drop.
-        // The in-process server can finish draining before Tokio drops its last
-        // completed connection task, so observe exclusive ownership explicitly.
-        phase.set("waiting for the old controller's request views to close");
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match enhance_publisher::control::Store::open(&state_dir) {
-                    Ok(store) => {
-                        drop(store);
-                        break;
-                    }
-                    Err(error) if error.starts_with("controller already running:") => {
-                        tokio::task::yield_now().await;
-                    }
-                    Err(error) => panic!("cannot reopen controller state: {error}"),
-                }
-            }
-        })
-        .await
-        .expect("old HTTP request views retained the controller lock");
         phase.set("restoring the coordinator from disk");
-        let restored = Coordinator::open(&state_dir, groups).unwrap();
-        let restored_http = serve(restored.router()).await;
+        serving.restart(groups).await.unwrap();
         phase.set("querying after restart with a fresh wallet");
-        let mut client = EnhancePirClient::connect(&restored_http.url).await.unwrap();
+        let mut client = EnhancePirClient::connect(&serving.origin).await.unwrap();
         // These positions share a row. One encrypted request checks that the
         // update preserved the old slot beside the appended record, and that
         // a fresh wallet can recover both after reopening durable state.
@@ -124,7 +105,6 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
         assert_eq!(recovered[0].as_ref(), record(66));
         assert_eq!(recovered[1].as_ref(), record(67));
         drop(client);
-        restored_http.stop().await;
     })
     .await
     .unwrap_or_else(|_| {

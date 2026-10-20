@@ -1,17 +1,9 @@
-//! Aggregate telemetry for the isolated synthetic Status service. No query identifiers enter labels.
-use axum::{
-    body::HttpBody,
-    extract::Request,
-    middleware::Next,
-    response::{IntoResponse, Response},
-    routing::get,
-    Json, Router,
-};
+//! Aggregate Status telemetry. No query identifiers enter labels. Hosts mount
+//! [`snapshot`] and [`prometheus`] on loopback management routes.
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
-    time::Instant,
 };
 
 #[derive(Clone, Default, Serialize)]
@@ -76,7 +68,7 @@ pub fn admission_rejected(role: &'static str, reason: &'static str) {
         .entry(reason.into())
         .or_default() += 1;
 }
-pub(super) fn admission_gauge(role: &'static str, waiting: bool, increment: bool) {
+pub fn admission_gauge(role: &'static str, waiting: bool, increment: bool) {
     let mut t = shared().lock().unwrap();
     let m = t.admission.entry(role.into()).or_default();
     let value = if waiting {
@@ -90,7 +82,7 @@ pub(super) fn admission_gauge(role: &'static str, waiting: bool, increment: bool
         *value -= 1;
     }
 }
-pub(super) fn admission_timing(role: &'static str, waiting: bool, elapsed: std::time::Duration) {
+pub fn admission_timing(role: &'static str, waiting: bool, elapsed: std::time::Duration) {
     let mut t = shared().lock().unwrap();
     let m = t.admission.entry(role.into()).or_default();
     let buckets = if waiting {
@@ -166,59 +158,51 @@ pub fn stage(operation: &'static str, elapsed: std::time::Duration, success: boo
     item.buckets[index] += 1;
 }
 
-pub async fn observe(role: &'static str, request: Request, next: Next) -> Response {
-    let path = request.uri().path();
-    let operation = match (role, path) {
-        ("coordinator", "/v1/status/init") => "init",
-        ("coordinator", p) if p.starts_with("/v1/status/session/") => "public_material",
-        ("coordinator", "/v1/status/query") => "query",
-        ("router", "/v1/status/query") => "router_query",
-        ("worker", "/evaluate") => "worker_evaluate",
-        _ => return next.run(request).await,
-    };
-    let upload = request
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
-    {
-        shared()
-            .lock()
-            .unwrap()
-            .operations
-            .entry(operation.into())
-            .or_default()
-            .arrivals += 1;
+/// The wallet-facing or role operation a request path counts as, if any.
+pub fn operation(role: &str, path: &str) -> Option<&'static str> {
+    match (role, path) {
+        ("router", "/v1/status/init") => Some("init"),
+        ("router", p) if p.starts_with("/v1/status/session/") => Some("public_material"),
+        ("router", "/v1/status/query") => Some("router_query"),
+        ("worker", "/evaluate") => Some("worker_evaluate"),
+        _ => None,
     }
-    let start = Instant::now();
-    let response = next.run(request).await;
-    let download = response
-        .headers()
-        .get("content-length")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok())
-        .or_else(|| response.body().size_hint().exact())
-        .unwrap_or(0);
+}
+/// Count one arrival before the request runs, so in-flight work is visible.
+pub fn arrival(operation: &'static str) {
+    shared()
+        .lock()
+        .unwrap()
+        .operations
+        .entry(operation.into())
+        .or_default()
+        .arrivals += 1;
+}
+/// Record the HTTP outcome of a request already counted by [`arrival`].
+pub fn outcome(
+    operation: &'static str,
+    status: u16,
+    upload: u64,
+    download: u64,
+    elapsed: std::time::Duration,
+) {
     let mut guard = shared().lock().unwrap();
-    let counter = guard.operations.get_mut(operation).unwrap();
-    if response.status().is_success() {
+    let counter = guard.operations.entry(operation.into()).or_default();
+    if (200..300).contains(&status) {
         counter.successes += 1;
     } else {
         counter.failures += 1;
-        if response.status().is_server_error() {
+        if status >= 500 {
             counter.server_errors += 1;
         }
     }
     counter.upload_bytes += upload;
     counter.download_bytes += download;
-    let seconds = start.elapsed().as_secs_f64();
     let bucket = LIMITS
         .iter()
-        .position(|limit| seconds <= *limit)
+        .position(|limit| elapsed.as_secs_f64() <= *limit)
         .unwrap_or(LIMITS.len());
     counter.buckets[bucket] += 1;
-    response
 }
 
 fn process_resources() -> Resources {
@@ -266,7 +250,9 @@ fn process_resources() -> Resources {
     }
     resources
 }
-async fn snapshot() -> Json<Telemetry> {
+/// Current counters with process resources. Reads `/proc` and may run
+/// `nvidia-smi`, so call it off any async runtime thread.
+pub fn snapshot() -> Telemetry {
     let mut data = shared().lock().unwrap().clone();
     static INSTANCE: OnceLock<String> = OnceLock::new();
     data.http_observation_version = 1;
@@ -283,25 +269,14 @@ async fn snapshot() -> Json<Telemetry> {
         })
         .clone();
     // Explicit zero counters distinguish an idle observed route from old telemetry.
-    for operation in [
-        "init",
-        "public_material",
-        "query",
-        "router_query",
-        "worker_evaluate",
-    ] {
+    for operation in ["init", "public_material", "router_query", "worker_evaluate"] {
         data.operations.entry(operation.into()).or_default();
     }
-    data.resources = tokio::task::spawn_blocking(process_resources)
-        .await
-        .unwrap_or_default();
-    Json(data)
+    data.resources = process_resources();
+    data
 }
-async fn health() -> impl IntoResponse {
-    "ok\n"
-}
-
-async fn prometheus() -> impl IntoResponse {
+/// Prometheus text exposition (`text/plain; version=0.0.4`).
+pub fn prometheus() -> String {
     let data = shared().lock().unwrap().clone();
     let mut body = String::from("# TYPE status_pir_requests_total counter\n# TYPE status_pir_request_duration_seconds_bucket counter\n");
     for (role, metrics) in &data.admission {
@@ -328,7 +303,6 @@ async fn prometheus() -> impl IntoResponse {
     for operation in [
         "init",
         "public_material",
-        "query",
         "router_query",
         "worker_evaluate",
         "router_pack",
@@ -372,116 +346,56 @@ async fn prometheus() -> impl IntoResponse {
             body.push_str(&format!("{name} {v}\n"));
         }
     }
-    (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "text/plain; version=0.0.4",
-        )],
-        body,
-    )
-}
-
-/// Bind this router only to a separate loopback management listener.
-pub fn routes() -> Router {
-    Router::new()
-        .route("/internal/status-apm", get(snapshot))
-        .route("/internal/metrics", get(prometheus))
-        .route("/internal/health", get(health))
+    body
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        body::{to_bytes, Body},
-        http::{Request, StatusCode},
-    };
-    use tower::ServiceExt;
 
-    #[tokio::test]
-    async fn counts_one_ingress_and_exports_no_request_identity() {
+    #[test]
+    fn outcomes_distinguish_client_errors_and_export_no_request_identity() {
         stage("router_pack", std::time::Duration::from_millis(4), true);
-        let app = Router::new()
-            .route("/v1/status/query", axum::routing::post(|| async { "ok" }))
-            .layer(axum::middleware::from_fn(|req, next| {
-                observe("coordinator", req, next)
-            }));
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/status/query")
-                    .header("content-length", "2")
-                    .body(Body::from("xx"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = routes()
-            .oneshot(
-                Request::builder()
-                    .uri("/internal/status-apm")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let bytes = to_bytes(body.into_body(), 64 * 1024).await.unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["operations"]["query"]["arrivals"], 1);
-        assert_eq!(value["operations"]["query"]["download_bytes"], 2);
-        assert_eq!(value["operations"]["router_pack"]["buckets"][0], 1);
-        assert!(String::from_utf8_lossy(&bytes).find("xx").is_none());
-    }
-}
-
-#[cfg(test)]
-mod http_tests {
-    use super::*;
-    use axum::{
-        body::Body,
-        extract::Path,
-        http::{Request as HttpRequest, StatusCode},
-    };
-    use tower::ServiceExt;
-    #[tokio::test]
-    async fn http_outcomes_distinguish_client_errors_and_record_latency_once() {
-        let app = Router::new()
-            .route(
-                "/v1/status/session/:code",
-                get(|Path(code): Path<u16>| async move { StatusCode::from_u16(code).unwrap() }),
-            )
-            .layer(axum::middleware::from_fn(|request, next| {
-                observe("coordinator", request, next)
-            }));
-        let before = shared()
-            .lock()
-            .unwrap()
-            .operations
-            .get("public_material")
-            .cloned()
-            .unwrap_or_default();
-        for code in [200, 400, 503] {
-            let r = app
-                .clone()
-                .oneshot(
-                    HttpRequest::get(format!("/v1/status/session/{code}"))
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(r.status().as_u16(), code);
+        let before = snapshot().operations["public_material"].clone();
+        for status in [200, 400, 503] {
+            arrival("public_material");
+            outcome(
+                "public_material",
+                status,
+                2,
+                3,
+                std::time::Duration::from_millis(1),
+            );
         }
-        let after = shared().lock().unwrap().operations["public_material"].clone();
+        let data = snapshot();
+        let after = &data.operations["public_material"];
         assert_eq!(after.arrivals - before.arrivals, 3);
         assert_eq!(after.successes - before.successes, 1);
         assert_eq!(after.failures - before.failures, 2);
         assert_eq!(after.server_errors - before.server_errors, 1);
+        assert_eq!(after.upload_bytes - before.upload_bytes, 6);
         assert_eq!(
             after.buckets.iter().sum::<u64>() - before.buckets.iter().sum::<u64>(),
             3
         );
+        assert!(data.operations["router_pack"].buckets[0] >= 1);
+        assert_eq!(data.http_observation_version, 1);
+        assert!(prometheus().contains("status_pir_requests_total{operation=\"public_material\""));
+    }
+
+    #[test]
+    fn only_wallet_and_role_paths_are_counted() {
+        assert_eq!(operation("router", "/v1/status/init"), Some("init"));
+        assert_eq!(
+            operation("router", "/v1/status/session/00"),
+            Some("public_material")
+        );
+        assert_eq!(
+            operation("router", "/v1/status/query"),
+            Some("router_query")
+        );
+        assert_eq!(operation("worker", "/evaluate"), Some("worker_evaluate"));
+        assert_eq!(operation("worker", "/v1/status/query"), None);
+        assert_eq!(operation("router", "/control/health"), None);
     }
 }

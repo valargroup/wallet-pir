@@ -1,8 +1,8 @@
-# External Status CPU worker, rendered by tools/enhance/lib/roles.py. It pulls
+# External Status CPU worker, rendered by tools/status/lib/roles.py. It pulls
 # each generation's artifact from the router's artifact origin and is fenced,
 # prepared and activated by the Status controller over its loopback control
-# routes (reached through authenticated SSH forwarding). ExecStart and paths
-# are rendered.
+# routes (reached through authenticated SSH forwarding). ExecStart, the config
+# path and paths are rendered.
 [Unit]
 Description=Status PIR evaluation worker (external)
 After=network-online.target

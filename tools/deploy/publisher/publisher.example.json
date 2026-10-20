@@ -35,13 +35,10 @@
         "window_blocks": 4096,
         "worker_origin": "http://127.0.0.1:8481",
         "router_origin": "http://127.0.0.1:8482",
-        "query_router_origin": "http://127.0.0.1:8492",
-        "private_listen": "127.0.0.1:8480",
-        "public_enabled": true
+        "private_listen": "127.0.0.1:8480"
       },
       "rpc_url": "http://127.0.0.1:8232",
-      "cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "public_listen": "127.0.0.1:8489"
+      "cookie": "/run/credentials/pir-publisher.service/chain-cookie"
     }
   },
   "transparent_history": {

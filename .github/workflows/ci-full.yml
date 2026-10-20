@@ -433,10 +433,10 @@ jobs:
             -p enhance-publisher -p status-publisher -p enhance-pir-client -p enhance-pir-load-test -p pir-publisher \
             --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir --bin pir-publisher \
             --features enhance-pir-client/native-reinspiring,enhance-publisher/native-reinspiring,status-publisher/native-reinspiring,status-publisher/cli,enhance-pir-load-test/native-reinspiring,pir-publisher/enhance,pir-publisher/status,pir-publisher/transparent,pir-publisher/receiver,pir-publisher/native-reinspiring
-          # Own invocation so `enhance` names the query server's feature, not another package's.
+          # Own invocation so `enhance` and `status` name the query server's features, not another package's.
           python3 tools/ci/stage.py compile:native-query-server -- cargo build --locked --release \
             -p pir-query-server --bin pir-query-server \
-            --features enhance,native-reinspiring
+            --features enhance,status,native-reinspiring
           python3 tools/ci/qualification.py assemble --family enhance --native --sha "$GITHUB_SHA"
       - name: Report Cargo cache reuse
         if: always() && inputs.family != 'ops'

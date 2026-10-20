@@ -42,7 +42,8 @@ def main():
         manifest = '[package]\nname="schema11-interop"\nversion="0.0.0"\nedition="2021"\n'
         manifest += '[[test]]\nname="interop"\npath=' + json.dumps(str(Path(__file__).with_name('public.rs' if args.public_origin else 'interop.rs'))) + '\n[dependencies]\n'
         for name, path in dependencies.items():
-            manifest += f'{name} = {{ path = {json.dumps(str(path))} }}\n'
+            features = ', features = ["local-serving"]' if name == 'enhance-publisher' else ''
+            manifest += f'{name} = {{ path = {json.dumps(str(path))}{features} }}\n'
         for name, subdir, features in [
             ('zakura-pir-client', 'zakura/pir-client', ['enhance', 'wallet']),
             ('zakura-client-backend', 'librustzcash/zcash_client_backend', ['orchard', 'test-dependencies']),
