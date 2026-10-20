@@ -3634,6 +3634,7 @@ dependencies = [
  "pir-control",
  "pir-observability",
  "pir-pipeline",
+ "pir-query-server",
  "pir-service-discovery",
  "prometheus",
  "reqwest",

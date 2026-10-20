@@ -8,7 +8,6 @@ pub const DISCOVERY_DEADLINE: Duration = Duration::from_secs(10);
 /// A publisher whose discovery document could not be accepted. Only
 /// [`DiscoveryError::incompatible`] is a permanent condition; every other
 /// reason may clear when the publisher or network recovers.
-#[derive(Debug)]
 pub struct DiscoveryError {
     origin: String,
     reason: Reason,
@@ -57,6 +56,13 @@ impl fmt::Display for DiscoveryError {
             ),
             Reason::Document(error) => error.fmt(f),
         }
+    }
+}
+// A host `main` that returns this error prints it with `Debug`; operators get
+// the same actionable message as `Display`.
+impl fmt::Debug for DiscoveryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 impl std::error::Error for DiscoveryError {}

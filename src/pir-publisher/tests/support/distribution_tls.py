@@ -8,6 +8,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import os
 import ssl
 import sys
 import time
@@ -17,6 +18,9 @@ upstream, cert, key, control = sys.argv[1:5]
 # An optional fixed port lets a restarted terminator keep the configured origin.
 port = int(sys.argv[5]) if len(sys.argv) > 5 else 0
 DISCOVERY = "/.well-known/pir-service-discovery"
+# A unified publisher serves discovery on its management listener; an edge
+# proxies that exact path there. Unset, discovery goes to `upstream`.
+discovery_upstream = os.environ.get("DISCOVERY_UPSTREAM") or upstream
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -162,7 +166,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        connection = http.client.HTTPConnection(upstream, timeout=10)
+        target = discovery_upstream if self.path == DISCOVERY else upstream
+        connection = http.client.HTTPConnection(target, timeout=10)
         try:
             connection.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() in {"if-none-match", "cache-control", "content-type"}})
             response = connection.getresponse()
