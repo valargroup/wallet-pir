@@ -26,6 +26,10 @@ ENHANCE_PUBLIC_HOST {
 	handle_path /apm* {
 		reverse_proxy 127.0.0.1:3002
 	}
+	# Status wallets reach the query router through the existing loopback tunnel.
+	handle /v1/status/* {
+		reverse_proxy 127.0.0.1:8492
+	}
 	# Wallets reach only query ingress: manifest, session reads and queries.
 	# Query admission can reject overload before evaluation. Use a fresh local
 	# upstream connection so a stale keepalive socket cannot turn that response
