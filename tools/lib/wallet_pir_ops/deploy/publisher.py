@@ -442,14 +442,15 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart',
+                      'retire-state-plan', 'retire-state-preflight', 'retire-state-deploy'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
         if operation in ('preflight', 'deploy'):
             command.add_argument('--archive', required=True)
-        if operation == 'deploy':
+        if operation in ('deploy', 'retire-state-deploy'):
             command.add_argument('--expect-plan-sha256', required=True)
 
 
@@ -460,6 +461,9 @@ def dispatch(args, executor=None, **_options):
                                       recovery=operation in ('status', 'rollback', 'reconcile', 'restart'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
+    if operation.startswith('retire-state-'):
+        from .publisher_retirement import dispatch as retire_state
+        return retire_state(target, operation, getattr(args, 'expect_plan_sha256', None))
     if target.serving:
         target.serving.binary = getattr(args, 'serving_binary', None)
     if operation in ('rollback', 'reconcile'):
