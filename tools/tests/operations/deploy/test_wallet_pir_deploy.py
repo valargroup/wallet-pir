@@ -158,7 +158,7 @@ class Fleet(unittest.TestCase):
         self.binary.write_bytes(NEW)
         self.status_binary = self.dir / 'status-pir'
         self.status_binary.write_bytes(STATUS_NEW)
-        self.status_query_binary = self.dir / 'pir-query-server'
+        self.status_query_binary = self.dir / 'status-pir-query-server'
         self.status_query_binary.write_bytes(STATUS_QUERY_NEW)
         self.receiver_binary = self.dir / 'receiver-directory'
         self.receiver_binary.write_bytes(RECEIVER_NEW)
@@ -197,8 +197,7 @@ class Fleet(unittest.TestCase):
             for old, new in (live_edits or {}).get(role, []):
                 self.assertIn(old, text)
                 text = text.replace(old, new)
-            files = ({STATUS_LEGACY + '/status-pir': STATUS_OLD} if role == 'controller'
-                     else {STATUS_LEGACY + '/pir-query-server': STATUS_QUERY_OLD})
+            files = {STATUS_LEGACY + '/pir-query-server': STATUS_QUERY_OLD}
             self.fake.install(host, service.roles[role].unit, text, (), files)
         deployer = self.deployer('status', only=list(only))
         deployer.capture_baseline()
@@ -784,16 +783,14 @@ class StatusTests(Fleet):
         self.assertEqual(plans[0].drift, [])
         self.assertEqual(problems, [])
 
-    def test_roles_and_controller_deploy_as_separate_transactions(self):
-        self.status_fleet()
-        with self.assertRaisesRegex(DeployError, 'one transaction runs one binary'):
-            self.deployer('status').deploy(sha256(STATUS_NEW), self.status_binary)
-        self.fake.log.clear()
-        deployer = self.deployer('status', only=['controller'])
-        deployer.capture_baseline()
-        journal = deployer.deploy(sha256(STATUS_NEW), self.status_binary)
+    def test_status_roles_deploy_together_without_a_standalone_controller(self):
+        deployer = self.status_fleet()
+        journal = deployer.deploy(sha256(STATUS_QUERY_NEW), self.status_query_binary)
         self.assertEqual(journal.status, 'committed')
-        self.assertEqual(self.restarts(), [('coordinator', 'status-controller-qualification.service')])
+        self.assertEqual(self.restarts(), [('status-01', 'status-worker.service'),
+                                         ('status-01', 'status-router.service')])
+        with self.assertRaises(descriptors.DescriptorError):
+            self.deployer('status', only=['controller'])
 
 
 class ReceiverTests(Fleet):

@@ -334,12 +334,12 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<Value, &'static st
 }
 
 fn merge_roles(
-    mut coordinator: Value,
+    mut publisher: Value,
     router: Value,
     worker: Value,
     manifest: Option<Value>,
 ) -> Result<Value, &'static str> {
-    for sample in [&coordinator, &router, &worker] {
+    for sample in [&publisher, &router, &worker] {
         if !sample.get("operations").is_some_and(Value::is_object)
             || !sample.get("admission").is_some_and(Value::is_object)
         {
@@ -364,8 +364,8 @@ fn merge_roles(
             http_instances.insert(endpoint.into(), source["http_instance"].clone());
         }
     }
-    coordinator["http_operations"] = Value::Object(http_operations);
-    coordinator["http_instances"] = Value::Object(http_instances);
+    publisher["http_operations"] = Value::Object(http_operations);
+    publisher["http_instances"] = Value::Object(http_instances);
     let mut operations = serde_json::Map::new();
     let mut admission = serde_json::Map::new();
     let mut resources = serde_json::Map::new();
@@ -395,11 +395,11 @@ fn merge_roles(
             router["operations"]["router_pack"].clone(),
         );
     }
-    coordinator["operations"] = Value::Object(operations);
-    coordinator["admission"] = Value::Object(admission);
-    coordinator["role_resources"] = Value::Object(resources);
-    coordinator["live_roles"] = Value::Bool(true);
-    coordinator["publication_available"] = Value::Bool(manifest.is_some());
+    publisher["operations"] = Value::Object(operations);
+    publisher["admission"] = Value::Object(admission);
+    publisher["role_resources"] = Value::Object(resources);
+    publisher["live_roles"] = Value::Bool(true);
+    publisher["publication_available"] = Value::Bool(manifest.is_some());
     if let Some(manifest) = manifest {
         for key in [
             "generation",
@@ -408,10 +408,10 @@ fn merge_roles(
             "anchor_height",
             "observed_ms",
         ] {
-            coordinator[key] = manifest[key].clone();
+            publisher[key] = manifest[key].clone();
         }
     }
-    Ok(coordinator)
+    Ok(publisher)
 }
 
 pub async fn monitor(
@@ -562,7 +562,7 @@ pub fn pane(view: &View) -> String {
         html.push_str("<p class=\"notice\">Live publication is unavailable; monitoring reachability does not imply serving readiness.</p>");
     }
     html.push_str("<h3>Admission and rejection counters</h3><div class=\"wrap\"><table><tr><th>Role</th><th>Active</th><th>Waiting</th><th>Rejections / refused checks since start</th></tr>");
-    for role in ["coordinator", "router", "worker"] {
+    for role in ["router", "worker"] {
         let reasons = sample["admission"][role]["rejections"]
             .as_object()
             .map(|r| {
@@ -610,7 +610,7 @@ pub fn pane(view: &View) -> String {
         html.push_str("</ul></section>");
     }
     html.push_str("</div>");
-    for role in ["coordinator", "router", "worker"] {
+    for role in ["router", "worker"] {
         // CPU-only hosts report no GPU reading; omit it rather than show a blank.
         let gpu = number(sample, &["role_resources", role, "gpu_utilization_percent"])
             .map(|_| {
@@ -723,7 +723,7 @@ mod tests {
             serde_json::json!({"operations":{}, "admission":{name:{"execution_buckets":buckets,"active":0,"waiting":0,"rejections":{}}},"resources":{"process_rss_bytes":42}})
         };
         let merged = merge_roles(
-            role("coordinator", 8),
+            role("publisher", 8),
             role("router", 5),
             role("worker", 2),
             Some(serde_json::json!({"generation":123,"observed_ms":1})),
@@ -748,7 +748,7 @@ mod tests {
         assert!(!html.contains("GPU utilization"));
         assert!(!html.contains("P4000"));
         let missing = merge_roles(
-            role("coordinator", 8),
+            role("publisher", 8),
             role("router", 5),
             role("worker", 2),
             None,
@@ -756,7 +756,7 @@ mod tests {
         .unwrap();
         assert_eq!(missing["publication_available"], false);
         assert!(merge_roles(
-            role("coordinator", 8),
+            role("publisher", 8),
             serde_json::json!({}),
             role("worker", 2),
             None

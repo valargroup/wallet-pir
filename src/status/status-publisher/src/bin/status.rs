@@ -69,7 +69,7 @@ enum Command {
     },
     /// Check a canonical mined txid through a live encrypted query on loopback.
     ProbeLive {
-        #[arg(long, default_value = "http://127.0.0.1:8380")]
+        #[arg(long, default_value = "http://127.0.0.1:8492")]
         origin: String,
         #[arg(long, default_value = "http://127.0.0.1:8232")]
         rpc_url: String,

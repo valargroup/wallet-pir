@@ -410,6 +410,7 @@ impl Publisher {
         });
         tasks.own(&observer);
         let mut last_observed = 0;
+        let mut recovering = false;
         loop {
             if shutdown.requested() {
                 return Ok(());
@@ -436,6 +437,11 @@ impl Publisher {
                     continue;
                 }
             };
+            // Roles keep serving the old view until fenced, so recovery backs
+            // off only after the fence.
+            if std::mem::take(&mut recovering) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
             // Heartbeats never change observation freshness or authorize a recovery.
             let (active_tx, active_rx) = watch::channel(None::<Manifest>);
             let heartbeat_owner = self.clone();
@@ -528,7 +534,7 @@ impl Publisher {
             self.stop();
             heartbeat.abort();
             let _ = heartbeat.await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            recovering = true;
         }
     }
 }

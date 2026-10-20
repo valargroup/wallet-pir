@@ -10,6 +10,7 @@ use crate::types::{DatabaseId, DatabaseLayout, ENHANCE_LAYOUT};
 use crate::wire::read_crs_blocks;
 use crate::{ipir::LoadError, matvec::MatvecConfig};
 use crate::{ITEM_SIZE_BITS, RECORDS_PER_ROW, RECORD_BYTES};
+#[cfg(not(feature = "native-reinspiring"))]
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use inspiring::RlweParams;
 use ipir_sp::server::CrsBlock;

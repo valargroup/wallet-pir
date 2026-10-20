@@ -25,7 +25,6 @@ use status_query_server::{
 };
 use std::{
     fs::{self, File, OpenOptions},
-    net::SocketAddr,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -302,21 +301,6 @@ impl Service {
     }
     /// With `query_listen`, a router serves only the wallet routes there and
     /// everything else on `listen`. Without it, both share `listen`.
-    pub async fn serve(
-        self,
-        listen: SocketAddr,
-        query_listen: Option<SocketAddr>,
-    ) -> Result<(), Failure> {
-        if !listen.ip().is_loopback() || query_listen.is_some_and(|q| !q.ip().is_loopback()) {
-            return Err("Status role listener must be loopback".into());
-        }
-        let listener = tokio::net::TcpListener::bind(listen).await?;
-        let query = match query_listen {
-            Some(addr) => Some(tokio::net::TcpListener::bind(addr).await?),
-            None => None,
-        };
-        self.serve_listeners(listener, query).await
-    }
     pub async fn serve_listeners(
         self,
         listen: tokio::net::TcpListener,
@@ -1095,20 +1079,21 @@ mod tests {
             StatusCode::OK
         );
         // A split worker or a non-loopback query listener is refused.
+        let bind = |address: &'static str| tokio::net::TcpListener::bind(address);
         let worker_dir = tempfile::tempdir().unwrap();
         let worker = open(Role::Worker, worker_dir.path());
         assert!(worker
-            .serve(
-                "127.0.0.1:0".parse().unwrap(),
-                Some("127.0.0.1:0".parse().unwrap())
+            .serve_listeners(
+                bind("127.0.0.1:0").await.unwrap(),
+                Some(bind("127.0.0.1:0").await.unwrap())
             )
             .await
             .is_err());
         assert!(s
             .clone()
-            .serve(
-                "127.0.0.1:0".parse().unwrap(),
-                Some("0.0.0.0:0".parse().unwrap())
+            .serve_listeners(
+                bind("127.0.0.1:0").await.unwrap(),
+                Some(bind("0.0.0.0:0").await.unwrap())
             )
             .await
             .is_err());

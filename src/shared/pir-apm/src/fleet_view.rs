@@ -356,29 +356,6 @@ fn coordinator(data: &DashboardData) -> String {
             ],
         ),
     ));
-    body.push_str(&card(
-        "Queries",
-        rows(
-            &data.snapshot_gauges,
-            &[
-                ("enhance_query_active", "Active"),
-                ("enhance_query_waiting", "Waiting"),
-                (
-                    "enhance_query_primary_success_total",
-                    "Primary successes · cumulative",
-                ),
-                (
-                    "enhance_query_fallback_success_total",
-                    "Fallback successes · cumulative",
-                ),
-                ("enhance_query_rejected_total", "Rejected · cumulative"),
-                (
-                    "enhance_query_worker_failure_total",
-                    "Worker failures · cumulative",
-                ),
-            ],
-        ),
-    ));
     body.push_str(&host_card(&data.host));
     body.push_str("</div>");
     body.push_str(&monitoring_card(data));

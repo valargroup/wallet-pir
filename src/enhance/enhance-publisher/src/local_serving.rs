@@ -178,7 +178,7 @@ impl Serving {
     }
 
     /// Opens another coordinator over the same directory and roles.
-    pub fn reopen(&self, groups: Vec<Group>) -> Result<Coordinator> {
+    fn reopen(&self, groups: Vec<Group>) -> Result<Coordinator> {
         Coordinator::open_with_serving(
             &self.root,
             groups,

@@ -269,13 +269,7 @@ pub fn snapshot() -> Telemetry {
         })
         .clone();
     // Explicit zero counters distinguish an idle observed route from old telemetry.
-    for operation in [
-        "init",
-        "public_material",
-        "query",
-        "router_query",
-        "worker_evaluate",
-    ] {
+    for operation in ["init", "public_material", "router_query", "worker_evaluate"] {
         data.operations.entry(operation.into()).or_default();
     }
     data.resources = process_resources();
@@ -309,7 +303,6 @@ pub fn prometheus() -> String {
     for operation in [
         "init",
         "public_material",
-        "query",
         "router_query",
         "worker_evaluate",
         "router_pack",

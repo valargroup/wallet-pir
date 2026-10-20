@@ -155,15 +155,7 @@ impl Coordinator {
         Ok(())
     }
     pub fn open(root: &FsPath, groups: Vec<Group>) -> Result<Self, String> {
-        Self::open_with_routers(root, groups, Vec::new())
-    }
-
-    pub fn open_with_routers(
-        root: &FsPath,
-        groups: Vec<Group>,
-        routers: Vec<super::packing_router::RouterRegistration>,
-    ) -> Result<Self, String> {
-        Self::open_with_serving(root, groups, routers, Vec::new())
+        Self::open_with_serving(root, groups, Vec::new(), Vec::new())
     }
     pub fn open_with_serving(
         root: &FsPath,
@@ -173,6 +165,8 @@ impl Coordinator {
     ) -> Result<Self, String> {
         let serving = if routers.is_empty() {
             None
+        } else if ingresses.is_empty() {
+            return Err("packing routers need a query ingress; wallets reach only ingress".into());
         } else {
             Some(Arc::new(super::serving_control::ServingControl::open(
                 root, routers, ingresses,
@@ -1002,6 +996,22 @@ mod admission_tests {
         changed.placement_policy.sealed_shards = 6;
         assert!(Coordinator::open(root.path(), vec![changed]).is_err());
         assert!(Coordinator::open(root.path(), vec![group]).is_ok());
+    }
+
+    #[test]
+    fn packing_routers_without_query_ingress_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let router = crate::packing_router::RouterRegistration {
+            name: "packing".into(),
+            url: "http://127.0.0.1:9200".into(),
+            query_url: "http://127.0.0.1:9201".into(),
+            domains: Default::default(),
+        };
+        let error =
+            Coordinator::open_with_serving(root.path(), Vec::new(), vec![router], Vec::new())
+                .err()
+                .unwrap();
+        assert!(error.contains("query ingress"), "{error}");
     }
 
     #[tokio::test]

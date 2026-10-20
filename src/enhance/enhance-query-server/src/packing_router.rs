@@ -1240,6 +1240,44 @@ mod tests {
             .is_err());
         assert!(prepare(State(r), Json(view())).await.is_err());
     }
+    #[tokio::test]
+    async fn session_reads_refuse_unserved_or_fenced_sessions() {
+        let root = tempfile::tempdir().unwrap();
+        let r = router(root.path());
+        let read = |id: String| session(State(r.clone()), UrlPath(id));
+        let id = "cc".repeat(32);
+        assert_eq!(read("x".into()).await.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            read(id.clone()).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let ack = prepare(State(r.clone()), Json(view())).await.unwrap().0;
+        activate(
+            State(r.clone()),
+            Json(Activation {
+                incarnation: ack.incarnation,
+                digest: ack.digest,
+                controller_epoch: 1,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(read(id.clone()).await.status(), StatusCode::GONE);
+        r.inner.lock().unwrap().control.refreshed =
+            Watchdog::renewed_at(Instant::now() - Duration::from_secs(6));
+        assert_eq!(
+            read(id.clone()).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        r.inner
+            .lock()
+            .unwrap()
+            .control
+            .fence
+            .sessions
+            .insert(id.clone());
+        assert_eq!(read(id).await.status(), StatusCode::GONE);
+    }
     #[test]
     fn selection_counts_outstanding_and_rotates_ties() {
         let root = tempfile::tempdir().unwrap();
