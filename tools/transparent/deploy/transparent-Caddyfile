@@ -1,8 +1,11 @@
 # Rendered by tools/transparent/scripts/deploy-transparent-shard.sh, which substitutes the
-# placeholder site name below with the host of TRANSPARENT_PUBLIC_URL before the
-# file is validated and installed. The placeholder is deliberately not repeated
-# in this comment: the substitution is a plain sed over the whole file, and a
-# second occurrence would be rewritten into a sentence that no longer parses.
+# placeholder site name below with the host of TRANSPARENT_PUBLIC_URL, and the
+# upstream placeholder with the shard server's configured listener (its VPC
+# address: pir-query-server refuses unspecified listeners, so the service is not
+# on loopback), before the file is validated and installed. The placeholders are
+# deliberately not repeated in this comment: the substitution is a plain sed
+# over the whole file, and a second occurrence would be rewritten into a
+# sentence that no longer parses.
 #
 # This runs on the worker, not on the Enhance coordinator. The coordinator's
 # Caddyfile is rendered and installed by Enhance coordinator deploys, and a token
@@ -34,7 +37,7 @@ TRANSPARENT_PUBLIC_HOST {
 	# `/v1/shards*` covers the revision-addressed private routes, which are
 	# `/v1/shards/{id}/revisions/{digest}/...`.
 	handle /v1/shards* {
-		reverse_proxy 127.0.0.1:8093
+		reverse_proxy TRANSPARENT_SHARD_UPSTREAM
 	}
 
 	# The public range filters, served here as well as by the filter service on
@@ -45,7 +48,7 @@ TRANSPARENT_PUBLIC_HOST {
 	# bytes elsewhere for a wallet that wants to fetch the two over different
 	# network paths.
 	handle /v1/filters/* {
-		reverse_proxy 127.0.0.1:8093
+		reverse_proxy TRANSPARENT_SHARD_UPSTREAM
 	}
 
 	handle {

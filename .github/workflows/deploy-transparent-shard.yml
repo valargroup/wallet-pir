@@ -197,6 +197,8 @@ jobs:
       - name: Deploy and verify
         env:
           TRANSPARENT_WORKER_HOST: ${{ vars.TRANSPARENT_WORKER_HOST }}
+          # The pilot's private IPv4 listener when the host above is a name.
+          TRANSPARENT_WORKER_LISTEN: ${{ vars.TRANSPARENT_WORKER_LISTEN }}
           WALLET_PIR_DEPLOY_USER: ${{ vars.WALLET_PIR_DEPLOY_USER }}
           TRANSPARENT_RELEASE_SHA: ${{ inputs.ref }}
           TRANSPARENT_ARTIFACT_DIR: ${{ github.workspace }}/artifact

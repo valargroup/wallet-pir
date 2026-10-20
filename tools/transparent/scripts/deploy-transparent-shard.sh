@@ -371,24 +371,44 @@ render_unit() {
   RENDERED_CONFIG="$config"
 }
 
+# Renders the worker's Caddyfile against the rendered configuration `$1`.
+#
+# The public host is substituted here rather than on the worker, so the file
+# that gets validated is byte-for-byte the file that gets installed. The
+# upstream is the configuration's own listener: the shard server binds only its
+# VPC address, so a loopback upstream would leave the public edge with nothing
+# to proxy to. Sets RENDERED_CADDYFILE, for the same reason render_unit does
+# not print.
+RENDERED_CADDYFILE=""
+render_caddyfile() {
+  local host="${TRANSPARENT_PUBLIC_URL#https://}"
+  local rendered="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.rendered"
+  local upstream
+  upstream="$(jq -er '.transparent_history.settings.listen' "$1")" \
+    || fail "configuration $1 names no listener"
+  private_listen "$upstream" || fail "configured listener is not a private IPv4 address: $upstream"
+  sed -e "s/TRANSPARENT_PUBLIC_HOST/$host/" -e "s/TRANSPARENT_SHARD_UPSTREAM/$upstream/" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" >"$rendered"
+  grep -q "TRANSPARENT_PUBLIC_HOST\|TRANSPARENT_SHARD_UPSTREAM" "$rendered" \
+    && fail "Caddyfile still carries an unsubstituted token"
+  grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
+  grep -q "reverse_proxy $upstream\$" "$rendered" \
+    || fail "rendered Caddyfile does not proxy to the configured listener $upstream"
+  grep -E 'reverse_proxy ' "$rendered" | grep -qv "reverse_proxy $upstream\$" \
+    && fail "rendered Caddyfile proxies to something other than $upstream"
+  RENDERED_CADDYFILE="$rendered"
+}
+
 stage() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   local -a opts
   mapfile -t opts < <(ssh_opts)
   echo "== stage binary, unit, configuration and Caddyfile"
 
-  # The public host is substituted here rather than on the worker, so the file
-  # that gets validated is byte-for-byte the file that gets installed.
-  local host="${TRANSPARENT_PUBLIC_URL#https://}"
-  local rendered="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.rendered"
-  sed "s/TRANSPARENT_PUBLIC_HOST/$host/" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" >"$rendered"
-  grep -q "TRANSPARENT_PUBLIC_HOST" "$rendered" \
-    && fail "Caddyfile still carries an unsubstituted token"
-  grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
-
   render_unit
   local unit="$RENDERED_UNIT" config="$RENDERED_CONFIG"
+  render_caddyfile "$config"
+  local rendered="$RENDERED_CADDYFILE"
 
   worker_ssh "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
@@ -1427,6 +1447,10 @@ case "$MODE" in
     if [[ -r "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" ]]; then
       render_unit
       echo "unit renders to $RENDERED_UNIT and configuration to $RENDERED_CONFIG, naming $(shard_set_path)"
+      if [[ -r "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" ]]; then
+        render_caddyfile "$RENDERED_CONFIG"
+        echo "Caddyfile renders to $RENDERED_CADDYFILE, proxying to the configured listener"
+      fi
     else
       echo "no unit in $TRANSPARENT_ARTIFACT_DIR; skipping the unit check"
     fi

@@ -51,6 +51,25 @@ class ShardInputs(unittest.TestCase):
                                           'shard_dir': '/srv/transparent-pir/sets/shard-set',
                                           'cache_bytes': 8589934592, 'build_slots': 1, 'query_slots': 2}}})
 
+    def test_caddyfile_proxies_to_the_configured_listener(self):
+        # The shard server binds only its VPC address, so the worker's own
+        # edge must proxy there rather than to loopback.
+        shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-shard-server.service', self.unit)
+        shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-Caddyfile', self.artifact / 'transparent-Caddyfile')
+        for listen in (None, '10.142.0.9:8093'):
+            with self.subTest(listen=listen):
+                if listen:
+                    self.env['TRANSPARENT_WORKER_LISTEN'] = listen
+                result = self.validate()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rendered = (self.artifact / 'Caddyfile.rendered').read_text()
+                upstreams = {line.split()[1] for line in rendered.splitlines()
+                             if line.strip().startswith('reverse_proxy ')}
+                self.assertEqual(upstreams, {listen or '10.142.0.5:8093'})
+                self.assertIn('transparent-pir.example.net {', rendered)
+                self.assertNotIn('TRANSPARENT_SHARD_UPSTREAM', rendered)
+                self.assertNotIn('TRANSPARENT_PUBLIC_HOST', rendered)
+
     def test_listener_must_be_a_private_address(self):
         # pir-query-server refuses unspecified and public listeners.
         shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-shard-server.service', self.unit)
