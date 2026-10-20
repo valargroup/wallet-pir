@@ -204,7 +204,7 @@ The workflow accepts only the optional GPU worker, takes the shared production
 lock, and preserves its state root, arguments, CUDA library path and placement.
 Preflight uploads verified validation binaries and runs `cuda-smoke.py`: two
 workers from the CUDA `pir-query-server` and the coordinator from the native
-`enhance-pir-server`, on device 0, to satisfy the reservation quorum. GPU hosts
+`pir-publisher` with an Enhance-only fixture configuration, on device 0, to satisfy the reservation quorum. GPU hosts
 do not run the publisher as the worker. Both replicas must publish native CUDA
 health; their summed evaluation counter must increase during exact fixture
 queries. Each uses a separate loopback port and temporary state root. Preflight

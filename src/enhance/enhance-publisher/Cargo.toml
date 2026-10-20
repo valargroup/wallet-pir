@@ -2,7 +2,7 @@
 name = "enhance-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; hosts the enhance-pir-server service"
+description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; provides enhance-pir-server offline maintenance"
 publish = false
 
 [lib]

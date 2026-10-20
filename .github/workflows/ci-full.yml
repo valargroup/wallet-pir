@@ -587,6 +587,12 @@ jobs:
           cargo build --locked --profile release-fast -p transparent-tools --bin transparent-regression --bin regression-export --bin txid-quality-canary
           cargo build --locked --profile release-fast -p transparent-query-server --example rate-query --example txid-rate
           cargo test --locked --profile release-fast -p transparent-query-server --example rate-query
+      - name: Check retired commands and managed Status lifecycle
+        run: |
+          cargo test --locked --profile release-fast -p enhance-publisher --features native-reinspiring --test publisher_cli
+          cargo test --locked --profile release-fast -p status-publisher --features cli,native-reinspiring --bin status-pir
+          cargo test --locked --profile release-fast -p status-publisher --features fixtures,native-reinspiring --lib shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
+          cargo test --locked --profile release-fast -p pir-publisher --features enhance,status,transparent,native-reinspiring --test lifecycle
       - name: Package the exact source candidate
         run: |
           python3 tools/ci/release.py assemble --kind pir-publisher --sha "$GITHUB_SHA" --output .local-pir/publisher-candidate
