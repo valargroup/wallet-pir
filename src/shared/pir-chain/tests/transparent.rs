@@ -368,10 +368,13 @@ fn compact_blocks_advance_every_tree_from_the_given_sizes() {
         (counts[0], counts[1], counts[2])
     );
     assert_fields_are_on_chain(&raw, &compact);
+}
 
-    // Ironwood, from the refund block the receiver tests use.
-    let refund = receiver::RefundBlock::new(9);
-    let raw = refund.bytes();
+#[test]
+fn compact_ironwood_blocks_advance_the_tree_and_leave_sizes_unchanged_on_overflow() {
+    let transactions = [ironwood_coinbase(9), ironwood_fixture()];
+    let (raw, hash) = block(&transactions, 0);
+    let raw = hex::decode(raw).unwrap();
     let block = FetchedBlock::from_exact_bytes(&raw).unwrap();
     let mut counts = [5, 6, 7];
     let compact = block.compact(9, &mut counts).unwrap();
@@ -385,12 +388,11 @@ fn compact_blocks_advance_every_tree_from_the_given_sizes() {
     assert_eq!(compact.ironwood_tree_size, counts[2]);
     assert_fields_are_on_chain(&raw, &compact);
     assert_eq!(compact.time, block.time() as u32);
-    assert_eq!(
-        (compact.height, compact.hash, compact.prev_hash),
-        (9, refund.hash(), block.parent())
-    );
+    assert_eq!(compact.height, 9);
+    assert_eq!(zakura_server_chain::hash::display(&compact.hash), hash);
+    assert_eq!(compact.prev_hash, block.parent());
 
-    // A tree that would overflow in the refund, after the coinbase has already
+    // A tree that would overflow in the second transaction, after the coinbase has already
     // added to it, fails the block and leaves every size where it was.
     let mut full = [5, 6, u32::MAX - ironwood[0] as u32];
     assert!(block.compact(9, &mut full).is_err());
