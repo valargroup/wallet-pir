@@ -16,8 +16,21 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_publication_advances_with_a_pending_commit_and_survives_restart() {
+    // Ordinary correctness uses the small reference profile. The explicit native
+    // qualification builds and transfers hundreds of MiB of public matrices;
+    // its cold publication cost is separate from wallet request latency.
+    let native_qualification = cfg!(all(
+        feature = "native-reinspiring",
+        feature = "qualification-tests"
+    ));
+    assert!(
+        !cfg!(feature = "native-reinspiring") || native_qualification,
+        "native publication recovery requires the qualification-tests feature"
+    );
+    let deadline = Duration::from_secs(if native_qualification { 180 } else { 30 });
     let phase = std::cell::Cell::new("starting listeners");
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let started = std::time::Instant::now();
+    tokio::time::timeout(deadline, async {
         let root = tempfile::tempdir().unwrap();
         let reject_commit = Arc::new(AtomicBool::new(false));
         let (_listeners, groups) = workers(root.path(), 2, reject_commit.clone()).await;
@@ -47,6 +60,7 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
             .publish(&journal, 3428143, "01".repeat(32))
             .await
             .unwrap();
+        eprintln!("initial encrypted publication: {:?}", started.elapsed());
         // Keep one real commit unacknowledged while its healthy peer publishes
         // again. This bridges the small decision-delivery tests to real worker
         // preparation, publication selection and encrypted wallet answers.
@@ -66,6 +80,7 @@ async fn encrypted_publication_advances_with_a_pending_commit_and_survives_resta
             .await
             .unwrap();
         assert_eq!(read_state().pending_commits, pending);
+        eprintln!("appended encrypted publication: {:?}", started.elapsed());
         phase.set("querying the new publication");
         let mut current = EnhancePirClient::connect(&serving.origin).await.unwrap();
         assert_eq!(
