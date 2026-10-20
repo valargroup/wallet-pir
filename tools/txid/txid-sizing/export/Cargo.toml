@@ -20,9 +20,8 @@ serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 sha2 = "0.10"
 thiserror = "2"
-# Transaction and block reads through the server adapter, at the revision the
-# services pin.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
+# Transaction and block reads through the services' local server adapter.
+zakura-server-chain = { path = "../../../../src/shared/pir-chain", default-features = false, features = ["transparent"] }
 
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
@@ -35,7 +34,7 @@ toml = "0.8.23"
 [dev-dependencies]
 toml = "0.8.23"
 # Raw synthetic blocks for the shared extractor's tests.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent", "testing"] }
+zakura-server-chain = { path = "../../../../src/shared/pir-chain", default-features = false, features = ["transparent", "testing"] }
 
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent", "testing"] }
 

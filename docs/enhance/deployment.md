@@ -30,8 +30,8 @@ re-ingested. Never open v6 controller or worker state with the v7 binary.
 
 ## Node RPC policy
 
-The current source reads the node through wallet-libraries' server-only
-`zakura-server-chain` adapter. Enhance and Status read their RPC cookie when the
+The current source reads the node through the server-only
+`zakura-server-chain` adapter (`src/shared/pir-chain`). Enhance and Status read their RPC cookie when the
 client is constructed and report HTTP 401 as an invalid cookie. Each request has
 a 120-second total deadline, including connection establishment and reading the
 body, with no separate connection timeout. Each whole response, including a
@@ -44,7 +44,7 @@ and artifact receipt.
 ## Build and local validation
 
 ```sh
-cargo build --locked --release -p enhance-publisher -p enhance-pir-client -p enhance-pir-load-test --bins
+cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help
 python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
@@ -338,30 +338,15 @@ Its next publication serves the old records again. Keep the preserved directory
 until the repaired publication has been checked; it is the only copy of the
 pre-rebuild journal.
 
-## Direct SSH rollout and rollback
+## Deployment and qualification
 
-The September 24 rollout builds with Rust 1.91, locked dependencies,
-`RUSTFLAGS="-Dwarnings -C target-cpu=x86-64-v3"` and `CFLAGS/CXXFLAGS=-mpclmul`.
-One checked server binary is copied to all hosts. CI waiting is intentionally
-skipped; native tests and the external wallet harness run directly on Linux.
+The unified publisher and Enhance query roles use the locked deployment tool
+and retained transaction journals described in [Publisher operations](../publisher.md).
+The former v6/v7 SSH rollout and focused v7 assessment are retired. Do not
+restore standalone coordinator units or qualify the current native fleet using
+those older workloads. Keep retained raw evidence and binaries needed by a
+saved rollback transaction.
 
-Existing systemd units are retained. `90-v7.conf` overrides `ExecStart` on
-`enhance-pir-coordinator.service` and `enhance-pir-worker.service`; the worker
-override also grants write access to the new worker directory. Old unit files,
-drop-ins and binary checksums are saved under `/srv/enhance-pir-v7/rollback` on
-each host. The coordinator listens on loopback port 8080 for operator routes
-only; Caddy sends wallet routes on the existing public origin to query ingress. Workers listen on their private addresses at port 8091.
-
-To roll back this layout, stop the coordinator, stop both workers, move only the
-`90-v7.conf` overrides out of their `.service.d` directories, reload systemd,
-start both preserved v6 workers and then the v6 coordinator. Verify the public
-v6 manifest and exact-answer oracle. Restore matching v6 clients if any are in
-use. Do not delete or reinterpret v7 state. To return to v7, stop the v6 services,
-restore the v7 overrides, reload, start both v7 workers and then the coordinator.
-
-The isolated workload uses separate `qualification-worker` directories and an
-`enhance-v7-qualification` unit on loopback ports 8280 (coordinator operator
-routes) and 8281 (wallet routes through its in-process query ingress). Stop it before changing
-worker state back to canonical serving. Preserve its samples, including memory
-pressure and failures. A focused 30-minute run never grants the six-hour
-hardware qualification or permission to increase placement/admission limits.
+Use the current native wallet and encrypted-answer checks, independent live
+oracles, and host resource observations. A focused run does not replace the
+six-hour hardware qualification or permit higher placement/admission limits.

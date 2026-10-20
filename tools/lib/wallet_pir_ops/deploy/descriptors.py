@@ -87,6 +87,9 @@ class Role:
     # Explicit product opt-in: recognized old launch overlays may include their
     # writable state paths when the complete role replaces both directives.
     adopt_command_write_paths: bool = False
+    # An interpreter/credential loader that execs the real service executable.
+    # Every prefix file is pinned; only the following executable may change.
+    launcher: tuple = ()
 
     def render(self, settings, release, unit=None):
         """The product adapter's `RenderedRole` for one instance.
@@ -230,10 +233,17 @@ def load_descriptors(path, _parents=()):
             adopt_paths = spec.get('adopt_command_write_paths', False)
             require(type(adopt_paths) is bool and (not adopt_paths or mode == 'role'),
                     '%s.%s: command/path adoption is boolean, true only for a rendered role' % (name, role_name))
+            launcher = spec.get('launcher', [])
+            require(isinstance(launcher, list) and len(launcher) <= 4 and (not launcher or mode == 'exec-drop-in')
+                    and all(isinstance(p, dict) and set(p) == {'path', 'sha256'}
+                            and isinstance(p['path'], str) and PLAIN_PATH.fullmatch(p['path'])
+                            and isinstance(p['sha256'], str) and re.fullmatch('[a-f0-9]{64}', p['sha256'])
+                            for p in launcher), 'launcher requires pinned absolute paths on an exec-drop-in role')
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
                                     tuple(spec.get('adoptable_drop_ins', ())), owns_unit or mode == 'role',
-                                    tuple(duties), renderer, optional, shared_lifecycle, guard, binary, adopt_paths)
+                                    tuple(duties), renderer, optional, shared_lifecycle, guard, binary, adopt_paths,
+                                    tuple((p['path'], p['sha256']) for p in launcher))
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)

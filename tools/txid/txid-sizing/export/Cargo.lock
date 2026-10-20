@@ -2558,7 +2558,6 @@ dependencies = [
 [[package]]
 name = "zakura-server-chain"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=f48b62b80ec7d9d7fb7893401435a24b189b8ec2#f48b62b80ec7d9d7fb7893401435a24b189b8ec2"
 dependencies = [
  "hex",
  "serde",

@@ -92,6 +92,14 @@ def worker_settings(listen):
             'matvec_backend': 'cpu', 'credentials': [TOKEN]}
 
 
+def status_settings(role):
+    return dict(network_hex='08' * 32, state_dir='/var/lib/status-pir-' + role + '-native',
+                listen='127.0.0.1:' + ('8481' if role == 'worker' else '8482'),
+                artifact_origin='http://127.0.0.1:' + ('8495' if role == 'worker' else '8481'),
+                worker_origin='http://127.0.0.1:8481',
+                **({'query_listen': '127.0.0.1:8484'} if role == 'router' else {}))
+
+
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
     'ssh': {'mode': 'config'},
@@ -115,7 +123,7 @@ INVENTORY = {
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}', '{transaction}']},
         },
         'status': {
-            'roles': {'worker': [{'host': 'status-01'}], 'router': [{'host': 'status-01'}]},
+            'roles': {role: [{'host': 'status-01', 'settings': status_settings(role)}] for role in ('worker', 'router')},
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}']},
         },
         'receiver': {
@@ -193,11 +201,12 @@ class Fleet(unittest.TestCase):
         service = SERVICES['status']
         placements = [('status-01', 'worker'), ('status-01', 'router')]
         for host, role in placements:
-            text = units.render(service.roles[role].template.read_text(), {'RELEASE': STATUS_LEGACY})
+            rendered = service.roles[role].render(status_settings(role), STATUS_LEGACY)
+            text = rendered.unit
             for old, new in (live_edits or {}).get(role, []):
                 self.assertIn(old, text)
                 text = text.replace(old, new)
-            files = {STATUS_LEGACY + '/pir-query-server': STATUS_QUERY_OLD}
+            files = {STATUS_LEGACY + '/pir-query-server': STATUS_QUERY_OLD, **rendered.files}
             self.fake.install(host, service.roles[role].unit, text, (), files)
         deployer = self.deployer('status', only=list(only))
         deployer.capture_baseline()
@@ -551,6 +560,7 @@ class DeployTests(Fleet):
     def test_exact_check_failure_rolls_everything_back(self):
         deployer = self.enhance_fleet()
         self.fake.exact_result = (1, 'answer mismatch at row 17')
+        self.fake.product_check = lambda host, argv: (0, 'configuration accepted')
         with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(self.restarts(), ENHANCE + list(reversed(ENHANCE)))
@@ -762,8 +772,8 @@ class StatusTests(Fleet):
         sha = sha256(STATUS_QUERY_NEW)
         journal = deployer.deploy(sha, self.status_query_binary, allow_drift=True)
         self.assertEqual(journal.status, 'committed')
-        expected = units.render((STATUS_DEPLOY / 'status-worker.service.in').read_text(),
-                                {'RELEASE': '/opt/status-pir/releases/' + sha})
+        expected = SERVICES['status'].roles['worker'].render(
+            status_settings('worker'), '/opt/status-pir/releases/' + sha).unit
         self.assertEqual(self.fake.host('status-01').files['/etc/systemd/system/status-worker.service'].decode(), expected)
         self.assertIn('/opt/status-pir/releases/%s/pir-query-server --config /etc/status-pir/worker.json' % sha, expected)
         self.assertEqual(self.restarts(), [('status-01', 'status-worker.service'), ('status-01', 'status-router.service')])
@@ -779,9 +789,23 @@ class StatusTests(Fleet):
         deployer = self.deployer('status', only=['worker', 'router'])
         deployer.capture_baseline()
         plans, problems = deployer.assess(sha256(STATUS_QUERY_NEW), self.status_query_binary)
-        # The drop-in stays and still applies over the rendered unit: no drift.
-        self.assertEqual(plans[0].drift, [])
-        self.assertEqual(problems, [])
+        # A complete rendered role refuses an overlay that would silently change its budget.
+        self.assertTrue(any('owns its whole unit' in problem for problem in problems))
+        self.assertEqual(self.fake.log, [])
+
+    def test_upgrade_restores_absent_configuration_files_on_rollback(self):
+        deployer = self.status_fleet()
+        for role in ('worker', 'router'):
+            self.fake.host('status-01').files.pop('/etc/status-pir/' + role + '.json')
+        deployer.capture_baseline()
+        self.fake.log.clear()
+        journal = deployer.deploy(sha256(STATUS_QUERY_NEW), self.status_query_binary)
+        self.assertEqual(journal.status, 'committed')
+        self.assertTrue(all('/etc/status-pir/' + role + '.json' in self.fake.host('status-01').files
+                            for role in ('worker', 'router')))
+        deployer.rollback()
+        self.assertTrue(all('/etc/status-pir/' + role + '.json' not in self.fake.host('status-01').files
+                            for role in ('worker', 'router')))
 
     def test_status_roles_deploy_together_without_a_standalone_controller(self):
         deployer = self.status_fleet()

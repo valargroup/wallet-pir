@@ -137,7 +137,7 @@ Storage ownership, query coordinates and serving placement are separate:
 ## Record metadata and fees
 
 The coordinator derives each record's metadata from the canonical block, which it
-reads through wallet-libraries' server-only chain adapters (`zakura-server-chain`):
+reads through the server-only chain adapters (`zakura-server-chain`, `src/shared/pir-chain`):
 they decode blocks and transactions, resolve spent outputs and compute fees, and the
 coordinator maps their results onto records. Every
 Ironwood action of a transaction carries the same expiry, transparent input and

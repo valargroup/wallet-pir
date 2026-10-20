@@ -90,15 +90,15 @@ its exact completion receipt or complete coordinator quiescence.
 
 ## Node RPC policy
 
-The JSON-RPC path uses wallet-libraries' server-only `zakura-server-chain`
-adapter. It reads the RPC cookie when constructed, maps HTTP 401 to an invalid
+The JSON-RPC path uses the server-only `zakura-server-chain` adapter
+(`src/shared/pir-chain`). It reads the RPC cookie when constructed, maps HTTP 401 to an invalid
 cookie, and allows 120 seconds for the whole request, including connecting and
 reading the body. There is no separate connection timeout. The whole response,
 including a batch, is limited to 64 MiB with or without Content-Length. Valid
 large historical-transaction batches can exceed this cap and fail; there is no
 automatic retry, splitting or endpoint fallback. Valid batch replies are matched
 by integer ID and returned in request order. Chain interpretation, canonical
-checks and the direct RocksDB reader remain in the library's chain adapter.
+checks and the direct RocksDB reader remain in that chain adapter.
 These source policies do not identify the release currently deployed.
 
 ## Target configuration

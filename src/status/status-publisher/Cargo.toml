@@ -2,17 +2,14 @@
 name = "status-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Status PIR ingestion, publication and the status-pir application"
+description = "Status PIR ingestion, publication hosted by pir-publisher"
 publish = false
+
+autobins = false
 
 [lib]
 name = "status_publisher"
 path = "src/lib.rs"
-
-[[bin]]
-name = "status-pir"
-path = "src/bin/status.rs"
-required-features = ["cli"]
 
 [features]
 default = []
@@ -39,7 +36,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["status", "rpc"] }
+zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["status", "rpc"] }
 
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["status"], optional = true }
 # Wallet client for the host's Status regressions. Production builds leave it off.

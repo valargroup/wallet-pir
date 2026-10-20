@@ -7,7 +7,10 @@ beside that product's query server, and `src/shared` holds libraries only.
 Operations and standalone scripts live under `tools/<product>/`;
 shared automation lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. Docs and
 evidence live under `docs/<product>/` and `evidence/<product>/`.
-Preserve existing Cargo package and binary names.
+Preserve existing Cargo package names. Enhance, Status and Transparent publisher
+and query-server crates are libraries only. Run their services through
+`pir-publisher` and `pir-query-server`; maintenance uses `pir-publisher`
+subcommands, and product features are selected independently.
 
 ## Toolchain, build and run
 
@@ -33,7 +36,7 @@ Preserve existing Cargo package and binary names.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:
-  `cargo run --locked --profile release-fast -p enhance-publisher --bin enhance-pir-server -- --help`,
+  `cargo run --locked --profile release-fast -p pir-publisher --features enhance -- --help`,
   `cargo run --locked --profile release-fast -p pir-query-server --features enhance,native-reinspiring -- --help`,
   and
   `cargo run --locked --profile release-fast -p enhance-pir-client --bin enhance-pir-cli -- --help`.

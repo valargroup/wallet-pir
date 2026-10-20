@@ -110,7 +110,7 @@ pub async fn validate_distributed(
         Some(path) => path,
         None => std::env::current_exe()?
             .parent()
-            .ok_or("status-pir has no parent directory")?
+            .ok_or("pir-publisher has no parent directory")?
             .join("pir-query-server"),
     };
     require(

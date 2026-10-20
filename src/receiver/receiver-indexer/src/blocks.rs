@@ -1,4 +1,4 @@
-//! The canonical chain, read through wallet-libraries' server chain adapters, as the
+//! The canonical chain, read through the shared server chain adapters, as the
 //! directory store's blocks. The adapters own the node client, block decoding,
 //! note positions and zero-OVK recovery; this module maps their results.
 use receiver_store::{Checkpoint, IndexedBlock};

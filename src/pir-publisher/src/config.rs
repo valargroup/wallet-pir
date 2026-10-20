@@ -31,9 +31,12 @@ pub struct Config {
     pub enhance: Option<Product<enhance_publisher::service::Config>>,
     #[cfg(feature = "status")]
     pub status: Option<Product<status_publisher::service::Config>>,
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
     pub transparent_history: Option<Product<transparent_publisher::history::controller::Config>>,
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
+    pub transparent_filters:
+        Option<Product<transparent_publisher::history::filter_service::Config>>,
+    #[cfg(feature = "transparent-detail")]
     pub transaction_details: Option<Product<transparent_publisher::tx_detail::service::Config>>,
     #[cfg(feature = "receiver")]
     pub receiver: Option<Product<receiver_indexer::service::Config>>,
@@ -82,7 +85,8 @@ impl Layout {
         not(any(
             feature = "enhance",
             feature = "status",
-            feature = "transparent",
+            feature = "transparent-history",
+            feature = "transparent-detail",
             feature = "receiver"
         )),
         allow(dead_code)
@@ -103,7 +107,8 @@ impl Layout {
     #[cfg(any(
         feature = "enhance",
         feature = "status",
-        feature = "transparent",
+        feature = "transparent-history",
+        feature = "transparent-detail",
         feature = "receiver"
     ))]
     fn probe(
@@ -124,7 +129,8 @@ impl Layout {
     not(any(
         feature = "enhance",
         feature = "status",
-        feature = "transparent",
+        feature = "transparent-history",
+        feature = "transparent-detail",
         feature = "receiver"
     )),
     allow(dead_code)
@@ -177,7 +183,7 @@ impl Config {
                 "status",
             );
         }
-        #[cfg(feature = "transparent")]
+        #[cfg(feature = "transparent-history")]
         if let Some(c) = active(&self.transparent_history)? {
             c.validate()?;
             if c.distribute_prepared && !c.ship_runtimes {
@@ -196,7 +202,14 @@ impl Config {
                 layout.probe("transparent_history", c.listen, "/v2/shards/init", "status");
             }
         }
-        #[cfg(feature = "transparent")]
+        #[cfg(feature = "transparent-history")]
+        if let Some(c) = active(&self.transparent_filters)? {
+            c.validate()?;
+            layout.listener("transparent_filters", c.listen)?;
+            layout.root("transparent_filters", &c.data_dir)?;
+            layout.probe("transparent_filters", c.listen, "/v1/health", "filter");
+        }
+        #[cfg(feature = "transparent-detail")]
         if let Some(c) = active(&self.transaction_details)? {
             c.validate()?;
             layout.listener("transaction_details", c.status_listen)?;
@@ -229,7 +242,8 @@ mod tests {
     #[cfg(all(
         feature = "enhance",
         feature = "status",
-        feature = "transparent",
+        feature = "transparent-history",
+        feature = "transparent-detail",
         feature = "receiver"
     ))]
     #[test]
@@ -259,8 +273,8 @@ mod tests {
         for (product, compiled) in [
             ("enhance", cfg!(feature = "enhance")),
             ("status", cfg!(feature = "status")),
-            ("transparent_history", cfg!(feature = "transparent")),
-            ("transaction_details", cfg!(feature = "transparent")),
+            ("transparent_history", cfg!(feature = "transparent-history")),
+            ("transaction_details", cfg!(feature = "transparent-detail")),
             ("receiver", cfg!(feature = "receiver")),
         ] {
             if compiled {
@@ -319,14 +333,49 @@ mod tests {
         )
         .is_err());
     }
-    #[cfg(not(feature = "transparent"))]
     #[test]
-    fn transparent_sections_require_the_compiled_product() {
-        for section in ["transparent_history", "transaction_details"] {
-            let raw = format!(
-                r#"{{"management_listen":"127.0.0.1:18080","{section}":{{"enabled":false}}}}"#
-            );
-            assert!(serde_json::from_str::<Config>(&raw).is_err(), "{section}");
+    fn uncompiled_sections_are_rejected_even_when_disabled() {
+        for (section, compiled) in [
+            ("transparent_history", cfg!(feature = "transparent-history")),
+            ("transaction_details", cfg!(feature = "transparent-detail")),
+            ("transparent_filters", cfg!(feature = "transparent-history")),
+        ] {
+            if !compiled {
+                let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", section:{"enabled":false}});
+                assert!(serde_json::from_value::<Config>(raw).is_err(), "{section}");
+            }
         }
+    }
+    #[cfg(feature = "transparent-detail")]
+    #[test]
+    fn replay_does_not_require_live_credentials_and_cannot_offer_http_authority() {
+        let mut settings = serde_json::json!({
+            "root":"/srv/display", "journal":"/srv/journal", "workers":"/etc/workers.json",
+            "mode":"replay", "poll_ms":500, "status_listen":"127.0.0.1:8099"
+        });
+        let config: transparent_publisher::tx_detail::service::Config =
+            serde_json::from_value(settings.clone()).unwrap();
+        config.validate().unwrap();
+        settings["http_only"] = serde_json::json!(true);
+        settings["ship_runtimes"] = serde_json::json!(true);
+        let config: transparent_publisher::tx_detail::service::Config =
+            serde_json::from_value(settings).unwrap();
+        assert!(config.validate().is_err());
+    }
+    #[cfg(feature = "transparent-history")]
+    #[test]
+    fn filter_and_history_publishers_cannot_write_the_same_state() {
+        let example: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tools/deploy/publisher/publisher.example.json"
+        ))
+        .unwrap();
+        let mut history = example["transparent_history"].clone();
+        history["settings"]["follow_journal"] = serde_json::json!(false);
+        let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", "transparent_history":history,
+        "transparent_filters":{"enabled":true,"settings":{
+            "data_dir":history["settings"]["data_dir"], "zakura_cookie":"/etc/node.cookie"
+        }}});
+        let config: Config = serde_json::from_value(raw).unwrap();
+        assert!(config.validate().is_err());
     }
 }

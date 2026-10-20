@@ -27,7 +27,7 @@ class PublisherRoleTests(unittest.TestCase):
         effective = units.effective([writer.unit])['Service']
         self.assertIn('/srv/history/journal', [p.strip('"') for p in effective['ReadWritePaths']])
         self.assertNotIn('/srv/history/journal', [p.strip('"') for p in effective['ReadOnlyPaths']])
-        self.assertFalse(json.loads(writer.files['/etc/history/controller.json'])['follow_journal'])
+        self.assertFalse(json.loads(writer.files['/etc/history/controller.json'])['transparent_history']['settings']['follow_journal'])
         self.assertEqual(effective['ProtectSystem'], 'strict')
         self.assertIn('/opt/transparent-publisher/credentials', [p.strip('"') for p in effective['ReadOnlyPaths']])
 
@@ -37,7 +37,7 @@ class PublisherRoleTests(unittest.TestCase):
         effective = units.effective([follower.unit])['Service']
         self.assertIn('/srv/history/journal', [p.strip('"') for p in effective['ReadOnlyPaths']])
         self.assertNotIn('/srv/history/journal', [p.strip('"') for p in effective['ReadWritePaths']])
-        self.assertTrue(json.loads(follower.files['/etc/history/controller.json'])['follow_journal'])
+        self.assertTrue(json.loads(follower.files['/etc/history/controller.json'])['transparent_history']['settings']['follow_journal'])
 
     def test_paths_and_mode_refuse_before_rendering(self):
         for bad in ('relative', '/', '/srv/../journal', '/srv/%n', '/srv/$STATE', '/srv/a\nExecStart=/bin/false'):
@@ -68,7 +68,10 @@ class PublisherRoleTests(unittest.TestCase):
         effective = units.effective([role.unit])['Service']
         self.assertEqual(effective['MemoryMax'], '7G')
         self.assertEqual(effective['EnvironmentFile'], ['/etc/pir/runtime.env'])
-        self.assertEqual(json.loads(role.files['/etc/history/controller.json']), config)
+        document = json.loads(role.files['/etc/history/controller.json'])
+        self.assertEqual(document['transparent_history']['settings'], config)
+        self.assertIs(document['transparent_history']['enabled'], True)
+        self.assertEqual(document['management_listen'], '127.0.0.1:18197')
 
     def test_continued_command_and_quoted_paths_render_without_leftover_arguments(self):
         template = '[Service]\nExecStart=/old \\\n --old\nReadWritePaths=/old \\\n "/old path"\nMemoryMax=7G\n'

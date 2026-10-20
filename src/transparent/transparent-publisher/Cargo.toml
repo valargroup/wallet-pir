@@ -3,33 +3,12 @@ name = "transparent-publisher"
 version = "0.1.0-rc.4"
 edition = "2021"
 description = "Transparent PIR publisher: ingest, history publication and transaction-detail publication"
-# Every binary is listed below; a stray src/bin file is not a new program.
+# Product publishing is hosted by pir-publisher; this crate is a library.
 autobins = false
 
 [lib]
 name = "transparent_publisher"
 path = "src/lib.rs"
-
-[[bin]]
-name = "shard-publish"
-path = "src/bin/shard-publish.rs"
-
-[[bin]]
-name = "transparent-event-ingest"
-required-features = ["rocksdb-reader"]
-path = "src/bin/event-ingest.rs"
-
-[[bin]]
-name = "transparent-publisher"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "txid-display-controller"
-path = "src/bin/txid-display-controller.rs"
-
-[[bin]]
-name = "transparent-publish-controller"
-path = "src/bin/transparent-publish-controller.rs"
 
 [features]
 default = []
@@ -73,10 +52,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-shared = { path = "../transparent-shared" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
-# reader, pinned to an exact wallet-libraries revision. The reader opens the
-# node's RocksDB directly: before deploying it, verify that the zakura-state
-# revision wallet-libraries pins matches the running node's database format.
-zakura-server-chain = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent", "rpc"] }
+# reader, from the shared chain reader. The reader opens the node's RocksDB
+# directly: before deploying it, verify that the zakura-state revision it pins
+# matches the running node's database format.
+zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["transparent", "rpc"] }
 
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }

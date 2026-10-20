@@ -542,7 +542,7 @@ class PlanTests(Base):
         self.assertEqual(plan['phases'], ['stage', 'workers', 'route', 'controller'])
         self.assertEqual(sorted(plan), ['files', 'hosts', 'phases', 'release', 'release_dir', 'request_sha256',
                                         'retires', 'schema', 'site', 'source_sha', 'templates', 'transient'])
-        self.assertEqual(sorted(files), ['config:archive', 'fleet.json', 'routes.caddy', 'unit:archive',
+        self.assertEqual(sorted(files), ['config:archive', 'fleet.json', 'publisher.json', 'routes.caddy', 'unit:archive',
                                          'unit:controller', 'withdrawn.caddy', 'workers.json'])
         self.assertEqual((plan['files']['config:archive']['host'], plan['files']['config:archive']['path'],
                           plan['files']['config:archive']['mode']),
@@ -595,13 +595,17 @@ class PlanTests(Base):
             'runtime_cache_max_bytes': self.request['units']['archive']['disk_cache_bytes']})
         for line in ('MemoryMax=4G', 'CPUQuota=200%', 'CPUWeight=20', 'Nice=10', 'ProtectSystem=strict'):
             self.assertIn('\n' + line + '\n', controller)
-        self.assertIn('--workers /opt/transparent-txid-display-k8/workers.json --mode replay-then-live '
-                      '--status-listen 127.0.0.1:8098', controller)
-        self.assertIn('--blocks-per-step 25 --step-interval-ms 2000', controller)
-        # `run` takes no seal flags: the bootstrapped root carries the rule.
+        config = json.loads(files['publisher.json'])
+        settings = config['transaction_details']['settings']
+        self.assertTrue(config['transaction_details']['enabled'])
+        self.assertEqual(settings['workers'], '/opt/transparent-txid-display-k8/workers.json')
+        self.assertEqual(settings['mode'], 'replay-then-live')
+        self.assertEqual(settings['status_listen'], '127.0.0.1:8098')
+        self.assertEqual(settings['blocks_per_step'], 25)
+        self.assertEqual(settings['step_interval_ms'], 2000)
+        self.assertEqual(settings['rpc_cookie'], '/root/.cache/zakura/.cookie')
         start = [line for line in controller.splitlines() if line.startswith('ExecStart=')][0]
-        self.assertTrue(start.endswith('--rpc-cookie /root/.cache/zakura/.cookie --blocks-per-step 25 '
-                                       '--step-interval-ms 2000'), start)
+        self.assertEqual(start, 'ExecStart=' + RELEASE_DIR + '/pir-publisher --config /opt/transparent-txid-display-k8/publisher.json')
         for flag in ('--geometry', '--n-', '--archive-target', '--recent-window', '--t-archive', '--k-recent'):
             self.assertNotIn(flag, start)
         # The node's RPC cookie under /root stays readable.
@@ -648,8 +652,8 @@ class PlanTests(Base):
                      '--property=CPUWeight=20', '--property=IOWeight=20', '--property=MemoryMax=12G',
                      '--property=Nice=10', '--property=RemainAfterExit=yes'):
             self.assertIn(item, ingest)
-        tail = ingest[ingest.index(RELEASE_DIR + '/transparent-event-ingest'):]
-        self.assertEqual(tail[1:], ['--state-dir', '/root/.cache/zakura', '--workers', '4', '--txid-display',
+        tail = ingest[ingest.index(RELEASE_DIR + '/pir-publisher'):]
+        self.assertEqual(tail[1:], ['ingest-events', '--state-dir', '/root/.cache/zakura', '--workers', '4', '--txid-display',
                                     '--start-height', '3289805', '--data-dir', '/srv/zakura/txid-display-poc/journal'])
         smoke = transient['ingest-smoke']
         self.assertIn('--wait', smoke)
@@ -659,18 +663,18 @@ class PlanTests(Base):
         # txid-display-controller's flags: DisplaySealParams plus the map window.
         seal = ['--geometry', 'txid-2k8', '--n-archive', '1', '--n-recent', '1', '--archive-target', '90000',
                 '--recent-window', '90000', '--reorg-margin', '100', '--max-archive-shards', '24']
-        controller = RELEASE_DIR + '/txid-display-controller'
+        controller = RELEASE_DIR + '/pir-publisher'
         plan_start = transient['plan-start']
         self.assertEqual(plan_start[plan_start.index(controller):], [
-            controller, 'plan-start', '--journal', '/srv/zakura/txid-display-poc/journal', '--archives', '15',
+            controller, 'detail', 'plan-start', '--journal', '/srv/zakura/txid-display-poc/journal', '--archives', '15',
             '--replay-seals', '4', *seal])
         bootstrap = transient['bootstrap']
         self.assertEqual(bootstrap[bootstrap.index(controller):], [
-            controller, 'bootstrap', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
+            controller, 'detail', 'bootstrap', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
             '/srv/zakura/txid-display-poc/journal', '--start', '{start}', '--through', '{through}', *seal])
         verify = transient['verify']
         self.assertEqual(verify[verify.index(controller):], [
-            controller, 'verify', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
+            controller, 'detail', 'verify', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
             '/srv/zakura/txid-display-poc/journal'])
         self.assertIn('getbestblockhash', (ROOT / P.RELEASE_FILES['txid-display-observe.py']).read_text())
         self.assertIn('--interval-ms', transient['observer'])
@@ -808,7 +812,7 @@ class StageTests(Base):
                     continue
                 self.assertIn([RELEASE_DIR + '/' + name, '--help'] if not name.endswith('.py')
                               else ['/usr/bin/python3', RELEASE_DIR + '/' + name, '--help'], self.fake.commands(host))
-        self.assertIsNone(self.fake.sha256('archive-03', RELEASE_DIR + '/txid-display-controller'))
+        self.assertIsNone(self.fake.sha256('archive-03', RELEASE_DIR + '/pir-publisher'))
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
         uploads = len([m for m in self.fake.mutations() if m[1] == 'upload'])
         poc = self.poc()

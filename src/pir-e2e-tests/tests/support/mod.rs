@@ -1,4 +1,4 @@
-//! Synthetic mixed transactions and a trusted-RPC test double, from wallet-libraries'
+//! Synthetic mixed transactions and a trusted-RPC test double, from the shared
 //! server chain fixtures, and the frozen Enhance records of the public fixture.
 //!
 //! Mixed transactions keep the public fixture's two Ironwood actions and

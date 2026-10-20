@@ -268,7 +268,7 @@ def receiver():
 
 def enhance():
     r = Rehearsal('enhance-external-worker')
-    binary = r.binary('enhance-pir-server')
+    binary = r.binary('pir-query-server')
     sha = sha256(binary)
     # The synthetic coordinator needs a replicated group: two external workers.
     listens = ['127.0.0.1:%d' % free_port() for _ in range(2)]
@@ -289,7 +289,7 @@ def enhance():
     groups = r.work / 'workers.json'
     groups.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': [
         {'name': 'w%d' % i, 'url': 'http://' + l} for i, l in enumerate(listens)]}]}))
-    exercise = r.run(binary, 'exercise', '--isolated-workers', '--profile', 'smoke', '--data-dir', r.work / 'controller',
+    exercise = r.run(r.binary('enhance-pir-exercise'), '--isolated-workers', '--profile', 'smoke', '--data-dir', r.work / 'controller',
                      '--worker-config', groups, '--listen', '127.0.0.1:%d' % free_port(), '--seconds', '120',
                      '--min-publications', '2', '--publication-interval', '20', '--concurrency', '1',
                      timeout=1800, check=False)
@@ -376,7 +376,7 @@ def history():
 def status_worker():
     r = Rehearsal('status-external-worker')
     binary = r.binary('pir-query-server')
-    publisher = r.binary('status-pir')
+    publisher = r.binary('pir-publisher')
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
@@ -397,7 +397,7 @@ def status_worker():
         if phase == 'publication-after-restart':
             r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
             r.wait('second restart', lambda: r.health('http://%s/control/identity' % listen))
-        validation = r.run(publisher, 'validate-distributed', '--entries', '32',
+        validation = r.run(publisher, 'status', 'validate-distributed', '--entries', '32',
                            '--state-dir', r.work / phase, '--existing-worker', 'http://%s' % listen,
                            '--artifact-listen', '127.0.0.1:%d' % artifact_port,
                            '--request-timeout-seconds', '120', timeout=1800, check=False)

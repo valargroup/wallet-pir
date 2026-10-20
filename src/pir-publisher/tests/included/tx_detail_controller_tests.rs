@@ -1950,6 +1950,7 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
     );
     let log: Log = Arc::default();
     let archive_unavailable = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let refuse_first_stage = Arc::new(std::sync::atomic::AtomicBool::new(true));
     struct Tasks(Vec<tokio::task::JoinHandle<()>>);
     impl Drop for Tasks {
         fn drop(&mut self) {
@@ -1967,6 +1968,7 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
             tokio::net::UnixListener::bind(temp.path().join(format!("{name}.sock"))).unwrap();
         let log = log.clone();
         let unavailable = archive_unavailable.clone();
+        let refuse_first_stage = refuse_first_stage.clone();
         tasks.0.push(tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -1993,8 +1995,11 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
                         .collect::<Vec<_>>());
                 }
                 let refuse = name == "archive"
-                    && observed["operation"] == "prepare"
-                    && unavailable.load(std::sync::atomic::Ordering::Acquire);
+                    && ((observed["operation"] == "prepare"
+                        && unavailable.load(std::sync::atomic::Ordering::Acquire))
+                        || (observed["operation"] == "stage"
+                            && refuse_first_stage
+                                .swap(false, std::sync::atomic::Ordering::AcqRel)));
                 log.lock().unwrap().push((name.into(), observed));
                 if refuse {
                     // A real control-transport EOF: no fabricated readiness or
@@ -2084,12 +2089,23 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
             {
                 break;
             }
-            let event = controller.receiver.recv().await.unwrap();
-            controller.background(event);
+            // Staging can fail transiently. Wake at its retry deadline even
+            // when no build or stage job remains to send another event.
+            let wake_at = controller
+                .queue
+                .iter()
+                .filter_map(|job| job.retry_at)
+                .min()
+                .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
+            tokio::select! {
+                event = controller.receiver.recv() => controller.background(event.unwrap()),
+                () = tokio::time::sleep_until(wake_at.into()) => {},
+            }
         }
     })
     .await
-    .unwrap();
+    .expect("ordered seals did not finish building and staging");
+    assert!(!refuse_first_stage.load(std::sync::atomic::Ordering::Acquire));
     let recent_prepares = || {
         log.lock()
             .unwrap()

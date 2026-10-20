@@ -159,21 +159,18 @@ def align_filter_origin(initial):
     path=Path('/etc/systemd/system/transparent-filter-server.service')
     text=path.read_text()
     lines=text.splitlines()
-    # Check with the executable the unit runs: hosts installed before the
-    # rename still run the legacy name.
-    executable=next(shlex.split(line.removeprefix('ExecStart='))[0] for line in lines if line.startswith('ExecStart='))
-    execute([executable,'--check-shard-dir','--shard-dir',initial,'--zakura-cookie','/root/.cache/zakura/.cookie'])
-    for i,line in enumerate(lines):
-        if line.startswith('ExecStart='):
-            args=shlex.split(line.removeprefix('ExecStart='))
-            index=args.index('--shard-dir')+1
-            args[index]=str(initial)
-            lines[i]='ExecStart='+shlex.join(args)
-    updated='\n'.join(lines)+'\n'
-    if updated!=text:
-        shutil.copy2(path,ROOT/'filter-unit-before-alignment')
-        path.write_text(updated)
-        execute(['systemctl','daemon-reload'])
+    args=next(shlex.split(line.removeprefix('ExecStart=')) for line in lines if line.startswith('ExecStart='))
+    if len(args)!=3 or args[1]!='--config' or Path(args[0]).name!='pir-publisher':
+        raise RuntimeError('filter service must use pir-publisher with its installed host configuration')
+    executable,_,config_path=args
+    execute([executable,'verify-filters','--shard-dir',initial])
+    config_path=Path(config_path)
+    config=json.loads(config_path.read_text())
+    settings=config['transparent_filters']['settings']
+    if settings.get('shard_dir')!=str(initial):
+        atomic_bytes(ROOT/'filter-config-before-alignment',config_path.read_bytes())
+        settings['shard_dir']=str(initial)
+        atomic_bytes(config_path,(json.dumps(config,indent=2)+'\n').encode())
         execute(['systemctl','restart','transparent-filter-server'])
 
 
@@ -359,7 +356,7 @@ async def rollback(fleet, saved):
     subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
     # A binary rollback must never resurrect an orphaned publication. Validate
     # the static predecessor against the node before changing routing or units.
-    initial=Path(json.loads((saved/'controller.json').read_text())['initial_publication'])
+    initial=Path(json.loads((saved/'controller.json').read_text())['transparent_history']['settings']['initial_publication'])
     end=json.loads((initial/'shards.json').read_text())['shards'][-1]
     import base64
     cookie=Path('/root/.cache/zakura/.cookie').read_text().strip()
@@ -450,7 +447,8 @@ async def main():
         if args.range_profile!='zcash-transparent-range-v1':
             config['range_profile']=args.range_profile
         from tools.transparent.lib.roles import publisher
-        rendered = publisher(config, state_dir=ROOT/'state', config_path=ROOT/'controller.json')
+        rendered = publisher(config, state_dir=ROOT/'state', config_path=ROOT/'controller.json',
+                             executable=str(ROOT/'releases'/args.source_sha/'pir-publisher'))
         service = rendered.unit
         atomic_bytes(ROOT/'controller.json', rendered.files[str(ROOT/'controller.json')].encode())
     fleet=LIVE.Fleet(json.loads((ROOT/'fleet.json').read_text()))
@@ -487,10 +485,13 @@ async def main():
             restore_previous()
             subprocess.run(['systemctl','start','transparent-publish-controller'],check=False,**inherited_lock.options())
             raise
-        for name in ['transparent-publish-controller','shard-assign']:
-            shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')
-            os.chmod('/usr/local/bin/'+name+'.next',0o755)
-            os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
+        release_dir=ROOT/'releases'/args.source_sha
+        release_dir.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(args.artifacts/'pir-publisher',release_dir/'pir-publisher')
+        os.chmod(release_dir/'pir-publisher',0o755)
+        shutil.copy2(args.artifacts/'shard-assign','/usr/local/bin/shard-assign.next')
+        os.chmod('/usr/local/bin/shard-assign.next',0o755)
+        os.replace('/usr/local/bin/shard-assign.next','/usr/local/bin/shard-assign')
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
         shutil.copy2(SCRIPT/'transparent-fleet-inventory.py',ROOT/'transparent-fleet-inventory.py')
         args.publication_root.mkdir(parents=True,exist_ok=True)
@@ -520,9 +521,10 @@ async def main():
             raise
     else:
         config=json.loads((ROOT/'controller.json').read_text())
-        if config['source_sha']!=args.source_sha:
+        settings=config['transparent_history']['settings']
+        if settings['source_sha']!=args.source_sha:
             raise RuntimeError('activation must name the shadow-tested source SHA')
-        config['shadow']=False
+        settings['shadow']=False
         LIVE.atomic_json(ROOT/'controller.json',config)
         execute(['systemctl','restart','transparent-publish-controller'])
         execute(['systemctl','enable','transparent-replica-reconciler'])

@@ -14,6 +14,8 @@ members = [
     "src/shared/pir-pipeline",
     "src/shared/pir-sync-manager",
     "src/shared/pir-serving",
+    # Zakura node reads and chain interpretation for the publishers and tools.
+    "src/shared/pir-chain",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-query-server",
     "src/status/status-query-server",

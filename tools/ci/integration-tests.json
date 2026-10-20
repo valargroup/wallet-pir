@@ -1,10 +1,4 @@
 {
-  "enhance-publisher": {
-    "fast": [
-      "publisher_cli"
-    ],
-    "full": []
-  },
   "enhance-query-server": {
     "fast": [],
     "full": [
@@ -78,7 +72,8 @@
   },
   "pir-publisher": {
     "fast": [
-      "lifecycle"
+      "lifecycle",
+      "commands"
     ],
     "full": []
   },
@@ -105,6 +100,17 @@
       "transparent_host_processes",
       "transparent_provider_installation",
       "unified_http_sync_campaign"
+    ]
+  },
+  "zakura-server-chain": {
+    "fast": [
+      "enhance",
+      "receiver",
+      "status",
+      "transparent"
+    ],
+    "full": [
+      "state"
     ]
   }
 }

@@ -9,8 +9,10 @@ autotests = false
 [features]
 default = []
 enhance = ["dep:enhance-publisher"]
-status = ["dep:status-publisher"]
-transparent = ["dep:transparent-publisher"]
+status = ["dep:status-publisher", "status-publisher/cli"]
+transparent-history = ["dep:transparent-publisher"]
+transparent-detail = ["dep:transparent-publisher"]
+rocksdb-reader = ["transparent-history", "transparent-publisher/rocksdb-reader"]
 receiver = ["dep:receiver-indexer"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
 status-tests = ["status", "status-publisher/fixtures"]
@@ -36,3 +38,7 @@ tempfile = "3"
 [[test]]
 name = "lifecycle"
 path = "tests/lifecycle.rs"
+
+[[test]]
+name = "commands"
+path = "tests/commands.rs"

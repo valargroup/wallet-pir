@@ -213,7 +213,7 @@ concurrency:
 env:
   UNIT: transparent-event-ingest
   DATA_DIR: /srv/zakura/transparent-event-data-v2
-  BIN: /usr/local/bin/transparent-event-ingest
+  BIN: /opt/wallet-pir-tools/releases/${{ github.sha }}/pir-publisher
   SHARD_DIR: /srv/zakura/transparent-shards
 
 jobs:
@@ -295,8 +295,8 @@ jobs:
           CFLAGS: -mpclmul
         run: |
           set -euo pipefail
-          cargo build --locked --release -p transparent-publisher --features rocksdb-reader --bin transparent-event-ingest
-          sha256sum target/release/transparent-event-ingest
+          cargo build --locked --release -p pir-publisher --features rocksdb-reader --bin pir-publisher
+          sha256sum target/release/pir-publisher
 
       - name: Build and run the shard census
         if: inputs.action == 'census'
@@ -430,7 +430,7 @@ jobs:
           # publish yield: lowest CPU priority, idle IO class.
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-publisher --bin shard-publish
+          "${NICE[@]}" cargo build --locked --release -p pir-publisher --features transparent-history --bin pir-publisher
           OUT="${SHARD_DIR_INPUT:-$SHARD_DIR}"
           # A shard set is a few gigabytes, and a second one beside it is a
           # second few. Say what is free before writing rather than after.
@@ -438,7 +438,7 @@ jobs:
           # Read-only against the journal; writes only its own output directory.
           # Publication is immutable, so re-running verifies rather than
           # rewrites and a changed byte is a hard error.
-          sudo "${NICE[@]}" ./target/release/shard-publish \
+          sudo "${NICE[@]}" ./target/release/pir-publisher publish-history \
             --data-dir "${DATA_DIR_INPUT:-$DATA_DIR}" \
             --output "$OUT" \
             --zakura-cookie /root/.cache/zakura/.cookie 2>&1 | tee publish.txt
@@ -526,10 +526,11 @@ jobs:
           fi
           REMOTE
 
-          "${SCP[@]}" target/release/transparent-event-ingest "$USER_NAME@$HOST:/tmp/transparent-event-ingest.$SHA"
-          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "/tmp/transparent-event-ingest.$SHA" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" <<'REMOTE'
+          "${SCP[@]}" target/release/pir-publisher "$USER_NAME@$HOST:/tmp/pir-publisher.$SHA"
+          "${SSH[@]}" "$USER_NAME@$HOST" bash -s -- "/tmp/pir-publisher.$SHA" "$BIN" "${DATA_DIR_INPUT:-$DATA_DIR}" <<'REMOTE'
           set -euo pipefail
           staged="$1"; target="$2"; data_dir="$3"
+          sudo install -d -m 0755 "$(dirname "$target")"
           sudo install -m 0755 "$staged" "$target"
           rm -f "$staged"
           sudo mkdir -p "$data_dir"
@@ -614,7 +615,7 @@ jobs:
             --property=MemoryMax=12G \
             --property=Nice=10 \
             --setenv=RUST_LOG=info \
-            "$bin" "${args[@]}"
+            "$bin" ingest-events "${args[@]}"
 
           sleep 5
           systemctl status "$unit" --no-pager --lines=20 || true

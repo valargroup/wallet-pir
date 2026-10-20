@@ -989,17 +989,16 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         "listen": listen.to_string(), "source_sha": std::env::var("WALLET_PIR_SOURCE_SHA").unwrap_or_default(),
         "follow_journal": true, "ship_runtimes": true, "distribute_prepared": true,
     });
-    std::fs::write(out.join("controller-config.json"), config.to_string()).unwrap();
+    std::fs::write(out.join("controller-config.json"), serde_json::json!({"management_listen":free_port().to_string(),"transparent_history":{"enabled":true,"settings":config}}).to_string()).unwrap();
     let controller_log = std::fs::File::create(out.join("controller.log")).unwrap();
-    let mut controller =
-        tokio::process::Command::new(env!("CARGO_BIN_EXE_transparent-publish-controller-test"))
-            .arg("--config")
-            .arg(out.join("controller-config.json"))
-            .kill_on_drop(true)
-            .stdout(Stdio::null())
-            .stderr(controller_log)
-            .spawn()
-            .unwrap();
+    let mut controller = tokio::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher-test"))
+        .arg("--config")
+        .arg(out.join("controller-config.json"))
+        .kill_on_drop(true)
+        .stdout(Stdio::null())
+        .stderr(controller_log)
+        .spawn()
+        .unwrap();
     let controller_pid = controller.id().unwrap();
 
     let openssl = std::process::Command::new("openssl")

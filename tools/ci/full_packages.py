@@ -34,6 +34,16 @@ def inventory(packages=None, groups=None):
 # The Transparent family also runs the publisher host and its end-to-end tests.
 TRANSPARENT_HOSTS = ['pir-publisher', 'pir-e2e-tests']
 
+# The chain reader's explicit test selections, each with its library tests:
+# decoding and fixtures without a runtime, RPC reads of every product against the
+# HTTP node double, and the RocksDB reader. One unified run would hide the first.
+CHAIN_READER = 'zakura-server-chain'
+CHAIN_READER_SELECTIONS = (
+    ('transparent', 'enhance', 'status', 'receiver', 'testing'),
+    ('testing-node', 'transparent', 'enhance', 'status', 'receiver'),
+    ('testing-node', 'rocksdb'),
+)
+
 
 def qualification_features(names):
     """Enable declared test campaigns only in explicit full qualification."""
@@ -53,7 +63,7 @@ def commands(group, groups, lint=False, compile_only=False):
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     features = {
         'enhance': NATIVE + [
-            'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent',
+            'pir-publisher/enhance', 'pir-publisher/status', 'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',
             'pir-publisher/receiver', 'pir-publisher/native-reinspiring',
             'pir-publisher/status-tests', 'pir-e2e-tests/enhance-tests',
             'pir-e2e-tests/native-reinspiring',
@@ -65,9 +75,15 @@ def commands(group, groups, lint=False, compile_only=False):
     }.get(group, []) + qualification_features([*names, *(TRANSPARENT_HOSTS if group == 'transparent' else [])])
     if group == 'transparent':
         names = [*names, *TRANSPARENT_HOSTS]
+    reader = CHAIN_READER in names
+    names = [name for name in names if name != CHAIN_READER]
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in names for arg in ('-p', name)],
                *(['--features', ','.join(features)] if features else [])]]
+    if reader:
+        result.extend([*runner, '--locked', '--profile', 'release-fast', '-p', CHAIN_READER, '--features',
+                       ','.join(f'{CHAIN_READER}/{feature}' for feature in selection)]
+                      for selection in CHAIN_READER_SELECTIONS)
     if group == 'transparent':
         # This analysis tool has its own workspace. Its journal-reader identity
         # and compiled-codec contracts run first, so another service test's

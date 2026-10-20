@@ -31,7 +31,7 @@ def main(argv=None):
     parser.add_argument('--config', type=Path)
     parser.add_argument('--config-path')
     parser.add_argument('--state-dir')
-    parser.add_argument('--executable', default='/usr/local/bin/transparent-publish-controller')
+    parser.add_argument('--executable', default='/usr/local/bin/pir-publisher')
     args = parser.parse_args(argv)
     if args.service is None or (args.service, args.role) == ('transparent-history', 'publisher'):
         if args.service is None and args.role is not None:

@@ -152,6 +152,46 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def reader(self, *dependencies, manifest=boundary.CHAIN_READER_MANIFEST):
+        return {'name': boundary.CHAIN_READER, 'manifest': manifest, 'dependencies': list(dependencies)}
+
+    def reader_edges(self, rev='d' * 40):
+        node = 'https://github.com/zakura-core/zakura.git'
+        return [{**self.edge(name, git=node if name in boundary.NODE else ''), 'rev': rev if name in boundary.NODE else ''}
+                for name in boundary.CHAIN_READER_EDGES]
+
+    def test_only_the_local_chain_reader_declares_its_exact_common_and_node_edges(self):
+        self.assertEqual(boundary.violations([self.reader(*self.reader_edges())], []), [])
+        # Every permitted edge has a reason and is still declared.
+        self.assertTrue(all(boundary.CHAIN_READER_EDGES.values()))
+        self.assertTrue(any('no longer exists' in p for p in
+                            boundary.violations([self.reader(*self.reader_edges()[1:])], [])))
+        # An edge outside the list, a package elsewhere under the reader's name and
+        # another package declaring the reader's edges all still fail.
+        self.assertEqual(len(boundary.violations(
+            [self.reader(*self.reader_edges(), self.edge('zakura-consensus'))], [])), 1)
+        moved = boundary.violations([self.reader(*self.reader_edges(), manifest='tools/chain/Cargo.toml')], [])
+        self.assertTrue(any('belongs at' in p for p in moved))
+        self.assertTrue(any('node package zakura-state' in p for p in moved))
+        other = boundary.violations([{'name': 'transparent-publisher', 'manifest': 'p/Cargo.toml',
+                                      'dependencies': self.reader_edges()}], [])
+        self.assertEqual(len(other), len(boundary.CHAIN_READER_EDGES))
+
+    def test_chain_reader_node_edges_share_one_exact_revision(self):
+        edges = self.reader_edges()
+        state = next(e for e in edges if e['name'] == 'zakura-state')
+        state['rev'] = 'e' * 40
+        self.assertTrue(boundary.violations([self.reader(*edges)], []))
+        self.assertTrue(boundary.violations([self.reader(*self.reader_edges(rev='main'))], []))
+
+    def test_serving_libraries_still_cannot_reach_the_local_chain_reader(self):
+        edge = {**self.edge(boundary.CHAIN_READER), 'path': 'src/shared/pir-chain/'}
+        for name in sorted(boundary.SERVING):
+            packages = [{'name': name, 'manifest': f'src/shared/{name}/Cargo.toml', 'dependencies': [edge]}]
+            with self.subTest(name=name):
+                self.assertTrue(any('chain reading or ingestion package' in p
+                                    for p in boundary.violations(packages, [])))
+
     def test_runtime_free_cores_declare_no_transport_edge_of_any_kind(self):
         core = next(iter(sorted(boundary.RUNTIME_FREE - boundary.RUNTIME_PENDING)))
         for kind in ['dependencies', 'dev-dependencies', 'build-dependencies',
@@ -579,7 +619,7 @@ class BoundaryTests(unittest.TestCase):
 class ReleaseTests(unittest.TestCase):
     def bundle(self, directory, mutate=None):
         data = {name: b'binary' for name in release.BINARIES['transparent-filter']}
-        data['transparent-filter-server.service'] = b'unit'
+        data.update({Path(name).name: b'unit' for name in release.FILES['transparent-filter']})
         data['revision'] = (SHA + '\n').encode()
         data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n' for k, v in data.items()).encode()
         if mutate:
@@ -596,11 +636,11 @@ class ReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             release.extract(self.bundle(root), root / 'artifact', SHA, 'transparent-filter')
-            self.assertTrue((root / 'artifact/transparent-publisher').stat().st_mode & 0o111)
+            self.assertTrue((root / 'artifact/pir-publisher').stat().st_mode & 0o111)
 
     def test_wrong_sha_tampered_missing_extra_or_path_escape_refused_before_write(self):
         mutations = [lambda d: d.update(revision=b'b' * 40),
-                     lambda d: d.update({'transparent-publisher': b'tampered'}),
+                     lambda d: d.update({'pir-publisher': b'tampered'}),
                      lambda d: d.pop('transparent-filter-server.service'),
                      lambda d: d.update({'extra': b'x'}),
                      lambda d: d.update({'../outside': b'x'}),
@@ -655,10 +695,9 @@ class ReleaseTests(unittest.TestCase):
                 release.extract(root / 'bundles-enhance-pir-native' / 'enhance-pir-native.tar.gz', root / 'cross', revision, 'enhance-pir')
             # The Status bundle carries the unit templates its deploy renders, and no candidate claim.
             self.assertEqual(sorted(p.name for p in (root / 'status-pir').iterdir()),
-                             ['SHA256SUMS', 'pir-query-server', 'revision',
-                              'status-pir', 'status-router.example.json', 'status-router.service.in',
+                             ['SHA256SUMS', 'pir-publisher', 'pir-query-server', 'revision', 'status-router.example.json', 'status-router.service.in',
                               'status-worker.example.json', 'status-worker.service.in'])
-            self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
+            self.assertTrue((root / 'status-pir' / 'pir-publisher').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', revision, 'enhance-pir-native')
 
