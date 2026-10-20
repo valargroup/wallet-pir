@@ -103,7 +103,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                 "--no-auth",
                 "--depth",
                 "0",
-                "--witnesses",
             ])
             .output()
             .unwrap();
@@ -117,10 +116,12 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let first = run();
     assert_eq!(first["records"], 1);
     let revision = first["revision"].as_str().unwrap();
-    assert!(dir
-        .path()
-        .join(format!("publications/{revision}.witness"))
-        .exists());
+    for file in ["rows", "witness", "witness.json", "json"] {
+        assert!(dir
+            .path()
+            .join(format!("publications/{revision}.{file}"))
+            .exists());
+    }
     // Republishing a revision requires identical bytes in every existing file.
     assert_eq!(first, run());
     changed.store(true, Ordering::SeqCst);
@@ -145,7 +146,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             "--no-auth",
             "--depth",
             "0",
-            "--witnesses",
         ])
         .output()
         .unwrap();
@@ -176,7 +176,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                     "--no-auth",
                     "--depth",
                     "0",
-                    "--witnesses",
                     "--serve",
                     "--poll-seconds",
                     "1",
@@ -199,7 +198,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             loop {
                 if let Ok(response) = client.get(endpoint).send().await {
                     if response.status().is_success()
-                        && response.json::<Value>().await.unwrap()["directory"]["end_height"]
+                        && response.json::<Value>().await.unwrap()["payments"]["directory"]
+                            ["end_height"]
                             == height
                     {
                         break;
@@ -233,7 +233,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             "--rpc-url",
             &url,
             "--no-auth",
-            "--witnesses",
         ])
         .output()
         .unwrap();
@@ -285,11 +284,12 @@ fn cli_rejects_unservable_geometry_before_contacting_the_node() {
     }
 }
 
-/// Witnesses need commitments from position zero, and wallets refuse served coverage
-/// that starts later, so both refuse a later start before contacting the node.
+/// Witness tables need every commitment of each Ironwood shard, and wallets refuse
+/// served coverage that starts later, so one-shot and serving runs both refuse a later
+/// start before contacting the node.
 #[test]
-fn cli_refuses_a_later_start_for_witnesses_or_serving_before_contacting_the_node() {
-    for flag in ["--witnesses", "--serve"] {
+fn cli_refuses_a_later_start_before_contacting_the_node() {
+    for flag in ["--depth=2", "--serve"] {
         let dir = tempfile::tempdir().unwrap();
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
             .args([

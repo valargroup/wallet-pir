@@ -6,12 +6,14 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/prepared.rs"]
+mod prepared;
 #[path = "common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
 use history::history;
 use receiver_directory::snapshot::Snapshot;
-use receiver_pir::{server::Server, MIN_ROWS};
+use receiver_pir::MIN_ROWS;
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error,
@@ -126,11 +128,7 @@ async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a
 /// query per page.
 #[tokio::test]
 async fn the_library_client_looks_up_over_pir() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(2)).unwrap(),
-        None,
-    ))
-    .await;
+    let server = serve(prepared::prepare_payments(snapshot(2)).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
     let payments = history(&client, receiver()).await.unwrap();
@@ -159,37 +157,31 @@ async fn the_library_client_looks_up_over_pir() {
     assert!(history(&client, other).await.unwrap().is_empty());
 }
 
-/// The common witness file reaches the library client byte for byte; a publication
-/// without one serves none.
+/// The library client reads a payment's companion payload over this service's PIR by
+/// the ordinal its record carries, one encrypted query per payload.
 #[tokio::test]
-async fn the_library_client_downloads_the_common_witness_file() {
-    let proof = b"IWPROOF1 opaque to the server".to_vec();
-    let server = serve(Publication::verified(
-        Server::new(snapshot(0)).unwrap(),
-        Some(proof.clone()),
-    ))
-    .await;
+async fn the_library_client_reads_companion_payloads_over_pir() {
+    let snapshot = snapshot(2);
+    let payloads = [[3; 512], [4; 512]];
+    let table = prepared::companion_table(&snapshot, &payloads);
+    let server = serve(prepared::prepare(snapshot, table).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
-    assert_eq!(client.witnesses().await.unwrap(), proof);
-    let server = serve(Publication::verified(
-        Server::new(snapshot(0)).unwrap(),
-        None,
-    ))
-    .await;
-    let client = connect(&server.origin, &http).await.unwrap();
-    assert!(client.witnesses().await.is_err());
+    for page in 0..2 {
+        let record = client.page(receiver(), page).await.unwrap().unwrap();
+        assert_eq!(
+            client.witness(record.ordinal).await.unwrap(),
+            payloads[record.ordinal as usize]
+        );
+    }
+    assert_eq!(http.queries.load(Ordering::Relaxed), 4);
 }
 
 /// A revoked publication answers the library client's next query 410, which it
 /// reports as a revision change rather than a result.
 #[tokio::test]
 async fn a_revoked_publication_is_a_revision_to_the_library_client() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(1)).unwrap(),
-        None,
-    ))
-    .await;
+    let server = serve(prepared::prepare_payments(snapshot(1)).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
     server.publications.revoke();
@@ -197,5 +189,5 @@ async fn a_revoked_publication_is_a_revision_to_the_library_client() {
         history(&client, receiver()).await,
         Err(Error::Revision)
     ));
-    assert!(matches!(client.witnesses().await, Err(Error::Revision)));
+    assert!(matches!(client.witness(0).await, Err(Error::Revision)));
 }

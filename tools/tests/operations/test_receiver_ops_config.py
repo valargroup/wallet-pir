@@ -2,7 +2,7 @@
 
 Caddy syntax validation accepts a catch-all proxy, which would put the
 operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
-checks pin the edge to the six wallet routes, the unit (the template
+checks pin the edge to the four wallet routes the server registers, the unit (the template
 `wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
 optional NEAR key file the inventory names, cloud-init to the matching account and
 firewall rule, the inventory's `exact_check` to the deployed binary's probe on
@@ -24,8 +24,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 DIR = ROOT / 'tools/receiver/digitalocean'
+SERVER = ROOT / 'src/receiver/receiver-pir-server/src/lib.rs'
+OPERATOR_ROUTES = {'/v1/receiver/health', '/metrics'}
 WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
-                 '/v1/receiver/witness/*', '/v1/receiver/block-filters/*'}
+                 '/v1/receiver/block-filters/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
 INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'
@@ -77,6 +79,24 @@ def check_caddyfile(text):
     directive, upstream = proxy.split()
     assert directive == 'reverse_proxy' and not nested, proxy
     return upstream
+
+
+def check_server_routes(source, caddy):
+    """Fail unless the edge's wallet routes match the server's routes but the operator ones.
+
+    Each route the server registers must be one a wallet route matches, so a release
+    adding a route also adds it to the Caddyfile its cutover installs, and each wallet
+    route must match a registered one.
+    """
+    served = set(re.findall(r'\.route\(\s*"([^"]+)"', source))
+    assert OPERATOR_ROUTES <= served, sorted(served)
+    matcher = next(line for line in caddy.splitlines() if line.split()[:1] == ['@wallet'])
+    edge = matcher.split()[2:]
+    matches = lambda pattern, route: route.startswith(pattern[:-1]) if pattern.endswith('*') else route == pattern
+    for route in served - OPERATOR_ROUTES:
+        assert any(matches(pattern, route) for pattern in edge), 'the edge does not serve ' + route
+    for pattern in edge:
+        assert any(matches(pattern, route) for route in served - OPERATOR_ROUTES), pattern + ' serves nothing'
 
 
 def systemd_sections(text):
@@ -161,8 +181,6 @@ def check_exact_check(service, unit, caddy):
     nodes = lambda words: [words[i + 1] for i, word in enumerate(words) if word == '--rpc-url']
     assert nodes(argv) and nodes(argv) == nodes(served), (nodes(argv), nodes(served))
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
-    # A service that serves witness files has them checked against the nodes' root.
-    assert ('--witnesses' in argv) == ('--witnesses' in served), argv
     # Provider audit availability does not gate wallet discovery or publication.
     assert '--await-feed-reads' not in argv, argv
     timeout = check.get('timeout')
@@ -208,8 +226,8 @@ def check_probe_config(configs):
     assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
     argv = config['command']
     assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
-    # The service serves witness files (see check_exact_check), so the monitor checks them too.
-    assert '--witnesses' in argv, argv
+    # Companion witness tables are always served, and the probe always checks them.
+    assert '--witnesses' not in argv, argv
 
 
 def monitor_merge(readme):
@@ -233,6 +251,19 @@ class ReceiverOpsContract(unittest.TestCase):
         bind, _ = check_unit(self.unit)
         self.assertEqual(check_caddyfile(self.caddy), bind)
         check_cloud_init(self.cloud, bind)
+
+    def test_the_edge_serves_every_wallet_route_and_only_those(self):
+        source = SERVER.read_text()
+        check_server_routes(source, self.caddy)
+        unexposed = source.replace('.route("/v1/receiver/query"', '.route("/v1/receiver/unrouted", get(health))\n'
+                                   '        .route("/v1/receiver/query"', 1)
+        self.assertNotEqual(unexposed, source)
+        for server, caddy in [
+            (unexposed, self.caddy),
+            (source, self.caddy.replace('/v1/receiver/query ', '/v1/receiver/query /v1/receiver/gone/* ')),
+        ]:
+            with self.assertRaises(AssertionError):
+                check_server_routes(server, caddy)
 
     def test_the_deploy_tool_renders_this_whole_unit(self):
         with open(DEPLOY, 'rb') as handle:

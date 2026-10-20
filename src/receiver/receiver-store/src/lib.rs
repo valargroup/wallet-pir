@@ -1,5 +1,6 @@
 //! The receiver indexer's durable stores: atomic contiguous coverage with explicit
-//! rewind (empty blocks are retained too), and the provider feeds' `PayoutStore`.
+//! rewind (empty blocks are retained too), completed Ironwood shards with their final
+//! witness payloads, and the provider feeds' `PayoutStore`.
 //!
 //! Records, placement and publications are wallet-libraries'
 //! `zakura-receiver-directory`; this crate only persists them.
@@ -22,12 +23,14 @@ pub enum Error {
     Malformed,
     #[error("receiver directory coverage is incomplete or uses a different anchor")]
     Coverage,
-    #[error("receiver directory table or commitment history limit exceeded")]
+    #[error("receiver directory table limit exceeded")]
     Capacity,
     #[error("missing continuation page")]
     MissingPage,
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }
@@ -76,6 +79,7 @@ pub struct Checkpoint {
 }
 
 /// Construct only after verifying the raw block, canonical hash and tree size.
+#[derive(Clone)]
 pub struct IndexedBlock {
     pub height: u32,
     pub hash: Hash,
@@ -87,14 +91,17 @@ pub struct IndexedBlock {
     pub commitments: Vec<Hash>,
 }
 
-/// One publication's commitment history and payment positions; see
-/// [`Store::witness_inputs`].
+/// Leaves in one Ironwood shard, the most commitments one read returns.
+pub const SHARD_LEAVES: u64 = 1 << 16;
+/// Bytes of one companion witness payload.
+pub const PAYLOAD_BYTES: usize = 512;
+
+/// A completed Ironwood shard: its root and the block holding its last leaf.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WitnessInputs {
-    /// Every commitment from position zero, in position order.
-    pub commitments: Vec<Hash>,
-    /// The positions of the publication's payments.
-    pub positions: std::collections::BTreeSet<u32>,
+pub struct CompletedShard {
+    pub root: Hash,
+    pub height: u32,
+    pub hash: Hash,
 }
 
 /// The indexer's SQLite database of contiguous public coverage.
@@ -117,8 +124,25 @@ impl Store {
         )?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let version: u32 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             return Err(Error::Malformed);
+        }
+        // Earlier versions hold shorter records; see [`upgrade`].
+        if version < 3 {
+            let tables: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='payments')",
+                [],
+                |r| r.get(0),
+            )?;
+            let legacy = tables
+                && tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM payments WHERE length(record)!=?1)",
+                    [receiver_directory::RECORD_BYTES],
+                    |r| r.get::<_, bool>(0),
+                )?;
+            if legacy {
+                return Err(Error::Malformed);
+            }
         }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS filter_revision (revision INTEGER NOT NULL);
             INSERT INTO filter_revision SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM filter_revision);
@@ -130,7 +154,11 @@ impl Store {
             CREATE INDEX IF NOT EXISTS receiver_payments ON payments(receiver,position);
             CREATE INDEX IF NOT EXISTS payments_height ON payments(height);
             CREATE TABLE IF NOT EXISTS commitments (position INTEGER PRIMARY KEY, height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, cmx BLOB NOT NULL CHECK(length(cmx)=32));
-            PRAGMA user_version=2;")?;
+            CREATE TABLE IF NOT EXISTS ironwood_shards (shard INTEGER PRIMARY KEY,
+                height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, root BLOB NOT NULL CHECK(length(root)=32));
+            CREATE TABLE IF NOT EXISTS witness_payloads (position INTEGER PRIMARY KEY REFERENCES payments(position) ON DELETE CASCADE,
+                shard INTEGER NOT NULL REFERENCES ironwood_shards(shard) ON DELETE CASCADE, payload BLOB NOT NULL CHECK(length(payload)=512));
+            PRAGMA user_version=3;")?;
         let encoded = serde_json::to_string(&config)?;
         tx.execute("INSERT OR IGNORE INTO config VALUES (1,?1)", [&encoded])?;
         let saved: String =
@@ -140,57 +168,6 @@ impl Store {
         }
         tx.commit()?;
         Ok(Self { db, config })
-    }
-
-    /// Every note commitment from the pool's empty tree to `manifest`'s end, and the
-    /// note position of every stored payment up to its end height, read from one
-    /// database view so the two always describe the same chain. These are what the
-    /// publication's common inclusion proofs are built from; this crate does not hash
-    /// them. A history of more than `max_commitments` commitments is
-    /// [`Error::Capacity`], before any is read.
-    pub fn witness_inputs(
-        &self,
-        manifest: &Manifest,
-        max_commitments: u64,
-    ) -> Result<WitnessInputs, Error> {
-        manifest.validate()?;
-        if manifest.end_position > max_commitments {
-            return Err(Error::Capacity);
-        }
-        // Bind the commitments and payment positions to a single database view.
-        let tx = self.db.unchecked_transaction()?;
-        let checkpoint = self.checkpoint(manifest.end_height)?;
-        if self.config.start_position != 0
-            || checkpoint.hash != manifest.end_hash
-            || checkpoint.position != manifest.end_position
-        {
-            return Err(Error::Coverage);
-        }
-        let mut query = self
-            .db
-            .prepare("SELECT position,cmx FROM commitments WHERE position<?1 ORDER BY position")?;
-        let mut commitments = Vec::new();
-        for row in query.query_map([manifest.end_position], |r| {
-            Ok((r.get::<_, u64>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })? {
-            let (position, cmx) = row?;
-            if position != commitments.len() as u64 {
-                return Err(Error::Coverage);
-            }
-            commitments.push(cmx.try_into().map_err(|_| Error::Malformed)?);
-        }
-        let mut query = self
-            .db
-            .prepare("SELECT position FROM payments WHERE height<=?1")?;
-        let positions = query
-            .query_map([manifest.end_height], |r| r.get::<_, u32>(0))?
-            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-        drop(query);
-        tx.commit()?;
-        Ok(WitnessInputs {
-            commitments,
-            positions,
-        })
     }
 
     /// The last stored block, or the configured boundary when none is stored.
@@ -240,47 +217,7 @@ impl Store {
                 ],
             )?;
         }
-        let mut last: Option<&Payment> = None;
-        for (receiver, p) in &block.payments {
-            // Coinbase recipients are excluded: the coinbase is transaction zero, and its
-            // Actions take the block's first positions.
-            if p.height != block.height
-                || p.block_hash != block.hash
-                || p.tx_index == 0
-                || p.position < block.start_position + block.coinbase_actions
-                || p.position >= block.end_position
-                || block
-                    .commitments
-                    .get((p.position - block.start_position) as usize)
-                    != Some(&p.cmx)
-                || last.is_some_and(|q| {
-                    p.position <= q.position
-                        || (p.tx_index, p.action_index) <= (q.tx_index, q.action_index)
-                        || (p.tx_index == q.tx_index && p.txid != q.txid)
-                })
-            {
-                return Err(Error::Malformed);
-            }
-            last = Some(p);
-            // Stored as a lone page; a snapshot numbers the pages.
-            let record = encode(&RawRecord {
-                receiver: *receiver,
-                page: 0,
-                total: 1,
-                payment: p.clone(),
-            })?;
-            tx.execute(
-                "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
-                params![
-                    block.height,
-                    receiver.as_slice(),
-                    p.position,
-                    p.txid.as_slice(),
-                    p.action_index,
-                    record.as_slice()
-                ],
-            )?;
-        }
+        insert_payments(&tx, block)?;
         tx.commit()?;
         Ok(())
     }
@@ -306,18 +243,210 @@ impl Store {
         Ok(())
     }
 
-    /// The stored block at `height`, or the boundary just below the configured start.
-    pub fn checkpoint(&self, height: u32) -> Result<Checkpoint, Error> {
-        if height == self.config.start_height - 1 {
-            return Ok(boundary(&self.config));
+    /// Replaces the payments of stored blocks after an indexing correction on an
+    /// unchanged chain, advancing the stored correction revision to `revision`, which must
+    /// exceed it. Offline only: a serving indexer would keep answering from the old
+    /// payments, so callers hold the data directory's lock, as the indexer's
+    /// `application::correct` does. Each block must match its stored hash, parent, positions, coinbase count
+    /// and commitments; its payments are checked as [`Self::append`] checks them. Final
+    /// witness payloads of the replaced payments go with them and are rebuilt from the
+    /// retained commitments when next requested.
+    pub fn correct(&mut self, revision: u64, blocks: &[IndexedBlock]) -> Result<(), Error> {
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let previous: u64 =
+            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
+        if revision <= previous || revision > i64::MAX as u64 {
+            return Err(Error::Coverage);
         }
+        for block in blocks {
+            let stored = checkpoint_at(&tx, &self.config, block.height)?;
+            let parent = checkpoint_at(&tx, &self.config, block.height - 1)?;
+            let coinbase: Option<u64> = tx
+                .query_row(
+                    "SELECT coinbase_actions FROM blocks WHERE height=?1",
+                    [block.height],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let mut query =
+                tx.prepare("SELECT cmx FROM commitments WHERE height=?1 ORDER BY position")?;
+            let commitments = query
+                .query_map([block.height], |r| r.get::<_, Vec<u8>>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(query);
+            if stored.hash != block.hash
+                || parent.hash != block.parent
+                || parent.position != block.start_position
+                || stored.position != block.end_position
+                || coinbase != Some(block.coinbase_actions)
+                || commitments.len() != block.commitments.len()
+                || commitments
+                    .iter()
+                    .zip(&block.commitments)
+                    .any(|(a, b)| a != b)
+            {
+                return Err(Error::Coverage);
+            }
+            tx.execute("DELETE FROM payments WHERE height=?1", [block.height])?;
+            insert_payments(&tx, block)?;
+        }
+        tx.execute("UPDATE filter_revision SET revision=?1", [revision])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The correction revision the store last accepted.
+    pub fn history_revision(&self) -> Result<u64, Error> {
+        Ok(self
+            .db
+            .query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?)
+    }
+
+    /// The commitments at positions `start..end`, at most [`SHARD_LEAVES`], all stored.
+    pub fn commitments(&self, start: u64, end: u64) -> Result<Vec<Hash>, Error> {
+        if end < start || end - start > SHARD_LEAVES {
+            return Err(Error::Capacity);
+        }
+        let mut query = self.db.prepare(
+            "SELECT position,cmx FROM commitments WHERE position>=?1 AND position<?2 ORDER BY position",
+        )?;
+        let mut commitments = Vec::new();
+        for row in query.query_map([start, end], |r| {
+            Ok((r.get::<_, u64>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })? {
+            let (position, cmx) = row?;
+            if position != start + commitments.len() as u64 {
+                return Err(Error::Coverage);
+            }
+            commitments.push(cmx.try_into().map_err(|_| Error::Malformed)?);
+        }
+        if commitments.len() as u64 != end - start {
+            return Err(Error::Coverage);
+        }
+        Ok(commitments)
+    }
+
+    /// Payment note positions in `start..end`, ascending.
+    pub fn payment_positions(&self, start: u64, end: u64) -> Result<Vec<u64>, Error> {
+        let mut query = self.db.prepare(
+            "SELECT position FROM payments WHERE position>=?1 AND position<?2 ORDER BY position",
+        )?;
+        let positions = query
+            .query_map([start, end], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        Ok(positions)
+    }
+
+    /// How many Ironwood shards are recorded complete. They are always shards zero onward,
+    /// recorded in order, and a rewind removes those its blocks completed.
+    pub fn completed_shards(&self) -> Result<u32, Error> {
+        let (count, last): (u32, Option<u32>) =
+            self.db
+                .query_row("SELECT COUNT(*),MAX(shard) FROM ironwood_shards", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })?;
+        if last.map_or(0, |last| last + 1) != count {
+            return Err(Error::Malformed);
+        }
+        Ok(count)
+    }
+
+    /// Completed shard `shard`'s root and the block holding its last leaf, if recorded.
+    pub fn completed_shard(&self, shard: u32) -> Result<Option<CompletedShard>, Error> {
         self.db
             .query_row(
-                "SELECT height,hash,end_position FROM blocks WHERE height=?1",
-                [height],
-                checkpoint_row,
-            )?
-            .ok_or(Error::Malformed)
+                "SELECT s.root,s.height,b.hash FROM ironwood_shards s JOIN blocks b ON b.height=s.height WHERE s.shard=?1",
+                [shard],
+                |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get(1)?, r.get::<_, Vec<u8>>(2)?)),
+            )
+            .optional()?
+            .map(|(root, height, hash)| {
+                Ok(CompletedShard {
+                    root: root.try_into().map_err(|_| Error::Malformed)?,
+                    height,
+                    hash: hash.try_into().map_err(|_| Error::Malformed)?,
+                })
+            })
+            .transpose()
+    }
+
+    /// Records Ironwood shard `shard`, the next incomplete one or one already recorded
+    /// with the same `root`, as completed by the block holding its last leaf, and stores
+    /// final `payloads` for payments in it. Payloads are the caller's to check.
+    pub fn complete_shard(
+        &mut self,
+        shard: u32,
+        root: Hash,
+        payloads: &[(u64, [u8; PAYLOAD_BYTES])],
+    ) -> Result<(), Error> {
+        let tx = self.db.transaction()?;
+        let start = u64::from(shard) * SHARD_LEAVES;
+        let last = start + SHARD_LEAVES - 1;
+        let height: u32 = tx
+            .query_row(
+                "SELECT height FROM commitments WHERE position=?1",
+                [last],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(Error::Coverage)?;
+        let saved: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT root FROM ironwood_shards WHERE shard=?1",
+                [shard],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match saved {
+            Some(saved) if saved != root => return Err(Error::Coverage),
+            Some(_) => {}
+            None => {
+                let count: u32 =
+                    tx.query_row("SELECT COUNT(*) FROM ironwood_shards", [], |r| r.get(0))?;
+                if count != shard {
+                    return Err(Error::Coverage);
+                }
+                tx.execute(
+                    "INSERT INTO ironwood_shards VALUES (?1,?2,?3)",
+                    params![shard, height, root.as_slice()],
+                )?;
+            }
+        }
+        for (position, payload) in payloads {
+            if !(start..=last).contains(position) {
+                return Err(Error::Coverage);
+            }
+            tx.execute(
+                "INSERT OR REPLACE INTO witness_payloads VALUES (?1,?2,?3)",
+                params![position, shard, payload.as_slice()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The final payloads recorded for `positions`, `None` where absent.
+    pub fn payloads(&self, positions: &[u64]) -> Result<Vec<Option<[u8; PAYLOAD_BYTES]>>, Error> {
+        let mut query = self
+            .db
+            .prepare("SELECT payload FROM witness_payloads WHERE position=?1")?;
+        positions
+            .iter()
+            .map(|position| {
+                query
+                    .query_row([position], |r| r.get::<_, Vec<u8>>(0))
+                    .optional()?
+                    .map(|payload| payload.try_into().map_err(|_| Error::Malformed))
+                    .transpose()
+            })
+            .collect()
+    }
+
+    /// The stored block at `height`, or the boundary just below the configured start.
+    pub fn checkpoint(&self, height: u32) -> Result<Checkpoint, Error> {
+        checkpoint_at(&self.db, &self.config, height)
     }
 
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
@@ -363,6 +492,7 @@ impl Store {
             }
             start = end;
         }
+        snapshot::assign_ordinals(&mut records);
         tx.commit()?;
         for attempt in 0..SALT_ATTEMPTS {
             let manifest = Manifest {
@@ -410,6 +540,72 @@ impl Store {
         )?)
     }
 }
+/// The store's file in a data directory.
+pub const STORE_FILE: &str = "directory-v3.sqlite";
+/// The version 2 store an earlier release kept in a data directory, with 285-byte
+/// records and no witness tables. [`upgrade`] copies it and never changes it.
+pub const LEGACY_STORE_FILE: &str = "directory.sqlite";
+/// Bytes of a version 2 record: today's record without its witness ordinal.
+const LEGACY_RECORD_BYTES: usize = 285;
+
+/// Builds the store at `path` from the version 2 store at `legacy` once, if `path` does
+/// not exist yet and `legacy` does. The copy's records gain a zero witness ordinal,
+/// which every snapshot reassigns, and it becomes version 3; completed Ironwood shards
+/// are recorded from its retained commitments when next needed. `legacy` is left
+/// unchanged, so a rollback to the earlier binary keeps working from it. Interrupted
+/// conversions restart from the beginning. Returns whether it converted.
+pub fn upgrade(legacy: &Path, path: &Path) -> Result<bool, Error> {
+    if path.exists() || !legacy.exists() {
+        return Ok(false);
+    }
+    let temp = path.with_extension("upgrading");
+    match std::fs::remove_file(&temp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+        _ => {}
+    }
+    let source = Connection::open_with_flags(legacy, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    source.busy_timeout(std::time::Duration::from_secs(5))?;
+    let version: u32 = source.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version != 2 {
+        return Err(Error::Malformed);
+    }
+    let destination = temp.to_str().ok_or(Error::Malformed)?;
+    source.execute("VACUUM INTO ?1", [destination])?;
+    drop(source);
+    let mut copy = Connection::open(&temp)?;
+    let tx = copy.transaction()?;
+    {
+        let mut read = tx.prepare("SELECT position,record FROM payments")?;
+        let mut write = tx.prepare("UPDATE payments SET record=?2 WHERE position=?1")?;
+        let rows = read
+            .query_map([], |r| Ok((r.get::<_, u64>(0)?, r.get::<_, Vec<u8>>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for (position, mut record) in rows {
+            if record.len() == LEGACY_RECORD_BYTES {
+                record.resize(receiver_directory::RECORD_BYTES, 0);
+                write.execute(params![position, record])?;
+            }
+        }
+    }
+    let malformed: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM payments WHERE length(record)!=?1)",
+        [receiver_directory::RECORD_BYTES],
+        |r| r.get(0),
+    )?;
+    if malformed {
+        return Err(Error::Malformed);
+    }
+    tx.execute_batch("PRAGMA user_version=3;")?;
+    tx.commit()?;
+    drop(copy);
+    std::fs::File::open(&temp)?.sync_all()?;
+    std::fs::rename(&temp, path)?;
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::File::open(dir).and_then(|dir| dir.sync_all());
+    }
+    Ok(true)
+}
+
 /// Optional provider-reported payouts, independent of chain coverage and publication.
 pub struct PayoutStore {
     db: Connection,
@@ -514,6 +710,53 @@ impl PayoutStore {
     }
 }
 
+/// Checks and stores `block`'s payments as [`Store::append`] describes, each as a lone
+/// page whose snapshot numbers its pages and witness ordinal.
+fn insert_payments(tx: &Connection, block: &IndexedBlock) -> Result<(), Error> {
+    let mut last: Option<&Payment> = None;
+    for (receiver, p) in &block.payments {
+        // Coinbase recipients are excluded: the coinbase is transaction zero, and its
+        // Actions take the block's first positions.
+        if p.height != block.height
+            || p.block_hash != block.hash
+            || p.tx_index == 0
+            || p.position < block.start_position + block.coinbase_actions
+            || p.position >= block.end_position
+            || block
+                .commitments
+                .get((p.position - block.start_position) as usize)
+                != Some(&p.cmx)
+            || last.is_some_and(|q| {
+                p.position <= q.position
+                    || (p.tx_index, p.action_index) <= (q.tx_index, q.action_index)
+                    || (p.tx_index == q.tx_index && p.txid != q.txid)
+            })
+        {
+            return Err(Error::Malformed);
+        }
+        last = Some(p);
+        let record = encode(&RawRecord {
+            receiver: *receiver,
+            page: 0,
+            total: 1,
+            payment: p.clone(),
+            ordinal: 0,
+        })?;
+        tx.execute(
+            "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                block.height,
+                receiver.as_slice(),
+                p.position,
+                p.txid.as_slice(),
+                p.action_index,
+                record.as_slice()
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 /// The anchor hash first, so an uncrowded publication keeps its earlier salt.
 fn salt(anchor: &Hash, attempt: u32) -> Hash {
     if attempt == 0 {
@@ -545,6 +788,19 @@ fn checkpoint_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Checkpoint>>
         position,
     }))
 }
+/// See [`Store::checkpoint`].
+fn checkpoint_at(db: &Connection, c: &Config, height: u32) -> Result<Checkpoint, Error> {
+    if height == c.start_height - 1 {
+        return Ok(boundary(c));
+    }
+    db.query_row(
+        "SELECT height,hash,end_position FROM blocks WHERE height=?1",
+        [height],
+        checkpoint_row,
+    )?
+    .ok_or(Error::Malformed)
+}
+
 /// See [`Store::tip`].
 fn tip(db: &Connection, c: &Config) -> Result<Checkpoint, Error> {
     match db

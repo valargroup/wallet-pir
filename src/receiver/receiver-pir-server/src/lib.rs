@@ -56,7 +56,6 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "init" => "receiver_init",
         "public" => "receiver_public",
         "query" => "receiver_query",
-        "witness" => "receiver_witness",
         "block-filters" => "receiver_block_filters",
         "health" => "receiver_health",
         _ => return None,
@@ -97,11 +96,10 @@ struct Service {
 }
 
 /// The receiver categories `pir_observability` reports.
-const ENDPOINTS: [&str; 6] = [
+const ENDPOINTS: [&str; 5] = [
     "receiver_init",
     "receiver_public",
     "receiver_query",
-    "receiver_witness",
     "receiver_block_filters",
     "receiver_health",
 ];
@@ -140,7 +138,7 @@ fn router(service: Service) -> Router {
                 match s.publications.select(None) {
                     Ok((p, _)) => (
                         [(header::CACHE_CONTROL, "no-store")],
-                        Json(p.server.manifest().clone()),
+                        Json(p.session()),
                     )
                         .into_response(),
                     Err(status) => status.into_response(),
@@ -149,21 +147,9 @@ fn router(service: Service) -> Router {
         )
         .route(
             "/v1/receiver/public/:session",
-            get(
-                |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, &id, Material::Public)
-                },
-            ),
+            get(|State(s): State<Service>, Path(id): Path<String>| async move { public(&s, &id) }),
         )
         .route("/v1/receiver/query", post(query))
-        .route(
-            "/v1/receiver/witness/:session",
-            get(
-                |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, &id, Material::Witness)
-                },
-            ),
-        )
         .route("/v1/receiver/block-filters/head", get(|State(s): State<Service>| async move {
             match s.publications.filters() {
                 Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
@@ -218,26 +204,14 @@ async fn health(State(s): State<Service>) -> Response {
         .into_response()
 }
 
-enum Material {
-    Public,
-    Witness,
-}
-
-/// Serves one file of the publication whose hex id is `id`.
-fn material(s: &Service, id: &str, material: Material) -> Response {
+/// Serves the public PIR setup of the payment or witness session whose hex id is `id`.
+fn public(s: &Service, id: &str) -> Response {
     let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let p = match s.publications.select(Some(id)) {
-        Ok((p, _)) => p,
-        Err(status) => return status.into_response(),
-    };
-    match material {
-        Material::Public => binary(p.server.public().to_vec()),
-        Material::Witness => match &p.witnesses {
-            Some(bytes) => binary(bytes.clone()),
-            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-        },
+    match s.publications.select(Some(id)) {
+        Ok((p, _)) => binary(p.table(&id).expect("selected by id").public().to_vec()),
+        Err(status) => status.into_response(),
     }
 }
 
@@ -258,7 +232,8 @@ fn overloaded() -> Response {
     (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "1")]).into_response()
 }
 
-/// Answers one PIR query against the publication its header names. The upload is
+/// Answers one PIR query against the payment or witness table whose session its header
+/// names. The upload is
 /// read before the query waits for an evaluation slot, so a slow upload holds only
 /// its client's place, and a body longer or shorter than that session's query is
 /// refused (413 or 400) without waiting.
@@ -276,11 +251,13 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     if body.len() < HEADER_BYTES || &body[..4] != MAGIC {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let (publication, epoch) = match s.publications.select(Some(body[4..36].try_into().unwrap())) {
+    let id: receiver_directory::Hash = body[4..36].try_into().unwrap();
+    let (publication, epoch) = match s.publications.select(Some(id)) {
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    let expected = query_bytes(publication.manifest().rows).expect("a served geometry");
+    let rows = publication.table(&id).expect("selected by id").rows();
+    let expected = query_bytes(rows).expect("a served geometry");
     match body.len().cmp(&expected) {
         std::cmp::Ordering::Greater => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         std::cmp::Ordering::Less => return StatusCode::BAD_REQUEST.into_response(),
@@ -291,7 +268,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     };
     let result = pir_control::admission::spawn_admitted(
         (permit, client, publication),
-        move |(_, _, publication)| publication.server.respond(&body),
+        move |(_, _, publication)| {
+            publication
+                .table(&id)
+                .expect("selected by id")
+                .respond(&body)
+        },
     )
     .await;
     // A revocation during evaluation is 410; after it, wallets revalidate their anchor.
@@ -349,7 +331,7 @@ mod tests {
         use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
-        let publication = crate::prepared::prepare(snapshot, None).unwrap();
+        let publication = crate::prepared::prepare_payments(snapshot).unwrap();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
             required_start: 100,
@@ -409,7 +391,7 @@ mod tests {
             &[],
         )
         .unwrap();
-        let publication = crate::prepared::prepare(snapshot, None).unwrap();
+        let publication = crate::prepared::prepare_payments(snapshot).unwrap();
         let mut header = MAGIC.to_vec();
         header.extend(publication.id);
         let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
@@ -496,10 +478,11 @@ mod tests {
     #[tokio::test]
     async fn a_revocation_after_selection_is_gone() {
         use receiver_directory::snapshot::Snapshot;
-        use receiver_pir::{server::Server, AcceptedCoverage, Client, MIN_ROWS};
+        use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
-        let server = Server::new(snapshot).unwrap();
+        let publication = crate::prepared::prepare_payments(snapshot).unwrap();
+        let server = publication.server.clone();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
             required_start: 100,
@@ -508,7 +491,7 @@ mod tests {
         };
         let client = Client::new(server.manifest().clone(), server.public(), accepted).unwrap();
         let publications = Publications::default();
-        assert!(publications.publish(Publication::verified(server, None), 0));
+        assert!(publications.publish(publication, 0));
         let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
         let (url, task) = serve(publications.clone(), queue.clone()).await;
 
@@ -516,8 +499,8 @@ mod tests {
         let rotated = held_query(&url, &queue, query.body().to_vec(), || {
             let mut next = common::manifest(MIN_ROWS);
             (next.end_height, next.end_hash) = (102, [9; 32]);
-            let next = Server::new(Snapshot::build(next, &[]).unwrap()).unwrap();
-            assert!(publications.publish(Publication::verified(next, None), 0));
+            let next = crate::prepared::prepare_payments(Snapshot::build(next, &[]).unwrap());
+            assert!(publications.publish(next.unwrap(), 0));
         })
         .await;
         assert_eq!(rotated.status(), StatusCode::OK);
@@ -551,7 +534,7 @@ mod fixture_cache_tests {
     fn reused_servers_do_not_share_reports_or_hide_corruption() {
         // A cache of its own, so concurrent tests cannot evict its entries.
         let cache = Default::default();
-        let prepare = |snapshot| prepared::prepare_in(&cache, snapshot, None);
+        let prepare = |snapshot| prepared::prepare_payments_in(&cache, snapshot);
         let first = prepare(snapshot()).unwrap();
         let second = prepare(snapshot()).unwrap();
         assert!(std::ptr::eq(

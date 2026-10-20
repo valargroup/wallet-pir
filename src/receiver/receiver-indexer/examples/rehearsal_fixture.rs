@@ -10,12 +10,12 @@
 mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
+use receiver_directory::witness;
 use receiver_directory::{snapshot::Snapshot, Hash, Payment};
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error, MIN_ROWS,
 };
-use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -36,7 +36,7 @@ fn payments(offset: u32, hash: Hash) -> Vec<Payment> {
         .collect()
 }
 
-fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
+fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
     let mut manifest = common::manifest(MIN_ROWS);
     manifest.genesis = zakura_server_chain::Network::Mainnet.genesis_hash();
     manifest.start_height = activation();
@@ -55,14 +55,9 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
         .collect();
     let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(
-        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
-        &tree,
-        &[0, 5].into_iter().collect(),
-    )
-    .unwrap()
-    .encode();
-    (snapshot, proof)
+    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
+    (snapshot, table)
 }
 
 struct Http(reqwest::Client);
@@ -111,7 +106,12 @@ async fn main() {
             )
             .unwrap();
             std::fs::write(file("rows"), &snapshot.data).unwrap();
-            std::fs::write(file("witness"), witness).unwrap();
+            std::fs::write(file("witness"), &witness.data).unwrap();
+            std::fs::write(
+                file("witness.json"),
+                serde_json::to_vec_pretty(&witness.manifest).unwrap(),
+            )
+            .unwrap();
             let session = receiver_pir::server::Server::new(snapshot).unwrap().id();
             println!(
                 "{}",

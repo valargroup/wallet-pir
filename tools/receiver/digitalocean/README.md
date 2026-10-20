@@ -5,8 +5,8 @@ One Droplet, `receiver-pir-poc-01`, runs `receiver-pir.service`, which starts
 polls every 10 seconds and publishes two blocks below the tip. The service listens
 on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
-proxies only the wallet routes (`init`, `public`, `query`, `witness` and
-`block-filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
+proxies only the wallet routes (`init`, `public`, `query` and `block-filters`
+under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.
@@ -93,14 +93,15 @@ running digest and a set `serving`, which stays null until the first publication
 Then, still under the lock and before it commits, it runs the inventory's
 `exact_check` on the Droplet, since the coordinator cannot reach the private
 health route: `{release_dir}/receiver-directory probe`, the probe built into the
-deployed binary with its pinned fixture. It looks up the payment through encrypted PIR, checks current rolling block hints and private health, and validates witnesses when enabled. Provider audit availability is checked separately and never delays publication. Its chain checks use the fleet nodes, so the monitor's separate node remains the independent oracle. A failed check, its 300-second timeout, or `rollback` restores the previous unit and binary.
+deployed binary with its pinned fixture. It looks up the payment through encrypted PIR, reads its companion witness payload over PIR, checks current rolling block hints and private health. Provider audit availability is checked separately and never delays publication. Its chain checks use the fleet nodes, so the monitor's separate node remains the independent oracle. A failed check, its 300-second timeout, or `rollback` restores the previous unit and binary.
 Report `status receiver` and the rollback command after each deploy.
 
 A release that changes the wallet routes changes the probe with them, so the
 binary cannot verify through the old Caddyfile and the old binary cannot verify
-through the new one. Deploy such a release, including the one that replaces the
-aggregate `filters` route with `block-filters`, as one locked cutover of both with
-[`caddy.py`](caddy.py), which takes the production lock itself:
+through the new one. Deploy such a release as one locked cutover of both with
+[`caddy.py`](caddy.py), which takes the production lock itself. This release is
+one. It replaces the aggregate `filters` route with `block-filters` and drops the
+`witness/*` file route, since companion witnesses now come over PIR.
 
 ```sh
 tools/receiver/digitalocean/caddy.py cutover tools/receiver/digitalocean/Caddyfile \
@@ -265,9 +266,14 @@ A change of the wallet routes is a cutover with the binary instead, as
 [above](#release-and-deploy).
 
 The service publishes from memory and writes no publication files; the index keeps
-only `directory.sqlite` and, with the audit, `providers.sqlite`. A `publications/`
-directory left by an earlier release can be deleted. Back up `directory.sqlite`,
-the chain index. `providers.sqlite` holds only the payout audit. If it is lost,
+only `directory-v3.sqlite` and, with the audit, `providers.sqlite`. A `publications/`
+directory left by an earlier release can be deleted. Back up `directory-v3.sqlite`,
+the chain index. On its first start the companion witness release copies an
+earlier release's `directory.sqlite` into `directory-v3.sqlite`, adding each record's
+witness ordinal, and never changes the original: rolling the binary back keeps
+serving from `directory.sqlite`, which then catches up from where it stopped, and
+rolling forward again resumes `directory-v3.sqlite`. Delete `directory.sqlite` once
+a rollback past that release is no longer needed. `providers.sqlite` holds only the payout audit. If it is lost,
 the next read starts again from `--near-since`, and payouts completed before then
 go unchecked. Nothing else depends on it. A first read that exceeds its page
 bound fails, so deploy a later `--near-since` in that case. Logs go to the journal through
@@ -281,8 +287,9 @@ private network. `pir-monitor` is not in a release bundle: build it with
 `tools/enhance/scripts/build-observability.sh`, as for its other probes. The chain
 checks use the monitor host's own node and cookie, as the Status probe and the
 Transparent canary do, not the fleet nodes the service reads, so they are an
-independent oracle. That node must answer `z_gettreestate` with the Ironwood
-root, which `--witnesses` checks the served witness file against. The cookie and
+independent oracle. That node must answer `z_getsubtreesbyindex` for the
+`ironwood` pool, whose root for the fixture's Ironwood shard the served witness
+payload must reach. The cookie and
 the probe config come from the monitor's host drop-in, [`pir-monitor-service-quality.conf`](../../enhance/deploy/pir-monitor-service-quality.conf),
 installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
 (the live monitor already has it). Its `LoadCredential` source,
@@ -303,7 +310,7 @@ probe:
     "https://receiver-pir.valargroup.dev", "--health-url",
     "http://10.70.0.11:18380/v1/receiver/health",
     "--rpc-url", "http://127.0.0.1:18232", "--cookie",
-    "/run/credentials/pir-monitor.service/chain-rpc-cookie", "--witnesses"],
+    "/run/credentials/pir-monitor.service/chain-rpc-cookie"],
    "timeout_seconds": 30}
 ]
 ```
@@ -340,8 +347,8 @@ The fixture pins the public NEAR refund
 its receiver as decoded independently from NEAR's refund address (see
 [`src/receiver/receiver-store/tests/fixtures/zero-ovk-action-oracle`](../../../src/receiver/receiver-store/tests/fixtures/zero-ovk-action-oracle));
 the probe refuses a recovery that does not reproduce it. It alerts when the served
-anchor leaves the chain, the lookup misses or misreports the pinned payment, the
-witness file or the current block hint is wrong, or the audit reports a completed
+anchor leaves the chain, the lookup misses or misreports the pinned payment, its
+witness payload or the current block hint is wrong, or the audit reports a completed
 NEAR payout missing from the index (correctness, `answer_mismatch`), when the
 built-in fixture is malformed, recovers another receiver, is off the node's chain
 or outside the publication (`oracle_invalid`), and after three failed probes when

@@ -14,7 +14,7 @@ filters; it parses structure only. The indexer's SQLite chain index and optional
 payout audit store are this repository's `receiver-store` package. The same
 library's `crypto` feature checks receivers,
 unified addresses and record fields, recovers receivers with the zero OVK, and
-builds and checks witness files. The indexer enables these checks before storing
+builds lower inclusion paths for companion witness tables. The indexer enables these checks before storing
 a payment and before serving a publication, and a wallet checks a retrieved
 payment before crediting it. Dependencies run one way from wallet-pir to
 wallet-libraries; wallet-libraries never consumes wallet-pir packages.
@@ -56,10 +56,12 @@ to retain the prior Receiver release.
 
 ## Records and publications
 
-A 285-byte record holds version (1 byte), receiver (43), page (4), total pages
+A 289-byte record holds version (1 byte), receiver (43), page (4), total pages
 (4), present flag (1), height (4), block hash (32), txid (32), transaction index
 (4), Action index (4), note position (8), Action input nullifier (32), note
-commitment (32), ephemeral key (32) and ciphertext prefix (52). Integers are
+commitment (32), ephemeral key (32), ciphertext prefix (52) and witness ordinal
+(4). The ordinal is the record's rank by note position in its payment table and
+selects its companion witness payload; it means nothing under another table. Integers are
 little endian and hashes use protocol byte order. The Action input nullifier is
 decryption context, not the received note's spend nullifier. Structural encoding and decoding check lengths, tags and page ranges. The
 indexer and wallet additionally refuse a note commitment or Action input
@@ -99,17 +101,42 @@ Filters use the shared GCS codec with P = 20 and M = 1,569,792. Their salt binds
 
 Increase `--history-revision` after an indexing correction on an unchanged chain. The store refuses a lower revision after restart, and the same revision is bound into PIR publication identity. Advancing it immediately revokes older sessions before replacement preparation, including direct-PIR sessions. Reorgs use block hashes. A wallet must not settle a queued hit with an older history revision or a PIR frontier below the hit. Filters and PIR may become available at different times. Measure both availability lag and time to credit. Hints never delay ordinary wallet sync.
 
-A publication is its rows, an optional witness file and the manifest. The global NEAR recent/seen sets, the aggregate snapshot envelope with its `.filters` file and the aggregate HTTP filter route are gone. Rolling block hints are the only filters, and nothing published is an issuance input.
+A publication is its rows and manifest with its companion witness table. The global NEAR recent/seen sets, the aggregate snapshot envelope with its `.filters` file and the aggregate HTTP filter route are gone. Rolling block hints are the only filters, and nothing published is an issuance input.
 
 ## Witnesses
 
-The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
-terminal height and hash, tree size and root. Sorted 37-byte nodes (level,
-index, hash) follow, with every sibling of each payment position. It is capped
-at 64 MiB. The indexer serves a file only once it has checked a path to that root
-for every record in the rows. Building the file reads every commitment
-since the empty tree, so the store refuses a history longer than the caller's
-limit, the indexer's `--max-witness-commitments`, before reading it.
+Each payment table has a companion witness PIR table (profile
+`ironwood-zero-ovk-witness-v1`). Row `o / 8`, slot `o % 8` holds the 512-byte
+payload for the record with ordinal `o`: its sixteen siblings inside its Ironwood
+shard of 2^16 leaves, each supplied only when it is a complete subtree at the
+table's tree size, the rest zero. The witness manifest binds the payment table's
+revision, the correction revision, the payload count, geometry, the tree context
+(height, hash and size, here the payment table's end) and the rows' digest. Rows
+are the fewest supported that hold the payloads, from 8192; more payloads than 65536
+rows hold publish nothing. A payload whose Ironwood shard has completed is final on
+its chain; a provisional one is usable only with the wallet's own tree at exactly
+the table's block. Wallets authenticate payloads against their own tree.
+
+The store is `directory-v3.sqlite` in the data directory. An earlier release's
+`directory.sqlite`, whose records lack the ordinal, is copied into it once with zero
+ordinals that every snapshot reassigns, and is left unchanged so the earlier binary
+can still be rolled back to.
+
+Witnesses are built per Ironwood shard, never from the whole commitment history.
+The store keeps every commitment, records each completed shard's root and the
+block that completed it, and keeps every payment's final payload; a rewind past
+that block removes them. Only the filling shard's paths are held in memory and
+extended with each publication's new commitments; a restart or a rewind rebuilds
+them from that shard's at most 65,536 stored commitments. Before serving, the
+indexer checks that each record's payload supplies exactly the expected siblings
+and that every final payload folds from its commitment to its shard's recorded
+root.
+
+`Store::correct` applies an indexing correction on an unchanged chain: it replaces
+stored blocks' payments, checking hashes, positions and commitments against the
+stored blocks, and advances the store's correction revision. A payment it adds to a
+completed shard rebuilds that one shard's payloads from its stored commitments
+under the recorded root. Restart the service with the same `--history-revision`.
 
 ## Protocol
 
@@ -119,17 +146,18 @@ profile that Enhance and Transparent also use: a 4096-byte row is one
 setup derive from the protocol and the row count. At 8192 rows a query is 77,876
 bytes, a response 5,684 and the public setup 14,848. A session manifest holds the
 directory manifest, the protocol and the SHA-256 of the public setup, and refuses
-unknown fields. Its compact JSON, as `/v1/receiver/init` serves it, is at most 16
-KiB: a server refuses to prepare a larger one, and a client reads no more. A
-domain-separated hash of the protocol, the directory revision and that digest is
-the session ID.
+unknown fields. A domain-separated hash of the protocol, the directory revision and
+that digest is the session ID. The witness session is formed the same way from the
+witness manifest under its own domain. `/v1/receiver/init` serves both session
+manifests as one compact JSON object of at most 16 KiB: a client reads no more.
+Both sessions share `/v1/receiver/query`, and a query's session ID selects the
+table.
 
 | Route | Content |
 |---|---|
-| `GET /v1/receiver/init` | Current session manifest |
-| `GET /v1/receiver/public/:session` | Public PIR setup |
-| `POST /v1/receiver/query` | One encrypted row query |
-| `GET /v1/receiver/witness/:session` | Common witness file |
+| `GET /v1/receiver/init` | Current payment and witness session manifests |
+| `GET /v1/receiver/public/:session` | Public PIR setup of either session |
+| `POST /v1/receiver/query` | One encrypted payment or witness row query |
 | `GET /v1/receiver/block-filters/head` | Rolling hint availability |
 | `GET /v1/receiver/block-filters/:revision/:from/:limit` | Bounded consecutive block filters |
 | `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
@@ -171,7 +199,7 @@ cleartext fallback.
 ```sh
 cargo build --locked --release -p receiver-indexer --bin receiver-directory
 receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
-  --cookie /path/to/.cookie --serve --witnesses --min-rows 8192
+  --cookie /path/to/.cookie --serve --min-rows 8192
 ```
 
 `receiver-directory --help` and the `Config` documentation in
@@ -203,9 +231,9 @@ operator stages, from the same binary, without indexing: it opens no index
 database, ingests no blocks and reads no partner key. The JSON configuration
 (unknown fields refused) names `publication_record`, `bind` (loopback or
 private), `state_dir`, `rpc_urls`, and `cookie` or `"no_auth": true`, with the
-optional `poll_seconds`, `witnesses` and `min_rows` of the indexer. The record
+optional `poll_seconds` and `min_rows` of the indexer. The record
 is `{"directory": "/abs/path", "revision": "<64 hex>"}`: stage the complete
-directory a one-shot run writes (`<revision>.json`, `.rows`,
+directory a one-shot run writes (`<revision>.json`, `.rows`, `.witness.json` and
 `.witness`), then replace the record atomically (write beside it, rename over
 it). It is a private local control input; there is no update route.
 
@@ -214,7 +242,8 @@ Staged serving publishes the immutable PIR directory and proofs only. Rolling hi
 Each record is verified in full before it can serve: the manifest must digest
 to the expected revision, be mainnet, start at Ironwood activation and hold at
 least `min_rows`, the rows must match its digest and every record must check,
-and any witness file must bind to the publication and prove every record. The
+and the companion witness table must bind to the publication and supply each
+record's payload as the indexer checks it. The
 server library re-validates the rows record by record while preparing PIR. Its anchor must then be canonical on the freshest node. Updates
 are serial: a newer record supersedes one still preparing, a record that does
 not verify is refused while the last valid publication keeps serving, and the
@@ -232,26 +261,28 @@ for completeness. Operators install it as the `receiver.serve-publication`
 external worker ([operations](../operations.md#external-workers)).
 
 `receiver-directory probe --origin <url> --health-url <private health URL>
---rpc-url <node> --no-auth [--witnesses]`, or `receiver-probe` with the same
+--rpc-url <node> --no-auth`, or `receiver-probe` with the same
 arguments on the monitor host, is a `pir-monitor` service probe with an embedded
 mainnet fixture. It checks the served anchor against independent nodes, looks up a
-pinned historical payment over live encrypted PIR, validates current block hints against the node and, with `--witnesses`, checks the witness against the node's Ironwood root. Retained fixtures must match their block's filter. A pruned fixture is still recovered through PIR. Provider feed freshness is not a deployment gate. `--max-lag` defaults to 12 blocks.
+pinned historical payment over live encrypted PIR, reads its companion payload over live encrypted PIR by the record's ordinal, and validates current block hints against the node. A final payload must fold from the fixture's commitment to the node's root for that Ironwood shard (`z_getsubtreesbyindex`). A provisional one, for a shard the chain has not completed, has no independent oracle here, so the probe reports it `oracle_unavailable` rather than passing. Retained fixtures must match their block's filter. A pruned fixture is still recovered through PIR. Provider feed freshness is not a deployment gate. `--max-lag` defaults to 12 blocks.
 
 ## Wallet use
 
-`receiver_pir::transport::DirectoryClient` uses the caller's routing, cancellation and response limits. Fetch bounded block hints when cheaper than direct lookups, match receivers locally and use PIR for positives. Otherwise query unfinished addresses directly. Accept a manifest's end hash and history correction revision before connecting. `page` reads one history record per encrypted query and `witnesses` fetches common inclusion data. Reuse setup where supported. The server can observe query counts and timing, but the receiver stays private. There is no public row-file route.
+`receiver_pir::transport::DirectoryClient` uses the caller's routing, cancellation and response limits. Fetch bounded block hints when cheaper than direct lookups, match receivers locally and use PIR for positives. Otherwise query unfinished addresses directly. Accept a manifest's end hash and history correction revision before connecting. `page` reads one history record per encrypted query and `witness` reads a payment's companion payload by its record's ordinal, also over PIR. Reuse setup where supported. The server can observe query counts and timing, but the receiver stays private. There is no public row-file route.
 
 ## Tests
 
 `cargo test -p receiver-store` covers publications and store restart and
-rollback, including the commitment history a witness file is built from.
+rollback, commitment ranges, completed Ironwood shards and corrections.
 `cargo test -p receiver-pir-server` tests the HTTP service with the canonical
 library client. `cargo test -p receiver-indexer` covers indexing with synthetic
-blocks, refusal of invalid records and witness files before storing or serving,
-witness files fetched over HTTP and checked with the library, serving from
-memory and the probe's encrypted lookup.
+blocks, incremental witness payloads against fresh rebuilds across shard
+completion, restart, reorg and correction, refusal of invalid records and payloads
+before storing or serving, payloads read over PIR through the library client and
+checked against an independent tree, serving from memory and the probe's encrypted
+lookup.
 
-The [receiver packages in wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/0077246dd952ae861f51280ead9ee049404200f8/zakura)
+The [receiver packages in wallet-libraries](https://github.com/zakura-core/wallet-libraries/tree/439cd52b513467631a2159267aa4e28d1cf45597/zakura)
 own record and address validation, public mainnet refund recovery, independent
 tree witnesses, encrypted round trips at every geometry, and fixed protocol
 seeds, framing and row placement. Run those tests in that repository with its

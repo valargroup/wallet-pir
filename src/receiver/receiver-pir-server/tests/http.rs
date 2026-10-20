@@ -3,6 +3,8 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/prepared.rs"]
+mod prepared;
 #[path = "common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
@@ -50,7 +52,7 @@ impl Drop for Running {
     }
 }
 async fn serve(snapshot: Snapshot) -> Running {
-    serve_publication(Publication::verified(Server::new(snapshot).unwrap(), None)).await
+    serve_publication(prepared::prepare_payments(snapshot).unwrap()).await
 }
 /// Serve one prepared publication through the production router.
 async fn serve_publication(publication: Publication) -> Running {
@@ -68,10 +70,7 @@ async fn serve_router(app: axum::Router) -> Running {
 #[tokio::test]
 async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     let publications = Publications::default();
-    assert!(publications.publish(
-        Publication::verified(Server::new(snapshot(2)).unwrap(), None),
-        0
-    ));
+    assert!(publications.publish(prepared::prepare_payments(snapshot(2)).unwrap(), 0));
     let server = serve_router(router_with_publications(publications.clone())).await;
     let old = connect(&server.origin, Http(http()), accepted())
         .await
@@ -81,10 +80,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     next.manifest.end_height = 102;
     next.manifest.end_hash = [9; 32];
     // Empty canonical extension: old payments remain unchanged.
-    assert!(publications.publish(
-        Publication::verified(Server::new(next.clone()).unwrap(), None),
-        0
-    ));
+    assert!(publications.publish(prepared::prepare_payments(next.clone()).unwrap(), 0));
     let public = http()
         .get(format!("{}/v1/receiver/public/{old_id}", server.origin))
         .send()
@@ -100,7 +96,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
 
     // Preparation started before the canonical guard detected the fork.
     let preparing_epoch = publications.epoch();
-    let prepared = Publication::verified(Server::new(next).unwrap(), None);
+    let prepared = prepared::prepare_payments(next).unwrap();
     publications.revoke();
     assert!(!publications.publish(prepared, preparing_epoch));
     assert_eq!(
@@ -121,7 +117,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
             .status(),
         reqwest::StatusCode::GONE
     );
-    assert!(matches!(old.witnesses().await, Err(Error::Revision)));
+    assert!(matches!(old.witness(0).await, Err(Error::Revision)));
     assert!(matches!(
         history(&new, receiver()).await,
         Err(Error::Revision)
@@ -132,7 +128,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     replacement.manifest.end_height = 102;
     replacement.manifest.end_hash = [10; 32];
     assert!(publications.publish(
-        Publication::verified(Server::new(replacement).unwrap(), None),
+        prepared::prepare_payments(replacement).unwrap(),
         publications.epoch()
     ));
     anchor.hash = [10; 32];
@@ -153,10 +149,10 @@ fn no_store(response: &reqwest::Response) -> bool {
 #[tokio::test]
 async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let snapshot = snapshot(1);
-    let pir = Server::new(snapshot.clone()).unwrap();
-    let id = hex::encode(pir.id());
+    let pir = prepared::prepare_payments(snapshot.clone()).unwrap();
+    let id = hex::encode(pir.session().payments.id().unwrap());
     let publications = Publications::default();
-    assert!(publications.publish(Publication::verified(pir, None), 0));
+    assert!(publications.publish(pir, 0));
     let server = serve_router(router_with_publications(publications.clone())).await;
     let get = |path: String| http().get(format!("{}{path}", server.origin)).send();
     let unknown = get(format!("/v1/receiver/public/{}", "00".repeat(32)))
@@ -169,8 +165,8 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     for salt in 0..9 {
         let mut m = manifest(MIN_ROWS);
         m.salt[0] = salt;
-        let other = Server::new(Snapshot::build(m, &[]).unwrap()).unwrap();
-        assert!(publications.publish(Publication::verified(other, None), publications.epoch()));
+        let other = prepared::prepare_payments(Snapshot::build(m, &[]).unwrap()).unwrap();
+        assert!(publications.publish(other, publications.epoch()));
         publications.revoke();
     }
     let public = format!("/v1/receiver/public/{id}");
@@ -179,9 +175,9 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     assert!(no_store(&gone));
 
     // The identical publication has the same session id and serves the same URL.
-    let pir = Server::new(snapshot).unwrap();
-    let expected = pir.public().to_vec();
-    assert!(publications.publish(Publication::verified(pir, None), publications.epoch()));
+    let expected = Server::new(snapshot.clone()).unwrap().public().to_vec();
+    let pir = prepared::prepare_payments(snapshot).unwrap();
+    assert!(publications.publish(pir, publications.epoch()));
     let restored = get(public).await.unwrap();
     assert!(restored.status().is_success() && no_store(&restored));
     assert_eq!(restored.bytes().await.unwrap(), expected);
@@ -192,7 +188,8 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
 async fn health_serves_the_owners_report() {
     let publications = Publications::default();
     assert!(publications.publish(
-        Publication::verified(Server::new(snapshot(0)).unwrap(), None)
+        prepared::prepare_payments(snapshot(0))
+            .unwrap()
             .with_report(serde_json::json!({"missing_payouts": 0})),
         0
     ));
@@ -211,11 +208,10 @@ async fn health_serves_the_owners_report() {
     let mut next = snapshot(1);
     next.manifest.end_height = 102;
     next.manifest.end_hash = [9; 32];
-    let server_next = Server::new(next).unwrap();
-    let id = hex::encode(server_next.manifest().id().unwrap());
+    let next = prepared::prepare_payments(next).unwrap();
+    let id = hex::encode(next.session().payments.id().unwrap());
     assert!(publications.publish(
-        Publication::verified(server_next, None)
-            .with_report(serde_json::json!({"missing_payouts": 3})),
+        next.with_report(serde_json::json!({"missing_payouts": 3})),
         0
     ));
     let health = health().await;
@@ -269,7 +265,7 @@ fn rotation_waits_for_the_previous_revisions_grace() {
         let mut paid = record(0, 1);
         paid.payment.height = 100;
         let next = Snapshot::build(m, &[paid]).unwrap();
-        publications.publish(Publication::verified(Server::new(next).unwrap(), None), 0)
+        publications.publish(prepared::prepare_payments(next).unwrap(), 0)
     };
     assert!(publish(101));
     assert!(publications.ready_at().is_none());
@@ -302,7 +298,7 @@ async fn health_and_metrics_follow_the_serving_contract() {
     let manifest = DirectoryClient::fetch_manifest(&server.origin, &Http(http()))
         .await
         .unwrap();
-    assert_eq!(manifest.directory.revision().unwrap(), revision);
+    assert_eq!(manifest.payments.directory.revision().unwrap(), revision);
     let metrics = http()
         .get(format!("{}/metrics", server.origin))
         .send()
@@ -515,7 +511,8 @@ impl Transport for Counted {
 }
 
 /// A history longer than the old 16-page PIR limit completes over PIR alone: one
-/// query per page, no row file request, and no GET beyond the manifest and setup.
+/// query per page, no row file request, and no GET beyond the manifest and the two
+/// sessions' setup.
 #[tokio::test]
 async fn long_histories_use_only_pir() {
     const PAGES: u32 = 20;
@@ -531,30 +528,26 @@ async fn long_histories_use_only_pir() {
     assert_eq!(payments.len(), PAGES as usize);
     assert!(payments.windows(2).all(|p| p[0].position < p[1].position));
     assert_eq!(host.row_files.load(Ordering::Relaxed), 0);
-    assert_eq!(host.gets.load(Ordering::Relaxed), 2);
+    assert_eq!(host.gets.load(Ordering::Relaxed), 3);
     assert_eq!(host.posts.load(Ordering::Relaxed), PAGES as usize);
 }
 
-/// The common witness file is served byte for byte under the session's own route;
-/// this crate never interprets it, and a wallet verifies it.
+/// The companion witness table answers an ordinal over the shared query route under
+/// its own session, which `init` advertises beside the payment session; this crate never
+/// interprets payloads, and a wallet verifies them.
 #[tokio::test]
-async fn common_witness_file_uses_the_same_publication() {
-    let proof = b"IWPROOF1 opaque to the server".to_vec();
-    let server = serve_publication(Publication::verified(
-        Server::new(snapshot(0)).unwrap(),
-        Some(proof.clone()),
-    ))
-    .await;
+async fn companion_witness_payloads_are_read_over_pir() {
+    let snapshot = snapshot(2);
+    let payloads = [[7; 512], [9; 512]];
+    let table = prepared::companion_table(&snapshot, &payloads);
+    let server = serve_publication(prepared::prepare(snapshot, table).unwrap()).await;
     let client = connect(&server.origin, Http(http()), accepted())
         .await
         .unwrap();
-    assert_eq!(client.witnesses().await.unwrap(), proof);
-    // A publication without a witness file serves none.
-    let server = serve(snapshot(0)).await;
-    let client = connect(&server.origin, Http(http()), accepted())
-        .await
-        .unwrap();
-    assert!(client.witnesses().await.is_err());
+    assert_eq!(client.witness(1).await.unwrap(), payloads[1]);
+    assert_eq!(client.witness(0).await.unwrap(), payloads[0]);
+    // An ordinal past the table's payloads is never sent.
+    assert!(client.witness(2).await.is_err());
 }
 
 #[test]

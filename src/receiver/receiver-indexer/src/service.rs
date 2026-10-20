@@ -25,16 +25,6 @@ pub struct Config {
     /// Minimum served row count. Grows by powers of two up to 65536.
     #[arg(long, default_value_t = receiver_pir::MIN_ROWS)]
     pub min_rows: u32,
-    /// Publish common witness data. Requires commitment history from position zero.
-    #[arg(long)]
-    #[serde(default)]
-    pub witnesses: bool,
-    /// The most commitments a witness build reads. A longer history publishes nothing,
-    /// so the served publication goes stale instead of exhausting memory. The default,
-    /// 2^24, peaks near 3.4 GB at about 200 bytes per commitment, within the unit's
-    /// 7 GiB `MemoryMax`, and leaves years of growth at about 7,600 a day.
-    #[arg(long, default_value_t = 1 << 24)]
-    pub max_witness_commitments: u64,
     /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the mainnet
     /// one with the highest tip (see [`NodeClient::ranked`]).
     #[arg(long, required = true)]
@@ -44,6 +34,8 @@ pub struct Config {
     #[arg(long)]
     #[serde(default)]
     pub no_auth: bool,
+    /// Must be Ironwood activation: companion witness tables need every commitment of each
+    /// Ironwood shard, and wallets refuse served coverage that starts later.
     #[arg(long, default_value_t = crate::blocks::ironwood_activation())]
     pub start_height: u32,
     #[arg(long)]
@@ -97,8 +89,6 @@ impl From<&Config> for application::Config {
         Self {
             data_dir: args.data_dir.clone(),
             min_rows: args.min_rows,
-            witnesses: args.witnesses,
-            max_witness_commitments: args.max_witness_commitments,
             start_height: args.start_height,
             end_height: args.end_height,
             depth: args.depth,
@@ -114,15 +104,8 @@ impl From<&Config> for application::Config {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         receiver_pir::validate_rows(self.min_rows)?;
-        if self.start_height < crate::blocks::ironwood_activation() {
-            return Err("start must be at or after Ironwood activation".into());
-        }
-        // Witnesses need every commitment, and wallets refuse served coverage that starts
-        // later; a one-shot run without witnesses may.
-        if (self.witnesses || self.serve)
-            && self.start_height != crate::blocks::ironwood_activation()
-        {
-            return Err("witnesses and serving need history from Ironwood activation".into());
+        if self.start_height != crate::blocks::ironwood_activation() {
+            return Err("witness tables and serving need history from Ironwood activation".into());
         }
         let private = match self.bind.ip() {
             IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),

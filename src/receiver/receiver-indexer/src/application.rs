@@ -5,7 +5,10 @@ use crate::{
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
+use receiver_directory::{
+    snapshot::{Snapshot, MAX_ROWS},
+    witness,
+};
 use receiver_pir_server::{Publication, Publications};
 use receiver_store::{Config as StoreConfig, Error, PayoutStore, Store};
 use std::{
@@ -13,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::{info, warn};
-use zakura_receiver_crypto::witness::WitnessCache;
 #[cfg(test)]
 use zakura_server_chain::Network;
 use zakura_server_chain::NodeClient;
@@ -27,8 +29,6 @@ pub const PROVIDERS: &str = "providers.sqlite";
 pub struct Config {
     pub data_dir: PathBuf,
     pub min_rows: u32,
-    pub witnesses: bool,
-    pub max_witness_commitments: u64,
     pub start_height: u32,
     pub end_height: Option<u32>,
     pub depth: u32,
@@ -49,12 +49,12 @@ struct Active {
     history_revision: u64,
 }
 
-/// In-memory publication identity and reusable witness preparation across polls.
+/// In-memory publication identity and the filling Ironwood shard's paths across polls.
 /// Recreate on restart; committed progress is recovered from the store.
 #[derive(Default)]
 pub struct State {
     active: Option<Active>,
-    witness_cache: WitnessCache,
+    witnesses: crate::witness::Witnesses,
 }
 
 /// Poll the product refresh operation, retaining its state across source or
@@ -154,8 +154,15 @@ pub async fn refresh(
     }
     let boundary = crate::blocks::boundary(rpc, args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
+    let path = args.data_dir.join(receiver_store::STORE_FILE);
+    if receiver_store::upgrade(
+        &args.data_dir.join(receiver_store::LEGACY_STORE_FILE),
+        &path,
+    )? {
+        info!("converted the version 2 receiver store; the original is kept for rollback");
+    }
     let mut store = Store::open(
-        args.data_dir.join("directory.sqlite"),
+        path,
         StoreConfig {
             genesis,
             start_height: args.start_height,
@@ -198,6 +205,8 @@ pub struct Collected<'a> {
     tip: receiver_store::Checkpoint,
     epoch: Option<u64>,
     refresh_started: std::time::Instant,
+    /// The correction revision this pass publishes; see [`collect`].
+    history_revision: u64,
 }
 
 /// Reconcile and commit validated blocks, revoking served sessions before rewind.
@@ -289,7 +298,10 @@ async fn collect_inner<'a>(
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
-    if serving.is_some_and(|s| !s.advance_history_revision(args.history_revision)) {
+    // An offline correction (see [`correct`]) may have advanced the store past the
+    // configured revision; publish the higher one rather than refuse to collect.
+    let history_revision = args.history_revision.max(store.history_revision()?);
+    if serving.is_some_and(|s| !s.advance_history_revision(history_revision)) {
         return Err("history correction revision cannot decrease".into());
     }
     // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
@@ -331,10 +343,10 @@ async fn collect_inner<'a>(
     // Hints activate before witness/PIR preparation and are not held by session grace.
     // The guard also checks this anchor while expensive preparation runs.
     let filter_started = std::time::Instant::now();
-    let filters = store.block_filters(args.filter_blocks, args.history_revision)?;
+    let filters = store.block_filters(args.filter_blocks, history_revision)?;
     if let Some(serving) = serving {
         let window =
-            receiver_pir_server::blocks::BlockWindow::new(genesis, args.history_revision, filters)?;
+            receiver_pir_server::blocks::BlockWindow::new(genesis, history_revision, filters)?;
         rpc.check_network(genesis).await?;
         if !is_canonical(rpc, tip.height, tip.hash).await?
             || !serving.publish_filters(window, epoch.unwrap())
@@ -356,6 +368,7 @@ async fn collect_inner<'a>(
         tip,
         epoch,
         refresh_started,
+        history_revision,
     }))
 }
 
@@ -388,11 +401,9 @@ impl<'a> Collected<'a> {
             tip,
             epoch,
             refresh_started,
+            history_revision,
         } = self;
-        let State {
-            active,
-            witness_cache,
-        } = state;
+        let State { active, witnesses } = state;
         // The optional audit cannot prevent chain publication when its store is unavailable.
         let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
         let report = crate::near::capture(provider_store, anchor_time)
@@ -404,7 +415,7 @@ impl<'a> Collected<'a> {
         if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
             if active.anchor == (tip.height, tip.hash)
                 && serving.current_anchor() == Some(active.anchor)
-                && active.history_revision == args.history_revision
+                && active.history_revision == history_revision
             {
                 // The audit never rebuilds a publication; its report refreshes in place.
                 if !serving.update_report(active.anchor, report, epoch.unwrap()) {
@@ -423,7 +434,7 @@ impl<'a> Collected<'a> {
                     "directory exceeds the maximum row count; no publication created".into(),
                 );
             }
-            match store.snapshot(rows, args.history_revision) {
+            match store.snapshot(rows, history_revision) {
                 Ok(s) => break s,
                 Err(Error::Capacity) => rows *= 2,
                 Err(e) => return Err(e.into()),
@@ -439,31 +450,15 @@ impl<'a> Collected<'a> {
         {
             return Err("chain changed before publication; rerun to reconcile".into());
         }
-        let witnesses = if args.witnesses {
-            let started = std::time::Instant::now();
-            // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
-            let proof = match verify::build_witnesses(
-                store,
-                &snapshot.manifest,
-                witness_cache,
-                args.max_witness_commitments,
-            ) {
-                Err(Error::Capacity) => {
-                    return Err(format!(
-                        "witnesses for {} commitments exceed --max-witness-commitments or the \
-                     witness file's node limit; no publication created",
-                        snapshot.manifest.end_position
-                    )
-                    .into())
-                }
-                proof => proof?,
-            };
-            log_stage("witness_prepare", started);
-            info!(witness_bytes = proof.len(), "witnesses prepared");
-            Some(proof)
-        } else {
-            None
-        };
+        let started = std::time::Instant::now();
+        // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
+        let witnesses = companion(store, witnesses, &snapshot)?;
+        log_stage("witness_prepare", started);
+        info!(
+            witness_rows = witnesses.manifest.rows,
+            payloads = witnesses.manifest.payloads,
+            "witnesses prepared"
+        );
         if !is_canonical(
             rpc,
             snapshot.manifest.end_height,
@@ -480,19 +475,16 @@ impl<'a> Collected<'a> {
         "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
         "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
         "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
-        "history_revision":args.history_revision});
+        "witness_rows":witnesses.manifest.rows,"history_revision":history_revision});
         let candidate = if serving.is_some() {
             let started = std::time::Instant::now();
             let publication =
                 tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses))
                     .await??;
             log_stage("pir_prepare", started);
-            Candidate::Serving(publication)
+            Candidate::Serving(Box::new(publication))
         } else {
-            Candidate::Files {
-                snapshot,
-                witnesses,
-            }
+            Candidate::Files(Box::new((snapshot, witnesses)))
         };
         Ok(Input::Work(Prepared {
             candidate,
@@ -501,7 +493,7 @@ impl<'a> Collected<'a> {
             serving,
             epoch,
             active,
-            history_revision: args.history_revision,
+            history_revision,
             report,
             refresh_started,
             revision,
@@ -511,11 +503,45 @@ impl<'a> Collected<'a> {
 }
 
 enum Candidate {
-    Serving(Publication),
-    Files {
-        snapshot: Snapshot,
-        witnesses: Option<Vec<u8>>,
-    },
+    Serving(Box<Publication>),
+    /// A one-shot run's rows and companion table, to write.
+    Files(Box<(Snapshot, witness::Table)>),
+}
+
+/// The companion witness table for `snapshot`, which the store's tip anchors: one payload
+/// per payment in position order, each checked to fold to its completed Ironwood shard's
+/// recorded root. More payloads than the largest witness table holds publish nothing.
+fn companion(
+    store: &mut Store,
+    witnesses: &mut crate::witness::Witnesses,
+    snapshot: &Snapshot,
+) -> Result<witness::Table> {
+    let m = &snapshot.manifest;
+    let tip = store.tip()?;
+    let positions = store.payment_positions(m.start_position, m.end_position)?;
+    if (tip.height, tip.hash, tip.position) != (m.end_height, m.end_hash, m.end_position)
+        || positions.len() as u64 != m.records
+    {
+        return Err("the index moved while building witnesses; retrying".into());
+    }
+    let payloads = witnesses.payloads(store, &tip, &positions)?;
+    let table = match crate::witness::table(snapshot, &payloads) {
+        Err(Error::Capacity) => {
+            return Err(format!(
+                "{} payments exceed the largest witness table; no publication created",
+                payloads.len()
+            )
+            .into())
+        }
+        table => table?,
+    };
+    for (shard, root) in verify::check_publication(snapshot, &table)? {
+        let shard = u32::try_from(shard)?;
+        if store.completed_shard(shard)?.map(|s| s.root) != Some(root) {
+            return Err(Error::Coverage.into());
+        }
+    }
+    Ok(table)
 }
 
 struct Prepared<'a> {
@@ -547,17 +573,15 @@ impl Prepared<'_> {
             summary,
         } = self;
         let publication = match candidate {
-            Candidate::Files {
-                snapshot,
-                witnesses,
-            } => {
+            Candidate::Files(files) => {
+                let (snapshot, witnesses) = *files;
                 let started = std::time::Instant::now();
                 write_publication(&args.data_dir.join("publications"), &snapshot, witnesses)?;
                 log_stage("directory_write", started);
                 println!("{summary}");
                 return Ok(());
             }
-            Candidate::Serving(publication) => publication,
+            Candidate::Serving(publication) => *publication,
         };
         let serving = serving.expect("serving candidate has publication owner");
         let end_height = publication.manifest().end_height;
@@ -587,6 +611,33 @@ impl Prepared<'_> {
     }
 }
 
+/// Applies an indexing correction to the store in `data_dir` offline: replaces the
+/// payments of `blocks`, which must match the stored chain, under `history_revision`
+/// (see [`Store::correct`]). It holds the data directory's lock, so it refuses while a
+/// serving indexer runs there; the restarted service publishes the higher revision and
+/// revokes every older session before serving.
+pub fn correct(
+    data_dir: &Path,
+    config: StoreConfig,
+    history_revision: u64,
+    blocks: &[receiver_store::IndexedBlock],
+) -> Result<()> {
+    let _lock = pir_pipeline::service::lock(data_dir).map_err(|e| {
+        format!(
+            "the receiver service is running in {}: {e}",
+            data_dir.display()
+        )
+    })?;
+    for block in blocks {
+        for (receiver, payment) in &block.payments {
+            verify::check_payment(receiver, payment)?;
+        }
+    }
+    let mut store = Store::open(data_dir.join(receiver_store::STORE_FILE), config)?;
+    store.correct(history_revision, blocks)?;
+    Ok(())
+}
+
 /// Stage processing excludes the poll interval and client retries.
 fn log_stage(stage: &str, started: std::time::Instant) {
     info!(
@@ -596,24 +647,21 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Durably write a revision's rows and any witness file, then its manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
-/// no more of, or invalid records or witnesses, writes nothing.
-fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
-    verify::check_publication(snapshot, witnesses.as_deref())?;
+/// Durably write a revision's rows, its companion witness table and witness manifest,
+/// then its manifest. A session manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which
+/// clients read no more of, or invalid records or witnesses, writes nothing.
+fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: witness::Table) -> Result<()> {
+    verify::check_publication(snapshot, &witnesses)?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
-    if manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
+    let witness_manifest = serde_json::to_vec_pretty(&witnesses.manifest)?;
+    if manifest.len() + witness_manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
         return Err("publication manifest exceeds its size bound; nothing written".into());
     }
     std::fs::create_dir_all(root)?;
     let revision = hex::encode(snapshot.manifest.revision()?);
     write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
-    if let Some(proof) = witnesses {
-        // Witnesses are not covered by the revision, so a rebuild replaces them.
-        let mut temp = tempfile::NamedTempFile::new_in(root)?;
-        temp.write_all(&proof)?;
-        temp.as_file().sync_all()?;
-        temp.persist(root.join(format!("{revision}.witness")))?;
-    }
+    write_revision_file(root, &format!("{revision}.witness"), &witnesses.data)?;
+    write_revision_file(root, &format!("{revision}.witness.json"), &witness_manifest)?;
     write_revision_file(root, &format!("{revision}.json"), &manifest)?;
     std::fs::File::open(root)?.sync_all()?;
     Ok(())
@@ -723,7 +771,8 @@ mod tests {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[]).unwrap();
-        prepare_snapshot(snapshot, None).unwrap()
+        let table = crate::witness::table(&snapshot, &[]).unwrap();
+        prepare_snapshot(snapshot, table).unwrap()
     }
 
     /// A check that finds an anchor off the chain after a revocation and a new
@@ -810,7 +859,7 @@ mod tests {
             *node.time.lock().unwrap() = NOW;
             let rpc = serve_node(node.clone()).await;
             let mut store = Store::open(
-                dir.path().join("directory.sqlite"),
+                dir.path().join(receiver_store::STORE_FILE),
                 StoreConfig {
                     genesis: Network::Mainnet.genesis_hash(),
                     start_height: height as u32,
@@ -834,8 +883,6 @@ mod tests {
             let args = Config {
                 data_dir: dir.path().to_owned(),
                 min_rows: receiver_pir::MIN_ROWS,
-                witnesses: false,
-                max_witness_commitments: 1 << 24,
                 start_height: height as u32,
                 end_height: None,
                 depth: 0,
@@ -881,7 +928,7 @@ mod tests {
 
         fn store(&self) -> Store {
             Store::open(
-                self.dir.path().join("directory.sqlite"),
+                self.dir.path().join(receiver_store::STORE_FILE),
                 StoreConfig {
                     genesis: Network::Mainnet.genesis_hash(),
                     start_height: crate::blocks::ironwood_activation(),
@@ -896,6 +943,58 @@ mod tests {
         fn provider(&self) -> PayoutStore {
             PayoutStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
+    }
+
+    /// A correction is refused while the service holds the data directory, and once
+    /// applied offline the restarted service publishes the store's higher revision under
+    /// its unchanged configuration, revoking older sessions before serving.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_offline_correction_is_published_at_the_next_start() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let old: receiver_pir::Publication =
+            serde_json::from_value(paused.get("init").await).unwrap();
+        let height = crate::blocks::ironwood_activation();
+        let block = receiver_store::IndexedBlock {
+            height,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 0,
+            end_position: 0,
+            coinbase_actions: 0,
+            payments: Vec::new(),
+            commitments: Vec::new(),
+        };
+        let config = StoreConfig {
+            genesis: Network::Mainnet.genesis_hash(),
+            start_height: height,
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        let held = pir_pipeline::service::lock(paused.dir.path()).unwrap();
+        let refused = correct(
+            paused.dir.path(),
+            config.clone(),
+            1,
+            std::slice::from_ref(&block),
+        );
+        assert!(refused
+            .unwrap_err()
+            .to_string()
+            .contains("service is running"));
+        drop(held);
+        correct(paused.dir.path(), config, 1, std::slice::from_ref(&block)).unwrap();
+        paused.state = State::default();
+        paused.refresh().await.unwrap();
+        let next: receiver_pir::Publication =
+            serde_json::from_value(paused.get("init").await).unwrap();
+        assert_eq!(paused.args.history_revision, 0);
+        assert_eq!(next.payments.directory.history_revision, 1);
+        let id = hex::encode(old.payments.id().unwrap());
+        let gone = reqwest::get(format!("{}/v1/receiver/public/{id}", paused.origin))
+            .await
+            .unwrap();
+        assert_eq!(gone.status(), reqwest::StatusCode::GONE);
     }
 
     /// An outage proves nothing about canonicality; a restarted application recovers
@@ -1003,8 +1102,8 @@ mod tests {
         paused.state = State::default();
         paused.refresh().await.unwrap();
         let next = paused.get("init").await;
-        assert_eq!(next["directory"]["end_height"], height);
-        assert_eq!(next["directory"]["records"], 1);
+        assert_eq!(next["payments"]["directory"]["end_height"], height);
+        assert_eq!(next["payments"]["directory"]["records"], 1);
         assert_ne!(next, first);
     }
 
@@ -1045,7 +1144,10 @@ mod tests {
         assert_eq!(store.tip().unwrap().height, height);
         drop(store);
         paused.refresh().await.unwrap();
-        assert_eq!(paused.get("init").await["directory"]["end_height"], height);
+        assert_eq!(
+            paused.get("init").await["payments"]["directory"]["end_height"],
+            height
+        );
     }
 
     /// A response admitted under the old revision retains its immutable bytes
@@ -1056,7 +1158,8 @@ mod tests {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
         let old = paused.get("init").await;
-        let old_manifest: receiver_pir::Manifest = serde_json::from_value(old.clone()).unwrap();
+        let old_manifest: receiver_pir::Publication = serde_json::from_value(old.clone()).unwrap();
+        let old_manifest = old_manifest.payments;
         let height = crate::blocks::ironwood_activation();
         let accepted = receiver_pir::AcceptedCoverage {
             genesis: Network::Mainnet.genesis_hash(),
@@ -1115,8 +1218,9 @@ mod tests {
             .unwrap()
             .insert(u64::from(height), [4; 32]);
         paused.refresh().await.unwrap();
-        let next: receiver_pir::Manifest =
+        let next: receiver_pir::Publication =
             serde_json::from_value(paused.get("init").await).unwrap();
+        let next = next.payments;
         assert_ne!(
             next.directory.data_sha256,
             old_manifest.directory.data_sha256
@@ -1309,7 +1413,20 @@ mod tests {
         paused.args.depth = 5;
         paused.refresh().await.unwrap();
         let height = crate::blocks::ironwood_activation();
-        assert_eq!(paused.get("init").await["directory"]["end_height"], height);
+        assert_eq!(
+            paused.get("init").await["payments"]["directory"]["end_height"],
+            height
+        );
+    }
+
+    /// A zero companion payload for each record of `snapshot`, all positions in its
+    /// filling Ironwood shard. With `invalid`, each supplies a sibling at level 15, which no
+    /// position below 32,768 has in a tree of fewer leaves.
+    fn placeholder(snapshot: &Snapshot, invalid: bool) -> witness::Table {
+        let mut payload = [0; receiver_store::PAYLOAD_BYTES];
+        payload[15 * 32] = u8::from(invalid);
+        let payloads = vec![payload; snapshot.manifest.records as usize];
+        crate::witness::table(snapshot, &payloads).unwrap()
     }
 
     #[test]
@@ -1322,13 +1439,15 @@ mod tests {
         let mut malformed = valid.clone();
         malformed.payment.cmx = [255; 32];
         let snapshot = Snapshot::build(manifest.clone(), &[malformed]).unwrap();
+        let table = placeholder(&snapshot, false);
         assert!(matches!(
-            prepare_snapshot(snapshot, None),
+            prepare_snapshot(snapshot, table),
             Err(Directory(Malformed))
         ));
         let snapshot = Snapshot::build(manifest, &[valid]).unwrap();
+        let table = placeholder(&snapshot, true);
         assert!(matches!(
-            prepare_snapshot(snapshot, Some(vec![0; 152])),
+            prepare_snapshot(snapshot, table),
             Err(Directory(Malformed))
         ));
     }
@@ -1340,7 +1459,12 @@ mod tests {
         manifest.end_position = 300;
         let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)]).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        write_publication(&dir.path().join("valid"), &valid, None).unwrap();
+        write_publication(
+            &dir.path().join("valid"),
+            &valid,
+            placeholder(&valid, false),
+        )
+        .unwrap();
         for field in 0..4 {
             let mut record = super::common::record(0, 1);
             match field {
@@ -1351,14 +1475,15 @@ mod tests {
             }
             let snapshot = Snapshot::build(manifest.clone(), &[record]).unwrap();
             let root = dir.path().join(format!("invalid-{field}"));
+            let table = placeholder(&snapshot, false);
             assert!(
-                write_publication(&root, &snapshot, None).is_err(),
+                write_publication(&root, &snapshot, table).is_err(),
                 "field {field}"
             );
             assert!(!root.exists());
         }
         let root = dir.path().join("invalid-proof");
-        assert!(write_publication(&root, &valid, Some(vec![0; 152])).is_err());
+        assert!(write_publication(&root, &valid, placeholder(&valid, true)).is_err());
         assert!(!root.exists());
     }
 }

@@ -10,6 +10,7 @@ pub mod near;
 pub mod probe;
 pub mod serve_publication;
 pub mod verify;
+pub mod witness;
 
 /// A response body over its bound, or a failed read.
 #[derive(Debug, thiserror::Error)]

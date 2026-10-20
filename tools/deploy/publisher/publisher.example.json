@@ -79,8 +79,6 @@
     "settings": {
       "data_dir": "/srv/pir-publisher/receiver",
       "min_rows": 8192,
-      "witnesses": true,
-      "max_witness_commitments": 16777216,
       "rpc_url": [
         "http://127.0.0.1:8232"
       ],

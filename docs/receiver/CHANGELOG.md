@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Replace the common `IWPROOF1` witness file with a companion witness PIR table per
+  payment table. Records grow to 289 bytes with a witness ordinal, `init` serves
+  the payment and witness sessions together, and witness payloads are read over
+  PIR. Witnesses are built per Ironwood shard from stored commitments, so
+  `--witnesses`, `--max-witness-commitments` and the 2^24 commitment limit are
+  gone. The probe checks the fixture's payload against the node's subtree root.
 - Add the receiver directory: authenticated zero-OVK receiver extraction,
   paginated fixed-width records, deterministic publications from 8192 to 65536
   rows that retry up to 16 salts before doubling (directory profile

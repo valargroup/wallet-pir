@@ -209,7 +209,7 @@ def receiver():
     origin = 'http://' + listen
     settings = {'config_path': str(r.work / 'input/config.json'), 'publication_record': str(record),
                 'publication_root': str(publications), 'state_dir': str(r.work / 'worker-state'),
-                'bind': listen, 'rpc_urls': [node.url], 'no_auth': True, 'poll_seconds': 1, 'witnesses': True}
+                'bind': listen, 'rpc_urls': [node.url], 'no_auth': True, 'poll_seconds': 1}
     exact = lambda offset, byte: [fixture, 'lookup', origin, str(offset), str(byte)]
     inventory = r.inventory('receiver', 'serve-publication', settings, listen, exact(1, 161))
     deployer = r.deployer('receiver', inventory)

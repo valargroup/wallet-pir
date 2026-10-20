@@ -235,8 +235,7 @@
           "http://10.70.0.19:8232",
           "--rpc-url",
           "http://10.70.0.6:8232",
-          "--no-auth",
-          "--witnesses"
+          "--no-auth"
         ],
         "timeout": 300
       }

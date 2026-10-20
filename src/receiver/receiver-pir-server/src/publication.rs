@@ -1,33 +1,84 @@
 //! Immutable prepared publications and atomic, reorg-fenced serving state.
-use axum::{body::Bytes, http::StatusCode};
+use axum::http::StatusCode;
 use receiver_directory::{snapshot::Manifest, Hash};
-use receiver_pir::server::Server;
+use receiver_pir::server::{Server, WitnessServer};
 use std::{
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
-/// One revision prepared for serving, with its optional common witness file and the
-/// owner's report on the index it was built from.
+/// One revision prepared for serving: its payment session, the companion witness
+/// session bound to it, and the owner's report on the index it was built from.
 pub struct Publication {
     pub(crate) server: Server,
-    pub(crate) witnesses: Option<Bytes>,
+    pub(crate) witnesses: WitnessServer,
     pub(crate) id: Hash,
     pub(crate) report: Option<serde_json::Value>,
 }
 
+/// One of a publication's two PIR tables, which a query's session ID selects.
+pub(crate) enum Table<'a> {
+    Payments(&'a Server),
+    Witnesses(&'a WitnessServer),
+}
+
+impl Table<'_> {
+    /// The table's row count, which fixes its query length.
+    pub(crate) fn rows(&self) -> u32 {
+        match self {
+            Table::Payments(s) => s.manifest().directory.rows,
+            Table::Witnesses(s) => s.manifest().table.rows,
+        }
+    }
+
+    /// The public setup clients download once per session.
+    pub(crate) fn public(&self) -> &[u8] {
+        match self {
+            Table::Payments(s) => s.public(),
+            Table::Witnesses(s) => s.public(),
+        }
+    }
+
+    /// Answers one encrypted query for this table's session.
+    pub(crate) fn respond(&self, body: &[u8]) -> Result<Vec<u8>, receiver_pir::Error> {
+        match self {
+            Table::Payments(s) => s.respond(body),
+            Table::Witnesses(s) => s.respond(body),
+        }
+    }
+}
+
 impl Publication {
-    /// Prepare a complete immutable revision whose records and witness file the caller
+    /// Prepare a complete immutable revision whose records and witness payloads the caller
     /// has already verified cryptographically: every record's receiver and Action
-    /// fields, and that the witness file binds to this publication and proves every
-    /// record. This crate checks structure only. The caller must separately accept the
-    /// publication's chain anchor.
-    pub fn verified(server: Server, witnesses: Option<Vec<u8>>) -> Self {
+    /// fields, and that each payload is its record's lower path. The witness server binds
+    /// this payment session. This crate checks structure only. The caller must separately
+    /// accept the publication's chain anchor.
+    pub fn verified(server: Server, witnesses: WitnessServer) -> Self {
         Self {
             id: server.id(),
             server,
-            witnesses: witnesses.map(Into::into),
+            witnesses,
             report: None,
+        }
+    }
+
+    /// The payment and witness session manifests `/v1/receiver/init` serves.
+    pub fn session(&self) -> receiver_pir::Publication {
+        receiver_pir::Publication {
+            payments: self.server.manifest().clone(),
+            witnesses: self.witnesses.manifest().clone(),
+        }
+    }
+
+    /// The table whose session ID is `id`, if it is one of this publication's.
+    pub(crate) fn table(&self, id: &Hash) -> Option<Table<'_>> {
+        if *id == self.id {
+            Some(Table::Payments(&self.server))
+        } else if *id == self.witnesses.id() {
+            Some(Table::Witnesses(&self.witnesses))
+        } else {
+            None
         }
     }
 
@@ -41,6 +92,20 @@ impl Publication {
     /// The directory manifest this publication serves.
     pub fn manifest(&self) -> &Manifest {
         &self.server.manifest().directory
+    }
+
+    /// Every block it depends on: the payment table's end and, when later, the block
+    /// its companion witness table was constructed at. A reorg replacing either
+    /// invalidates the publication.
+    pub fn anchors(&self) -> Vec<(u32, Hash)> {
+        let end = (self.manifest().end_height, self.manifest().end_hash);
+        let table = &self.witnesses.manifest().table;
+        let context = (table.tree_height, table.tree_hash);
+        if context == end {
+            vec![end]
+        } else {
+            vec![end, context]
+        }
     }
 }
 
@@ -79,7 +144,7 @@ impl State {
     /// See [`Publications::anchors`].
     fn anchors(&self) -> Vec<(u32, Hash)> {
         self.live()
-            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
+            .flat_map(|p| p.anchors())
             .chain(
                 self.filters
                     .iter()
@@ -214,8 +279,8 @@ impl Publications {
     /// no earlier revision is still in its grace (see [`Self::ready_at`]), and the current
     /// revision ends no higher: within one epoch the chain only extends, so a lower end
     /// comes from a preparation that a newer publish overtook. A publication with the
-    /// current session's ID replaces it in place, keeping the epoch and any predecessor's
-    /// grace. It expects one serial publisher (the indexer awaits each publish), so
+    /// current payment and witness sessions replaces it in place, keeping the epoch and
+    /// any predecessor's grace. It expects one serial publisher (the indexer awaits each publish), so
     /// equal-height preparations need no further ordering.
     /// The caller must verify the new canonical anchor and revoke before replacing forked coverage.
     pub fn publish(&self, publication: Publication, expected_epoch: u64) -> bool {
@@ -232,11 +297,11 @@ impl Publications {
             state.history_revision = revision;
         }
         state.expire();
-        if state
-            .current
-            .as_ref()
-            .is_some_and(|p| p.id == publication.id)
-        {
+        // Only identical sessions replace in place: a new companion beside the same
+        // payment session displaces the old one, which keeps its grace.
+        if state.current.as_ref().is_some_and(|p| {
+            p.id == publication.id && p.witnesses.id() == publication.witnesses.id()
+        }) {
             state.current = Some(Arc::new(publication));
             return true;
         }
@@ -305,13 +370,14 @@ impl Publications {
         true
     }
 
-    /// The publication `id` names, or the current one for `None`, with the current
-    /// epoch. An id not served now, whether unknown, revoked or expired, is `GONE`.
+    /// The publication holding session `id`, payment or witness, or the current one for
+    /// `None`, with the current epoch. An id not served now, whether unknown, revoked or
+    /// expired, is `GONE`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.expire();
         let state = self.0.read().unwrap();
         if let Some(id) = id {
-            return match state.live().find(|p| p.id == id) {
+            return match state.live().find(|p| p.table(&id).is_some()) {
                 Some(p) => Ok((p.clone(), state.epoch)),
                 None => Err(StatusCode::GONE),
             };
@@ -340,7 +406,7 @@ mod tests {
         manifest.salt[0] = salt;
         manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
-        crate::prepared::prepare(snapshot, None).unwrap()
+        crate::prepared::prepare_payments(snapshot).unwrap()
     }
 
     /// A check that found an anchor off the chain revokes only while its epoch is
@@ -383,7 +449,7 @@ mod tests {
         let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
         let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[]).unwrap();
-        let newer = crate::prepared::prepare(snapshot, None).unwrap();
+        let newer = crate::prepared::prepare_payments(snapshot).unwrap();
         assert!(publications.publish(newer, 0));
         let ended = Instant::now()
             .checked_sub(Duration::from_millis(1))
@@ -469,6 +535,53 @@ mod tests {
         publications.revoke();
         assert!(!publications.update_report(anchor, serde_json::json!(3), 0));
     }
+    /// A companion constructed at a later block than its payment table makes that block
+    /// a served anchor too, so finding it off the chain revokes every session.
+    #[test]
+    fn a_later_witness_context_is_a_served_anchor() {
+        let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
+        let mut table = crate::prepared::placeholder(&snapshot).manifest;
+        (table.tree_height, table.tree_hash) = (105, [5; 32]);
+        let table = receiver_directory::witness::Table::build(table, &[]).unwrap();
+        let publication = crate::prepared::prepare(snapshot, table).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(publication, 0));
+        let (epoch, anchors) = publications.serving();
+        assert_eq!(anchors, [(101, [3; 32]), (105, [5; 32])]);
+        assert!(publications.revoke_serving(epoch, (105, [5; 32])));
+        assert!(publications.anchors().is_empty());
+    }
+
+    /// A new companion beside an unchanged payment session displaces the old one
+    /// through the ordinary grace, so a wallet that captured the old pair can finish.
+    #[test]
+    fn a_witness_only_replacement_keeps_the_displaced_companion() {
+        let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(manifest, &[crate::common::record(0, 1)])
+                .unwrap();
+        let first = crate::prepared::prepare(
+            snapshot.clone(),
+            crate::prepared::companion_table(&snapshot, &[[1; 512]]),
+        )
+        .unwrap();
+        let second = crate::prepared::prepare(
+            snapshot.clone(),
+            crate::prepared::companion_table(&snapshot, &[[2; 512]]),
+        )
+        .unwrap();
+        let (old, new) = (first.witnesses.id(), second.witnesses.id());
+        assert_eq!(first.id, second.id);
+        assert_ne!(old, new);
+        let publications = Publications::default();
+        assert!(publications.publish(first, 0));
+        assert!(publications.publish(second, 0));
+        assert!(publications.select(Some(old)).is_ok());
+        assert!(publications.select(Some(new)).is_ok());
+        assert!(publications.ready_at().is_some());
+    }
+
     /// A correction fences direct lookups before the replacement PIR table is ready.
     #[test]
     fn correction_revokes_old_sessions_and_refuses_old_preparations() {
@@ -484,7 +597,7 @@ mod tests {
         let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
         manifest.history_revision = 1;
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
-        let corrected = crate::prepared::prepare(snapshot, None).unwrap();
+        let corrected = crate::prepared::prepare_payments(snapshot).unwrap();
         assert!(publications.publish(corrected, publications.epoch()));
         assert!(publications.select(None).is_ok());
         assert!(publications.select(Some(old_id)).is_err());
