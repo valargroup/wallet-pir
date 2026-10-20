@@ -6,7 +6,7 @@ struct Tls {
     origin: String,
     cert: reqwest::Certificate,
     requests: Arc<Mutex<Vec<String>>>,
-    /// Discovery response selector: ok, missing, redirect, oversize, slow or
+    /// Discovery response selector: ok, missing, redirect, oversize, slow-body or
     /// `body:<raw body>`.
     discovery: Arc<Mutex<String>>,
     task: tokio::task::JoinHandle<()>,
@@ -100,6 +100,19 @@ impl Tls {
                 let ok = pir_service_discovery::Document::publisher().to_json();
                 let large = "x".repeat(pir_service_discovery::MAX_DOCUMENT_BYTES + 1);
                 let discovered = request.starts_with("GET /.well-known/pir-service-discovery ");
+                seen.lock().unwrap().push(request.clone());
+                if discovered && mode == "slow-body" {
+                    // Complete TLS and send headers plus a partial JSON body,
+                    // then stall so the deadline must cover reading the body.
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{{",
+                        ok.len()
+                    );
+                    socket.write_all(response.as_bytes()).await.unwrap();
+                    socket.flush().await.unwrap();
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    continue;
+                }
                 let (status, headers, body) = if discovered {
                     match mode.as_str() {
                         "ok" => ("200 OK", "", String::from_utf8(ok).unwrap()),
@@ -110,10 +123,6 @@ impl Tls {
                             String::new(),
                         ),
                         "oversize" => ("200 OK", "", large),
-                        "slow" => {
-                            tokio::time::sleep(Duration::from_secs(30)).await;
-                            ("200 OK", "", String::new())
-                        }
                         body => ("200 OK", "", body.strip_prefix("body:").unwrap().into()),
                     }
                 } else if request.starts_with("GET /feed/redirect ") {
@@ -128,7 +137,6 @@ impl Tls {
                 } else {
                     ("200 OK", "", "abcdef".into())
                 };
-                seen.lock().unwrap().push(request);
                 let response = format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.shutdown().await;
@@ -463,12 +471,23 @@ async fn discovery_accepts_only_a_trusted_compatible_publisher() {
         .all(|r| r.starts_with("GET /.well-known/pir-service-discovery ")));
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn discovery_has_a_whole_request_deadline() {
     let tls = Tls::new().await;
-    *tls.discovery.lock().unwrap() = "slow".into();
+    *tls.discovery.lock().unwrap() = "slow-body".into();
     let source = tls.source(100);
-    let error = source.discover().await.unwrap_err();
+    // Real DNS/TCP/TLS setup must run with real time. A paused Tokio clock can
+    // expire the connection timeout before the server receives the request.
+    let started = std::time::Instant::now();
+    let error = tokio::time::timeout(
+        DISCOVERY_DEADLINE + Duration::from_secs(5),
+        source.discover(),
+    )
+    .await
+    .expect("discovery did not stop while the response body was stalled")
+    .unwrap_err();
+    assert!(started.elapsed() >= DISCOVERY_DEADLINE);
+    assert_eq!(tls.requests.lock().unwrap().len(), 1);
     assert!(error.to_string().contains("within 10s"), "{error}");
     assert!(error.incompatible().is_none());
 }
