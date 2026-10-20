@@ -119,6 +119,40 @@ class WorkerRoles(unittest.TestCase):
         self.assertNotIn('127.0.0.1:18091', ports)
 
 
+class StatusInstalledRoles(unittest.TestCase):
+    def settings(self, role):
+        return dict(network_hex='08' * 32, state_dir='/var/lib/status-' + role,
+                    listen='127.0.0.1:' + ('8481' if role == 'worker' else '8482'),
+                    artifact_origin='http://127.0.0.1:8495', worker_origin='http://127.0.0.1:8481',
+                    **({'query_listen': '127.0.0.1:8484'} if role == 'router' else {}))
+
+    def test_deployment_owns_configuration_and_runs_its_loader_before_restart(self):
+        for role in ('worker', 'router'):
+            with self.subTest(role=role):
+                spec = REGISTRY['status'].roles[role]
+                rendered = spec.render(self.settings(role), RELEASE)
+                path = '/etc/status-pir/' + role + '.json'
+                document = json.loads(rendered.files[path])
+                effective = units.effective([rendered.unit])['Service']
+                self.assertEqual(spec.mode, 'role')
+                self.assertEqual(document['status']['settings'], {'role': role, **self.settings(role)})
+                self.assertEqual(rendered.check, ('--config', path, '--check'))
+                self.assertIn(path, paths(effective['ReadOnlyPaths']))
+                self.assertEqual(paths(effective['ReadWritePaths']), ['/var/lib/status-' + role])
+                self.assertEqual(effective['MemoryMax'], '12G' if role == 'worker' else '3G')
+
+    def test_invalid_network_or_non_loopback_peers_refuse_before_deployment(self):
+        for role in ('worker', 'router'):
+            bad_settings = [{'network_hex': 'ab'}, {'network_hex': 'FF' * 32},
+                            {'listen': '0.0.0.0:8481'}, {'worker_origin': 'http://10.0.0.1:8481'},
+                            {'artifact_origin': 'https://127.0.0.1:8495'}, {'listen': '127.0.0.1:65536'}]
+            if role == 'worker':
+                bad_settings.append({'query_listen': '127.0.0.1:8484'})
+            for bad in bad_settings:
+                with self.subTest(role=role, bad=bad), self.assertRaises(ValueError):
+                    REGISTRY['status'].roles[role].render({**self.settings(role), **bad}, RELEASE)
+
+
 class RolesCommand(unittest.TestCase):
     def run_roles(self, *arguments):
         return subprocess.run([sys.executable, str(ROOT / 'tools/scripts/wallet-pir-roles.py'), *arguments],
