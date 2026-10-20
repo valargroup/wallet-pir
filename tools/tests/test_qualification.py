@@ -359,6 +359,33 @@ class StorageTests(unittest.TestCase):
             link.symlink_to(root / 'full-test', target_is_directory=True)
             self.assertNotIn(link, storage.candidates(root, now=200000))
 
+    def test_incremental_cleanup_preserves_recent_open_and_linked_sessions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            incremental = root / 'fast' / ('a' * 16) / 'release-fast' / 'incremental'
+            incremental.mkdir(parents=True)
+            old, recent, opened = [incremental / name for name in ('old', 'recent', 'opened')]
+            for path in (old, recent, opened):
+                path.mkdir()
+                (path / 'session').mkdir()
+                os.utime(path / 'session', (0, 0))
+                os.utime(path, (0, 0))
+            os.utime(recent / 'session', (199999, 199999))
+            (incremental / 'linked').symlink_to(old, target_is_directory=True)
+            selected = storage.incremental_candidates(
+                root, now=200000, references=[str(opened / 'session' / 'work-products.bin')])
+            self.assertEqual(selected, [old])
+            # Reclaiming incremental state leaves final binaries and dependencies alone.
+            binary = incremental.parent / 'query-server'
+            binary.write_bytes(b'compiled')
+            with patch.object(storage, 'open_paths', return_value=[str(opened)]):
+                with patch.object(storage.time, 'time', return_value=200000):
+                    storage.maintain(root, apply=True, minimum_free=0)
+            self.assertFalse(old.exists())
+            self.assertTrue(recent.is_dir())
+            self.assertTrue(opened.is_dir())
+            self.assertEqual(binary.read_bytes(), b'compiled')
+
     def test_last_used_marker_preserves_a_recently_reused_old_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
