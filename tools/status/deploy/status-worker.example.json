@@ -5,10 +5,10 @@
     "settings": {
       "role": "worker",
       "network_hex": "<canonical network genesis hash, hex>",
-      "state_dir": "/var/lib/status-pir-worker-native",
+      "state_dir": "/var/lib/status-pir-worker-native-https",
       "listen": "127.0.0.1:8481",
-      "artifact_origin": "http://127.0.0.1:8495",
-      "worker_origin": "http://127.0.0.1:8481"
+      "worker_origin": "http://127.0.0.1:8481",
+      "publisher": "https://enhance-pir.valargroup.dev"
     }
   }
 }

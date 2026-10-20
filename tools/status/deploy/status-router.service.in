@@ -9,9 +9,6 @@ Group=status-pir
 # Its query listener serves the wallet routes `/v1/status/*`.
 ExecStart=@RELEASE@/pir-query-server --config /etc/status-pir/router.json
 Environment=RAYON_NUM_THREADS=4
-# Worker and router prepare serially; one thread let the full-occupancy rebuild
-# outlive the 20-second freshness limit. Preparation threads run at nice 10.
-Environment=STATUS_PREPARATION_THREADS=6
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=3
@@ -21,7 +18,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/status-pir-router-native
+ReadWritePaths=/var/lib/status-pir-router-native-https
 
 [Install]
 WantedBy=multi-user.target

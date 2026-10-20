@@ -16,8 +16,8 @@
       "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
       "state_dir": "/srv/pir-query-server/status",
       "listen": "127.0.0.1:8481",
-      "artifact_origin": "http://127.0.0.1:8480",
-      "worker_origin": "http://127.0.0.1:8481"
+      "worker_origin": "http://127.0.0.1:8481",
+      "publisher": "https://enhance-pir.valargroup.dev"
     }
   },
   "transparent_history": {

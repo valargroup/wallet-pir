@@ -1,5 +1,11 @@
 # Status PIR architecture
 
+The source now supports autonomous HTTPS distribution through `pir-sync-manager`:
+the publisher prepares complete material once, and worker/router roles verify and
+activate it locally. [Distribution and cutover](status_distributed.md) owns that
+interface. Dated deployment records below describe the predecessor; this source
+change is not evidence of a production switch.
+
 Production deployment records include a separate `status-pir` controller, router
 and worker on the native v3 profile; see [deployment](../enhance/deployment.md) and the
 [October 10 record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-9d2cbda0-2026-10-10/README.md).
@@ -60,36 +66,20 @@ enhancement.
 ## Topology and ownership
 
 ```mermaid
-flowchart TB
-    wallet["Vizor · Rust and Dart"]
-    node["Canonical node · blocks and mempool"]
-    subgraph origin["Existing coordinator host"]
-        tls["Public HTTPS origin"]
-        ingress["Query ingress"]
-        coordinator["Shared Enhance coordinator"]
-        tls <--> ingress
-        tls <-->|"Status manifest and session material"| coordinator
-        coordinator -. "Session assignments and authority" .-> ingress
-    end
-    subgraph status["Dedicated P4000 host"]
-        router["Status packing router · CPU"]
-        worker["Status evaluation worker · CUDA"]
-        router <-->|"Loopback evaluation API"| worker
-    end
-    enhance["Existing Enhance serving fleet"]
-    wallet <-->|"Encrypted lookup over HTTPS"| tls
-    node --> coordinator
-    ingress <-->|"Bound query and packed response"| router
-    coordinator -. "Prepare, activate, revoke" .-> router
-    coordinator -. "Snapshots and row updates" .-> worker
-    coordinator -. "Existing Enhance control" .-> enhance
+flowchart LR
+    node[Canonical node: blocks and mempool] --> publisher[Unified publisher: Status preparation]
+    publisher --> tls[Existing HTTPS origin: prepared publications]
+    tls --> worker[Status evaluation worker]
+    tls --> router[Status packing router]
+    router -->|Loopback encrypted evaluation| worker
+    wallet[Wallet] -->|Existing HTTPS wallet routes| router
 ```
 
-The coordinator owns ingestion, coverage, generation identity, publication,
-placement, and revocation. Ingress routes exact sessions without decoding the
-PIR query. The router validates and decodes the encrypted request, obtains the
-worker intermediate, validates its binding, and packs the result. The worker
-evaluates the selected generation on the GPU.
+The publisher owns ingestion, coverage, generation identity, preparation,
+publication and revocation. Query servers independently synchronize prepared
+material over HTTPS. The router validates the encrypted request, obtains the
+worker intermediate, validates its binding and packs the result. The worker
+evaluates the selected generation on its configured CPU/CUDA backend.
 
 Router and worker are separate processes and systemd services, with independent
 admission and resource limits. Their shared host does not introduce a new
@@ -419,8 +409,8 @@ Manifests carry network identity, coverage bounds, anchor height/hash, source
 observation time, generation, recovery epoch, salt, snapshot commitment, and
 session identity. Protocol bindings cover these fields. Unchanged contents may
 reuse cryptographic material, but a refreshed observation time requires a new
-successful source collection and a bound metadata publication. A control
-heartbeat alone cannot renew data freshness.
+successful source collection and a bound metadata publication. An HTTPS poll, unchanged response or authority attestation cannot renew data
+freshness.
 
 The twenty-second target measures completed source observation to query availability.
 The client also rejects an observation older than twenty seconds when accepting

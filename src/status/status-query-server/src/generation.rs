@@ -1,5 +1,6 @@
 //! Status PIR material for one generation: database units, their hints and the
 //! router packing material, prepared from an index snapshot.
+mod prepared;
 use super::{index, profile};
 use crate::protocol::*;
 #[cfg(not(feature = "native-reinspiring"))]
@@ -47,6 +48,9 @@ pub(super) struct Unit {
 /// reconstruction. The candidate owns its hint; admitted views are immutable.
 /// The native profile uses the same exact negacyclic product modulo 2^54.
 fn incremental_hint(old: &Unit, bytes: &[u8], setup: &[u64]) -> Option<Vec<CrsBlock>> {
+    if old.hint.is_empty() {
+        return None;
+    }
     sparse_hint_update(
         &old.rows,
         &old.hint,
@@ -148,6 +152,8 @@ pub struct Generation {
     pub(super) packing: Arc<Vec<PackingBlock>>,
     #[cfg(not(feature = "native-reinspiring"))]
     packing: Option<Arc<PreparedPacking<'static>>>,
+    #[cfg(not(feature = "native-reinspiring"))]
+    mapped_packing: Option<Arc<inspiring::prepared::MappedPrepared<'static>>>,
     pub(super) packing_digests: Vec<Hash>,
 }
 
@@ -216,6 +222,8 @@ impl Generation {
             packing: Arc::new(Vec::new()),
             #[cfg(not(feature = "native-reinspiring"))]
             packing: None,
+            #[cfg(not(feature = "native-reinspiring"))]
+            mapped_packing: None,
             packing_digests: Vec::new(),
         }
     }
@@ -245,6 +253,10 @@ impl Generation {
         worker.manifest = router.manifest;
         worker.public = router.public;
         worker.packing = router.packing;
+        #[cfg(not(feature = "native-reinspiring"))]
+        {
+            worker.mapped_packing = router.mapped_packing;
+        }
         worker.packing_digests = router.packing_digests;
         stats.packing_ms = started.elapsed().as_secs_f64() * 1000.;
         stats.total_ms += stats.packing_ms;
@@ -253,6 +265,10 @@ impl Generation {
 
     /// Fixed-shape, little-endian hint artifact. Never includes wallet queries.
     pub fn hint_bytes(&self) -> Result<Vec<u8>, Error> {
+        let blocks = profile().ypir().db_cols.div_ceil(profile().rlwe().d);
+        if self.units.iter().any(|unit| unit.hint.len() != blocks) {
+            return Err(Error::Unavailable);
+        }
         let mut hint = self.units.first().ok_or(Error::Unavailable)?.hint.clone();
         let q = modulus();
         if q > u64::MAX / 2 {
@@ -387,6 +403,7 @@ impl Generation {
                 public: Arc::new(public),
                 units: Vec::new(),
                 packing: Some(Arc::new(packing)),
+                mapped_packing: None,
                 packing_digests,
             })
         }
@@ -419,7 +436,7 @@ impl Generation {
                     prev.manifest.network == snapshot.network && prev.manifest.salt == snapshot.salt
                 })
                 .and_then(|prev| prev.units.get(i))
-                .filter(|u| u.bytes_digest == digest);
+                .filter(|u| u.bytes_digest == digest && !u.hint.is_empty());
             if let Some(old) = old {
                 units.push(old.clone());
                 reused += 1;
@@ -491,6 +508,8 @@ impl Generation {
                 public: Arc::new(public),
                 units,
                 packing,
+                #[cfg(not(feature = "native-reinspiring"))]
+                mapped_packing: None,
                 packing_digests: Vec::new(),
             },
             stats,
@@ -585,7 +604,7 @@ impl Generation {
     #[cfg(not(feature = "native-reinspiring"))]
     pub fn pack(&self, body: &[u8], values: &[u64]) -> Result<Vec<u8>, Error> {
         self.coefficients(body)?;
-        let packing = self.packing.as_ref().ok_or(Error::Unavailable)?;
+
         let p = profile();
         if values.len() != p.ypir().db_cols || values.iter().any(|v| *v >= p.rlwe().q) {
             return Err(Error::Malformed);
@@ -594,11 +613,19 @@ impl Generation {
         let keys = PackingKeys::decode(p.rlwe(), &body[HEADER_BYTES..HEADER_BYTES + len])
             .map_err(|_| Error::Malformed)?;
         let mut response = body[..HEADER_BYTES].to_vec();
-        response.extend(
+        let packed = if let Some(packing) = &self.packing {
             packing
                 .pack(values, &keys, p.ypir().q_prime_1)
-                .map_err(|_| Error::Pir)?,
-        );
+                .map_err(|_| Error::Pir)?
+        } else if let Some(mapped) = &self.mapped_packing {
+            let packed = mapped
+                .pack(values, keys.upstream())
+                .map_err(|_| Error::Pir)?;
+            pir_runtime::packing::response_bodies(&packed, p.ypir().q_prime_1)
+        } else {
+            return Err(Error::Unavailable);
+        };
+        response.extend(packed);
         Ok(response)
     }
     /// Differential oracle: compare composed hints with upstream full-database preprocessing.

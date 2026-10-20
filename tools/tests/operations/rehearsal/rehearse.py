@@ -376,12 +376,11 @@ def history():
 def status_worker():
     r = Rehearsal('status-external-worker')
     binary = r.binary('pir-query-server')
-    publisher = r.binary('pir-publisher')
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
     artifact_port = free_port()
-    settings = {'network_hex': '31' * 32, 'listen': listen, 'artifact_origin': 'http://127.0.0.1:%d' % artifact_port,
+    settings = {'network_hex': '31' * 32, 'listen': listen, 'publisher': 'https://localhost:%d' % artifact_port,
                 'state_dir': str(r.work / 'worker-state')}
     inventory = r.inventory('status', 'external-worker', settings, listen)
     deployer = r.deployer('status', inventory)
@@ -392,20 +391,15 @@ def status_worker():
     r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
     again = r.wait('restart', lambda: r.health('http://%s/control/identity' % listen))
     r.step('restart', new_incarnation=again['incarnation'] != identity['incarnation'])
-    # Exercise the installed unit, including a new publication after restart.
-    for phase in ('first-publication', 'publication-after-restart'):
-        if phase == 'publication-after-restart':
-            r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
-            r.wait('second restart', lambda: r.health('http://%s/control/identity' % listen))
-        validation = r.run(publisher, 'status', 'validate-distributed', '--entries', '32',
-                           '--state-dir', r.work / phase, '--existing-worker', 'http://%s' % listen,
-                           '--artifact-listen', '127.0.0.1:%d' % artifact_port,
-                           '--request-timeout-seconds', '120', timeout=1800, check=False)
-        r.step(phase, returncode=validation.returncode, exact_answer=validation.returncode == 0,
-               scope='the installed external worker, with fixture controller and router',
-               output=(validation.stdout + validation.stderr)[-600:])
-        if validation.returncode:
-            raise RuntimeError('installed Status worker failed exact encrypted validation: %s' % phase)
+    # This rehearsal owns no source snapshot or HTTPS publisher. An empty
+    # consumer can prove installation/identity but cannot prove serving authority.
+    # The native TLS lifecycle and independent live-source campaign own that gate.
+    health = r.health('http://%s/control/health' % listen)
+    if health['ready']:
+        raise RuntimeError('an unconfigured HTTPS publication unexpectedly became ready')
+    r.step('publication-qualification', scope='installation and restart only',
+           exact_answer='not-executed', ready=False,
+           required='Status native HTTPS lifecycle and independent live-source qualification')
     report = r.report('status', inventory)
     r.step('report', report=report)
     r.deployer('status', inventory).rollback(journal.id)

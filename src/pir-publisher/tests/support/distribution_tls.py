@@ -70,7 +70,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == fault:
                 time.sleep(0.01)
-        if fault == "pause-artifact" and "/artifacts/" in self.path:
+        if fault == "pause-artifact" and ("/artifacts/" in self.path or "/objects/" in self.path):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":
                 time.sleep(0.01)
@@ -129,7 +129,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Faults affect actual transport bytes, never replace the producer
             # or the provider loader with a mock implementation.
             status = response.status
-            if fault == "missing" and "/artifacts/" in self.path:
+            if fault == "missing" and ("/artifacts/" in self.path or "/objects/" in self.path):
                 response.read()
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
@@ -147,7 +147,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             first = True
             while chunk := response.read(1 << 20):
-                if first and "/artifacts/" in self.path:
+                if first and ("/artifacts/" in self.path or "/objects/" in self.path):
                     if fault == "corrupt":
                         chunk = bytes([chunk[0] ^ 1]) + chunk[1:]
                     if fault == "truncated":

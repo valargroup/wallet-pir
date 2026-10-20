@@ -2,35 +2,17 @@
 use super::*;
 use status_query_server::fixture;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use zakura_pir_client::status as wallet;
 
 #[path = "../../tests/support/status_http.rs"]
 mod status_http;
 use status_http::{serve, Loopback};
 
-/// Activate `g` on a role through its own fence and activation handlers.
+/// Install a verified fixture generation to exercise wallet request handling.
 async fn activated(role: Role, dir: &FsPath, worker_origin: String, g: Generation) -> Service {
-    let s = Service::open(
-        role,
-        g.manifest().network,
-        dir.to_path_buf(),
-        "http://127.0.0.1:1".into(),
-        worker_origin,
-        false,
-    )
-    .unwrap();
-    let binding = Binding {
-        epoch: g.manifest().recovery_epoch,
-        incarnation: s.incarnation.clone(),
-    };
-    let _ = fence(State(s.clone()), Json(binding.clone()))
-        .await
-        .unwrap();
-    let manifest = g.manifest().clone();
-    s.state.lock().await.candidate = Some((g, manifest.public_digest));
-    let _ = activate(State(s.clone()), Json(Activate { binding, manifest }))
-        .await
-        .unwrap();
+    let s = Service::open(role, g.manifest().network, dir.to_path_buf(), worker_origin).unwrap();
+    s.state.lock().await.controller = Some(Controller::new(g));
     s
 }
 

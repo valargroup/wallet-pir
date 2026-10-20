@@ -12,6 +12,7 @@ pub mod fixture;
 mod generation;
 pub mod index;
 pub mod protocol;
+pub mod publication;
 pub mod telemetry;
 use crate::protocol::*;
 pub use controller::Controller;

@@ -7,11 +7,9 @@ pub mod http_client;
 mod live;
 mod live_load;
 mod production;
-mod synthetic;
 pub use live::observe_live;
 pub use live_load::probe_live_load;
 pub use production::probe_live;
-pub use synthetic::validate_distributed;
 
 pub type AnyError = Box<dyn std::error::Error + Send + Sync>;
 fn require(ok: bool, message: &str) -> Result<(), AnyError> {

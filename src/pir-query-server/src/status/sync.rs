@@ -1,0 +1,472 @@
+//! Status publication policy hosted by the product-neutral HTTPS loop.
+use super::*;
+use pir_sync_manager::{HttpsSource, SyncTask};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{collections::BTreeSet, fs, io::Read};
+use tokio::io::AsyncWriteExt;
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Floor {
+    current: Option<Current>,
+    invalid: BTreeSet<Hash>,
+}
+pub(super) struct StatusSync {
+    service: Service,
+    source: HttpsSource,
+    backend: MatvecBackend,
+    floor: Floor,
+    conditional: Option<Current>,
+    retained: Vec<Object>,
+}
+impl StatusSync {
+    pub fn new(service: Service, config: &RoleConfig) -> Result<Self, Failure> {
+        let roots = match &config.publisher_ca {
+            Some(path) => vec![reqwest::Certificate::from_pem(&fs::read(path)?)?],
+            None => Vec::new(),
+        };
+        let source = HttpsSource::new(&config.publisher, PREFIX, attempt_limit(), &roots)?;
+        let floor = match fs::read(service.dir.join("publisher-high-water.json")) {
+            Ok(bytes) => serde_json::from_slice::<Floor>(&bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Floor::default(),
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(current) = &floor.current {
+            current.validate(service.network)?;
+        }
+        fs::create_dir_all(service.dir.join("objects"))?;
+        // The exclusive owner can remove interrupted transfer files. Completed
+        // objects and every authority/revocation record are preserved.
+        for entry in fs::read_dir(service.dir.join("objects"))? {
+            let entry = entry?;
+            if entry.file_type()?.is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".download-")
+            {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        let backend = if config.cuda {
+            MatvecBackend::Cuda { device: 0 }
+        } else {
+            MatvecBackend::Cpu
+        };
+        Ok(Self {
+            service,
+            source,
+            backend,
+            floor,
+            conditional: None,
+            retained: Vec::new(),
+        })
+    }
+    async fn save_floor(&self) -> Result<(), Failure> {
+        let root = self.service.dir.clone();
+        let bytes = serde_json::to_vec(&self.floor)?;
+        let result = tokio::task::spawn_blocking(move || {
+            persist(&root, "publisher-high-water.json", &bytes)
+        })
+        .await?;
+        if let Err(error) = result {
+            self.revoke().await;
+            self.service.state.lock().await.poisoned = true;
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    async fn revoke(&self) {
+        if let Some(c) = &self.service.state.lock().await.controller {
+            c.revoke();
+        }
+    }
+    async fn observe(&mut self, current: Current) -> Result<(), Failure> {
+        current.validate(self.service.network)?;
+        if let Some(old) = &self.floor.current {
+            if !current.succeeds(old) {
+                return Err("Status publisher replay or identity change".into());
+            }
+            if current.recovery_epoch > old.recovery_epoch {
+                self.revoke().await;
+            }
+        }
+        if !current.eligible {
+            self.revoke().await;
+        }
+        self.floor.current = Some(current);
+        self.save_floor().await
+    }
+    async fn current(&mut self) -> Result<Current, Failure> {
+        let token = self
+            .conditional
+            .as_ref()
+            .map(|c| format!("\"{}-{}\"", c.revision, c.eligible));
+        let mut response = self.source.request("current", token.as_deref()).await?;
+        let current = if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            response.discard().await?;
+            self.conditional
+                .clone()
+                .ok_or("Status unexpected unchanged response")?
+        } else if response.status().is_success() {
+            serde_json::from_slice::<Current>(&response.read_limited(METADATA_LIMIT).await?)?
+        } else {
+            response.discard().await?;
+            return Err("Status publisher unavailable".into());
+        };
+        drop(response);
+        self.observe(current.clone()).await?;
+        self.conditional = Some(current.clone());
+        if !current.eligible {
+            return Err("Status publication withdrawn".into());
+        }
+        Ok(current)
+    }
+    async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
+        object.validate(attempt_limit())?;
+        let root = self.service.dir.join("objects");
+        let target = root.join(&object.sha256);
+        if target.exists() {
+            let path = target.clone();
+            let expected = object.clone();
+            tokio::task::spawn_blocking(move || verify_file(&path, &expected)).await??;
+            return Ok(target);
+        }
+        let temporary = root.join(format!(
+            ".download-{}",
+            hex::encode(rand::random::<[u8; 16]>())
+        ));
+        let result = async {
+            let mut response = self
+                .source
+                .request(&format!("objects/{}", object.sha256), None)
+                .await?;
+            if !response.status().is_success() {
+                response.discard().await?;
+                return Err::<(), Failure>("Status object unavailable".into());
+            }
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .await?;
+            let mut hash = Sha256::new();
+            let mut length = 0u64;
+            while let Some(chunk) = response.chunk().await? {
+                length = length
+                    .checked_add(chunk.len() as u64)
+                    .ok_or("Status object length overflow")?;
+                if length > object.bytes {
+                    return Err("Status object exceeds advertised length".into());
+                }
+                file.write_all(&chunk).await?;
+                hash.update(&chunk);
+            }
+            if length != object.bytes || hex::encode(hash.finalize()) != object.sha256 {
+                return Err("Status object digest or length differs".into());
+            }
+            file.sync_all().await?;
+            drop(file);
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(&temporary, fs::Permissions::from_mode(0o444)).await?;
+            tokio::fs::rename(&temporary, &target).await?;
+            let directory = root.clone();
+            tokio::task::spawn_blocking(move || fs::File::open(directory)?.sync_all()).await??;
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        result?;
+        Ok(target)
+    }
+    async fn worker_inventory(&self) -> Result<Object, Failure> {
+        let response = self
+            .service
+            .serving_http
+            .get(format!("{}/v1/provider-status", self.service.worker_origin))
+            .send()
+            .await?;
+        let bytes = serving::bounded(response, METADATA_LIMIT)
+            .await
+            .map_err(|_| "Status worker status unavailable")?;
+        let status: ProviderStatus = serde_json::from_slice(&bytes)?;
+        status
+            .manifest
+            .as_ref()
+            .ok_or("Status worker not loaded")?
+            .fresh(now_ms())?;
+        status
+            .inventory
+            .ok_or_else(|| "Status worker has no verified inventory".into())
+    }
+    async fn worker_ready(&self, manifest: &Manifest) -> Result<(), Failure> {
+        if self.service.role != Role::Router {
+            return Ok(());
+        }
+        let response = self
+            .service
+            .serving_http
+            .get(format!(
+                "{}/v1/provider-ready/{}",
+                self.service.worker_origin,
+                hex::encode(manifest.id())
+            ))
+            .send()
+            .await?;
+        let bytes = serving::bounded(response, 16)
+            .await
+            .map_err(|_| "Status worker cannot evaluate candidate generation")?;
+        if !serde_json::from_slice::<bool>(&bytes)? {
+            return Err("Status worker generation not ready".into());
+        }
+        Ok(())
+    }
+    async fn authority(&mut self, current: Current, candidate: &Manifest) -> Result<(), Failure> {
+        let active = self
+            .service
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .map(Controller::serving_manifests)
+            .unwrap_or_default();
+        let mut manifests = vec![candidate.clone()];
+        manifests.extend(active.into_iter().filter(|m| m.id() != candidate.id()));
+        let request = AnchorRequest {
+            current: current.clone(),
+            anchors: manifests
+                .iter()
+                .map(|m| (m.anchor_height, m.anchor_hash))
+                .collect(),
+        };
+        let mut response = self
+            .source
+            .post_json("anchors/check", serde_json::to_vec(&request)?)
+            .await?;
+        if !response.status().is_success() {
+            response.discard().await?;
+            return Err("Status authority changed during synchronization".into());
+        }
+        let attestation: AnchorResponse =
+            serde_json::from_slice(&response.read_limited(METADATA_LIMIT).await?)?;
+        drop(response);
+        if attestation.current != current || attestation.canonical.len() != manifests.len() {
+            return Err("Status authority response differs".into());
+        }
+        let mut changed = false;
+        for (manifest, canonical) in manifests.iter().zip(&attestation.canonical) {
+            if !canonical {
+                self.floor.invalid.insert(manifest.id());
+                self.revoke().await;
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_floor().await?;
+        }
+        if self.floor.invalid.contains(&candidate.id())
+            || candidate.recovery_epoch != current.recovery_epoch
+        {
+            return Err("Status candidate revoked".into());
+        }
+        Ok(())
+    }
+    async fn update(&mut self) -> Result<u64, Failure> {
+        self.source.reset_budget();
+        let current = self.current().await?;
+        let active = self
+            .service
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .map(|c| c.current().manifest().clone());
+        if let Some(active) = active.filter(|m| m.recovery_epoch == current.recovery_epoch) {
+            self.authority(current.clone(), &active).await?;
+        }
+        let inventory_object = if self.service.role == Role::Router {
+            self.worker_inventory().await?
+        } else {
+            current
+                .inventory
+                .clone()
+                .ok_or("Status current has no inventory")?
+        };
+        inventory_object.validate(METADATA_LIMIT as u64)?;
+        let inventory_path = self.object(&inventory_object).await?;
+        let inventory: Inventory = serde_json::from_slice(&fs::read(inventory_path)?)?;
+        inventory.validate(&current)?;
+        if self.floor.invalid.contains(&inventory.manifest.id()) {
+            return Err("Status candidate was invalidated".into());
+        }
+        inventory.manifest.fresh(now_ms())?;
+        // Even an unchanged active publication must revalidate live authority.
+        let previous = self
+            .service
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .map(Controller::current);
+        let unchanged = previous
+            .as_ref()
+            .is_some_and(|g| g.manifest().id() == inventory.manifest.id());
+        if !unchanged
+            && self
+                .service
+                .state
+                .lock()
+                .await
+                .controller
+                .as_ref()
+                .is_some_and(|c| !c.can_prepare())
+        {
+            return Err("Status predecessor queries still running".into());
+        }
+        let candidate = if unchanged {
+            previous.as_ref().map(|g| g.as_ref().clone())
+        } else {
+            for object in
+                std::iter::once(&inventory.public).chain(if self.service.role == Role::Worker {
+                    inventory.units.iter()
+                } else {
+                    inventory.packing.iter()
+                })
+            {
+                self.object(object).await?;
+            }
+            let root = self.service.dir.join("objects");
+            let i = inventory.clone();
+            let worker = self.service.role == Role::Worker;
+            let backend = self.backend;
+            Some(
+                tokio::task::spawn_blocking(move || {
+                    Generation::load_prepared(
+                        &i,
+                        worker,
+                        |o| root.join(&o.sha256),
+                        backend,
+                        previous.as_deref(),
+                    )
+                })
+                .await??,
+            )
+        };
+        let latest = self.current().await?;
+        inventory.validate(&latest)?;
+        self.authority(latest, &inventory.manifest).await?;
+        self.worker_ready(&inventory.manifest).await?;
+        inventory.manifest.fresh(now_ms())?;
+        if let Some(candidate) = candidate {
+            let root = self.service.dir.clone();
+            let bytes = serde_json::to_vec(&inventory_object)?;
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || persist(&root, "active.json", &bytes)).await?
+            {
+                self.revoke().await;
+                self.service.state.lock().await.poisoned = true;
+                return Err(error.into());
+            }
+            let mut state = self.service.state.lock().await;
+            match state.controller.as_ref() {
+                Some(controller) if !controller.revoked() => {
+                    if controller.current().manifest().id() != candidate.manifest().id() {
+                        controller.activate(candidate)?;
+                    }
+                }
+                _ => state.controller = Some(Controller::new(candidate)),
+            }
+            state.inventory = Some(inventory_object.clone());
+            state.poisoned = false;
+            drop(state);
+            self.retained.push(inventory_object.clone());
+            if self.retained.len() > 2 {
+                self.retained.remove(0);
+            }
+            let root = self.service.dir.join("objects");
+            let retained = self.retained.clone();
+            tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
+        }
+        Ok(inventory.manifest.generation)
+    }
+}
+impl SyncTask for StatusSync {
+    type Report = u64;
+    type Error = Failure;
+    async fn synchronize(&mut self) -> Result<u64, Failure> {
+        self.service.state.lock().await.synchronization = "synchronizing".into();
+        let result = self.update().await;
+        self.service.state.lock().await.synchronization = if result.is_ok() {
+            "synchronized"
+        } else {
+            "refused"
+        }
+        .into();
+        result
+    }
+    fn report(&self, result: &Result<u64, Failure>) {
+        if let Err(error) = result {
+            tracing::warn!(%error,"Status synchronization refused");
+        }
+    }
+}
+fn persist(root: &FsPath, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    pir_control::durable::write_atomic(root, name, |f| f.write_all(bytes))?;
+    pir_control::durable::sync_dir(root)
+}
+fn verify_file(path: &FsPath, object: &Object) -> Result<(), Failure> {
+    let file = fs::File::open(path)?;
+    if file.metadata()?.len() != object.bytes {
+        return Err("Status cached object length differs".into());
+    }
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = [0u8; 65536];
+    let mut hash = Sha256::new();
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buffer[..n]);
+    }
+    if hex::encode(hash.finalize()) != object.sha256 {
+        return Err("Status cached object digest differs".into());
+    }
+    Ok(())
+}
+
+fn collect(root: &FsPath, inventories: &[Object]) -> Result<(), Failure> {
+    let mut keep = BTreeSet::new();
+    for object in inventories {
+        keep.insert(object.sha256.clone());
+        let bytes = fs::read(root.join(&object.sha256))?;
+        object.verify(&bytes)?;
+        let inventory: Inventory = serde_json::from_slice(&bytes)?;
+        inventory.validate_material()?;
+        for item in inventory
+            .units
+            .iter()
+            .chain(&inventory.packing)
+            .chain(std::iter::once(&inventory.public))
+        {
+            keep.insert(item.sha256.clone());
+        }
+    }
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
