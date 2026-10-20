@@ -94,6 +94,8 @@ def verify_adoption(cutover, states, installed):
         require(config[product] == installed[product], 'Transparent settings must remain unchanged')
     already_adopted = 'enhance' in installed
     if already_adopted:
+        if cutover.serving:
+            installed = publication_only(installed)
         require(config == installed, 'publisher updates must preserve every product setting')
     else:
         require(all(states[name]['active_state'] == 'active' and states[name]['main_pid'] for name in ADOPTED),
@@ -155,3 +157,18 @@ def render(config, binary, states):
                 'unsafe environment file reference')
         extra.append('EnvironmentFile=' + path)
     return text.replace('\n[Install]', '\n' + '\n'.join(extra) + '\n\n[Install]')
+
+
+def publication_only(config):
+    """Remove only the retired wallet gateway fields from an adopted publisher."""
+    import copy
+    result = copy.deepcopy(config)
+    enhance = result['enhance']['settings']
+    require(enhance.get('status_config') is None, 'embedded Status cannot be retired while configured')
+    enhance.pop('status_config', None)
+    status = result['status']['settings']
+    require(status.get('public_listen') in (None, '127.0.0.1:8489'), 'unknown Status wallet listener')
+    status.pop('public_listen', None)
+    for name in ('public_enabled', 'query_router_origin'):
+        status['publisher'].pop(name, None)
+    return result

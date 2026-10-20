@@ -5,7 +5,7 @@ After=network-online.target status-worker.service
 [Service]
 User=status-pir
 Group=status-pir
-# The operator installs the role config; status-router.example.json shows it.
+# Deployment renders and retains the role config; status-router.example.json shows it.
 # Its query listener serves the wallet routes `/v1/status/*`.
 ExecStart=@RELEASE@/pir-query-server --config /etc/status-pir/router.json
 Environment=RAYON_NUM_THREADS=4

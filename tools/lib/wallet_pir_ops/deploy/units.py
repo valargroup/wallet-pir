@@ -102,23 +102,30 @@ def exec_start(config):
     return lines[0]
 
 
-def split_exec(line):
-    """`(prefix, binary, tail)`: systemd's special prefixes, the executable path and the rest verbatim."""
+def split_exec(line, launcher=()):
+    """Return systemd/launcher prefixes, the service executable and its unchanged arguments."""
     prefix = EXEC_PREFIX.match(line).group(0)
-    binary, _, tail = line[len(prefix):].strip().partition(' ')
+    command = line[len(prefix):].strip()
+    if launcher:
+        matched = re.match(r'\s+'.join(re.escape(path) for path in launcher) + r'\s+', command)
+        if not matched:
+            raise UnitError('ExecStart does not use the pinned credential launcher')
+        prefix += matched[0]
+        command = command[matched.end():]
+    binary, _, tail = command.partition(' ')
     if not binary.startswith('/'):
         raise UnitError('ExecStart binary must be an absolute path: %r' % line)
     return prefix, binary, tail.strip()
 
 
-def normalized(config):
+def normalized(config, launcher=()):
     """Comparable form: empty settings dropped, whitespace collapsed, the ExecStart binary abstracted.
 
     The binary is compared separately, by the digest of what runs. A start
     check running that same binary (`ExecStartPre`) is abstracted with it.
     """
     result = {}
-    started = [split_exec(item)[1] for item in config.get('Service', {}).get('ExecStart', [])]
+    started = [split_exec(item, launcher)[1] for item in config.get('Service', {}).get('ExecStart', [])]
     for section, values in config.items():
         for key, value in values.items():
             if isinstance(value, dict):
@@ -127,7 +134,7 @@ def normalized(config):
                 value = [' '.join(item.split()) for item in value] or None
                 if value and (key == 'ExecStart' or key == 'ExecStartPre' and started
                               and all(split_exec(item)[1] == started[-1] for item in value)):
-                    value = [' '.join(filter(None, (split_exec(item)[0] + BINARY, split_exec(item)[2])))
+                    value = [' '.join(filter(None, (split_exec(item, launcher)[0] + BINARY, split_exec(item, launcher)[2])))
                              for item in value]
             else:
                 value = ' '.join(value.split()) or None
