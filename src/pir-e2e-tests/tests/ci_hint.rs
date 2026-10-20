@@ -298,13 +298,13 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
     // Corruption, unlinking and retirement touched only this worker's copy.
     {
         let relative = path.strip_prefix(&worker_root).unwrap();
-        let retained = if let Some(source) = encrypted::shared_hint_fixture(&candidate.plans[0]) {
-            std::fs::read(source.join(relative)).unwrap()
-        } else {
-            let fixtures = encrypted::HINT_FIXTURES.lock().unwrap();
-            let source = &fixtures.iter().find(|(count, _)| *count == 67).unwrap().1;
-            std::fs::read(source.path().join(relative)).unwrap()
-        };
+        let source = encrypted::shared_hint_fixture(&candidate.plans[0]);
+        let mut next_epoch = candidate.plans[0].clone();
+        next_epoch.units[0].recovery_epoch += 1;
+        assert_eq!(encrypted::shared_hint_fixture(&next_epoch), source);
+        next_epoch.units[0].content_sha256 = "00".repeat(32);
+        assert_ne!(encrypted::shared_hint_fixture(&next_epoch), source);
+        let retained = std::fs::read(source.join(relative)).unwrap();
         assert_eq!(retained, original);
     }
     drop(http);

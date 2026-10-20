@@ -92,7 +92,7 @@ pub(super) async fn workers(
                         for plan in candidate.plans {
                             let root = worker_root.clone();
                             tokio::task::spawn_blocking(move || {
-                                seed_hint_fixture(&root, plan.shard.records, &plan);
+                                seed_hint_fixture(&root, &plan);
                             })
                             .await
                             .unwrap();
@@ -126,16 +126,14 @@ pub(super) async fn workers(
     (listeners, groups)
 }
 
-// The original record fixture above also drives the independent generic-hint
-// oracle. Each worker and oracle has its own writable artifact directory.
-pub(super) static HINT_FIXTURES: std::sync::Mutex<Vec<(u64, tempfile::TempDir)>> =
-    std::sync::Mutex::new(Vec::new());
+// Only immutable public bytes are shared. Every worker owns and validates its copy.
+static LOCAL_FIXTURES: std::sync::Mutex<Option<tempfile::TempDir>> = std::sync::Mutex::new(None);
 
 extern "C" fn cleanup_hint_fixtures() {
-    HINT_FIXTURES
+    LOCAL_FIXTURES
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
+        .take();
 }
 
 fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
@@ -157,66 +155,70 @@ fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
     }
 }
 
-fn seed_hint_fixture(
-    root: &std::path::Path,
-    count: u64,
+fn fixture_plan(
     plan: &enhance_query_server::runtime::DomainPlan,
-) {
-    if let Some(prepared) = shared_hint_fixture(plan) {
-        let cache = prepared.parent().unwrap();
-        // Publish complete immutable material atomically. Workers copy the
-        // bytes and verify their own files; the independent oracle cold-builds.
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(cache.join("enhance-hints.lock"))
-            .unwrap();
-        lock.lock().unwrap();
-        if !prepared.exists() {
-            let temporary = tempfile::tempdir_in(cache).unwrap();
-            build_hint_fixture(temporary.path(), plan);
-            std::fs::rename(temporary.path(), &prepared).unwrap();
-        }
-        copy_hint_fixture(&prepared.join("artifacts-9"), &root.join("artifacts-9"));
-        return;
+) -> enhance_query_server::runtime::DomainPlan {
+    let mut fixture = plan.clone();
+    // Recovery epochs change directory names, not the public matrix or hint.
+    // Workers still validate their own copies under the requested identities.
+    for unit in &mut fixture.units {
+        unit.recovery_epoch = 0;
     }
-    static CLEANUP: std::sync::Once = std::sync::Once::new();
-    CLEANUP.call_once(|| {
-        // SAFETY: only owned test directories are dropped, after test threads exit.
-        assert_eq!(unsafe { libc::atexit(cleanup_hint_fixtures) }, 0);
-    });
-    let mut fixtures = HINT_FIXTURES.lock().unwrap();
-    if !fixtures.iter().any(|(records, _)| *records == count) {
-        let fixture = tempfile::tempdir().unwrap();
-        build_hint_fixture(fixture.path(), plan);
-        fixtures.push((count, fixture));
+    fixture
+}
+
+fn seed_hint_fixture(root: &std::path::Path, plan: &enhance_query_server::runtime::DomainPlan) {
+    let prepared = shared_hint_fixture(plan);
+    let cache = prepared.parent().unwrap();
+    std::fs::create_dir_all(cache).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.join("enhance-hints.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let fixture = fixture_plan(plan);
+    if !prepared.exists() {
+        let temporary = tempfile::tempdir_in(cache).unwrap();
+        build_hint_fixture(temporary.path(), &fixture);
+        std::fs::rename(temporary.path(), &prepared).unwrap();
     }
-    let source = &fixtures
-        .iter()
-        .find(|(records, _)| *records == count)
-        .unwrap()
-        .1;
-    // Copy bytes, never handles or verification results. The real worker loader
-    // verifies its own private copy, and the generic oracle cold-builds separately.
-    copy_hint_fixture(
-        &source.path().join("artifacts-9"),
-        &root.join("artifacts-9"),
-    );
+    for (source, target) in fixture.units.iter().zip(&plan.units) {
+        copy_hint_fixture(
+            &prepared.join("artifacts-9").join(source.digest()),
+            &root.join("artifacts-9").join(target.digest()),
+        );
+    }
 }
 
 pub(super) fn shared_hint_fixture(
     plan: &enhance_query_server::runtime::DomainPlan,
-) -> Option<std::path::PathBuf> {
+) -> std::path::PathBuf {
     use sha2::{Digest, Sha256};
-    std::env::var_os("WALLET_PIR_TEST_RUNTIME_CACHE").map(|root| {
-        std::path::PathBuf::from(root).join(format!(
-            "enhance-hints-{}-{}-{}",
-            cfg!(feature = "native-reinspiring"),
-            cfg!(feature = "cuda"),
-            hex::encode(Sha256::digest(serde_json::to_vec(plan).unwrap()))
+    let cache = if let Some(root) = std::env::var_os("WALLET_PIR_TEST_RUNTIME_CACHE") {
+        std::path::PathBuf::from(root)
+    } else {
+        let mut local = LOCAL_FIXTURES.lock().unwrap();
+        local
+            .get_or_insert_with(|| {
+                // SAFETY: only owned test directories are dropped after test threads exit.
+                assert_eq!(unsafe { libc::atexit(cleanup_hint_fixtures) }, 0);
+                tempfile::tempdir().unwrap()
+            })
+            .path()
+            .to_path_buf()
+    };
+    // Unit identities bind content, geometry, setup and parameters. Publication
+    // state and record counts do not alter these prepared bytes.
+    cache.join(format!(
+        "enhance-hints-{}-{}-{}",
+        cfg!(feature = "native-reinspiring"),
+        cfg!(feature = "cuda"),
+        hex::encode(Sha256::digest(
+            serde_json::to_vec(&fixture_plan(plan).units).unwrap()
         ))
-    })
+    ))
 }
 
 fn build_hint_fixture(root: &std::path::Path, plan: &enhance_query_server::runtime::DomainPlan) {
