@@ -15,7 +15,7 @@ make doctor
 make prepare-dev  # explicit, one-time fetch of pinned dependencies
 make check-fast BASE=origin/main OFFLINE=1
 make check-package PACKAGE=pir-apm TEST=dashboard FEATURES= OFFLINE=1
-make check-package PACKAGE=transparent-query-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
+make check-package PACKAGE=transparent-query-server FEATURES=transparent-history TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
@@ -194,7 +194,10 @@ foreground polling and duplicate broad local/CI checks.
 
 For Transparent PIR runtime or artifact changes, start with
 `make check-package PACKAGE=transparent-shared`. For HTTP handling and
-worker control, use `make check-package PACKAGE=transparent-query-server`.
+worker control, use `make check-package PACKAGE=transparent-query-server
+FEATURES=transparent-history,transparent-detail`; the library's default features
+are empty. The host binary is `pir-query-server`, and the worker administration
+tools are in `transparent-tools`.
 These packages do not pull in the publisher's chain reader or RocksDB, including
 when compiling their tests. Publisher-to-worker shipping tests live in the
 tools package; select them with

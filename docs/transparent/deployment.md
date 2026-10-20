@@ -127,7 +127,7 @@ These source policies do not identify the release currently deployed.
 
 These are proposed operating budgets within the accepted architecture, not target-host RSS measurements. Cache reservations omit overhead. Verify full-process and cgroup memory during cold builds, queued HTTP traffic, revision overlap and restart. Do not raise limits automatically to fit a failed census.
 
-Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's cache and memory budgets and `--assignment … --worker-id … --prune-excess`.
+Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's memory budget and run `pir-query-server --config /etc/transparent-pir/shard-server.json`; the generated `transparent_history` settings carry the roster's cache budget and `assignment`, `worker_id` and `prune_excess`.
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
 
@@ -345,8 +345,8 @@ artifacts remain the source for historical rollback; this cleanup changes no hos
 
 ## Runtime persistence and deployment identity
 
-Fleet units enable `--runtime-cache-dir /srv/transparent-pir/runtime-cache` and
-`--runtime-cache-max-bytes` at twice the configured RAM cache budget. Standalone
+Fleet units set `runtime_cache_dir` to `/srv/transparent-pir/runtime-cache` and
+`runtime_cache_max_bytes` at twice the configured RAM cache budget. Standalone
 servers leave persistence disabled unless a cache directory is supplied. The
 cache stores public encoded databases and packing matrices, keyed by revision,
 table, segment, plaintext digest, parameters, setup seed and cache compatibility

@@ -27,6 +27,9 @@ Preserve existing Cargo package and binary names.
   `make prepare-dev`; verify prerequisites with `make doctor`.
 - Compile all CPU workspace binaries, including the Enhance CLI, for local use:
   `cargo build --locked --workspace --bins --profile release-fast --features transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export`.
+  Workspace binaries include a product-less `pir-query-server`; build the
+  Transparent-capable host after that with
+  `cargo build --locked --profile release-fast -p pir-query-server --features transparent-history,transparent-detail`.
   Use `make build` for deploy-profile binaries (fat-LTO `release`, slower
   and more memory-intensive). Do not enable CUDA on a CPU-only devbox.
 - Inspect entrypoints without starting a fleet:

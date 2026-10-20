@@ -75,8 +75,9 @@ Inside a shard, each hash bucket is one `txid-4k8` table (4,096 rows) of 72-entr
 placement seed. A lookup is always one row query, so the server learns the
 range, tier, bucket and timing, but never the size of the transaction.
 
-`transparent-txid-server` serves the tables in archive-owner, recent-replica
-and combined roles. It shares the native runtime, cache and admission code
+The `transaction_details` section of `pir-query-server` (feature
+`transparent-detail`) serves the tables in archive-owner, recent-replica and
+combined roles. It shares the native runtime, cache and admission code
 with history serving, but not `ShardSet`. History manifests and serving carry
 no display tables.
 
@@ -95,7 +96,8 @@ and local evidence only.
 | Ingest, census, publish | `src/transparent/transparent-publisher` | Resolve events, persist journal, seal and build shards, serve filters |
 | Shared publication and runtime | `src/transparent/transparent-shared` | Journal, verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Raw PIR runtime | `src/shared/pir-runtime` | Retained P16 adapter uses shared scan parameters and `PreparedDatabase`; current Directory, Pages and TxDirectory tables all select P8. Enhance and Status are the active u16 consumers |
-| Retrieval service | `src/transparent/transparent-query-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
+| Retrieval service | `src/transparent/transparent-query-server` (library; features `transparent-history`, `transparent-detail`) | Verify publication, bound runtime cache, revision-addressed setup/query; runs inside `pir-query-server` |
+| Worker administration | `tools/transparent` (package `transparent-tools`) | `shard-assign`, `shard-prune`, `shard-control`, `txid-control` |
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
 | Comparison baseline | `tools/transparent` (`benchmarks` feature) | Pinned compact-block datasets for benchmark comparison; not a lightwalletd implementation |

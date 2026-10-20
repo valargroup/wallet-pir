@@ -522,7 +522,10 @@ class Actuator:
         return json.loads(result.stdout)
 
     def fleet_release(self):
-        """The release most rendered recent replicas run; new hosts get exactly it."""
+        """The release most rendered recent replicas run; new hosts get exactly it.
+
+        A release ships pir-query-server; one from before it ships the retired
+        transparent-query-server, which a new host then runs as the fleet does."""
         record = INVENTORY.membership(self.state)
         roster = {w['id']: w for w in json.loads(Path(self.fleet['roster']).read_text())}
         counts = {}
@@ -538,8 +541,9 @@ class Actuator:
         for sums in sorted(Path(self.c['release_store']).glob('*/SHA256SUMS')):
             for line in sums.read_text().splitlines():
                 digest, _, name = line.partition('  ')
-                if name.strip() == 'transparent-query-server' and digest == sha:
-                    return {'sha': sums.parent.name, 'binary_sha256': sha, 'dir': str(sums.parent)}
+                if name.strip() in SERVER_NAMES and digest == sha:
+                    return {'sha': sums.parent.name, 'binary_sha256': sha, 'dir': str(sums.parent),
+                            'binary': name.strip()}
         raise ActuatorError('no release in the store holds the fleet binary ' + sha[:12])
 
 
@@ -587,9 +591,10 @@ def bootstrap(actuator, op, name):
     staging = '/opt/transparent-pir/staged'
     remote.run(host, f'mkdir -p {staging} /opt/transparent-pir/assignments /opt/transparent-publisher '
                      f"{actuator.c['publication_root']}")
-    remote.copy(host, [Path(release['dir'])/'transparent-query-server', Path(release['dir'])/'shard-control'], staging + '/')
-    remote.run(host, f"echo '{release['binary_sha256']}  {staging}/transparent-query-server' | sha256sum -c --quiet && "
-                     f'install -m755 {staging}/transparent-query-server /usr/local/bin/transparent-query-server && '
+    binary = release_binary(release)
+    remote.copy(host, [Path(release['dir'])/binary, Path(release['dir'])/'shard-control'], staging + '/')
+    remote.run(host, f"echo '{release['binary_sha256']}  {staging}/{binary}' | sha256sum -c --quiet && "
+                     f'install -m755 {staging}/{binary} /usr/local/bin/{binary} && '
                      f'install -m755 {staging}/shard-control /usr/local/bin/shard-control')
     plan = newest_plan_naming(actuator.state, name)
     if plan is None:
@@ -612,9 +617,13 @@ def bootstrap(actuator, op, name):
         remote.copy(host, [str(request['directory']) + '/'], publication + '/', bwlimit=actuator.c['bwlimit_kbps'],
                     files_from=files.name)
     remote.run(host, f'cat > {publication}/assignment.json', data=assignment.read_bytes())
-    unit = render_unit(actuator, name, publication)
+    unit, config = render_unit(actuator, name, publication, '/usr/local/bin/' + binary, f'{host}:8093')
+    if config is not None:
+        remote.run(host, f'mkdir -p {shlex.quote(str(Path(transparent_unit.CONFIG).parent))} && '
+                         f'cat > {transparent_unit.CONFIG}.next && chmod 644 {transparent_unit.CONFIG}.next && '
+                         f'mv {transparent_unit.CONFIG}.next {transparent_unit.CONFIG}', data=config.encode())
     remote.run(host, 'cat > /etc/systemd/system/transparent-shard-server.service', data=unit.encode())
-    for directory in unit_directories(unit):
+    for directory in unit_directories(unit, config):
         remote.run(host, 'mkdir -p ' + shlex.quote(directory))
     remote.run(host, 'systemctl daemon-reload && systemctl enable --now transparent-shard-server')
     deadline = time.time() + 20 * 60
@@ -639,6 +648,7 @@ def publication_fresh(actuator):
 
 
 unit_directories = transparent_unit.unit_directories
+SERVER_NAMES = (transparent_unit.SERVER_NAME, 'transparent-query-server')
 
 
 def newest_plan_naming(state, name):
@@ -658,21 +668,38 @@ def newest_plan_naming(state, name):
     return None
 
 
-def render_unit(actuator, name, publication):
-    """A serving recent replica's unit, with this member's identity and first
-    publication. Budgets and flags stay exactly those of the running fleet."""
+def release_binary(release):
+    """The history server a store release ships; an operation recorded before
+    pir-query-server names only the retired executable's release."""
+    binary = release.get('binary', 'transparent-query-server')
+    if binary not in SERVER_NAMES:
+        raise ActuatorError(f'release names an unknown server {binary!r}')
+    return binary
+
+
+def render_unit(actuator, name, publication, executable=transparent_unit.SERVER, listen=None):
+    """(unit, configuration text or None): a serving recent replica's unit and
+    settings, with this member's identity and first publication, running
+    `executable`. Budgets and settings stay exactly those of the running fleet;
+    pir-query-server listens on this member's own address, `listen`, because it
+    refuses the unspecified address a retired peer may name."""
     record = INVENTORY.membership(actuator.state)
     roster = {w['id']: w for w in json.loads(Path(actuator.fleet['roster']).read_text())}
     peer = sorted(m for m in INVENTORY.serving_recent(record) if m in roster)[0]
-    unit = actuator.remote.run(roster[peer]['ssh_host'], 'cat /etc/systemd/system/transparent-shard-server.service')
-    unit, found = transparent_unit.rewrite_exec(unit, {'--worker-id': name, '--shard-dir': publication,
-                                                       '--assignment': publication + '/assignment.json'})
+    host = roster[peer]['ssh_host']
+    unit = actuator.remote.run(host, 'cat /etc/systemd/system/transparent-shard-server.service')
+    config = actuator.remote.run(host, 'cat ' + transparent_unit.CONFIG) if transparent_unit.configured(unit) else None
+    flags, found = transparent_unit.rewrite_flags(transparent_unit.server_flags(unit, config), {
+        '--worker-id': name, '--shard-dir': publication, '--assignment': publication + '/assignment.json'})
     if '--worker-id' not in found:
         raise ActuatorError('the peer unit has no --worker-id to replace')
-    # A peer installed before the executable rename names the legacy path;
-    # this member receives the executable under its current name.
-    return unit.replace('ExecStart=/usr/local/bin/transparent-shard-server ',
-                        'ExecStart=/usr/local/bin/transparent-query-server ')
+    if Path(executable).name == transparent_unit.SERVER_NAME:
+        if listen is None:
+            raise ActuatorError('pir-query-server needs this member\'s listen address')
+        flags, _ = transparent_unit.rewrite_flags(flags, {'--listen': listen}, append=True)
+    # A peer installed before the executable rename names a retired path; this
+    # member receives the release's executable under its own name.
+    return transparent_unit.worker_exec(unit, flags, executable)
 
 
 def main(argv=None):

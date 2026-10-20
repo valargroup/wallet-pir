@@ -124,7 +124,7 @@ class Fake(Executor):
         self.preparing = {}
         self.calls = []
         self.history = {'freshness_seconds': 3, 'ready_replicas': 2}
-        self.worker_binary = sha256(binary_bytes('transparent-txid-server'))
+        self.worker_binary = sha256(binary_bytes('pir-query-server'))
         # The role each worker reports.
         self.roles = dict(P.ROLES)
         # Whether a site's Caddy holds its certificate yet.
@@ -342,6 +342,9 @@ class Fake(Executor):
         if command == 'systemd-run':
             self._mutate(host, 'systemd-run', argv)
             unit = argv[1].removeprefix('--unit=')
+            if '--config' in argv:
+                # What a configured check read when it ran.
+                self.checked = self.text(host, argv[argv.index('--config') + 1])
             if '--wait' in argv:
                 return self.wait_results.get(unit, (0, 'done'))
             self.unit(host, unit).update(load='loaded', active='active', sub='running',
@@ -539,8 +542,11 @@ class PlanTests(Base):
         self.assertEqual(plan['phases'], ['stage', 'workers', 'route', 'controller'])
         self.assertEqual(sorted(plan), ['files', 'hosts', 'phases', 'release', 'release_dir', 'request_sha256',
                                         'retires', 'schema', 'site', 'source_sha', 'templates', 'transient'])
-        self.assertEqual(sorted(files), ['fleet.json', 'routes.caddy', 'unit:archive', 'unit:controller',
-                                         'withdrawn.caddy', 'workers.json'])
+        self.assertEqual(sorted(files), ['config:archive', 'fleet.json', 'routes.caddy', 'unit:archive',
+                                         'unit:controller', 'withdrawn.caddy', 'workers.json'])
+        self.assertEqual((plan['files']['config:archive']['host'], plan['files']['config:archive']['path'],
+                          plan['files']['config:archive']['mode']),
+                         ('archive', '/etc/transparent-pir/txid-display-worker.json', '0644'))
         self.assertEqual(plan['hosts'], {'coordinator': 'coordinator', 'archive': 'archive-03'})
         self.assertEqual(sorted(plan['release']), ['archive', 'coordinator'])
         self.assertEqual(plan['retires'], {})
@@ -564,23 +570,29 @@ class PlanTests(Base):
     def test_rendered_units_carry_the_reviewed_limits(self):
         files = self.poc().render()
         archive, controller = files['unit:archive'], files['unit:controller']
-        self.assertIn('ExecStart=%s/transparent-txid-server --listen 10.142.0.5:8095 --role combined '
-                      '--cache-bytes %d' % (RELEASE_DIR, 4 << 30), archive)
+        self.assertIn('\nExecStart=%s/pir-query-server --config /etc/transparent-pir/txid-display-worker.json\n'
+                      % RELEASE_DIR, archive)
         for line in ('MemoryMax=6G', 'CPUQuota=200%', 'CPUWeight=20', 'IOWeight=20', 'Nice=10',
                      'OOMScoreAdjust=1000', 'Environment=TRANSPARENT_BUILD_THREADS=2', 'MemorySwapMax=0',
-                     'ProtectSystem=strict'):
+                     'ProtectSystem=strict', 'ReadOnlyPaths=/etc/transparent-pir/txid-display-worker.json'):
             self.assertIn('\n' + line + '\n', archive)
-        self.assertIn('--runtime-cache-dir /srv/transparent-txid-display/runtime-cache', archive)
-        self.assertIn('--control-socket /run/transparent-txid-display/control.sock', archive)
-        self.assertIn('--retain-revisions 2', archive)
+        config = json.loads(files['config:archive'])
+        self.assertEqual(sorted(config), ['management_listen', 'transaction_details'])
+        self.assertEqual(config['management_listen'], '127.0.0.1:18195')
+        self.assertTrue(config['transaction_details']['enabled'])
+        settings = config['transaction_details']['settings']
         # `collect` deletes on disk only under its collect roots: the adapter's
         # publications directory, where every cycle's candidate lands, and its
         # staged directory, where sealed revisions wait to be named.
         publications = json.loads(files['fleet.json'])['workers']
-        argv = [line for line in archive.splitlines() if line.startswith('ExecStart=')][0].split()
-        roots = [argv[i + 1] for i, a in enumerate(argv) if a == '--collect-root']
-        self.assertEqual(roots, [publications['archive']['publications'], publications['archive']['staged']])
-        self.assertEqual(argv[argv.index('--active-record') + 1], P.ACTIVE_RECORD)
+        self.assertEqual(settings, {
+            'listen': '10.142.0.5:8095', 'role': 'combined', 'cache_bytes': 4 << 30,
+            'build_slots': self.request['units']['archive']['build_slots'],
+            'query_slots': self.request['units']['archive']['query_slots'], 'retain_revisions': 2,
+            'control_socket': '/run/transparent-txid-display/control.sock', 'active_record': P.ACTIVE_RECORD,
+            'collect_root': [publications['archive']['publications'], publications['archive']['staged']],
+            'runtime_cache_dir': '/srv/transparent-txid-display/runtime-cache',
+            'runtime_cache_max_bytes': self.request['units']['archive']['disk_cache_bytes']})
         for line in ('MemoryMax=4G', 'CPUQuota=200%', 'CPUWeight=20', 'Nice=10', 'ProtectSystem=strict'):
             self.assertIn('\n' + line + '\n', controller)
         self.assertIn('--workers /opt/transparent-txid-display-k8/workers.json --mode replay-then-live '
@@ -827,7 +839,7 @@ class StageTests(Base):
         archive = self.bundle(2)
         self.request['release']['archive_sha256'] = sha256(archive.read_bytes())
         self.fake.put('archive-03', RELEASE_DIR + '/txid-control', b'other')
-        self.fake.put('archive-03', RELEASE_DIR + '/transparent-txid-server', b'x')
+        self.fake.put('archive-03', RELEASE_DIR + '/pir-query-server', b'x')
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'holds other bytes'):
             poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
@@ -854,14 +866,19 @@ class WorkerTests(DeployedFleet):
         files = poc.render()
         host = 'archive-03'
         self.assertEqual(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT), files['unit:archive'])
+        self.assertEqual(self.fake.text(host, P.WORKER_CONFIG), files['config:archive'])
         self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'active')
         self.assertTrue(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
         self.assertEqual(self.fake.active, {'archive': self.map})
         verify = [argv for argv in self.fake.commands(host) if argv[0] == 'systemd-run']
         self.assertEqual(len(verify), 1)
-        self.assertEqual(verify[0][-7:], ['--role', 'combined', '--publication-dir',
-                                          '%s/%s' % (P.PUBLICATIONS, self.map), '--cache-bytes',
-                                          str(self.request['units']['archive']['cache_bytes']), '--verify-only'])
+        self.assertEqual(verify[0][-4:], [RELEASE_DIR + '/pir-query-server', '--config', P.WORKER_CHECK_CONFIG,
+                                          '--verify-only'])
+        # The check reads only what it always took: role, publication and cache budget.
+        self.assertEqual(json.loads(self.fake.checked)['transaction_details']['settings'], {
+            'role': 'combined', 'publication_dir': '%s/%s' % (P.PUBLICATIONS, self.map),
+            'cache_bytes': self.request['units']['archive']['cache_bytes']})
+        self.assertIsNone(self.fake.text(host, P.WORKER_CHECK_CONFIG))
         self.assertIn('--property=MemoryMax=' + self.request['units']['archive']['memory_max'], verify[0])
         order = [m[2] for m in self.fake.mutations(host) if m[1] == 'systemctl']
         self.assertEqual(order, [('daemon-reload',), ('enable', P.WORKER_UNIT), ('restart', P.WORKER_UNIT)])
@@ -878,6 +895,7 @@ class WorkerTests(DeployedFleet):
 
         poc.rollback(poc.transaction.id)
         self.assertIsNone(self.fake.text(host, '/etc/systemd/system/' + P.WORKER_UNIT))
+        self.assertIsNone(self.fake.text(host, P.WORKER_CONFIG))
         self.assertEqual(self.fake.unit(host, P.WORKER_UNIT)['active'], 'inactive')
         self.assertFalse(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
         self.assertIsNone(self.fake.text('coordinator', N.FLEET_JSON))
@@ -989,7 +1007,8 @@ class WorkerTests(DeployedFleet):
         self.assertEqual(poc.plan()['retires'], {P.FORMER_RECENT: FORMER_HOST})
         self.assertNotEqual(poc.plan_sha256(), self.poc(request()).plan_sha256())
         poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
-        self.assertIn('--role combined ', self.fake.text('archive-03', unit))
+        self.assertEqual(json.loads(self.fake.text('archive-03', P.WORKER_CONFIG))
+                         ['transaction_details']['settings']['role'], 'combined')
         self.assertEqual(self.fake.unit('archive-03', P.WORKER_UNIT)['active'], 'active')
         self.assertIsNone(self.fake.text(FORMER_HOST, unit))
         self.assertNotEqual(self.fake.unit(FORMER_HOST, P.WORKER_UNIT)['active'], 'active')
@@ -1175,7 +1194,9 @@ class StopAndRetireTests(DeployedFleet):
         self.fake.unit('coordinator', N.MAPWATCH_UNIT).update(load='loaded', active='active', sub='running',
                                                               fragment='/run/systemd/transient/' + N.MAPWATCH_UNIT)
         poc = self.poc()
+        self.fake.put('archive-03', P.WORKER_CONFIG, poc.render()['config:archive'])
         poc.retire(poc.plan_sha256())
+        self.assertIsNone(self.fake.text('archive-03', P.WORKER_CONFIG))
         for host, unit in (('archive-03', P.WORKER_UNIT), ('coordinator', N.CONTROLLER_UNIT)):
             self.assertIsNone(self.fake.text(host, '/etc/systemd/system/' + unit))
             self.assertFalse(self.fake.unit(host, unit)['enabled'])

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from wallet_pir_ops.deploy import descriptors, units  # noqa: E402
 from worker_settings import SETTINGS  # noqa: E402
-from tools.transparent.tests.test_history_provider_role import ProviderRole  # noqa: E402,F401
+from tools.transparent.tests.test_history_provider_role import ProviderRole, assert_history_config  # noqa: E402,F401
 
 REGISTRY = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 RELEASE = '/opt/example/releases/' + '0' * 64
@@ -89,6 +90,65 @@ class WorkerRoles(unittest.TestCase):
         self.assertEqual(check('transparent-display', 'external-worker'), ())
         initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}
         self.assertEqual(check('transparent-display', 'external-worker', initial)[-1], '--verify-only')
+
+    def test_transparent_roles_run_the_host_over_one_generated_section(self):
+        configs = {('transparent-history', 'external-worker'): '/etc/transparent-pir/history-worker.json',
+                   ('transparent-history', 'https-recent'): '/etc/transparent-pir/history-https-recent.json',
+                   ('transparent-history', 'provider'): '/etc/transparent-pir/history-provider.json',
+                   ('transparent-display', 'external-worker'): '/etc/transparent-pir/display-worker.json'}
+        managements = set()
+        for (service, role), path in configs.items():
+            with self.subTest(service=service, role=role):
+                settings = SETTINGS[(service, role)]
+                result = REGISTRY[service].roles[role].render(settings, RELEASE)
+                command = shlex.split(units.exec_start(units.effective([result.unit])))
+                self.assertEqual(command, ['%s/pir-query-server' % RELEASE, '--config', path])
+                readonly = paths(units.effective([result.unit])['Service'].get('ReadOnlyPaths', ''))
+                self.assertIn(path, readonly)
+                section = 'transaction_details' if service == 'transparent-display' else 'transparent_history'
+                body = assert_history_config(self, result.files[path], settings['listen'], section)
+                managements.add(json.loads(result.files[path])['management_listen'])
+                for name, value in settings.items():
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        self.assertIs(type(body[name]), int, name)
+                        self.assertEqual(body[name], value)
+                if service == 'transparent-history':
+                    self.assertEqual(result.check, ('--config', path, '--verify-only'))
+        self.assertEqual(len(managements), len(configs))
+        worker = REGISTRY['transparent-history'].roles['external-worker'].render(
+            SETTINGS[('transparent-history', 'external-worker')], RELEASE)
+        body = json.loads(worker.files['/etc/transparent-pir/history-worker.json'])['transparent_history']['settings']
+        self.assertEqual(body, {'listen': '127.0.0.1:8093', 'shard_dir': '/srv/history/set',
+                                'cache_bytes': 8 << 30, 'assignment': '/srv/history/assignment.json',
+                                'worker_id': 'external-1',
+                                'control_socket': '/run/transparent-history-worker/control.sock',
+                                'active_record': '/var/lib/history-worker/active.json'})
+
+    def test_display_check_verifies_the_initial_publication_without_control_state(self):
+        role = REGISTRY['transparent-display'].roles['external-worker']
+        settings = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/c0',
+                    'collect_roots': ['/srv/display/publications', '/srv/display/staged'], 'loaded_only': True,
+                    'cache_bytes': 1 << 30, 'runtime_cache_dir': '/var/cache/display',
+                    'runtime_cache_max_bytes': 2 << 30}
+        result = role.render(settings, RELEASE)
+        config, check = '/etc/transparent-pir/display-worker.json', '/etc/transparent-pir/display-worker.check.json'
+        self.assertEqual(set(result.files), {config, check})
+        self.assertEqual(result.check, ('--config', check, '--verify-only'))
+        readonly = paths(units.effective([result.unit])['Service']['ReadOnlyPaths'])
+        self.assertLessEqual({config, check}, set(readonly))
+        serving = assert_history_config(self, result.files[config], settings['listen'], 'transaction_details')
+        verified = assert_history_config(self, result.files[check], settings['listen'], 'transaction_details')
+        self.assertEqual(serving['collect_root'], settings['collect_roots'])
+        self.assertEqual(serving['control_socket'], '/run/transparent-display-worker/control.sock')
+        self.assertEqual(serving['active_record'], '/var/lib/display-worker/active.json')
+        self.assertEqual({k: v for k, v in serving.items()
+                          if k not in ('control_socket', 'active_record', 'collect_root')}, verified)
+        self.assertEqual(verified, {'listen': '127.0.0.1:8095', 'role': 'combined', 'cache_bytes': 1 << 30,
+                                    'runtime_cache_dir': '/var/cache/display', 'runtime_cache_max_bytes': 2 << 30,
+                                    'loaded_only': True, 'publication_dir': '/srv/display/c0'})
+        without = role.render(SETTINGS[('transparent-display', 'external-worker')], RELEASE)
+        self.assertEqual(set(without.files), {config})
+        self.assertEqual(without.check, ())
 
     def test_two_external_workers_on_one_host_do_not_share_a_config(self):
         role = REGISTRY['enhance'].roles['external-worker']

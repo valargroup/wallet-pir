@@ -1,12 +1,23 @@
 """An upgrade may become ready on a newer publication than its predecessor."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 SPEC = importlib.util.spec_from_file_location('deploy', Path(__file__).resolve().parents[1]/'scripts/deploy-transparent-publisher.py')
 M = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(M)
+
+
+def staged(fleet):
+    """(unit, history settings, verify command) the install staged on the worker."""
+    calls = fleet.ssh.await_args_list
+    unit = next(call.args[2].decode() for call in calls if call.args[1].endswith('/worker.service'))
+    config = json.loads(next(call.args[2].decode() for call in calls if call.args[1].startswith('cat > ') and call.args[1].endswith('/shard-server.json')))
+    verify = next(call for call in calls if call.args[1].endswith('--verify-only'))
+    return unit, config['transparent_history']['settings'], verify
+
 
 class UpgradeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -32,10 +43,9 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
                 with tempfile.TemporaryDirectory() as directory, patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
                     if valid:
                         await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
-                        unit = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].endswith('/worker.service'))
-                        self.assertIn(flags, unit)
-                        self.assertEqual(unit.count('--runtime-cache-dir'), 1)
-                        self.assertNotIn('103079215104', unit)
+                        unit, settings, _ = staged(fleet)
+                        self.assertIn('\nExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json\n', unit)
+                        self.assertEqual((settings['runtime_cache_dir'], settings['runtime_cache_max_bytes']), ('/custom', 1234))
                     else:
                         with self.assertRaisesRegex(ValueError, 'incomplete runtime cache'):
                             await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
@@ -50,11 +60,14 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
                       upstream='host:8093', cache_bytes=51539607552)
         with tempfile.TemporaryDirectory() as directory, patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
             await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
-        unit = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].endswith('/worker.service'))
-        self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache', unit)
-        self.assertIn('--runtime-cache-max-bytes 103079215104', unit)
-        verify = next(call.args[1] for call in fleet.ssh.await_args_list if '--verify-only' in call.args[1])
-        self.assertIn('--runtime-cache-max-bytes 103079215104', verify)
+        _, settings, verify = staged(fleet)
+        self.assertEqual(settings['runtime_cache_dir'], '/srv/transparent-pir/runtime-cache')
+        self.assertEqual(settings['runtime_cache_max_bytes'], 103079215104)
+        # The staged server verifies exactly the staged configuration.
+        self.assertEqual(verify.args[1], '/opt/transparent-publisher/staged/pir-query-server --config '
+                         '/opt/transparent-publisher/staged/shard-server.json --verify-only')
+        commands = [call.args[1] for call in fleet.ssh.await_args_list]
+        self.assertLess(commands.index(verify.args[1].replace('--verify-only', '--check')), commands.index(verify.args[1]))
         self.assertFalse(any('systemctl restart' in call.args[1] for call in fleet.ssh.await_args_list))
 
     async def test_current_binary_and_warm_control_attest_advancing_publication(self):
@@ -64,19 +77,53 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         fleet.ssh_args = []
         fleet.ssh.return_value = unit.encode()
         fleet.control.return_value = {'active': {'map_sha256': 'new'}, 'warm': True}
-        worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
+        worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='10.0.0.7:8093')
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory)
-            (artifacts/'transparent-query-server').write_bytes(b'binary')
+            (artifacts/'pir-query-server').write_bytes(b'binary')
             digest = hashlib.sha256(b'binary').hexdigest()
             with patch.object(M, 'read_json', side_effect=[{'ready':True,'mode':'warm','map_sha256':'old'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE, 'run', new=AsyncMock()):
                 await M.install_worker(fleet, worker, artifacts, '/rollback')
-        uploaded = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].startswith('cat >'))
+        uploaded, settings, verify = staged(fleet)
         self.assertEqual(uploaded.count('RuntimeDirectory=transparent-pir'), 1)
         self.assertEqual(uploaded.count('MemoryHigh=5905580032'), 1)
-        verify = next(call for call in fleet.ssh.await_args_list if '--verify-only' in call.args[1])
+        self.assertEqual(uploaded.count('ExecStart='), 1)
+        # The retired unit's settings, on the worker's own VPC listener.
+        self.assertEqual((settings['shard_dir'], settings['listen']), ('/set', '10.0.0.7:8093'))
         self.assertFalse(verify.kwargs['multiplex'])
+        install = next(call.args[1] for call in fleet.ssh.await_args_list if 'systemctl restart' in call.args[1])
+        # The retired executable and the absent configuration are what a rollback restores.
+        self.assertIn('for name in pir-query-server transparent-query-server transparent-shard-server', install)
+        self.assertIn('mv /usr/local/bin/pir-query-server.next /usr/local/bin/pir-query-server', install)
+        self.assertIn('mv /etc/transparent-pir/shard-server.json.next /etc/transparent-pir/shard-server.json', install)
         fleet.control.assert_awaited_once()
+
+    async def test_configured_worker_is_read_through_its_configuration(self):
+        unit = '[Service]\nExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json\n'
+        current = json.dumps({'management_listen': '127.0.0.1:18190', 'transparent_history': {'enabled': True, 'settings': {
+            'listen': '10.0.0.7:8093', 'shard_dir': '/set', 'build_slots': 1, 'prune_excess': True,
+            'runtime_cache_dir': '/custom', 'runtime_cache_max_bytes': 1234,
+            'control_socket': '/run/transparent-pir/control.sock', 'active_record': '/opt/transparent-publisher/active.json'}}})
+        async def ssh(host, command, *args, **kwargs):
+            return {'cat /etc/systemd/system/transparent-shard-server.service': unit.encode(),
+                    'cat /etc/transparent-pir/shard-server.json': current.encode()}.get(command, b'')
+        fleet = AsyncMock()
+        fleet.c = {}
+        fleet.ssh_args = []
+        fleet.ssh.side_effect = ssh
+        worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='10.0.0.7:8093', build_slots=2)
+        with patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
+            await M.install_worker(fleet, worker, Path('/unused'), '/rollback', stage_only=True)
+        _, settings, _ = staged(fleet)
+        self.assertEqual(settings, {'listen': '10.0.0.7:8093', 'shard_dir': '/set', 'prune_excess': True,
+                                    'runtime_cache_dir': '/custom', 'runtime_cache_max_bytes': 1234,
+                                    'control_socket': '/run/transparent-pir/control.sock',
+                                    'active_record': '/opt/transparent-publisher/active.json', 'build_slots': 2})
+
+    def test_rollback_restores_or_removes_the_configuration(self):
+        command = M.restore_config('/rollback dir')
+        self.assertIn("if [ -f '/rollback dir'/shard-server.json ]", command)
+        self.assertIn('else rm -f /etc/transparent-pir/shard-server.json; fi', command)
 
     async def test_roster_build_slots_replace_both_cli_forms_before_verification(self):
         for old in ['--build-slots 1', '--build-slots=1', '']:
@@ -88,11 +135,9 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
                 worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093', build_slots=2)
                 with tempfile.TemporaryDirectory() as directory, patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), patch.object(M.LIVE, 'run', new=AsyncMock()):
                     await M.install_worker(fleet, worker, Path(directory), '/rollback', stage_only=True)
-                uploaded = next(call.args[2].decode() for call in fleet.ssh.await_args_list if call.args[1].startswith('cat >'))
-                self.assertEqual(uploaded.count('--build-slots'), 1)
-                self.assertIn('--build-slots 2', uploaded)
-                verify = next(call.args[1] for call in fleet.ssh.await_args_list if '--verify-only' in call.args[1])
-                self.assertIn('--build-slots 2', verify)
+                uploaded, settings, _ = staged(fleet)
+                self.assertNotIn('--build-slots', uploaded)
+                self.assertEqual(settings['build_slots'], 2)
                 self.assertFalse(any('systemctl restart' in call.args[1] for call in fleet.ssh.await_args_list))
 
     async def test_headless_preflight_stages_without_changing_runtime(self):
@@ -124,7 +169,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         fleet.control.return_value = {'active': {'map_sha256': 'new'}, 'warm': True}
         worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         with tempfile.TemporaryDirectory() as directory:
-            artifacts=Path(directory);(artifacts/'transparent-query-server').write_bytes(b'binary')
+            artifacts=Path(directory);(artifacts/'pir-query-server').write_bytes(b'binary')
             digest=hashlib.sha256(b'binary').hexdigest()
             with patch.object(M,'read_json',side_effect=[{'ready':True,'mode':'warm'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE,'run',new=AsyncMock()):
                 await M.install_worker(fleet,worker,artifacts,'/rollback')
@@ -162,7 +207,7 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
         fleet.control.return_value = {'active': {'map_sha256': 'new'}, 'warm': True}
         worker = dict(id='recent', role='recent-replica', ssh_host='host', upstream='host:8093')
         with tempfile.TemporaryDirectory() as directory:
-            artifacts=Path(directory);(artifacts/'transparent-query-server').write_bytes(b'binary')
+            artifacts=Path(directory);(artifacts/'pir-query-server').write_bytes(b'binary')
             digest=hashlib.sha256(b'binary').hexdigest()
             with patch.object(M,'read_json',side_effect=[{'ready':True,'mode':'warm'}, {'ready':True,'binary_sha256':digest,'map_sha256':'new'}]), patch.object(M.LIVE,'run',new=AsyncMock()):
                 await M.install_worker(fleet,worker,artifacts,'/rollback')
@@ -224,10 +269,10 @@ class SchemaNamespaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_transfer_corruption_is_rejected_for_either_binary(self):
         with tempfile.TemporaryDirectory() as directory:
             artifacts = Path(directory)
-            for name in ('transparent-query-server','shard-control'):
+            for name in ('pir-query-server','shard-control'):
                 (artifacts/name).write_bytes(name.encode())
             lines = [hashlib.sha256((artifacts/name).read_bytes()).hexdigest()+'  /stage/'+name
-                     for name in ('transparent-query-server','shard-control')]
+                     for name in ('pir-query-server','shard-control')]
             fleet = AsyncMock()
             fleet.ssh.return_value = ('\n'.join(lines)+'\n').encode()
             await M.verify_worker_artifacts(fleet,'host',artifacts,'/stage')

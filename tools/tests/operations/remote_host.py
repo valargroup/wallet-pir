@@ -7,7 +7,8 @@ import sys
 root = Path(os.environ["HOST_ROOT"])
 
 def redirect(text):
-    for prefix in ("/opt/transparent-pir", "/usr/local/bin", "/etc/systemd/system", "/tmp/transparent-pir-"):
+    for prefix in ("/opt/transparent-pir", "/usr/local/bin", "/etc/systemd/system", "/etc/transparent-pir",
+                   "/tmp/transparent-pir-"):
         text = text.replace(prefix, str(root) + prefix)
     return text
 

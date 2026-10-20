@@ -375,6 +375,35 @@ class TransparentUnitTests(unittest.TestCase):
         self.assertEqual(list(transparent_unit.unit_directories(self.UNIT)),
                          ['/srv/transparent-pir/runtime-cache', '/opt/transparent-publisher'])
 
+    def test_flags_become_the_generated_configuration_and_back(self):
+        flags = transparent_unit.server_flags(self.UNIT)
+        unit, config = transparent_unit.worker_exec(self.UNIT, flags + ['--prune-excess', '--query-slots', '2'])
+        self.assertEqual(transparent_unit.exec_args(unit),
+                         ['/usr/local/bin/pir-query-server', '--config', '/etc/transparent-pir/shard-server.json'])
+        self.assertTrue(transparent_unit.configured(unit))
+        self.assertIn('MemoryMax=7G\n', unit)
+        self.assertEqual(json.loads(config), {'management_listen': '127.0.0.1:18190', 'transparent_history': {
+            'enabled': True, 'settings': {
+                'shard_dir': '/p/old', 'cache_bytes': 5368709120, 'worker_id': 'transparent-pir-recent-01',
+                'runtime_cache_dir': '/srv/transparent-pir/runtime-cache',
+                'active_record': '/opt/transparent-publisher/active.json', 'prune_excess': True, 'query_slots': 2}}})
+        self.assertEqual(transparent_unit.server_flags(unit, config), [
+            '--shard-dir', '/p/old', '--cache-bytes', '5368709120', '--worker-id', 'transparent-pir-recent-01',
+            '--runtime-cache-dir', '/srv/transparent-pir/runtime-cache',
+            '--active-record', '/opt/transparent-publisher/active.json', '--prune-excess', '--query-slots', '2'])
+        self.assertEqual(list(transparent_unit.unit_directories(unit, config)),
+                         ['/srv/transparent-pir/runtime-cache', '/opt/transparent-publisher'])
+        with self.assertRaisesRegex(ValueError, 'not read'):
+            transparent_unit.server_flags(unit)
+        # A retired release keeps its own executable and flags.
+        legacy, none = transparent_unit.worker_exec(unit, flags, '/usr/local/bin/transparent-query-server')
+        self.assertIsNone(none)
+        self.assertEqual(transparent_unit.exec_args(legacy)[0], '/usr/local/bin/transparent-query-server')
+        self.assertEqual(transparent_unit.server_flags(legacy), flags)
+        for bad in (['--verify-only'], ['--cache-bytes', 'x'], ['--unknown', '1'], ['--shard-dir']):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                transparent_unit.config_text(bad)
+
 
 if __name__ == '__main__':
     unittest.main()

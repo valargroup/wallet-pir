@@ -767,6 +767,33 @@ class ReleaseTests(unittest.TestCase):
                 release.extract(root / 'forged.tar.gz', root / 'forged', SHA, kind)
             self.assertFalse((root / 'forged').exists())
 
+    def test_transparent_kinds_ship_the_query_server_host_and_admin_tools(self):
+        retired = {'transparent-query-server', 'transparent-txid-server'}
+        for kind in ('transparent-shard', 'transparent-publisher', 'transparent-txid-display'):
+            self.assertIn('pir-query-server', release.BINARIES[kind])
+            self.assertFalse(retired & set(release.BINARIES[kind]), kind)
+        self.assertEqual(release.BINARIES['transparent-shard'], ['pir-query-server', 'shard-assign', 'shard-prune'])
+        self.assertIn('shard-control', release.BINARIES['transparent-publisher'])
+        self.assertIn('txid-control', release.BINARIES['transparent-txid-display'])
+
+    def test_transparent_build_selects_the_host_with_both_transparent_features(self):
+        sys.path.insert(0, str(ROOT / 'tools/ci'))
+        qualification = load('qualification')
+        commands = []
+        with patch.object(qualification, 'run', lambda command, stage: commands.append(command)):
+            qualification.build('transparent')
+        (command,) = commands
+        packages = [command[i + 1] for i, item in enumerate(command) if item == '-p']
+        self.assertIn('pir-query-server', packages)
+        self.assertNotIn('transparent-query-server', packages)
+        features = command[command.index('--features') + 1].split(',')
+        self.assertIn('pir-query-server/transparent-history', features)
+        self.assertIn('pir-query-server/transparent-detail', features)
+        bins = {command[i + 1] for i, item in enumerate(command) if item == '--bin'}
+        self.assertEqual(bins, {name for kind in qualification.KINDS['transparent']
+                                for name in release.BINARIES[kind]})
+        self.assertIn('pir-query-server', bins)
+
 
 class TimingTests(unittest.TestCase):
     def test_nearest_rank_p95(self):

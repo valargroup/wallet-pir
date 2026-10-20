@@ -1,8 +1,9 @@
 # External Transparent history worker, rendered by tools/transparent/lib/roles.py.
 # It loads the staged shard set (or the active record on restart) and takes
 # prepare/activate/invalidate from the publication controller on its root-only
-# control socket. ExecStart and paths are rendered; budgets come from the
-# inventory.
+# control socket. ExecStart (`pir-query-server --config
+# /etc/transparent-pir/history-worker.json`), that configuration and paths are
+# rendered; budgets come from the inventory.
 [Unit]
 Description=Transparent PIR history worker (external)
 After=network-online.target

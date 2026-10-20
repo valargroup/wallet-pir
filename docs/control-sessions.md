@@ -151,7 +151,7 @@ hosts' OpenSSH version before relying on the result there.
 the worker's control socket on a loopback TCP port instead, listed in
 `permitopen`. Two ways to get there:
 
-- a listener in `transparent-shard-server`;
+- a listener in the `pir-query-server` Transparent history process;
 - `systemd-socket-proxyd` in front of the existing socket.
 
 The trade-off: any local user on the worker can connect to a loopback TCP port,

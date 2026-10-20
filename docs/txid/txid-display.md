@@ -248,8 +248,8 @@ geometry.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay
   bounded as the archive window grows (below).
-- **Workers.** `transparent-txid-server --role` picks which tables a worker
-  holds:
+- **Workers.** The `role` setting of a `pir-query-server`
+  `transaction_details` section picks which tables a worker holds:
   - `archive-owner`: the sealed archives;
   - `recent-replica`: the recent shard;
   - `combined`: both.
@@ -279,9 +279,10 @@ geometry.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
-- `transparent-filter-server/src/txid_display/` (`txid-display-controller`);
-- `transparent-shard-server/src/display/` (`transparent-txid-server`,
-  `txid-control`, `txid-inventory`);
+- `src/transparent/transparent-publisher/src/tx_detail/` (`txid-display-controller`);
+- `src/transparent/transparent-query-server/src/tx_detail/` (serving, run by
+  `pir-query-server` with feature `transparent-detail`);
+- `tools/transparent` (`txid-control`, `txid-inventory`);
 - the `txid-display-*` deploy commands.
 
 The v1 publication has run in production beside history since 2026-10-06

@@ -14,8 +14,9 @@ x86-64-v3 CPU; the release binaries, checked against the store's SHA256SUMS;
 a plan of the active publication with the enrolled recent replicas and this
 host pinned to the whole archive; its files, hard-linked from any earlier
 standby publication and otherwise copied at a bounded rate, paused while
-publication is late; the assignment, written once; the unit, a serving
-archive owner's unit with this host's identity and budgets; the wait until
+publication is late; the assignment, written once; the unit and its
+generated configuration, a serving archive owner's settings with this host's
+identity, budgets and VPC listener; the wait until
 the worker attests that publication warm; and a dial from the router to the
 host, so the path the cutover uses is proven first. Prints a JSON summary.
 """
@@ -49,6 +50,7 @@ def load_module(name, filename):
 ACTUATOR = load_module('fleet_actuator', 'transparent-fleet-actuator.py')
 INVENTORY = ACTUATOR.INVENTORY
 UNIT_PATH = '/etc/systemd/system/transparent-shard-server.service'
+CONFIG_PATH = transparent_unit.CONFIG
 RUNTIME_CACHE = '/srv/transparent-pir/runtime-cache'
 DIGEST = re.compile(r'[0-9a-f]{64}')
 # Helpers a serving unit may run before start, and the repository scripts they
@@ -75,20 +77,30 @@ def sha256_file(path):
 
 def release_binaries(store, sha):
     """{name: (path, sha256)} for the worker binaries of release `sha`, each
-    checked on the coordinator against the release's SHA256SUMS."""
+    checked on the coordinator against the release's SHA256SUMS. The server is
+    pir-query-server, or the retired transparent-query-server of a release
+    from before it; `server_name` says which."""
     directory = Path(store)/sha
     sums = {}
     for line in (directory/'SHA256SUMS').read_text().splitlines():
         digest, _, name = line.partition('  ')
         sums[name.strip().removeprefix('./')] = digest
+    server = next((name for name in SERVER_NAMES if name in sums), SERVER_NAMES[0])
     binaries = {}
-    for name in ('transparent-query-server', 'shard-control'):
+    for name in (server, 'shard-control'):
         if name not in sums:
             raise StandbyError(f'release {sha} lists no {name}')
         if sha256_file(directory/name) != sums[name]:
             raise StandbyError(f'release {sha}: {name} does not match its SHA256SUMS')
         binaries[name] = (directory/name, sums[name])
     return binaries
+
+
+SERVER_NAMES = (transparent_unit.SERVER_NAME, 'transparent-query-server')
+
+
+def server_name(binaries):
+    return next(name for name in binaries if name in SERVER_NAMES)
 
 
 class Standby:
@@ -108,7 +120,8 @@ class Standby:
         self.refuse_members()
         self.check_host()
         binaries = release_binaries(self.a.release_store, self.a.release)
-        self.summary['binary_sha256'] = binaries['transparent-query-server'][1]
+        self.server = server_name(binaries)
+        self.summary['binary_sha256'] = binaries[self.server][1]
         self.install(binaries)
         warm = self.already_warm(binaries)
         if warm:
@@ -121,7 +134,7 @@ class Standby:
         publication = f"{self.a.publication_root}/{digest}"
         self.transfer(digest, request, assignment, publication)
         self.write_assignment(assignment, publication)
-        started = self.start(self.render(publication), publication, digest)
+        started = self.start(*self.render(publication), publication, digest)
         self.summary['warm_seconds'] = round(self.wait_warm(digest, binaries, started), 1)
         self.check_router()
         return self.summary
@@ -150,7 +163,8 @@ class Standby:
     # -- release ---------------------------------------------------------
     def install(self, binaries):
         installed = {}
-        output = self.remote.run(self.host, 'sha256sum /usr/local/bin/transparent-query-server '
+        server = server_name(binaries)
+        output = self.remote.run(self.host, f'sha256sum /usr/local/bin/{server} '
                                             '/usr/local/bin/shard-control 2>/dev/null || true')
         for line in output.splitlines():
             digest, _, path = line.partition('  ')
@@ -163,8 +177,8 @@ class Standby:
         self.remote.copy(self.host, [path for path, _ in binaries.values()], staging + '/')
         check = ''.join(f'{digest}  {staging}/{name}\n' for name, (_, digest) in binaries.items())
         self.remote.run(self.host, f'sha256sum -c --quiet && '
-                                   f'install -m755 {staging}/transparent-query-server /usr/local/bin/transparent-query-server.next && '
-                                   f'mv /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server && '
+                                   f'install -m755 {staging}/{server} /usr/local/bin/{server}.next && '
+                                   f'mv /usr/local/bin/{server}.next /usr/local/bin/{server} && '
                                    f'install -m755 {staging}/shard-control /usr/local/bin/shard-control',
                         data=check.encode())
         self.summary['installed'] = 'now'
@@ -175,7 +189,7 @@ class Standby:
         This is the condition `repartition` checks."""
         try:
             ready = self.http(f'http://{self.host}:8093/v1/ready')
-            if not ready.get('ready') or ready.get('binary_sha256') != binaries['transparent-query-server'][1]:
+            if not ready.get('ready') or ready.get('binary_sha256') != binaries[server_name(binaries)][1]:
                 return None
             status = self.status(dict(self.fleet, known_hosts=str(self.a.known_hosts)),
                                  {'id': self.a.id, 'ssh_host': self.host})
@@ -280,31 +294,43 @@ class Standby:
 
     # -- unit ------------------------------------------------------------
     def template(self):
-        """The unit of a serving archive owner, else of a serving recent
-        replica: every flag this host does not override stays the fleet's."""
+        """(unit, its settings as flags, worker id) of a serving archive owner,
+        else of a serving recent replica: every setting this host does not
+        override stays the fleet's."""
         roster = json.loads(Path(self.fleet['roster']).read_text())
         for role in ('archive-owner', 'recent-replica'):
             for worker in roster:
                 if worker['role'] == role and worker.get('intent', 'enrolled') == 'enrolled':
                     try:
-                        return self.fleet_remote.run(worker['ssh_host'], 'cat ' + UNIT_PATH), worker['id']
+                        unit = self.fleet_remote.run(worker['ssh_host'], 'cat ' + UNIT_PATH)
+                        config = (self.fleet_remote.run(worker['ssh_host'], 'cat ' + CONFIG_PATH)
+                                  if transparent_unit.configured(unit) else None)
+                        return unit, transparent_unit.server_flags(unit, config), worker['id']
                     except (ACTUATOR.ActuatorError, subprocess.TimeoutExpired):
                         continue
         raise StandbyError('no serving worker unit to render from')
 
     def render(self, publication):
-        unit, source = self.template()
+        """(unit, configuration text or None) for this host, running the
+        release's server: pir-query-server reads the settings from its
+        generated configuration and listens on this host's VPC address, which
+        it needs instead of the unspecified address a retired peer may name."""
+        unit, flags, source = self.template()
         cache = self.a.cache_bytes
-        unit, found = transparent_unit.rewrite_exec(unit, {
+        values = {
             '--worker-id': self.a.id, '--shard-dir': publication, '--assignment': publication + '/assignment.json',
             '--cache-bytes': cache, '--runtime-cache-dir': RUNTIME_CACHE, '--runtime-cache-max-bytes': 2 * cache,
-            '--query-slots': self.a.query_slots, '--build-slots': self.a.build_slots}, append=True)
+            '--query-slots': self.a.query_slots, '--build-slots': self.a.build_slots}
+        if self.server == transparent_unit.SERVER_NAME:
+            values['--listen'] = f'{self.host}:8093'
+        flags, found = transparent_unit.rewrite_flags(flags, values, append=True)
         if '--worker-id' not in found:
             raise StandbyError(f'the unit of {source} has no --worker-id to replace')
+        unit, config = transparent_unit.worker_exec(unit, flags, '/usr/local/bin/' + self.server)
         unit = transparent_unit.set_service(unit, {'MemoryMax': self.a.memory_max,
                                                    'MemoryHigh': self.a.memory_high})
         self.summary['unit_from'] = source
-        return unit
+        return unit, config
 
     def install_prestart(self, unit):
         for line in unit.splitlines():
@@ -317,23 +343,30 @@ class Standby:
                                     data=(SCRIPTS/script).read_bytes())
                     self.remote.run(self.host, f'python3 {path} --preflight')
 
-    def start(self, unit, publication, digest):
-        """Install `unit` and (re)start the service when anything changed.
-        Returns the monotonic time the service was last started from here.
+    def start(self, unit, config, publication, digest):
+        """Install `unit` and its configuration `config` (None for a retired
+        executable, which takes flags) and (re)start the service when anything
+        changed. Returns the monotonic time the service was last started from here.
 
         A worker with a control socket starts from its active record, not
-        from --shard-dir, so the record is pointed at this publication too.
+        from its shard_dir, so the record is pointed at this publication too.
         Nothing routes to this host yet; no one else writes that record."""
         current = self.remote.run(self.host, f'cat {UNIT_PATH} 2>/dev/null || true')
+        current_config = (self.remote.run(self.host, f'cat {CONFIG_PATH} 2>/dev/null || true')
+                          if config is not None else None)
         active = self.remote.run(self.host, 'systemctl is-active transparent-shard-server || true').strip()
-        if current == unit and active == 'active':
+        if current == unit and current_config == config and active == 'active':
             self.summary['started'] = 'already'
             return self.clock()
         self.install_prestart(unit)
-        for directory in transparent_unit.unit_directories(unit):
+        for directory in transparent_unit.unit_directories(unit, config):
             self.remote.run(self.host, 'mkdir -p ' + shlex.quote(directory))
+        if config is not None:
+            self.remote.run(self.host, f'mkdir -p {shlex.quote(str(Path(CONFIG_PATH).parent))} && '
+                                       f'cat > {CONFIG_PATH}.next && chmod 644 {CONFIG_PATH}.next && '
+                                       f'mv {CONFIG_PATH}.next {CONFIG_PATH}', data=config.encode())
         self.remote.run(self.host, f'cat > {UNIT_PATH}.next && mv {UNIT_PATH}.next {UNIT_PATH}', data=unit.encode())
-        args = transparent_unit.exec_args(unit)
+        args = transparent_unit.server_flags(unit, config)
         if '--active-record' in args:
             record = shlex.quote(args[args.index('--active-record') + 1])
             value = {'directory': publication, 'assignment': publication + '/assignment.json', 'map_sha256': digest}
@@ -351,7 +384,7 @@ class Standby:
         while self.clock() < deadline:
             try:
                 ready = self.http(f'http://{self.host}:8093/v1/ready')
-                if (ready.get('ready') and ready.get('binary_sha256') == binaries['transparent-query-server'][1]
+                if (ready.get('ready') and ready.get('binary_sha256') == binaries[server_name(binaries)][1]
                         and ready.get('map_sha256') == digest):
                     status = self.status(config, member)
                     active = (status.get('active') or {}).get('map_sha256')

@@ -2,8 +2,21 @@
 # Sourced by deploy-transparent-shard.sh. Stable comparisons and transaction
 # bookkeeping are shared with the offline rollout tests.
 
+# The identity of a unit and, when it runs pir-query-server, its generated
+# configuration: everything but the assignment file's digest-derived name.
 unit_digest() {
-  sed -E 's@--assignment /opt/transparent-pir/assignments/[0-9a-f]+\.json@--assignment ASSIGNMENT@g' "$1" | sha256sum | cut -d' ' -f1
+  cat "$@" | sed -E 's@/opt/transparent-pir/assignments/[0-9a-f]+\.json@ASSIGNMENT@g' | sha256sum | cut -d' ' -f1
+}
+
+# A pir-query-server configuration's history settings as the retired
+# executable's flags, so installed state reads the same either way.
+settings_args() {
+  jq -r '.transparent_history.settings // {} | to_entries
+    | map(select(.value != false and .value != null) | ("--" + (.key | gsub("_"; "-"))) as $flag
+          | if .value == true then $flag
+            elif (.value | type) == "array" then (.value[] | "\($flag) \(.)")
+            else "\($flag) \(.value)" end)
+    | join(" ")' <<<"$1"
 }
 
 worker_digest() {
@@ -79,9 +92,9 @@ runtime_cache_directory() {
 fleet_diff() {
   DEPLOY_PLAN="$TRANSPARENT_ARTIFACT_DIR/deploy-plan.json"
   printf '{"workers":{},"publisher_control":false}\n' >"$DEPLOY_PLAN"
-  local id host cache disk_cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control
+  local id host cache disk_cache memory slots extra assignment_sha unit ready installed wanted action tools_match binary helper control args listen
   assignment_sha="$(assignment_digest)"
-  binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" | cut -d' ' -f1)"
+  binary="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/pir-query-server" | cut -d' ' -f1)"
   helper="$(sha256sum "$TRANSPARENT_ARTIFACT_DIR/shard-prune" | cut -d' ' -f1)"
   # shellcheck disable=SC2034 # consumed by wait_ready in the calling script
   EXPECTED_BINARY_SHA256="$binary"
@@ -92,27 +105,42 @@ fleet_diff() {
     slots="$(worker_field "$id" build_slots)"; [[ "$slots" != null && -n "$slots" ]] || slots=1
     installed="$(host_ssh "$host" bash -s <<'REMOTE'
 set -euo pipefail
-binary="$(sha256sum /usr/local/bin/transparent-query-server 2>/dev/null | cut -d' ' -f1 || true)"
+binary="$(sha256sum /usr/local/bin/pir-query-server 2>/dev/null | cut -d' ' -f1 || true)"
 helper="$(sha256sum /usr/local/bin/shard-prune 2>/dev/null | cut -d' ' -f1 || true)"
-unit="$(sed -E 's@--assignment /opt/transparent-pir/assignments/[0-9a-f]+\.json@--assignment ASSIGNMENT@g' /etc/systemd/system/transparent-shard-server.service 2>/dev/null | sha256sum | cut -d' ' -f1 || true)"
+exec_start="$(sed -n 's/^ExecStart=//p' /etc/systemd/system/transparent-shard-server.service 2>/dev/null || true)"
+# A unit running pir-query-server is identified together with its configuration.
+files=(/etc/systemd/system/transparent-shard-server.service)
+config=""
+if [[ " $exec_start " == *' --config /etc/transparent-pir/shard-server.json '* ]]; then
+  files+=(/etc/transparent-pir/shard-server.json)
+  config="$(cat /etc/transparent-pir/shard-server.json 2>/dev/null || true)"
+fi
+unit="$(cat "${files[@]}" 2>/dev/null | sed -E 's@/opt/transparent-pir/assignments/[0-9a-f]+\.json@ASSIGNMENT@g' | sha256sum | cut -d' ' -f1 || true)"
 recorded="$(cat /opt/transparent-pir/current-unit-digest 2>/dev/null || true)"
 drop_ins="$(systemctl show transparent-shard-server.service -p DropInPaths --value)"
-exec_start="$(sed -n 's/^ExecStart=//p' /etc/systemd/system/transparent-shard-server.service 2>/dev/null || true)"
-jq -cn --arg binary "$binary" --arg helper "$helper" --arg unit "$unit" --arg recorded "$recorded" --arg drop_ins "$drop_ins" --arg exec_start "$exec_start" '{binary:$binary,helper:$helper,unit:$unit,recorded_unit:$recorded,drop_ins:$drop_ins,exec_start:$exec_start}'
+jq -cn --arg binary "$binary" --arg helper "$helper" --arg unit "$unit" --arg recorded "$recorded" --arg drop_ins "$drop_ins" --arg exec_start "$exec_start" --arg config "$config" '{binary:$binary,helper:$helper,unit:$unit,recorded_unit:$recorded,drop_ins:$drop_ins,exec_start:$exec_start,config:$config}'
 REMOTE
 )"
-    control="$(publisher_control_enabled "$(jq -r '.exec_start' <<<"$installed")")"
+    # The installed server's settings, as flags: a legacy unit's own, or those
+    # of the configuration a pir-query-server unit runs.
+    args="$(jq -r '.exec_start' <<<"$installed")"
+    if [[ -n "$(jq -r '.config // ""' <<<"$installed")" ]]; then
+      args="$(settings_args "$(jq -r '.config' <<<"$installed")")" \
+        || fail "$id has an unreadable shard server configuration; reconcile before a fleet rollout"
+    fi
+    control="$(publisher_control_enabled "$args")"
     # A schema cutover moves every worker off the publisher's current
     # publication, which that publisher's binaries cannot serve. Workers get
     # plain units on the new set; the new publisher's deployment restores
     # publication control afterwards.
     if [[ "${TRANSPARENT_SCHEMA_CUTOVER:-false}" == true ]]; then control=false; fi
-    disk_cache="$(runtime_cache_directory "$(jq -r '.exec_start' <<<"$installed")")"
+    disk_cache="$(runtime_cache_directory "$args")"
+    listen="$(jq -er --arg id "$id" '.workers[] | select(.id == $id) | .upstream' "$TRANSPARENT_ASSIGNMENT")"
     extra="--assignment /opt/transparent-pir/assignments/$assignment_sha.json --worker-id $id --prune-excess --runtime-cache-dir $disk_cache --runtime-cache-max-bytes $((cache * 2))"
     if [[ "$control" == true ]]; then
       extra+=" --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
     fi
-    render_unit "$cache" "$memory" "$extra" ".$id" "$slots"
+    render_unit "$cache" "$memory" "$extra" ".$id" "$slots" "$listen"
     if [[ "$control" == true ]]; then
       awk '{print; if ($0 == "[Service]") print "RuntimeDirectory=transparent-pir"}' "$RENDERED_UNIT" >"$RENDERED_UNIT.next"
       mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
@@ -126,7 +154,7 @@ REMOTE
         mv "$RENDERED_UNIT.next" "$RENDERED_UNIT"
       fi
     fi
-    unit="$(unit_digest "$RENDERED_UNIT")"
+    unit="$(unit_digest "$RENDERED_UNIT" "$RENDERED_CONFIG")"
     wanted="$(jq -cn --arg binary "$binary" --arg unit "$unit" --arg assignment "$(worker_digest "$id")" --arg map "$EXPECTED_MAP_SHA256" '{binary:$binary,unit:$unit,assignment:$assignment,map:$map}')"
     ready="$(curl --silent --max-time 10 "http://$(worker_field "$id" upstream)/v1/ready" || true)"
     jq -e 'type == "object"' <<<"$ready" >/dev/null 2>&1 || ready='{}'

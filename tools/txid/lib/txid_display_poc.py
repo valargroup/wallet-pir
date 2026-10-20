@@ -48,7 +48,7 @@ PLAN_SCHEMA = 'txid-display-poc-plan-v1'
 JOURNAL_KIND = 'txid-display-poc-transaction-v1'
 FLEET_SCHEMA = 'txid-display-fleet-v1'
 KIND = 'transparent-txid-display'
-BINARIES = ('transparent-txid-server', 'txid-control', 'txid-inventory', 'txid-display-controller',
+BINARIES = ('pir-query-server', 'txid-control', 'txid-inventory', 'txid-display-controller',
             'transparent-event-ingest', 'txid-quality-canary')
 SCRIPTS = ('txid-display-fleet.py', 'txid-display-observe.py')
 TEMPLATES = ('transparent-txid-display-worker.service.in', 'transparent-txid-display-controller.service.in',
@@ -59,7 +59,7 @@ RELEASE_FILES.update({name: 'tools/txid/scripts/' + name for name in SCRIPTS})
 # What each host runs. Workers never receive the controller or the backfill.
 HOST_RELEASE = {
     'coordinator': ('txid-display-controller', 'transparent-event-ingest', 'txid-inventory', 'txid-control', *SCRIPTS),
-    'archive': ('transparent-txid-server', 'txid-control'),
+    'archive': ('pir-query-server', 'txid-control'),
 }
 # One combined worker on the archive host, which also serves the site.
 WORKERS = ('archive',)
@@ -90,6 +90,13 @@ ACTIVE_RECORD = WORKER_STATE + '/active.json'
 CONTROL_SOCKET = '/run/transparent-txid-display/control.sock'
 SYSTEM = '/etc/systemd/system'
 WORKER_UNIT = 'transparent-txid-display-worker.service'
+# The worker runs the release's pir-query-server over one generated, root-owned
+# `transaction_details` configuration, read-only to the unit, with its own
+# loopback management listener. The candidate check runs `--verify-only` over a
+# separate file holding only the settings that check always used.
+WORKER_CONFIG = '/etc/transparent-pir/txid-display-worker.json'
+WORKER_CHECK_CONFIG = '/etc/transparent-pir/txid-display-worker.check.json'
+WORKER_MANAGEMENT = '127.0.0.1:18195'
 CADDYFILE = '/etc/caddy/Caddyfile'
 PUBLISHER = '/opt/transparent-publisher'
 HISTORY_DAEMONS = ('transparent-replica-reconciler.service', 'transparent-control-sessions.service')
@@ -572,17 +579,12 @@ class Poc:
         files = {}
         for key in self.worker_keys:
             spec = r['units'][key]
-            extra = ''
-            if spec['disk_cache_bytes']:
-                extra = ' --runtime-cache-dir %s --runtime-cache-max-bytes %d' % (RUNTIME_CACHE, spec['disk_cache_bytes'])
             files['unit:' + key] = units.render(self.template('transparent-txid-display-worker.service.in'), {
-                'RELEASE': self.release_dir, 'LISTEN': self.upstream(key), 'ROLE': self.roles[key],
-                'COLLECT_ROOT': PUBLICATIONS, 'STAGED_ROOT': STAGED,
-                'CACHE_BYTES': str(spec['cache_bytes']), 'BUILD_SLOTS': str(spec['build_slots']),
-                'QUERY_SLOTS': str(spec['query_slots']), 'RETAIN_REVISIONS': str(spec['retain_revisions']),
-                'EXTRA_ARGS': extra, 'BUILD_THREADS': str(spec['build_threads']), 'MEMORY_MAX': spec['memory_max'],
+                'RELEASE': self.release_dir, 'ROLE': self.roles[key],
+                'BUILD_THREADS': str(spec['build_threads']), 'MEMORY_MAX': spec['memory_max'],
                 'CPU_QUOTA': spec['cpu_quota'], 'CPU_WEIGHT': str(spec['cpu_weight']), 'NICE': str(spec['nice']),
                 'OOM_SCORE_ADJUST': str(spec['oom_score_adjust'])})
+            files['config:' + key] = self.worker_config(key)
         controller, limits = r['controller'], r['units']['controller']
         # `run` reads the seal rule from the bootstrapped root; it takes no seal flags.
         extra = ''
@@ -622,6 +624,7 @@ class Poc:
         """`name -> (host key, path, mode)` of every rendered file."""
         return {
             **{'unit:' + key: (key, '%s/%s' % (SYSTEM, WORKER_UNIT), 0o644) for key in self.worker_keys},
+            **{'config:' + key: (key, WORKER_CONFIG, 0o644) for key in self.worker_keys},
             'unit:controller': ('coordinator', '%s/%s' % (SYSTEM, self.n.CONTROLLER_UNIT), 0o644),
             'workers.json': ('coordinator', self.n.WORKERS_JSON, 0o600),
             'fleet.json': ('coordinator', self.n.FLEET_JSON, 0o600),
@@ -686,11 +689,34 @@ class Poc:
                 '--out-dir', measure + '/mapwatch']),
         }
 
+    @staticmethod
+    def detail_config(settings):
+        """A pir-query-server configuration enabling only `transaction_details`; never `verify_only`."""
+        return json.dumps({'management_listen': WORKER_MANAGEMENT,
+                           'transaction_details': {'enabled': True, 'settings': settings}}, indent=2) + '\n'
+
+    def worker_config(self, key):
+        """The serving worker's settings: the retired transparent-txid-server's flags, in their order."""
+        spec = self.request['units'][key]
+        settings = {'listen': self.upstream(key), 'role': self.roles[key], 'cache_bytes': spec['cache_bytes'],
+                    'build_slots': spec['build_slots'], 'query_slots': spec['query_slots'],
+                    'retain_revisions': spec['retain_revisions'], 'control_socket': CONTROL_SOCKET,
+                    'active_record': ACTIVE_RECORD, 'collect_root': [PUBLICATIONS, STAGED]}
+        if spec['disk_cache_bytes']:
+            settings.update(runtime_cache_dir=RUNTIME_CACHE, runtime_cache_max_bytes=spec['disk_cache_bytes'])
+        return self.detail_config(settings)
+
+    def verify_only_config(self, key, directory):
+        """The candidate check's settings: role, publication and cache budget only, as before."""
+        spec = self.request['units'][key]
+        return self.detail_config({'role': self.roles[key], 'publication_dir': directory,
+                                   'cache_bytes': spec['cache_bytes']})
+
     def verify_only(self, key, directory):
+        """The check's argv; it reads `verify_only_config`, written to WORKER_CHECK_CONFIG first."""
         spec = self.request['units'][key]
         return self.systemd_run('transparent-txid-display-verify-only.service', self.unit_limits(key), [
-            self.binary('transparent-txid-server'), '--role', self.roles[key], '--publication-dir', directory,
-            '--cache-bytes', str(spec['cache_bytes']), '--verify-only'],
+            self.binary('pir-query-server'), '--config', WORKER_CHECK_CONFIG, '--verify-only'],
             wait=True, environment=('TRANSPARENT_BUILD_THREADS=%d' % spec['build_threads'],))
 
     def plan(self):
@@ -1088,7 +1114,8 @@ class Poc:
         self.ex.mkdir(self.host('coordinator'), self.n.STATE + '/ssh', 0o700)
         transaction.change('coordinator', self.n.FLEET_JSON, files['fleet.json'], 0o600)
         for key in self.worker_keys:
-            self.worker(transaction, key, files['unit:' + key], source, map_sha256, replace_active)
+            self.worker(transaction, key, files['unit:' + key], source, map_sha256, replace_active,
+                        files['config:' + key])
         if self.former_recent:
             self.retire_former_recent(transaction)
 
@@ -1111,13 +1138,14 @@ class Poc:
         self.ex.systemctl(self.host(key), 'daemon-reload')
         transaction.event('%s: removed the recent-replica unit; %s and %s stay' % (key, WORKER_DATA, self.n.OPT))
 
-    def worker(self, transaction, key, unit_text, source, map_sha256, replace_active=None):
+    def worker(self, transaction, key, unit_text, source, map_sha256, replace_active=None, config_text=None):
         """Install and start one worker; only a worker with no active map takes `map_sha256`.
 
         A worker that already serves a map (from an earlier deploy or the
         controller) restarts onto its own active record and keeps it, since the
         bootstrap candidate may be older; the controller advances it later.
-        The unit restarts only when its bytes (and so the release) changed.
+        The unit restarts only when its bytes (and so the release) or its
+        configuration's bytes changed; both are journaled.
 
         `replace_active` is the map of a lineage this deploy replaces, as a
         re-layout's fresh lineage does: a worker serving it is stopped and its
@@ -1125,7 +1153,8 @@ class Poc:
         then takes `map_sha256` as an empty worker would.
         """
         host = self.host(key)
-        binary = self.request['release']['binaries']['transparent-txid-server']
+        binary = self.request['release']['binaries']['pir-query-server']
+        config_text = self.worker_config(key) if config_text is None else config_text
         timeout = self.request['units'][key]['ready_timeout_seconds']
         self.guard()
         for path in (PUBLICATIONS, STAGED, RUNTIME_CACHE, WORKER_STATE):
@@ -1151,17 +1180,23 @@ class Poc:
             require(shipped.get('directory') == directory, 'adapter shipped to %s' % shipped.get('directory'))
             transaction.event('%s: shipped candidate %s' % (key, map_sha256), seconds=shipped.get('seconds'))
             self.guard()
-            self.run(key, self.verify_only(key, directory), timeout)
+            self.ex.mkdir(host, posixpath.dirname(WORKER_CHECK_CONFIG), 0o755)
+            self.ex.write(host, WORKER_CHECK_CONFIG, self.verify_only_config(key, directory).encode(), 0o644)
+            try:
+                self.run(key, self.verify_only(key, directory), timeout)
+            finally:
+                self.ex.remove(host, WORKER_CHECK_CONFIG)
             transaction.event('%s: --verify-only accepted the candidate' % key)
         unit = '%s/%s' % (SYSTEM, WORKER_UNIT)
         running = self.running(key, WORKER_UNIT)
-        if running and self.ex.read(host, unit) == unit_text:
+        if running and self.ex.read(host, unit) == unit_text and self.ex.read(host, WORKER_CONFIG) == config_text:
             transaction.event('%s: unit unchanged; the worker keeps running' % key)
         else:
             if running:
                 transaction.undo('post', key, 'start-unit', unit=WORKER_UNIT)
             transaction.undo('pre', key, 'stop-unit', unit=WORKER_UNIT)
             transaction.undo('post', key, 'systemctl', args=['daemon-reload'])
+            transaction.change(key, WORKER_CONFIG, config_text, 0o644)
             transaction.change(key, unit, unit_text, 0o644)
             self.guard()
             self.ex.systemctl(host, 'daemon-reload')
@@ -1502,6 +1537,9 @@ class Poc:
                 self.run(key, ['systemctl', 'disable', unit], 120, check=False)
                 transaction.remove(key, path)
                 self.ex.systemctl(self.host(key), 'daemon-reload')
+            for key in self.worker_keys:
+                # The worker's generated configuration goes with its unit.
+                transaction.remove(key, WORKER_CONFIG)
             # The host keeps a Caddyfile, so Caddy keeps running: the withdrawn site.
             transaction.undo('post', self.route_host, 'reload-caddy')
             if transaction.change(self.route_host, self.routes_path, self.render()['withdrawn.caddy'], 0o644):

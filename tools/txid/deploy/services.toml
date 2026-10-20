@@ -3,7 +3,9 @@
 [services.transparent-display]
 driver = "txid-display"
 root = "/opt/transparent-txid-display"
-binary = "transparent-txid-server"
+# Display workers run the release's pir-query-server with `--config` a
+# generated `transaction_details` section; `--verify-only` is its check.
+binary = "pir-query-server"
 order = ["worker", "external-worker", "controller"]
 ancillary = ["routing"]
 

@@ -23,9 +23,10 @@ from tools.transparent.lib import https_recent  # noqa: E402
 
 SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 SERVICE = SERVICES['transparent-history']
-BINARY, NEXT = b'transparent-query-server one', b'transparent-query-server two'
+BINARY, NEXT = b'pir-query-server one', b'pir-query-server two'
 SHA, NEXT_SHA = sha256(BINARY), sha256(NEXT)
 UNIT = 'transparent-history-https-recent.service'
+CONFIG = '/etc/transparent-pir/history-https-recent.json'
 STATE = '/var/lib/transparent-provider'
 STATUS = 'http://127.0.0.1:8092/v1/provider-status'
 READY = 'http://127.0.0.1:8092/v1/ready'
@@ -41,6 +42,7 @@ class Host(FakeFleet):
         self.users = {'transparent-provider'}
         self.owner = {STATE: 'transparent-provider:transparent-provider:700'}
         self.checks = []          # (binary, argv) of each disposable check
+        self.configs = []         # the configuration each disposable check read
         self.accepts = lambda binary, argv: True
 
     def run(self, host, argv, timeout):
@@ -55,9 +57,12 @@ class Host(FakeFleet):
             return 0, ''
         if argv[0] == https_recent.SETPRIV:
             command = argv[argv.index('--') + 1:]
-            scratch = command[command.index('--shard-dir') + 1]
+            assert command[1:] == ['--config', command[2], '--verify-only'], command
+            document = json.loads(self.host(host).files[command[2]])
+            scratch = document['transparent_history']['settings']['shard_dir']
             assert self.owner.get(scratch, '').startswith(argv[2] + ':'), 'check ran outside its own state'
             self.checks.append((command[0], command))
+            self.configs.append(document)
             ok = self.accepts(sha256(self.host(host).files[command[0]]), command)
             return (0, '{"active":true}') if ok else (1, 'refused: owner floor')
         return super().run(host, argv, timeout)
@@ -65,8 +70,12 @@ class Host(FakeFleet):
     def remove_tree(self, host, path, owner):
         self._mutate(host, 'remove_tree', path)
         assert path.startswith(owner + '/') and path != STATE
-        self.host(host).dirs.discard(path)
-        self.owner.pop(path, None)
+        below = lambda p: p == path or p.startswith(path + '/')
+        self.host(host).dirs.difference_update({d for d in self.host(host).dirs if below(d)})
+        for name in [f for f in self.host(host).files if below(f)]:
+            del self.host(host).files[name]
+        for name in [o for o in self.owner if below(o)]:
+            del self.owner[name]
 
 
 class HttpsRecent(unittest.TestCase):
@@ -143,16 +152,26 @@ class HttpsRecent(unittest.TestCase):
         journal = deployer.deploy(SHA, str(self.binary), skip_exact_check=True)
         self.assertEqual(journal.status, 'committed')
         ((binary, argv),) = self.fake.checks
-        self.assertEqual(binary, '/opt/transparent-publisher/releases/%s/transparent-query-server' % SHA)
-        scratch = argv[argv.index('--shard-dir') + 1]
-        self.assertTrue(scratch.startswith(SERVICE.transaction_dir(journal.id) + '/'))
+        self.assertEqual(binary, '/opt/transparent-publisher/releases/%s/pir-query-server' % SHA)
+        copy = argv[argv.index('--config') + 1]
+        (checked,) = self.fake.configs
+        scratch = checked['transparent_history']['settings']['shard_dir']
+        transaction = SERVICE.transaction_dir(journal.id) + '/'
+        self.assertTrue(copy.startswith(transaction) and scratch.startswith(transaction))
         self.assertNotIn(STATE, argv)
+        self.assertNotIn(STATE, json.dumps(checked))
         self.assertNotIn(scratch, self.fake.host('edge-01').dirs, 'disposable state is removed')
+        self.assertNotIn(copy, self.fake.host('edge-01').files, 'disposable configuration is removed')
         self.assertEqual(self.touched_state(), [], 'the deploy never creates or writes live state')
         unit = self.unit()
         self.assertEqual((unit['User'], unit['Group']), ('transparent-provider', 'transparent-provider'))
-        self.assertIn('--shard-dir ' + STATE, unit['ExecStartPre'][-1])
-        self.assertIn('--verify-only', unit['ExecStartPre'][-1])
+        self.assertEqual(unit['ExecStartPre'][-1], '/opt/transparent-publisher/releases/%s/pir-query-server '
+                         '--config %s --verify-only' % (SHA, CONFIG))
+        installed = json.loads(self.fake.read('edge-01', CONFIG))
+        self.assertEqual(installed['transparent_history']['settings']['shard_dir'], STATE)
+        self.assertEqual({**checked['transparent_history']['settings'], 'shard_dir': STATE},
+                         installed['transparent_history']['settings'])
+        self.assertNotIn('verify_only', installed['transparent_history']['settings'])
 
         self.deployer().rollback(journal.id)
         self.assertEqual(self.fake.probe_unit('edge-01', UNIT)['load_state'], 'not-found')
@@ -230,8 +249,9 @@ class HttpsRecent(unittest.TestCase):
         self.deployer().rollback(journal.id)
         self.assertEqual(self.fake.probe_unit('edge-01', UNIT)['exe_sha256'], SHA)
         binary, argv = self.fake.checks[-1]
-        self.assertEqual(binary, '/opt/transparent-publisher/releases/%s/transparent-query-server' % SHA)
+        self.assertEqual(binary, '/opt/transparent-publisher/releases/%s/pir-query-server' % SHA)
         self.assertNotIn(STATE, argv)
+        self.assertNotIn(STATE, json.dumps(self.fake.configs[-1]))
         self.assertEqual(self.touched_state(), [])
 
     def test_cli_admits_https_recent_and_still_refuses_the_standalone_provider(self):
@@ -247,6 +267,35 @@ class HttpsRecent(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('ordinary binary deployment', output[-1])
         self.assertEqual(self.fake.log, [])
+
+
+
+class DisposableConfiguration(unittest.TestCase):
+    """The check copy moves only shard_dir and refuses anything that would reach live state."""
+
+    def document(self, **settings):
+        return {'management_listen': '127.0.0.1:18192', 'transparent_history': {
+            'enabled': True, 'settings': {'listen': '127.0.0.1:8092', 'shard_dir': STATE, **settings}}}
+
+    def test_moves_shard_dir_and_keeps_every_other_setting(self):
+        moved = json.loads(https_recent.disposable_config(json.dumps(self.document(cache_bytes=8)), STATE, '/tmp/s'))
+        self.assertEqual(moved, {**self.document(cache_bytes=8), 'transparent_history': {
+            'enabled': True, 'settings': {'listen': '127.0.0.1:8092', 'shard_dir': '/tmp/s', 'cache_bytes': 8}}})
+
+    def test_refuses_other_products_verify_only_and_live_state(self):
+        other = {**self.document(), 'transaction_details': {'enabled': False}}
+        for document in (other, self.document(verify_only=True), self.document(runtime_cache_dir=STATE + '/c'),
+                         {**self.document(), 'transparent_history': {'enabled': False, 'settings': {}}}):
+            with self.subTest(document=document), self.assertRaises(ValueError):
+                https_recent.disposable_config(json.dumps(document), STATE, '/tmp/s')
+        with self.assertRaises(ValueError):
+            https_recent.disposable_config(json.dumps(self.document(shard_dir='/elsewhere')), STATE, '/tmp/s')
+        with self.assertRaises(ValueError):
+            https_recent.disposable_config(None, STATE, '/tmp/s')
+
+    def test_a_restored_pre_configuration_unit_still_moves_its_shard_dir(self):
+        argv = ['/old/transparent-query-server', '--listen', '127.0.0.1:8092', '--shard-dir', STATE, '--verify-only']
+        self.assertEqual(https_recent.disposable(argv, STATE, '/tmp/s')[4], '/tmp/s')
 
 
 if __name__ == '__main__':

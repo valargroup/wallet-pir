@@ -9,16 +9,19 @@ evaluation, admission, and readiness.
 ## Features
 
 The host compiles a product only when that product's Cargo feature is enabled:
-`enhance`, `status`, or `transparent`. `transparent` compiles both history and
-transaction-detail serving. `native-reinspiring` and `cuda` select those
-backends and do nothing unless the matching product feature is also enabled.
-A configuration section for a product that was not compiled is rejected.
+`enhance`, `status`, `transparent-history`, or `transparent-detail`. The default
+is none. The two Transparent features compile history and transaction-detail
+serving independently; Transparent release kinds enable both.
+`native-reinspiring` and `cuda` select those backends and do nothing unless the
+matching product feature is also enabled. A configuration section for a product
+that was not compiled is rejected, even when it is disabled.
 
 ```sh
 cargo build --locked --profile release-fast -p pir-query-server \
-  --features enhance,status,transparent,native-reinspiring
+  --features enhance,status,transparent-history,transparent-detail,native-reinspiring
 pir-query-server --config /etc/wallet-pir/query-server.json --check
 pir-query-server --config /etc/wallet-pir/query-server.json
+pir-query-server --config /etc/transparent-pir/shard-server.json --verify-only
 pir-query-server check-backend [--matvec-backend cpu|cuda] [--cuda-device N]
 pir-query-server repair-rows --data-dir DIR --source-rows DIR
 ```
@@ -31,9 +34,11 @@ it has no CUDA field.
 
 `check-backend` validates the selected evaluator, and for CUDA the driver,
 without opening worker state. `repair-rows` repairs journal-referenced rows
-from a peer row archive while the worker is stopped. `status-pir`,
-`transparent-query-server`, and `transparent-txid-server` remain their own
-commands.
+from a peer row archive while the worker is stopped. `status-pir` remains its
+own command. Transparent history and transaction details have no separate
+server executables; they run only as `pir-query-server --config FILE`. The
+Transparent administration tools `shard-assign`, `shard-prune`,
+`shard-control`, and `txid-control` are built from `transparent-tools`.
 
 ## Configuration
 
@@ -50,11 +55,57 @@ and optional `requests` (default 16) and `uploads` (default 256). A packing
 router needs `data_dir`, `artifact_origin`, `listen`, `control_listen`, and
 optional `max_objects` (default 6) and `requests` (default 4). Status settings
 name `worker` or `router`. Those roles stay separate processes. History and
-transaction details keep their existing settings.
+transaction-detail settings are described under [Transparent](#transparent).
 
 Listeners need distinct fixed loopback or private addresses. State directories
 are absolute and must not overlap. `--check` validates the file and does not
 bind sockets or open stores.
+
+## Transparent
+
+A `transparent_history` or `transaction_details` section takes the former server
+settings: each command-line long flag becomes a field with `-` replaced by `_`.
+Boolean flags are `true` when set and omitted otherwise, numbers are integers,
+and repeated flags (`runtime_cache_prune_set`, `collect_root`) are arrays.
+Transaction details require `role` (`archive-owner`, `recent-replica`, or
+`combined`). Every object rejects unknown fields. A deployment renders one
+Transparent section per file, so history and detail stay separate processes.
+
+```json
+{
+  "management_listen": "127.0.0.1:18190",
+  "transparent_history": {
+    "enabled": true,
+    "settings": {
+      "listen": "127.0.0.1:8093",
+      "shard_dir": "/srv/transparent-pir/shards",
+      "cache_bytes": 4294967296
+    }
+  }
+}
+```
+
+```json
+{
+  "management_listen": "127.0.0.1:18195",
+  "transaction_details": {
+    "enabled": true,
+    "settings": {
+      "listen": "127.0.0.1:8095",
+      "role": "combined",
+      "publication_dir": "/srv/transparent-pir/txid",
+      "state_dir": "/srv/transparent-pir/txid-state"
+    }
+  }
+}
+```
+
+`pir-query-server --config FILE --verify-only` replaces the former servers'
+`--verify-only`. The file must enable exactly one Transparent section and no
+other product. It binds no listener, prints the same JSON report and keeps the
+same exit status. It conflicts with `--check` and the Enhance subcommands.
+Configuration files never set `verify_only`; ordinary startup rejects
+`verify_only: true`.
 
 ## Readiness
 

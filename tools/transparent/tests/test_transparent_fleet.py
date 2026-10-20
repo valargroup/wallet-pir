@@ -38,6 +38,7 @@ class FleetTests(unittest.TestCase):
             root = Path(temp)
             cache = '/srv/transparent-pir/runtime-cache-v10'
             unit = root/'worker.service'
+            # A host still running the retired executable with its own flags.
             unit.write_text(f'ExecStart=/bin/server --assignment /assignment.json --runtime-cache-dir {cache} --query-slots 2\n')
             plan = root/'plan.json'
             plan.write_text('{"workers":{"owner":{"publisher_control":false}}}')
@@ -69,6 +70,57 @@ fleet_prune
             arguments = calls[-1].split()
             self.assertEqual(arguments[arguments.index('--runtime-cache-dir')+1], cache)
 
+    def test_configured_cleanup_prunes_through_a_verify_only_configuration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cache = '/srv/transparent-pir/runtime-cache-v10'
+            unit, config = root/'worker.service', root/'shard-server.json'
+            unit.write_text('ExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json\n')
+            config.write_text(json.dumps({'management_listen': '127.0.0.1:18190', 'transparent_history': {
+                'enabled': True, 'settings': {'listen': '10.0.0.5:8093', 'shard_dir': '/candidate',
+                                              'assignment': '/assignment.json', 'runtime_cache_dir': cache}}}))
+            backup = root/'backup'
+            backup.mkdir()
+            (backup/'transparent-shard-server.service').write_text('ExecStart=/bin/server --shard-dir /previous --query-slots 2\n')
+            plan = root/'plan.json'
+            plan.write_text('{"workers":{"owner":{"publisher_control":false}}}')
+            code = r'''
+DEPLOY_PLAN="$PLAN"
+TRANSACTION_ID=synthetic-cache-test
+worker_ids() { echo owner; }
+worker_field() { echo host; }
+worker_action() { echo restart; }
+shard_set_path() { echo /candidate; }
+sudo() {
+  case "$1" in
+    test|sed|jq) "$@"; return;;
+  esac
+  if [[ "$1" == */pir-query-server ]]; then cp "$3" "$CONFIG_SEEN"; fi
+  echo "$*" >>"$LOG"
+  if [[ "$1" == */shard-prune ]]; then echo '{"deleted":[],"bytes_freed":0}'; fi
+}
+export -f sudo
+host_ssh() {
+  shift
+  local script
+  script="$(cat)"
+  script="${script//\/etc\/systemd\/system\/transparent-shard-server.service/$UNIT}"
+  script="${script//\/etc\/transparent-pir\/shard-server.json/$CONFIG}"
+  script="${script//\/opt\/transparent-pir\/transactions\/\$3/$BACKUP}"
+  "$@" <<<"$script"
+}
+fleet_prune
+'''
+            shell(code, PLAN=str(plan), UNIT=str(unit), CONFIG=str(config), BACKUP=str(backup),
+                  LOG=str(root/'calls'), CONFIG_SEEN=str(root/'seen.json'), TRANSPARENT_SCHEMA_CUTOVER='false')
+            calls = (root/'calls').read_text().splitlines()
+            self.assertIn('--assignment /assignment.json', calls[0])
+            self.assertEqual(calls[-1].split()[0], '/usr/local/bin/pir-query-server')
+            self.assertEqual(calls[-1].split()[-1], '--verify-only')
+            self.assertEqual(json.loads((root/'seen.json').read_text()), {
+                'management_listen': '127.0.0.1:18190', 'transparent_history': {'enabled': True, 'settings': {
+                    'runtime_cache_dir': cache, 'runtime_cache_prune_set': ['/candidate', '/previous']}}})
+
     def test_publisher_control_paths_and_shadow_guard(self):
         args = "/bin/server --control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json"
         self.assertEqual(shell('publisher_control_enabled "$ARGS"', ARGS=args), "true")
@@ -99,11 +151,11 @@ fleet_prune
     def test_diff_preserves_publisher_control_and_leaves_retention_intact(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            for name in ['transparent-query-server','shard-prune']:
+            for name in ['pir-query-server','shard-prune']:
                 (root/name).write_text('binary')
             (root/'transparent-shard-server.service').write_text(
                 (ROOT/'tools/transparent/deploy/transparent-shard-server.service').read_text())
-            worker = dict(id='owner',role='archive-owner',replica_group=None,ssh_host='owner',upstream='owner:8093',cache_bytes=1024,memory_max='1G')
+            worker = dict(id='owner',role='archive-owner',replica_group=None,ssh_host='owner',upstream='10.0.0.5:8093',cache_bytes=1024,memory_max='1G')
             assignment = root/'assignment.json'
             assignment.write_text(json.dumps(dict(workers=[worker])))
             config = root/'controller.json'
@@ -127,10 +179,24 @@ fleet_prune
             shell(code, READY=json.dumps(ready), **env)
             unit = (root/'transparent-shard-server.service.owner.rendered').read_text()
             self.assertEqual(unit.count('RuntimeDirectory=transparent-pir\n'), 1)
-            self.assertIn('--control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json', unit)
-            self.assertIn('--runtime-cache-dir /srv/transparent-pir/runtime-cache-v10 ', unit)
+            self.assertIn('\nExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json\n', unit)
+            config = json.loads((root/'shard-server.json.owner.rendered').read_text())
+            self.assertEqual(config, {'management_listen': '127.0.0.1:18190', 'transparent_history': {
+                'enabled': True, 'settings': {
+                    'listen': '10.0.0.5:8093', 'shard_dir': '/srv/set', 'cache_bytes': 1024, 'build_slots': 1,
+                    'query_slots': 2, 'assignment': '/opt/transparent-pir/assignments/%064d.json' % 0,
+                    'worker_id': 'owner', 'prune_excess': True,
+                    'runtime_cache_dir': '/srv/transparent-pir/runtime-cache-v10', 'runtime_cache_max_bytes': 2048,
+                    'control_socket': '/run/transparent-pir/control.sock',
+                    'active_record': '/opt/transparent-publisher/active.json'}}})
             self.assertTrue(json.loads((root/'deploy-plan.json').read_text())['publisher_control'])
             self.assertEqual((root/'calls').read_text().splitlines(), ['read'])
+            # A host already on pir-query-server is read through its configuration.
+            configured = dict(installed, exec_start='/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json',
+                              config=json.dumps(config))
+            shell(code, READY=json.dumps(ready), **{**env, 'INSTALLED': json.dumps(configured)})
+            self.assertEqual(json.loads((root/'shard-server.json.owner.rendered').read_text()), config)
+            self.assertTrue(json.loads((root/'deploy-plan.json').read_text())['publisher_control'])
             with self.assertRaises(subprocess.CalledProcessError):
                 shell(code, READY=json.dumps({**ready,'worker_assignment_sha256':'changed'}), **env)
             worker['role'] = 'recent-replica'
@@ -243,7 +309,7 @@ fleet_activate_workers
                 sha = "a"*40
                 staged = root/("tmp/transparent-pir-"+sha)
                 staged.mkdir(parents=True)
-                for name in ["transparent-query-server", "shard-prune", "unit.rendered", "assignment.json"]:
+                for name in ["pir-query-server", "shard-prune", "unit.rendered", "shard-server.json", "assignment.json"]:
                     (staged/name).write_text("new "+name)
                 workers = [dict(id="owner", ssh_host="owner", upstream="owner:8093", role="archive-owner", replica_group=None)]
                 assignment = Path(temp)/"assignment.json"
@@ -273,8 +339,13 @@ rollback_fleet
                     shell(code, **env)
                 for path, content in previous.items():
                     self.assertEqual((root/path.lstrip("/")).read_text(), content)
-                # The host predates the executable rename: rollback leaves only its legacy name.
-                self.assertFalse((root/"usr/local/bin/transparent-query-server").exists())
+                # The host predates pir-query-server: rollback leaves only its
+                # legacy executable and unit, with no generated configuration.
+                for absent in ("usr/local/bin/transparent-query-server", "usr/local/bin/pir-query-server",
+                               "etc/transparent-pir/shard-server.json"):
+                    self.assertFalse((root/absent).exists(), absent)
+                if action == "restart" and not fail:
+                    self.assertFalse((root/"usr/local/bin/pir-query-server.next").exists())
                 if action == "tools":
                     log = (root/"systemctl.log").read_text()
                     self.assertNotIn("stop", log)

@@ -76,6 +76,8 @@ PRODUCTS = {
 # pir-apm on the controller host. Its configuration names each service's alert_mode
 # but is read only at APM start; the incident database records the mode each family
 # last evaluated in, and monitor-status reports delivery. Read for reporting only.
+# The workers' release executable (the descriptors' `binary`).
+SERVER = 'pir-query-server'
 APM_CONFIG = '/etc/pir-quality/transparent-production.json'
 APM_STATE = '/var/lib/pir-apm/incidents.sqlite'
 APM_LISTEN = '127.0.0.1:3002'
@@ -385,6 +387,13 @@ class Upgrade:
             problem_if(actual != value, '%s %s is %r, pinned %r' % (target.key, key, actual, value), problems)
         tail = units.split_exec((service.get('ExecStart') or [''])[-1])[2] if service.get('ExecStart') else ''
         words = tail.split()
+        # The release's pir-query-server takes its settings only as `--config
+        # FILE`; a worker still running a retired executable's flags cannot be
+        # carried by swapping the binary under the same arguments.
+        problem_if(self.request['component'] == 'workers' and self.service.binary == SERVER
+                   and words[:1] != ['--config'],
+                   '%s runs a retired executable with command-line settings; %s takes only --config FILE, '
+                   'so install its configured unit before a binary-only upgrade' % (target.key, SERVER), problems)
         for index in range(0, len(pinned['args']), 2):
             pair = pinned['args'][index:index + 2]
             present = any(words[i:i + len(pair)] == pair for i in range(len(words)))

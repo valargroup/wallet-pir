@@ -202,7 +202,7 @@ jobs:
           echo; echo "## unit: $(systemctl is-active transparent-shard-server 2>/dev/null)"
           systemctl cat transparent-shard-server 2>/dev/null | grep -E '^(ExecStart|MemoryMax|MemorySwapMax)'
           echo; echo "## release"; cat /opt/transparent-pir/current-release 2>/dev/null || echo "(none)"
-          sudo sha256sum /usr/local/bin/transparent-query-server 2>/dev/null
+          sudo sha256sum /usr/local/bin/pir-query-server /usr/local/bin/transparent-shard-server 2>/dev/null
           echo; echo "## rollback"; ls -l /opt/transparent-pir/rollback 2>/dev/null || echo "(none)"
           echo; echo "## sets"
           for dir in /srv/transparent-pir/sets/* /srv/transparent-pir/shards; do

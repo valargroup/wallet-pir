@@ -210,7 +210,7 @@ async def ready_to_freeze(fleet, workers):
 
 async def upgrade(args):
     fleet = L.Fleet(json.loads(args.fleet_config.read_text()))
-    binary = sha(args.artifacts/'transparent-query-server')
+    binary = sha(args.artifacts/'pir-query-server')
     workers = [w for w in fleet.data_members() if not args.worker or w['id'] == args.worker]
     if not workers or (args.worker and (len(workers) != 1 or workers[0]['role'] != 'recent-replica')):
         raise ValueError('canary must name one existing recent replica')
@@ -277,12 +277,13 @@ async def upgrade(args):
             backup = shlex.quote(str(args.out))
             await fleet.ssh(worker['ssh_host'], f'''set -eu
 if [ -f {backup}/worker.service ]; then
- for name in transparent-query-server transparent-shard-server; do
+ for name in pir-query-server {D.RETIRED_WORKER_BINARIES}; do
   if [ -f {backup}/$name ]; then
    install -m755 {backup}/$name /usr/local/bin/$name.rollback
    mv /usr/local/bin/$name.rollback /usr/local/bin/$name
   fi
  done
+ {D.restore_config(args.out)}
  install -m755 {backup}/shard-control /usr/local/bin/shard-control
  if [ -f {backup}/headless-console.py ]; then install -Dm755 {backup}/headless-console.py /usr/local/lib/transparent-pir/headless-console.py; fi
  if [ -f {backup}/storage-mount-options ]; then python3 {backup}/restore-storage-policy.py --restore-options-file {backup}/storage-mount-options; fi
