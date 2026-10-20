@@ -53,6 +53,34 @@ def candidates(root, *, keep=2, age=86400, now=None, references=()):
     return result
 
 
+def incremental_candidates(root, *, age=86400, now=None, references=()):
+    """Reclaim stale compiler sessions while retaining reusable final artifacts."""
+    now = time.time() if now is None else now
+    result = []
+    for lane in sorted(LANES):
+        directory = root / lane
+        if not directory.is_dir() or directory.is_symlink():
+            continue
+        for generation in directory.iterdir():
+            if (not generation.is_dir() or generation.is_symlink()
+                    or not re.fullmatch('[0-9a-f]{16}', generation.name)):
+                continue
+            for profile in ('debug', 'release', 'release-fast'):
+                incremental = generation / profile / 'incremental'
+                if (not incremental.is_dir() or incremental.is_symlink()
+                        or (generation / profile).is_symlink()):
+                    continue
+                for crate in incremental.iterdir():
+                    if not crate.is_dir() or crate.is_symlink():
+                        continue
+                    modified = max([crate.stat().st_mtime,
+                                    *(child.stat().st_mtime for child in crate.iterdir())])
+                    if (now - modified >= age
+                            and not any(str(crate) in ref for ref in references)):
+                        result.append(crate)
+    return sorted(result)
+
+
 def maintain(root, *, apply=False, keep=2, minimum_free=10 * 1024**3, diagnostics=None):
     root = root.resolve(strict=True)
     with (root / '.maintenance.lock').open('a') as lock:
@@ -61,6 +89,11 @@ def maintain(root, *, apply=False, keep=2, minimum_free=10 * 1024**3, diagnostic
         for path in candidates(root, keep=keep, references=open_paths()):
             # Names only; logs never enumerate credentials or cache contents.
             removed.append(str(path.relative_to(root)))
+            if apply:
+                shutil.rmtree(path)
+        incremental = []
+        for path in incremental_candidates(root, references=open_paths()):
+            incremental.append(str(path.relative_to(root)))
             if apply:
                 shutil.rmtree(path)
         logs = []
@@ -75,7 +108,8 @@ def maintain(root, *, apply=False, keep=2, minimum_free=10 * 1024**3, diagnostic
                     if apply:
                         path.unlink()
         free = shutil.disk_usage(root).free
-    return {'apply': apply, 'generations': removed, 'diagnostic_logs': logs, 'free_bytes': free,
+    return {'apply': apply, 'generations': removed, 'incremental': incremental,
+            'diagnostic_logs': logs, 'free_bytes': free,
             'minimum_free_bytes': minimum_free, 'ready': free >= minimum_free}
 
 
