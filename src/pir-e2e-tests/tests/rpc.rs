@@ -149,24 +149,19 @@ fn start(root: &Path, address: &str, rpc: &str, roles: &serving::Roles) -> Proce
         .append(true)
         .open(root.join("coordinator.log"))
         .unwrap();
+    let config = root.join("publisher.json");
+    std::fs::write(
+        &config,
+        roles
+            .publisher_config(root, address, rpc)
+            .unwrap()
+            .to_string(),
+    )
+    .unwrap();
     Process(
-        Command::new(env!("CARGO_BIN_EXE_enhance-pir-server-test"))
-            .args([
-                "coordinator",
-                "--listen",
-                address,
-                "--poll-seconds",
-                "1",
-                "--zakura-rpc-url",
-                rpc,
-            ])
-            .arg("--data-dir")
-            .arg(root.join("data"))
-            .arg("--worker-config")
-            .arg(root.join("workers.json"))
-            .arg("--zakura-cookie")
-            .arg(root.join("cookie"))
-            .args(roles.coordinator_args(root).unwrap())
+        Command::new(env!("CARGO_BIN_EXE_pir-publisher-test"))
+            .arg("--config")
+            .arg(config)
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(log))
             .spawn()

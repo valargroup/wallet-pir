@@ -56,10 +56,10 @@ cargo test --locked -p status-query-server --lib protocol::tests
 cargo test --locked -p status-query-server --lib index::tests
 cargo test --locked --profile release-fast -p pir-query-server \
   --features status,native-reinspiring --lib status::
-cargo build --locked --profile release-fast -p status-publisher --bin status-pir --features cli,cuda
+cargo build --locked --profile release-fast -p pir-publisher --features status,native-reinspiring
 cargo build --locked --profile release-fast -p pir-query-server --features status,cuda
 RAYON_NUM_THREADS=4 LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64 \
-  target/release-fast/status-pir validate-distributed --cuda \
+  target/release-fast/pir-publisher status validate-distributed --cuda \
   --entries 1572864 --state-dir /tmp/status-pir-validation
 ```
 

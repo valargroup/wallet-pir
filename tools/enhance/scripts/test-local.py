@@ -18,6 +18,9 @@ import time
 import urllib.request
 
 
+ROOT = Path(__file__).resolve().parents[3]
+
+
 def free_port():
     with socket.socket() as stream:
         stream.bind(('127.0.0.1', 0))

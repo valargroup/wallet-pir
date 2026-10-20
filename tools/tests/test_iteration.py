@@ -366,7 +366,7 @@ class IntegrityTests(unittest.TestCase):
                 self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
             self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
             if family == 'enhance':
-                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance')
+                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance,pir-publisher/enhance')
 
     def test_workflows_invoke_only_scripts_that_exist(self):
         import re

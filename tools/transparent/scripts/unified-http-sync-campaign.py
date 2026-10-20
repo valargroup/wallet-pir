@@ -64,7 +64,7 @@ def main():
     code = 1
     try:
         with (output / "build.log").open("w") as log:
-            binaries = build(["build", "-p", "pir-publisher", "--features", "pir-publisher/transparent",
+            binaries = build(["build", "-p", "pir-publisher", "--features", "pir-publisher/transparent-history,pir-publisher/transparent-detail",
                               "--bin", "pir-publisher"], log)
             # Its own invocation, so the host's features are its Transparent products only.
             binaries.update(build(["build", "-p", "pir-query-server",

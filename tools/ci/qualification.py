@@ -125,16 +125,16 @@ def build(family):
     elif family == 'transparent':
         # The history and display processes are pir-query-server with both
         # Transparent features; the admin tools are transparent-tools binaries.
-        command += ['-p', 'transparent-publisher', '-p', 'pir-query-server',
+        command += ['-p', 'pir-publisher', '-p', 'pir-query-server',
                     '-p', 'transparent-tools', '--features',
-                    'transparent-publisher/rocksdb-reader,transparent-tools/test-support,'
+                    'pir-publisher/transparent-history,pir-publisher/transparent-detail,pir-publisher/rocksdb-reader,transparent-tools/test-support,'
                     'pir-query-server/transparent-history,pir-query-server/transparent-detail']
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]
     else:
         # v7 bundle: the query server enables Enhance serving and not the native protocol.
-        command += ['-p', 'enhance-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test',
-                    '-p', 'pir-apm', '-p', 'pir-query-server', '--features', 'pir-query-server/enhance']
+        command += ['-p', 'pir-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test',
+                    '-p', 'pir-apm', '-p', 'pir-query-server', '--features', 'pir-query-server/enhance,pir-publisher/enhance']
         for name in release.BINARIES['enhance-pir']:
             command += ['--bin', name]
     run(command, stage=f'compile:release-{family}')

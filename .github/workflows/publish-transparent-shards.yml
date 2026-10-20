@@ -164,10 +164,10 @@ jobs:
           # Yield to the ingester and the live services on this host.
           NICE=(nice -n 19)
           if command -v ionice >/dev/null; then NICE+=(ionice -c3); fi
-          "${NICE[@]}" cargo build --locked --release -p transparent-publisher -p transparent-tools \
-            --features transparent-publisher/rocksdb-reader,transparent-tools/rocksdb-reader \
-            --bin shard-publish --bin shard-cutoff --bin journal-inventory
-          sha256sum target/release/shard-publish
+          "${NICE[@]}" cargo build --locked --release -p pir-publisher -p transparent-tools \
+            --features pir-publisher/rocksdb-reader,transparent-tools/rocksdb-reader \
+            --bin pir-publisher --bin shard-cutoff --bin journal-inventory
+          sha256sum target/release/pir-publisher
 
       - name: Pin the dataset
         env:
@@ -227,7 +227,7 @@ jobs:
           # Read-only against the journal; writes only $OUT and the record.
           # Peak resident memory and wall time are reported figures, so they
           # are measured rather than asserted.
-          sudo "${TIMED[@]}" "${NICE[@]}" ./target/release/shard-publish "${ARGS[@]}" 2>&1 | tee publication/publish.log
+          sudo "${TIMED[@]}" "${NICE[@]}" ./target/release/pir-publisher publish-history "${ARGS[@]}" 2>&1 | tee publication/publish.log
           sudo chown -R "$(id -u)" publication
           echo "## disk after"; df -h "$(dirname "$OUT")" | tee publication/disk-after.txt
           sudo du -sh "$OUT" | tee publication/set-size.txt

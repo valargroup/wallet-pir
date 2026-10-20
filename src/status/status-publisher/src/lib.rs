@@ -1,4 +1,4 @@
-//! Status PIR ingestion, publication and the `status-pir` application.
+//! Status PIR ingestion, publication and the `pir-publisher status` diagnostics.
 //!
 //! Ingestion checkpoints source observations independently of publication.
 //! Prepared datasets are served by `pir-query-server` roles; this package never
@@ -19,3 +19,6 @@ mod zakura {
 }
 
 pub mod service;
+
+#[cfg(feature = "cli")]
+pub mod commands;

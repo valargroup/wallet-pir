@@ -2,16 +2,14 @@
 name = "enhance-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; provides enhance-pir-server offline maintenance"
+description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; hosted by pir-publisher"
 publish = false
+
+autobins = false
 
 [lib]
 name = "enhance_publisher"
 path = "src/lib.rs"
-
-[[bin]]
-name = "enhance-pir-server"
-path = "src/bin/server.rs"
 
 [features]
 qualification-tests = []

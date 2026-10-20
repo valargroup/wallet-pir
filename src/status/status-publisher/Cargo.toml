@@ -2,17 +2,14 @@
 name = "status-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Status PIR ingestion, publication and the status-pir application"
+description = "Status PIR ingestion, publication hosted by pir-publisher"
 publish = false
+
+autobins = false
 
 [lib]
 name = "status_publisher"
 path = "src/lib.rs"
-
-[[bin]]
-name = "status-pir"
-path = "src/bin/status.rs"
-required-features = ["cli"]
 
 [features]
 default = []

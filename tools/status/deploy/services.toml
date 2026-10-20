@@ -2,7 +2,7 @@
 # Worker and router unit/configuration changes are installed and rolled back together.
 [services.status]
 root = "/opt/status-pir"
-binary = "status-pir"
+binary = "pir-publisher"
 artifact_kinds = ["status-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824

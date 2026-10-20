@@ -18,19 +18,18 @@
 
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
+use crate::ingest::blocks::{build_fetched_block_events, BoxError};
+use crate::ingest::prevout::OutputCache;
+use crate::ingest::state::StateReader;
+use crate::ingest::zakura::NodeClient;
 use clap::Parser;
 use std::path::PathBuf;
 use std::time::Instant;
-use tracing_subscriber::EnvFilter;
-use transparent_publisher::ingest::blocks::{build_fetched_block_events, BoxError};
-use transparent_publisher::ingest::prevout::OutputCache;
-use transparent_publisher::ingest::state::StateReader;
-use transparent_publisher::ingest::zakura::NodeClient;
 use transparent_shared::journal::events::EventStore;
 
 #[derive(Parser, Clone)]
 #[command(
-    name = "transparent-event-ingest",
+    name = "pir-publisher ingest-events",
     about = "Backfill the transparent event journal from a Zakura archive node"
 )]
 struct Cli {
@@ -80,7 +79,7 @@ struct Cli {
     /// Counted in outputs, not transactions: an early-chain mining-pool
     /// coinbase carries thousands of outputs, so a transaction count does not
     /// bound what the cache holds.
-    #[arg(long, default_value_t = transparent_publisher::ingest::prevout::DEFAULT_CACHE_OUTPUTS)]
+    #[arg(long, default_value_t = crate::ingest::prevout::DEFAULT_CACHE_OUTPUTS)]
     cache_outputs: usize,
     /// Blocks between durable checkpoints.
     #[arg(long, default_value_t = 1_000)]
@@ -102,7 +101,7 @@ fn append(
     store: &mut EventStore,
     cli: &Cli,
     height: u64,
-    built: transparent_publisher::ingest::blocks::BuiltEvents,
+    built: crate::ingest::blocks::BuiltEvents,
 ) -> Result<(), BoxError> {
     if cli.txid_display {
         store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
@@ -245,9 +244,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     );
 
     let mut inflight: std::collections::VecDeque<
-        tokio::task::JoinHandle<
-            Result<(u64, transparent_publisher::ingest::blocks::BuiltEvents), BoxError>,
-        >,
+        tokio::task::JoinHandle<Result<(u64, crate::ingest::blocks::BuiltEvents), BoxError>>,
     > = std::collections::VecDeque::new();
     let mut to_spawn = first;
     let mut height = first;
@@ -302,12 +299,8 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), BoxError> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
-    let cli = Cli::parse();
+pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
+    let cli = Cli::parse_from(args);
 
     if let Some(state_dir) = cli.state_dir.clone() {
         return run_state_backfill(cli, state_dir).await;
@@ -316,7 +309,7 @@ async fn main() -> Result<(), BoxError> {
     let Some(cookie) = cli.zakura_cookie.clone() else {
         return Err("--zakura-cookie is required unless --state-dir is given".into());
     };
-    let zakura = transparent_publisher::ingest::zakura::connect(&cli.zakura_rpc_url, &cookie)?;
+    let zakura = crate::ingest::zakura::connect(&cli.zakura_rpc_url, &cookie)?;
     // Chain identity comes from the node, once, and is then pinned in the
     // store: a journal built against one chain must never be read as another's.
     let genesis_hash = zakura.block_hash_display(0).await?;

@@ -36,13 +36,16 @@ Use Rust 1.97.1 and build Enhance separately from transparent services to avoid
 Cargo feature unification selecting the native path in shared server code.
 
 ```sh
-# Coordinator, packing router and CPU workers: existing Skylake AVX-512 hosts.
+# Packing router and CPU workers: existing Skylake AVX-512 hosts.
 RUSTFLAGS='-C target-cpu=skylake-avx512' cargo build --locked --profile release-fast \
-  -p enhance-publisher --bin enhance-pir-server --features native-reinspiring,cuda
+  -p pir-query-server --bin pir-query-server --features enhance,native-reinspiring,cuda
+
+# Publisher ingestion and preparation remain CPU-only.
+cargo build --locked --profile release-fast -p pir-publisher --features enhance,native-reinspiring
 
 # GPU worker's host CPU supports AVX2, not AVX-512.
 RUSTFLAGS='-C target-cpu=haswell' cargo build --locked --profile release-fast \
-  -p enhance-publisher --bin enhance-pir-server --features native-reinspiring,cuda
+  -p pir-query-server --bin pir-query-server --features enhance,native-reinspiring,cuda
 
 # Matching client / load tool.
 cargo build --locked --profile release-fast \

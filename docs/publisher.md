@@ -27,15 +27,14 @@ pipeline depends only on Tokio: its HTTP adapter is
 generic over a product's router, and the application supplies the actual server.
 
 `pir-publisher` compiles a product only when that product's Cargo feature is
-enabled: `enhance`, `status`, `transparent`, or `receiver`. `transparent`
-compiles both history and transaction-detail publishing. `native-reinspiring`
+enabled: `enhance`, `status`, `transparent-history`, `transparent-detail`, or `receiver`. History and transaction-detail publishing compile independently. `native-reinspiring`
 selects native packing for Enhance and Status and does nothing unless that
 product feature is also enabled. The publisher host has no CUDA feature. A
 configuration section for a product that was not compiled is rejected.
 
 This layout changes no wallet protocol, record codec, publication identity,
-journal, database or runtime-cache format. Existing standalone commands remain
-available. Crate relocation does not relocate deployed data or change upstream
+journal, database or runtime-cache format. Maintenance is available through
+root subcommands; the product crates have no standalone executables. Crate relocation does not relocate deployed data or change upstream
 wallet-libraries revisions.
 
 ## Configuration and local use
@@ -44,7 +43,7 @@ Build the native CPU application used by the deployed protocols:
 
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher \
-  --features enhance,status,transparent,receiver,native-reinspiring
+  --features enhance,status,transparent-history,transparent-detail,receiver,native-reinspiring
 pir-publisher --config /etc/wallet-pir/publisher.json --check
 pir-publisher --config /etc/wallet-pir/publisher.json
 ```
@@ -278,3 +277,38 @@ status and rollback commands. This preserves its unit arguments, credential
 files and durable incident/delivery state. Acceptance requires fresh monitoring
 coverage; a stale sidecar can report missing init coverage despite correct
 wallet answers.
+
+## Product libraries and commands
+
+`enhance-publisher`, `status-publisher` and `transparent-publisher` are libraries
+with no executable targets. Build and run `pir-publisher` for publishing and
+maintenance. Its independent product features are `enhance`, `status`,
+`transparent-history`, `transparent-detail` and `receiver`; defaults enable none.
+The two Transparent features select separate configuration sections and owners.
+
+Long-running services use `pir-publisher --config FILE`. Existing history and
+display settings live under `transparent_history.settings` and
+`transaction_details.settings`. The optional `transparent_filters` section,
+compiled by `transparent-history`, runs the existing filter ingestion and HTTP
+service with its own state and listener. Use the packaged
+`tools/transparent/deploy/transparent-filters.example.json` when installing the
+filter unit; install its reviewed configuration as
+`/etc/wallet-pir/transparent-filters.json` before starting it.
+
+Maintenance uses root subcommands:
+
+| Former executable | Root command |
+|---|---|
+| `enhance-pir-server` | `pir-publisher enhance` |
+| `status-pir` | `pir-publisher status` |
+| `shard-publish` | `pir-publisher publish-history` |
+| `transparent-event-ingest` | `pir-publisher ingest-events` (requires `rocksdb-reader`) |
+| `txid-display-controller` offline commands | `pir-publisher detail` |
+| `transparent-publisher --check-shard-dir` | `pir-publisher verify-filters --shard-dir DIR` |
+
+The standalone history controller and display `run` command are removed. Their
+services run through the root configuration. Display settings retain `mode`
+(`live`, `replay`, `replay-then-live`), replay timing and `exit_when_idle` for
+bounded rehearsals. HTTP-only distribution requires live canonicality checks.
+No executable aliases or data conversion are needed. Install the matching binary,
+configuration and unit together through the supported deployment tooling.

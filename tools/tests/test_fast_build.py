@@ -324,15 +324,15 @@ class FastBuildTests(unittest.TestCase):
         # The host operator test has no required product feature; the host's
         # products compile through the e2e fixture features.
         self.assertEqual(build[build.index('--features') + 1],
-                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests,status-publisher/cli')
+                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
             'enhance-pir-exercise', 'enhance-pir-load-test',
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'rate-query',
-            'status-pir', 'txid-quality-canary', 'txid-rate'])
+            'txid-quality-canary', 'txid-rate'])
         self.assertEqual(tests, [
-            'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'lifecycle',
-            'operator', 'publisher_cli', 'record_layout', 'status_routes'])
+            'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'commands', 'lifecycle',
+            'operator', 'record_layout', 'status_routes'])
 
     def test_hardware_features_cannot_silently_replace_reference_arithmetic(self):
         self.packages[0]['targets'][1]['required-features'] = ['native-reinspiring']

@@ -114,7 +114,7 @@ checksum = "first"
         from fast import workspace_packages
         features = cpu_features([p['name'] for p in workspace_packages()])
         self.assertFalse(any(feature.endswith('/cuda') for feature in features))
-        self.assertIn('transparent-publisher/rocksdb-reader', features)
+        self.assertIn('pir-publisher/rocksdb-reader', features)
         self.assertIn('pir-query-server/native-reinspiring', features)
 
     def test_cpu_graph_rejects_transitive_cuda_activation(self):
