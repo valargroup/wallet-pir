@@ -137,6 +137,12 @@ SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
+# The independently published Publisher-Query Server contract. It stays free of
+# HTTP frameworks, runtimes, products and workspace packages so it can build from
+# its packaged sources alone; the sync manager is its one local consumer here.
+DISCOVERY = 'pir-service-discovery'
+DISCOVERY_PATH = 'src/shared/pir-service-discovery/'
+DISCOVERY_DIRECT = {'semver', 'serde', 'serde_json'}
 # These chain-free serving foundations also must not import the lifecycle.
 # transparent-query-server is an application; its HTTPS manager uses the lifecycle.
 PIPELINE_FOUNDATIONS = {'receiver-pir-server', 'pir-control', 'pir-observability'}
@@ -311,12 +317,19 @@ def violations(packages, allowed):
                 problems.append(f"{package['manifest']}: {reason}")
             if package['name'] == SYNC_MANAGER:
                 local_pipeline = (name == PIPELINE and not dependency['git'] and
-                                  dependency.get('path') == 'src/shared/pir-pipeline/')
+                                  dependency.get('path') == 'src/shared/pir-pipeline/') or (
+                                  name == DISCOVERY and not dependency['git'] and
+                                  dependency.get('path') == DISCOVERY_PATH)
                 registry_utility = (name in SYNC_DIRECT - {PIPELINE} and
                                     not dependency.get('path') and not dependency['git'])
                 if not (local_pipeline or registry_utility):
                     problems.append(f"{package['manifest']}: sync manager has a "
                                     f"{dependency['kind']} outside its utility boundary: {name}")
+            if package['name'] == DISCOVERY and (
+                    name not in DISCOVERY_DIRECT or dependency.get('path')
+                    or dependency['git']):
+                problems.append(f"{package['manifest']}: service discovery has a "
+                                f"{dependency['kind']} outside its contract boundary: {name}")
             if package['name'] == PIPELINE and (
                     name not in PIPELINE_DIRECT or dependency.get('path')
                     or dependency['git']):
@@ -435,7 +448,7 @@ def resolved_violations(metadata, *, workspace_unified=False):
                 seen.add(current)
                 target = packages[current]
                 if current != root_id and (
-                        (target['source'] is None and target['name'] != PIPELINE)
+                        (target['source'] is None and target['name'] not in {PIPELINE, DISCOVERY})
                         or target['name'] in COMMON | NODE | CANONICAL
                         or target['name'] in {'ipir-sp', 'inspiring', 'reinspiring',
                                               'simplepir-kernel', 'valar-spiral-rs'}

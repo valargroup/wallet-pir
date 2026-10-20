@@ -371,3 +371,50 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(all(test, feature = "transparent-history", feature = "transparent-detail"))]
+mod tests {
+    use super::*;
+
+    /// Discovery runs before any listener, state directory or product task:
+    /// every configured address is held here, so binding one would fail with
+    /// "address in use" instead of the publisher's discovery error.
+    #[tokio::test]
+    async fn unreachable_publisher_stops_every_product_before_any_listener_or_state() {
+        let root = tempfile::tempdir().unwrap();
+        let mut held = Vec::new();
+        for _ in 0..3 {
+            held.push(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+        }
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let publisher = format!("https://localhost:{}", closed.local_addr().unwrap().port());
+        drop(closed);
+        let addr = |i: usize| held[i].local_addr().unwrap().to_string();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": addr(0),
+            "transparent_history": {"enabled": true, "settings": {
+                "publisher": publisher,
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
+                "listen": addr(1),
+                "shard_dir": root.path().join("history"),
+            }},
+            "transaction_details": {"enabled": true, "settings": {
+                "publisher": publisher,
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
+                "state_dir": root.path().join("details"),
+                "role": "combined",
+                "listen": addr(2),
+            }},
+        }))
+        .unwrap();
+        config.validate().unwrap();
+        let error = run(config, Shutdown::default()).await.unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("service discovery failed"), "{text}");
+        assert!(text.contains(&publisher), "{text}");
+        assert!(!pir_sync_manager::is_incompatible(error.as_ref()));
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+    }
+}

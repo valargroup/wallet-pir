@@ -293,17 +293,7 @@ pub(crate) fn with_discovery(router: Router) -> Router {
     )
 }
 
-/// The publisher's service discovery, which the unified host serves on its
-/// management router and an operator proxies at this exact public path.
-pub(crate) fn with_discovery(router: Router) -> Router {
-    router.route(
-        pir_service_discovery::PATH,
-        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
-    )
-}
-
 pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
-    let router = with_discovery(router);
     let router = with_discovery(router);
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
