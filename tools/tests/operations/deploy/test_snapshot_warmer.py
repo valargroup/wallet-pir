@@ -80,6 +80,48 @@ class SnapshotFilesTests(unittest.TestCase):
                 warmer.pin(source, root / 'pin')
 
 
+class SnapshotDeadlineTests(unittest.TestCase):
+    def run_warmup(self, shards, seconds_per_shard):
+        with tempfile.TemporaryDirectory() as directory:
+            specification = {'work': directory, 'pin': directory,
+                             'section': 'transparent_history', 'identity': {'shards': shards},
+                             'memory_bytes': 1024, 'disk_bytes': 1024,
+                             'map_sha256': 'map', 'binary_sha256': 'binary', 'binary': '/query'}
+            now = 0
+            waiting = True
+
+            def readiness(*args):
+                nonlocal now, waiting
+                if waiting:
+                    now += seconds_per_shard
+                    waiting = False
+                    return None
+                waiting = True
+                return {'ready': True}
+
+            with patch.object(warmer.time, 'monotonic', side_effect=lambda: now), \
+                    patch.object(warmer.time, 'sleep'), \
+                    patch.object(warmer, 'assignment', return_value={}), \
+                    patch.object(warmer, 'ready_report', side_effect=readiness), \
+                    patch.object(warmer.subprocess, 'Popen'), \
+                    patch.object(warmer, 'stop_child') as stop:
+                try:
+                    return warmer.warm(specification)
+                finally:
+                    self.assertGreater(stop.call_count, 0)
+
+    def test_multiple_healthy_shards_can_take_more_than_fifteen_minutes(self):
+        self.assertEqual(self.run_warmup(3, 400), {'validated': 3, 'complete': True})
+
+    def test_a_single_stalled_shard_still_stops_after_fifteen_minutes(self):
+        with self.assertRaisesRegex(RuntimeError, 'warming deadline exceeded'):
+            self.run_warmup(1, 901)
+
+    def test_total_preparation_still_has_a_one_hour_limit(self):
+        with self.assertRaisesRegex(RuntimeError, 'warming deadline exceeded'):
+            self.run_warmup(10, 400)
+
+
 class SnapshotReadinessTests(unittest.TestCase):
     def setUp(self):
         self.executable = b'the qualified executable'

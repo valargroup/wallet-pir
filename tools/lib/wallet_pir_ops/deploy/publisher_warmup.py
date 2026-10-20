@@ -4,6 +4,7 @@ from pathlib import Path
 import shlex
 
 from .publisher import require, sha
+from .snapshot_warmer import WARMUP_SECONDS
 
 SCRIPT = Path(__file__).with_name('snapshot_warmer.py').read_text()
 
@@ -154,7 +155,7 @@ class SnapshotWarmup:
                 self.serving.write(owner.host, '/etc/systemd/system/' + unit, text, 0o644)
                 owner.ex.systemctl(owner.host, 'daemon-reload')
                 owner.ex.systemctl(owner.host, 'start', unit)
-                deadline = owner.clock() + 960
+                deadline = owner.clock() + WARMUP_SECONDS + 60
                 while True:
                     owner.lock.verify()
                     raw = owner.read(work + '/report.json')

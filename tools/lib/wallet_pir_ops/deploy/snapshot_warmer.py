@@ -17,6 +17,9 @@ import urllib.error
 import urllib.request
 import uuid
 
+WARMUP_SECONDS = 3600
+SHARD_WARMUP_SECONDS = 900
+
 
 def sync_directory(path):
     descriptor = os.open(path, os.O_RDONLY)
@@ -222,8 +225,9 @@ def warm(specification):
     shards = range(specification['identity']['shards']) if history else [None]
     result = {'map_sha256': specification['map_sha256'],
               'binary_sha256': specification['binary_sha256'], 'complete': False, 'checks': []}
-    deadline = time.monotonic() + 900
+    deadline = time.monotonic() + WARMUP_SECONDS
     for shard in shards:
+        shard_deadline = min(deadline, time.monotonic() + SHARD_WARMUP_SECONDS)
         settings = {
             'listen': '127.0.0.1:18990', 'cache_bytes': specification['memory_bytes'],
             'runtime_cache_dir': specification['pin'],
@@ -256,7 +260,7 @@ def warm(specification):
                     report = ready_report(specification, digest, child)
                     if report is not None:
                         break
-                    if time.monotonic() >= deadline:
+                    if time.monotonic() >= shard_deadline:
                         raise RuntimeError('production snapshot warming deadline exceeded')
                     time.sleep(.25)
             except Exception as error:
