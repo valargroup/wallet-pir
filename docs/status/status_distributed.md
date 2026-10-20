@@ -245,3 +245,29 @@ a single client's overload test is a separate check. The wrapper preserves
 failures without retrying and records its transport and client count beside the
 probe's raw arrival records. It refuses public upstream origins and never
 changes the server's admission policy.
+
+### Cutting over the existing wallet edge
+
+The query router and its public route must move together. The retired publisher
+wallet gateway does not preserve forwarded client addresses, so leaving it in
+front of the updated router collapses unrelated clients into one concurrency
+limit. Keep the shared publisher running and send the existing `/v1/status/*`
+edge route directly to the router's loopback query tunnel at `127.0.0.1:8492`.
+
+Use `wallet-pir-deploy.py status-routing-plan`, `status-routing-preflight` and
+`status-routing-deploy`, with the private `--request` and `--request-sha256`.
+The request schema is `status-wallet-route/1`, with `host`, `machine_id`,
+`router_host`, `router_sha256` and the existing HTTPS `public_origin`. The private
+Status inventory also supplies `route_probe_client`, the checksummed diagnostic
+client at `/opt/status-pir/releases/<sha256>/status-pir`, and its independent
+`exact_check`. Deployment requires the reviewed `--expect-plan-sha256`.
+
+Plan can run before the new router starts. Preflight and deployment require its
+exact executable and wallet listener to be active. The operation validates Caddy,
+changes only the Status upstream in the installed file, reloads rather than
+restarts Caddy, and checks encrypted answers through the existing public TLS
+origin and the aggregate private load. It preserves every other route and TLS
+setting. An interrupted or failed operation is recovered with
+`status-routing-rollback`; `status-routing-status` reports its journal and
+current configuration digest. For a complete service rollback, restore routing
+first and then restore the router executable through its retained transaction.
