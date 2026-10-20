@@ -1,4 +1,6 @@
 //! Public refund ciphertext in synthetic block envelopes. Consensus is trusted to RPC.
+#[path = "common/bound.rs"]
+mod bound;
 use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -116,11 +118,23 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let first = run();
     assert_eq!(first["records"], 1);
     let revision = first["revision"].as_str().unwrap();
-    for file in ["rows", "witness", "witness.json", "json"] {
-        assert!(dir
-            .path()
-            .join(format!("publications/{revision}.{file}"))
-            .exists());
+    let layout = dir
+        .path()
+        .join(format!("publications/{revision}.inventory.json"));
+    let layout: receiver_indexer::application::Layout =
+        serde_json::from_slice(&std::fs::read(layout).unwrap()).unwrap();
+    let segment = &layout.shards[0].segments[0];
+    let (payments, companion) = (
+        hex::encode(segment.payments),
+        hex::encode(segment.witnesses),
+    );
+    for file in [
+        format!("{payments}.rows"),
+        format!("{payments}.json"),
+        format!("{companion}.witness"),
+        format!("{companion}.witness.json"),
+    ] {
+        assert!(dir.path().join("publications").join(file).exists());
     }
     // Republishing a revision requires identical bytes in every existing file.
     assert_eq!(first, run());
@@ -162,11 +176,10 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             let _ = self.0.wait();
         }
     }
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-    let start = || {
-        Child(
+    // Each daemon binds a port of its own choosing, read back from its log.
+    let log = dir.path().join("daemon.log");
+    let start = || async {
+        let child = Child(
             Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
                 .args([
                     "--data-dir",
@@ -180,27 +193,26 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                     "--poll-seconds",
                     "1",
                     "--bind",
-                    &addr.to_string(),
+                    "127.0.0.1:0",
                 ])
+                .env("RUST_LOG", "info")
                 .stdout(std::process::Stdio::null())
-                .stderr(std::fs::File::create(dir.path().join("daemon.log")).unwrap())
+                .stderr(std::fs::File::create(&log).unwrap())
                 .spawn()
                 .unwrap(),
-        )
+        );
+        (child, bound::address(&log, 0, "receiver PIR bound").await)
     };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
-    let endpoint = format!("http://{addr}/v1/receiver/init");
     async fn wait_height(client: &reqwest::Client, endpoint: &str, height: u64) {
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             loop {
                 if let Ok(response) = client.get(endpoint).send().await {
                     if response.status().is_success()
-                        && response.json::<Value>().await.unwrap()["payments"]["directory"]
-                            ["end_height"]
-                            == height
+                        && response.json::<Value>().await.unwrap()["end_height"] == height
                     {
                         break;
                     }
@@ -217,7 +229,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             .count()
     };
     let written = files();
-    let daemon = start();
+    let (daemon, addr) = start().await;
+    let endpoint = format!("http://{addr}/v1/receiver/inventory");
     wait_height(&client, &endpoint, activation() + 1).await;
     assert_eq!(files(), written, "serving publishes from memory");
     // The deploy gate's form of the probe, `receiver-directory probe`, with its built-in
@@ -257,7 +270,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     hold.store(false, Ordering::SeqCst);
     wait_height(&client, &endpoint, activation() + 1).await;
     drop(daemon);
-    let _restarted = start();
+    let (_restarted, addr) = start().await;
+    let endpoint = format!("http://{addr}/v1/receiver/inventory");
     wait_height(&client, &endpoint, activation() + 1).await;
     task.abort();
 }

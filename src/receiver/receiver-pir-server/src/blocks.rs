@@ -1,4 +1,4 @@
-//! Bounded rolling hints, independent of PIR session preparation and grace periods.
+//! Bounded rolling hints, independent of PIR session preparation and retention.
 use axum::http::StatusCode;
 use receiver_directory::{
     blocks::{Batch, BlockFilter, Head, MAX_BATCH_BYTES, MAX_BLOCKS},

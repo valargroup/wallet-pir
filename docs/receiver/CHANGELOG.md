@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Publish history as an inventory of sealed Receiver shards and a recent tier.
+  Shards seal automatically on exact payment placement and companion witness
+  capacity in the pinned `--shard-rows` geometry, or after `--shard-target`
+  payments, on block boundaries; an oversized block becomes its own shard of
+  several segments. Each sealed shard keeps a GCS receiver filter while it is
+  served. `/v1/receiver/inventory`, its chunks and `/v1/receiver/shard-filters/{digest}`
+  replace `init`, and a displaced inventory serves for `--retention-seconds`
+  (default 600). Staged serving loads one-shot inventory layouts. Prepared tables
+  are written to the data directory and kept resident only within a
+  `--table-memory-mib` budget (default 4096, at least 1536), loading on demand.
 - Replace the common `IWPROOF1` witness file with a companion witness PIR table per
   payment table. Records grow to 289 bytes with a witness ordinal, `init` serves
   the payment and witness sessions together, and witness payloads are read over

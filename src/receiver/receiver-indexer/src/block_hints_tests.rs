@@ -123,7 +123,7 @@ async fn hints_are_independent_of_pir_and_refuse_pruned_or_stale_requests() {
         .unwrap();
     assert_eq!(head.revision, 7);
     assert_eq!(
-        http.get(format!("{origin}/v1/receiver/init"))
+        http.get(format!("{origin}/v1/receiver/inventory"))
             .send()
             .await
             .unwrap()

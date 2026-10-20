@@ -8,9 +8,8 @@ use receiver_directory::{
     witness::{self, PAYLOAD_BYTES},
     Hash, Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
-#[cfg(not(test))]
 use receiver_pir::server::{Server, WitnessServer};
-use receiver_pir_server::Publication;
+use receiver_pir_server::publication::Segment;
 use receiver_store::{Error, IndexedBlock, Store, SHARD_LEAVES};
 use std::collections::BTreeMap;
 use zakura_receiver_crypto::Record;
@@ -54,8 +53,8 @@ pub fn append(store: &mut Store, block: &IndexedBlock) -> Result<(), Error> {
 }
 
 /// The `(position, cmx, ordinal)` of every record in `rows`, each slot checked by
-/// [`check_slot`].
-fn leaves(rows: &[u8]) -> Result<Vec<(u64, Hash, u32)>, Error> {
+/// [`check_slot`], in row order.
+pub fn leaves(rows: &[u8]) -> Result<Vec<(u64, Hash, u32)>, Error> {
     let mut leaves = Vec::new();
     for row in rows.as_chunks::<ROW_BYTES>().0 {
         // Bytes after the last slot are row padding, not a record.
@@ -78,12 +77,24 @@ pub fn check_publication(
     witnesses: &witness::Table,
 ) -> Result<BTreeMap<u64, Hash>, Error> {
     let leaves = leaves(&snapshot.data)?;
+    witnesses.manifest.check_payments(&snapshot.manifest)?;
+    check_witnesses(&leaves, witnesses)
+}
+
+/// The companion checks of [`check_publication`] for a payment table whose checked
+/// records are `leaves`, after the caller bound `witnesses` to that table.
+pub fn check_witnesses(
+    leaves: &[(u64, Hash, u32)],
+    witnesses: &witness::Table,
+) -> Result<BTreeMap<u64, Hash>, Error> {
     witnesses.validate()?;
     let table = &witnesses.manifest;
-    table.check_payments(&snapshot.manifest)?;
+    if table.payloads != leaves.len() as u64 {
+        return Err(Error::Malformed);
+    }
     let payloads = witnesses.data.as_chunks::<PAYLOAD_BYTES>().0;
     let mut roots = BTreeMap::new();
-    for (position, cmx, ordinal) in leaves {
+    for &(position, cmx, ordinal) in leaves {
         let payload = payloads.get(ordinal as usize).ok_or(Error::Malformed)?;
         if let Some(root) = crate::witness::shard_root(payload, position, &cmx, table.tree_size)? {
             if *roots.entry(position / SHARD_LEAVES).or_insert(root) != root {
@@ -116,22 +127,33 @@ pub fn check_publication_for_serving(
         })
 }
 
-/// Prepares `snapshot` and its companion `witnesses` for serving once
+/// Prepares one segment, `snapshot` and its companion `witnesses`, for serving once
 /// [`check_publication_for_serving`] accepts them.
 pub fn prepare(
     snapshot: Snapshot,
     witnesses: witness::Table,
-) -> Result<Publication, receiver_pir::Error> {
+) -> Result<Segment, receiver_pir::Error> {
+    let (server, witnesses) = prepare_servers(snapshot, witnesses)?;
+    Ok(Segment::resident(server, witnesses))
+}
+
+/// [`prepare`]'s payment and witness servers, for a caller that keeps them elsewhere.
+pub fn prepare_servers(
+    snapshot: Snapshot,
+    witnesses: witness::Table,
+) -> Result<(Server, WitnessServer), receiver_pir::Error> {
     check_publication_for_serving(&snapshot, &witnesses)?;
     #[cfg(test)]
     {
-        crate::prepared::prepare(snapshot, witnesses)
+        let server = crate::prepared::payments(snapshot)?;
+        let witnesses = crate::prepared::companion(witnesses, &server)?;
+        Ok((server, witnesses))
     }
     #[cfg(not(test))]
     {
         let server = Server::new(snapshot)?;
         let witnesses = WitnessServer::new(witnesses, &server)?;
-        Ok(Publication::verified(server, witnesses))
+        Ok((server, witnesses))
     }
 }
 
@@ -273,8 +295,8 @@ mod tests {
     #[tokio::test]
     async fn served_witnesses_verify_through_the_wallet_transport() {
         use receiver_pir::{
-            transport::{DirectoryClient, Transport},
-            AcceptedCoverage, Error as PirError,
+            transport::{Inventories, InventoryClient, Transport},
+            Error as PirError,
         };
         use zakura_receiver_crypto::wire::decode_payload;
         struct Http(reqwest::Client);
@@ -303,27 +325,35 @@ mod tests {
         let (snapshot, table) = witnessed(&tree, &tree);
         let manifest = snapshot.manifest.clone();
         let publications = receiver_pir_server::Publications::default();
-        assert!(publications.publish(prepare(snapshot, table).unwrap(), 0));
+        let segment = prepare(snapshot, table).unwrap();
+        let publication = receiver_pir_server::Publication::assemble(
+            manifest.genesis,
+            0,
+            vec![(false, vec![segment], None)],
+        );
+        assert!(publications.publish(publication.unwrap(), 0));
         let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let http = Http(reqwest::Client::new());
-        let served = DirectoryClient::fetch_manifest(&origin, &http)
+        let head = Inventories::head(&origin, &http, &manifest.genesis)
             .await
             .unwrap();
-        let accepted = AcceptedCoverage {
-            genesis: manifest.genesis,
-            required_start: manifest.start_height,
-            height: manifest.end_height,
-            hash: manifest.end_hash,
-        };
-        let client = DirectoryClient::connect_manifest(&origin, http, accepted, served)
-            .await
+        let inventory = Inventories::capture(&origin, &http, head).await.unwrap();
+        let m = &manifest;
+        inventory
+            .accept(&m.genesis, m.start_height, m.end_height, &m.end_hash)
             .unwrap();
-        let record = client.page(common::receiver(), 1).await.unwrap().unwrap();
+        let client = InventoryClient::new(&origin, http, inventory, false);
+        let segment = client.segment(0, 0).await.unwrap();
+        let record = client
+            .page(&segment, common::receiver(), 1)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!((record.payment.position, record.ordinal), (5, 1));
-        let payload = client.witness(record.ordinal).await.unwrap();
+        let payload = client.witness(&segment, record.ordinal).await.unwrap();
         // The independent oracle: every level of the 8-leaf tree, then empty subtrees.
         let mut level = tree.clone();
         for height in 0..3 {

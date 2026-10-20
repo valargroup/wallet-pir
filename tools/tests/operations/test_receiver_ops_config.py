@@ -2,7 +2,7 @@
 
 Caddy syntax validation accepts a catch-all proxy, which would put the
 operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
-checks pin the edge to the four wallet routes the server registers, the unit (the template
+checks pin the edge to the six wallet routes the server registers, the unit (the template
 `wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
 optional NEAR key file the inventory names, cloud-init to the matching account and
 firewall rule, the inventory's `exact_check` to the deployed binary's probe on
@@ -26,8 +26,8 @@ ROOT = Path(__file__).resolve().parents[3]
 DIR = ROOT / 'tools/receiver/digitalocean'
 SERVER = ROOT / 'src/receiver/receiver-pir-server/src/lib.rs'
 OPERATOR_ROUTES = {'/v1/receiver/health', '/metrics'}
-WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
-                 '/v1/receiver/block-filters/*'}
+WALLET_ROUTES = {'/v1/receiver/inventory', '/v1/receiver/inventory/*', '/v1/receiver/query',
+                 '/v1/receiver/public/*', '/v1/receiver/shard-filters/*', '/v1/receiver/block-filters/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
 INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'

@@ -2,20 +2,23 @@
 //! publications an operator stages, without indexing.
 //!
 //! The operator stages a complete publication directory, in the files a one-shot
-//! indexer run writes (`<revision>.json`, `.rows`, `.witness.json` and `.witness`),
-//! and then atomically replaces a small record naming it:
-//! `{"directory": "/abs/path", "revision": "<hex>"}`. The record is a private, local
-//! control input: there is no update route. This mode opens no index database,
-//! ingests no blocks and reads no partner key.
+//! indexer run writes: a `<layout>.inventory.json` naming every shard's segments and
+//! filter, each segment's `<revision>.json` and `.rows` and its companion's own
+//! `<witness revision>.witness.json` and `.witness`,
+//! and each sealed shard's `<digest>.filter`. It then atomically replaces a small
+//! record naming the layout: `{"directory": "/abs/path", "revision": "<layout hex>"}`.
+//! The record is a private, local control input: there is no update route. This mode
+//! opens no index database, ingests no blocks and reads no partner key.
 //!
-//! Each record is loaded and verified in full before it can be served: the manifest
-//! must digest to the expected revision, cover history from Ironwood activation on
-//! mainnet, and commit to the row and companion witness files beside it, which the
-//! Receiver server library re-validates record by record while preparing PIR. Its
-//! anchor must then be canonical on the freshest node. Throughout, an independent
-//! guard checks every served anchor and revokes on a confirmed reorg, as the
-//! indexer's serving mode does. [`Publications`] owns epochs, monotonic coverage and
-//! the predecessor's grace.
+//! Each record is loaded and verified in full before it can be served: the layout must
+//! digest to the expected identity and be for mainnet, every manifest must hold its
+//! listed revision and commit to the row and companion witness files beside it, which
+//! the Receiver server library re-validates record by record while preparing PIR,
+//! every filter must hold its digest, and the shards must form one contiguous
+//! inventory from Ironwood activation. Its anchor must then be canonical on the
+//! freshest node. Throughout, an independent guard checks every served anchor and
+//! revokes on a confirmed reorg, as the indexer's serving mode does. [`Publications`]
+//! owns epochs, monotonic coverage and retention of displaced inventories.
 //!
 //! Updates are serial. A newer record supersedes one still preparing; a record that
 //! does not verify is refused and the valid publication already served stays. A
@@ -27,14 +30,20 @@
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
+use crate::application::Layout;
 use crate::canonical::{freshest, is_canonical};
 use receiver_directory::Hash;
 use receiver_directory::{
+    shards::{ShardFilter, MAX_FILTER_BYTES},
     snapshot::{Manifest, Snapshot, ROW_BYTES},
     witness,
 };
-use receiver_pir_server::{Publication, Publications};
+use receiver_pir_server::{
+    tables::{FilterSource, Loaded},
+    Publication, Publications,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     net::{IpAddr, SocketAddr},
@@ -245,109 +254,261 @@ impl VerifiedPublication {
         &self.record
     }
 
+    /// The inventory it serves once activated.
+    pub fn publication(&self) -> &Publication {
+        &self.publication
+    }
+
     /// Its terminal height and block hash.
     pub fn anchor(&self) -> (u32, [u8; 32]) {
         self.anchor
     }
 
-    /// Every block it depends on, which must all be canonical before it activates: its
-    /// terminal block and its companion's construction block when later.
-    pub fn anchors(&self) -> Vec<(u32, [u8; 32])> {
-        self.publication.anchors()
+    /// The head of the inventory it serves.
+    pub fn head(&self) -> &receiver_pir::inventory::Head {
+        self.publication.head()
     }
 
-    pub fn manifest(&self) -> &Manifest {
-        self.publication.manifest()
+    /// Every block it depends on, which must all be canonical before it activates: its
+    /// terminal block and every companion's construction block.
+    pub fn anchors(&self) -> Vec<(u32, [u8; 32])> {
+        let mut anchors = self.publication.anchors();
+        for context in self.publication.contexts() {
+            if !anchors.contains(&context) {
+                anchors.push(context);
+            }
+        }
+        anchors
     }
 }
 
-/// Loads and verifies the publication `record` names. Blocking: it reads up to a few
-/// hundred megabytes and prepares PIR. When serving, a validated correction manifest
-/// revokes older sessions before any row loading or preparation.
+/// The largest staged layout read.
+const MAX_LAYOUT_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Loads and verifies the inventory `record` names: its layout, then every segment's
+/// rows and companion witness table and every sealed shard's filter. Blocking: it reads
+/// up to several gigabytes and prepares PIR. When serving, a validated correction
+/// layout revokes older sessions before any row loading or preparation.
 pub fn load(
     record: &PublicationRecord,
     config: &Config,
     serving: Option<&Publications>,
 ) -> std::result::Result<VerifiedPublication, Refusal> {
     let invalid = |message: String| Refusal::InvalidSource(message);
-    let file = |extension: &str| {
-        record
-            .directory
-            .join(format!("{}.{extension}", record.revision))
-    };
-    let raw = read_bounded(&file("json"), receiver_pir::MAX_MANIFEST_BYTES as u64)
-        .map_err(|e| invalid(format!("manifest: {e}")))?;
-    let manifest: Manifest =
-        serde_json::from_slice(&raw).map_err(|e| invalid(format!("manifest: {e}")))?;
-    let revision = manifest
-        .revision()
-        .map_err(|e| invalid(format!("manifest: {e}")))?;
-    if hex::encode(revision) != record.revision {
+    let file = |name: &str| record.directory.join(name);
+    let raw = read_bounded(
+        &file(&format!("{}.inventory.json", record.revision)),
+        MAX_LAYOUT_BYTES,
+    )
+    .map_err(|e| invalid(format!("layout: {e}")))?;
+    let digest = hex::encode(Sha256::digest(&raw));
+    if digest != record.revision {
         return Err(invalid(format!(
-            "the directory holds revision {}, the record expects {}",
-            hex::encode(revision),
+            "the directory holds layout {digest}, the record expects {}",
             record.revision
         )));
     }
-    if manifest.genesis != Network::Mainnet.genesis_hash() {
+    let layout: Layout =
+        serde_json::from_slice(&raw).map_err(|e| invalid(format!("layout: {e}")))?;
+    if layout.genesis != Network::Mainnet.genesis_hash() {
         return Err(invalid("the publication is not for mainnet".into()));
+    }
+    // A trusted operator correction invalidates old answers immediately, even if
+    // replacement rows are missing or preparation later fails.
+    if serving
+        .is_some_and(|publications| !publications.advance_history_revision(layout.history_revision))
+    {
+        return Err(invalid("history revision moved backwards".into()));
+    }
+    let mut shards = Vec::new();
+    for shard in &layout.shards {
+        let mut segments = Vec::new();
+        for segment in &shard.segments {
+            let (revision, name) = (&segment.payments, hex::encode(segment.payments));
+            let companion = hex::encode(segment.witnesses);
+            let raw = read_bounded(
+                &file(&format!("{name}.json")),
+                receiver_pir::MAX_MANIFEST_BYTES as u64,
+            )
+            .map_err(|e| invalid(format!("manifest: {e}")))?;
+            let manifest: Manifest =
+                serde_json::from_slice(&raw).map_err(|e| invalid(format!("manifest: {e}")))?;
+            if manifest.revision().ok().as_ref() != Some(revision) {
+                return Err(invalid(format!(
+                    "manifest {name} does not hold its revision"
+                )));
+            }
+            if manifest.genesis != layout.genesis
+                || manifest.history_revision != layout.history_revision
+            {
+                return Err(invalid(format!("manifest {name} is for another layout")));
+            }
+            if manifest.rows < config.min_rows {
+                return Err(invalid(format!(
+                    "the publication has {} rows, fewer than min_rows {}",
+                    manifest.rows, config.min_rows
+                )));
+            }
+            let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
+            let data = read_exact_len(&file(&format!("{name}.rows")), rows_bytes)
+                .map_err(|e| invalid(format!("rows: {e}")))?;
+            let raw = read_bounded(
+                &file(&format!("{companion}.witness.json")),
+                receiver_pir::MAX_MANIFEST_BYTES as u64,
+            )
+            .map_err(|e| invalid(format!("witness manifest: {e}")))?;
+            let table: witness::Manifest = serde_json::from_slice(&raw)
+                .map_err(|e| invalid(format!("witness manifest: {e}")))?;
+            if table.revision().ok() != Some(segment.witnesses) {
+                return Err(invalid(format!(
+                    "witness manifest {companion} does not hold its revision"
+                )));
+            }
+            let witness_bytes = u64::from(table.rows) * ROW_BYTES as u64;
+            let witnesses = witness::Table {
+                manifest: table,
+                data: read_exact_len(&file(&format!("{companion}.witness")), witness_bytes)
+                    .map_err(|e| invalid(format!("witness: {e}")))?,
+            };
+            let staged = Staged {
+                payments: file(&format!("{name}.rows")),
+                witnesses: file(&format!("{companion}.witness")),
+            };
+            // Each segment is verified and prepared, then released before the next, so
+            // only one segment's tables are ever resident outside the table budget.
+            let (server, witnesses) =
+                crate::verify::prepare_servers(Snapshot { manifest, data }, witnesses)
+                    .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+            let segment = staged
+                .sources(&server, &witnesses)
+                .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+            if let Some(publications) = serving {
+                let tables = publications.tables();
+                tables.insert(&segment.payments, Loaded::Payments(server));
+                tables.insert(&segment.witnesses, Loaded::Witnesses(witnesses));
+            }
+            segments.push(segment);
+        }
+        let filter = match &shard.filter {
+            None => None,
+            Some(digest) => {
+                let name = format!("{}.filter", hex::encode(digest));
+                let path = file(&name);
+                let bytes = read_bounded(&path, MAX_FILTER_BYTES as u64)
+                    .map_err(|e| invalid(format!("filter: {e}")))?;
+                let source = staged_filter(path, bytes.into(), digest)
+                    .map_err(|e| invalid(format!("filter {name}: {e}")))?;
+                Some(Arc::new(source))
+            }
+        };
+        shards.push((shard.sealed, segments, filter));
     }
     // Wallets refuse served coverage that starts after activation, and witnesses
     // need every commitment from it.
-    if manifest.start_height != crate::blocks::ironwood_activation() {
+    let start = shards
+        .first()
+        .and_then(|s| s.1.first())
+        .and_then(|s| s.payments.payment_manifest())
+        .map(|m| m.directory.start_height);
+    if start != Some(crate::blocks::ironwood_activation()) {
         return Err(invalid(
             "served coverage must start at Ironwood activation".into(),
         ));
     }
-    if manifest.rows < config.min_rows {
-        return Err(invalid(format!(
-            "the publication has {} rows, fewer than min_rows {}",
-            manifest.rows, config.min_rows
-        )));
-    }
-    // A trusted operator correction invalidates old answers immediately, even if
-    // replacement rows are missing or preparation later fails.
-    if serving.is_some_and(|publications| {
-        !publications.advance_history_revision(manifest.history_revision)
-    }) {
-        return Err(invalid("history revision moved backwards".into()));
-    }
-    let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
-    let data =
-        read_exact_len(&file("rows"), rows_bytes).map_err(|e| invalid(format!("rows: {e}")))?;
-    let raw = read_bounded(
-        &file("witness.json"),
-        receiver_pir::MAX_MANIFEST_BYTES as u64,
-    )
-    .map_err(|e| invalid(format!("witness manifest: {e}")))?;
-    let table: witness::Manifest =
-        serde_json::from_slice(&raw).map_err(|e| invalid(format!("witness manifest: {e}")))?;
-    table
-        .validate()
-        .map_err(|e| invalid(format!("witness manifest: {e}")))?;
-    let witness_bytes = u64::from(table.rows) * ROW_BYTES as u64;
-    let witnesses = witness::Table {
-        manifest: table,
-        data: read_exact_len(&file("witness"), witness_bytes)
-            .map_err(|e| invalid(format!("witness: {e}")))?,
-    };
-    let anchor = (manifest.end_height, manifest.end_hash);
-    let publication = crate::verify::prepare(Snapshot { manifest, data }, witnesses)
-        .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+    let publication = Publication::assemble(layout.genesis, layout.history_revision, shards)
+        .map_err(|e| invalid(format!("publication: {e}")))?;
     let report = serde_json::json!({
         "mode": "serve-publication",
         "directory": record.directory,
         "revision": record.revision,
     });
+    let head = publication.head();
     Ok(VerifiedPublication {
         record: record.clone(),
-        anchor,
+        anchor: (head.end_height, head.end_hash),
         publication: publication.with_report(report),
     })
 }
 
+/// Verifies `bytes`, read from the staged filter file `path`, as the filter `digest`
+/// names, and returns a source that serves it from that file within the table budget.
+/// The source keeps the path and length only, never `bytes`.
+fn staged_filter(
+    path: PathBuf,
+    bytes: Arc<[u8]>,
+    digest: &Hash,
+) -> std::result::Result<FilterSource, String> {
+    let filter = ShardFilter::decode(&bytes).map_err(|e| e.to_string())?;
+    if filter.digest() != *digest {
+        return Err("it does not hold its digest".into());
+    }
+    let len = bytes.len();
+    Ok(FilterSource::stored(
+        filter.digest(),
+        len as u32,
+        filter.receivers(),
+        move || {
+            read_exact_len(&path, len as u64)
+                .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+        },
+    ))
+}
+
+/// A staged segment's payment and companion row files, which its sources reload from.
+struct Staged {
+    payments: PathBuf,
+    witnesses: PathBuf,
+}
+
+impl Staged {
+    /// Sources for the verified, prepared `server` and its companion `witnesses` that
+    /// reload them from these files, so staged history stays within the table budget as
+    /// indexed history does, and a check retains none of it.
+    fn sources(
+        self,
+        server: &receiver_pir::server::Server,
+        witnesses: &receiver_pir::server::WitnessServer,
+    ) -> std::result::Result<receiver_pir_server::publication::Segment, receiver_pir::Error> {
+        use receiver_pir_server::tables::Source;
+        // A reload prepares the rows under the manifest verified here, never a restaged
+        // one, and reads exactly the rows its geometry holds, so a replaced file cannot
+        // change the geometry or grow the allocation.
+        let read = |path: &Path, rows: u32| {
+            read_exact_len(path, u64::from(rows) * ROW_BYTES as u64)
+                .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+        };
+        let (manifest, path) = (server.manifest().directory.clone(), self.payments);
+        let payments = Arc::new(Source::payments(
+            server.manifest().clone(),
+            server.public().to_vec(),
+            move || {
+                receiver_pir::server::Server::new(Snapshot {
+                    manifest: manifest.clone(),
+                    data: read(&path, manifest.rows)?,
+                })
+            },
+        )?);
+        let (table, path) = (witnesses.manifest().table.clone(), self.witnesses);
+        let witnesses = Arc::new(Source::witnesses(
+            witnesses.manifest().clone(),
+            witnesses.public().to_vec(),
+            payments.clone(),
+            move || {
+                Ok(witness::Table {
+                    manifest: table.clone(),
+                    data: read(&path, table.rows)?,
+                })
+            },
+        )?);
+        Ok(receiver_pir_server::publication::Segment {
+            payments,
+            witnesses,
+        })
+    }
+}
+
 /// Reads at most `limit` bytes of `path`, refusing a longer file.
-fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
         .take(limit + 1)
@@ -362,7 +523,7 @@ fn read_bounded(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
 }
 
 /// Reads `path`, which must be exactly `len` bytes.
-fn read_exact_len(path: &Path, len: u64) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_exact_len(path: &Path, len: u64) -> std::io::Result<Vec<u8>> {
     let bytes = read_bounded(path, len)?;
     if bytes.len() as u64 != len {
         return Err(std::io::Error::other(format!(
@@ -426,8 +587,8 @@ struct Pending {
     verified: VerifiedPublication,
 }
 
-/// The single serial updater: loads what the record names, waits out any
-/// predecessor's grace, confirms the anchor and publishes.
+/// The single serial updater: loads what the record names, waits while the retained
+/// set is full, confirms the anchor and publishes.
 struct Updater {
     config: Config,
     nodes: Vec<ZakuraClient>,
@@ -533,7 +694,7 @@ impl Updater {
                 return;
             }
         }
-        // The predecessor keeps its full grace; the step is retried after it.
+        // Displaced inventories keep their full retention; the step is retried after.
         if self.publications.ready_at().is_some() {
             return;
         }
@@ -796,12 +957,31 @@ mod tests {
         manifest.end_height = manifest.start_height;
         let old = receiver_directory::snapshot::Snapshot::build(manifest.clone(), &[]).unwrap();
         let table = crate::witness::table(&old, &[]).unwrap();
+        let segment = crate::verify::prepare(old, table).unwrap();
+        let old = Publication::assemble(manifest.genesis, 0, vec![(false, vec![segment], None)]);
         let publications = Publications::default();
-        assert!(publications.publish(crate::verify::prepare(old, table).unwrap(), 0));
+        assert!(publications.publish(old.unwrap(), 0));
         manifest.history_revision = 1;
-        let revision = hex::encode(manifest.revision().unwrap());
+        let layout = Layout {
+            genesis: manifest.genesis,
+            history_revision: 1,
+            shards: vec![crate::application::LayoutShard {
+                sealed: false,
+                segments: vec![crate::application::LayoutSegment {
+                    payments: manifest.revision().unwrap(),
+                    witnesses: [0; 32],
+                }],
+                filter: None,
+            }],
+        };
+        let (id, bytes) = layout.encode().unwrap();
+        let revision = hex::encode(id);
+        std::fs::write(dir.path().join(format!("{revision}.inventory.json")), bytes).unwrap();
         std::fs::write(
-            dir.path().join(format!("{revision}.json")),
+            dir.path().join(format!(
+                "{}.json",
+                hex::encode(manifest.revision().unwrap())
+            )),
             serde_json::to_vec(&manifest).unwrap(),
         )
         .unwrap();
@@ -814,6 +994,32 @@ mod tests {
         assert!(publications.current_anchor().is_none());
         assert_eq!(publications.epoch(), 1);
         assert!(publications.ready_at().is_none());
+    }
+
+    /// A staged filter's source serves from its file and keeps none of the verified
+    /// bytes, which would otherwise stay resident outside the table budget.
+    #[test]
+    fn a_staged_filter_keeps_no_verified_bytes() {
+        use receiver_directory::shards::Coverage;
+        let coverage = Coverage {
+            start_height: 100,
+            end_height: 101,
+            end_hash: [3; 32],
+        };
+        let filter = ShardFilter::build([1; 32], 0, coverage, &[common::receiver()]).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("filter");
+        std::fs::write(&path, filter.bytes()).unwrap();
+        let bytes: Arc<[u8]> = filter.bytes().into();
+        let verified = Arc::downgrade(&bytes);
+        let source = staged_filter(path, bytes, &filter.digest()).unwrap();
+        assert!(verified.upgrade().is_none());
+        let tables = receiver_pir_server::tables::Tables::new(1 << 30);
+        let served = tables.filter(&source).unwrap();
+        assert_eq!(served.filter().unwrap(), filter.bytes());
+        assert!(
+            staged_filter(dir.path().join("filter"), [0u8; 4].into(), &filter.digest()).is_err()
+        );
     }
 
     #[test]

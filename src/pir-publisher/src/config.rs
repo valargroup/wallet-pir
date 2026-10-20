@@ -230,7 +230,7 @@ impl Config {
             }
             layout.listener("receiver", c.bind)?;
             layout.root("receiver", &c.data_dir)?;
-            layout.probe("receiver", c.bind, "/v1/receiver/init", "status");
+            layout.probe("receiver", c.bind, "/v1/receiver/inventory", "status");
         }
         Ok(layout)
     }

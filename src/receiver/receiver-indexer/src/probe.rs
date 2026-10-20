@@ -3,12 +3,13 @@
 use crate::read_limited;
 use clap::Parser;
 use receiver_directory::{
-    blocks::{Batch, Head, MAX_BATCH_BYTES},
+    blocks::{Batch, MAX_BATCH_BYTES},
+    shards::{ShardFilter, MAX_FILTER_BYTES},
     Hash, Payment, ReceiverBytes,
 };
 use receiver_pir::{
-    public_bytes, response_bytes, AcceptedCoverage, Client, Publication, WitnessClient,
-    MAX_MANIFEST_BYTES,
+    inventory::{Capture, Head, Inventory, Shard, MAX_CAPTURE_BYTES, MAX_CHUNK_BYTES},
+    public_bytes, response_bytes, Client, Publication, WitnessClient, MAX_MANIFEST_BYTES,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -47,7 +48,7 @@ pub struct Args {
     no_auth: bool,
     /// Blocks the publication may trail the freshest node's tip. It must cover the
     /// indexer's `--depth` plus its publication delay (a poll and PIR preparation) and
-    /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
+    /// a full retained set's wait: the default 12 suits the default depth of 2.
     #[arg(long, default_value_t = 12)]
     max_lag: u64,
     /// Check a staged PIR-only service that intentionally publishes no rolling hints.
@@ -161,30 +162,32 @@ async fn probe(
         .build()?;
 
     let origin = args.origin.trim_end_matches('/');
-    let init = http.get(format!("{origin}/v1/receiver/init"));
-    let publication = fetch(init, MAX_MANIFEST_BYTES, "manifest", |bytes| {
-        let publication: Publication = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        publication.validate().map_err(|e| e.to_string())?;
-        Ok::<_, String>(publication)
+    let genesis = Network::Mainnet.genesis_hash();
+    let request = http.get(format!("{origin}/v1/receiver/inventory"));
+    let head = fetch(request, MAX_MANIFEST_BYTES, "manifest", |bytes| {
+        serde_json::from_slice::<Head>(bytes)
     });
-    let publication = match publication.await? {
-        Ok(publication) => publication,
+    let head = match head.await? {
+        Ok(head) => head,
         Err(failure) => return Ok(Some(failure)),
     };
-    let manifest = &publication.payments;
-    let directory = &manifest.directory;
     // Another network's publication is wrong whatever the nodes or the fixture say.
-    let genesis = Network::Mainnet.genesis_hash();
-    if directory.genesis != genesis {
-        let served = hash::display(&directory.genesis);
+    if head.genesis != genesis {
+        let served = hash::display(&head.genesis);
         return Ok(Some((
             "answer_mismatch",
             json!({"expected_genesis": hash::display(&genesis), "served_genesis": served}),
         )));
     }
+    if let Err(error) = head.validate(&genesis) {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"manifest": error.to_string()}),
+        )));
+    }
     // A start after the fixture is truncated history, which the activation check below
     // classifies. An end before it leaves the fixture uncheckable: oracle_invalid by design.
-    if directory.end_height < fixture.height {
+    if head.end_height < fixture.height {
         return Ok(Some((
             "oracle_invalid",
             json!({"fixture": "after coverage"}),
@@ -196,70 +199,95 @@ async fn probe(
         .map(|url| NodeClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let pinned = (fixture.height, block_hash);
-    // A session displaced during a slow ranking fails this run; the next starts from /init.
+    // An inventory displaced during a slow ranking fails this run; the next starts from
+    // its head.
     let shard = u16::try_from(fixture.position >> 16)?;
-    let (rpc, root, tip) = match oracle(&nodes, directory, pinned, shard).await {
+    let (rpc, root, tip) = match oracle(&nodes, &head, pinned, shard).await {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
-    if let Some(failure) = check_lag(tip, directory, args.max_lag) {
+    if let Some(failure) = check_lag(tip, &head, args.max_lag) {
         return Ok(Some(failure));
     }
-    // The pinned receiver's pages over live encrypted PIR, in position order, until the
-    // fixture's payment or a later one.
-    let id = hex::encode(manifest.id()?);
-    let rows = directory.rows;
-    // Wallets require history from Ironwood activation, independently of what the
-    // manifest claims.
-    let accepted = AcceptedCoverage {
-        genesis,
-        required_start: crate::blocks::ironwood_activation(),
-        height: directory.end_height,
-        hash: directory.end_hash,
+    let inventory = match capture(&http, origin, head.clone()).await? {
+        Ok(inventory) => inventory,
+        Err(failure) => return Ok(Some(failure)),
     };
-    // Served history that starts after activation is wrong for every wallet.
-    if let Err(receiver_pir::Error::Directory(receiver_directory::Error::Coverage)) =
-        accepted.check(directory)
+    // Wallets require history from Ironwood activation, independently of what the
+    // inventory claims; served history that starts later is wrong for every wallet.
+    let activation = crate::blocks::ironwood_activation();
+    if inventory
+        .accept(&genesis, activation, head.end_height, &head.end_hash)
+        .is_err()
     {
         return Ok(Some((
             "answer_mismatch",
             json!({"coverage": "starts after Ironwood activation"}),
         )));
     }
-    let public = http.get(format!("{origin}/v1/receiver/public/{id}"));
-    let client = fetch(public, public_bytes(rows)?, "public", |bytes| {
-        Client::new(manifest.clone(), bytes, accepted)
-    });
-    let client = match client.await? {
-        Ok(client) => client,
-        Err(failure) => return Ok(Some(failure)),
+    let Some(descriptor) = inventory
+        .shards()
+        .iter()
+        .find(|s| (s.start_height..=s.end_height).contains(&fixture.height))
+    else {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"coverage": "fixture height"}),
+        )));
     };
+    if let Some(failure) =
+        check_shard_filter(&http, origin, &inventory, descriptor, &receiver).await?
+    {
+        return Ok(Some(failure));
+    }
+    // The pinned receiver's pages over live encrypted PIR, segment by segment and in
+    // position order, until the fixture's payment or a later one.
     let mut queries = 0;
-    let found = loop {
-        let query = client.prepare(receiver, queries)?;
-        let request = http
-            .post(format!("{origin}/v1/receiver/query"))
-            .body(query.body().to_vec());
-        let answer = fetch(request, response_bytes(rows)?, "lookup", |bytes| {
-            client.decode(query, bytes)
+    let mut found = None;
+    for segment in &descriptor.segments {
+        let manifest = &segment.payments;
+        let rows = manifest.directory.rows;
+        let id = hex::encode(manifest.id()?);
+        let public = http.get(format!("{origin}/v1/receiver/public/{id}"));
+        let client = fetch(public, public_bytes(rows)?, "public", |bytes| {
+            Client::new(manifest.clone(), bytes)
         });
-        let answer = answer.await?;
-        queries += 1;
-        let record = match answer {
-            Ok(Some(record)) => record,
-            Ok(None) => break None,
-            Err(failure) => {
-                *lookup = Some((queries, false));
-                return Ok(Some(failure));
+        let client = match client.await? {
+            Ok(client) => client,
+            Err(failure) => return Ok(Some(failure)),
+        };
+        let mut page = 0;
+        let last = loop {
+            let query = client.prepare(receiver, page)?;
+            let request = http
+                .post(format!("{origin}/v1/receiver/query"))
+                .body(query.body().to_vec());
+            let answer = fetch(request, response_bytes(rows)?, "lookup", |bytes| {
+                client.decode(query, bytes)
+            });
+            let answer = answer.await?;
+            queries += 1;
+            page += 1;
+            let record = match answer {
+                Ok(Some(record)) => record,
+                Ok(None) => break None,
+                Err(failure) => {
+                    *lookup = Some((queries, false));
+                    return Ok(Some(failure));
+                }
+            };
+            if record.payment.position >= fixture.position || page == record.total {
+                break Some(record);
+            }
+            if page == MAX_PROBE_PAGES {
+                return Err("pinned receiver's history exceeds the probe's page bound".into());
             }
         };
-        if record.payment.position >= fixture.position || queries == record.total {
-            break Some(record);
+        if let Some(record) = last.filter(|r| r.payment.position >= fixture.position) {
+            found = Some((record, segment));
+            break;
         }
-        if queries == MAX_PROBE_PAGES {
-            return Err("pinned receiver's history exceeds the probe's page bound".into());
-        }
-    };
+    }
     let expected = |p: &Payment| {
         p.position == fixture.position
             && p.height == fixture.height
@@ -272,19 +300,19 @@ async fn probe(
             && p.ephemeral_key == action.ephemeral_key
             && p.ciphertext_prefix[..] == action.enc_ciphertext[..52]
     };
-    let correct = found.as_ref().is_some_and(|r| expected(&r.payment));
+    let correct = found.as_ref().is_some_and(|(r, _)| expected(&r.payment));
     *lookup = Some((queries, correct));
-    let record = match found {
-        Some(record) if correct => record,
+    let (record, segment) = match found {
+        Some(found) if correct => found,
         found => {
-            let found = found.map(|r| (r.payment.height, r.payment.position));
+            let found = found.map(|(r, _)| (r.payment.height, r.payment.position));
             return Ok(Some((
                 "answer_mismatch",
                 json!({"lookup": found, "queries": queries}),
             )));
         }
     };
-    let check = check_witness(&http, origin, &publication, &record, root);
+    let check = check_witness(&http, origin, segment, &record, root);
     if let Some(failure) = check.await? {
         return Ok(Some(failure));
     }
@@ -292,7 +320,7 @@ async fn probe(
         &http,
         origin,
         &rpc,
-        directory,
+        &head,
         &receiver,
         Some(&record.payment),
         args.without_block_filters,
@@ -303,10 +331,82 @@ async fn probe(
     }
     // The node's checks hold for the whole lookup only if the terminal block is still
     // its own.
-    if rpc.block_hash(u64::from(directory.end_height)).await? != directory.end_hash {
+    if rpc.block_hash(u64::from(head.end_height)).await? != head.end_hash {
         return Err("chain changed during the probe".into());
     }
-    indexer_report(&http, &args.health_url, &id).await
+    indexer_report(&http, &args.health_url, &hex::encode(head.inventory)).await
+}
+
+/// Downloads `head`'s inventory chunk by chunk through the library's bounded
+/// [`Capture`], which checks each chunk before the next is requested and retains at most
+/// [`MAX_CAPTURE_BYTES`]. A chunk the service cannot send is an error; one that does not
+/// fit the head, or chunks that are not exactly its inventory, are wrong served data.
+async fn capture(
+    http: &reqwest::Client,
+    origin: &str,
+    head: Head,
+) -> Result<std::result::Result<Inventory, Failure>> {
+    let mismatch =
+        |error: receiver_pir::Error| ("answer_mismatch", json!({"inventory": error.to_string()}));
+    let id = hex::encode(head.inventory);
+    let mut capture = match Capture::new(head, MAX_CAPTURE_BYTES) {
+        Ok(capture) => capture,
+        Err(error) => return Ok(Err(mismatch(error))),
+    };
+    while let Some(index) = capture.next_chunk() {
+        let request = http.get(format!("{origin}/v1/receiver/inventory/{id}/{index}"));
+        let pushed = fetch(request, MAX_CHUNK_BYTES, "inventory", |bytes| {
+            capture.push(bytes)
+        });
+        if let Err(failure) = pushed.await? {
+            return Ok(Err(failure));
+        }
+    }
+    Ok(capture.finish().map_err(mismatch))
+}
+
+/// Checks the fixture shard's filter, when it is sealed with one: it must decode, hold
+/// its digest, size and count, cover exactly the shard under the inventory's network
+/// and correction, and match the fixture's receiver, whose indexed payment it holds.
+async fn check_shard_filter(
+    http: &reqwest::Client,
+    origin: &str,
+    inventory: &Inventory,
+    shard: &Shard,
+    receiver: &ReceiverBytes,
+) -> Result<Option<Failure>> {
+    let Some(reference) = &shard.filter else {
+        return Ok(None);
+    };
+    let request = http.get(format!(
+        "{origin}/v1/receiver/shard-filters/{}",
+        hex::encode(reference.digest)
+    ));
+    let head = inventory.head();
+    let filter = fetch(request, MAX_FILTER_BYTES, "shard_filter", |bytes| {
+        let filter = ShardFilter::decode(bytes).map_err(|e| e.to_string())?;
+        filter
+            .check(&head.genesis, head.history_revision, &shard.coverage())
+            .map_err(|e| e.to_string())?;
+        if filter.digest() != reference.digest
+            || filter.bytes().len() != reference.bytes as usize
+            || filter.receivers() != u64::from(reference.receivers)
+        {
+            return Err("filter differs from its descriptor".to_owned());
+        }
+        Ok(filter)
+    });
+    let filter = match filter.await? {
+        Ok(filter) => filter,
+        Err(failure) => return Ok(Some(failure)),
+    };
+    if !filter.matches(&[*receiver])[0] {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"shard_filter": shard.index}),
+        )));
+    }
+    Ok(None)
 }
 
 /// Checks the publication's anchor against `rpc`: its hash and the tree size after it
@@ -316,7 +416,7 @@ async fn probe(
 /// against the publication.
 async fn check_anchor(
     rpc: &NodeClient,
-    directory: &receiver_directory::snapshot::Manifest,
+    directory: &Head,
 ) -> std::result::Result<Option<Failure>, NodeError> {
     rpc.check_network(Network::Mainnet.genesis_hash()).await?;
     let height = directory.end_height;
@@ -338,11 +438,7 @@ async fn check_anchor(
 
 /// Whether the publication trails `tip`, the highest any node reported, by more than
 /// `max_lag` blocks.
-fn check_lag(
-    tip: u64,
-    directory: &receiver_directory::snapshot::Manifest,
-    max_lag: u64,
-) -> Option<Failure> {
+fn check_lag(tip: u64, directory: &Head, max_lag: u64) -> Option<Failure> {
     let height = u64::from(directory.end_height);
     (tip.saturating_sub(height) > max_lag).then(|| {
         (
@@ -369,12 +465,7 @@ enum Verdict {
 /// the chain is invalid), and reads the root of the fixture's Ironwood `shard`, `None`
 /// while the node has not completed it. Reads by hash or of deep history need no
 /// recheck; the probe rechecks the terminal block once its lookup ends.
-async fn verify(
-    rpc: &NodeClient,
-    directory: &receiver_directory::snapshot::Manifest,
-    pinned: (u32, Hash),
-    shard: u16,
-) -> Verdict {
+async fn verify(rpc: &NodeClient, directory: &Head, pinned: (u32, Hash), shard: u16) -> Verdict {
     let checks = async {
         if let Some(failure) = check_anchor(rpc, directory).await? {
             return Ok(Err(failure));
@@ -458,7 +549,7 @@ async fn check_filters(
     http: &reqwest::Client,
     origin: &str,
     rpc: &NodeClient,
-    directory: &receiver_directory::snapshot::Manifest,
+    directory: &Head,
     receiver: &ReceiverBytes,
     payment: Option<&Payment>,
     without_block_filters: bool,
@@ -471,7 +562,8 @@ async fn check_filters(
         16384,
         "block_head",
         |bytes| {
-            let head: Head = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+            let head: receiver_directory::blocks::Head =
+                serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
             head.validate(&directory.genesis)
                 .map_err(|e| e.to_string())?;
             Ok::<_, String>(head)
@@ -554,7 +646,7 @@ async fn indexer_report(
 /// it is `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
     nodes: &[NodeClient],
-    directory: &receiver_directory::snapshot::Manifest,
+    directory: &Head,
     pinned: (u32, Hash),
     shard: u16,
 ) -> std::result::Result<(NodeClient, Option<Hash>, u64), Failure> {
@@ -651,11 +743,28 @@ mod tests {
 
     /// [`super::common::manifest`] on mainnet, ending at Ironwood activation, where a
     /// node reports tree sizes.
-    fn anchored() -> receiver_directory::snapshot::Manifest {
+    fn anchored_directory() -> receiver_directory::snapshot::Manifest {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
         directory.genesis = Network::Mainnet.genesis_hash();
         directory.end_height = crate::blocks::ironwood_activation();
         directory
+    }
+
+    /// An inventory head covering [`anchored_directory`].
+    fn anchored() -> Head {
+        let d = anchored_directory();
+        Head {
+            protocol: receiver_pir::inventory::PROTOCOL.into(),
+            genesis: d.genesis,
+            history_revision: 0,
+            inventory: [0; 32],
+            shards: 1,
+            start_height: d.start_height,
+            start_position: d.start_position,
+            end_height: d.end_height,
+            end_hash: d.end_hash,
+            end_position: d.end_position,
+        }
     }
 
     /// The anchor must have the node's hash and the tree size after that block. A node
@@ -918,10 +1027,17 @@ mod tests {
     /// Serves an empty publication of `directory`. Returns the probe's arguments for it,
     /// with the node at `rpc`.
     async fn publish(directory: receiver_directory::snapshot::Manifest, rpc: &str) -> Args {
+        let genesis = directory.genesis;
         let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
         let publications = receiver_pir_server::Publications::default();
         let table = crate::witness::table(&snapshot, &[]).unwrap();
-        let publication = crate::verify::prepare(snapshot, table).unwrap();
+        let segment = crate::verify::prepare(snapshot, table).unwrap();
+        let publication = receiver_pir_server::Publication::assemble(
+            genesis,
+            0,
+            vec![(false, vec![segment], None)],
+        )
+        .unwrap();
         assert!(publications.publish(publication, 0));
         let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1005,7 +1121,7 @@ mod tests {
     /// the fixture's block differs), or unreachable.
     #[tokio::test]
     async fn a_publication_on_another_network_is_an_answer_mismatch() {
-        let mut directory = anchored();
+        let mut directory = anchored_directory();
         directory.genesis = [2; 32];
         let end = u64::from(directory.end_height);
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
@@ -1017,9 +1133,8 @@ mod tests {
             fixture: 6,
             ..good(end)
         };
-        let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let unreachable = format!("http://{}", closed.local_addr().unwrap());
-        drop(closed);
+        // Port 0 accepts no connection, unlike a released port another test may take.
+        let unreachable = "http://127.0.0.1:0".to_owned();
         let expected = json!({
             "expected_genesis": hash::display(&Network::Mainnet.genesis_hash()),
             "served_genesis": hash::display(&[2; 32]),
@@ -1061,7 +1176,7 @@ mod tests {
                 ..good(end_node)
             })
             .await;
-            let mut directory = anchored();
+            let mut directory = anchored_directory();
             (directory.start_height, directory.end_height) = (start, end);
             let mut lookup = None;
             let args = publish(directory, &rpc).await;
@@ -1129,13 +1244,20 @@ mod tests {
         let payload = encode_payload(&siblings, 5, tree_size).unwrap();
         let snapshot =
             receiver_directory::snapshot::Snapshot::build(manifest, &[record.clone()]).unwrap();
+        let genesis = snapshot.manifest.genesis;
         let table = crate::witness::table(&snapshot, &[payload]).unwrap();
         // A corrupt payload would be refused by the publisher's checks; serve it anyway.
-        let publication = match corrupt {
+        let segment = match corrupt {
             false => crate::verify::prepare(snapshot, table).unwrap(),
-            true => crate::prepared::prepare(snapshot, table).unwrap(),
+            true => crate::prepared::segment(snapshot, table).unwrap(),
         };
-        let session = publication.session();
+        let session = segment.publication();
+        let publication = receiver_pir_server::Publication::assemble(
+            genesis,
+            0,
+            vec![(false, vec![segment], None)],
+        )
+        .unwrap();
         let publications = receiver_pir_server::Publications::default();
         assert!(publications.publish(publication, 0));
         let app = crate::router::router_with_publications(publications);
@@ -1182,30 +1304,37 @@ mod tests {
         );
     }
 
-    /// The hex payment session ID of `p`, as health reports it.
-    fn id(p: &Publication) -> String {
-        hex::encode(p.payments.id().unwrap())
+    /// The hex inventory ID `[byte; 32]`, as health reports one.
+    fn id(byte: u8) -> String {
+        hex::encode([byte; 32])
     }
 
-    /// Session manifests whose directory salt starts with `salt`, with an empty
-    /// companion table.
-    fn manifest(salt: u8) -> Publication {
-        let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
-        directory.salt[0] = salt;
-        let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
-        let table = crate::witness::table(&snapshot, &[]).unwrap();
-        Publication {
-            payments: receiver_pir::Manifest {
-                protocol: receiver_pir::PROTOCOL.into(),
-                directory: snapshot.manifest,
-                public_digest: [0; 32],
-            },
-            witnesses: receiver_pir::WitnessManifest {
-                protocol: receiver_pir::PROTOCOL.into(),
-                table: table.manifest,
-                public_digest: [0; 32],
-            },
-        }
+    /// A head promising many chunks whose first chunk does not fit it is refused after
+    /// that one request, before any other chunk is fetched.
+    #[tokio::test]
+    async fn the_inventory_capture_stops_at_the_first_bad_chunk() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counted = requests.clone();
+        let app = Router::new().fallback(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { Json(json!({"inventory": vec![0u8; 32], "index": 0, "shards": []})) }
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let mut head = anchored();
+        head.shards = receiver_pir::inventory::MAX_SHARDS;
+        let failure = capture(&reqwest::Client::new(), &origin, head)
+            .await
+            .unwrap();
+        let (category, detail) = failure.unwrap_err();
+        assert_eq!(category, "answer_mismatch");
+        assert!(detail["inventory"].is_string(), "{detail}");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
     /// [`fetch`] against a real server: a successful body within its bound that decodes
@@ -1246,19 +1375,19 @@ mod tests {
         }
     }
 
-    /// A successful `init` response that is malformed JSON or a manifest failing
-    /// validation (protocol or geometry) reaches the probe's result as an answer
+    /// A successful inventory head response that is malformed JSON or a head failing
+    /// validation (protocol or shard count) reaches the probe's result as an answer
     /// mismatch.
     #[tokio::test]
     async fn an_invalid_served_manifest_is_an_answer_mismatch() {
-        let mut protocol = manifest(0);
-        protocol.payments.protocol = "other".into();
-        let mut geometry = manifest(0);
-        geometry.payments.directory.rows = receiver_pir::MIN_ROWS + 1;
-        let json = |m: &Publication| serde_json::to_string(m).unwrap();
-        for body in ["{".to_owned(), json(&protocol), json(&geometry)] {
+        let mut protocol = anchored();
+        protocol.protocol = "other".into();
+        let mut empty = anchored();
+        empty.shards = 0;
+        let json = |h: &Head| serde_json::to_string(h).unwrap();
+        for body in ["{".to_owned(), json(&protocol), json(&empty)] {
             let app = Router::new().route(
-                "/v1/receiver/init",
+                "/v1/receiver/inventory",
                 routing::get(move || async move { body }),
             );
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1302,7 +1431,7 @@ mod tests {
     /// and a body over its bound is an error, not an answer mismatch.
     #[tokio::test]
     async fn the_report_is_bound_to_the_probed_publication() {
-        let (probed, rotated) = (id(&manifest(1)), id(&manifest(2)));
+        let (probed, rotated) = (id(1), id(2));
         let http = reqwest::Client::new();
         let report = |health: Value| {
             let (http, probed) = (http.clone(), probed.clone());
@@ -1489,6 +1618,8 @@ mod tests {
         let config = crate::application::Config {
             data_dir: dir.path().to_owned(),
             min_rows: receiver_pir::MIN_ROWS,
+            shard_rows: receiver_pir::MIN_ROWS,
+            shard_target: None,
             start_height: activation,
             end_height: None,
             depth: 0,

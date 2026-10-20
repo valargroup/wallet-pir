@@ -6,9 +6,12 @@
 pub mod application;
 pub mod blocks;
 pub mod canonical;
+pub mod durable;
 pub mod near;
 pub mod probe;
+pub mod seal;
 pub mod serve_publication;
+pub mod shards;
 pub mod verify;
 pub mod witness;
 

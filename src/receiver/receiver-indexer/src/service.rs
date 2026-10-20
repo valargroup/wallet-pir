@@ -68,6 +68,33 @@ pub struct Config {
     #[arg(long, default_value_t = receiver_store::blocks::MAX_FILTER_BLOCKS)]
     #[serde(default = "default_filter_blocks")]
     pub filter_blocks: u32,
+    /// Pinned payment table rows of every sealed Receiver shard segment. Sealing keeps
+    /// each segment placeable at this geometry; changing it affects only later seals.
+    #[arg(long, default_value_t = receiver_pir::MAX_ROWS)]
+    #[serde(default = "default_shard_rows")]
+    pub shard_rows: u32,
+    /// Payments after which a Receiver shard seals at the next block. By default one
+    /// seventh below the smaller of the segment's payment slots and the largest witness
+    /// table's payloads.
+    #[arg(long)]
+    #[serde(default)]
+    pub shard_target: Option<u64>,
+    /// How long a displaced inventory, with every session, chunk and shard filter it
+    /// names, keeps serving, in seconds: long enough for a wallet that captured it to
+    /// finish a restore pass. At most 16 are retained; a new publication waits for one to
+    /// expire rather than drop one early.
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(60..=86_400))]
+    #[serde(default = "default_retention_seconds")]
+    pub retention_seconds: u64,
+    /// The most memory prepared PIR tables may occupy, in MiB, counting cached tables,
+    /// retained inventories' and in-flight queries' tables. Sealed tables live in the data
+    /// directory's `tables/` and load on demand within it. The default leaves the
+    /// deployed unit's 7 GiB `MemoryMax` room for preparation, the index and witness
+    /// paths. It must hold the largest payment and witness pair, 1536 MiB, which a cold
+    /// witness load needs at once.
+    #[arg(long, default_value_t = 4096)]
+    #[serde(default = "default_table_memory_mib")]
+    pub table_memory_mib: u64,
     /// Increase after correcting indexed history on an unchanged chain. Never decrease on restart.
     #[arg(long, default_value_t = 0)]
     #[serde(default)]
@@ -97,6 +124,8 @@ impl From<&Config> for application::Config {
             audit_enabled: args.near_key.is_some(),
             filter_blocks: args.filter_blocks,
             history_revision: args.history_revision,
+            shard_rows: args.shard_rows,
+            shard_target: args.shard_target,
         }
     }
 }
@@ -104,6 +133,19 @@ impl From<&Config> for application::Config {
 impl Config {
     pub fn validate(&self) -> Result<()> {
         receiver_pir::validate_rows(self.min_rows)?;
+        crate::seal::Policy::new(self.shard_rows, self.shard_target)
+            .map_err(|_| "invalid shard rows or target")?;
+        let floor = receiver_pir_server::tables::MIN_BUDGET as u64 >> 20;
+        if self.table_memory_mib < floor {
+            return Err(format!(
+                "the table memory budget must be at least {floor} MiB: a cold witness load \
+                 holds the largest payment and witness tables together"
+            )
+            .into());
+        }
+        if !(60..=86_400).contains(&self.retention_seconds) {
+            return Err("retention must be between one minute and one day".into());
+        }
         if self.start_height != crate::blocks::ironwood_activation() {
             return Err("witness tables and serving need history from Ironwood activation".into());
         }
@@ -157,7 +199,10 @@ pub async fn run(
         application::refresh(&config, &nodes, genesis, None, &mut state).await?;
         return Ok(());
     }
-    let publications = Publications::default();
+    let publications = Publications::new(
+        Duration::from_secs(args.retention_seconds),
+        usize::try_from(args.table_memory_mib << 20)?,
+    );
     struct Fence(Publications);
     impl Drop for Fence {
         fn drop(&mut self) {
@@ -252,7 +297,55 @@ pub async fn run_isolated(
     .await?
 }
 
+/// Default sealed segment rows, shared by JSON configuration and command-line parsing.
+fn default_shard_rows() -> u32 {
+    receiver_pir::MAX_ROWS
+}
+
+/// Default prepared table budget in MiB, shared by JSON configuration and command-line
+/// parsing.
+fn default_table_memory_mib() -> u64 {
+    4096
+}
+
+/// Default inventory retention in seconds, shared by JSON configuration and command-line
+/// parsing.
+fn default_retention_seconds() -> u64 {
+    600
+}
+
 /// Default rolling suffix, shared by JSON configuration and command-line parsing.
 fn default_filter_blocks() -> u32 {
     receiver_store::blocks::MAX_FILTER_BLOCKS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A budget too small for a cold witness load of the largest pair is refused, since
+    /// once such a table was evicted its queries could never load it again; the pair
+    /// itself is accepted.
+    #[test]
+    fn the_table_budget_must_hold_the_largest_pair() {
+        let config = |mib: u64| {
+            Config::try_parse_from([
+                "receiver-directory",
+                "--data-dir",
+                "/srv/receiver",
+                "--rpc-url",
+                "http://127.0.0.1:8232",
+                "--no-auth",
+                "--table-memory-mib",
+                &mib.to_string(),
+            ])
+            .unwrap()
+        };
+        assert_eq!(receiver_pir_server::tables::MIN_BUDGET, 1536 << 20);
+        for mib in [256, 1024, 1535] {
+            assert!(config(mib).validate().is_err(), "{mib}");
+        }
+        assert!(config(1536).validate().is_ok());
+        assert!(config(4096).validate().is_ok());
+    }
 }

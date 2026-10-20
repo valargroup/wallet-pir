@@ -5,8 +5,8 @@ One Droplet, `receiver-pir-poc-01`, runs `receiver-pir.service`, which starts
 polls every 10 seconds and publishes two blocks below the tip. The service listens
 on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
-proxies only the wallet routes (`init`, `public`, `query` and `block-filters`
-under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
+proxies only the wallet routes (`inventory`, `shard-filters`, `public`, `query` and
+`block-filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.
@@ -100,8 +100,10 @@ A release that changes the wallet routes changes the probe with them, so the
 binary cannot verify through the old Caddyfile and the old binary cannot verify
 through the new one. Deploy such a release as one locked cutover of both with
 [`caddy.py`](caddy.py), which takes the production lock itself. This release is
-one. It replaces the aggregate `filters` route with `block-filters` and drops the
-`witness/*` file route, since companion witnesses now come over PIR.
+one. It replaces the aggregate `filters` route with `block-filters`, replaces
+`init` with the shard `inventory` and its chunks under `inventory/*`, adds
+`shard-filters/*`, and drops the `witness/*` file route, since companion
+witnesses now come over PIR.
 
 ```sh
 tools/receiver/digitalocean/caddy.py cutover tools/receiver/digitalocean/Caddyfile \
@@ -268,7 +270,8 @@ A change of the wallet routes is a cutover with the binary instead, as
 The service publishes from memory and writes no publication files; the index keeps
 only `directory-v3.sqlite` and, with the audit, `providers.sqlite`. A `publications/`
 directory left by an earlier release can be deleted. Back up `directory-v3.sqlite`,
-the chain index. On its first start the companion witness release copies an
+the chain index. `tables/` holds prepared PIR tables the service reloads within
+its `--table-memory-mib` budget; it is rebuilt from the index if lost. On its first start the companion witness release copies an
 earlier release's `directory.sqlite` into `directory-v3.sqlite`, adding each record's
 witness ordinal, and never changes the original: rolling the binary back keeps
 serving from `directory.sqlite`, which then catches up from where it stopped, and
