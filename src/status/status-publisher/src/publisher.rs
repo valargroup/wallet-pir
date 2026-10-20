@@ -272,7 +272,19 @@ impl Publisher {
             let observed = rx.borrow().clone();
             if let Some(observed) = observed.filter(|o| o.observed_ms > last_observed) {
                 // Detect invalidation independently of the publication outcome.
-                let active = self.published.read().unwrap().manifest.clone();
+                let (active, withdrawn) = {
+                    let published = self.published.read().unwrap();
+                    (
+                        published.manifest.clone(),
+                        published.current.as_ref().is_some_and(|c| !c.eligible),
+                    )
+                };
+                // Candidate validation can withdraw after the active-anchor
+                // check. Its cleared manifest must not hide the recovery fence.
+                if withdrawn {
+                    authority = None;
+                    previous = None;
+                }
                 if let Some(active) = active {
                     if rpc.block_hash(u64::from(active.anchor_height)).await? != active.anchor_hash
                     {

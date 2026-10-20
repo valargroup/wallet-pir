@@ -56,6 +56,8 @@ sequential polling/backoff without a Status-specific scheduler. They persist
 publisher high-water marks and observed invalidations before allowing service.
 Withdrawal or a new recovery epoch fences active service. Exact-anchor checks
 also catch invalidated older views after a consumer skips an intermediate update.
+A revoked view cannot prevent loading a verified replacement. Withdrawal during
+candidate preparation reopens publisher authority before the next publication.
 A disk failure persisting authority closes admission. Restart reuses completed
 immutable objects, but requires fresh HTTPS authority before serving.
 

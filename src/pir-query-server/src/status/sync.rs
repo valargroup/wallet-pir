@@ -312,6 +312,7 @@ impl StatusSync {
             .await
             .controller
             .as_ref()
+            .filter(|c| !c.revoked())
             .map(|c| c.current().manifest().clone());
         if let Some(active) = active
             .filter(|m| m.recovery_epoch == current.recovery_epoch && m.fresh(now_ms()).is_ok())

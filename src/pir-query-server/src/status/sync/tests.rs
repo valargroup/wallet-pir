@@ -204,6 +204,36 @@ async fn ordinary_https_failure_preserves_a_still_fresh_view() {
     assert!(task.floor.invalid.is_empty());
     server.abort();
 }
+
+#[tokio::test]
+async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    let old = service
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .current();
+    let mut withdrawn = pointer();
+    withdrawn.eligible = false;
+    task.observe(withdrawn).await.unwrap();
+    assert!(service.serving().await.is_err());
+    {
+        let mut current = source.current.write().unwrap();
+        current.revision += 1;
+        current.generation += 1;
+    }
+    // This fixture deliberately has no valid prepared inventory. Recovery must
+    // reach its download/validation without making the withdrawn view usable.
+    assert!(task.synchronize().await.is_err());
+    let object = pointer().inventory.unwrap();
+    assert!(service.dir.join("objects").join(object.sha256).is_file());
+    assert!(task.floor.invalid.contains(&old.manifest().id()));
+    assert!(service.serving().await.is_err());
+    server.abort();
+}
 #[tokio::test]
 async fn truncated_objects_never_become_completed_cache_entries() {
     let (_root, service, mut task, _source, tls, server) = setup().await;

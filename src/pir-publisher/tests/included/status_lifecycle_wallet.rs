@@ -68,6 +68,7 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         async move { axum::serve(held.lock().await.take().unwrap(), routes).await }
     });
     let source_rpc = rpc.clone();
+    let publisher_owner = publisher.clone();
     let _publisher = Abort(tokio::spawn(async move {
         publisher
             .run_managed(source_rpc, http, pir_pipeline::service::Shutdown::default())
@@ -173,9 +174,14 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
             .unwrap(),
         wallet::Observation::NotFound
     );
+    // A disconnected candidate withdraws the publication during preparation.
+    // Even with its active manifest cleared, the next publication must reopen
+    // authority so consumers can distinguish the recovery from ordinary updates.
+    publisher_owner.withdraw();
     *mempool.write().unwrap() = "88".repeat(32);
     let second = wait_manifest(&poll, &router_origin, Some(first.rows_digest)).await;
     assert!(second.generation > first.generation);
+    assert!(second.recovery_epoch > first.recovery_epoch);
     assert!(second.observed_ms > first.observed_ms);
     let client = wallet::transport::PendingClient::fetch(
         &transport,
