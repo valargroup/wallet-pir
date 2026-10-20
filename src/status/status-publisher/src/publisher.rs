@@ -747,7 +747,6 @@ async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure
 #[cfg(test)]
 mod query_transport_tests {
     use super::*;
-    use axum::routing::post;
     fn config() -> Config {
         serde_json::from_value(serde_json::json!({
             "state_dir":"/unused", "salt_hex":hex::encode([1u8;32]), "window_blocks":1,
@@ -784,6 +783,7 @@ mod query_transport_tests {
     #[tokio::test]
     async fn refresh_preparation_and_source_failures_keep_committed_observation_and_retry() {
         use axum::response::IntoResponse;
+        use axum::routing::post;
         use serde_json::{json, Value};
         let root = tempfile::tempdir().unwrap();
         let (source_rpc, source_service) = source::tests::fixture(false, false).await;

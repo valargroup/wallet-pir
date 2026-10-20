@@ -489,15 +489,6 @@ impl PublishedPacking {
             parameter_id: parameter_id(parameters(self.logical_rows)?.db_rows as u64)?,
         })
     }
-    pub fn session(&self, manifest: &Manifest, shard_id: u64) -> ShardSession {
-        ShardSession {
-            session_id: hex::encode(manifest.session_id(shard_id).expect("validated session")),
-            generation: manifest.generation,
-            shard_id,
-            params: parameters(self.logical_rows).expect("validated geometry"),
-            public_params_base64: STANDARD.encode(&self.public),
-        }
-    }
 }
 
 pub struct Engine {

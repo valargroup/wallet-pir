@@ -298,22 +298,20 @@ fn public_read(r: &QueryIngress) -> Result<tokio::sync::OwnedSemaphorePermit, Er
         .map_err(|_| overloaded("overloaded"))
 }
 /// The active view, if control is live.
-fn active(r: &QueryIngress) -> Result<(Arc<Loaded>, u64), Error> {
+fn active(r: &QueryIngress) -> Result<Arc<Loaded>, Error> {
     let i = r.inner.lock().unwrap();
     if !i.control.refreshed.live() {
         return Err(fail("ingress control stale"));
     }
-    let active = i
-        .control
+    i.control
         .active
         .clone()
-        .ok_or_else(|| fail("ingress not activated"))?;
-    Ok((active, i.control.epoch))
+        .ok_or_else(|| fail("ingress not activated"))
 }
 async fn init(State(r): State<QueryIngress>) -> Response {
-    let read = public_read(&r).and_then(|_read| active(&r));
-    match read {
-        Ok((active, _)) => Json(active.view.manifests[0].clone()).into_response(),
+    let served = public_read(&r).and_then(|read| Ok((read, active(&r)?)));
+    match served {
+        Ok((_read, active)) => Json(&active.view.manifests[0]).into_response(),
         Err(error) => crate::packing_router::public_error(error),
     }
 }
@@ -321,7 +319,7 @@ async fn session(
     State(r): State<QueryIngress>,
     UrlPath((generation, shard)): UrlPath<(u64, u64)>,
 ) -> Response {
-    let id = active(&r).and_then(|(active, _)| {
+    let id = active(&r).and_then(|active| {
         let manifest = active
             .view
             .manifests
