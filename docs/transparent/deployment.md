@@ -3395,8 +3395,8 @@ site does not need.
 ([observability](../enhance/observability-alerting.md)); only v12 history
 and the one-query txid display are monitored, v1 is not.
 
-- **History (`transparent`).** `quality-canary`, an example of
-  `transparent-shard-server`. Its wallet transport already asks for
+- **History (`transparent`).** `quality-canary`, a binary in `transparent-tools`
+  (`cargo build --release -p transparent-tools --bin quality-canary`). Its wallet transport already asks for
   `/v2/shards`, so `--url https://transparent-pir.valargroup.dev` reaches v12 with
   no extra flag. It refuses with `oracle_invalid` until it has a v12 fixture.
 - **Txid display (`txid`).** `txid-quality-canary`, a binary in the service-owned

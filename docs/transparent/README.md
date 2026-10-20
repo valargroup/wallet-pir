@@ -45,6 +45,16 @@ separate benchmark baseline in `tools/transparent`.
 
 Validation tools live in the `transparent-tools` package under `tools/transparent/`: load tests, regression fixtures, and the
 current-shard `transparent-measure` command used by the backfill workflow.
+The package also owns `quality-canary`, `rate-query`, `txid-rate`, `soak-query`,
+and the `history_fixture` rehearsal generator (enable
+`test-support`). Build these with `cargo build -p transparent-tools --bin NAME`.
+Build the certificate exporter with
+`cargo build -p transparent-tools --example native_certificate`; its example
+name avoids a binary filename collision with the Enhance certificate exporter.
+The manual `publication_bench` tool requires `benchmarks,publisher-tools`; it
+measures publication and replica loading cost from a retained mainnet-day input.
+Retained qualification bundles keep their historical `examples/` artifact labels;
+the builder copies the current binaries into those evidence paths.
 Enhance has its own [index](../enhance/README.md).
 
 The [filter API](filter-api.md), [range envelope](filter-envelope.md), and [filter crate reference](https://github.com/zakura-core/wallet-libraries/blob/main/zakura/transparent-filter/README.md) remain active detailed references. Their formats have separate versioning from shard schema.
