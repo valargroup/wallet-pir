@@ -311,7 +311,7 @@
           "status": {
             "host": "coordinator",
             "argv": [
-              "{release_dir}/status-pir",
+              "/opt/status-pir/tools/status-pir",
               "probe-live-load",
               "--origin",
               "http://127.0.0.1:8480",
