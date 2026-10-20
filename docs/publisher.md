@@ -345,3 +345,37 @@ use the publisher role; historical commands are parsed only for cutover. Rollbac
 restores captured units and old executables, which must remain available through
 the rollback rehearsal. CUDA smoke callers now pass `--publisher` and use isolated
 Enhance fixture state.
+
+## Enhance publisher and wallet route cutover
+
+Enhance private control version changes require the publisher, packing router
+and query ingress to change together. Use `publisher-cutover-*` with schema
+`publisher-cutover/3`, the four-product configuration and complete inventory.
+The additional `serving` object pins `git_sha`, `binary_sha256`, `binary_bytes`
+and the installed `caddy_sha256`. The publisher and serving source revisions
+must match. Supply `--serving-binary` to plan, preflight and deploy. Existing
+workers retain their wallet wire protocol and are not restarted by this command.
+
+The plan captures both serving units, configurations, old executable identities
+and the entire Caddyfile. The only accepted publisher configuration changes are
+removal of the retired Enhance `status_config: null` and Status wallet gateway
+fields (`public_listen`, `public_enabled`, `query_router_origin`). Product
+publication settings and Transparent distribution policy remain unchanged.
+Recognized historical ingress command and writable-path overlays are saved for
+rollback; unrecognized service directives still refuse adoption.
+
+Deploy stages both releases and checks their configurations before stopping any
+owner. Under one production lock it starts the matching serving roles, starts
+the publisher, verifies aggregate and role readiness, then adds the existing
+Enhance wallet prefix to the ingress. The dedicated query route and every other
+edge route remain unchanged. Independent encrypted-answer probes must pass for
+all four products before commit. The serving journals are retained inside the
+coordinator's publisher journal before effects.
+
+`publisher-cutover-status` reports the transaction. `publisher-cutover-rollback`
+(or `publisher-cutover-reconcile` after interruption) restores the edge, both
+serving roles and the old publisher as one group, then verifies readiness and
+all product probes. Foreign file changes or altered rollback binaries refuse
+restoration. This path does not change DNS, add HTTPS distribution, update GPU
+artifacts or qualify wallet recovery by itself; retain native wallet, public
+HTTPS and sustained-service evidence separately.

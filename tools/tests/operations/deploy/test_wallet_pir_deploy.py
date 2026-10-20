@@ -560,6 +560,7 @@ class DeployTests(Fleet):
     def test_exact_check_failure_rolls_everything_back(self):
         deployer = self.enhance_fleet()
         self.fake.exact_result = (1, 'answer mismatch at row 17')
+        self.fake.product_check = lambda host, argv: (0, 'configuration accepted')
         with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(self.restarts(), ENHANCE + list(reversed(ENHANCE)))

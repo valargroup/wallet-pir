@@ -81,7 +81,8 @@ def _render(role, template, release, settings, body, writable, unit=None):
     document = {'management_listen': management,
                 'enhance': {'enabled': True, 'settings': body}}
     return render_worker(template, directory(release) + '/' + QUERY_BINARY, ['--config', path],
-                         configurations={path: document}, writable=writable, readonly=[path], settings=settings)
+                         configurations={path: document}, writable=writable, readonly=[path], settings=settings,
+                         check=['--config', path, '--check'] if role in ('packing-router', 'query-ingress') else ())
 
 
 def _worker(role, settings, release, template, unit=None):
