@@ -7,13 +7,11 @@
       "export:txid-sizing-export:test:executing_identity",
       "export:txid-sizing-export:test:source_identity",
       "transparent:pir-e2e-tests:test:unified_http_sync_campaign",
-      "transparent:transparent-query-server:bin:shard-assign",
-      "transparent:transparent-query-server:bin:shard-control",
-      "transparent:transparent-query-server:bin:shard-prune",
-      "transparent:transparent-query-server:bin:transparent-query-server",
-      "transparent:transparent-query-server:bin:transparent-txid-server",
-      "transparent:transparent-query-server:bin:txid-control",
       "transparent:transparent-query-server:doc:transparent_query_server",
+      "transparent:transparent-tools:bin:shard-assign",
+      "transparent:transparent-tools:bin:shard-control",
+      "transparent:transparent-tools:bin:shard-prune",
+      "transparent:transparent-tools:bin:txid-control",
       "transparent:transparent-tools:bin:history_fixture",
       "transparent:transparent-tools:example:native_certificate",
       "transparent:transparent-tools:bin:quality-canary",
@@ -67,6 +65,8 @@
       "transparent:pir-e2e-tests:test:event_codec_bounds",
       "transparent:pir-e2e-tests:test:service_round_trip",
       "transparent:pir-e2e-tests:test:shard_filters",
+      "transparent:pir-e2e-tests:test:transparent_host_processes",
+      "transparent:pir-e2e-tests:test:transparent_provider_installation",
       "transparent:transparent-tools:bin:compact-export",
       "transparent:transparent-tools:bin:event-spotcheck",
       "transparent:transparent-tools:bin:filter-sweep",
@@ -166,7 +166,8 @@
       "native:pir-publisher:test:lifecycle",
       "native:pir-query-server:bin:pir-query-server",
       "native:pir-query-server:doc:pir_query_server",
-      "native:pir-query-server:lib:pir_query_server"
+      "native:pir-query-server:lib:pir_query_server",
+      "native:pir-query-server:test:operator"
     ]
   },
   "enhance-http": {

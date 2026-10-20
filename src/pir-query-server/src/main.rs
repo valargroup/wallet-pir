@@ -12,6 +12,11 @@ struct Args {
     /// Check static configuration without opening state, listeners, or credentials.
     #[arg(long, requires = "config")]
     check: bool,
+    /// Verify the one enabled Transparent history or transaction-detail
+    /// section through its one-shot path, print the report, and exit without
+    /// binding management or wallet listeners.
+    #[arg(long, requires = "config", conflicts_with = "check")]
+    verify_only: bool,
     #[cfg(feature = "enhance")]
     #[command(subcommand)]
     command: Option<EnhanceCommand>,
@@ -59,10 +64,22 @@ fn enhance_command(command: EnhanceCommand) -> pir_query_server::Result<()> {
 
 #[tokio::main]
 async fn main() -> pir_query_server::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let args = Args::parse();
+    if args.verify_only {
+        // Stdout carries only the verification report; diagnostics go to
+        // stderr at the level the Transparent verifiers have always logged.
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    }
     #[cfg(feature = "enhance")]
     if let Some(command) = args.command {
         return enhance_command(command);
@@ -70,6 +87,9 @@ async fn main() -> pir_query_server::Result<()> {
     let config_path = args.config.ok_or("query server requires --config FILE")?;
     let config: pir_query_server::config::Config =
         serde_json::from_slice(&std::fs::read(config_path)?)?;
+    if args.verify_only {
+        return pir_query_server::verify(config).await;
+    }
     config.validate()?;
     if args.check {
         println!("Query server configuration is valid; runtime readiness was not checked");

@@ -4,6 +4,7 @@
 //! Every case ends by comparing the store's ledger with an independent
 //! traversal of the same events, and every recovery path — crash, restart,
 //! replaced tail, reorg, budget, overload — has to reach that equality.
+#![cfg(feature = "transparent-history")]
 
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;

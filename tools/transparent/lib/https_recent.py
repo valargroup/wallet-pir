@@ -9,9 +9,11 @@ replica policy:
 - plan: the unit user and the live state directory already exist, the
   directory owned by that user and writable by no one else, with room for a
   disposable bootstrap. The deploy creates neither users nor state.
-- deploy preflight: the staged release's strict loader runs as the unit user
-  over a fresh transaction-owned state directory, never the live one, which
-  only the unit's own `ExecStartPre` checks, after the old process stopped.
+- deploy preflight: the staged release's strict loader
+  (`pir-query-server --config <file> --verify-only`) runs as the unit user over
+  a transaction-owned copy of the configuration whose shard_dir is a fresh
+  transaction-owned state directory, never the live one, which only the unit's
+  own `ExecStartPre` checks, after the old process stopped.
 - restart and restore: at least two other recent replicas stay served, read
   from the fleet's membership record under the deploy lock. A restore also
   needs the previous executable and proof, again in disposable state, that it
@@ -57,7 +59,11 @@ def start_check(text):
 
 
 def disposable(argv, live_state, scratch):
-    """`argv` with its `--shard-dir` moved from the live state to `scratch`."""
+    """`argv` with its `--shard-dir` moved from the live state to `scratch`.
+
+    A unit from before `pir-query-server --config` names its state on the
+    command line; restoring such a unit still checks it this way.
+    """
     if argv.count('--shard-dir') != 1 or argv[argv.index('--shard-dir') + 1] != live_state:
         raise ValueError('the check must name the live state exactly once, as --shard-dir')
     argv = list(argv)
@@ -65,6 +71,33 @@ def disposable(argv, live_state, scratch):
     if any(a == live_state or a.startswith(live_state.rstrip('/') + '/') for a in argv):
         raise ValueError('the disposable check would still reach live state')
     return argv
+
+
+def reaches(value, live_state):
+    """Whether any string in a JSON value is the live state or below it."""
+    if isinstance(value, dict):
+        return any(reaches(v, live_state) for v in value.values())
+    if isinstance(value, list):
+        return any(reaches(v, live_state) for v in value)
+    return isinstance(value, str) and (value == live_state or value.startswith(live_state.rstrip('/') + '/'))
+
+
+def disposable_config(text, live_state, scratch):
+    """A `pir-query-server` history configuration with its shard_dir moved to `scratch`."""
+    document = json.loads(text) if text is not None else None
+    if not isinstance(document, dict) or set(document) != {'management_listen', 'transparent_history'}:
+        raise ValueError('the check configuration must hold only the transparent_history section')
+    section = document['transparent_history']
+    section = section if isinstance(section, dict) else {}
+    settings = section.get('settings')
+    if section.get('enabled') is not True or not isinstance(settings, dict) or 'verify_only' in settings:
+        raise ValueError('the check configuration must enable transparent_history without verify_only')
+    if settings.get('shard_dir') != live_state:
+        raise ValueError('the check configuration must name the live state as its shard_dir')
+    settings['shard_dir'] = scratch
+    if reaches(document, live_state):
+        raise ValueError('the disposable check would still reach live state')
+    return json.dumps(document, sort_keys=True, indent=2) + '\n'
 
 
 class Guard:
@@ -138,15 +171,43 @@ class Guard:
             return []
         return self.others_serving(deployer, self.target(deployer, record['key']).settings)
 
-    def check_in_disposable_state(self, deployer, journal, record, argv, user, group, label):
-        """Run `argv` as the unit user over a fresh transaction-owned state; (code, output)."""
+    def check_in_disposable_state(self, deployer, journal, record, argv, user, group, label, which='new'):
+        """Run `argv` as the unit user over a fresh transaction-owned state; (code, output).
+
+        A `--config` check runs over a transaction-owned copy of that
+        configuration (`which`: the record's rendered or previous bytes, else
+        the installed file) whose shard_dir is the disposable state.
+        """
         host, settings = record['host'], self.target(deployer, record['key']).settings
         owner = deployer.service.transaction_dir(journal.id)
         scratch = '%s/%s.%s-state' % (owner, record['unit'], label)
-        argv = disposable(argv, settings['state_dir'], scratch)
+        copy = None
+        if '--config' in argv:
+            if argv.count('--config') != 1:
+                raise ValueError('the check must name one configuration')
+            at = argv.index('--config') + 1
+            path = argv[at]
+            change = next((c for c in record['changes'] if c['path'] == path), None)
+            text = change[which] if change is not None else deployer.ex.read(host, path)
+            work = '%s/%s.%s-check' % (owner, record['unit'], label)
+            scratch = work + '/state'
+            copy = work + '/config.json'
+            body = disposable_config(text, settings['state_dir'], scratch)
+            argv = [*argv[:at], copy, *argv[at + 1:]]
+            if any(a == settings['state_dir'] or a.startswith(settings['state_dir'].rstrip('/') + '/') for a in argv):
+                raise ValueError('the disposable check would still reach live state')
+        else:
+            argv = disposable(argv, settings['state_dir'], scratch)
         deployer.lock.verify()
+        if copy is not None:
+            code, output = deployer.ex.run(host, [INSTALL, '-d', '-o', 'root', '-g', 'root', '-m', '0755', work], 30)
+            if code:
+                return code, 'cannot create disposable check directory: ' + output
+            deployer.ex.write(host, copy, body.encode(), 0o644)
         code, output = deployer.ex.run(host, [INSTALL, '-d', '-o', user, '-g', group, '-m', '0700', scratch], 30)
         if code:
+            if copy is not None:
+                deployer.ex.remove_tree(host, work, owner)
             return code, 'cannot create disposable state: ' + output
         try:
             argv = [SETPRIV, '--reuid', user, '--regid', group, '--init-groups', '--no-new-privs', '--', *argv]
@@ -156,7 +217,7 @@ class Guard:
             return code, output
         finally:
             deployer.lock.verify()
-            deployer.ex.remove_tree(host, scratch, owner)
+            deployer.ex.remove_tree(host, scratch if copy is None else work, owner)
 
     def preflight(self, deployer, journal, record, sha):
         from wallet_pir_ops.deploy.engine import DeployError
@@ -203,9 +264,10 @@ class Guard:
         try:
             user, group = unit_identity(unit)
             argv = start_check(unit)
+            code, output = self.check_in_disposable_state(deployer, journal, record, argv, user, group, 'previous',
+                                                          'previous')
         except ValueError as error:
             return ['previous unit: %s' % error]
-        code, output = self.check_in_disposable_state(deployer, journal, record, argv, user, group, 'previous')
         if code:
             return ['the previous executable refuses current publications (exit %d); roll forward instead: %s'
                     % (code, output[-500:])]

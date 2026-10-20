@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Build and run the explicit unified-publisher/full-consumer HTTPS campaign.
 
+Two independent providers each run one `pir-query-server` process serving
+history and transaction detail from generated JSON configuration.
+
 Retains source/binary identities, original released-client provenance, process
 logs and raw observations under a new ignored run directory. This is local
 functional evidence, not production-state, unchanged-app or performance proof.
@@ -61,9 +64,12 @@ def main():
     code = 1
     try:
         with (output / "build.log").open("w") as log:
-            binaries = build(["build", "-p", "pir-publisher", "-p", "transparent-query-server",
-                              "--features", "pir-publisher/transparent",
-                              "--bin", "pir-publisher", "--bin", "transparent-query-server", "--bin", "transparent-txid-server"], log)
+            binaries = build(["build", "-p", "pir-publisher", "--features", "pir-publisher/transparent",
+                              "--bin", "pir-publisher"], log)
+            # Its own invocation, so the host's features are its Transparent products only.
+            binaries.update(build(["build", "-p", "pir-query-server",
+                                   "--features", "transparent-history,transparent-detail",
+                                   "--bin", "pir-query-server"], log))
             tests = build(["test", "-p", "pir-e2e-tests", "--features", "transparent-tests",
                             "--test", TEST, "--no-run"], log)
             client = build(["build", "--manifest-path", str(FROZEN / "Cargo.toml")], log)["frozen-provider-client"]
@@ -74,8 +80,7 @@ def main():
         manifest["binaries"] = {name: {"path": str(path), "sha256": digest(path)} for name, path in binaries.items()}
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         env = dict(os.environ, WALLET_PIR_PUBLISHER_BIN=str(binaries["pir-publisher"]),
-                   WALLET_PIR_PROVIDER_BIN=str(binaries["transparent-query-server"]),
-                   WALLET_PIR_DISPLAY_BIN=str(binaries["transparent-txid-server"]),
+                   WALLET_PIR_QUERY_SERVER_BIN=str(binaries["pir-query-server"]),
                    WALLET_PIR_FROZEN_CLIENT=str(client), WALLET_PIR_SOURCE_SHA=source,
                    WALLET_PIR_CAMPAIGN_OUT=str(output))
         with (output / "campaign.log").open("w") as log:

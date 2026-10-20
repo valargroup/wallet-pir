@@ -1,4 +1,7 @@
 # Standalone Transparent history provider. Only loopback administration is exposed.
+# ExecStart, ExecStartPre (`pir-query-server --config <file> --verify-only`),
+# the configuration under /etc/transparent-pir and paths are rendered by
+# tools/transparent/lib/roles.py.
 [Unit]
 Description=Transparent PIR history provider
 After=network-online.target

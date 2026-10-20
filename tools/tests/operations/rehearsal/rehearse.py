@@ -12,6 +12,10 @@ open under --forbid, so nothing is read from the source checkout. Binaries
 are copies of release builds; fixture controllers, nodes and oracles are the
 release's own tools or the rehearsal's fixture programs. Nothing here is a
 GPU qualification, and the local executor does not enforce the sandbox.
+Status, history and display run --binaries' one `pir-query-server`, so it must
+be built with the features of every selected role (`status`,
+`transparent-history`, `transparent-detail`); otherwise rehearse those roles
+from separate --binaries directories.
 """
 import argparse
 import http.server
@@ -308,7 +312,8 @@ def enhance():
 
 def history():
     r = Rehearsal('transparent-history-external-worker')
-    binary = r.binary('transparent-query-server')
+    # The release's pir-query-server, built with transparent-history and transparent-detail.
+    binary = r.binary('pir-query-server')
     sha = sha256(binary)
     p1 = r.work / 'publications/p1'
     p1.mkdir(parents=True)
@@ -326,7 +331,7 @@ def history():
     deployer.capture_baseline()
     journal = deployer.deploy(sha, binary)
     r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha,
-           product_check='transparent-query-server --verify-only on the staged set',
+           product_check='pir-query-server --config <staged transparent_history> --verify-only on the staged set',
            exact_answer='deploy exact_check passed (soak-query against the published files)')
     r.executor.systemctl('local', 'restart', 'transparent-history-worker.service')
     r.wait('ready after restart', lambda: r.executor.http_get('local', url + '/v1/ready')[0] == 200)
@@ -410,7 +415,7 @@ def status_worker():
 
 def display():
     r = Rehearsal('transparent-display-external-worker')
-    binary = r.binary('transparent-txid-server')
+    binary = r.binary('pir-query-server')
     fixture = r.binary('display_fixture')
     sha = sha256(binary)
     port = free_port()

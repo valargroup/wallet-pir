@@ -5,33 +5,31 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Bound to the VPC interface, not to loopback and not to the internet. The
+# Bound to the VPC address, not to loopback and not to the internet. The
 # firewall opens 8093 to the coordinator tag alone, so the only thing that can
 # reach this is the coordinator. It is deliberately not published: the
 # wallet-facing API is not designed yet, and the upstream default is loopback
 # for exactly that reason.
-# TRANSPARENT_SHARD_SET_PATH is substituted by deploy-transparent-shard.sh with
-# the versioned directory the set was shipped to, the same way the Caddyfile's
-# host is substituted. It is a path per published set rather than one directory
-# rewritten in place, so a rollback that restores this unit also restores the
-# set the restored binary was built to read. A set of another schema is refused
-# at load, so pointing an old binary at a new set is an outage, and pointing it
-# at the set it came with is not.
+# The command is the release's pir-query-server over one generated,
+# root-owned `transparent_history` configuration,
+# /etc/transparent-pir/shard-server.json (management 127.0.0.1:18190, loopback
+# only). deploy-transparent-shard.sh writes it: listen on the worker's VPC
+# address at 8093 (the host refuses unspecified listeners), query_slots 2, and
+# shard_dir set to the versioned directory the set was shipped to, the
+# same way the Caddyfile's host is substituted. It is a path per published set
+# rather than one directory rewritten in place, so a rollback that restores this
+# unit and that configuration also restores the set the restored binary was
+# built to read. A set of another schema is refused at load, so pointing an old
+# binary at a new set is an outage, and pointing it at the set it came with is
+# not. `pir-query-server --config <file> --verify-only` checks the file and the
+# set without listening.
 #
-# One line on purpose. systemd honours backslash continuations, but nothing
-# validates this file before `systemctl enable --now` runs it -- unlike the
-# Caddyfile, which is validated while the old config is still serving -- so a
-# mis-parse here is a failed start, and a failed start is a rollback onto a
-# shard set the restored binary may not be able to read. The line is long; the
-# alternative is a parsing surface with no check in front of it.
-#
-# TRANSPARENT_CACHE_BYTES, TRANSPARENT_MEMORY_MAX, TRANSPARENT_BUILD_SLOTS and
-# TRANSPARENT_EXTRA_ARGS are substituted the same way. A single-host pilot gets
-# 8 GiB, 12G, one build slot and nothing extra; a fleet worker gets its
-# roster's budgets and slots and
-# `--assignment <file> --worker-id <id> --prune-excess`, under which it loads
-# only its assigned tables, prewarms them, and reports ready only once warm.
-ExecStart=/usr/local/bin/transparent-query-server --listen 0.0.0.0:8093 --shard-dir TRANSPARENT_SHARD_SET_PATH --cache-bytes TRANSPARENT_CACHE_BYTES --build-slots TRANSPARENT_BUILD_SLOTS --query-slots 2 TRANSPARENT_EXTRA_ARGS
+# The configuration carries cache_bytes and build_slots, and TRANSPARENT_MEMORY_MAX
+# is substituted here. A single-host pilot gets 8 GiB, 12G, one build slot and
+# nothing extra; a fleet worker gets its roster's budgets and slots and
+# assignment, worker_id and prune_excess, under which it loads only its
+# assigned tables, prewarms them, and reports ready only once warm.
+ExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json
 Restart=on-failure
 RestartSec=10
 User=root
@@ -43,13 +41,13 @@ Environment=RUST_LOG=info
 # per table segment: a 32 MiB u16 database plus three 32 MiB pack matrices).
 #
 # This is now a backstop rather than the only limit. The service holds a
-# byte-bounded runtime cache -- 8 GiB above -- and refuses work it cannot make
+# byte-bounded runtime cache -- 8 GiB for the pilot -- and refuses work it cannot make
 # room for, so reaching this cap means the reservation is wrong rather than
 # that the set grew. The 4 GiB between the two covers what the reservation
 # deliberately does not count: allocator fragmentation, the transient plaintext
 # each build reads, the shared parameters, and in-flight requests.
 #
-# Re-measure with `shard-residency` before raising --cache-bytes. Swap is off so
+# Re-measure with `shard-residency` before raising cache_bytes. Swap is off so
 # a reservation that drifted low fails loudly here rather than degrading into
 # thrash.
 MemoryMax=TRANSPARENT_MEMORY_MAX

@@ -35,6 +35,13 @@ LOAD = 'transparent-5qps-continuous.service'
 SCALER = 'transparent-fleet-scaler.service'
 FILTER = 'transparent-filter-server.service'
 WORKER = 'transparent-shard-server.service'
+# The installed pir-query-server configuration of WORKER. pir-query-server binds
+# only its configured private listener; a legacy flag-form unit bound every
+# address, so loopback is its endpoint.
+WORKER_CONFIG = Path('/etc/transparent-pir/shard-server.json')
+LEGACY_ENDPOINT = '127.0.0.1:8093'
+PRIVATE_ENDPOINT = re.compile(r'(?:127|10)(?:\.\d{1,3}){3}:8093|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}:8093'
+                              r'|192\.168(?:\.\d{1,3}){2}:8093')
 CACHE = Path('/srv/transparent-pir/v11/runtime-cache')
 UNITS = {'coordinator': (*AUTHORITY, FILTER, LOAD, SCALER), 'worker': (WORKER,), 'router': ('caddy.service',)}
 WRITERS = {'coordinator': (SCALER, LOAD, *AUTHORITY, FILTER), 'worker': (WORKER,), 'router': ()}
@@ -245,10 +252,23 @@ class Commands:
         return reply['result']
 
 
-    def cache_observation(self):
-        # Fixed installed worker endpoint, never an operator-selected URL.
+    def worker_endpoint(self):
+        # The installed worker's own endpoint, never an operator-selected URL.
         try:
-            response = urllib.request.urlopen('http://127.0.0.1:8093/v1/ready', timeout=5)
+            text = WORKER_CONFIG.read_text()
+        except FileNotFoundError:
+            return LEGACY_ENDPOINT
+        config = json.loads(text, object_pairs_hook=unique)
+        listen = config
+        for key in ('transparent_history', 'settings', 'listen'):
+            listen = listen.get(key) if isinstance(listen, dict) else None
+        require(isinstance(listen, str) and PRIVATE_ENDPOINT.fullmatch(listen),
+                'installed worker configuration has no private port-8093 listener')
+        return listen
+
+    def cache_observation(self):
+        try:
+            response = urllib.request.urlopen(f'http://{self.worker_endpoint()}/v1/ready', timeout=5)
         except urllib.error.HTTPError as error:
             require(error.code == 503, 'unexpected cache readiness HTTP status')
             response = error

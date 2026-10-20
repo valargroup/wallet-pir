@@ -202,18 +202,22 @@ jobs:
           echo; echo "## unit: $(systemctl is-active transparent-shard-server 2>/dev/null)"
           systemctl cat transparent-shard-server 2>/dev/null | grep -E '^(ExecStart|MemoryMax|MemorySwapMax)'
           echo; echo "## release"; cat /opt/transparent-pir/current-release 2>/dev/null || echo "(none)"
-          sudo sha256sum /usr/local/bin/transparent-query-server 2>/dev/null
+          sudo sha256sum /usr/local/bin/pir-query-server /usr/local/bin/transparent-shard-server 2>/dev/null
           echo; echo "## rollback"; ls -l /opt/transparent-pir/rollback 2>/dev/null || echo "(none)"
           echo; echo "## sets"
           for dir in /srv/transparent-pir/sets/* /srv/transparent-pir/shards; do
             [[ -f "$dir/shards.json" ]] || continue
             printf '%s  shards.json sha256 %s  %s\n' "$dir" "$(sha256sum "$dir/shards.json" | cut -d' ' -f1)" "$(du -sh "$dir" | cut -f1)"
           done
-          echo; echo "## service (loopback)"
-          curl -fsS --max-time 10 http://127.0.0.1:8093/v1/health || echo "(no answer)"; echo
-          curl -fsS --max-time 10 http://127.0.0.1:8093/v1/ready || echo "(not ready)"; echo
-          printf 'map sha256 (loopback): '; curl -fsS --max-time 10 http://127.0.0.1:8093/v1/shards | sha256sum | cut -d' ' -f1
-          printf 'init: '; curl -fsS --max-time 10 http://127.0.0.1:8093/v1/shards/init | head -c 400; echo
+          # pir-query-server binds the configured (VPC) listener only; a legacy
+          # flag-form unit bound every address, so loopback reaches it.
+          listen="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["transparent_history"]["settings"]["listen"])' \
+            /etc/transparent-pir/shard-server.json 2>/dev/null || echo 127.0.0.1:8093)"
+          echo; echo "## service ($listen)"
+          curl -fsS --max-time 10 "http://$listen/v1/health" || echo "(no answer)"; echo
+          curl -fsS --max-time 10 "http://$listen/v1/ready" || echo "(not ready)"; echo
+          printf 'map sha256 (%s): ' "$listen"; curl -fsS --max-time 10 "http://$listen/v1/shards" | sha256sum | cut -d' ' -f1
+          printf 'init: '; curl -fsS --max-time 10 "http://$listen/v1/shards/init" | head -c 400; echo
           REMOTE
           {
             echo "## public origins"

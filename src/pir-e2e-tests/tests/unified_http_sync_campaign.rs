@@ -1,4 +1,5 @@
-//! Explicit local campaign for the actual unified publisher and independent consumers.
+//! Explicit local campaign for the actual unified publisher and two independent
+//! `pir-query-server` providers, each serving history and display in one process.
 //! Runs only through unified-http-sync-campaign.py; all observations are retained.
 use std::{
     io::Write,
@@ -121,6 +122,11 @@ impl Process {
         self.child = Some(
             tokio::process::Command::new(&self.command)
                 .args(&self.args)
+                // Retained logs keep info-level diagnostics unless overridden.
+                .env(
+                    "RUST_LOG",
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+                )
                 .stdout(Stdio::from(log.try_clone().unwrap()))
                 .stderr(Stdio::from(log))
                 .kill_on_drop(true)
@@ -228,52 +234,92 @@ async fn wait_through(process: &mut Process, origin: &str, path: &str, height: u
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
-fn consumer(
+/// One `pir-query-server` provider: a history and a display section in a
+/// single host process, each following its own HTTPS publisher origin.
+struct Provider {
+    process: Process,
+    management: String,
+}
+#[allow(clippy::too_many_arguments)]
+fn provider(
     name: &str,
-    display: bool,
-    publisher: &str,
-    listen: &str,
+    history_publisher: &str,
+    display_publisher: &str,
+    history_listen: &str,
+    display_listen: &str,
     cert: &Path,
     state: &Path,
     out: &Path,
-) -> Process {
-    let bin = std::env::var(if display {
-        "WALLET_PIR_DISPLAY_BIN"
-    } else {
-        "WALLET_PIR_PROVIDER_BIN"
-    })
+) -> Provider {
+    let management = address();
+    let common = serde_json::json!({
+        "publisher_network": "main",
+        "publisher_genesis": GENESIS,
+        "publisher_ca": cert,
+        "cache_bytes": 16u64 << 30,
+        "bootstrap_max_bytes": 16u64 << 30,
+    });
+    let mut history = common.clone();
+    history["publisher"] = history_publisher.into();
+    history["listen"] = history_listen.into();
+    history["shard_dir"] = state.join("history").display().to_string().into();
+    history["full_holdings"] = true.into();
+    let mut display = common;
+    display["publisher"] = display_publisher.into();
+    display["listen"] = display_listen.into();
+    display["role"] = "combined".into();
+    display["state_dir"] = state.join("display").display().to_string().into();
+    let config = out.join(format!("{name}.json"));
+    std::fs::write(
+        &config,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "management_listen": management,
+            "transparent_history": {"enabled": true, "settings": history},
+            "transaction_details": {"enabled": true, "settings": display},
+        }))
+        .unwrap(),
+    )
     .unwrap();
-    let mut args = vec![
-        "--publisher".into(),
-        publisher.into(),
-        "--publisher-network".into(),
-        "main".into(),
-        "--publisher-genesis".into(),
-        GENESIS.into(),
-        "--publisher-ca".into(),
-        cert.display().to_string(),
-        "--cache-bytes".into(),
-        (16u64 << 30).to_string(),
-        "--bootstrap-max-bytes".into(),
-        (16u64 << 30).to_string(),
-        "--listen".into(),
-        listen.into(),
-    ];
-    if display {
-        args.extend([
-            "--role".into(),
-            "combined".into(),
-            "--state-dir".into(),
-            state.display().to_string(),
-        ]);
-    } else {
-        args.extend([
-            "--shard-dir".into(),
-            state.display().to_string(),
-            "--full-holdings".into(),
-        ]);
+    let bin = std::env::var("WALLET_PIR_QUERY_SERVER_BIN").unwrap();
+    Provider {
+        process: Process::new(
+            name,
+            bin.into(),
+            vec!["--config".into(), config.display().to_string()],
+            out,
+        ),
+        management,
     }
-    Process::new(name, bin.into(), args, out)
+}
+impl Provider {
+    async fn wait_through(&mut self, history: &str, display: &str, height: u64) {
+        wait_through(&mut self.process, history, "/v2/shards/init", height).await;
+        wait_through(&mut self.process, display, "/v2/txid/init", height).await;
+    }
+    /// Both products refused to start; the host process stays up and reports them failed.
+    async fn wait_refused(&mut self) {
+        let origin = format!("http://{}", self.management);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            self.process.assert_running();
+            if let Some(health) = json(&origin, "/health").await {
+                let products = &health["products"];
+                if products["transparent_history"]["phase"] == "failed"
+                    && products["transaction_details"]["phase"] == "failed"
+                {
+                    assert_eq!(health["ready"], false);
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} products started without live authority: {}",
+                self.process.name,
+                std::fs::read_to_string(&self.process.log).unwrap()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
 }
 async fn recovery(client: &Path, origin: &str, journal: &Path, ledger: &Ledger) {
     let started = Instant::now();
@@ -366,7 +412,7 @@ async fn no_builds(origins: &[String], out: &Path) {
             .text()
             .await
             .unwrap();
-        std::fs::write(out.join(format!("consumer-{index}-metrics.txt")), &text).unwrap();
+        std::fs::write(out.join(format!("origin-{index}-metrics.txt")), &text).unwrap();
         let value = text
             .lines()
             .find(|line| line.starts_with("transparent_shard_builds_total"))
@@ -520,20 +566,18 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
     publisher.start();
     let addresses: Vec<_> = (0..4).map(|_| address()).collect();
     let origins: Vec<_> = addresses.iter().map(|a| format!("http://{a}")).collect();
-    let roots: Vec<_> = (0..4).map(|i| out.join(format!("consumer-{i}"))).collect();
-    let mut consumers: Vec<_> = (0..4)
-        .map(|i| {
-            consumer(
-                &format!("consumer-{i}"),
-                i % 2 == 1,
-                if i % 2 == 1 {
-                    &display_origin
-                } else {
-                    &history_origin
-                },
-                &addresses[i],
+    // Two independent providers; provider k serves history at origins[2k]
+    // and display at origins[2k + 1] from one host process and state root.
+    let mut providers: Vec<_> = (0..2)
+        .map(|k| {
+            provider(
+                &format!("provider-{k}"),
+                &history_origin,
+                &display_origin,
+                &addresses[2 * k],
+                &addresses[2 * k + 1],
                 &cert,
-                &roots[i],
+                &out.join(format!("provider-{k}")),
                 &out,
             )
         })
@@ -573,27 +617,18 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         "publisher_without_consumers",
         serde_json::json!({"height":8}),
     );
-    for (i, process) in consumers.iter_mut().enumerate() {
-        process.start();
-        wait_through(
-            process,
-            &origins[i],
-            if i % 2 == 0 {
-                "/v2/shards/init"
-            } else {
-                "/v2/txid/init"
-            },
-            8,
-        )
-        .await;
+    for (k, provider) in providers.iter_mut().enumerate() {
+        provider.process.start();
+        provider
+            .wait_through(&origins[2 * k], &origins[2 * k + 1], 8)
+            .await;
     }
     for i in [0, 2] {
         recovery(&frozen, &origins[i], &history, &ledger).await;
         display_lookup(&origins[i + 1], &display, 1, &ledger).await;
         display_lookup(&origins[i + 1], &display, 8, &ledger).await;
     }
-    consumers[0].stop().await;
-    consumers[1].stop().await;
+    providers[0].process.stop().await;
     for height in [9, 10] {
         publisher.stop().await;
         recovery(&frozen, &origins[2], &history, &ledger).await;
@@ -615,44 +650,36 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        wait_through(&mut consumers[3], &origins[3], "/v2/txid/init", height).await;
+        wait_through(
+            &mut providers[1].process,
+            &origins[3],
+            "/v2/txid/init",
+            height,
+        )
+        .await;
         recovery(&frozen, &origins[2], &history, &ledger).await;
         display_lookup(&origins[3], &display, height, &ledger).await;
         ledger.record("live_update", serde_json::json!({"height":height}));
     }
-    for i in [0, 1] {
-        consumers[i].start();
-        wait_through(
-            &mut consumers[i],
-            &origins[i],
-            if i == 0 {
-                "/v2/shards/init"
-            } else {
-                "/v2/txid/init"
-            },
-            10,
-        )
+    providers[0].process.start();
+    providers[0]
+        .wait_through(&origins[0], &origins[1], 10)
         .await;
-    }
     no_builds(&origins, &out).await;
     publisher.stop().await;
     for i in [0, 2] {
         recovery(&frozen, &origins[i], &history, &ledger).await;
         display_lookup(&origins[i + 1], &display, 10, &ledger).await;
     }
-    consumers[0].stop().await;
-    consumers[1].stop().await;
+    providers[0].process.stop().await;
     // Restart requires live authority, even when all bytes and the old active pointer exist.
-    for i in [0, 1] {
-        consumers[i].start();
-        let child = consumers[i].child.as_mut().unwrap();
-        let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(!status.success());
-        consumers[i].child = None;
-    }
+    providers[0].process.start();
+    providers[0].wait_refused().await;
+    ledger.record(
+        "restart_without_authority_refused",
+        serde_json::json!({"provider": 0}),
+    );
+    providers[0].process.stop().await;
     publisher.start();
     let deadline = Instant::now() + Duration::from_secs(300);
     loop {
@@ -677,20 +704,10 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    for i in [0, 1] {
-        consumers[i].start();
-        wait_through(
-            &mut consumers[i],
-            &origins[i],
-            if i == 0 {
-                "/v2/shards/init"
-            } else {
-                "/v2/txid/init"
-            },
-            10,
-        )
+    providers[0].process.start();
+    providers[0]
+        .wait_through(&origins[0], &origins[1], 10)
         .await;
-    }
     no_builds(&origins, &out).await;
     canonical.store(false, Ordering::Release);
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -710,8 +727,8 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     ledger.record("noncanonical_refused", serde_json::json!({"height":10}));
-    for process in &mut consumers {
-        process.stop().await;
+    for provider in &mut providers {
+        provider.process.stop().await;
     }
     publisher.stop().await;
     node_task.abort();

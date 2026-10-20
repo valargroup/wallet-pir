@@ -4,6 +4,7 @@
 //!
 //! Entries are fixed-size, so every lookup that reaches a shard sends the
 //! same transcript: found or absent, a complete entry or one with omissions.
+#![cfg(feature = "transparent-detail")]
 
 use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_protocol::transparent::events as transparent_events;

@@ -6,6 +6,8 @@ description = "Status PIR serving core: generations, serving authority and the p
 publish = false
 
 # These existing wire-contract regressions exercise the native protocol only.
+# A serving library only: pir-query-server is the entrypoint.
+autobins = false
 [[test]]
 name = "status_wallet"
 required-features = ["native-reinspiring"]

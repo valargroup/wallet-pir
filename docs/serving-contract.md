@@ -85,7 +85,7 @@ durability mechanisms in `src/shared/pir-control`; each owner keeps its own
 authority and retention rules above.
 
 Transparent history and txid display share a private activation transaction
-in `transparent-shard-server`. The adapters stay private to that crate.
+in `transparent-query-server`. The adapters stay private to that crate.
 The transaction holds command serialization in a blocking job,
 so a disconnected caller cannot release it while persistence is in progress.
 After checking already-active success and the expected predecessor, it locks

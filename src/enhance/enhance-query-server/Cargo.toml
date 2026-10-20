@@ -7,6 +7,8 @@ license = "MIT"
 description = "Enhance PIR protocol, client, prepared runtimes, workers and public query serving; no publication, chain reading or ingestion"
 publish = false
 
+# A serving library only: pir-query-server is the entrypoint.
+autobins = false
 [features]
 # Restore the larger ordinary-domain test campaigns during full qualification.
 qualification-tests = []

@@ -1,7 +1,9 @@
 # External Transparent txid display worker, rendered by
-# tools/transparent/lib/roles.py. It starts with no publication unless one is
+# tools/txid/lib/roles.py. It starts with no publication unless one is
 # recorded; the display controller stages, prepares and activates over the
-# root-only control socket. ExecStart and paths are rendered.
+# root-only control socket. ExecStart (`pir-query-server --config
+# /etc/transparent-pir/display-worker.json`), that configuration and paths are
+# rendered.
 [Unit]
 Description=Transparent txid display worker (external)
 After=network-online.target

@@ -177,8 +177,12 @@ def align_filter_origin(initial):
         execute(['systemctl','restart','transparent-filter-server'])
 
 
-WORKER_BINARY = '/usr/local/bin/transparent-query-server'
-LEGACY_WORKER_BINARY = '/usr/local/bin/transparent-shard-server'
+# The worker runs the release's pir-query-server over its generated
+# configuration. Hosts installed before it run a retired executable with flags;
+# their unit, executable and (absent) configuration are what a rollback restores.
+WORKER_BINARY = transparent_unit.SERVER
+WORKER_CONFIG = transparent_unit.CONFIG
+RETIRED_WORKER_BINARIES = ' '.join(transparent_unit.RETIRED_NAMES)
 
 STORAGE_PATH = '/usr/local/lib/transparent-pir/storage-policy.py'
 STORAGE_PRESTART = 'ExecStartPre=+/usr/bin/python3 '+STORAGE_PATH+' --apply'
@@ -193,15 +197,16 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
     if not before.get('ready') or before.get('mode')!='warm':
         raise RuntimeError(worker['id']+' is not a warm rollout predecessor')
     unit=(await fleet.ssh(host,'cat /etc/systemd/system/transparent-shard-server.service')).decode()
-    args=None
-    for line in unit.splitlines():
-        if line.startswith('ExecStart='):
-            args=shlex.split(line.removeprefix('ExecStart='))
-    if not args:
-        raise RuntimeError('worker unit lacks a simple ExecStart')
-    # Units written before the executable rename run the legacy path.
-    if args[0] == LEGACY_WORKER_BINARY:
-        args[0] = WORKER_BINARY
+    try:
+        current=(await fleet.ssh(host,'cat '+WORKER_CONFIG)).decode() if transparent_unit.configured(unit) else None
+        # The running settings as flags, from a retired executable's command
+        # line or the configuration pir-query-server runs.
+        args=[WORKER_BINARY]+transparent_unit.server_flags(unit, current)
+    except ValueError as error:
+        raise RuntimeError('worker unit lacks a simple ExecStart') from error
+    # pir-query-server refuses the unspecified address a retired unit may
+    # name; it listens on the worker's own VPC upstream.
+    args = replace_argument(args, '--listen', worker['upstream'])
     # Older units predate the fleet generator's persistent runtime cache.
     # Preserve explicit cache settings, but repair an absent cache before the
     # next restart so archive workers can restore instead of rebuilding.
@@ -235,7 +240,7 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
                 updated.append(args[index])
                 index += 1
         args = updated + ['--build-slots', str(slots)]
-    new_unit='\n'.join('ExecStart='+shlex.join(args) if line.startswith('ExecStart=') else line for line in unit.splitlines())+'\n'
+    new_unit, new_config = transparent_unit.worker_exec(unit, args[1:], WORKER_BINARY)
     # RuntimeDirectory is created before the binary opens its control socket.
     if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
         new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
@@ -266,11 +271,15 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
         storage_helper=(SCRIPT/'transparent-storage-policy.py').read_bytes()
         await fleet.ssh(host,'cat > '+remote+'/storage-policy.py',storage_helper)
         await fleet.ssh(host,'python3 '+remote+'/storage-policy.py --preflight')
-    for name in ['transparent-query-server','shard-control']:
+    for name in ['pir-query-server','shard-control']:
         await LIVE.run(['rsync','-a','-e',shlex.join(fleet.ssh_args),str(artifacts/name),'root@'+host+':'+remote+'/'+name],timeout=120)
     await verify_worker_artifacts(fleet, host, artifacts, remote)
-    verify=[remote+'/transparent-query-server']+args[1:]+['--verify-only']
-    await fleet.ssh(host,shlex.join(verify),timeout=300,multiplex=False)
+    await fleet.ssh(host,'cat > '+remote+'/shard-server.json',new_config.encode())
+    # The staged server checks the configuration statically, then loads and
+    # verifies it through its one-shot path, which binds no listener.
+    check=[remote+'/pir-query-server','--config',remote+'/shard-server.json']
+    await fleet.ssh(host,shlex.join(check+['--check']),timeout=60,multiplex=False)
+    await fleet.ssh(host,shlex.join(check+['--verify-only']),timeout=300,multiplex=False)
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
     if stage_only:
         return
@@ -282,24 +291,29 @@ if [ ! -f {shlex.quote(rollback)}/worker.service ]; then
  {storage_backup}
  if [ -f {STORAGE_PATH} ]; then cp {STORAGE_PATH} {shlex.quote(rollback)}/storage-policy.py; fi
  cp /etc/systemd/system/transparent-shard-server.service {shlex.quote(rollback)}/worker.service
- # Keep whichever executable the saved unit runs, legacy name included.
- for name in transparent-query-server transparent-shard-server; do
+ # Keep whichever executable the saved unit runs, retired names included,
+ # and the configuration a pir-query-server unit reads.
+ for name in pir-query-server {RETIRED_WORKER_BINARIES}; do
   if [ -f /usr/local/bin/$name ]; then cp /usr/local/bin/$name {shlex.quote(rollback)}/$name; fi
  done
+ if [ -f {WORKER_CONFIG} ]; then cp {WORKER_CONFIG} {shlex.quote(rollback)}/shard-server.json; fi
  cp /usr/local/bin/shard-control {shlex.quote(rollback)}/shard-control
  if [ -f {HEADLESS_PATH} ]; then cp {HEADLESS_PATH} {shlex.quote(rollback)}/headless-console.py; fi
 fi
 {headless_install}
 {storage_install}
-install -m755 {remote}/transparent-query-server /usr/local/bin/transparent-query-server.next
-mv /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server
+install -m755 {remote}/pir-query-server {WORKER_BINARY}.next
+mv {WORKER_BINARY}.next {WORKER_BINARY}
+install -d -m755 {shlex.quote(str(Path(WORKER_CONFIG).parent))}
+install -m644 {remote}/shard-server.json {WORKER_CONFIG}.next
+mv {WORKER_CONFIG}.next {WORKER_CONFIG}
 install -m755 {remote}/shard-control /usr/local/bin/shard-control
 install -m644 {remote}/worker.service /etc/systemd/system/transparent-shard-server.service
 systemctl daemon-reload
 systemctl restart transparent-shard-server
 '''
     await fleet.ssh(host,command)
-    expected_binary=hashlib.sha256((artifacts/'transparent-query-server').read_bytes()).hexdigest()
+    expected_binary=hashlib.sha256((artifacts/'pir-query-server').read_bytes()).hexdigest()
     deadline=time.monotonic()+warm_seconds
     while time.monotonic()<deadline:
         try:
@@ -324,10 +338,18 @@ systemctl restart transparent-shard-server
     raise RuntimeError(worker['id']+' failed to warm after upgrade')
 
 
+def restore_config(backup):
+    """Shell restoring the saved worker configuration; a unit saved before
+    pir-query-server had none, so the generated one is removed."""
+    saved = shlex.quote(str(backup)) + '/shard-server.json'
+    return (f'if [ -f {saved} ]; then install -D -m644 {saved} {WORKER_CONFIG}.rollback && '
+            f'mv {WORKER_CONFIG}.rollback {WORKER_CONFIG}; else rm -f {WORKER_CONFIG}; fi')
+
+
 async def verify_worker_artifacts(fleet, host, artifacts, remote):
-    hashes = (await fleet.ssh(host, 'sha256sum '+remote+'/transparent-query-server '+remote+'/shard-control')).decode().splitlines()
+    hashes = (await fleet.ssh(host, 'sha256sum '+remote+'/pir-query-server '+remote+'/shard-control')).decode().splitlines()
     expected_hashes = [hashlib.sha256((artifacts/name).read_bytes()).hexdigest()+'  '+remote+'/'+name
-                       for name in ['transparent-query-server','shard-control']]
+                       for name in ['pir-query-server','shard-control']]
     if hashes != expected_hashes:
         raise RuntimeError('worker transferred artifact checksum mismatch')
 
@@ -352,13 +374,14 @@ async def rollback(fleet, saved):
         if await fleet.ssh(worker['ssh_host'],f'test -f {shlex.quote(remote)}/worker.service && echo yes || true')!=b'yes\n':
             continue
         await fleet.ssh(worker['ssh_host'],f'''set -eu
-for name in transparent-query-server transparent-shard-server; do
+for name in pir-query-server {RETIRED_WORKER_BINARIES}; do
  if [ -f {shlex.quote(remote)}/$name ]; then
   cp {shlex.quote(remote)}/$name /usr/local/bin/$name.rollback
   chmod 755 /usr/local/bin/$name.rollback
   mv /usr/local/bin/$name.rollback /usr/local/bin/$name
  fi
 done
+{restore_config(remote)}
 cp {shlex.quote(remote)}/worker.service /etc/systemd/system/transparent-shard-server.service
 systemctl daemon-reload
 systemctl restart transparent-shard-server

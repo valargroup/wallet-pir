@@ -16,15 +16,17 @@ ARTIFACTS = (
     'transparent-event-ingest', 'shard-publish', 'event-spotcheck',
     'shard-verify', 'script-sample', 'transparent-publish-controller',
     'shard-cutoff', 'journal-inventory', 'shard-census', 'shard-assign', 'shard-control',
-    'transparent-shard-server', 'transparent-filter-server',
+    'pir-query-server', 'transparent-filter-server',
     'transparent-loadtest', 'transparent-measure',
     'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen',
 )
 
 
 # Retained evidence keeps its historical labels while Cargo uses current names.
+# The history server is pir-query-server under its own name: earlier results'
+# `transparent-shard-server` was the retired flag-driven executable, which
+# their frozen pins still describe.
 ARTIFACT_SOURCES = {
-    'transparent-shard-server': 'transparent-query-server',
     'transparent-filter-server': 'transparent-publisher',
     'examples/rate-query': 'rate-query',
 }
@@ -39,9 +41,12 @@ def build_commands(profile):
     """
     commands = [
         ['cargo', 'build', '--locked', '--profile', profile,
-         '-p', 'transparent-publisher', '-p', 'transparent-query-server',
+         '-p', 'transparent-publisher',
          '-p', 'transparent-tools', '--features',
          'transparent-publisher/rocksdb-reader,transparent-tools/benchmarks,transparent-tools/rocksdb-reader', '--bins'],
+        # Transparent history and transaction-detail serving: the configured host.
+        ['cargo', 'build', '--locked', '--profile', profile,
+         '-p', 'pir-query-server', '--features', 'transparent-history,transparent-detail', '--bin', 'pir-query-server'],
         ['cargo', 'build', '--locked', '--profile', profile,
          '-p', 'transparent-tools', '--example', 'activity-reopen', '--example', 'native_certificate'],
     ]
@@ -53,7 +58,7 @@ def build_commands(profile):
         ['cargo', 'test', '--locked', '--profile', profile,
          '-p', 'transparent-tools', '--features', 'benchmarks', '--test', 'compact_recovery'],
         ['cargo', 'test', '--locked', '--profile', profile,
-         '-p', 'transparent-query-server', '--test', 'wallet_anchor',
+         '-p', 'transparent-query-server', '--features', 'transparent-history,transparent-detail', '--test', 'wallet_anchor',
          '--test', 'wallet_continuation', '--test', 'wallet_recut', '--test', 'wallet_sync'],
         ['cargo', 'test', '--locked', '--profile', profile,
          '-p', 'transparent-tools', '--features', 'benchmarks', '--tests'],

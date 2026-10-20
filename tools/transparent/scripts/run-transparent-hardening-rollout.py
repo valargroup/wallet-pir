@@ -35,7 +35,7 @@ async def command(args, logfile):
 
 async def run(args):
     args.out.mkdir(parents=True, exist_ok=False)
-    binary = hashlib.sha256((args.artifacts/'transparent-query-server').read_bytes()).hexdigest()
+    binary = hashlib.sha256((args.artifacts/'pir-query-server').read_bytes()).hexdigest()
     canary = 'transparent-pir-recent-01'
     query = args.artifacts/'soak-query'
     upgrade = [sys.executable, HERE/'upgrade-transparent-fleet.py', '--fleet-config', args.fleet_config,

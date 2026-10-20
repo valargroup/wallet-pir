@@ -100,7 +100,7 @@ class ActuatorTests(unittest.TestCase):
         actuator = A.Actuator(config, self.fleet, self.elastic, FakeDO(self.provider), FakeRemote(),
                               now=lambda: self.clock[0])
         actuator.validate_plan = lambda plan, **kw: {'ok': True, **{k: list(v) for k, v in kw.items()}}
-        actuator.fleet_release = lambda: {'sha': 'rel', 'binary_sha256': 'b' * 64, 'dir': '/rel'}
+        actuator.fleet_release = lambda: {'sha': 'rel', 'binary_sha256': 'b' * 64, 'dir': '/rel', 'binary': 'pir-query-server'}
         actuator.generate_host_key = lambda op, name: {'public': 'ssh-ed25519 KEY' + name[-2:], 'private_path': '/nonexistent'}
         actuator.host_keys = lambda op: {}
         return actuator
@@ -280,6 +280,50 @@ class ActuatorTests(unittest.TestCase):
         self.assertIsNone(self.actuator.run_once())
         last = self.actuator.history()[-1]
         self.assertEqual((last['decision_id'], last['phase']), ('d9', 'refused'))
+
+    def test_new_members_clone_a_peer_into_the_releases_server_form(self):
+        legacy = ('[Service]\nExecStart=/usr/local/bin/transparent-shard-server --listen 0.0.0.0:8093 '
+                  '--shard-dir /pub/old --cache-bytes 5368709120 --worker-id transparent-pir-recent-01 '
+                  '--assignment /pub/old/assignment.json --runtime-cache-dir /srv/transparent-pir/runtime-cache '
+                  '--control-socket /run/transparent-pir/control.sock --active-record /opt/transparent-publisher/active.json\n'
+                  'MemoryMax=7G\n')
+        files = {'cat /etc/systemd/system/transparent-shard-server.service': legacy}
+        self.actuator.remote.run = lambda host, command, data=None, timeout=120: files[command]
+        new, publication = 'transparent-pir-recent-03', '/pub/new'
+        unit, config = A.render_unit(self.actuator, new, publication, '/usr/local/bin/pir-query-server', '10.0.9.3:8093')
+        self.assertIn('\nExecStart=/usr/local/bin/pir-query-server --config /etc/transparent-pir/shard-server.json\n', unit)
+        self.assertIn('MemoryMax=7G\n', unit)
+        document = json.loads(config)
+        self.assertEqual(document['management_listen'], '127.0.0.1:18190')
+        settings = document['transparent_history']['settings']
+        self.assertEqual((settings['listen'], settings['worker_id'], settings['shard_dir'], settings['assignment']),
+                         ('10.0.9.3:8093', new, publication, publication + '/assignment.json'))
+        self.assertEqual(settings['cache_bytes'], 5368709120)
+        self.assertEqual(list(A.unit_directories(unit, config)),
+                         ['/srv/transparent-pir/runtime-cache', '/opt/transparent-publisher'])
+        # A configured peer is read through its configuration; a release from
+        # before pir-query-server still gets the retired executable's flags.
+        files['cat /etc/systemd/system/transparent-shard-server.service'] = unit
+        files['cat /etc/transparent-pir/shard-server.json'] = config
+        retired, none = A.render_unit(self.actuator, 'transparent-pir-recent-04', '/pub/four',
+                                      '/usr/local/bin/transparent-query-server')
+        self.assertIsNone(none)
+        self.assertIn('ExecStart=/usr/local/bin/transparent-query-server --listen 10.0.9.3:8093 --shard-dir /pub/four ', retired)
+        self.assertEqual(A.release_binary({}), 'transparent-query-server')
+        with self.assertRaises(A.ActuatorError):
+            A.release_binary({'binary': 'other'})
+
+    def test_the_fleet_release_names_the_server_it_ships(self):
+        store = Path(self.temp.name)/'releases'
+        for release, name in (('old', 'transparent-query-server'), ('new', 'pir-query-server')):
+            (store/release).mkdir(parents=True)
+            (store/release/'SHA256SUMS').write_text(f'{release[0] * 64}  {name}\n{"c" * 64}  shard-control\n')
+        actuator = A.Actuator(dict(scaler_dir=str(self.scaler), release_store=str(store)), self.fleet, self.elastic,
+                              FakeDO(self.provider), FakeRemote(), now=lambda: self.clock[0])
+        for digest, release, name in (('n' * 64, 'new', 'pir-query-server'), ('o' * 64, 'old', 'transparent-query-server')):
+            with patch.object(A, 'http_json', return_value={'binary_sha256': digest}):
+                found = actuator.fleet_release()
+            self.assertEqual((found['sha'], found['binary']), (release, name))
 
     def test_scale_out_respects_max_recent(self):
         self.policy(mode='act', max_recent=2)

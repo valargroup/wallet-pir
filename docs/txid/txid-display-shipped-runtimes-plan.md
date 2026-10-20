@@ -6,8 +6,8 @@ BASE=<base>`). Read `CLAUDE.md` and `AGENTS.md` first.
 
 ## Goal
 
-Every block, the txid display recent worker (`transparent-txid-server --role recent-replica`
-on recent-01) rebuilds the two `txid-2k` tables of the new recent revision: encode, hint
+Every block, the txid display recent worker (`pir-query-server` with a `transaction_details`
+section, `"role": "recent-replica"`, on recent-01) rebuilds the two `txid-2k` tables of the new recent revision: encode, hint
 and two-mask preprocessing. That costs about 12 CPU-seconds per block. It competes with
 the worker's own queries: recent-shard query p50 rises from 29 to 75 ms and p99 from 101
 to 306 ms during a rebuild, at 20 lookups/s. It is also most of block-to-serving time:
@@ -197,7 +197,7 @@ before starting.
   `~/.config/wallet-pir-deploy/txid-display/measure-20qps-20261007/`: `events.jsonl`,
   `TRIPPED`. Do not restart anything inside one of its load windows.
 - **Build** release binaries with the CI flags:
-  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p transparent-shard-server -p transparent-filter-server --bin transparent-txid-server --bin txid-display-controller`
+  - `RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" cargo build --locked --release -p pir-query-server -p transparent-publisher --features pir-query-server/transparent-detail --bin pir-query-server --bin txid-display-controller`
   - Check the minimum glibc version against the hosts (2.39).
 - **Order:**
   1. **Worker first.** Its behavior is unchanged when no shipped files are present.

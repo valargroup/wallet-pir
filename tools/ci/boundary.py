@@ -248,8 +248,30 @@ def manifests(root=ROOT):
         packages.append({'name': data['package']['name'], 'manifest': relative,
                          'dependencies': dependencies,
                          'features': sorted(data.get('features', {})),
+                         'autobins': data['package'].get('autobins', True),
+                         'bins': [target.get('name') for target in data.get('bin', [])],
                          'preserved': relative.startswith(EXCLUDED)})
     return packages
+
+
+# Serving libraries; `pir-query-server` is their only executable entrypoint.
+SERVING_LIBRARIES = ('enhance-query-server', 'status-query-server',
+                     'transparent-query-server', 'receiver-pir-server')
+
+
+def serving_binary_violations(packages):
+    """Serving crates that could build an executable: each must set
+    `autobins = false` and declare no `[[bin]]` target."""
+    problems = []
+    for package in packages:
+        if package['name'] not in SERVING_LIBRARIES or package['preserved']:
+            continue
+        if package.get('autobins', True) is not False:
+            problems.append(f"{package['name']}: serving library must set autobins = false")
+        for name in package.get('bins', []):
+            problems.append(f"{package['name']}: serving library declares binary {name}; "
+                            'run it through pir-query-server')
+    return problems
 
 
 def violations(packages, allowed):
@@ -567,7 +589,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     allowed = json.loads(ALLOWLIST.read_text())['edges']
     from cuda_boundary import manifest_violations, cpu_graph_violations
-    problems = violations(manifests(), allowed) + manifest_violations()
+    packages = manifests()
+    problems = violations(packages, allowed) + manifest_violations()
+    problems += serving_binary_violations(packages)
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
     # these are the two workspaces used by the current services and sizing tool.

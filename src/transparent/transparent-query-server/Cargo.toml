@@ -5,38 +5,17 @@ edition = "2021"
 description = "Transparent PIR shard server"
 license = "MIT"
 repository = "https://github.com/valargroup/wallet-pir"
-# Every binary is listed below; a stray src/bin file is not a new program.
+# A serving library only: pir-query-server is the entrypoint.
 autobins = false
 
 [lib]
 name = "transparent_query_server"
 path = "src/lib.rs"
 
-[[bin]]
-name = "transparent-query-server"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "transparent-txid-server"
-path = "src/bin/txid-server.rs"
-
-[[bin]]
-name = "txid-control"
-path = "src/bin/txid-control.rs"
-
-[[bin]]
-name = "shard-assign"
-path = "src/bin/shard-assign.rs"
-
-[[bin]]
-name = "shard-prune"
-path = "src/bin/shard-prune.rs"
-
-[[bin]]
-name = "shard-control"
-path = "src/bin/shard-control.rs"
-
 [features]
+default = []
+transparent-history = []
+transparent-detail = []
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
 portable-kernel = ["transparent-shared/portable-kernel"]
 

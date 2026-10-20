@@ -24,11 +24,14 @@ BINARIES = {
     # GPU hosts run this query server, not the publisher. The clients are diagnostics.
     'enhance-pir-native-cuda': ['pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-publisher'],
-    'transparent-shard': ['transparent-query-server', 'shard-assign', 'shard-prune'],
-    'transparent-publisher': ['transparent-publish-controller', 'transparent-query-server', 'shard-control', 'shard-assign'],
+    # Transparent history and txid display processes run pir-query-server
+    # (features `transparent-history,transparent-detail`) with `--config`; the
+    # admin tools come from transparent-tools.
+    'transparent-shard': ['pir-query-server', 'shard-assign', 'shard-prune'],
+    'transparent-publisher': ['transparent-publish-controller', 'pir-query-server', 'shard-control', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by
     # `wallet-pir-deploy.py txid-display-*` (tools/txid/lib/txid_display_poc.py).
-    'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
+    'transparent-txid-display': ['pir-query-server', 'txid-control', 'txid-inventory',
                                  'txid-display-controller', 'transparent-event-ingest',
                                  'txid-quality-canary'],
     # Status publisher and the query server its roles run, from the native target

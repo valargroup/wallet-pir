@@ -238,8 +238,9 @@ preflight_capacity() {
 # Where this publication's set lives on the worker.
 #
 # A directory per published set, named for the set it came from, rather than one
-# directory rewritten in place. That is what makes a rollback coherent: the unit
-# names its own set, so restoring the unit restores the pairing. Replacing the
+# directory rewritten in place. That is what makes a rollback coherent: the
+# unit's configuration names its own set, so restoring the unit and its
+# configuration restores the pairing. Replacing the
 # set in place meant a restored binary met a set of a schema it could not read,
 # which is an outage rather than a rollback.
 # Pure: it is used in command substitution, and `fail` inside `$(...)` exits
@@ -249,7 +250,8 @@ shard_set_path() {
   printf '%s/%s\n' "$TRANSPARENT_SHARD_DIR" "$(basename "$TRANSPARENT_SHARD_SOURCE")"
 }
 
-# Renders the unit for this publication and checks it, printing the path.
+# Renders the unit and its configuration for this publication and checks
+# them.
 #
 # Local, so `validate` runs it without a host. Nothing validated this file
 # before `systemctl enable --now` executed it, which is the gap the Caddyfile
@@ -257,38 +259,88 @@ shard_set_path() {
 # a rollback. `systemd-analyze verify` is deliberately not the gate -- at stage
 # time the binary is not yet at the path the unit names, so it would fail every
 # first deploy for a reason that is not a fault.
-# Sets RENDERED_UNIT rather than printing it, because every check below calls
-# `fail`, and a `fail` inside `$(render_unit)` would exit the subshell while the
-# caller carried on with an empty path -- which is how a broken unit reached the
-# end of a validate run reporting success.
+# Sets RENDERED_UNIT and RENDERED_CONFIG rather than printing them, because
+# every check below calls `fail`, and a `fail` inside `$(render_unit)` would
+# exit the subshell while the caller carried on with an empty path -- which is
+# how a broken unit reached the end of a validate run reporting success.
 # Single-host pilot budgets. A fleet worker gets its roster's values instead.
 PILOT_CACHE_BYTES=8589934592
 PILOT_MEMORY_MAX=12G
 
+# The unit runs the release's pir-query-server over one generated, root-owned
+# `transparent_history` configuration with its own loopback management
+# listener. The settings are what the retired executable took as flags.
+readonly SHARD_SERVER_BINARY=/usr/local/bin/pir-query-server
+readonly SHARD_SERVER_CONFIG=/etc/transparent-pir/shard-server.json
+readonly SHARD_SERVER_MANAGEMENT=127.0.0.1:18190
+
+# Flags of the retired executable as a `transparent_history` settings object:
+# the long name with '-' -> '_', switches as true, numbers as integers and a
+# repeated prune set as an array. Anything else is refused rather than guessed.
+# Returns nonzero instead of calling `fail`: it runs inside `$(...)`.
+flags_to_settings() {
+  local -a words=()
+  read -r -a words <<<"$1"
+  local json='{}' i=0 flag name value
+  while (( i < ${#words[@]} )); do
+    flag="${words[i]}"
+    [[ "$flag" =~ ^--[a-z][a-z-]*$ ]] || { echo "unexpected server argument $flag" >&2; return 1; }
+    name="${flag#--}"; name="${name//-/_}"
+    case "$name" in
+      prune_excess|pilot_cold|full_holdings)
+        json="$(jq -c --arg k "$name" '.[$k] = true' <<<"$json")"; i=$((i + 1)); continue ;;
+    esac
+    (( i + 1 < ${#words[@]} )) || { echo "$flag needs a value" >&2; return 1; }
+    value="${words[i + 1]}"
+    case "$name" in
+      bootstrap_max_bytes|cache_bytes|runtime_cache_max_bytes|runtime_restore_slots|build_slots|query_slots|\
+      retain_revisions|query_waiters|body_bytes|upload_deadline_secs|query_deadline_secs|retain_bytes)
+        [[ "$value" =~ ^[0-9]+$ ]] || { echo "$flag must be an integer: $value" >&2; return 1; }
+        json="$(jq -c --arg k "$name" --argjson v "$value" '.[$k] = $v' <<<"$json")" ;;
+      runtime_cache_prune_set)
+        json="$(jq -c --arg k "$name" --arg v "$value" '.[$k] += [$v]' <<<"$json")" ;;
+      publisher|archive_upstream|archive_ca|publisher_network|publisher_genesis|publisher_ca|listen|shard_dir|\
+      runtime_cache_dir|assignment|worker_id|control_socket|active_record)
+        json="$(jq -c --arg k "$name" --arg v "$value" '.[$k] = $v' <<<"$json")" ;;
+      *) echo "unknown server argument $flag" >&2; return 1 ;;
+    esac
+    i=$((i + 2))
+  done
+  printf '%s\n' "$json"
+}
+
+# A fixed private IPv4 listener: pir-query-server refuses an unspecified or
+# public address, so the shard server binds the VPC address it is reached at.
+private_listen() {
+  [[ "$1" =~ ^(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}):[1-9][0-9]{0,4}$ ]]
+}
+
 RENDERED_UNIT=""
+RENDERED_CONFIG=""
 render_unit() {
   # Optional overrides, for a fleet worker: cache bytes, MemoryMax, extra
-  # arguments, and the file name to render to.
+  # settings (as the retired executable's flags), the file name suffix to
+  # render to, build slots and the VPC listener.
   local cache_bytes="${1:-$PILOT_CACHE_BYTES}"
   local memory_max="${2:-$PILOT_MEMORY_MAX}"
   local extra_args="${3:-}"
   local suffix="${4:-}"
   local build_slots="${5:-1}"
-  local set_path unit execstarts exec_line
+  local listen="${6:-${TRANSPARENT_WORKER_LISTEN:-${TRANSPARENT_WORKER_HOST:-}:8093}}"
+  local set_path unit config settings execstarts exec_line
   set_path="$(shard_set_path)"
   unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service${suffix}.rendered"
+  config="$TRANSPARENT_ARTIFACT_DIR/shard-server.json${suffix}.rendered"
   [[ "$cache_bytes" =~ ^[0-9]+$ ]] || fail "cache bytes must be a number: $cache_bytes"
   [[ "$memory_max" =~ ^[0-9]+[KMGT]?$ ]] || fail "MemoryMax must be a systemd size: $memory_max"
   [[ "$build_slots" =~ ^[1-9][0-9]?$ ]] || fail "build slots must be a small positive number: $build_slots"
+  private_listen "$listen" \
+    || fail "listen must be a private IPv4 address and port (the worker's VPC address): $listen"
   # Quoted regex: an unquoted `[... ]` with a space inside is parsed as two
   # words. Letters, digits, space, dot, underscore, slash, equals, dash.
   local plain='^[-A-Za-z0-9 ._/=]*$'
-  [[ "$extra_args" =~ $plain ]] || fail "extra arguments contain characters the unit must not carry"
-  sed -e "s|TRANSPARENT_SHARD_SET_PATH|$set_path|" \
-    -e "s|TRANSPARENT_CACHE_BYTES|$cache_bytes|" \
-    -e "s|TRANSPARENT_MEMORY_MAX|$memory_max|" \
-    -e "s|TRANSPARENT_BUILD_SLOTS|$build_slots|" \
-    -e "s|TRANSPARENT_EXTRA_ARGS|$extra_args|" \
+  [[ "$extra_args" =~ $plain ]] || fail "extra arguments contain characters the configuration must not carry"
+  sed -e "s|TRANSPARENT_MEMORY_MAX|$memory_max|" \
     "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" \
     | sed -e 's/[[:space:]]*$//' >"$unit"
   grep -q "TRANSPARENT_SHARD_SET_PATH\|TRANSPARENT_CACHE_BYTES\|TRANSPARENT_MEMORY_MAX\|TRANSPARENT_BUILD_SLOTS\|TRANSPARENT_EXTRA_ARGS" "$unit" \
@@ -299,43 +351,76 @@ render_unit() {
   exec_line="$(sed -n 's/^ExecStart=//p' "$unit")"
   [[ "$exec_line" == /* ]] \
     || fail "unit ExecStart does not begin with an absolute path: $exec_line"
-  grep -q -- "--shard-dir $set_path" "$unit" \
-    || fail "unit does not name the shard set it is being deployed with"
+  # The shard set is named by the configuration, so the unit must run exactly
+  # that configuration; anything else would not serve the set being deployed.
+  [[ "$exec_line" == "$SHARD_SERVER_BINARY --config $SHARD_SERVER_CONFIG" ]] \
+    || fail "unit ExecStart must be $SHARD_SERVER_BINARY --config $SHARD_SERVER_CONFIG"
   # A continuation that did not join leaves an argument stranded on its own
   # line, which systemd reads as a second directive rather than as an error.
   grep -qE '\\$' "$unit" \
     && fail "unit uses line continuations; keep ExecStart on one line"
+  settings="$(flags_to_settings "--listen $listen --shard-dir $set_path --cache-bytes $cache_bytes --build-slots $build_slots --query-slots 2 $extra_args")" \
+    || fail "extra arguments do not describe shard server settings: $extra_args"
+  jq -n --arg management "$SHARD_SERVER_MANAGEMENT" --argjson settings "$settings" \
+    '{management_listen: $management, transparent_history: {enabled: true, settings: $settings}}' >"$config"
+  jq -e --arg set "$set_path" '.transparent_history.settings.shard_dir == $set' "$config" >/dev/null \
+    || fail "configuration does not name the shard set it is being deployed with"
+  jq -e '.transparent_history.settings | has("verify_only") | not' "$config" >/dev/null \
+    || fail "a serving configuration must not carry verify_only"
   RENDERED_UNIT="$unit"
+  RENDERED_CONFIG="$config"
+}
+
+# Renders the worker's Caddyfile against the rendered configuration `$1`.
+#
+# The public host is substituted here rather than on the worker, so the file
+# that gets validated is byte-for-byte the file that gets installed. The
+# upstream is the configuration's own listener: the shard server binds only its
+# VPC address, so a loopback upstream would leave the public edge with nothing
+# to proxy to. Sets RENDERED_CADDYFILE, for the same reason render_unit does
+# not print.
+RENDERED_CADDYFILE=""
+render_caddyfile() {
+  local host="${TRANSPARENT_PUBLIC_URL#https://}"
+  local rendered="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.rendered"
+  local upstream
+  upstream="$(jq -er '.transparent_history.settings.listen' "$1")" \
+    || fail "configuration $1 names no listener"
+  private_listen "$upstream" || fail "configured listener is not a private IPv4 address: $upstream"
+  sed -e "s/TRANSPARENT_PUBLIC_HOST/$host/" -e "s/TRANSPARENT_SHARD_UPSTREAM/$upstream/" \
+    "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" >"$rendered"
+  grep -q "TRANSPARENT_PUBLIC_HOST\|TRANSPARENT_SHARD_UPSTREAM" "$rendered" \
+    && fail "Caddyfile still carries an unsubstituted token"
+  grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
+  grep -q "reverse_proxy $upstream\$" "$rendered" \
+    || fail "rendered Caddyfile does not proxy to the configured listener $upstream"
+  grep -E 'reverse_proxy ' "$rendered" | grep -qv "reverse_proxy $upstream\$" \
+    && fail "rendered Caddyfile proxies to something other than $upstream"
+  RENDERED_CADDYFILE="$rendered"
 }
 
 stage() {
   local staged="/tmp/transparent-pir-$TRANSPARENT_RELEASE_SHA"
   local -a opts
   mapfile -t opts < <(ssh_opts)
-  echo "== stage binary, unit and Caddyfile"
-
-  # The public host is substituted here rather than on the worker, so the file
-  # that gets validated is byte-for-byte the file that gets installed.
-  local host="${TRANSPARENT_PUBLIC_URL#https://}"
-  local rendered="$TRANSPARENT_ARTIFACT_DIR/Caddyfile.rendered"
-  sed "s/TRANSPARENT_PUBLIC_HOST/$host/" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" >"$rendered"
-  grep -q "TRANSPARENT_PUBLIC_HOST" "$rendered" \
-    && fail "Caddyfile still carries an unsubstituted token"
-  grep -q "^$host {" "$rendered" || fail "rendered Caddyfile does not name $host"
+  echo "== stage binary, unit, configuration and Caddyfile"
 
   render_unit
-  local unit="$RENDERED_UNIT"
+  local unit="$RENDERED_UNIT" config="$RENDERED_CONFIG"
+  render_caddyfile "$config"
+  local rendered="$RENDERED_CADDYFILE"
 
   worker_ssh "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" \
+    "$TRANSPARENT_ARTIFACT_DIR/pir-query-server" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/"
   scp "${opts[@]}" "$rendered" \
     "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/Caddyfile"
   scp "${opts[@]}" "$unit" \
     "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/unit.rendered"
+  scp "${opts[@]}" "$config" \
+    "$WALLET_PIR_DEPLOY_USER@$TRANSPARENT_WORKER_HOST:$staged/shard-server.json"
 
   # Verified on the far side: a truncated copy that still looked like an ELF
   # binary would otherwise be installed and only fail at start. Caddy validates
@@ -345,7 +430,7 @@ stage() {
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
-chmod 0755 transparent-query-server
+chmod 0755 pir-query-server
 sudo caddy validate --config Caddyfile --adapter caddyfile
 REMOTE
 }
@@ -394,15 +479,25 @@ set -euo pipefail
 staged="$1"; sha="$2"
 release="/opt/transparent-pir/releases/$sha"
 sudo mkdir -p "$release" /opt/transparent-pir/rollback
-sudo install -m 0755 "$staged/transparent-query-server" "$release/"
+sudo install -m 0755 "$staged/pir-query-server" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
+sudo install -m 0644 "$staged/shard-server.json" "$release/shard-server.json"
 
 # Keep whatever is running now, so a failed start has something to go back to.
-# Hosts installed before the executable rename keep the legacy name, which the
-# saved unit still runs; keep it too so rollback restores a working pair.
+# Hosts installed before pir-query-server keep a retired executable name,
+# which the saved unit still runs with its own flags; keep it too so rollback
+# restores a working pair. The current executable and its configuration are
+# mirrored exactly, so a stale copy is never restored beside a legacy unit.
 for name in transparent-query-server transparent-shard-server; do
   if [[ -x /usr/local/bin/$name ]]; then
     sudo cp -f /usr/local/bin/$name /opt/transparent-pir/rollback/
+  fi
+done
+for path in /usr/local/bin/pir-query-server /etc/transparent-pir/shard-server.json; do
+  if [[ -f "$path" ]]; then
+    sudo cp -f "$path" /opt/transparent-pir/rollback/
+  else
+    sudo rm -f "/opt/transparent-pir/rollback/$(basename "$path")"
   fi
 done
 if [[ -f /etc/systemd/system/transparent-shard-server.service ]]; then
@@ -411,9 +506,13 @@ fi
 
 sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
 # Installed beside the target and moved into place, so an interrupted copy
-# never leaves a half-written binary at the path systemd will execute.
-sudo install -m 0755 "$release/transparent-query-server" /usr/local/bin/transparent-query-server.next
-sudo mv -f /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server
+# never leaves a half-written binary or configuration at the path systemd will
+# execute or the server will read.
+sudo install -m 0755 "$release/pir-query-server" /usr/local/bin/pir-query-server.next
+sudo mv -f /usr/local/bin/pir-query-server.next /usr/local/bin/pir-query-server
+sudo install -d -m 0755 /etc/transparent-pir
+sudo install -m 0644 "$release/shard-server.json" /etc/transparent-pir/shard-server.json.next
+sudo mv -f /etc/transparent-pir/shard-server.json.next /etc/transparent-pir/shard-server.json
 sudo install -m 0644 "$release/transparent-shard-server.service" \
   /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
@@ -435,12 +534,21 @@ rollback() {
   echo "== rollback" >&2
   worker_ssh bash -s <<'REMOTE' || true
 set -euo pipefail
-if [[ -x /opt/transparent-pir/rollback/transparent-query-server || -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
-  for name in transparent-query-server transparent-shard-server; do
+if [[ -x /opt/transparent-pir/rollback/pir-query-server || -x /opt/transparent-pir/rollback/transparent-query-server \
+  || -x /opt/transparent-pir/rollback/transparent-shard-server ]]; then
+  for name in pir-query-server transparent-query-server transparent-shard-server; do
     if [[ -x /opt/transparent-pir/rollback/$name ]]; then
       sudo install -m 0755 /opt/transparent-pir/rollback/$name /usr/local/bin/$name
     fi
   done
+  # The previous configuration goes back with its unit; a legacy unit takes
+  # its settings as flags and had none.
+  if [[ -f /opt/transparent-pir/rollback/shard-server.json ]]; then
+    sudo install -d -m 0755 /etc/transparent-pir
+    sudo install -m 0644 /opt/transparent-pir/rollback/shard-server.json /etc/transparent-pir/shard-server.json
+  else
+    sudo rm -f /etc/transparent-pir/shard-server.json
+  fi
   if [[ -f /opt/transparent-pir/rollback/transparent-shard-server.service ]]; then
     sudo install -m 0644 /opt/transparent-pir/rollback/transparent-shard-server.service \
       /etc/systemd/system/transparent-shard-server.service
@@ -739,22 +847,24 @@ fleet_prepare() {
   action="$(worker_action "$id")"
   [[ "$action" == restart || "$action" == tools ]] || return 0
   local unit="$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service.$id.rendered"
-  echo "== stage $id ($host): binary, tools, unit, assignment"
+  local config="$TRANSPARENT_ARTIFACT_DIR/shard-server.json.$id.rendered"
+  echo "== stage $id ($host): binary, tools, unit, configuration, assignment"
   host_ssh "$host" "mkdir -p $(printf %q "$staged")"
   scp "${opts[@]}" \
-    "$TRANSPARENT_ARTIFACT_DIR/transparent-query-server" \
+    "$TRANSPARENT_ARTIFACT_DIR/pir-query-server" \
     "$TRANSPARENT_ARTIFACT_DIR/shard-prune" \
     "$TRANSPARENT_ARTIFACT_DIR/SHA256SUMS" \
     "$TRANSPARENT_ASSIGNMENT" \
     "$WALLET_PIR_DEPLOY_USER@$host:$staged/"
   scp "${opts[@]}" "$unit" "$WALLET_PIR_DEPLOY_USER@$host:$staged/unit.rendered"
-  # The unit names the assignment by its digest; the staged copy carries
-  # that name too, so the verify-only run below and the install find it.
+  scp "${opts[@]}" "$config" "$WALLET_PIR_DEPLOY_USER@$host:$staged/shard-server.json"
+  # The configuration names the assignment by its digest; the staged copy
+  # carries that name too, so the verify-only run below and the install find it.
   host_ssh "$host" bash -s -- "$staged" "$assignment_sha" <<'REMOTE'
 set -euo pipefail
 cd "$1"
 sha256sum -c SHA256SUMS --ignore-missing
-chmod 0755 transparent-query-server shard-prune
+chmod 0755 pir-query-server shard-prune
 cp -f assignment.json "$2.json"
 REMOTE
   dest="$(shard_set_path)"
@@ -830,7 +940,7 @@ REMOTE
 }
 
 # The staged binary loads and verifies each worker's subset under its own
-# unit's arguments while the running service is untouched. This is the gate
+# configuration while the running service is untouched. This is the gate
 # between "copied" and "activated": a partial copy, a wrong assignment or a
 # budget the assignment does not fit all stop here.
 fleet_verify_prepared() {
@@ -843,18 +953,19 @@ fleet_verify_prepared() {
     host_ssh "$host" bash -s -- "$staged" <<'REMOTE'
 set -euo pipefail
 staged="$1"
-exec_line="$(sed -n 's/^ExecStart=//p' "$staged/unit.rendered")"
-# The unit's own arguments, with the binary and the assignment path pointed at
-# the staged copies, so what is verified is what will run.
-args="${exec_line#* }"
-args="${args//\/opt\/transparent-pir\/assignments\//$staged/}"
-# shellcheck disable=SC2086
-report="$("$staged/transparent-query-server" $args --verify-only)"
+# The serving configuration's static checks (listeners, state paths), then its
+# own settings with the assignment path pointed at the staged copy, so what is
+# verified is what will run. `--verify-only` binds no listener.
+"$staged/pir-query-server" --config "$staged/shard-server.json" --check
+jq --arg staged "$staged/" '.transparent_history.settings |= with_entries(
+    if (.value | type) == "string" then .value |= sub("^/opt/transparent-pir/assignments/"; $staged) else . end)' \
+  "$staged/shard-server.json" >"$staged/shard-server.check.json"
+report="$("$staged/pir-query-server" --config "$staged/shard-server.check.json" --verify-only)"
 echo "$report"
 if jq -e '.runtime_cache != null' <<<"$report" >/dev/null; then
   need="$(jq -r '.runtime_cache | .missing_bytes + .temporary_bytes' <<<"$report")"
-  cache_dir="$(sed -n '/^ExecStart=/s/.* --runtime-cache-dir \([^ ]*\).*/\1/p' "$staged/unit.rendered")"
-  [[ -n "$cache_dir" ]] || { echo "verified runtime cache has no directory in the staged unit" >&2; exit 1; }
+  cache_dir="$(jq -r '.transparent_history.settings.runtime_cache_dir // empty' "$staged/shard-server.json")"
+  [[ -n "$cache_dir" ]] || { echo "verified runtime cache has no directory in the staged configuration" >&2; exit 1; }
   read -r total available < <(df -PB1 "$cache_dir" | awk 'NR==2 {print $2, $4}')
   (( available - need >= total / 5 )) || { echo "runtime cache would violate 20% filesystem headroom" >&2; exit 1; }
 fi
@@ -931,8 +1042,11 @@ backup="/opt/transparent-pir/transactions/$transaction"
 sudo mkdir -p "$release" "$backup" /opt/transparent-pir/assignments
 # Complete the snapshot before the first mutation; a failed snapshot is never
 # interpreted as an empty previous installation during rollback.
-for path in /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
-  /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
+# Retired executable names stay in the snapshot so a host installed before
+# pir-query-server gets its legacy unit, binary and flags back.
+for path in /usr/local/bin/pir-query-server /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server \
+  /usr/local/bin/shard-prune /etc/systemd/system/transparent-shard-server.service /etc/transparent-pir/shard-server.json \
+  /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
   if sudo test -f "$path"; then sudo cp -p "$path" "$backup/$(basename "$path")"; fi
 done
 systemctl is-active transparent-shard-server.service >"$staged/previous-active" || true
@@ -943,12 +1057,15 @@ sudo touch "$backup/touched"
 sudo install -m 0755 "$staged/shard-prune" "$release/"
 sudo install -m 0755 "$release/shard-prune" /usr/local/bin/shard-prune
 if [[ "$action" == tools ]]; then exit 0; fi
-sudo install -m 0755 "$staged/transparent-query-server" "$release/"
+sudo install -m 0755 "$staged/pir-query-server" "$release/"
 sudo install -m 0644 "$staged/unit.rendered" "$release/transparent-shard-server.service"
 sudo install -m 0644 "$staged/$assignment_sha.json" "/opt/transparent-pir/assignments/$assignment_sha.json"
 sudo systemctl stop transparent-shard-server.service 2>/dev/null || true
-sudo install -m 0755 "$release/transparent-query-server" /usr/local/bin/transparent-query-server.next
-sudo mv -f /usr/local/bin/transparent-query-server.next /usr/local/bin/transparent-query-server
+sudo install -m 0755 "$release/pir-query-server" /usr/local/bin/pir-query-server.next
+sudo mv -f /usr/local/bin/pir-query-server.next /usr/local/bin/pir-query-server
+sudo install -d -m 0755 /etc/transparent-pir
+sudo install -m 0644 "$staged/shard-server.json" /etc/transparent-pir/shard-server.json.next
+sudo mv -f /etc/transparent-pir/shard-server.json.next /etc/transparent-pir/shard-server.json
 sudo install -m 0644 "$release/transparent-shard-server.service" /etc/systemd/system/transparent-shard-server.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now transparent-shard-server.service
@@ -997,7 +1114,8 @@ REMOTE
       [[ "$(worker_action "$id")" != restart ]] || pending+=("$id")
       # First activation is established by the absence of an installed binary,
       # never by an unhealthy fleet being mistaken for a fresh one.
-      if host_ssh "$(worker_field "$id" ssh_host)" test -x /usr/local/bin/transparent-query-server -o -x /usr/local/bin/transparent-shard-server; then fresh=false; fi
+      if host_ssh "$(worker_field "$id" ssh_host)" test -x /usr/local/bin/pir-query-server -o -x /usr/local/bin/transparent-query-server \
+        -o -x /usr/local/bin/transparent-shard-server; then fresh=false; fi
     done
     while [[ "${#pending[@]}" -gt 0 ]]; do
       healthy=0
@@ -1161,18 +1279,35 @@ fleet_prune() {
     host_ssh "$host" bash -s -- "$(shard_set_path)" "$id" "$TRANSACTION_ID" <<'REMOTE'
 set -euo pipefail
 set_path="$1"; id="$2"
-# From the ExecStart line only: the unit's comments mention the flag too.
-assignment="$(sed -n '/^ExecStart=/s/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+unit=/etc/systemd/system/transparent-shard-server.service
+config=/etc/transparent-pir/shard-server.json
+backup="/opt/transparent-pir/transactions/$3"
+configured() { sed -n 's/^ExecStart=//p' "$1" | grep -q -- ' --config '; }
+# One server setting of a unit: from its configuration when the unit runs
+# pir-query-server --config, else from a legacy unit's ExecStart flags (only
+# that line: the unit's comments mention the flags too). The transaction's
+# rollback copies are read as root.
+setting() {
+  local as="$1" unit_file="$2" config_file="$3" name="$4"
+  local -a run=()
+  [[ "$as" == root ]] && run=(sudo)
+  if "${run[@]}" sed -n 's/^ExecStart=//p' "$unit_file" | grep -q -- ' --config '; then
+    "${run[@]}" jq -r --arg name "$name" '.transparent_history.settings[$name] // empty' "$config_file"
+  else
+    "${run[@]}" sed -n "/^ExecStart=/s/.* --${name//_/-} \\([^ ]*\\).*/\\1/p" "$unit_file"
+  fi
+}
+assignment="$(setting user "$unit" "$config" assignment)"
 [[ -n "$assignment" && "$assignment" != *$'\n'* ]] || { echo "could not read the assignment path from the unit" >&2; exit 1; }
-cache_dir="$(sed -n '/^ExecStart=/s/.* --runtime-cache-dir \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+cache_dir="$(setting user "$unit" "$config" runtime_cache_dir)"
 [[ -n "$cache_dir" && "$cache_dir" != *$'\n'* ]] || { echo "could not read the runtime cache path from the unit" >&2; exit 1; }
 # Keep every retained revision in the current and rollback publication.
-old_unit="/opt/transparent-pir/transactions/$3/transparent-shard-server.service"
-keep=(--runtime-cache-prune-set "$set_path")
+old_unit="$backup/transparent-shard-server.service"
+keep=("$set_path")
 if sudo test -f "$old_unit"; then
-  old_set="$(sudo sed -n '/^ExecStart=/s/.*--shard-dir \([^ ]*\).*/\1/p' "$old_unit")"
+  old_set="$(setting root "$old_unit" "$backup/shard-server.json" shard_dir)"
   [[ -n "$old_set" ]] || { echo "rollback unit has no shard set" >&2; exit 1; }
-  keep+=(--runtime-cache-prune-set "$old_set")
+  keep+=("$old_set")
 fi
 # A shared physical set may still be needed under the previous assignment.
 # Defer plaintext pruning in that case rather than weakening rollback retention.
@@ -1180,9 +1315,23 @@ if [[ "${old_set:-}" != "$set_path" ]]; then
 sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
   | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
 fi
-server=/usr/local/bin/transparent-query-server
-[[ -x "$server" ]] || server=/usr/local/bin/transparent-shard-server
-sudo "$server" --runtime-cache-dir "$cache_dir" "${keep[@]}"
+if configured "$unit"; then
+  # The installed server's one-shot runtime cache collection: a configuration
+  # naming only the cache and the sets to keep, run through --verify-only,
+  # which binds nothing and exits after the collection.
+  prune="$(mktemp)"
+  trap 'rm -f "$prune"' EXIT
+  jq -n --arg management 127.0.0.1:18190 --arg cache "$cache_dir" '$ARGS.positional as $keep |
+    {management_listen: $management, transparent_history: {enabled: true,
+     settings: {runtime_cache_dir: $cache, runtime_cache_prune_set: $keep}}}' --args "${keep[@]}" >"$prune"
+  sudo /usr/local/bin/pir-query-server --config "$prune" --verify-only
+else
+  server=/usr/local/bin/transparent-query-server
+  [[ -x "$server" ]] || server=/usr/local/bin/transparent-shard-server
+  flags=()
+  for set in "${keep[@]}"; do flags+=(--runtime-cache-prune-set "$set"); done
+  sudo "$server" --runtime-cache-dir "$cache_dir" "${flags[@]}"
+fi
 REMOTE
   done
 }
@@ -1210,8 +1359,9 @@ backup="/opt/transparent-pir/transactions/$1"
 sudo test -f "$backup/touched" || exit 0
 action="$(sudo cat "$backup/action")"
 if [[ "$action" != tools ]]; then sudo systemctl stop transparent-shard-server.service || true; fi
-for path in /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server /usr/local/bin/shard-prune \
-  /etc/systemd/system/transparent-shard-server.service /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
+for path in /usr/local/bin/pir-query-server /usr/local/bin/transparent-query-server /usr/local/bin/transparent-shard-server \
+  /usr/local/bin/shard-prune /etc/systemd/system/transparent-shard-server.service /etc/transparent-pir/shard-server.json \
+  /opt/transparent-pir/current-release /opt/transparent-pir/current-unit-digest; do
   [[ "$action" != tools || "$path" == /usr/local/bin/shard-prune ]] || continue
   name="$(basename "$path")"
   if sudo test -f "$backup/$name"; then sudo cp -p "$backup/$name" "$path"; else sudo rm -f "$path"; fi
@@ -1296,7 +1446,11 @@ case "$MODE" in
     # rather than the worker catching it after the running service has stopped.
     if [[ -r "$TRANSPARENT_ARTIFACT_DIR/transparent-shard-server.service" ]]; then
       render_unit
-      echo "unit renders to $RENDERED_UNIT, naming $(shard_set_path)"
+      echo "unit renders to $RENDERED_UNIT and configuration to $RENDERED_CONFIG, naming $(shard_set_path)"
+      if [[ -r "$TRANSPARENT_ARTIFACT_DIR/transparent-Caddyfile" ]]; then
+        render_caddyfile "$RENDERED_CONFIG"
+        echo "Caddyfile renders to $RENDERED_CADDYFILE, proxying to the configured listener"
+      fi
     else
       echo "no unit in $TRANSPARENT_ARTIFACT_DIR; skipping the unit check"
     fi

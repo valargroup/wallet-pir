@@ -34,12 +34,26 @@ pub struct Config {
     pub enhance: Option<Product<enhance_query_server::service::ServingRole>>,
     #[cfg(feature = "status")]
     pub status: Option<Product<status_query_server::distributed::RoleConfig>>,
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
     pub transparent_history:
         Option<Product<transparent_query_server::history::process::HistoryProcess>>,
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-detail")]
     pub transaction_details:
         Option<Product<transparent_query_server::tx_detail::process::DetailProcess>>,
+}
+
+#[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+const ORDINARY_VERIFY: &str =
+    "product verify_only is reserved for pir-query-server --verify-only; remove it from serving configuration";
+
+/// The one Transparent section a `--verify-only` run checks.
+pub enum Verification<'a> {
+    #[cfg(feature = "transparent-history")]
+    History(&'a transparent_query_server::history::process::HistoryProcess),
+    #[cfg(feature = "transparent-detail")]
+    Detail(&'a transparent_query_server::tx_detail::process::DetailProcess),
+    #[doc(hidden)]
+    _Unused(std::marker::PhantomData<&'a ()>),
 }
 
 #[derive(Default)]
@@ -87,7 +101,12 @@ impl Layout {
     }
 
     #[cfg_attr(
-        not(any(feature = "enhance", feature = "status", feature = "transparent")),
+        not(any(
+            feature = "enhance",
+            feature = "status",
+            feature = "transparent-history",
+            feature = "transparent-detail"
+        )),
         allow(dead_code)
     )]
     fn root(&mut self, owner: &'static str, root: &Path) -> Result<()> {
@@ -104,7 +123,12 @@ impl Layout {
         Ok(())
     }
 
-    #[cfg(any(feature = "enhance", feature = "status", feature = "transparent"))]
+    #[cfg(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent-history",
+        feature = "transparent-detail"
+    ))]
     fn probe(&mut self, name: &'static str, address: SocketAddr, path: &'static str) {
         self.probes
             .entry(name)
@@ -114,7 +138,12 @@ impl Layout {
 }
 
 #[cfg_attr(
-    not(any(feature = "enhance", feature = "status", feature = "transparent")),
+    not(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent-history",
+        feature = "transparent-detail"
+    )),
     allow(dead_code)
 )]
 fn normalize(path: &Path) -> Result<PathBuf> {
@@ -137,6 +166,37 @@ fn normalize(path: &Path) -> Result<PathBuf> {
 }
 
 impl Config {
+    /// Select the sole enabled compiled Transparent section for one-shot
+    /// verification. Any other enabled product is refused, so a verification
+    /// run cannot start serving work.
+    pub fn verification(&self) -> Result<Verification<'_>> {
+        #[allow(unused_mut)]
+        let mut selected = Vec::new();
+        #[cfg(feature = "enhance")]
+        if self.enhance.as_ref().is_some_and(|p| p.enabled) {
+            return Err("--verify-only accepts only a Transparent section; disable enhance".into());
+        }
+        #[cfg(feature = "status")]
+        if self.status.as_ref().is_some_and(|p| p.enabled) {
+            return Err("--verify-only accepts only a Transparent section; disable status".into());
+        }
+        #[cfg(feature = "transparent-history")]
+        if let Some(worker) = active(&self.transparent_history)? {
+            selected.push(Verification::History(worker));
+        }
+        #[cfg(feature = "transparent-detail")]
+        if let Some(worker) = active(&self.transaction_details)? {
+            selected.push(Verification::Detail(worker));
+        }
+        if selected.len() != 1 {
+            return Err(
+                "--verify-only requires exactly one enabled transparent_history or transaction_details section"
+                    .into(),
+            );
+        }
+        Ok(selected.pop().unwrap())
+    }
+
     pub fn validate(&self) -> Result<Layout> {
         let mut layout = Layout::default();
         if !self.management_listen.ip().is_loopback() {
@@ -168,8 +228,11 @@ impl Config {
             layout.root("status", &role.state_dir)?;
             layout.probe("status", role.listen, "/control/health");
         }
-        #[cfg(feature = "transparent")]
+        #[cfg(feature = "transparent-history")]
         if let Some(worker) = active(&self.transparent_history)? {
+            if worker.verify_only {
+                return Err(ORDINARY_VERIFY.into());
+            }
             layout.listener("transparent_history", worker.listen)?;
             layout.root("transparent_history", &worker.shard_dir)?;
             if let Some(path) = &worker.runtime_cache_dir {
@@ -177,8 +240,11 @@ impl Config {
             }
             layout.probe("transparent_history", worker.listen, "/v1/ready");
         }
-        #[cfg(feature = "transparent")]
+        #[cfg(feature = "transparent-detail")]
         if let Some(worker) = active(&self.transaction_details)? {
+            if worker.verify_only {
+                return Err(ORDINARY_VERIFY.into());
+            }
             layout.listener("transaction_details", worker.listen)?;
             if let Some(path) = &worker.state_dir {
                 layout.root("transaction_details", path)?;
@@ -196,7 +262,12 @@ impl Config {
 mod tests {
     use super::*;
 
-    #[cfg(all(feature = "enhance", feature = "status", feature = "transparent"))]
+    #[cfg(all(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent-history",
+        feature = "transparent-detail"
+    ))]
     #[test]
     fn all_product_example_keeps_independent_roles() {
         let config: Config = serde_json::from_str(include_str!(
@@ -208,7 +279,7 @@ mod tests {
         assert_eq!(layout.listeners.len(), 5);
     }
 
-    #[cfg(feature = "transparent")]
+    #[cfg(feature = "transparent-history")]
     #[test]
     fn disabled_products_need_no_settings_or_files() {
         let config: Config = serde_json::from_value(serde_json::json!({
@@ -247,14 +318,119 @@ mod tests {
         .is_err());
     }
 
-    #[cfg(not(feature = "transparent"))]
+    #[cfg(not(feature = "transparent-history"))]
     #[test]
-    fn transparent_sections_require_the_compiled_product() {
-        for section in ["transparent_history", "transaction_details"] {
-            let raw = format!(
-                r#"{{"management_listen":"127.0.0.1:18080","{section}":{{"enabled":false}}}}"#
+    fn history_section_requires_the_compiled_product() {
+        let raw =
+            r#"{"management_listen":"127.0.0.1:18080","transparent_history":{"enabled":false}}"#;
+        assert!(serde_json::from_str::<Config>(raw).is_err());
+    }
+
+    #[cfg(not(feature = "transparent-detail"))]
+    #[test]
+    fn detail_section_requires_the_compiled_product() {
+        let raw =
+            r#"{"management_listen":"127.0.0.1:18080","transaction_details":{"enabled":false}}"#;
+        assert!(serde_json::from_str::<Config>(raw).is_err());
+    }
+
+    #[cfg(feature = "transparent-detail")]
+    #[test]
+    fn disabled_detail_needs_no_settings_and_does_no_work() {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            "transaction_details": {"enabled": false}
+        }))
+        .unwrap();
+        let layout = config.validate().unwrap();
+        assert_eq!(layout.listeners.len(), 1);
+        assert!(layout.roots.is_empty() && layout.probes.is_empty());
+        assert!(config.verification().is_err());
+    }
+
+    #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+    fn transparent(section: &str, verify_only: bool) -> Config {
+        let temp = std::env::temp_dir().join("pir-query-server-verify-config");
+        let settings = match section {
+            "transparent_history" => serde_json::json!({
+                "listen": "127.0.0.1:18092",
+                "shard_dir": temp.join("history"),
+                "verify_only": verify_only,
+            }),
+            _ => serde_json::json!({
+                "listen": "127.0.0.1:18095",
+                "role": "combined",
+                "publication_dir": temp.join("detail"),
+                "verify_only": verify_only,
+            }),
+        };
+        serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            section: {"enabled": true, "settings": settings},
+        }))
+        .unwrap()
+    }
+
+    #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+    #[test]
+    fn verification_selects_one_section_and_ordinary_startup_rejects_it() {
+        let sections = [
+            #[cfg(feature = "transparent-history")]
+            "transparent_history",
+            #[cfg(feature = "transparent-detail")]
+            "transaction_details",
+        ];
+        for section in sections {
+            assert!(transparent(section, false).validate().is_ok(), "{section}");
+            assert!(
+                transparent(section, false).verification().is_ok(),
+                "{section}"
             );
-            assert!(serde_json::from_str::<Config>(&raw).is_err(), "{section}");
+            let error = transparent(section, true).validate().err().unwrap();
+            assert!(error.to_string().contains("--verify-only"), "{section}");
+            assert!(
+                transparent(section, true).verification().is_ok(),
+                "{section}"
+            );
         }
+        let none: Config =
+            serde_json::from_str(r#"{"management_listen":"127.0.0.1:18080"}"#).unwrap();
+        assert!(none.verification().is_err());
+    }
+
+    #[cfg(all(feature = "transparent-history", feature = "transparent-detail"))]
+    #[test]
+    fn verification_refuses_two_transparent_sections() {
+        let mut config = transparent("transparent_history", false);
+        config.transaction_details = transparent("transaction_details", false).transaction_details;
+        assert!(config.validate().is_ok());
+        assert!(config.verification().is_err());
+    }
+
+    #[cfg(all(
+        any(feature = "transparent-history", feature = "transparent-detail"),
+        any(feature = "enhance", feature = "status")
+    ))]
+    #[test]
+    fn verification_refuses_other_enabled_products() {
+        let section = if cfg!(feature = "transparent-history") {
+            "transparent_history"
+        } else {
+            "transaction_details"
+        };
+        let other = if cfg!(feature = "enhance") {
+            "enhance"
+        } else {
+            "status"
+        };
+        // Settings are irrelevant: the enabled flag alone refuses verification.
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            other: {"enabled": true},
+            section: {"enabled": false},
+        }))
+        .unwrap();
+        let error = config.verification().err().unwrap();
+        assert!(error.to_string().contains(other), "{error}");
     }
 }

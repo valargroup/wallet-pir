@@ -1,4 +1,5 @@
 //! Accepted checkpoints inside published shards, recovered through real HTTP PIR.
+#![cfg(feature = "transparent-history")]
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;

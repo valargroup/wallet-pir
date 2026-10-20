@@ -16,10 +16,17 @@ from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors  # noqa: E402
 from tools.transparent.lib import binary_upgrade  # noqa: E402
 
-OLD, NEW = b'transparent-shard-server v12', b'transparent-shard-server next'
+OLD, NEW = b'pir-query-server v12', b'pir-query-server next'
 CTRL_OLD, CTRL_NEW = b'controller v12', b'controller next'
-SERVER = '/usr/local/bin/transparent-query-server'
+SERVER = '/usr/local/bin/pir-query-server'
 CONTROLLER_BIN = '/usr/local/bin/transparent-publication-controller'
+
+
+def history_config(unit):
+    """Each worker unit's generated pir-query-server configuration."""
+    return '/etc/transparent-pir/%s.json' % unit.removesuffix('.service')
+
+
 WORKERS = {'transparent-v12-archive.service': '10.142.0.9:8093', 'transparent-v12-recent.service': '10.142.0.9:8193'}
 IDS = {'transparent-v12-archive.service': 'transparent-v12-archive-01', 'transparent-v12-recent.service': 'transparent-v12-recent-01'}
 CONTROLLER = 'transparent-v12-publish-controller.service'
@@ -102,8 +109,8 @@ class HistoryUpgrade(Harness):
         self.map = [MAP]  # the controller's current map; advances during the rollout
         self.controller_status = {'phase': 'serving'}
         for unit, listen in WORKERS.items():
-            self.fake.install('v12', unit, '[Service]\nExecStart=%s serve --listen %s --cache-bytes 64\nMemoryMax=8G\n'
-                              % (SERVER, listen), files={SERVER: OLD})
+            self.fake.install('v12', unit, '[Service]\nExecStart=%s --config %s\nMemoryMax=8G\n'
+                              % (SERVER, history_config(unit)), files={SERVER: OLD})
             for path in ('/v1/health', '/v1/ready'):
                 self.fake.endpoints[('v12', 'http://%s%s' % (listen, path))] = unit
             self.fake.health_shapes[('v12', unit)] = lambda ready_, exe, unit=unit: {
@@ -143,7 +150,7 @@ class HistoryUpgrade(Harness):
             'controller': {'host': 'coordinator', 'unit_sha256': binary_upgrade.unit_digest(state),
                            'files': {p: self.fake.sha256('coordinator', p) for p in (CONFIG_PATH, FLEET, SCRIPT)}},
             'workers': {'worker@v12:' + u: {'ready_identity': {'worker_id': IDS[u], 'role': ready(u, MAP)['role']},
-                                            'limits': {'MemoryMax': '8G'}, 'args': ['--cache-bytes', '64']}
+                                            'limits': {'MemoryMax': '8G'}, 'args': ['--config', history_config(u)]}
                         for u in WORKERS},
             'load': {'host': 'coordinator', 'pins_sha256': self.fake.sha256('coordinator', LOAD_ROOT + '/pins.json'), 'resume_after_upgrade': True},
         }
@@ -221,7 +228,7 @@ class HistoryUpgrade(Harness):
         self.assertTrue(self.load_active())
         stops = [m for m in self.fake.mutations('coordinator') if m[1] == 'systemctl' and m[2] == ('stop', LOAD_UNIT)]
         self.assertEqual(len(stops), 1)
-        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/transparent-query-server'
+        self.assertEqual(self.fake.sha256('v12', '/opt/transparent-publisher/releases/%s/pir-query-server'
                                           % sha256(NEW)), sha256(NEW))
         code, lines = self.run_cli('rollback')
         self.assertEqual(code, 0, lines)
@@ -488,8 +495,18 @@ class HistoryUpgrade(Harness):
         self.assertEqual(code, 1)
         self.assertEqual(self.fake.probe_unit('coordinator', CONTROLLER)['exe_sha256'], sha256(CTRL_OLD))
 
+    def test_a_worker_on_retired_flags_needs_its_configured_unit_first(self):
+        unit = 'transparent-v12-archive.service'
+        self.fake.edit('v12', '/etc/systemd/system/' + unit,
+                       '[Service]\nExecStart=/usr/local/bin/transparent-query-server --listen %s --cache-bytes 64\n'
+                       'MemoryMax=8G\n' % WORKERS[unit])
+        self.write_request()
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1)
+        self.assertTrue(any('runs a retired executable with command-line settings' in line for line in lines), lines)
+
     def test_staged_release_bytes_are_immutable(self):
-        release = '/opt/transparent-publisher/releases/%s/transparent-query-server' % sha256(NEW)
+        release = '/opt/transparent-publisher/releases/%s/pir-query-server' % sha256(NEW)
         self.fake.put('v12', release, b'other bytes')
         self.run_cli('baseline')
         code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
@@ -501,7 +518,8 @@ class HistoryUpgrade(Harness):
 
 DISPLAY_WORKER, DISPLAY_CONTROLLER = 'transparent-txid-display-worker.service', 'transparent-txid-display-k8-controller.service'
 DISPLAY_ROOT = '/srv/txid-display-genesis/v4/root'
-DISPLAY_SERVER, DISPLAY_CONTROLLER_BIN = '/usr/local/bin/transparent-txid-server', '/usr/local/bin/txid-display-controller'
+DISPLAY_SERVER, DISPLAY_CONTROLLER_BIN = '/usr/local/bin/pir-query-server', '/usr/local/bin/txid-display-controller'
+DISPLAY_CONFIG = '/etc/transparent-pir/txid-display-worker.json'
 # The deployed run-mode command: geometry comes from root/display-root.json, not a flag.
 DISPLAY_RUN = ('%s run --root %s --journal /srv/txid-display-genesis/journal-v3 '
                '--workers /opt/transparent-txid-display-k8/workers.json --mode replay-then-live '
@@ -519,8 +537,8 @@ class DisplayUpgrade(Harness):
         self.fake = FakeFleet()
         self.map = [MAP]
         self.worker_shift = {}
-        self.fake.install('gpu', DISPLAY_WORKER, '[Service]\nExecStart=%s serve --listen 10.142.0.20:8094\nMemoryMax=40G\n'
-                          % DISPLAY_SERVER, files={DISPLAY_SERVER: OLD})
+        self.fake.install('gpu', DISPLAY_WORKER, '[Service]\nExecStart=%s --config %s\nMemoryMax=40G\n'
+                          % (DISPLAY_SERVER, DISPLAY_CONFIG), files={DISPLAY_SERVER: OLD})
         for path in ('/v1/health', '/v1/ready'):
             self.fake.endpoints[('gpu', 'http://10.142.0.20:8094' + path)] = DISPLAY_WORKER
         self.fake.health_shapes[('gpu', DISPLAY_WORKER)] = lambda ready_, exe: {
@@ -556,7 +574,7 @@ class DisplayUpgrade(Harness):
                            'files': {DISPLAY_ROOT + '/display-root.json':
                                      self.fake.sha256('coordinator', DISPLAY_ROOT + '/display-root.json')}},
             'workers': {'worker@gpu': {'ready_identity': {'role': 'combined'}, 'limits': {'MemoryMax': '40G'},
-                                       'args': ['--listen', '10.142.0.20:8094']}},
+                                       'args': ['--config', DISPLAY_CONFIG]}},
             'load': None,
         }
 

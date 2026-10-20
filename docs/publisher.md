@@ -129,11 +129,13 @@ the wallet's `/v2/` routes, payloads and protocol identities are unchanged.
 A TLS edge may expose both distribution prefixes from one origin while the
 products retain separate loopback listeners.
 
-For complete local history, run `transparent-query-server --publisher <HTTPS-origin>`
-with its existing managed settings and `--full-holdings`, without an archive
-upstream. For display, run `transparent-txid-server --role combined --publisher
-<HTTPS-origin> --state-dir <absolute-directory> --publisher-network main
---publisher-genesis <hash>`, with an optional `--publisher-ca <PEM-file>`.
+For complete local history, run `pir-query-server --config FILE` with a
+`transparent_history` section whose settings name `"publisher": "<HTTPS-origin>"`,
+its existing managed settings and `"full_holdings": true`, without an archive
+upstream. For display, run a separate `pir-query-server --config FILE` with a
+`transaction_details` section: `"role": "combined"`, `"publisher"`, an absolute
+`"state_dir"`, `"publisher_network": "main"` and `"publisher_genesis"`, with an
+optional `"publisher_ca"` PEM file. See [Query server host](query-server.md#transparent).
 Both processes need explicit cache and download budgets sized for their complete
 holdings, including active/candidate overlap. Full holdings are not a claim that
 production history fits on one machine.

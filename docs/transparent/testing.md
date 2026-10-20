@@ -269,7 +269,7 @@ crate tests the oracle independently.
 
 ```sh
 cargo test -p transparent-tools --features benchmarks --test compact_recovery
-cargo test -p transparent-query-server --test wallet_anchor \
+cargo test -p transparent-query-server --features transparent-history --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
 cargo test -p transparent-tools --test regression_runner
 ```

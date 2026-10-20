@@ -26,7 +26,8 @@ class ShardInputs(unittest.TestCase):
         artifact = root / 'artifact'
         artifact.mkdir()
         self.unit = artifact / 'transparent-shard-server.service'
-        self.env = dict(os.environ, TRANSPARENT_WORKER_HOST='worker.example.net',
+        self.artifact = artifact
+        self.env = dict(os.environ, TRANSPARENT_WORKER_HOST='10.142.0.5',
                         WALLET_PIR_DEPLOY_USER='deploy',
                         TRANSPARENT_RELEASE_SHA='da39a3ee5e6b4b0d3255bfef95601890afd80709',
                         TRANSPARENT_ARTIFACT_DIR=str(artifact),
@@ -44,6 +45,40 @@ class ShardInputs(unittest.TestCase):
         shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-shard-server.service', self.unit)
         result = self.validate()
         self.assertEqual(result.returncode, 0, result.stderr)
+        config = json.loads((self.artifact / 'shard-server.json.rendered').read_text())
+        self.assertEqual(config, {'management_listen': '127.0.0.1:18190', 'transparent_history': {
+            'enabled': True, 'settings': {'listen': '10.142.0.5:8093',
+                                          'shard_dir': '/srv/transparent-pir/sets/shard-set',
+                                          'cache_bytes': 8589934592, 'build_slots': 1, 'query_slots': 2}}})
+
+    def test_caddyfile_proxies_to_the_configured_listener(self):
+        # The shard server binds only its VPC address, so the worker's own
+        # edge must proxy there rather than to loopback.
+        shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-shard-server.service', self.unit)
+        shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-Caddyfile', self.artifact / 'transparent-Caddyfile')
+        for listen in (None, '10.142.0.9:8093'):
+            with self.subTest(listen=listen):
+                if listen:
+                    self.env['TRANSPARENT_WORKER_LISTEN'] = listen
+                result = self.validate()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rendered = (self.artifact / 'Caddyfile.rendered').read_text()
+                upstreams = {line.split()[1] for line in rendered.splitlines()
+                             if line.strip().startswith('reverse_proxy ')}
+                self.assertEqual(upstreams, {listen or '10.142.0.5:8093'})
+                self.assertIn('transparent-pir.example.net {', rendered)
+                self.assertNotIn('TRANSPARENT_SHARD_UPSTREAM', rendered)
+                self.assertNotIn('TRANSPARENT_PUBLIC_HOST', rendered)
+
+    def test_listener_must_be_a_private_address(self):
+        # pir-query-server refuses unspecified and public listeners.
+        shutil.copyfile(ROOT / 'tools/transparent/deploy/transparent-shard-server.service', self.unit)
+        for listen in ('0.0.0.0:8093', '203.0.113.5:8093', 'worker.example.net:8093'):
+            with self.subTest(listen=listen):
+                self.env['TRANSPARENT_WORKER_LISTEN'] = listen
+                result = self.validate()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('private IPv4', result.stderr)
 
     def test_missing_shard_directory_is_refused(self):
         (self.shards / 'bbb').rmdir()
@@ -56,6 +91,9 @@ class ShardInputs(unittest.TestCase):
             'line continuation': 'ExecStart=/usr/local/bin/x \\' + '\n  --shard-dir TRANSPARENT_SHARD_SET_PATH\n',
             'unsubstituted token': 'ExecStart=/usr/local/bin/x --shard-dir /hardcoded\n',
             'second ExecStart': 'ExecStart=/a --shard-dir TRANSPARENT_SHARD_SET_PATH\nExecStart=/b\n',
+            'retired executable': 'ExecStart=/usr/local/bin/transparent-query-server --listen 0.0.0.0:8093 '
+                                  '--shard-dir TRANSPARENT_SHARD_SET_PATH\n',
+            'other configuration': 'ExecStart=/usr/local/bin/pir-query-server --config /etc/other.json\n',
         }
         for name, text in units.items():
             with self.subTest(unit=name):

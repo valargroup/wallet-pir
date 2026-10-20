@@ -53,6 +53,10 @@ class FakeHost:
             return ''
         if command.startswith('cat /etc/systemd/system/transparent-shard-server.service'):
             return self.files.get(S.UNIT_PATH, '')
+        if command.startswith('cat ' + S.CONFIG_PATH):
+            return self.files.get(S.CONFIG_PATH, '')
+        if command.startswith('mkdir -p /etc/transparent-pir && cat > '):
+            command = command.removeprefix('mkdir -p /etc/transparent-pir && ')
         if command.startswith('systemctl is-active'):
             return 'active\n' if self.active else 'inactive\n'
         if 'systemctl restart' in command:
@@ -115,11 +119,18 @@ class StandbyTests(unittest.TestCase):
         release = root/'releases'/'a704616c'
         release.mkdir(parents=True)
         sums = []
-        for name in ('transparent-query-server', 'shard-control'):
+        for name in ('pir-query-server', 'shard-control'):
             (release/name).write_bytes(name.encode())
             sums.append(f'{hashlib.sha256(name.encode()).hexdigest()}  ./{name}')
         (release/'SHA256SUMS').write_text('\n'.join(sums) + '\n')
-        self.binary = hashlib.sha256(b'transparent-query-server').hexdigest()
+        self.binary = hashlib.sha256(b'pir-query-server').hexdigest()
+        # A release from before pir-query-server ships the retired executable.
+        retired = root/'releases'/'12ce0001'
+        retired.mkdir(parents=True)
+        for name in ('transparent-query-server', 'shard-control'):
+            (retired/name).write_bytes(name.encode())
+        (retired/'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(n.encode()).hexdigest()}  ./{n}\n'
+                                                  for n in ('transparent-query-server', 'shard-control')))
         self.fleet = dict(state_dir=str(self.state), roster=str(root/'roster.json'), known_hosts=str(root/'fleet_known'),
                           ssh_key=str(root/'id'), assign_binary='shard-assign', router_host=ROUTER)
         (root/'pinned').write_text(f'{HOST} ssh-ed25519 AAAAarchive3\n')
@@ -166,8 +177,8 @@ class StandbyTests(unittest.TestCase):
         if self.worker['polls'] < 3:
             return {'ready': False}
         record = json.loads(self.host.files['/opt/transparent-publisher/active.json'])
-        return {'ready': True, 'binary_sha256': self.host.binaries.get('transparent-query-server'),
-                'map_sha256': record['map_sha256']}
+        server = 'pir-query-server' if 'pir-query-server' in self.host.binaries else 'transparent-query-server'
+        return {'ready': True, 'binary_sha256': self.host.binaries.get(server), 'map_sha256': record['map_sha256']}
 
     def status(self, config, member):
         assert config['known_hosts'] == str(self.root/'pinned') and member['ssh_host'] == HOST
@@ -180,9 +191,9 @@ class StandbyTests(unittest.TestCase):
         self.sleeps += 1
         self.clock_value += seconds
 
-    def standby(self, *extra):
+    def standby(self, *extra, release='a704616c'):
         args = S.parse(['--id', NEW, '--host', HOST, '--droplet-id', '777', '--known-hosts', str(self.root/'pinned'),
-                        '--release', 'a704616c', '--release-store', str(self.root/'releases'), *extra])
+                        '--release', release, '--release-store', str(self.root/'releases'), *extra])
         tool = S.Standby(args, self.fleet, self.host, self.peers, http=self.http, execute=self.execute,
                          sleep=self.sleep, clock=lambda: self.clock_value)
         tool.status = self.status
@@ -203,19 +214,35 @@ class StandbyTests(unittest.TestCase):
         self.assertEqual([c[0] for c in self.host.copies[1:]], [publication + '/'] * 3)
         self.assertTrue(all(c[1] == 60000 for c in self.host.copies[1:]))
         self.assertIn(publication + '/assignment.json', self.host.files)
-        # The unit is the archive peer's, with this host's identity and budgets.
+        # The unit runs pir-query-server over the archive peer's settings, with
+        # this host's identity, budgets and VPC listener.
         unit = self.host.files[S.UNIT_PATH]
-        args = S.transparent_unit.exec_args(unit)
-        for flag, value in [('--worker-id', NEW), ('--shard-dir', publication), ('--cache-bytes', '51539607552'),
-                            ('--runtime-cache-max-bytes', '103079215104'), ('--query-slots', '2'), ('--build-slots', '1'),
-                            ('--assignment', publication + '/assignment.json')]:
-            self.assertEqual(args[args.index(flag) + 1], value, flag)
+        self.assertEqual(S.transparent_unit.exec_args(unit),
+                         ['/usr/local/bin/pir-query-server', '--config', '/etc/transparent-pir/shard-server.json'])
+        config = json.loads(self.host.files[S.CONFIG_PATH])
+        self.assertEqual(config['management_listen'], '127.0.0.1:18190')
+        settings = config['transparent_history']['settings']
+        for name, value in [('worker_id', NEW), ('shard_dir', publication), ('cache_bytes', 51539607552),
+                            ('runtime_cache_max_bytes', 103079215104), ('query_slots', 2), ('build_slots', 1),
+                            ('assignment', publication + '/assignment.json'), ('listen', HOST + ':8093'),
+                            ('prune_excess', True), ('control_socket', '/run/transparent-pir/control.sock')]:
+            self.assertEqual(settings[name], value, name)
         self.assertEqual(unit.count('MemoryMax=56G'), 1)
         self.assertEqual(unit.count('MemoryHigh=51539607552'), 1)
         self.assertEqual(self.peers.reads, ['10.142.1.1'])
         record = json.loads(self.host.files['/opt/transparent-publisher/active.json'])
         self.assertEqual(record, {'directory': publication, 'assignment': publication + '/assignment.json',
                                   'map_sha256': ACTIVE})
+
+    def test_a_retired_release_keeps_its_executable_and_flags(self):
+        summary = self.standby(release='12ce0001').run()
+        self.assertEqual(summary['binary_sha256'], hashlib.sha256(b'transparent-query-server').hexdigest())
+        unit = self.host.files[S.UNIT_PATH]
+        args = S.transparent_unit.exec_args(unit)
+        self.assertEqual(args[:3], ['/usr/local/bin/transparent-query-server', '--listen', '0.0.0.0:8093'])
+        self.assertEqual(args[args.index('--worker-id') + 1], NEW)
+        self.assertNotIn(S.CONFIG_PATH, self.host.files)
+        self.assertNotIn('pir-query-server', self.host.binaries)
 
     def test_the_router_must_reach_the_warm_host(self):
         self.peers.unreachable = 2

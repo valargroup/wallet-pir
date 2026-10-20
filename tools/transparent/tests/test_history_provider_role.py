@@ -1,5 +1,6 @@
 """Standalone role policy: explicit origins, private administration and strict loader."""
 import copy
+import ipaddress
 import json
 from pathlib import Path
 import shlex
@@ -12,6 +13,22 @@ sys.path.insert(0, str(ROOT))
 from tools.transparent.lib.roles import history_provider, report  # noqa: E402
 from wallet_pir_ops.deploy import units  # noqa: E402
 
+CONFIG = '/etc/transparent-pir/history-provider.json'
+
+
+def assert_history_config(test, text, listen, section='transparent_history'):
+    """One enabled product section, a distinct loopback management listener, never verify_only."""
+    document = json.loads(text)
+    test.assertEqual(set(document), {'management_listen', section})
+    management = document['management_listen']
+    test.assertTrue(ipaddress.ip_address(management.rsplit(':', 1)[0]).is_loopback, management)
+    test.assertNotEqual(management, listen)
+    test.assertIs(document[section]['enabled'], True)
+    settings = document[section]['settings']
+    test.assertEqual(settings['listen'], listen)
+    test.assertNotIn('verify_only', settings)
+    return settings
+
 
 class ProviderRole(unittest.TestCase):
     def setUp(self):
@@ -21,16 +38,24 @@ class ProviderRole(unittest.TestCase):
         role = history_provider(self.settings, release='/opt/provider/release')
         service = units.effective([role.unit])['Service']
         start = shlex.split(units.exec_start(units.effective([role.unit])))
-        self.assertEqual(start[0], '/opt/provider/release/transparent-query-server')
+        self.assertEqual(start, ['/opt/provider/release/pir-query-server', '--config', CONFIG])
         self.assertEqual(shlex.split(service['ExecStartPre'][0]), start + ['--verify-only'])
-        self.assertEqual(list(role.check), start[1:] + ['--verify-only'])
+        self.assertEqual(role.check, ('--config', CONFIG, '--verify-only'))
         self.assertEqual(role.directories, (self.settings['state_dir'],))
-        self.assertNotIn('--control-socket', start)
-        self.assertNotIn('--assignment', start)
-        self.assertNotIn('--runtime-cache-dir', start)
+        self.assertEqual(set(role.files), {CONFIG})
+        self.assertIn(CONFIG, [p for line in service['ReadOnlyPaths'] for p in shlex.split(line)])
+        settings = assert_history_config(self, role.files[CONFIG], self.settings['listen'])
+        self.assertEqual(settings['shard_dir'], self.settings['state_dir'])
+        for name in ('publisher', 'archive_upstream', 'publisher_network', 'publisher_genesis'):
+            self.assertEqual(settings[name], self.settings[name])
+        for name in ('cache_bytes', 'bootstrap_max_bytes', 'query_slots', 'query_waiters', 'body_bytes',
+                     'query_deadline_secs', 'upload_deadline_secs'):
+            self.assertIs(type(settings[name]), int, name)
+            self.assertEqual(settings[name], self.settings[name])
+        for name in ('control_socket', 'active_record', 'assignment', 'runtime_cache_dir'):
+            self.assertNotIn(name, settings)
         self.assertNotIn('EnvironmentFile', service)
         self.assertEqual(service['User'], 'transparent-provider')
-        self.assertEqual(role.files, {})
 
     def test_invalid_or_ambiguous_inputs_refused_before_install(self):
         for patch in ({'listen': '0.0.0.0:8092'}, {'listen': '127.0.0.1:0'},

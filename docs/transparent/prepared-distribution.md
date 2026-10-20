@@ -89,23 +89,38 @@ retain publication validation, replay and revocation records, recovery and
 activation. This extraction does not change their wire formats, stored records
 or serving authority, and does not migrate other PIR products.
 
-The existing binary has a one-shot verification entry point:
+`pir-query-server` has a one-shot verification entry point over a
+`transparent_history` configuration ([query server host](../query-server.md#transparent)):
+
+```json
+{
+  "management_listen": "127.0.0.1:18193",
+  "transparent_history": {
+    "enabled": true,
+    "settings": {
+      "publisher": "https://publisher.example",
+      "publisher_network": "main",
+      "publisher_genesis": "<configured-genesis-hash>",
+      "shard_dir": "/srv/transparent-provider/provider-inputs",
+      "cache_bytes": 4294967296
+    }
+  }
+}
+```
 
 ```sh
-transparent-shard-server --publisher https://publisher.example \
-  --publisher-network main --publisher-genesis <configured-genesis-hash> \
-  --shard-dir ./provider-inputs --cache-bytes 4294967296 --verify-only
+pir-query-server --config history-provider.json --verify-only
 ```
 
 The configured origin is the trust root: HTTPS only, normal hostname/certificate
 verification, no credentials in URLs, no path/query/fragment and no redirects,
-including same-origin redirects. An optional `--publisher-ca` adds an explicitly
+including same-origin redirects. An optional `publisher_ca` adds an explicitly
 trusted PEM root without disabling TLS. TLS termination belongs to the operator;
 the controller retains its existing loopback HTTP listener. No production proxy
 routing, DNS, listener or deployment is changed by this checkpoint.
 
 The consumer caps each metadata artifact at 16 MiB and uses a configured total download budget
-(`--bootstrap-max-bytes`, default 64 GiB), sequential streaming transfers and
+(`bootstrap_max_bytes`, default 64 GiB), sequential streaming transfers and
 connect/whole-request deadlines. The map is fetched first; inventory
 classifications must agree with its exact recent/archive boundary before tables
 are downloaded. Paths use a restricted relative alphabet and reject escapes,
@@ -192,7 +207,7 @@ production TLS, distribution scale, hardware or the complete service.
 ## Following publications with the recent worker
 
 Omit `--verify-only` from the command above to run the manager and existing recent
-worker in the existing binary. A successful initial fetch or verified predecessor recovery, strict load, prewarm
+worker in `pir-query-server`. A successful initial fetch or verified predecessor recovery, strict load, prewarm
 and live owner check precede listener binding. Startup source failure refuses to
 listen; restart retries through the operator's normal process supervisor. A saved
 predecessor can recover through fresh exact-anchor checks while a newer candidate
@@ -326,10 +341,10 @@ No archive cost/accounting row bypasses this boundary.
 
 ## Embedded history endpoint and fixed archive
 
-Add `--archive-upstream https://<trusted-Valargroup-archive-origin>` to managed
-serving mode to compose routing and recent execution in the existing process.
+Add `"archive_upstream": "https://<trusted-Valargroup-archive-origin>"` to the
+managed serving settings to compose routing and recent execution in the existing process.
 The operator must supply the trusted deployment address: this document assigns
-no public hostname/IP and changes no production routing. `--archive-ca` may add
+no public hostname/IP and changes no production routing. `archive_ca` may add
 an explicit trusted PEM root; certificate/hostname verification remains enabled.
 Only isolated loopback fixtures may use plain HTTP. The configured upstream must
 terminate at an owner running this serving implementation with warm readiness,
@@ -428,7 +443,7 @@ gate.
 `controller_update_campaign` test in
 `src/pir-e2e-tests/tests/`. Run it through the repository's
 build wrapper with `--consumers 10,100`. It builds the packaged
-`transparent-query-server`, the controller built with that test, the
+`pir-query-server` with Transparent history serving, the controller built with that test, the
 isolated released391 client (with `verify-sources.py` receipts) and the
 in-process publisher tests with one profile (default `release-fast`). Each run is
 written to a new ignored `.local-pir/https-update-campaign/<utc>-<sha>/` and is
@@ -439,7 +454,7 @@ three TLS terminators forwarding to the controller: one for each provider, so
 faults target one provider, and one for the campaign and its distribution
 consumers. A fixed archive owner serves its own copy of the initial publication's
 32k archive tier under a planned `archive-01` assignment, behind its own
-terminator. Two packaged providers run with `--archive-upstream` and separate
+terminator. Two packaged providers run with `archive_upstream` and separate
 state roots.
 
 Correctness comes from fresh released391 client processes recovering one wallet
@@ -639,14 +654,15 @@ live units, which cannot safely preflight this exclusive state root. Render and
 private reporting remain supported. Use the dedicated unit/user procedure below;
 this does not authorize any fleet or production change.
 
-`role.json` describes the unit, writable `directories`, and the exact loader
-`check` arguments. Create only those directories, owned by a dedicated
-`transparent-provider` user/group; install the rendered `unit` as
+`role.json` describes the unit, its configuration `files`, writable
+`directories`, and the exact loader `check` arguments. Create only those
+directories, owned by a dedicated `transparent-provider` user/group; install each
+file root-owned and readable but not writable by that user, and the rendered `unit` as
 `transparent-history-provider.service` through your local service manager.
 Before enabling it, run the rendered argument array as that user:
 
 ```sh
-python3 -c 'import json,subprocess; r=json.load(open("role.json")); subprocess.run(["./history-release/transparent-shard-server",*r["check"]],check=True)'
+python3 -c 'import json,subprocess; r=json.load(open("role.json")); subprocess.run(["./history-release/pir-query-server",*r["check"]],check=True)'
 ```
 
  This real preflight downloads/verifies and

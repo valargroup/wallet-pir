@@ -5,8 +5,10 @@ lives in `src/transparent/transparent-query-server`, and its publisher and
 controller live in `src/transparent/transparent-publisher`, beside the extraction
 code both history and display use. The journal, shared display verification and
 runtime preparation live in `src/transparent/transparent-shared`, so the
-publisher does not depend on the worker application. The existing server and controller binaries still
-run as separate processes.
+publisher does not depend on the worker application. Serving runs as
+`pir-query-server --config FILE` with a `transaction_details` section
+([query server host](../query-server.md#transparent)); it and the controller run
+as separate processes.
 Operations (the `txid-display` deploy driver, its fleet and observation scripts,
 unit templates, route snippet and the `transparent-display` service descriptor)
 live under `tools/txid/`; scripts live under `tools/txid/` and retained evidence under

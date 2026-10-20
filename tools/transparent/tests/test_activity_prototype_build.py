@@ -62,9 +62,13 @@ class CommandPlanTests(unittest.TestCase):
                 if '--bins' in command:
                     for package in selected:
                         built.update(targets(*packages[package], 'bin'))
+                built.update(options(command, '--bin'))
                 built.update('examples/' + name for name in options(command, '--example'))
             self.assertFalse({build.ARTIFACT_SOURCES.get(name, name) for name in build.ARTIFACTS} - built, (profile, built))
             self.assertIn('examples/activity-reopen', built)
+            # The history server is built and retained under its own name.
+            self.assertIn('pir-query-server', built)
+            self.assertNotIn('transparent-shard-server', build.ARTIFACTS)
             self.assertNotIn('examples/engine-store-reopen', built)
 
     def test_fast_qualification_exercises_real_service_recovery_and_http_consumers(self):

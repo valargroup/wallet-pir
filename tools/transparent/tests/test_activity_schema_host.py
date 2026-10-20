@@ -72,6 +72,28 @@ class CachePreparationTests(unittest.TestCase):
         with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(json.dumps(ready).encode())):
             self.assertEqual(M.Commands().cache_observation()['metrics']['transparent_shard_disk_save_pending'],0)
 
+    def test_readiness_uses_the_installed_configured_listener(self):
+        import io
+        ready=json.dumps({'runtime_cache':{'pending_saves':0,'write_failures':0}}).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            config=Path(directory)/'shard-server.json'
+            with patch.object(M,'WORKER_CONFIG',config):
+                # A legacy flag-form unit has no configuration and binds loopback.
+                with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(ready)) as fetch:
+                    M.Commands().cache_observation()
+                self.assertEqual(fetch.call_args.args[0],'http://127.0.0.1:8093/v1/ready')
+                config.write_text(json.dumps({'management_listen':'127.0.0.1:18190','transparent_history':{
+                    'enabled':True,'settings':{'listen':'10.142.0.5:8093'}}}))
+                with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(ready)) as fetch:
+                    M.Commands().cache_observation()
+                self.assertEqual(fetch.call_args.args[0],'http://10.142.0.5:8093/v1/ready')
+                for listen in ('0.0.0.0:8093','203.0.113.5:8093','10.142.0.5:9000',None):
+                    with self.subTest(listen=listen):
+                        config.write_text(json.dumps({'transparent_history':{'settings':{'listen':listen}}}))
+                        with patch.object(M.urllib.request,'urlopen') as fetch,self.assertRaises(ValueError):
+                            M.Commands().cache_observation()
+                        fetch.assert_not_called()
+
     def test_missing_unavailable_negative_and_noninteger_cache_counters_refuse(self):
         import io
         for cache in (None,{}, {'status':'unavailable: the cache directory was slow to list'},

@@ -16,7 +16,12 @@ User=root
 # candidates from the publications root and sealed revisions that left the
 # window from the staged root. The server keeps a staged revision whose shard
 # is not yet published, so a background stage still owns it from ship to stage.
-ExecStart=@RELEASE@/transparent-txid-server --listen @LISTEN@ --role @ROLE@ --cache-bytes @CACHE_BYTES@ --build-slots @BUILD_SLOTS@ --query-slots @QUERY_SLOTS@ --retain-revisions @RETAIN_REVISIONS@ --control-socket /run/transparent-txid-display/control.sock --active-record /opt/transparent-txid-display/worker/active.json --collect-root @COLLECT_ROOT@ --collect-root @STAGED_ROOT@@EXTRA_ARGS@
+# The command is the release's pir-query-server over one generated, root-owned
+# `transaction_details` configuration (management 127.0.0.1:18195, loopback only)
+# carrying the listener, role, budgets, control socket
+# /run/transparent-txid-display/control.sock, active record
+# /opt/transparent-txid-display/worker/active.json and both collect roots.
+ExecStart=@RELEASE@/pir-query-server --config /etc/transparent-pir/txid-display-worker.json
 Environment=RUST_LOG=info
 Environment=TRANSPARENT_BUILD_THREADS=@BUILD_THREADS@
 Restart=on-failure
@@ -37,6 +42,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ReadWritePaths=/srv/transparent-txid-display /opt/transparent-txid-display/worker
+ReadOnlyPaths=/etc/transparent-pir/txid-display-worker.json
 
 [Install]
 WantedBy=multi-user.target

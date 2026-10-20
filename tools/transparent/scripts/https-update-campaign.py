@@ -116,9 +116,11 @@ def main():
                             stdout=subprocess.PIPE, text=True).stdout.strip()
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, check=True,
                            stdout=subprocess.PIPE, text=True).stdout != ""
+    # The packaged provider is the release's pir-query-server; its own build, so
+    # the host's features are its Transparent products only.
     provider = executable(cargo_artifacts(args.profile, [
-        "build", "-p", "transparent-query-server", "--bin", "transparent-query-server"]),
-        "transparent-query-server")
+        "build", "-p", "pir-query-server", "--features", "transparent-history,transparent-detail",
+        "--bin", "pir-query-server"]), "pir-query-server")
     built = cargo_artifacts(args.profile, [
         "test", "-p", "pir-e2e-tests", "--features", "transparent-tests", "--test", TEST, "--no-run"])
     test = executable(built, TEST)
@@ -139,7 +141,7 @@ def main():
         "source_sha": source, "source_dirty": dirty, "profile": args.profile,
         "updates": args.updates, "consumers": args.consumers,
         "binaries": {name: {"path": path, "sha256": sha256(path)} for name, path in
-                     [("transparent-query-server", provider), ("campaign-test", test),
+                     [("pir-query-server", provider), ("campaign-test", test),
                       ("transparent-publish-controller", controller),
                       ("in-process-tests", library), ("frozen-provider-client", client)]},
         "frozen_client": json.loads((run / "client-sources/provenance.json").read_text()),

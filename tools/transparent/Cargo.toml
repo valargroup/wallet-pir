@@ -212,9 +212,26 @@ name = "compact_export"
 path = "tests/compact_export.rs"
 required-features = ["benchmarks", "publisher-tools"]
 
+# Transparent serving administration; names, arguments and output are stable.
+[[bin]]
+name = "shard-assign"
+path = "src/bin/shard-assign.rs"
+
+[[bin]]
+name = "shard-prune"
+path = "src/bin/shard-prune.rs"
+
+[[bin]]
+name = "shard-control"
+path = "src/bin/shard-control.rs"
+
+[[bin]]
+name = "txid-control"
+path = "src/bin/txid-control.rs"
+
 [dependencies]
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
-transparent-query-server = { path = "../../src/transparent/transparent-query-server" }
+transparent-query-server = { path = "../../src/transparent/transparent-query-server", features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared" }
 anyhow = "1"
 base64 = "0.22"

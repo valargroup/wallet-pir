@@ -286,14 +286,49 @@ impl Terminator {
     }
 }
 
+/// A `pir-query-server` history process: its generated host configuration,
+/// wallet origin and loopback management address.
 struct Provider {
     name: &'static str,
     origin: String,
+    management: String,
     args: Vec<String>,
     cwd: PathBuf,
     child: Option<tokio::process::Child>,
 }
 impl Provider {
+    fn new(name: &'static str, cwd: PathBuf, settings: serde_json::Value) -> Self {
+        let origin = format!("http://{}", settings["listen"].as_str().unwrap());
+        let management = free_port().to_string();
+        let config = cwd.join("query-server.json");
+        std::fs::write(
+            &config,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "management_listen": management,
+                "transparent_history": {"enabled": true, "settings": settings},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        Self {
+            name,
+            origin,
+            management,
+            args: vec!["--config".into(), config.display().to_string()],
+            cwd,
+            child: None,
+        }
+    }
+    /// The host keeps running when its product stops; report that as an exit.
+    async fn product_failed(&self) -> bool {
+        let Ok(response) = reqwest::get(format!("http://{}/health", self.management)).await else {
+            return false;
+        };
+        response
+            .json::<serde_json::Value>()
+            .await
+            .is_ok_and(|health| health["products"]["transparent_history"]["phase"] == "failed")
+    }
     async fn start(&mut self, binary: &Path, ledger: &Ledger) {
         let started = Instant::now();
         let log = std::fs::OpenOptions::new()
@@ -301,12 +336,17 @@ impl Provider {
             .append(true)
             .open(self.cwd.join("provider.log"))
             .unwrap();
+        // The host logs to stdout; keep the provider's info-level record.
         let mut child = tokio::process::Command::new(binary)
             .args(&self.args)
             .current_dir(&self.cwd)
+            .env(
+                "RUST_LOG",
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
+            )
             .kill_on_drop(true)
-            .stderr(log)
-            .stdout(Stdio::null())
+            .stderr(log.try_clone().unwrap())
+            .stdout(log)
             .spawn()
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(300);
@@ -317,10 +357,16 @@ impl Provider {
             {
                 break;
             }
-            if let Some(status) = child.try_wait().unwrap() {
+            let exited = child.try_wait().unwrap().map(|status| status.to_string());
+            let exited = match exited {
+                Some(status) => Some(status),
+                None if self.product_failed().await => Some("product failed".into()),
+                None => None,
+            };
+            if let Some(status) = exited {
                 ledger.record(
                     "process_exit",
-                    serde_json::json!({"process":self.name,"status":status.to_string()}),
+                    serde_json::json!({"process":self.name,"status":status}),
                 );
                 panic!(
                     "{} exited: {}",
@@ -798,26 +844,14 @@ async fn archive(
             .collect::<Vec<_>>()});
     drop(set);
     let addr = free_port();
-    let mut owner = Provider {
-        name: "archive",
-        origin: format!("http://{addr}"),
-        args: [
-            "--shard-dir",
-            state.to_str().unwrap(),
-            "--assignment",
-            cwd.join("assignment.json").to_str().unwrap(),
-            "--worker-id",
-            "archive-01",
-            "--listen",
-            &addr.to_string(),
-            "--cache-bytes",
-            &(2u64 << 30).to_string(),
-        ]
-        .map(String::from)
-        .to_vec(),
-        cwd,
-        child: None,
-    };
+    let settings = serde_json::json!({
+        "shard_dir": state,
+        "assignment": cwd.join("assignment.json"),
+        "worker_id": "archive-01",
+        "listen": addr.to_string(),
+        "cache_bytes": 2u64 << 30,
+    });
+    let mut owner = Provider::new("archive", cwd, settings);
     owner.start(binary, ledger).await;
     let mut tls = tokio::process::Command::new("python3")
         .arg(concat!(
@@ -845,7 +879,7 @@ async fn archive(
 async fn controller_updates_reach_independent_https_providers_under_queries() {
     let binary = PathBuf::from(
         std::env::var_os("WALLET_PIR_PROVIDER_BIN")
-            .expect("WALLET_PIR_PROVIDER_BIN names the packaged transparent-query-server"),
+            .expect("WALLET_PIR_PROVIDER_BIN names the packaged pir-query-server"),
     );
     let client = PathBuf::from(
         std::env::var_os("WALLET_PIR_FROZEN_CLIENT")
@@ -1023,35 +1057,18 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         let cwd = root.join(name);
         std::fs::create_dir(&cwd).unwrap();
         let addr = free_port();
-        let args = [
-            "--publisher",
-            &terminator.origin(),
-            "--publisher-network",
-            "main",
-            "--publisher-genesis",
-            GENESIS,
-            "--publisher-ca",
-            root.join("ca.pem").to_str().unwrap(),
-            "--archive-upstream",
-            &archive_origin,
-            "--archive-ca",
-            root.join("ca.pem").to_str().unwrap(),
-            "--listen",
-            &addr.to_string(),
-            "--shard-dir",
-            cwd.join("state").to_str().unwrap(),
-            "--cache-bytes",
-            &(1u64 << 30).to_string(),
-        ]
-        .map(String::from)
-        .to_vec();
-        providers.push(Provider {
-            name,
-            origin: format!("http://{addr}"),
-            args,
-            cwd,
-            child: None,
+        let settings = serde_json::json!({
+            "publisher": terminator.origin(),
+            "publisher_network": "main",
+            "publisher_genesis": GENESIS,
+            "publisher_ca": root.join("ca.pem"),
+            "archive_upstream": archive_origin,
+            "archive_ca": root.join("ca.pem"),
+            "listen": addr.to_string(),
+            "shard_dir": cwd.join("state"),
+            "cache_bytes": 1u64 << 30,
         });
+        providers.push(Provider::new(name, cwd, settings));
     }
     phase.set(&ledger, "provider-bootstrap");
     let started = Instant::now();

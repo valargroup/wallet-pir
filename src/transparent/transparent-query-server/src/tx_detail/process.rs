@@ -122,7 +122,7 @@ pub async fn run_with(
         if config.role != DisplayRole::Combined {
             return Err("managed display prototype requires combined holdings".into());
         }
-        let bootstrap = crate::routing::bootstrap::Config {
+        let bootstrap = crate::source::Config {
             publisher,
             network: config
                 .publisher_network

@@ -6,7 +6,9 @@
 [services.transparent-history]
 driver = "transparent-history"
 root = "/opt/transparent-publisher"
-binary = "transparent-query-server"
+# Every history process runs the release's pir-query-server with `--config`
+# a generated `transparent_history` section; `--verify-only` is its check.
+binary = "pir-query-server"
 order = ["worker", "external-worker", "https-recent", "provider", "controller"]
 ancillary = ["routing"]
 

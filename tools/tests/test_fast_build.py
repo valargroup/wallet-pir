@@ -321,8 +321,10 @@ class FastBuildTests(unittest.TestCase):
         tests = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--test']
         self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
         self.assertIn('--lib', build)
+        # The host operator test has no required product feature; the host's
+        # products compile through the e2e fixture features.
         self.assertEqual(build[build.index('--features') + 1],
-                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests,pir-query-server/enhance,status-publisher/cli')
+                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests,status-publisher/cli')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
             'enhance-pir-exercise', 'enhance-pir-load-test',
