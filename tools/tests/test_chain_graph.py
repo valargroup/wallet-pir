@@ -139,5 +139,23 @@ class ConsumerTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class FullSelectionTests(unittest.TestCase):
+    def test_shared_runs_three_reader_selections_with_rocksdb_limited_to_its_targets(self):
+        import sys
+        sys.path.insert(0, str(ROOT / 'tools/ci'))
+        import full_packages
+        groups = {'shared': ['pir-control', graph.READER], 'enhance': [], 'transparent': [], 'receiver': []}
+        commands = [c for c in full_packages.commands('shared', groups) if graph.READER in c]
+        self.assertEqual(len(commands), 3)
+        decoding, rpc, rocksdb = (c[c.index('--features') + 1] for c in commands)
+        self.assertNotIn('rpc', decoding)
+        self.assertNotIn('testing-node', decoding)
+        for product in graph.PRODUCTS:
+            self.assertIn(f'{graph.READER}/{product}', rpc)
+        self.assertIn(f'{graph.READER}/rocksdb', rocksdb)
+        self.assertEqual(commands[2][commands[2].index('--lib'):commands[2].index('--features')],
+                         ['--lib', '--test', 'state'])
+
+
 if __name__ == '__main__':
     unittest.main()
