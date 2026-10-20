@@ -6,6 +6,9 @@ struct Tls {
     origin: String,
     cert: reqwest::Certificate,
     requests: Arc<Mutex<Vec<String>>>,
+    /// Discovery response selector: ok, missing, redirect, oversize, slow or
+    /// `body:<raw body>`.
+    discovery: Arc<Mutex<String>>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Tls {
@@ -65,6 +68,8 @@ impl Tls {
         );
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = requests.clone();
+        let discovery = Arc::new(Mutex::new("ok".to_string()));
+        let mode = discovery.clone();
         let task = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let Ok(mut socket) = acceptor.accept(socket).await else {
@@ -91,17 +96,37 @@ impl Tls {
                 socket.read_exact(&mut body).await.unwrap();
                 request.extend_from_slice(&body);
                 let request = String::from_utf8(request).unwrap();
-                let (status, headers, body) = if request.starts_with("GET /feed/redirect ") {
-                    ("302 Found", "Location: /feed/ok\r\n", "refused")
+                let mode = mode.lock().unwrap().clone();
+                let ok = pir_service_discovery::Document::publisher().to_json();
+                let large = "x".repeat(pir_service_discovery::MAX_DOCUMENT_BYTES + 1);
+                let discovered = request.starts_with("GET /.well-known/pir-service-discovery ");
+                let (status, headers, body) = if discovered {
+                    match mode.as_str() {
+                        "ok" => ("200 OK", "", String::from_utf8(ok).unwrap()),
+                        "missing" => ("404 Not Found", "", "missing".into()),
+                        "redirect" => (
+                            "302 Found",
+                            "Location: /.well-known/pir-service-discovery-moved\r\n",
+                            String::new(),
+                        ),
+                        "oversize" => ("200 OK", "", large),
+                        "slow" => {
+                            tokio::time::sleep(Duration::from_secs(30)).await;
+                            ("200 OK", "", String::new())
+                        }
+                        body => ("200 OK", "", body.strip_prefix("body:").unwrap().into()),
+                    }
+                } else if request.starts_with("GET /feed/redirect ") {
+                    ("302 Found", "Location: /feed/ok\r\n", "refused".into())
                 } else if request.contains(" /feed/fail ") {
-                    ("503 Unavailable", "", "refused")
+                    ("503 Unavailable", "", "refused".into())
                 } else if request
                     .to_ascii_lowercase()
                     .contains("if-none-match: \"saved\"")
                 {
-                    ("304 Not Modified", "", "")
+                    ("304 Not Modified", "", String::new())
                 } else {
-                    ("200 OK", "", "abcdef")
+                    ("200 OK", "", "abcdef".into())
                 };
                 seen.lock().unwrap().push(request);
                 let response = format!("HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -113,6 +138,7 @@ impl Tls {
             origin,
             cert: reqwest::Certificate::from_pem(&cert_bytes).unwrap(),
             requests,
+            discovery,
             task,
         }
     }
@@ -364,4 +390,98 @@ async fn polling_is_sequential_and_backs_off_after_complete_passes() {
     }
     assert_eq!(delay(u32::MAX, 999), Duration::from_millis(120999));
     assert_eq!(delay(0, 1000), Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn discovery_accepts_only_a_trusted_compatible_publisher() {
+    let tls = Tls::new().await;
+    let source = tls.source(0);
+    assert_eq!(
+        source.discover().await.unwrap(),
+        pir_service_discovery::version()
+    );
+    // Discovery stays outside the product prefix and byte budget.
+    assert_eq!(source.downloaded(), 0);
+    let untrusted = HttpsSource::new(&tls.origin, "/feed/", 100, &[]).unwrap();
+    let error = untrusted.discover().await.unwrap_err();
+    assert!(error.incompatible().is_none());
+    assert!(error.to_string().contains("unreachable"), "{error}");
+    assert!(error.to_string().contains(&tls.origin), "{error}");
+
+    let refused = |mode: &str| {
+        *tls.discovery.lock().unwrap() = mode.into();
+        let source = tls.source(100);
+        async move { source.discover().await.unwrap_err() }
+    };
+    let missing = refused("missing").await;
+    assert!(missing.to_string().contains("HTTP 404"), "{missing}");
+    assert!(missing.to_string().contains(pir_service_discovery::PATH));
+    let redirect = refused("redirect").await;
+    assert!(redirect.to_string().contains("HTTP 302"), "{redirect}");
+    let oversize = refused("oversize").await;
+    assert!(oversize.to_string().contains("exceeds"), "{oversize}");
+    for (body, expected) in [
+        ("{", "malformed"),
+        (r#"{"service":"pir-query-server","version":"1.0.0"}"#, "expected"),
+        (r#"{"service":"pir-publisher","version":"1.0"}"#, "invalid publisher version"),
+        (r#"{"service":"pir-publisher","version":"1.0.0-rc.1"}"#, "prerelease"),
+    ] {
+        let error = refused(&format!("body:{body}")).await;
+        assert!(error.to_string().contains(expected), "{body}: {error}");
+        assert!(error.incompatible().is_none(), "{body}");
+        assert!(!is_incompatible(&error));
+    }
+    let mismatch = refused(r#"body:{"service":"pir-publisher","version":"2.0.0"}"#).await;
+    let incompatible = mismatch.incompatible().expect("typed mismatch");
+    assert!(incompatible.query_server_is_older());
+    let boxed: Error = Box::new(mismatch);
+    assert!(is_incompatible(boxed.as_ref()));
+    let text = boxed.to_string();
+    assert!(text.contains(&tls.origin) && text.contains("2.0.0") && text.contains("1.0.0"));
+    assert!(text.contains("upgrade the query server"), "{text}");
+    // The same-major additive fields of a newer publisher are accepted.
+    *tls.discovery.lock().unwrap() =
+        r#"body:{"service":"pir-publisher","version":"1.9.0","added":true}"#.into();
+    assert_eq!(
+        tls.source(1).discover().await.unwrap(),
+        pir_service_discovery::Version::new(1, 9, 0)
+    );
+    assert!(tls
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|r| r.starts_with("GET /.well-known/pir-service-discovery ")));
+}
+
+#[tokio::test(start_paused = true)]
+async fn discovery_has_a_whole_request_deadline() {
+    let tls = Tls::new().await;
+    *tls.discovery.lock().unwrap() = "slow".into();
+    let source = tls.source(100);
+    let error = source.discover().await.unwrap_err();
+    assert!(error.to_string().contains("within 10s"), "{error}");
+    assert!(error.incompatible().is_none());
+}
+
+struct Terminal(usize);
+impl SyncTask for Terminal {
+    type Report = ();
+    type Error = &'static str;
+    async fn synchronize(&mut self) -> Result<(), &'static str> {
+        self.0 += 1;
+        match self.0 {
+            1 => Ok(()),
+            2 | 3 => Err("temporary"),
+            _ => Err("fatal"),
+        }
+    }
+    fn terminal(&self, error: &&'static str) -> bool {
+        *error == "fatal"
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error() {
+    let manager = SyncManager::new(Terminal(0));
+    assert_eq!(manager.run().await, "fatal");
 }

@@ -87,6 +87,22 @@ impl Management {
         }
     }
 }
+/// Publisher service discovery: the contract version query servers compare
+/// before they synchronize. Informational only; never health or authority.
+fn discovery() -> Router {
+    Router::new().route(
+        pir_service_discovery::PATH,
+        get(|| async {
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, "application/json"),
+                    (axum::http::header::CACHE_CONTROL, "no-store"),
+                ],
+                pir_service_discovery::Document::publisher().to_json(),
+            )
+        }),
+    )
+}
 fn http(listeners: Arc<Mutex<BTreeMap<SocketAddr, TcpListener>>>, stop: Shutdown) -> Http<Router> {
     Http::new(move |addr, router| {
         let listener = listeners.lock().unwrap().remove(&addr);
@@ -158,7 +174,8 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                 )
             }),
         )
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .merge(discovery());
     let mut management = tokio::spawn(
         http(listeners.clone(), shutdown.clone()).serve(config.management_listen, routes),
     );
@@ -253,6 +270,38 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tower::ServiceExt;
+    #[tokio::test]
+    async fn discovery_serves_the_shared_contract_version_uncached() {
+        let response = discovery()
+            .oneshot(
+                axum::http::Request::get(pir_service_discovery::PATH)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], br#"{"service":"pir-publisher","version":"1.0.0"}"#);
+        assert_eq!(
+            pir_service_discovery::check_publisher(&body).unwrap(),
+            pir_service_discovery::version()
+        );
+        let other = discovery()
+            .oneshot(
+                axum::http::Request::get("/.well-known/other")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(other.status(), StatusCode::NOT_FOUND);
+    }
     #[tokio::test]
     async fn failure_does_not_stop_another_owner() {
         let mut group = JoinSet::new();

@@ -16,6 +16,7 @@ from pathlib import Path
 upstream, cert, key, control = sys.argv[1:5]
 # An optional fixed port lets a restarted terminator keep the configured origin.
 port = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+DISCOVERY = "/.well-known/pir-service-discovery"
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -23,13 +24,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def reply(self, status, body, headers=()):
+        self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+            pass
+
+    def discovery_fault(self, fault):
+        """Answer discovery with a fault; False forwards it unchanged."""
+        if fault == "discovery-missing":
+            self.reply(404, b"not found")
+        elif fault == "discovery-redirect":
+            self.reply(302, b"", [("Location", "http://127.0.0.1:1" + DISCOVERY)])
+        elif fault == "discovery-oversize":
+            self.reply(200, b" " * (16 * 1024 + 1))
+        elif fault == "discovery-slow":
+            time.sleep(12)
+            self.reply(200, b"")
+        elif fault == "discovery-unavailable":
+            self.reply(503, b"unavailable")
+        elif fault.startswith("discovery-body:"):
+            self.reply(200, fault.removeprefix("discovery-body:").encode())
+        else:
+            return False
+        return True
+
     def do_GET(self):
         # Read a POSTed batch first so every early fault reply keeps the
         # connection framed; its bytes are forwarded unchanged.
         body = self.rfile.read(int(self.headers.get("Content-Length", "0"))) if self.command == "POST" else None
-        with Path(control + ".requests").open("a") as requests:
-            requests.write(self.path + "\n")
         fault = Path(control).read_text().strip()
+        # Service discovery is logged apart from product requests and only
+        # `discovery-*` faults apply to it; product faults leave it forwarded.
+        if self.path == DISCOVERY:
+            with Path(control + ".discovery").open("a") as requests:
+                requests.write(self.path + "\n")
+            if fault.startswith("discovery-") and self.discovery_fault(fault):
+                return
+            fault = ""
+        else:
+            with Path(control + ".requests").open("a") as requests:
+                requests.write(self.path + "\n")
         if fault == "malformed-current" and self.path.endswith("/current"):
             self.send_response(200)
             self.send_header("Content-Length", "1")

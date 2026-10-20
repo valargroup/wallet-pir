@@ -23,6 +23,7 @@ status-publisher = { path = "../status/status-publisher", optional = true }
 transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
 receiver-indexer = { path = "../receiver/receiver-indexer", optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
+pir-service-discovery = { version = "1.0.0", path = "../shared/pir-service-discovery" }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -34,6 +35,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 
 [[test]]
 name = "lifecycle"

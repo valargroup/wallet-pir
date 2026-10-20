@@ -16,7 +16,7 @@ use transparent_shared::journal::events::EventStore;
 
 use super::display_world;
 
-fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
+async fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
     Manager::new(
         Config {
             publisher: origin.into(),
@@ -32,6 +32,7 @@ fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
 }
 
@@ -97,18 +98,20 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             &scratch.path().join(format!("refused-{fault}")),
             &tls.origin,
             tls.cert.clone(),
-        );
+        )
+        .await;
         assert!(refused.poll_once().await.is_err(), "accepted {fault}");
         assert!(!refused.ready().await, "served {fault}");
     }
     std::fs::write(&tls.control, "").unwrap();
     let first_root = scratch.path().join("first");
-    let mut first = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut first = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     let mut second = manager(
         &scratch.path().join("second"),
         &tls.origin,
         tls.cert.clone(),
-    );
+    )
+    .await;
     first.poll_once().await.unwrap();
     second.poll_once().await.unwrap();
     assert!(first.ready().await && second.ready().await);
@@ -154,7 +157,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     stop.send(()).unwrap();
     query_task.await.unwrap();
     drop(first);
-    let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     let result = restarted.poll_once().await.unwrap();
     assert!(restarted.ready().await);
     // The budget includes live metadata and attestations, not cached runtime bodies.
@@ -240,7 +243,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     assert!(restarted.poll_once().await.is_err());
     assert!(second.poll_once().await.is_err());
     drop(restarted);
-    let mut refused = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut refused = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     assert!(refused.poll_once().await.is_err());
     assert!(
         !refused.ready().await,
@@ -476,7 +479,7 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
     let consumer_root = scratch.path().join("consumer");
-    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
     consumer.poll_once().await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -596,7 +599,7 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
     query_task.abort();
     let _ = query_task.await;
     drop(consumer);
-    let mut restarted = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    let mut restarted = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
     restarted.poll_once().await.unwrap();
     assert!(restarted.ready().await);
     if reorg {

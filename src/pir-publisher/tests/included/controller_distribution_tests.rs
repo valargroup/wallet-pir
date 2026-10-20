@@ -284,7 +284,27 @@ async fn tls(root: &Path, authority: Authority) -> Tls {
     tls_router(root, authority.router()).await
 }
 
+/// The publisher's service discovery, which the unified host serves on its
+/// management router and an operator proxies at this exact public path.
+pub(crate) fn with_discovery(router: Router) -> Router {
+    router.route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
+/// The publisher's service discovery, which the unified host serves on its
+/// management router and an operator proxies at this exact public path.
+pub(crate) fn with_discovery(router: Router) -> Router {
+    router.route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
 pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
+    let router = with_discovery(router);
+    let router = with_discovery(router);
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     static MATERIAL: std::sync::LazyLock<(Vec<u8>, Vec<u8>)> = std::sync::LazyLock::new(|| {
@@ -959,6 +979,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     manager.poll_once().await.unwrap();
@@ -984,6 +1005,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = restarted.poll_once().await.unwrap();
@@ -1032,6 +1054,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = damaged.poll_once().await.unwrap();

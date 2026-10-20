@@ -24,6 +24,7 @@ fixtures = [
     "zakura-pir-client/testing",
     "transparent-shared/test-support",
     "dep:transparent-query-server",
+    "dep:pir-service-discovery",
     "dep:base64",
     "dep:libc",
     "dep:tower",
@@ -64,5 +65,6 @@ zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.
 base64 = { version = "0.22", optional = true }
 libc = { version = "0.2", optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
+pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
 transparent-query-server = { path = "../transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }

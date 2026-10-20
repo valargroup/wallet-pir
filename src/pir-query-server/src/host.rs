@@ -167,9 +167,27 @@ pub async fn verify(config: Config) -> Result<()> {
     }
 }
 
+/// Check publisher service discovery for every enabled HTTPS consumer. Runs
+/// before any listener is bound, product state is opened or task is started;
+/// any failure stops the whole query server. Legacy roles are not checked.
+async fn discover(config: &Config) -> Result<()> {
+    #[cfg(feature = "transparent-history")]
+    if let Some(worker) = active(&config.transparent_history)? {
+        worker.discover().await?;
+    }
+    #[cfg(feature = "transparent-detail")]
+    if let Some(worker) = active(&config.transaction_details)? {
+        worker.discover().await?;
+    }
+    let _ = config;
+    Ok(())
+}
+
 /// Prebind every listener, then run one role of each enabled product until shutdown.
+/// A publisher contract version mismatch in any product stops every product.
 pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     let layout = config.validate()?;
+    discover(&config).await?;
     let mut listeners = BTreeMap::new();
     for addr in layout.listeners.keys() {
         listeners.insert(*addr, TcpListener::bind(addr).await?);
@@ -307,24 +325,32 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             &mut owners,
         );
     }
-    let mut fatal = None;
+    let mut fatal: Option<Box<dyn std::error::Error + Send + Sync>> = None;
     loop {
         tokio::select! {
             biased;
             _ = shutdown.cancelled() => break,
-            _ = &mut management => { fatal = Some("management HTTP service stopped"); break; },
+            _ = &mut management => { fatal = Some("management HTTP service stopped".into()); break; },
             result = group.join_next_with_id(), if !group.is_empty() => {
                 match result.unwrap() {
                     Ok((id, (name, result))) => {
                         let (_, stop) = owners.remove(&id).unwrap();
                         stop.request();
                         state.phases.lock().unwrap().insert(name, "failed");
-                        if let Err(error) = result {
-                            tracing::error!(product = name, %error, "query server stopped; other products continue");
+                        match result {
+                            Err(error) if pir_sync_manager::is_incompatible(error.as_ref()) => {
+                                tracing::error!(product = name, %error, "publisher is incompatible; stopping the query server");
+                                fatal = Some(error);
+                                break;
+                            }
+                            Err(error) => {
+                                tracing::error!(product = name, %error, "query server stopped; other products continue");
+                            }
+                            Ok(()) => {}
                         }
                     }
                     Err(_) => {
-                        fatal = Some("query server task panicked; stopping all owners safely");
+                        fatal = Some("query server task panicked; stopping all owners safely".into());
                         break;
                     }
                 }
@@ -341,7 +367,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     }
     shutdown.request();
     if let Some(error) = fatal {
-        return Err(error.into());
+        return Err(error);
     }
     Ok(())
 }
