@@ -371,10 +371,42 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         }
     }
     shutdown.request();
+    // Cancellation alone can leave the management listener bound until the
+    // task is polled again. Join it before reporting that the host stopped.
+    if !management.is_finished() {
+        management.abort();
+        let _ = management.await;
+    }
     if let Some(error) = fatal {
         return Err(error);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_releases_management_listener_before_returning() {
+        let address = {
+            let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            held.local_addr().unwrap()
+        };
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": address,
+        }))
+        .unwrap();
+        // Stop before the spawned management task gets its first poll. Its
+        // reserved socket must still be released before the host returns.
+        let shutdown = Shutdown::default();
+        shutdown.request();
+        run(config, shutdown).await.unwrap();
+        assert!(
+            std::net::TcpListener::bind(address).is_ok(),
+            "management listener remained bound after the host returned"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "transparent-history", feature = "transparent-detail"))]
