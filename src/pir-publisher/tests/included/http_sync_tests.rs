@@ -629,15 +629,17 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
     let node = axum::Router::new().route(
         "/",
-        axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
-            let height = request["params"][0].as_u64().unwrap();
-            let hash = if height == 0 {
-                fixture::GENESIS.to_string()
-            } else {
-                fixture::block_hash(0, height).to_display_hex()
-            };
-            axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
-        }),
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -721,8 +723,15 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     std::fs::write(&tls.control, "discovery-unavailable").unwrap();
     std::fs::write(&requests, "").unwrap();
     let error = consumer.poll_once().await.unwrap_err();
-    assert!(!transparent_query_server::is_incompatible(&error), "{error}");
-    assert_eq!(product_requests(), "", "a refused pass fetched product data");
+    assert!(
+        !transparent_query_server::is_incompatible(&error),
+        "{error}"
+    );
+    assert_eq!(
+        product_requests(),
+        "",
+        "a refused pass fetched product data"
+    );
     assert!(consumer.ready().await, "temporary refusal withdrew serving");
     std::fs::write(&tls.control, "").unwrap();
     assert_eq!(consumer.poll_once().await.unwrap()["unchanged"], true);
@@ -749,7 +758,10 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     let status = format!("http://{serving}/v1/provider-status");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     while reqwest::get(&status).await.is_err() {
-        assert!(tokio::time::Instant::now() < deadline, "process never served");
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process never served"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     std::fs::write(&tls.control, newer).unwrap();

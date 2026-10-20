@@ -287,7 +287,10 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 1 << 16)
             .await
             .unwrap();
-        assert_eq!(&body[..], br#"{"service":"pir-publisher","version":"1.0.0"}"#);
+        assert_eq!(
+            &body[..],
+            br#"{"service":"pir-publisher","version":"1.0.0"}"#
+        );
         assert_eq!(
             pir_service_discovery::check_publisher(&body).unwrap(),
             pir_service_discovery::version()

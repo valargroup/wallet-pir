@@ -422,9 +422,18 @@ async fn discovery_accepts_only_a_trusted_compatible_publisher() {
     assert!(oversize.to_string().contains("exceeds"), "{oversize}");
     for (body, expected) in [
         ("{", "malformed"),
-        (r#"{"service":"pir-query-server","version":"1.0.0"}"#, "expected"),
-        (r#"{"service":"pir-publisher","version":"1.0"}"#, "invalid publisher version"),
-        (r#"{"service":"pir-publisher","version":"1.0.0-rc.1"}"#, "prerelease"),
+        (
+            r#"{"service":"pir-query-server","version":"1.0.0"}"#,
+            "expected",
+        ),
+        (
+            r#"{"service":"pir-publisher","version":"1.0"}"#,
+            "invalid publisher version",
+        ),
+        (
+            r#"{"service":"pir-publisher","version":"1.0.0-rc.1"}"#,
+            "prerelease",
+        ),
     ] {
         let error = refused(&format!("body:{body}")).await;
         assert!(error.to_string().contains(expected), "{body}: {error}");

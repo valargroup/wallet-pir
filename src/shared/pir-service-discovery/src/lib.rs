@@ -147,7 +147,10 @@ impl fmt::Display for Error {
         match self {
             Self::Malformed(reason) => write!(f, "malformed discovery document: {reason}"),
             Self::UnexpectedService { expected, found } => {
-                write!(f, "discovery names service {found:?}, expected {expected:?}")
+                write!(
+                    f,
+                    "discovery names service {found:?}, expected {expected:?}"
+                )
             }
             Self::InvalidVersion { version, reason } => {
                 write!(f, "invalid publisher version {version:?}: {reason}")
@@ -220,7 +223,10 @@ mod tests {
             String::from_utf8(Document::publisher().to_json()).unwrap(),
             r#"{"service":"pir-publisher","version":"1.0.0"}"#
         );
-        assert_eq!(check_publisher(&Document::publisher().to_json()), Ok(v(VERSION)));
+        assert_eq!(
+            check_publisher(&Document::publisher().to_json()),
+            Ok(v(VERSION))
+        );
     }
 
     #[test]
@@ -234,7 +240,11 @@ mod tests {
             ("1.3.2", "1.9.1"),
             ("2.0.0", "2.5.3"),
         ] {
-            assert_eq!(compatible(&v(query), &v(publisher)), Ok(()), "{query} vs {publisher}");
+            assert_eq!(
+                compatible(&v(query), &v(publisher)),
+                Ok(()),
+                "{query} vs {publisher}"
+            );
         }
     }
 
@@ -244,15 +254,24 @@ mod tests {
         assert!(older.query_server_is_older());
         let text = older.to_string();
         assert!(text.contains("publisher contract version 2.0.0"), "{text}");
-        assert!(text.contains("query server contract version 1.4.0"), "{text}");
+        assert!(
+            text.contains("query server contract version 1.4.0"),
+            "{text}"
+        );
         assert!(text.contains("supports major version 1"), "{text}");
         assert!(text.contains("upgrade the query server"), "{text}");
 
         let newer = compatible(&v("2.1.0"), &v("1.9.0")).unwrap_err();
         assert!(!newer.query_server_is_older());
         let text = newer.to_string();
-        assert!(text.contains("publisher is older and incompatible"), "{text}");
-        assert!(text.contains("upgrade the publisher to major version 2"), "{text}");
+        assert!(
+            text.contains("publisher is older and incompatible"),
+            "{text}"
+        );
+        assert!(
+            text.contains("upgrade the publisher to major version 2"),
+            "{text}"
+        );
         assert!(text.contains("supporting major version 1"), "{text}");
     }
 
@@ -318,12 +337,16 @@ mod tests {
             })
         );
         let oversized = vec![b' '; MAX_DOCUMENT_BYTES + 1];
-        assert!(matches!(check_publisher(&oversized), Err(Error::Malformed(_))));
+        assert!(matches!(
+            check_publisher(&oversized),
+            Err(Error::Malformed(_))
+        ));
     }
 
     #[test]
     fn unknown_additive_fields_are_ignored() {
-        let raw = br#"{"service":"pir-publisher","version":"1.4.0","features":["x"],"extra":{"a":1}}"#;
+        let raw =
+            br#"{"service":"pir-publisher","version":"1.4.0","features":["x"],"extra":{"a":1}}"#;
         assert_eq!(check_publisher(raw).unwrap(), v("1.4.0"));
     }
 }
