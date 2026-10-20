@@ -1,7 +1,7 @@
 //! Frozen public transaction byte slices checked through parser and HTTP PIR.
+use enhance_publisher::local_serving as serving;
 use enhance_publisher::{
     control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
     store::RecordJournal,
 };
 use enhance_query_server::{client::EnhancePirClient, RECORD_BYTES};
@@ -102,7 +102,8 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
+    let serving = serving::Serving::start(
+        root.path(),
         &root.path().join("control"),
         vec![Group {
             placement_policy: Default::default(),
@@ -111,8 +112,9 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             replicas,
         }],
     )
+    .await
     .unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -167,7 +169,6 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
         current.manifest().generation
     );
     assert!(current.manifest().generation > old);
-    server.abort();
     for task in tasks {
         task.abort();
     }

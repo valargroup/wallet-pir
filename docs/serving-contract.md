@@ -19,7 +19,7 @@ PIR parameter, evaluation and packing integration they share lives in
 | `started_unix` | Process start, seconds | `/internal/health` | `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
 
 A deploy confirms a restart by a changed `incarnation` and the expected
-`binary_sha256`. The Enhance coordinator's public `/v1/health` does not carry
+`binary_sha256`. The Enhance coordinator's private operator `/v1/health` does not carry
 identity; deploys read the executable hash through systemd instead. Status keeps
 identity off `/control/health` because its `Health` type refuses unknown fields,
 so adding one would break an older controller during a rolling deploy.

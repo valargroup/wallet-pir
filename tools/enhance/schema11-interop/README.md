@@ -20,7 +20,8 @@ verify wallet interoperability, not full-size placement or hardware capacity.
 
 The test covers:
 
-- Actual wallet client queries against a coordinator and two workers, including
+- Actual wallet client queries through query ingress, a packing router and two
+  workers, with an in-process coordinator publishing, including
   row boundaries, out-of-range positions, expired generations and fresh acceptance.
 - Two compact-scanned actions in a SQLite wallet, with the actual scanned anchor
   checked before accepting the manifest.

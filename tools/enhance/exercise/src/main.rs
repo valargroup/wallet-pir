@@ -5,6 +5,7 @@ use enhance_publisher::{
     application::load_inventory,
     control::{Group, PlacementPolicy, Role, State},
     coordinator::Coordinator,
+    local_serving::Serving,
     store::RecordJournal,
 };
 use enhance_query_server::{
@@ -76,6 +77,7 @@ pub struct Config {
     pub profile: Profile,
     pub root: PathBuf,
     pub listen: SocketAddr,
+    pub query_listen: SocketAddr,
     pub seconds: u64,
     pub min_publications: u64,
     pub interval: Duration,
@@ -196,12 +198,6 @@ fn assignments(root: &Path, manifest: &Manifest, profile: Profile) -> Result<Val
     )
 }
 
-struct HttpTask(tokio::task::JoinHandle<()>);
-impl Drop for HttpTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
 struct Traffic {
     latencies: Histogram<u64>,
     correct: u64,
@@ -283,27 +279,21 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
         })
         .collect();
     let sealed_shards = groups[0].placement_policy.sealed_shards;
-    let coordinator = Coordinator::open(&config.root.join("control"), groups)?;
-    let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    let address = listener.local_addr()?;
-    let connect_address = if address.ip().is_unspecified() {
-        SocketAddr::new(
-            if address.is_ipv4() {
-                std::net::Ipv4Addr::LOCALHOST.into()
-            } else {
-                std::net::Ipv6Addr::LOCALHOST.into()
-            },
-            address.port(),
-        )
-    } else {
-        address
-    };
-    let origin = format!("http://{connect_address}");
+    // Wallet traffic reaches query ingress backed by a packing router; the
+    // coordinator's own listener serves only health, readiness and metrics.
+    let serving = Serving::start_on(
+        &config.root.join("roles"),
+        &config.root.join("control"),
+        groups,
+        config.listen,
+        config.query_listen,
+    )
+    .await?;
+    let coordinator = serving.coordinator();
+    let origin = serving.origin.clone();
+    let operator = serving.operator.clone();
     summary["origin"] = json!(origin);
-    let router = coordinator.clone().router();
-    let _server = HttpTask(tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
-    }));
+    summary["operator"] = json!(operator);
     let mut journal = RecordJournal::open(
         config.root.join("journal"),
         DatabaseId::Enhance,
@@ -423,7 +413,7 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
         max_publication_ms = max_publication_ms.max(publication_ms);
         let mut placement = assignments(&config.root, &manifest, config.profile)?;
         let health: Value = http
-            .get(format!("{origin}/v1/health"))
+            .get(format!("{operator}/v1/health"))
             .send()
             .await?
             .error_for_status()?
@@ -501,7 +491,7 @@ async fn execute(config: &Config, groups: Vec<Group>, summary: &mut Value) -> Re
     let mut targets = vec![(
         "coordinator.prom".to_owned(),
         json!({"role":"coordinator"}),
-        format!("{origin}/metrics"),
+        format!("{operator}/metrics"),
     )];
     targets.extend(
         worker_targets
@@ -550,8 +540,12 @@ struct Cli {
     data_dir: PathBuf,
     #[arg(long)]
     worker_config: PathBuf,
+    /// Coordinator health, readiness and metrics.
     #[arg(long, default_value = "127.0.0.1:8280")]
     listen: SocketAddr,
+    /// Query ingress wallet routes.
+    #[arg(long, default_value = "127.0.0.1:8281")]
+    query_listen: SocketAddr,
     #[arg(long, default_value_t = 21600)]
     seconds: u64,
     #[arg(long, default_value_t = 300)]
@@ -584,6 +578,7 @@ async fn main() -> Result<()> {
             profile: cli.profile,
             root: cli.data_dir,
             listen: cli.listen,
+            query_listen: cli.query_listen,
             seconds: cli.seconds,
             min_publications: cli.min_publications,
             interval: Duration::from_secs(cli.publication_interval),

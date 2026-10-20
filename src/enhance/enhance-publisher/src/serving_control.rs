@@ -144,8 +144,9 @@ impl ServingControl {
             }
             prepared.push((router.clone(), ack));
         }
+        let retained = &snapshots[..snapshots.len().min(RETAINED_GENERATIONS)];
         let mut routes: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for snapshot in &snapshots {
+        for snapshot in retained {
             for id in snapshot.artifacts.keys() {
                 let session = hex::encode(snapshot.manifest.session_id(*id)?);
                 let assigned = routes.entry(session).or_default();
@@ -164,6 +165,7 @@ impl ServingControl {
             generation: snapshots[0].manifest.generation,
             revocation: fence,
             routes,
+            manifests: retained.iter().map(|s| s.manifest.clone()).collect(),
         };
         let expected = digest(&view);
         for url in &self.ingresses {

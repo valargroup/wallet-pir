@@ -349,8 +349,8 @@ Existing systemd units are retained. `90-v7.conf` overrides `ExecStart` on
 `enhance-pir-coordinator.service` and `enhance-pir-worker.service`; the worker
 override also grants write access to the new worker directory. Old unit files,
 drop-ins and binary checksums are saved under `/srv/enhance-pir-v7/rollback` on
-each host. The coordinator listens on loopback port 8080 and Caddy keeps the
-existing public origin. Workers listen on their private addresses at port 8091.
+each host. The coordinator listens on loopback port 8080 for operator routes
+only; Caddy sends wallet routes on the existing public origin to query ingress. Workers listen on their private addresses at port 8091.
 
 To roll back this layout, stop the coordinator, stop both workers, move only the
 `90-v7.conf` overrides out of their `.service.d` directories, reload systemd,
@@ -360,7 +360,8 @@ use. Do not delete or reinterpret v7 state. To return to v7, stop the v6 service
 restore the v7 overrides, reload, start both v7 workers and then the coordinator.
 
 The isolated workload uses separate `qualification-worker` directories and an
-`enhance-v7-qualification` unit on loopback port 8280. Stop it before changing
+`enhance-v7-qualification` unit on loopback ports 8280 (coordinator operator
+routes) and 8281 (wallet routes through its in-process query ingress). Stop it before changing
 worker state back to canonical serving. Preserve its samples, including memory
 pressure and failures. A focused 30-minute run never grants the six-hour
 hardware qualification or permission to increase placement/admission limits.

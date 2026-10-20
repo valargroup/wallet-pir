@@ -1,12 +1,14 @@
-//! Bounded EPQ7 prefix routing. No upload-key decoding, packing or query replay.
+//! The public Enhance origin: the manifest, session reads and bounded EPQ7
+//! prefix routing. No upload-key decoding, packing or query replay; session
+//! reads and queries go to the packing routers assigned to that session.
 use crate::admission::{client_key, read_body, BodyError, ClientSlots};
 use crate::packing_router::{Ack, Activation, CONTROL_VERSION};
-use crate::protocol::{canonical_hash, digest, QueryBinding, HEADER_BYTES};
+use crate::protocol::{canonical_hash, digest, Manifest, QueryBinding, HEADER_BYTES};
 use crate::serving_fence::{ControlledView, FenceRefusal, PreparedView, Withheld};
 use crate::worker::Revocation;
 use axum::{
     body::Bytes,
-    extract::{ConnectInfo, Request, State},
+    extract::{ConnectInfo, Path as UrlPath, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -29,6 +31,10 @@ const UPLOAD_DEADLINE: Duration = Duration::from_secs(30);
 pub const DEFAULT_UPLOADS: usize = 256;
 /// Concurrent in-flight uploads per client identity.
 const CLIENT_UPLOADS: usize = 4;
+/// Concurrent manifest and session reads.
+const PUBLIC_READS: usize = 64;
+/// Largest session document accepted from a router.
+const SESSION_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct IngressView {
@@ -37,6 +43,8 @@ pub struct IngressView {
     pub generation: u64,
     pub revocation: Revocation,
     pub routes: BTreeMap<String, Vec<String>>,
+    /// Retained manifests, newest (`generation`) first.
+    pub manifests: Vec<Manifest>,
 }
 struct Loaded {
     view: IngressView,
@@ -65,6 +73,7 @@ pub struct QueryIngress {
     incarnation: String,
     admission: Arc<Semaphore>,
     uploads: Arc<Semaphore>,
+    reads: Arc<Semaphore>,
     client_uploads: ClientSlots,
     http: reqwest::Client,
     _lock: Arc<File>,
@@ -97,6 +106,7 @@ impl QueryIngress {
             (0, Revocation::default())
         };
         let metrics = crate::http_metrics::HttpMetrics::default();
+        metrics.endpoint("init");
         metrics.endpoint("query");
         Ok(Self {
             metrics,
@@ -108,6 +118,7 @@ impl QueryIngress {
             incarnation: hex::encode(rand::random::<[u8; 16]>()),
             admission: Arc::new(Semaphore::new(requests)),
             uploads: Arc::new(Semaphore::new(uploads)),
+            reads: Arc::new(Semaphore::new(PUBLIC_READS)),
             client_uploads: ClientSlots::new(CLIENT_UPLOADS),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(90))
@@ -118,6 +129,9 @@ impl QueryIngress {
     }
     pub fn public_router(&self) -> Router {
         Router::new()
+            .route("/v1/enhance/init", get(init))
+            .route("/v1/enhance/sessions/:generation/:shard", get(session))
+            .route("/v1/enhance/session/:session_id", get(session_by_id))
             .route("/v1/enhance/query", post(query))
             .layer(axum::middleware::from_fn_with_state(
                 self.metrics.clone(),
@@ -201,8 +215,28 @@ async fn prepare(
     if view.version != CONTROL_VERSION {
         return Err(fail("unsupported ingress view"));
     }
+    let newest = view.manifests.first().map(|m| m.generation);
+    if newest != Some(view.generation)
+        || view
+            .manifests
+            .windows(2)
+            .any(|pair| pair[0].generation <= pair[1].generation)
+    {
+        return Err(fail("ingress manifests must be retained newest first"));
+    }
+    let sessions: std::collections::BTreeSet<String> = view
+        .manifests
+        .iter()
+        .flat_map(|m| {
+            m.coverage
+                .shards
+                .iter()
+                .filter_map(|shard| m.session_id(shard.id).ok().map(hex::encode))
+        })
+        .collect();
     for (session, routes) in &view.routes {
         if !canonical_hash(session)
+            || !sessions.contains(session)
             || routes.is_empty()
             || view.revocation.sessions.contains(session)
         {
@@ -256,6 +290,118 @@ async fn revoke(
     let epoch = i.control.epoch;
     r.fence(&mut i, epoch, fence).map_err(fail)?;
     Ok(StatusCode::NO_CONTENT)
+}
+fn public_read(r: &QueryIngress) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
+    r.reads
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| overloaded("overloaded"))
+}
+/// The active view, if control is live.
+fn active(r: &QueryIngress) -> Result<(Arc<Loaded>, u64), Error> {
+    let i = r.inner.lock().unwrap();
+    if !i.control.refreshed.live() {
+        return Err(fail("ingress control stale"));
+    }
+    let active = i
+        .control
+        .active
+        .clone()
+        .ok_or_else(|| fail("ingress not activated"))?;
+    Ok((active, i.control.epoch))
+}
+async fn init(State(r): State<QueryIngress>) -> Response {
+    let read = public_read(&r).and_then(|_read| active(&r));
+    match read {
+        Ok((active, _)) => Json(active.view.manifests[0].clone()).into_response(),
+        Err(error) => crate::packing_router::public_error(error),
+    }
+}
+async fn session(
+    State(r): State<QueryIngress>,
+    UrlPath((generation, shard)): UrlPath<(u64, u64)>,
+) -> Response {
+    let id = active(&r).and_then(|(active, _)| {
+        let manifest = active
+            .view
+            .manifests
+            .iter()
+            .find(|m| m.generation == generation)
+            .ok_or_else(|| (StatusCode::GONE, "expired session".into()))?;
+        manifest
+            .session_id(shard)
+            .map(hex::encode)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))
+    });
+    match id {
+        Ok(id) => forward_session(r, id).await,
+        Err(error) => crate::packing_router::public_error(error),
+    }
+}
+async fn session_by_id(State(r): State<QueryIngress>, UrlPath(id): UrlPath<String>) -> Response {
+    if !canonical_hash(&id) {
+        return crate::packing_router::public_error((
+            StatusCode::BAD_REQUEST,
+            "invalid session id".into(),
+        ));
+    }
+    forward_session(r, id).await
+}
+/// Read one session document from a router assigned to it. A document is only
+/// returned while the session is still unrevoked under the same authority.
+async fn forward_session(r: QueryIngress, session: String) -> Response {
+    let served = async {
+        let _read = public_read(&r)?;
+        let (url, epoch) = {
+            let mut i = r.inner.lock().unwrap();
+            if i.control.fence.sessions.contains(&session) {
+                return Err((StatusCode::GONE, "noncanonical_session".into()));
+            }
+            if !i.control.refreshed.live() {
+                return Err(fail("ingress control stale"));
+            }
+            let active = i
+                .control
+                .active
+                .as_ref()
+                .ok_or_else(|| fail("ingress not activated"))?;
+            let routes = active
+                .view
+                .routes
+                .get(&session)
+                .ok_or_else(|| (StatusCode::GONE, "session_unavailable".into()))?;
+            let url = routes[i.cursor % routes.len()].clone();
+            i.cursor = i.cursor.wrapping_add(1);
+            (url, i.control.epoch)
+        };
+        let response = r
+            .http
+            .get(format!("{url}/v1/enhance/session/{session}"))
+            .send()
+            .await
+            .map_err(router_unavailable)?;
+        let status = response.status();
+        let content_type = response.headers().get("content-type").cloned();
+        let bytes = crate::packing_router::bounded(response, SESSION_BYTES)
+            .await
+            .map_err(router_unavailable)?;
+        r.allowed(&session, epoch).map_err(|e| {
+            if e == "noncanonical_session" {
+                (StatusCode::GONE, e)
+            } else {
+                fail(e)
+            }
+        })?;
+        let mut response = (status, bytes).into_response();
+        if let Some(value) = content_type {
+            response.headers_mut().insert("content-type", value);
+        }
+        Ok::<_, Error>(response)
+    };
+    match served.await {
+        Ok(response) => response,
+        Err(error) => crate::packing_router::public_error(error),
+    }
 }
 async fn query(State(r): State<QueryIngress>, request: Request) -> Response {
     match serve(r, request).await {
@@ -383,20 +529,49 @@ mod tests {
         .await
         .expect("ingress state did not converge");
     }
+    fn manifest(generation: u64) -> Manifest {
+        use crate::protocol::*;
+        Manifest {
+            recovery_epoch: 0,
+            placement_revision: 0,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: SCHEMA_VERSION,
+            protocol_revision: PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation,
+            anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32),
+            geometry: Geometry::default(),
+            coverage: Lifecycle::default()
+                .coverage(67, Geometry::default())
+                .unwrap(),
+            sessions: vec![SessionRef {
+                shard_id: 0,
+                public_params_sha256: "00".repeat(32),
+                parameter_id: "parameters".into(),
+            }],
+            unit_identities: [(0, Vec::new())].into(),
+        }
+    }
+    fn session_id() -> [u8; 32] {
+        manifest(1).session_id(0).unwrap()
+    }
+    fn view(routes: Vec<String>) -> IngressView {
+        IngressView {
+            version: CONTROL_VERSION,
+            controller_epoch: 1,
+            generation: 1,
+            revocation: Revocation::default(),
+            routes: [(hex::encode(session_id()), routes)].into(),
+            manifests: vec![manifest(1)],
+        }
+    }
     async fn activate_for(r: &QueryIngress, routes: Vec<String>) {
-        let ack = prepare(
-            State(r.clone()),
-            Json(IngressView {
-                version: CONTROL_VERSION,
-                controller_epoch: 1,
-                generation: 1,
-                revocation: Revocation::default(),
-                routes: [("aa".repeat(32), routes)].into(),
-            }),
-        )
-        .await
-        .unwrap()
-        .0;
+        let ack = prepare(State(r.clone()), Json(view(routes)))
+            .await
+            .unwrap()
+            .0;
         activate(
             State(r.clone()),
             Json(Activation {
@@ -414,7 +589,7 @@ mod tests {
             shard_id: 0,
             epoch: [1; 8],
             recovery_epoch: 0,
-            session_id: [0xaa; 32],
+            session_id: session_id(),
             request_id: [3; 16],
             anchor_hash: [4; 32],
         }
@@ -600,7 +775,7 @@ mod tests {
             State(r.clone()),
             Json(Revocation {
                 recovery_epoch: 1,
-                sessions: ["aa".repeat(32)].into(),
+                sessions: [hex::encode(session_id())].into(),
             }),
         )
         .await
@@ -616,6 +791,105 @@ mod tests {
         assert_eq!(r.admission.available_permits(), 1);
         server.abort();
         let _ = server.await;
+    }
+    #[tokio::test]
+    async fn manifest_and_session_reads_come_from_the_active_view_and_assigned_router() {
+        let id = hex::encode(session_id());
+        let document = format!("{{\"session_id\":\"{id}\"}}");
+        let served = document.clone();
+        let upstream = Router::new().route(
+            &format!("/v1/enhance/session/{id}"),
+            get(move || {
+                let served = served.clone();
+                async move { ([("content-type", "application/json")], served) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+        let root = tempfile::tempdir().unwrap();
+        let r = QueryIngress::open(root.path(), 1).unwrap();
+        let get = |uri: String| {
+            let router = r.public_router();
+            async move {
+                let response = router
+                    .oneshot(Request::get(uri).body(axum::body::Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                (status, bytes)
+            }
+        };
+        // Nothing is served before the coordinator activates a view.
+        assert_eq!(
+            get("/v1/enhance/init".into()).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        activate_for(&r, vec![url]).await;
+        let (status, bytes) = get("/v1/enhance/init".into()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            serde_json::from_slice::<Manifest>(&bytes).unwrap(),
+            manifest(1)
+        );
+        for uri in [
+            format!("/v1/enhance/session/{id}"),
+            "/v1/enhance/sessions/1/0".into(),
+        ] {
+            let (status, bytes) = get(uri).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(bytes, document.as_bytes());
+        }
+        assert_eq!(
+            get("/v1/enhance/sessions/0/0".into()).await.0,
+            StatusCode::GONE
+        );
+        assert_eq!(
+            get(format!("/v1/enhance/session/{}", "bb".repeat(32)))
+                .await
+                .0,
+            StatusCode::GONE
+        );
+        assert_eq!(
+            get("/v1/enhance/session/zz".into()).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        revoke(
+            State(r.clone()),
+            Json(Revocation {
+                recovery_epoch: 1,
+                sessions: [id.clone()].into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            get(format!("/v1/enhance/session/{id}")).await.0,
+            StatusCode::GONE
+        );
+        server.abort();
+        let _ = server.await;
+    }
+    #[tokio::test]
+    async fn views_must_carry_newest_first_manifests_covering_every_route() {
+        let root = tempfile::tempdir().unwrap();
+        let r = QueryIngress::open(root.path(), 1).unwrap();
+        let origin = "http://127.0.0.1:1".to_string();
+        let mut stale = view(vec![origin.clone()]);
+        stale.manifests = vec![manifest(0)];
+        let mut unordered = view(vec![origin.clone()]);
+        unordered.manifests.push(manifest(2));
+        let mut unknown = view(vec![origin.clone()]);
+        unknown.routes = [("bb".repeat(32), vec![origin.clone()])].into();
+        for refused in [stale, unordered, unknown] {
+            assert!(prepare(State(r.clone()), Json(refused)).await.is_err());
+        }
+        assert!(prepare(State(r.clone()), Json(view(vec![origin])))
+            .await
+            .is_ok());
     }
     #[tokio::test]
     async fn ambiguous_router_failure_is_never_replayed() {

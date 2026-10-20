@@ -1,4 +1,6 @@
-//! Real encrypted requests traverse coordinator and two worker HTTP listeners.
+//! Real encrypted requests traverse query ingress, a packing router and worker
+//! HTTP listeners; the coordinator publishes and answers operator routes.
+use enhance_publisher::local_serving as serving;
 use enhance_publisher::{
     control::{Group, Ledger, Replica},
     coordinator::Coordinator,
@@ -105,8 +107,11 @@ async fn distributed_backend_round_trip(backend: enhance_query_server::matvec::M
         replicas,
     }];
     let coordinator_root = root.path().join("coordinator");
-    let coordinator = Coordinator::open(&coordinator_root, groups.clone()).unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let mut serving = serving::Serving::start(root.path(), &coordinator_root, groups.clone())
+        .await
+        .unwrap();
+    let coordinator = serving.coordinator();
+    let (origin, operator) = (serving.origin.clone(), serving.operator.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -187,7 +192,7 @@ async fn distributed_backend_round_trip(backend: enhance_query_server::matvec::M
         } else {
             publication.unwrap();
         }
-        let health: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+        let health: serde_json::Value = reqwest::get(format!("{operator}/v1/health"))
             .await
             .unwrap()
             .json()
@@ -195,7 +200,7 @@ async fn distributed_backend_round_trip(backend: enhance_query_server::matvec::M
             .unwrap();
         let ready = if block < 4 { 1 } else { 2 };
         assert_eq!(health["published_replica_counts"]["group-1"], ready);
-        let metrics = reqwest::get(format!("{origin}/metrics"))
+        let metrics = reqwest::get(format!("{operator}/metrics"))
             .await
             .unwrap()
             .text()
@@ -284,14 +289,10 @@ async fn distributed_backend_round_trip(backend: enhance_query_server::matvec::M
     let (got, _) = client.query_position_with_timing(66).await.unwrap();
     assert_eq!(got.as_ref(), record(66));
     drop(client);
-    server.abort();
-    let _ = server.await;
     drop(coordinator);
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    let restored = Coordinator::open(&coordinator_root, groups).unwrap();
-    let (origin, server) = serve(restored.router()).await;
+    serving.restart(groups).await.unwrap();
     // Publication health stays observable across a restart, before any new block.
-    let metrics = reqwest::get(format!("{origin}/metrics"))
+    let metrics = reqwest::get(format!("{}/metrics", serving.operator))
         .await
         .unwrap()
         .text()
@@ -310,7 +311,6 @@ async fn distributed_backend_round_trip(backend: enhance_query_server::matvec::M
             .as_ref(),
         record(33)
     );
-    server.abort();
     for worker in workers {
         worker.abort();
     }
@@ -363,9 +363,10 @@ async fn full_shard_composition_confirmation_and_recovery() {
         replicas,
     }];
     let control = root.path().join("control");
-    let coordinator = Coordinator::open(&control, groups.clone()).unwrap();
-    let (origin, task) = serve(coordinator.clone().router()).await;
-    tasks.push(task);
+    let serving = serving::Serving::start(root.path(), &control, groups.clone())
+        .await
+        .unwrap();
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -733,9 +734,10 @@ async fn consolidation_campaign(sealed_shards: usize) {
         });
     }
     let path = root.path().join("control");
-    let coordinator = Coordinator::open(&path, groups).unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
-    tasks.push(server);
+    let serving = serving::Serving::start(root.path(), &path, groups)
+        .await
+        .unwrap();
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -887,8 +889,11 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
     let policy_path = root.path().join("policy.json");
     std::fs::write(&inventory_path, serde_json::to_vec(&inventory).unwrap()).unwrap();
     std::fs::write(&policy_path, br#"{"kind":"isolated-test-policy"}"#).unwrap();
-    let coordinator = Coordinator::open(&root.path().join("control"), groups).unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let serving = serving::Serving::start(root.path(), &root.path().join("control"), groups)
+        .await
+        .unwrap();
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
+    let operator = serving.operator.clone();
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -907,7 +912,7 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
         .await
         .is_err());
     assert!(coordinator.manifest().await.is_none());
-    let blocked: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+    let blocked: serde_json::Value = reqwest::get(format!("{operator}/v1/health"))
         .await
         .unwrap()
         .json()
@@ -927,7 +932,7 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
             .arg("--state-dir")
             .arg(&operations)
             .arg("--coordinator-url")
-            .arg(&origin)
+            .arg(&operator)
             .arg("--inventory")
             .arg(&inventory_path)
             .arg("--policy")
@@ -957,7 +962,7 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
         .publish(&journal, 3428143, "01".repeat(32))
         .await
         .unwrap();
-    let health: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+    let health: serde_json::Value = reqwest::get(format!("{operator}/v1/health"))
         .await
         .unwrap()
         .json()
@@ -983,7 +988,6 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
             record(position)
         );
     }
-    server.abort();
     for task in tasks {
         task.abort();
     }
@@ -1057,8 +1061,11 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
             replicas,
         });
     }
-    let coordinator = Coordinator::open(&root.path().join("control"), groups).unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let serving = serving::Serving::start(root.path(), &root.path().join("control"), groups)
+        .await
+        .unwrap();
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
+    let operator = serving.operator.clone();
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -1106,7 +1113,7 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
         .publish(&journal, 3428144, "02".repeat(32))
         .await
         .unwrap();
-    let health: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+    let health: serde_json::Value = reqwest::get(format!("{operator}/v1/health"))
         .await
         .unwrap()
         .json()
@@ -1149,7 +1156,7 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
         .publish(&journal, 3428145, "03".repeat(32))
         .await
         .unwrap();
-    let health: serde_json::Value = reqwest::get(format!("{origin}/v1/health"))
+    let health: serde_json::Value = reqwest::get(format!("{operator}/v1/health"))
         .await
         .unwrap()
         .json()
@@ -1178,7 +1185,6 @@ async fn memory_refusal_moves_published_shard_with_complete_destination_pair() {
             .as_ref(),
         record(66)
     );
-    server.abort();
     for task in tasks {
         task.abort();
     }

@@ -1,9 +1,9 @@
 //! Authenticated synthetic Ironwood records through real HTTP PIR.
 //! Fixed inputs are public test material, never wallet credentials; the
 //! library-owned fixture holds the Orchard and note-encryption cryptography.
+use enhance_publisher::local_serving as serving;
 use enhance_publisher::{
     control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
     store::RecordJournal,
 };
 use enhance_query_server::{
@@ -81,7 +81,8 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
+    let serving = serving::Serving::start(
+        root.path(),
         &root.path().join("control"),
         vec![Group {
             placement_policy: Default::default(),
@@ -90,8 +91,9 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
             replicas,
         }],
     )
+    .await
     .unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -161,7 +163,6 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let mut epk_tampered = output.clone();
     epk_tampered.ephemeral_key[0] ^= 1;
     assert!(own_ivk(&epk_tampered).is_none());
-    server.abort();
     for task in tasks {
         task.abort();
     }

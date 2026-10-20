@@ -1,8 +1,9 @@
 //! Build as a separate test crate against the pinned wallet-pir checkout.
-//! Queries traverse the real coordinator and two worker HTTP listeners.
+//! Queries traverse real query ingress, packing router and two worker HTTP
+//! listeners; the coordinator publishes.
 use enhance_publisher::{
     control::{Group, Ledger, PlacementPolicy, Replica},
-    coordinator::Coordinator,
+    local_serving::Serving,
     store::RecordJournal,
 };
 use enhance_query_server::{
@@ -114,7 +115,8 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
+    let serving = Serving::start(
+        &root.path().join("roles"),
         &root.path().join("control"),
         vec![Group {
             placement_policy: PlacementPolicy { sealed_shards: 7 },
@@ -123,9 +125,10 @@ async fn wallet_client_round_trips_real_http_and_requires_fresh_acceptance() {
             replicas,
         }],
     )
+    .await
     .unwrap();
-    let (origin, task) = serve(coordinator.clone().router()).await;
-    tasks.push(task);
+    let coordinator = serving.coordinator();
+    let origin = serving.origin.clone();
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -324,7 +327,8 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
+    let serving = Serving::start(
+        &root.path().join("roles"),
         &root.path().join("control"),
         vec![Group {
             placement_policy: PlacementPolicy { sealed_shards: 7 },
@@ -333,9 +337,10 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             replicas,
         }],
     )
+    .await
     .unwrap();
-    let (origin, task) = serve(coordinator.clone().router()).await;
-    tasks.push(task);
+    let coordinator = serving.coordinator();
+    let origin = serving.origin.clone();
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -466,7 +471,8 @@ async fn v7_wallet_composition_reuse_and_recovery() {
             ledger: Ledger::default(),
         });
     }
-    let coordinator = Coordinator::open(
+    let serving = Serving::start(
+        &root.path().join("roles"),
         &root.path().join("control"),
         vec![Group {
             placement_policy: Default::default(),
@@ -475,9 +481,10 @@ async fn v7_wallet_composition_reuse_and_recovery() {
             replicas,
         }],
     )
+    .await
     .unwrap();
-    let (origin, task) = serve(coordinator.clone().router()).await;
-    tasks.push(task);
+    let coordinator = serving.coordinator();
+    let origin = serving.origin.clone();
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,

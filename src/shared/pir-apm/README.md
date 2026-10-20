@@ -119,10 +119,11 @@ The server exports `enhance_http_arrivals_total`,
 labels. Histograms count responses, including errors after a complete upload.
 No bodies, session identifiers, or dynamic paths enter metric labels.
 
-By default, both rows consume the coordinator metrics endpoint. For separate
-query ingress processes, set `PIR_APM_QUERY_SCRAPE_URLS` to a comma-separated list
-of their private full `/internal/metrics` URLs (maximum eight). This **replaces**
-the coordinator as the Query traffic source; Init still uses the coordinator.
+Query ingress serves both wallet entrypoints. Set `PIR_APM_QUERY_SCRAPE_URLS` to
+a comma-separated list of the ingress processes' private full `/internal/metrics`
+URLs (maximum eight); they supply both the Init and Query rows. Without it the
+rows read the coordinator metrics endpoint, which serves no wallet traffic, so
+both report missing instrumentation.
 Query latency comes from packing-router `enhance_query_stage_duration_seconds`
 histograms discovered through `PIR_APM_PACKING_ROUTER_CONFIG`.
 List only outer public ingress instances, never internal packing routers. Keep

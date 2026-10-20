@@ -9,7 +9,7 @@ use crate::{
     worker::{Evaluate, Revocation},
 };
 use axum::{
-    extract::{Request, State},
+    extract::{Path as UrlPath, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,9 +27,9 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 #[cfg(not(feature = "native-reinspiring"))]
-pub const CONTROL_VERSION: u16 = 2;
+pub const CONTROL_VERSION: u16 = 3;
 #[cfg(feature = "native-reinspiring")]
-pub const CONTROL_VERSION: u16 = 4;
+pub const CONTROL_VERSION: u16 = 5;
 const BODY_LIMIT: usize = 512 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -243,9 +243,12 @@ impl PackingRouter {
         })
     }
 
+    /// Wallet traffic arrives only through query ingress, which routes each
+    /// session to its assigned routers.
     pub fn public_router(&self) -> Router {
         Router::new()
             .route("/v1/enhance/query", post(query))
+            .route("/v1/enhance/session/:session_id", get(session))
             .with_state(self.clone())
     }
     pub fn control_router(&self) -> Router {
@@ -853,6 +856,50 @@ fn select(
 
 pub use crate::query_serving::bounded;
 pub(crate) use crate::query_serving::public_error;
+
+/// The session document of a retained generation whose packing material this
+/// router holds.
+async fn session(State(r): State<PackingRouter>, UrlPath(id): UrlPath<String>) -> Response {
+    let found = (|| {
+        if !canonical_hash(&id) {
+            return Err(bad("invalid session id"));
+        }
+        let i = r.inner.lock().unwrap();
+        if i.control.fence.sessions.contains(&id) {
+            return Err((StatusCode::GONE, "noncanonical_session".into()));
+        }
+        if !i.control.refreshed.live() {
+            return Err(unavailable("control connection stale"));
+        }
+        let loaded = i
+            .control
+            .active
+            .clone()
+            .ok_or_else(|| unavailable("router not activated"))?;
+        let pack = loaded
+            .packing
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| (StatusCode::GONE, "session_unavailable".into()))?;
+        loaded
+            .view
+            .snapshots
+            .iter()
+            .find_map(|s| {
+                s.manifest.coverage.shards.iter().find_map(|shard| {
+                    s.manifest
+                        .session_id(shard.id)
+                        .is_ok_and(|hash| hex::encode(hash) == id)
+                        .then(|| (pack.clone(), s.manifest.clone(), shard.id))
+                })
+            })
+            .ok_or_else(|| (StatusCode::GONE, "session_unavailable".into()))
+    })();
+    match found {
+        Ok((pack, manifest, shard)) => Json(pack.session(&manifest, shard)).into_response(),
+        Err(error) => public_error(error),
+    }
+}
 
 async fn query(State(r): State<PackingRouter>, request: Request) -> Response {
     use std::sync::atomic::Ordering::Relaxed;

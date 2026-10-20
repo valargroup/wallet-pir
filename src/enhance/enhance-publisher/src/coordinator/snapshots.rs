@@ -158,7 +158,7 @@ pub(super) fn restore(
                 f.write_all(&serving.public)
             })
             .map_err(|e| e.to_string())?;
-            PublishedPacking::new(shard.logical_rows, serving, true)
+            PublishedPacking::metadata(shard.logical_rows, serving.public)
         };
         if !manifest.sessions.contains(&pack.reference(shard.id)?) {
             return Err("restored session digest differs".into());

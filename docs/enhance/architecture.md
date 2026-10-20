@@ -6,8 +6,9 @@ owns ingestion, publication, placement and recovery control. A separate packing
 router decodes wallet queries and packs results; worker replicas evaluate private
 row queries. The September 24, 2026 rollout deployed EPQ7 query ingress, a dedicated
 8 GiB packing router and a two-worker pool with replication factor two. The
-coordinator retains public session metadata and immutable artifacts, with zero
-resident serving packing objects in this mode. See the
+coordinator never faces wallets: query ingress serves the manifest, session
+documents and queries, and the coordinator keeps public session metadata and
+immutable artifacts without resident serving packing objects. See the
 [rollout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/architecture2-2026-09-24/README.md) and
 [qualification](qualification.md) for measured limits and outstanding gates.
 
@@ -67,9 +68,8 @@ flowchart TB
         caddy["Caddy · TLS"]
         ingress["Query ingress · EPQ7 session routing"]
         coordinator["Coordinator · publication and recovery"]
-        caddy <-->|"Query / packed response"| ingress
-        caddy <-->|"Manifest and control routes"| coordinator
-        coordinator -. "Session-to-router assignments" .-> ingress
+        caddy <-->|"Manifest, sessions, query"| ingress
+        coordinator -. "Manifests and session-to-router assignments" .-> ingress
     end
     subgraph packing_host["Packing-router host · 8 GiB"]
         router["Packing router · decode, select, pack"]
@@ -81,7 +81,7 @@ flowchart TB
         worker2["Evaluation replica 2"]
     end
     wallet <-->|"HTTPS"| caddy
-    ingress <-->|"Query / packed response"| router
+    ingress <-->|"Session document, query / packed response"| router
     router <-->|"Evaluation / intermediate"| worker1
     router <-->|"Evaluation / intermediate"| worker2
     coordinator -. "Serving views and artifacts" .-> router
@@ -96,8 +96,16 @@ worker from its activated placement view, and sends a bound evaluation request.
 It checks the intermediate's binding, shape and coefficient range, then packs it
 using that request's upload keys and the pinned session's resident packing material.
 
-No synchronous coordinator lookup is needed per query. The coordinator process
-no longer receives public query bodies or packs their responses. The public URL,
+Ingress answers `/v1/enhance/init` and `/v1/enhance/sessions/{generation}/{shard}`
+from the manifests in its activated view and forwards `/v1/enhance/session/{id}`
+to a router assigned to that session, which returns its retained public session
+document. Ingress and router accept queries only for the current generation;
+retained generations remain for session reads until expiry.
+
+No synchronous coordinator lookup is needed per request. The coordinator serves
+only private health, readiness, metrics and artifact routes; it never receives
+wallet requests. Without registered packing routers it still publishes, but no
+wallet route serves the result. The public URL,
 EPQ7 framing, session identities and response bindings are unchanged by this
 separation. Wallets neither select nor learn physical replicas. Session identity
 binds packing material, not the process or host performing packing.
@@ -502,7 +510,7 @@ split. `src/enhance/enhance-query-server` (unpublished) owns the wallet protocol
 (`enhance_query_server::protocol`), the client (`enhance_query_server::client`),
 record types and constants, prepared runtimes, workers, query ingress, packing
 routers, admission, response guards, serving fences, pure placement policy
-(`placement`) and the public `QueryGateway` (`gateway`). `pir-query-server` (`src/pir-query-server`) is the serving host. It
+(`placement`). `pir-query-server` (`src/pir-query-server`) is the serving host. It
 compiles Enhance, Status, and Transparent only behind the matching Cargo
 feature, and one process may enable any subset. Enhance still names one role
 per process (`worker`, `query-ingress`, or `packing-router`); Status names
@@ -520,16 +528,14 @@ Its `enhance-pir-server` maintenance commands are `rebuild-journal`,
 `prepare-packing-artifacts`, `restore-legacy-placement`, and `build-info`
 (`build-info` has no CUDA field). Worker, query ingress, and packing router
 processes are `pir-query-server --config`, one Enhance role each. Enhance and Status publication run as independent applications within `pir-publisher`. The
-Enhance `coordinator::Coordinator` is the composition API and composes the `QueryGateway`.
-Dependencies run only from publisher to query server. The gateway reads publisher
-state through the read-only `PublisherStatus` trait, which the publisher
-implements; revocations are read live from publisher state at query acceptance and
-at each streaming-response poll, so a revocation applies to responses already in
-flight. Status observation (`source`)
-and publication (`publisher`), publication authority and the `status-pir` command
-line live in `src/status/status-publisher`; its synthetic listeners serve
-`QueryGateway::unpublished()` from `enhance-query-server` and do not depend on
-Enhance publication. Ingestion checkpoints source state
+Enhance `coordinator::Coordinator` is the composition API; its private operator
+routes (`operator`) serve health, readiness and metrics only. Dependencies run
+only from publisher to query server. Revocations reach ingress and routers
+through their control routes. The `local-serving` feature starts an in-process
+packing router and query ingress beside a coordinator for tools and tests that
+drive wallet traffic; production builds leave it off. Status observation
+(`source`) and publication (`publisher`), publication authority and the
+`status-pir` command line live in `src/status/status-publisher`. Ingestion checkpoints source state
 independently and hands its latest snapshot to publication; slow worker
 preparation does not block source observation.
 Ingestion-dependent tests live with those packages. `tools/ci/boundary.py`

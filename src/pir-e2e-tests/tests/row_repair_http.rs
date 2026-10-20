@@ -1,7 +1,7 @@
 //! The offline repair CLI restores real current and retained encrypted HTTP queries.
+use enhance_publisher::local_serving as serving;
 use enhance_publisher::{
     control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
     store::RecordJournal,
 };
 use enhance_query_server::{client::EnhancePirClient, RECORD_BYTES};
@@ -9,15 +9,6 @@ use enhance_query_server::{
     types::{DatabaseId, ENHANCE_LAYOUT},
     worker::Worker,
 };
-
-async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
-    });
-    (url, task)
-}
 
 fn record(position: u64) -> Vec<u8> {
     let mut bytes = vec![0; RECORD_BYTES];
@@ -30,7 +21,10 @@ fn copy_control(source: &std::path::Path, destination: &std::path::Path) {
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let target = destination.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
+        if entry.file_name() == "serving" {
+            // The copy registers its own serving roles.
+            continue;
+        } else if entry.file_type().unwrap().is_dir() {
             copy_control(&entry.path(), &target);
         } else if matches!(
             source.file_name().and_then(|name| name.to_str()),
@@ -95,8 +89,14 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
             })
             .collect(),
     }];
-    let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
-    let (origin, server) = serve(coordinator.clone().router()).await;
+    let serving = serving::Serving::start(
+        &root.path().join("roles"),
+        &root.path().join("control"),
+        groups.clone(),
+    )
+    .await
+    .unwrap();
+    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
     let mut journal = RecordJournal::open(
         root.path().join("journal"),
         DatabaseId::Enhance,
@@ -118,8 +118,26 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
     // router can keep querying the old generation after the live router advances.
     let retained_control = root.path().join("retained-control");
     copy_control(&root.path().join("control"), &retained_control);
-    let old_coordinator = Coordinator::open(&retained_control, groups).unwrap();
-    let (retained_origin, retained_server) = serve(old_coordinator.router()).await;
+    // The frozen copy only fronts the retained generation. Its inventory points
+    // at closed ports so its startup reconciliation never reaches the workers
+    // the live coordinator owns; its saved routes still evaluate on them.
+    let mut detached = groups.clone();
+    for (port, replica) in (1..).zip(&mut detached[0].replicas) {
+        replica.url = format!("http://127.0.0.1:{port}");
+    }
+    let state_path = retained_control.join("controller.json");
+    let mut state: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    state["groups"] = serde_json::to_value(&detached).unwrap();
+    std::fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+    let retained_serving = serving::Serving::start(
+        &root.path().join("retained-roles"),
+        &retained_control,
+        detached,
+    )
+    .await
+    .unwrap();
+    let retained_origin = retained_serving.origin.clone();
     let mut retained = EnhancePirClient::connect(&retained_origin).await.unwrap();
     let retained_generation = retained.manifest().generation;
     let retained_session = retained.session(0).await.unwrap();
@@ -229,10 +247,6 @@ async fn lost_worker_rows_repair_restores_current_and_retained_http_queries() {
         assert_eq!(answer.as_ref(), record(position));
     }
     assert!(current.manifest().generation > retained_generation);
-    server.abort();
-    retained_server.abort();
     recovered.abort();
-    let _ = server.await;
-    let _ = retained_server.await;
     let _ = recovered.await;
 }

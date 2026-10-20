@@ -21,6 +21,9 @@ native-reinspiring = ["enhance-query-server/native-reinspiring", "dep:zakura-pir
 fault-injection = []
 # Widens private helpers for those regressions. Production builds leave it off.
 fixtures = []
+# In-process packing router and query ingress for tools and tests that drive
+# wallet traffic. Production runs those roles as pir-query-server processes.
+local-serving = []
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }

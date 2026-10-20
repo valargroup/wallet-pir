@@ -7,10 +7,8 @@ use super::{
     runtime::{self, DomainPlan, Packing, PublishedPacking},
     worker,
 };
+use crate::operator::{OperatorStatus, PublisherHealth, PublisherStatus, SavedSnapshot, Snapshot};
 use axum::{http::StatusCode, Router};
-use enhance_query_server::gateway::{
-    PublisherHealth, PublisherStatus, QueryGateway, SavedSnapshot, Snapshot,
-};
 use enhance_query_server::protocol::*;
 use snapshots::{collect_artifacts, restore};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +29,7 @@ fn preparation_request(http: &reqwest::Client, worker_url: &str) -> reqwest::Req
 
 #[derive(Clone)]
 pub struct Coordinator {
-    gateway: QueryGateway,
+    operator: OperatorStatus,
     store: Arc<Mutex<Store>>,
     publication: Arc<Semaphore>,
     http: reqwest::Client,
@@ -241,7 +239,7 @@ impl Coordinator {
             serving: serving.clone(),
         });
         Ok(Self {
-            gateway: QueryGateway::new(status, packing_budget, snapshots, http.clone()),
+            operator: OperatorStatus::new(status, packing_budget, snapshots),
             serving,
             store,
             publication: Arc::new(Semaphore::new(1)),
@@ -758,7 +756,7 @@ impl Coordinator {
         if let Some(saved) = candidate {
             views.push(self.serving_view(saved)?);
         }
-        for snapshot in self.gateway.views().read().await.iter() {
+        for snapshot in self.operator.views().read().await.iter() {
             if candidate.is_none_or(|c| c.manifest.generation != snapshot.saved.manifest.generation)
             {
                 views.push(self.serving_view(&snapshot.saved)?);
@@ -793,17 +791,13 @@ impl Coordinator {
         Ok(())
     }
 
+    /// Private health, readiness and metrics; never wallet routes.
     pub fn router(self) -> Router {
-        self.gateway.router()
-    }
-
-    /// The public query surface backed by this publisher's state.
-    pub fn gateway(&self) -> &QueryGateway {
-        &self.gateway
+        self.operator.router()
     }
 
     pub async fn manifest(&self) -> Option<Manifest> {
-        self.gateway.manifest().await
+        self.operator.manifest().await
     }
 
     async fn synchronize_retention(&self) {
@@ -874,7 +868,7 @@ async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8
     Ok(bytes)
 }
 
-/// The read-only publisher state the query gateway consults. Each call reads
+/// The read-only publisher state behind the operator routes. Each call reads
 /// the current durable state under the store lock; nothing is copied.
 struct Status {
     store: Arc<Mutex<Store>>,
@@ -884,16 +878,6 @@ struct Status {
 }
 
 impl PublisherStatus for Status {
-    fn revoked(&self, session_id: &str) -> bool {
-        self.store
-            .lock()
-            .unwrap()
-            .state()
-            .recovery
-            .revoked
-            .contains(session_id)
-    }
-
     fn remote_packing(&self) -> bool {
         self.serving.is_some()
     }
@@ -994,54 +978,6 @@ mod admission_tests {
             .last_attempt_seconds
             .is_none());
         assert!(coordinator.manifest().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn gateway_status_reads_durable_revocation_without_copying() {
-        let inventory = test_coordinator()
-            .store
-            .lock()
-            .unwrap()
-            .state()
-            .groups
-            .clone();
-        let root = tempfile::tempdir().unwrap();
-        let coordinator = Coordinator::open(root.path(), inventory).unwrap();
-        let status = Status {
-            store: coordinator.store.clone(),
-            blocked: coordinator.blocked.clone(),
-            telemetry: coordinator.telemetry.clone(),
-            serving: None,
-        };
-        assert!(!status.revoked("session"));
-        coordinator
-            .store
-            .lock()
-            .unwrap()
-            .update(|state| {
-                state.recovery.revoked.insert("session".into());
-                state.recovery.revoked.insert("ab".repeat(32));
-                Ok(())
-            })
-            .unwrap();
-        assert!(status.revoked("session"));
-        use tower::ServiceExt;
-        let response = coordinator
-            .clone()
-            .router()
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!("/v1/enhance/session/{}", "ab".repeat(32)))
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::GONE);
-        let body = axum::body::to_bytes(response.into_body(), 4096)
-            .await
-            .unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("noncanonical_session"));
     }
 
     #[test]

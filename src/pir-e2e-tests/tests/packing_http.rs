@@ -251,9 +251,9 @@ async fn extracted_path(qualification: bool) {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     });
-    // Minimal Caddy equivalent: route query bodies to ingress, control GETs to coordinator.
+    // Minimal Caddy equivalent: every wallet route goes to query ingress.
     let query_origin = ingress_query.clone();
-    let metadata_origin = control_origin.clone();
+    let metadata_origin = ingress_query.clone();
     let proxy = Router::new()
         .route(
             "/v1/enhance/query",
@@ -885,7 +885,8 @@ impl PackingChecks<'_> {
                 .await
                 .unwrap()
                 .status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
+            axum::http::StatusCode::NOT_FOUND,
+            "the coordinator never serves wallet queries"
         );
         let health: serde_json::Value = http
             .get(format!("{packing_control}/internal/health"))

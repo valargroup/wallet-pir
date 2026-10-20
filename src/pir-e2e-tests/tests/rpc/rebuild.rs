@@ -47,7 +47,7 @@ fn read_log(root: &Path) -> String {
     std::fs::read_to_string(root.join("coordinator.log")).unwrap_or_default()
 }
 
-fn start(root: &Path, address: &str, rpc: &str) -> Process {
+fn start(root: &Path, address: &str, rpc: &str, roles: &crate::serving::Roles) -> Process {
     let log = log(root);
     Process(
         binary()
@@ -67,6 +67,7 @@ fn start(root: &Path, address: &str, rpc: &str) -> Process {
             .arg(root.join("workers.json"))
             .arg("--zakura-cookie")
             .arg(root.join("cookie"))
+            .args(roles.coordinator_args(root).unwrap())
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(log))
             .spawn()
@@ -291,8 +292,11 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = socket.local_addr().unwrap().to_string();
     drop(socket);
-    let origin = format!("http://{address}");
-    let mut process = start(root.path(), &address, &rpc_url);
+    let roles = crate::serving::Roles::for_process(&root.path().join("roles"))
+        .await
+        .unwrap();
+    let origin = roles.origin.clone();
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
     published(&mut process, root.path(), &origin, &hashes[3]).await;
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     let positions = [0, 2, 4, 8];
@@ -488,7 +492,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         tamper(&staged);
         let before = journal_digests(&live);
         let offset = read_log(root.path()).len();
-        process = start(root.path(), &address, &rpc_url);
+        process = start(root.path(), &address, &rpc_url, &roles);
         wait_for_log(
             &mut process,
             root.path(),
@@ -517,7 +521,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     std::fs::rename(&good, &staged).unwrap();
     let old_live = journal_digests(&live);
     let offset = read_log(root.path()).len();
-    let mut process = start(root.path(), &address, &rpc_url);
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
     wait_for_log(
         &mut process,
         root.path(),

@@ -15,7 +15,9 @@
   deep-recovery epochs and revocations and fence admitted responses.
 - Add explicit wallet routing refresh and reusable sessions, with optional
   birthday-based cover rounds. v6 framing and clients are incompatible.
-- Add coordinator packing admission and retain worker resource lifetime pins.
+- Add packing admission and retain worker resource lifetime pins.
+- Serve the manifest, session documents and queries only from query ingress
+  backed by packing routers; the coordinator keeps private operator routes.
 - Provide the optional `enhance-pir-cli` diagnostic client and the coordinated
   `enhance-pir-server` and `enhance-pir-load-test` binaries.
 - Include manifest and session validation, private row queries, and

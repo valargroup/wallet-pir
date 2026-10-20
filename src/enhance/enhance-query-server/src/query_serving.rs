@@ -50,7 +50,6 @@ pub(crate) async fn admitted<T: Send + 'static>(
 pub(crate) struct Answer {
     pub coefficients: Vec<u64>,
     pub intermediate_bytes: usize,
-    pub attempts: usize,
     pub worker_time: Option<std::time::Duration>,
 }
 
@@ -152,7 +151,6 @@ pub(crate) async fn evaluate_observed<G>(
                 return Ok(Answer {
                     coefficients: result.coefficients,
                     intermediate_bytes: bytes.len(),
-                    attempts: attempt + 1,
                     worker_time,
                 });
             }
@@ -353,7 +351,6 @@ mod tests {
             let (result, first, second) = pair(status, true, vec![7]).await;
             let answer = result.unwrap();
             assert_eq!(answer.coefficients, vec![9]);
-            assert_eq!(answer.attempts, 2);
             assert_eq!((first, second), (1, 1));
             let (result, first, second) = pair(status, false, vec![7]).await;
             assert!(result.is_err());
@@ -472,7 +469,6 @@ mod tests {
             })
             .await
             .unwrap();
-            assert_eq!(answer.attempts, 2);
             assert_eq!(answer.worker_time, expected);
             first_task.abort();
             second_task.abort();
@@ -486,7 +482,7 @@ mod tests {
         drop(listener);
         let (available, calls, task) = server(StatusCode::OK, false, vec![7]).await;
         let mut failures = 0;
-        let result = evaluate_observed(
+        evaluate_observed(
             &reqwest::Client::new(),
             &request(),
             2,
@@ -507,7 +503,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(result.attempts, 2);
         assert_eq!(failures, 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         task.abort();

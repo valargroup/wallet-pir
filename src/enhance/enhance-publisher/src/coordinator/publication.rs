@@ -116,7 +116,7 @@ impl Coordinator {
         self.deliver_decisions().await?;
         let revoked = self.store.lock().unwrap().state().recovery.revoked.clone();
         if !revoked.is_empty() {
-            let mut snapshots = self.gateway.views().write().await;
+            let mut snapshots = self.operator.views().write().await;
             for snapshot in snapshots.iter_mut() {
                 let packing = snapshot
                     .packing
@@ -497,7 +497,7 @@ impl Coordinator {
             .map(|p| (p.shard.id, digest(&(p.shard.logical_rows, &p.units))))
             .collect();
         {
-            let previous = self.gateway.views().read().await;
+            let previous = self.operator.views().read().await;
             for snapshot in previous.iter() {
                 for (shard, key) in &domain_keys {
                     if !packing.contains_key(shard)
@@ -635,14 +635,14 @@ impl Coordinator {
                             )?;
                             Arc::new(PublishedPacking::metadata(plan.shard.logical_rows, public))
                         } else {
-                            Arc::new(PublishedPacking::new(
+                            Arc::new(PublishedPacking::metadata(
                                 plan.shard.logical_rows,
                                 Packing::new(
                                     plan.shard.logical_rows,
                                     &hint,
-                                    self.gateway.packing_budget(),
-                                )?,
-                                true,
+                                    self.operator.packing_budget(),
+                                )?
+                                .public,
                             ))
                         };
                         let reference = pack.reference(plan.shard.id)?;
@@ -693,7 +693,7 @@ impl Coordinator {
             .map(|s| packing[&s.id].reference(s.id))
             .collect::<Result<_, _>>()?;
         let placement_revision = {
-            let snapshots = self.gateway.views().read().await;
+            let snapshots = self.operator.views().read().await;
             match snapshots.first() {
                 Some(old) if old.saved.routes == routes => old.saved.manifest.placement_revision,
                 Some(old) => old
@@ -822,7 +822,7 @@ impl Coordinator {
         };
         let router_readiness = self.prepare_routers(Some(&saved)).await?;
         // Wait for admitted HTTP queries before retiring worker routes. Preparations did not block them.
-        let mut snapshots = self.gateway.views().write().await;
+        let mut snapshots = self.operator.views().write().await;
         validate
             .take()
             .ok_or("canonical validation already consumed")?()

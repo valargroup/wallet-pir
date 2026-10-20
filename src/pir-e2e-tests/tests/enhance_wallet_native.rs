@@ -137,8 +137,6 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
     tasks.push(tokio::spawn(async move {
         axum::serve(artifact_listener, artifacts).await.unwrap()
     }));
-    let (control_origin, task) = serve(coordinator.clone().router()).await;
-    tasks.push(task);
     let heart = coordinator.clone();
     let heartbeat = tokio::spawn(async move {
         loop {
@@ -146,9 +144,9 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
     });
-    // Minimal Caddy equivalent: query bodies to ingress, everything else to the coordinator.
+    // Minimal Caddy equivalent: every wallet route goes to query ingress.
     let query_origin = ingress_query.clone();
-    let metadata_origin = control_origin.clone();
+    let metadata_origin = ingress_query.clone();
     let proxy = Router::new()
         .route(
             "/v1/enhance/query",

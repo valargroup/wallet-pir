@@ -88,9 +88,9 @@ compute cost explicitly.
 
 ```sh
 cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
-  --server http://127.0.0.1:8280 metadata
+  --server http://127.0.0.1:8281 metadata
 cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
-  --server http://127.0.0.1:8280 query 0
+  --server http://127.0.0.1:8281 query 0
 python3 tools/enhance/v7-interop/check_vectors.py
 python3 tools/enhance/schema11-interop/run.py /absolute/path/to/wallet-libraries \
   --wallet-revision <full-commit> --full
@@ -99,7 +99,7 @@ python3 tools/enhance/schema11-interop/run.py /absolute/path/to/wallet-libraries
 The CLI returns a suffix record; it does not perform wallet anchor acceptance or
 note authentication. The independent vector checker verifies session encoding.
 The external-wallet harness fingerprints the wallet source, runs real HTTP
-coordinator/worker queries, tests composition, confirmation, recovery and session
+queries through query ingress, a packing router and workers, tests composition, confirmation, recovery and session
 reuse, and scans a SQLite wallet before atomically applying authentic records.
 It also verifies rollback of a corrupt live record. Use `--full` for full-size
 lifecycle cases. Loopback tests do not establish production capacity.

@@ -13,6 +13,7 @@ pub(super) struct Listening {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 impl Listening {
+    #[allow(dead_code)]
     pub(super) async fn stop(mut self) {
         let _ = self.stop.take().unwrap().send(());
         tokio::time::timeout(Duration::from_secs(5), &mut self.task)

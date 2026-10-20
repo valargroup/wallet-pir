@@ -8,8 +8,8 @@ once per minute from a separate region, and monitors APM task progress.
 
 ## Sources and semantics
 
-- Init HTTP outcomes and processing latency come from the coordinator. Query
-  outcomes and processing latency come from the configured outer ingress.
+- Init and query HTTP outcomes and processing latency come from the configured
+  outer ingress; the coordinator serves no wallet routes.
   Router stage latency remains separate and describes successful matched work.
 - HTTP totals are per-source counter deltas, summed before calculating ratios.
   Histogram buckets are merged before quantiles. Missing bandwidth does not

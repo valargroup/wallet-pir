@@ -24,17 +24,21 @@ def free_port():
         return stream.getsockname()[1]
 
 
-def write_worker_config(path, listen, data_dir, management_listen, sealed_shards=6):
-    """One Enhance worker role for pir-query-server --config."""
+def write_role_config(path, management_listen, settings):
+    """One Enhance role for pir-query-server --config."""
     path.write_text(json.dumps({
         'management_listen': management_listen,
-        'enhance': {'enabled': True, 'settings': {
-            'role': 'worker',
-            'listen': listen,
-            'data_dir': str(data_dir),
-            'sealed_shards': sealed_shards,
-        }},
+        'enhance': {'enabled': True, 'settings': settings},
     }))
+
+
+def write_worker_config(path, listen, data_dir, management_listen, sealed_shards=6):
+    write_role_config(path, management_listen, {
+        'role': 'worker',
+        'listen': listen,
+        'data_dir': str(data_dir),
+        'sealed_shards': sealed_shards,
+    })
 
 
 def fetch(url):
@@ -121,17 +125,42 @@ def main():
                 logs.append(log)
                 processes.append(subprocess.Popen([str(query_server), '--config', str(config)],
                                                    stdout=log, stderr=log))
+            # Wallets and the load driver reach query ingress; the coordinator
+            # answers only operator routes and serves artifacts to the router.
+            artifact_listen = f'127.0.0.1:{take_port()}'
+            router_control, router_query = (f'127.0.0.1:{take_port()}' for _ in range(2))
+            ingress_control, ingress_listen = (f'127.0.0.1:{take_port()}' for _ in range(2))
+            roles = {
+                'packing-router': {'role': 'packing-router', 'data_dir': str(work / 'packing-router'),
+                                   'artifact_origin': f'http://{artifact_listen}',
+                                   'listen': router_query, 'control_listen': router_control},
+                'query-ingress': {'role': 'query-ingress', 'data_dir': str(work / 'query-ingress'),
+                                  'listen': ingress_listen, 'control_listen': ingress_control},
+            }
+            for name, settings in roles.items():
+                role_config = work / f'{name}.json'
+                write_role_config(role_config, f'127.0.0.1:{take_port()}', settings)
+                log = (args.out / f'{name}.log').open('w')
+                logs.append(log)
+                processes.append(subprocess.Popen([str(query_server), '--config', str(role_config)],
+                                                   stdout=log, stderr=log))
+            routers = work / 'packing-routers.json'
+            routers.write_text(json.dumps([{'name': 'packing-router', 'url': f'http://{router_control}',
+                                            'query_url': f'http://{router_query}'}]))
             config = work / 'workers.json'
             groups = [{'name': 'group-1', 'replicas': replicas[:2]}]
             config.write_text(json.dumps({'groups': groups}))
             port = take_port()
-            origin = f'http://127.0.0.1:{port}'
+            operator = f'http://127.0.0.1:{port}'
+            origin = f'http://{ingress_listen}'
             log = (args.out / 'coordinator.log').open('w')
             logs.append(log)
             processes.append(subprocess.Popen([str(publisher), 'coordinator', '--listen', f'127.0.0.1:{port}',
                 '--data-dir', str(work / 'coordinator'), '--worker-config', str(config), '--isolated-fixture',
                 '--fixture-records', str(args.records), '--fixture-append-records', '1', '--poll-seconds', '5',
-                '--capacity-fallback-rows-per-second', '8' if args.expand_inventory else '1'], stdout=log, stderr=log))
+                '--capacity-fallback-rows-per-second', '8' if args.expand_inventory else '1',
+                '--packing-router-config', str(routers), '--query-ingress', f'http://{ingress_control}',
+                '--artifact-listen', artifact_listen], stdout=log, stderr=log))
             deadline = time.monotonic() + 300
             while True:
                 if any(p.poll() is not None for p in processes):
@@ -144,7 +173,7 @@ def main():
                         raise RuntimeError('initial publication timed out') from None
                     time.sleep(1)
             if args.expand_inventory:
-                manifest['initial_capacity'] = fetch(origin + '/v1/health')['capacity']
+                manifest['initial_capacity'] = fetch(operator + '/v1/health')['capacity']
                 pending = manifest['initial_capacity']['requested']
                 if not pending or manifest['initial_capacity']['requests'][pending]['target_groups'] != 2:
                     raise RuntimeError('configured forecast did not request a second replica pair')
@@ -154,7 +183,7 @@ def main():
                                                   'project_id': 'fixture-only', 'vpc_id': 'fixture-only'}))
                     state_dir = work / 'infra-journal'
                     command = [sys.executable, str(args.journal_script.resolve()), '--state-dir', str(state_dir),
-                               '--coordinator-url', origin, '--inventory', str(config), '--policy', str(policy)]
+                               '--coordinator-url', operator, '--inventory', str(config), '--policy', str(policy)]
                     summaries = []
                     snapshots = []
                     for _ in range(2):
@@ -172,7 +201,7 @@ def main():
                 replacement.replace(config)
                 deadline = time.monotonic() + 60
                 while True:
-                    health = fetch(origin + '/v1/health')
+                    health = fetch(operator + '/v1/health')
                     if health.get('registered_groups') == 2:
                         if not health['capacity']['requests'][pending]['registered']:
                             raise RuntimeError('registered pair did not satisfy durable expansion demand')
@@ -191,7 +220,7 @@ def main():
                 with (args.out / f'load-c{concurrency}.log').open('w') as output:
                     result = subprocess.run(command, stdout=output, stderr=output, timeout=args.seconds + 180)
                 manifest['results'].append({'concurrency': concurrency, 'exit_code': result.returncode,
-                                            'report': report.name, 'health': fetch(origin + '/v1/health')})
+                                            'report': report.name, 'health': fetch(operator + '/v1/health')})
                 print(f'concurrency={concurrency} exit={result.returncode}', flush=True)
                 if result.returncode:
                     raise RuntimeError('load driver failed; inspect retained evidence')
@@ -207,7 +236,7 @@ def main():
                     with (args.out / f'open-loop-{fraction}.log').open('w') as output:
                         result = subprocess.run(command, stdout=output, stderr=output, timeout=args.seconds + 180)
                     manifest['results'].append({'offered_fraction': fraction, 'exit_code': result.returncode,
-                                                'report': report.name, 'health': fetch(origin + '/v1/health')})
+                                                'report': report.name, 'health': fetch(operator + '/v1/health')})
                     print(f'offered_fraction={fraction} exit={result.returncode}', flush=True)
                     if result.returncode:
                         raise RuntimeError('open-loop driver failed; inspect retained evidence')

@@ -13,14 +13,14 @@ def get(origin, path):
     with urllib.request.urlopen(origin + path, timeout=10) as response:
         data = response.read(1024 * 1024 + 1)
     if len(data) > 1024 * 1024:
-        raise ValueError('oversized coordinator response')
+        raise ValueError('oversized response')
     return json.loads(data)
 
 
-def observe(state_path, origin):
+def observe(state_path, origin, query_origin):
     state = json.loads(state_path.read_text())
     health = get(origin, '/v1/health')
-    init = get(origin, '/v1/enhance/init')
+    init = get(query_origin, '/v1/enhance/init')
     if init['generation'] != health['generation']:
         raise ValueError('health and init generations differ')
     capacity = health['capacity']
@@ -47,13 +47,14 @@ def observe(state_path, origin):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', type=Path, required=True)
-    parser.add_argument('--origin', default='http://127.0.0.1:8280')
+    parser.add_argument('--origin', default='http://127.0.0.1:8280', help='Coordinator operator routes')
+    parser.add_argument('--query-origin', default='http://127.0.0.1:8281', help='Query ingress wallet routes')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--seconds', type=int, default=1800)
     parser.add_argument('--interval', type=float, default=5)
     args = parser.parse_args()
-    if args.origin != 'http://127.0.0.1:8280' or args.seconds < 1 or not 1 <= args.interval <= 30:
-        parser.error('observe only the isolated loopback coordinator with a positive duration')
+    if (args.origin, args.query_origin) != ('http://127.0.0.1:8280', 'http://127.0.0.1:8281') or args.seconds < 1 or not 1 <= args.interval <= 30:
+        parser.error('observe only the isolated loopback workload with a positive duration')
     os.umask(0o077)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -64,7 +65,7 @@ def main():
         while time.monotonic() - started < args.seconds:
             began = time.monotonic()
             try:
-                value = observe(args.state, args.origin)
+                value = observe(args.state, args.origin, args.query_origin)
             except Exception as error:
                 value = {'at_ns': time.time_ns(), 'error': type(error).__name__}
                 errors += 1

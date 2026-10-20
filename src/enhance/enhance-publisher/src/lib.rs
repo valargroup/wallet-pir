@@ -4,9 +4,9 @@
 //! `enhance-pir-server` command line. Status publication is a separate process.
 //!
 //! Query serving lives in `enhance-query-server`, which never depends on this
-//! package. [`coordinator::Coordinator`] composes its public
-//! [`enhance_query_server::gateway::QueryGateway`] and implements the read-only
-//! [`enhance_query_server::gateway::PublisherStatus`] it consults.
+//! package. The publisher never faces wallets: query ingress serves them from
+//! views the coordinator activates, and the coordinator keeps only its private
+//! [`operator::OperatorStatus`] routes.
 
 // Query-server modules the publication code builds on, named at the crate root
 // so publisher modules refer to them alongside their own.
@@ -20,6 +20,9 @@ pub mod capacity;
 pub mod control;
 pub mod coordinator;
 pub mod ingest;
+#[cfg(feature = "local-serving")]
+pub mod local_serving;
+pub mod operator;
 pub mod pool;
 pub mod rebuild;
 mod serving_control;

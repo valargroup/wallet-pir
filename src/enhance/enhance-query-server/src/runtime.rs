@@ -469,28 +469,17 @@ impl Packing {
     }
 }
 
-/// Public session material survives independently of the serving representation.
+/// A published shard's public session material. Packing routers own the
+/// serving representation.
 pub struct PublishedPacking {
     pub logical_rows: u64,
     pub public: Vec<u8>,
-    serving: Option<Packing>,
 }
 impl PublishedPacking {
-    pub fn is_serving(&self) -> bool {
-        self.serving.is_some()
-    }
-    pub fn new(logical_rows: u64, pack: Packing, retain_serving: bool) -> Self {
-        Self {
-            logical_rows,
-            public: pack.public.clone(),
-            serving: retain_serving.then_some(pack),
-        }
-    }
     pub fn metadata(logical_rows: u64, public: Vec<u8>) -> Self {
         Self {
             logical_rows,
             public,
-            serving: None,
         }
     }
     pub fn reference(&self, shard_id: u64) -> Result<SessionRef, String> {
@@ -508,28 +497,6 @@ impl PublishedPacking {
             params: parameters(self.logical_rows).expect("validated geometry"),
             public_params_base64: STANDARD.encode(&self.public),
         }
-    }
-    pub fn query_coefficients(
-        &self,
-        body: &[u8],
-        binding: QueryBinding,
-        query_rows: usize,
-    ) -> Result<Vec<u64>, String> {
-        self.serving
-            .as_ref()
-            .ok_or("packing moved to router")?
-            .query_coefficients(body, binding, query_rows)
-    }
-    pub fn pack(
-        &self,
-        body: &[u8],
-        intermediate: &[u64],
-        query_rows: usize,
-    ) -> Result<Vec<u8>, String> {
-        self.serving
-            .as_ref()
-            .ok_or("packing moved to router")?
-            .pack(body, intermediate, query_rows)
     }
 }
 

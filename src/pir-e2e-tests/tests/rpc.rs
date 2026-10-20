@@ -2,6 +2,7 @@
 //! The public transaction is real; the block envelope and the mixed
 //! transactions built from its actions are synthetic, not consensus-valid.
 mod support;
+use enhance_publisher::local_serving as serving;
 // The offline journal repair shares the RPC double; producer fee derivation is
 // tested with the producer in wallet-libraries' server chain adapters.
 #[path = "rpc/rebuild.rs"]
@@ -142,7 +143,7 @@ async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
         }),
     )
 }
-fn start(root: &Path, address: &str, rpc: &str) -> Process {
+fn start(root: &Path, address: &str, rpc: &str, roles: &serving::Roles) -> Process {
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -165,6 +166,7 @@ fn start(root: &Path, address: &str, rpc: &str) -> Process {
             .arg(root.join("workers.json"))
             .arg("--zakura-cookie")
             .arg(root.join("cookie"))
+            .args(roles.coordinator_args(root).unwrap())
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(log))
             .spawn()
@@ -307,8 +309,11 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = socket.local_addr().unwrap().to_string();
     drop(socket);
-    let origin = format!("http://{address}");
-    let mut process = start(root.path(), &address, &rpc_url);
+    let roles = serving::Roles::for_process(&root.path().join("roles"))
+        .await
+        .unwrap();
+    let origin = roles.origin.clone();
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
     let first = published(&mut process, root.path(), &origin, &state.blocks[0].1).await;
     assert_eq!(first.coverage.records, 6);
     assert_eq!(
@@ -371,7 +376,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     );
     drop(process); // Kill the real process with a durably reserved, uncommitted candidate.
     hold_prepare.store(false, Ordering::SeqCst);
-    let mut process = start(root.path(), &address, &rpc_url);
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
     let second = published(&mut process, root.path(), &origin, &state.blocks[1].1).await;
     let recovered: Value =
         serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
@@ -432,7 +437,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     drop(process); // Durable publication, but neither worker has acknowledged it.
     hold_commit.store(false, Ordering::SeqCst);
     let before_restart = state.calls.load(Ordering::SeqCst);
-    let mut process = start(root.path(), &address, &rpc_url);
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
     let restarted = published(&mut process, root.path(), &origin, &state.blocks[2].1).await;
     assert_eq!(restarted, third);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
@@ -491,7 +496,6 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         application::{collect, Source},
         capacity,
         control::{Group, Ledger, Replica},
-        coordinator::Coordinator,
         ingest::EnhanceJournal,
         zakura::{Prevouts, ZakuraClient},
     };
@@ -558,7 +562,14 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         sequence: 0,
         replicas,
     }];
-    let coordinator = Coordinator::open(&root.path().join("control"), groups.clone()).unwrap();
+    let mut serving = serving::Serving::start(
+        &root.path().join("roles"),
+        &root.path().join("control"),
+        groups.clone(),
+    )
+    .await
+    .unwrap();
+    let coordinator = serving.coordinator();
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
     let collected = collect(&mut journal, &coordinator, &source).await.unwrap();
     assert!(
@@ -588,7 +599,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     drop(journal);
     drop(coordinator);
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let coordinator = Coordinator::open(&root.path().join("control"), groups).unwrap();
+    let coordinator = serving.restart(groups).await.unwrap();
     coordinator.reconcile().await.unwrap();
     drop(collect(&mut journal, &coordinator, &source).await.unwrap());
     assert_eq!(journal.tree_size(), 2);
@@ -603,7 +614,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         .await
         .unwrap();
     let first = coordinator.manifest().await.unwrap();
-    let (origin, router_task) = serve(coordinator.clone().router()).await;
+    let origin = serving.origin.clone();
     let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
     assert_eq!(
         retained
@@ -659,8 +670,6 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         &expected[84..],
         "existing client recovers expected answer after publication replacement"
     );
-    router_task.abort();
-    let _ = router_task.await;
     for worker in workers {
         worker.abort();
         let _ = worker.await;
