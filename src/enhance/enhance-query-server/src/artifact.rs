@@ -256,7 +256,7 @@ pub fn write_atomic(
 
 /// Sync first, then request eviction for large artifacts that are already
 /// represented in the live PIR database or will be streamed from disk later.
-pub(crate) fn write_atomic_cold(
+pub fn write_atomic_cold(
     directory: &Path,
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
