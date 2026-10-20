@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import struct
 import tempfile
-from lib.publication_capture import snapshot, protocol_hash, matches, retained_forks
+from lib.publication_capture import snapshot, protocol_hash, matches, retained_forks, change_kind
 
 
 def block(height, txids):
@@ -52,6 +52,14 @@ class PublicationOracleTests(unittest.TestCase):
                 retained_forks(path, Node(), expected_sha256='0' * 64)
             forks = retained_forks(path, Node(), expected_sha256=hashlib.sha256(payload).hexdigest())
             self.assertEqual(forks, [('02' * 32, 1, '03' * 32)])
+
+    def test_coalesced_observation_keeps_the_actual_publication_change(self):
+        committed = {'anchor': 'a', 'mempool_digest': 'old'}
+        changed = {'anchor': 'a', 'mempool_digest': 'new'}
+        latest = dict(changed)
+        self.assertEqual(change_kind(changed, latest), 'unchanged')
+        self.assertEqual(change_kind(committed, latest), 'mempool')
+        self.assertEqual(change_kind(committed, dict(latest, anchor='b')), 'block')
 
     def test_hashes_use_protocol_byte_order(self):
         self.assertEqual(protocol_hash('00' * 31 + '01'), b'\x01' + bytes(31))

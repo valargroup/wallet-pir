@@ -202,6 +202,12 @@ def resource(unit):
             'process': properties, 'memory_events': events}
 
 
+def change_kind(previous, current):
+    if current['anchor'] != previous['anchor']:
+        return 'block'
+    return 'mempool' if current['mempool_digest'] != previous['mempool_digest'] else 'unchanged'
+
+
 def capture(config, origin, directory, seconds, unit='pir-publisher.service', *, retained_source=None, retained_sha256=None):
     """Record complete independent observations and their verified successors.
 
@@ -218,6 +224,7 @@ def capture(config, origin, directory, seconds, unit='pir-publisher.service', *,
     oracle = Oracle(node, settings['window_blocks'], bytes.fromhex(settings['salt_hex']), forks)
     previous = oracle.observe()
     print(json.dumps({'event': 'oracle_warmed', 'height': previous['snapshot']['anchor_height']}), flush=True)
+    last_verified = previous
     pending, observations, failures = [], 0, []
     began = time.monotonic()
     with (directory / 'publications.jsonl').open('x') as publications, \
@@ -231,8 +238,7 @@ def capture(config, origin, directory, seconds, unit='pir-publisher.service', *,
             tick = time.monotonic()
             try:
                 observed = oracle.observe()
-                kind = 'block' if observed['anchor'] != previous['anchor'] else (
-                    'mempool' if observed['mempool_digest'] != previous['mempool_digest'] else 'unchanged')
+                kind = change_kind(previous, observed)
                 # Six hours of observations followed by an explicit fifteen-second
                 # drain lets the final observations reach serving before assessment.
                 collecting = seconds <= 15 or time.monotonic() - began < seconds - 15
@@ -258,11 +264,13 @@ def capture(config, origin, directory, seconds, unit='pir-publisher.service', *,
                             break
                         base = {key: item[key] for key in ('observation_id', 'kind', 'source_observed_ms')}
                         if item is verified:
-                            emit({**base, 'disposition': 'published', 'queryable_ms': now,
+                            emit({**base, 'kind': change_kind(last_verified, verified),
+                                  'disposition': 'published', 'queryable_ms': now,
                                   'oracle_match': True, 'canonical_continuity': True, 'complete_mempool': True,
                                   'generation': published['generation'], 'manifest': published})
                         else:
                             emit({**base, 'disposition': 'superseded', 'superseded_by': verified['observation_id']})
+                    last_verified = verified
                     pending = [item for item in pending if item['observation_id'] > verified['observation_id']]
                 for item in pending[:]:
                     if now - item['source_observed_ms'] > 20000:
