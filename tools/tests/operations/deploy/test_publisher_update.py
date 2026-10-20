@@ -26,6 +26,19 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.assertIn(('kill', publisher.UNIT, '--signal=SIGKILL'), self.ex.effects)
         self.assertGreaterEqual(self.ex.clock(), 60)
 
+    def test_recovery_checks_teardown_after_an_auxiliary_signal_error(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                return
+            if args == ('kill', publisher.UNIT, '--signal=SIGKILL'):
+                original(host, 'stop', publisher.UNIT)
+                raise RemoteError('Failed to send signal SIGKILL to auxiliary processes: Invalid argument')
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+
     def test_recovery_refuses_to_terminate_a_replaced_invocation(self):
         self.deploy()
         original = self.ex.systemctl

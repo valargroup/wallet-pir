@@ -19,7 +19,7 @@ from ..fleet import Fleet
 from ..paths import ROOT
 from . import descriptors, units
 from .engine import DeployError, file_sha256
-from .remote import production_lock
+from .remote import RemoteError, production_lock
 from .transaction import new_id
 
 SCHEMA = 'transparent-publisher-cutover/1'
@@ -297,8 +297,19 @@ class Cutover:
                     'publisher invocation changed during recovery stop')
             if self.clock() >= deadline:
                 require(not forced, 'candidate publisher did not stop after termination')
-                self.effect(journal, 'terminate stalled candidate publisher',
-                            lambda: self.ex.systemctl(self.host, 'kill', UNIT, '--signal=SIGKILL'))
+                def terminate():
+                    try:
+                        self.ex.systemctl(self.host, 'kill', UNIT, '--signal=SIGKILL')
+                    except RemoteError as error:
+                        # systemd can report an auxiliary-process error after
+                        # successfully stopping the main process. Accept only
+                        # that known case, with independently observed teardown.
+                        if 'Failed to send signal SIGKILL to auxiliary processes' not in str(error):
+                            raise
+                        stopped = self.ex.probe_unit(self.host, UNIT)
+                        require(not stopped['main_pid'] and stopped['active_state'] in ('inactive', 'failed'),
+                                'candidate publisher remains active after auxiliary-process signal error')
+                self.effect(journal, 'terminate stalled candidate publisher', terminate)
                 forced = True
                 deadline = self.clock() + 30
             self.sleep(1)
