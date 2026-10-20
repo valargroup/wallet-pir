@@ -63,7 +63,7 @@ class Serving:
         self.release = cutover.request['serving']
         service = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['enhance']
         self.deployer = Deployer(service, cutover.inventory, cutover.ex, cutover.state_dir,
-                                 only=ROLES, clock=cutover.clock, sleep=cutover.sleep)
+                                 only=ROLES, clock=cutover.clock, sleep=cutover.sleep, out=lambda _message: None)
         self.binary = None
 
     def validate_edge(self, text):

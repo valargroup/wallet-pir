@@ -1,4 +1,6 @@
 """The publisher's private control change must deploy and restore as a group."""
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -72,6 +74,12 @@ class ServingTests(ExpansionFixture, unittest.TestCase):
 
     def deploy(self):
         return self.target.deploy(self.binary, self.target.plan()['plan_sha256'], self.serving_binary)
+
+    def test_json_response_is_not_mixed_with_progress(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            print(json.dumps(self.deploy()))
+        self.assertEqual(json.loads(output.getvalue())['phase'], 'committed')
 
     def test_deploy_and_restore_keep_matching_control_versions(self):
         result = self.deploy()
