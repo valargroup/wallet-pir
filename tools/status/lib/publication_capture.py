@@ -15,6 +15,10 @@ import urllib.request
 ROWS, SLOTS, ROW_BYTES = 8192, 256, 12288
 
 
+class SourceChanged(ValueError):
+    """The node moved while a complete source observation was being read."""
+
+
 def protocol_hash(display):
     value = bytes.fromhex(display)
     if len(value) != 32:
@@ -85,7 +89,7 @@ class Node:
         identity = self.call('getblockhash', height)
         value = self.call('getblock', identity, 1)
         if value['hash'] != identity or value['height'] != height:
-            raise ValueError('node block identity changed')
+            raise SourceChanged('node block identity changed')
         return value
 
 
@@ -156,6 +160,14 @@ class Oracle:
         self.cached_identity, self.cached_snapshot = None, None
 
     def observe(self):
+        for _ in range(3):
+            try:
+                return self._observe()
+            except SourceChanged:
+                continue
+        raise SourceChanged('node source did not stabilize after three complete reads')
+
+    def _observe(self):
         tip = self.node.call('getblockcount')
         anchor = self.node.call('getblockhash', tip)
         while self.blocks and (self.blocks[-1]['height'] > tip or
@@ -169,7 +181,7 @@ class Oracle:
         self.forks = [entry for entry in self.forks if entry[1] >= self.blocks[0]['height']]
         mempool = sorted(self.node.call('getrawmempool', False))
         if self.node.call('getblockcount') != tip or self.node.call('getblockhash', tip) != anchor:
-            raise ValueError('node tip changed during independent collection')
+            raise SourceChanged('node tip changed during independent collection')
         observed_ms = int(time.time() * 1000)
         identity = (anchor, tuple(mempool), tuple(self.forks))
         if identity != self.cached_identity:

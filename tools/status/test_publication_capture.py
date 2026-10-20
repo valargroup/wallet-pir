@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import struct
 import tempfile
-from lib.publication_capture import snapshot, protocol_hash, matches, retained_forks, change_kind
+from lib.publication_capture import snapshot, protocol_hash, matches, retained_forks, change_kind, Oracle, SourceChanged
 
 
 def block(height, txids):
@@ -63,6 +63,38 @@ class PublicationOracleTests(unittest.TestCase):
 
     def test_hashes_use_protocol_byte_order(self):
         self.assertEqual(protocol_hash('00' * 31 + '01'), b'\x01' + bytes(31))
+
+    def test_block_arriving_during_read_requires_a_complete_new_observation(self):
+        class Node:
+            height = 1
+            reads = 0
+            def call(self, method, *args):
+                if method == 'getblockhash':
+                    return block(args[0], [])['hash']
+                if method == 'getblockcount':
+                    return self.height
+                self.reads += 1
+                self.height = 2
+                return []
+            def block(self, height):
+                return block(height, ['%064x' % height])
+        node = Node()
+        value = Oracle(node, 4096, bytes(32)).observe()
+        self.assertEqual(value['anchor'], block(2, [])['hash'])
+        self.assertEqual(value['snapshot']['entries'], 2)
+        self.assertEqual(node.reads, 2)
+
+        class MovingNode(Node):
+            def call(self, method, *args):
+                if method == 'getrawmempool':
+                    self.height += 1
+                    self.reads += 1
+                    return []
+                return super().call(method, *args)
+        moving = MovingNode()
+        with self.assertRaisesRegex(SourceChanged, 'three complete reads'):
+            Oracle(moving, 4096, bytes(32)).observe()
+        self.assertEqual(moving.reads, 3)
 
 
 if __name__ == '__main__':
