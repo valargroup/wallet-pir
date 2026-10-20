@@ -361,7 +361,7 @@ class StorageTests(unittest.TestCase):
 
     def test_incremental_cleanup_preserves_recent_open_and_linked_sessions(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             incremental = root / 'fast' / ('a' * 16) / 'release-fast' / 'incremental'
             incremental.mkdir(parents=True)
             old, recent, opened = [incremental / name for name in ('old', 'recent', 'opened')]
