@@ -59,9 +59,10 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         for section, key in [('transparent_history', 'publication_root'), ('transaction_details', 'root')]:
             root = self.request['configuration'][section]['settings'][key]
             source = root + '/immutable-snapshot'
-            content = '{"production":true}'
+            content = '{\n  "production": true\n}'
+            digest = publisher.sha('{"production":true}') if section == 'transparent_history' else publisher.sha(content)
             self.ex.put('coordinator', root + '/active.json',
-                        json.dumps({'directory': source, 'map_sha256': publisher.sha(content)}))
+                        json.dumps({'directory': source, 'map_sha256': digest}))
             name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
             self.ex.put('coordinator', source + '/' + name, content)
         self.target = self.make_target()
@@ -69,11 +70,15 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.ex.effects.clear()
         original_run, original_get = self.ex.run, self.ex.http_get
         def run(host, argv, timeout):
+            if len(argv) > 1 and argv[1] == 'verify-filters':
+                raw = self.ex.read(host, argv[argv.index('--shard-dir') + 1] + '/shards.json')
+                return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':')))})
             if argv[0].endswith('/pir-query-server') and '--config' in argv and '--check' not in argv:
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 if any(config.get(section, {}).get('settings', {}).get('verify_only') is True
                        for section in ('transparent_history', 'transaction_details')):
-                    return 0, '{"verified":true}'
+                    source = config.get('transaction_details', {}).get('settings', {}).get('publication_dir')
+                    return 0, json.dumps({'verified': True, 'map_sha256': self.ex.sha256(host, source + '/txid-shards.json') if source else None})
             if '--check' in argv and argv[0].endswith('/pir-query-server'):
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 if 'transparent_history' in config or 'transaction_details' in config:
@@ -217,7 +222,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
     def test_collected_production_snapshot_refuses_before_stopping_owners(self):
         root = self.request['configuration']['transparent_history']['settings']['publication_root']
         self.ex.remove('coordinator', root + '/immutable-snapshot/shards.json')
-        with self.assertRaisesRegex(DeployError, 'snapshot map differs'):
+        with self.assertRaisesRegex(DeployError, 'snapshot map is missing'):
             self.deploy()
         result = self.target.rollback()
         self.assertTrue(result['staging_only'])

@@ -283,8 +283,17 @@ class HttpsServing(Serving):
             require(PurePosixPath(source).is_relative_to(root) and '..' not in PurePosixPath(source).parts,
                     'production snapshot is outside its publication root')
             map_path = source + '/' + map_name
-            require(owner.ex.sha256(owner.host, map_path) == digest,
-                    'production snapshot map differs from its active record')
+            raw_digest = owner.ex.sha256(owner.host, map_path)
+            require(raw_digest is not None, 'production snapshot map is missing')
+            if section == 'transparent_history':
+                code, output = owner.ex.run(owner.host,
+                    [parent['plan']['binary'], 'verify-filters', '--shard-dir', source], 120)
+                try:
+                    canonical = json.loads(output)
+                except ValueError:
+                    canonical = {}
+                require(code == 0 and canonical.get('map_sha256') == digest,
+                        'production history snapshot differs from its active record')
             resources = owner.resources()
             budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
             require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
@@ -310,10 +319,14 @@ class HttpsServing(Serving):
             require(code == 0 and any(isinstance(report, dict) and report.get('verified') is True
                                       for report in reports),
                     'complete production snapshot failed verification: ' + section + ': ' + output[-1000:])
-            require(owner.ex.sha256(owner.host, map_path) == digest,
+            if section == 'transaction_details':
+                require(any(isinstance(report, dict) and report.get('map_sha256') == digest for report in reports),
+                        'production detail snapshot differs from its active record')
+            require(owner.ex.sha256(owner.host, map_path) == raw_digest,
                     'production snapshot changed during verification')
             parent.setdefault('production_snapshots', {})[section] = {
                 'directory': source, 'map_sha256': digest, 'verified': True,
+                'raw_map_sha256': raw_digest,
                 'query_binary_sha256': self.release['binary_sha256'], 'cache_bytes': budget}
             owner.save(parent)
 
@@ -383,6 +396,7 @@ class HttpsServing(Serving):
                     break
                 require(owner.clock() < deadline, 'prepared HTTPS publication readiness deadline exceeded')
                 owner.sleep(3)
+            owner.resources()
         for consumer in parent['plan']['serving']['https_consumers']:
             host, unit = consumer['host'], consumer['unit']
             if not restored and consumer['seed_paths']:
@@ -424,7 +438,7 @@ class HttpsServing(Serving):
                 # Recent startup verifies the terminal archive through this TLS
                 # origin, so expose the ready archive before starting recent.
                 self.route_history(parent)
-            resources = owner.ex.publisher_resources(host, [consumer['root']])
+            resources = owner.ex.publisher_resources(host, [consumer['root'] + '/.capacity-check'])
             require(all(disk['available'] >= disk['total'] * .2 for disk in resources['disks'].values()),
                     'HTTPS synchronization used the reserved disk headroom')
             require(resources['memory_available'] >= resources['memory_total'] * .2,
