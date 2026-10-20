@@ -370,7 +370,8 @@ Deploy stages both releases and checks their configurations before stopping any
 owner. Under one production lock it starts the matching serving roles, starts
 the publisher, verifies aggregate and role readiness, then adds the existing
 Enhance wallet prefix to the ingress. The dedicated query route and every other
-edge route remain unchanged. Independent encrypted-answer probes must pass for
+edge route remain unchanged. Unmatched requests return 404, keeping publisher
+control endpoints private. Independent encrypted-answer probes must pass for
 all four products before commit. The serving journals are retained inside the
 coordinator's publisher journal before effects.
 

@@ -76,7 +76,10 @@ class ServingTests(ExpansionFixture, unittest.TestCase):
     def test_deploy_and_restore_keep_matching_control_versions(self):
         result = self.deploy()
         self.assertEqual(result['phase'], 'committed')
-        self.assertIn('handle /v1/enhance/*', self.ex.read('coordinator', publisher_serving.CADDY))
+        edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        self.assertIn('handle /v1/enhance/*', edge)
+        self.assertIn('respond 404', edge)
+        self.assertNotIn('127.0.0.1:8080', edge)
         self.assertTrue(all(r['phase'] == 'verified' for r in result['serving_journal']['hosts']))
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
         self.assertNotIn('handle /v1/enhance/*', self.ex.read('coordinator', publisher_serving.CADDY))
