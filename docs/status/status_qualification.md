@@ -77,7 +77,11 @@ for 21,615 seconds beside the native live-load client: it measures six hours of
 source observations, then drains their verification for fifteen seconds. Keep
 its raw observations and resource samples. Align the assessor's observation IDs
 and resource samples to the load client's actual timestamps; missing or failed
-captures must remain failures.
+captures must remain failures. Require the collector to exit successfully and its
+`result.json` to report `passed: true`; the assessor alone does not consume
+collector errors. The collector verifies retained block contents against the node,
+starts at the retained coverage boundary, and permanently prunes capacity-evicted
+blocks so reduced mempool pressure cannot restore discarded history.
 
 Freeze retained fork inputs before the cutover and provide the frozen file with
 `--retained-source` and `--retained-source-sha256`. Old fork blocks may no longer

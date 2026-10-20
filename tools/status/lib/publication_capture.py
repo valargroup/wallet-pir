@@ -93,11 +93,11 @@ class Node:
         return value
 
 
-def retained_forks(path, node, *, expected_sha256=None):
-    """Replay retained fork inputs, checking their transaction membership with the node.
+def read_retained_source(path, node, *, expected_sha256=None):
+    """Read retained coverage and forks, verifying block contents against the node.
 
-    The checkpoint supplies only historical membership, which cannot be inferred
-    from today's canonical chain. No saved row, digest or publication is trusted.
+    The checkpoint supplies the retention boundary and historical fork membership.
+    Canonical rows are rebuilt from node data; no saved row or digest is trusted.
     """
     payload = Path(path).read_bytes()
     if expected_sha256 is not None and hashlib.sha256(payload).hexdigest() != expected_sha256:
@@ -114,12 +114,26 @@ def retained_forks(path, node, *, expected_sha256=None):
     blocks = number()
     if blocks > 4096:
         raise ValueError('retained block count exceeds its bound')
+    retained = []
     for _ in range(blocks):
-        position += 68
+        height = number()
+        identity = bytes(data[position:position + 32])[::-1].hex()
+        position += 32
+        parent = bytes(data[position:position + 32])[::-1].hex()
+        position += 32
         count = number()
         if count > 4000000:
             raise ValueError('retained transaction count exceeds its bound')
+        txids = [bytes(data[offset:offset + 32])[::-1].hex()
+                 for offset in range(position, position + count * 32, 32)]
         position += count * 32
+        block = node.call('getblock', identity, 1)
+        if (height < 1 or block['hash'] != identity or block['height'] != height
+                or block['previousblockhash'] != parent or block['tx'] != txids
+                or (retained and (height != retained[-1]['height'] + 1
+                                 or parent != retained[-1]['hash']))):
+            raise ValueError('retained block input disagrees with node data')
+        retained.append(block)
     count = number()
     if count > 4000000:
         raise ValueError('retained fork count exceeds its bound')
@@ -149,14 +163,14 @@ def retained_forks(path, node, *, expected_sha256=None):
         result.append((txid, height, identity))
     if position != len(data):
         raise ValueError('trailing or truncated retained source bytes')
-    return result
+    return retained, result
 
 
 class Oracle:
-    def __init__(self, node, window, salt, forks=()):
+    def __init__(self, node, window, salt, forks=(), blocks=()):
         self.node, self.window, self.salt = node, window, salt
         self.network = protocol_hash(node.call('getblockhash', 0))
-        self.blocks, self.forks = [], list(forks)
+        self.blocks, self.forks = list(blocks), list(forks)
         self.cached_identity, self.cached_snapshot = None, None
 
     def observe(self):
@@ -186,7 +200,10 @@ class Oracle:
         identity = (anchor, tuple(mempool), tuple(self.forks))
         if identity != self.cached_identity:
             self.cached_snapshot = snapshot(self.blocks, mempool, self.forks, self.network, self.salt)
-            self.cached_identity = identity
+            first = self.cached_snapshot['coverage_start']
+            self.blocks = [block for block in self.blocks if block['height'] >= first]
+            self.forks = [entry for entry in self.forks if entry[1] >= first]
+            self.cached_identity = (anchor, tuple(mempool), tuple(self.forks))
         return {'source_observed_ms': observed_ms, 'snapshot': self.cached_snapshot,
                 'mempool_digest': hashlib.sha256(json.dumps(mempool).encode()).hexdigest(),
                 'anchor': anchor}
@@ -232,8 +249,8 @@ def capture(config, origin, directory, seconds, unit='pir-publisher.service', *,
     node = Node(config['rpc_url'], config['cookie'])
     settings = config['publisher']
     seed = Path(retained_source) if retained_source else Path(settings['state_dir']) / 'source/source.bin'
-    forks = retained_forks(seed, node, expected_sha256=retained_sha256)
-    oracle = Oracle(node, settings['window_blocks'], bytes.fromhex(settings['salt_hex']), forks)
+    blocks, forks = read_retained_source(seed, node, expected_sha256=retained_sha256)
+    oracle = Oracle(node, settings['window_blocks'], bytes.fromhex(settings['salt_hex']), forks, blocks)
     previous = oracle.observe()
     print(json.dumps({'event': 'oracle_warmed', 'height': previous['snapshot']['anchor_height']}), flush=True)
     last_verified = previous

@@ -4,7 +4,9 @@ import hashlib
 from pathlib import Path
 import struct
 import tempfile
-from lib.publication_capture import snapshot, protocol_hash, matches, retained_forks, change_kind, Oracle, SourceChanged
+from unittest.mock import patch
+from lib import publication_capture
+from lib.publication_capture import snapshot, protocol_hash, matches, read_retained_source, change_kind, Oracle, SourceChanged
 
 
 def block(height, txids):
@@ -47,11 +49,11 @@ class PublicationOracleTests(unittest.TestCase):
             path = Path(directory) / 'source.bin'
             path.write_bytes(payload)
             with self.assertRaisesRegex(ValueError, 'node refused'):
-                retained_forks(path, Node())
+                read_retained_source(path, Node())
             with self.assertRaisesRegex(ValueError, 'frozen'):
-                retained_forks(path, Node(), expected_sha256='0' * 64)
-            forks = retained_forks(path, Node(), expected_sha256=hashlib.sha256(payload).hexdigest())
-            self.assertEqual(forks, [('02' * 32, 1, '03' * 32)])
+                read_retained_source(path, Node(), expected_sha256='0' * 64)
+            forks = read_retained_source(path, Node(), expected_sha256=hashlib.sha256(payload).hexdigest())
+            self.assertEqual(forks, ([], [('02' * 32, 1, '03' * 32)]))
 
     def test_coalesced_observation_keeps_the_actual_publication_change(self):
         committed = {'anchor': 'a', 'mempool_digest': 'old'}
@@ -60,6 +62,55 @@ class PublicationOracleTests(unittest.TestCase):
         self.assertEqual(change_kind(changed, latest), 'unchanged')
         self.assertEqual(change_kind(committed, latest), 'mempool')
         self.assertEqual(change_kind(committed, dict(latest, anchor='b')), 'block')
+
+    def test_capacity_relief_does_not_restore_discarded_blocks(self):
+        class Node:
+            mempool = ['%064x' % i for i in range(3, 6)]
+            def call(self, method, *args):
+                if method == 'getblockhash':
+                    return block(args[0], [])['hash']
+                if method == 'getblockcount':
+                    return 2
+                return self.mempool
+            def block(self, height):
+                return block(height, ['%064x' % height])
+        node = Node()
+        with patch.multiple(publication_capture, ROWS=1, SLOTS=6, ROW_BYTES=240):
+            oracle = Oracle(node, 4096, bytes(32))
+            pressured = oracle.observe()['snapshot']
+            self.assertEqual(pressured['coverage_start'], 2)
+            self.assertEqual([b['height'] for b in oracle.blocks], [2])
+            node.mempool = []
+            expected = snapshot([node.block(2)], [], [], oracle.network, bytes(32))
+            self.assertEqual(oracle.observe()['snapshot'], expected)
+            fresh = Oracle(node, 4096, bytes(32), blocks=oracle.blocks)
+            self.assertEqual(fresh.observe()['snapshot'], expected)
+
+    def test_retained_boundary_is_verified_and_used_on_attachment(self):
+        retained = block(2, ['02' * 32])
+        payload = b'STSOBS01' + struct.pack('<I', 4096) + bytes(64)
+        payload += struct.pack('<II', 1, 2) + protocol_hash(retained['hash'])
+        payload += protocol_hash(retained['previousblockhash']) + struct.pack('<I', 1)
+        payload += protocol_hash(retained['tx'][0]) + struct.pack('<I', 0)
+        class Node:
+            def call(self, method, *args):
+                if method == 'getblock':
+                    return retained
+                if method == 'getblockhash':
+                    return block(args[0], [])['hash']
+                return 2 if method == 'getblockcount' else []
+            def block(self, height):
+                raise AssertionError('retained blocks must not be backfilled')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'source.bin'
+            path.write_bytes(payload)
+            node = Node()
+            blocks, forks = read_retained_source(path, node)
+            oracle = Oracle(node, 4096, bytes(32), forks, blocks)
+            self.assertEqual(oracle.observe()['snapshot']['coverage_start'], 2)
+            with patch.object(node, 'call', return_value=dict(retained, tx=[])):
+                with self.assertRaisesRegex(ValueError, 'retained block'):
+                    read_retained_source(path, node)
 
     def test_hashes_use_protocol_byte_order(self):
         self.assertEqual(protocol_hash('00' * 31 + '01'), b'\x01' + bytes(31))
