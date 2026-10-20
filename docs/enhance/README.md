@@ -10,6 +10,7 @@ validates the answer against its own chain context.
 - [Protocol](protocol.md): record bytes, HTTP messages, and wallet trust boundary.
 - [Wallet integration](integration.md): client flow, batching, and interoperability.
 - [Architecture](architecture.md): publication, placement, retention, and recovery.
+- [HTTPS synchronization development plan](https-sync-development-plan.md): prepared publications and consumer-owned compatibility, readiness, and activation.
 - [Deployment](deployment.md): fresh-state release and coordinated cutover.
 - [Qualification](qualification.md): dated results and open production gates.
 - [Changelog](CHANGELOG.md): Enhance PIR release history.
