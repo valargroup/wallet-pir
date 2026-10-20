@@ -98,8 +98,10 @@ make check-package PACKAGE=zakura-server-chain TEST_TARGET=transparent
 `full_packages.py --group shared` runs the three explicit selections: decoding and
 fixtures without `rpc`, RPC reads of every product against the HTTP node double,
 and the RocksDB reader. Fast checks run the four product RPC targets; full checks
-add `state`. The graph check resolves and type-checks fresh consumers with and
-without fixture support, seeded from the workspace lockfile and source patches.
+add `state`. The graph check resolves fresh consumers with and without fixture
+support, seeded from the workspace lockfile and source patches. Fast feedback
+applies those resolve rules; running this tool directly also type-checks each
+consumer.
 
 Historical mainnet and testnet block vectors compare the RPC decoder against the
 pinned node decoder, including genesis, transaction IDs, output bytes and Merkle

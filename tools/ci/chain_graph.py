@@ -14,12 +14,17 @@ member unifies features into the reader, prove that:
 
 Only active normal and build edges count for the runtime, node and database
 rules: an optional dependency that Cargo resolves but does not enable, and a
-dev-dependency, never enter the consumer's build. Each consumer is then
-type-checked. Consumers seed the committed lockfile and source patches, so they
-resolve the same Common and node identities as the workspace. The query-serving
-boundary is tools/ci/boundary.py.
+dev-dependency, never enter the consumer's build. Consumers seed the committed
+lockfile and source patches, so they resolve the same Common and node identities
+as the workspace. The query-serving boundary is tools/ci/boundary.py.
+
+Running `python3 tools/ci/chain_graph.py` type-checks every consumer after those
+resolve rules. Fast feedback sets `WALLET_PIR_FAST_TESTS` and stops once the
+rules pass: the twelve consumer compiles repeat the node, fixture and RocksDB
+graphs already covered by full qualification, and they do not fit the fast job.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -201,6 +206,21 @@ def metadata(manifest, offline):
          *(['--offline'] if offline else [])], cwd=ROOT, text=True))
 
 
+def fast_feedback():
+    """Fast CI proves the resolve rules. The standalone tool also type-checks."""
+    return os.environ.get('WALLET_PIR_FAST_TESTS') == '1'
+
+
+def examine(directory, kind, options, source, offline):
+    consumer = directory / kind
+    write_consumer(consumer, kind, options, source)
+    fresh = metadata(consumer / 'Cargo.toml', offline)
+    found = local_dependency_problems(fresh)
+    for rule in checks(kind):
+        found.extend(rule(fresh))
+    return found, consumer
+
+
 def consumer_environment(target):
     """The type check proves each consumer's public surface, not lint cleanliness:
     single-product feature subsets of the reader warn (unused imports), and the
@@ -219,18 +239,23 @@ def main(argv=None):
     args = parser.parse_args(argv)
     errors = []
     # One shared target directory: consumers differ only in reader features.
+    # Fast feedback resolves offline and in parallel; it does not type-check.
     target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')) / 'chain-graph'
+    offline = args.offline or fast_feedback()
+    typecheck = not args.no_check and not fast_feedback()
+    specs = consumers()
     with tempfile.TemporaryDirectory(prefix='chain-consumers-') as temporary:
-        for kind, options, source in consumers():
-            consumer = Path(temporary) / kind
-            write_consumer(consumer, kind, options, source)
-            fresh = metadata(consumer / 'Cargo.toml', args.offline)
-            found = local_dependency_problems(fresh)
-            for rule in checks(kind):
-                found.extend(rule(fresh))
+        directory = Path(temporary)
+        if fast_feedback():
+            with ThreadPoolExecutor(max_workers=min(4, len(specs))) as pool:
+                examined = list(pool.map(
+                    lambda item: examine(directory, *item, offline), specs))
+        else:
+            examined = [examine(directory, *item, offline) for item in specs]
+        for found, consumer in examined:
             errors.extend(found)
-            if not found and not args.no_check:
-                subprocess.run(['cargo', 'check', '--locked', '--quiet', *(['--offline'] if args.offline else []),
+            if not found and typecheck:
+                subprocess.run(['cargo', 'check', '--locked', '--quiet', *(['--offline'] if offline else []),
                                 '--manifest-path', str(consumer / 'Cargo.toml')],
                                cwd=ROOT, check=True, env=consumer_environment(target))
     if errors:

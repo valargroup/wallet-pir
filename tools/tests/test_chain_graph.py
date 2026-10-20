@@ -105,6 +105,28 @@ class ConsumerTests(unittest.TestCase):
         self.assertEqual(env['RUSTFLAGS'], '-D warnings --cap-lints=warn')
         self.assertEqual(env['CARGO_TARGET_DIR'], '/t')
 
+    def test_fast_feedback_resolves_without_typechecking(self):
+        def metadata(manifest, offline):
+            self.assertTrue(offline)
+            kind = manifest.parent.name
+            features = []
+            if kind.startswith('product-'):
+                features = [kind.removeprefix('product-').removesuffix('-testing')]
+            packages = [{'id': 'c', 'name': kind + '-consumer', 'source': None},
+                        {'id': 'adapter', 'name': 'zakura-server-chain', 'source': None}]
+            if kind.startswith('product-receiver'):
+                packages.append({'id': 'recovery', 'name': 'zakura-receiver-crypto', 'source': 'git+x'})
+            return {'packages': packages, 'resolve': {'root': 'c', 'nodes': [
+                {'id': 'c', 'deps': []},
+                {'id': 'adapter', 'features': features, 'deps': []},
+                *([{'id': 'recovery', 'deps': []}] if kind.startswith('product-receiver') else [])]}}
+
+        with patch.dict(graph.os.environ, {'WALLET_PIR_FAST_TESTS': '1'}), \
+                patch.object(graph, 'metadata', side_effect=metadata), \
+                patch.object(graph.subprocess, 'run') as run:
+            graph.main([])
+        run.assert_not_called()
+
     def test_main_reports_violations_without_compiling(self):
         def metadata(manifest, offline):
             return {'packages': [{'id': 'c', 'name': manifest.parent.name + '-consumer', 'source': None},
