@@ -13,7 +13,7 @@ SETTINGS = {
         'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker',
         'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},
     ('status', 'external-worker'): {
-        'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'artifact_origin': 'http://127.0.0.1:8495',
+        'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'publisher': 'https://publisher.example',
         'state_dir': '/var/lib/status-worker'},
     ('transparent-history', 'external-worker'): {
         'listen': '127.0.0.1:8093', 'shard_dir': '/srv/history/set', 'state_dir': '/var/lib/history-worker',

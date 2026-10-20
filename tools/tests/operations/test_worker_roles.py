@@ -86,7 +86,7 @@ class WorkerRoles(unittest.TestCase):
         self.assertEqual(check('transparent-history', 'external-worker')[-1], '--verify-only')
         # No staged inputs, so no check is manufactured.
         self.assertEqual(check('enhance', 'external-worker'), ())
-        self.assertEqual(check('status', 'external-worker'), ())
+        self.assertEqual(check('status', 'external-worker'), ('--config', '/etc/status-pir/external-worker.json', '--check'))
         self.assertEqual(check('transparent-display', 'external-worker'), ())
         initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}
         self.assertEqual(check('transparent-display', 'external-worker', initial)[-1], '--verify-only')
@@ -183,7 +183,7 @@ class StatusInstalledRoles(unittest.TestCase):
     def settings(self, role):
         return dict(network_hex='08' * 32, state_dir='/var/lib/status-' + role,
                     listen='127.0.0.1:' + ('8481' if role == 'worker' else '8482'),
-                    artifact_origin='http://127.0.0.1:8495', worker_origin='http://127.0.0.1:8481',
+                    publisher='https://publisher.example', worker_origin='http://127.0.0.1:8481',
                     **({'query_listen': '127.0.0.1:8484'} if role == 'router' else {}))
 
     def test_deployment_owns_configuration_and_runs_its_loader_before_restart(self):
@@ -205,7 +205,7 @@ class StatusInstalledRoles(unittest.TestCase):
         for role in ('worker', 'router'):
             bad_settings = [{'network_hex': 'ab'}, {'network_hex': 'FF' * 32},
                             {'listen': '0.0.0.0:8481'}, {'worker_origin': 'http://10.0.0.1:8481'},
-                            {'artifact_origin': 'https://127.0.0.1:8495'}, {'listen': '127.0.0.1:65536'}]
+                            {'publisher': 'http://publisher.example'}, {'listen': '127.0.0.1:65536'}]
             if role == 'worker':
                 bad_settings.append({'query_listen': '127.0.0.1:8484'})
             for bad in bad_settings:

@@ -3,7 +3,8 @@
 The deployed `status-pir-v3-native-two-mask-m29` service must pass the complete
 live-source gate for release qualification. One unified publisher owns source
 capture and publication; separate query worker and router processes serve
-wallets through the existing ingress and authenticated private control sessions.
+wallets through the existing ingress and autonomous HTTPS publication synchronization. Loopback evaluation and
+wallet forwarding remain separate from publisher distribution.
 
 The database uses 8,192 rows, 256 slots per row, 40 bytes per slot, 12,288 padded
 row bytes, 6,144 u16 columns and a 96 MiB database. Its 75% admission ceiling

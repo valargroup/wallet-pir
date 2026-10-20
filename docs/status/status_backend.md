@@ -58,23 +58,20 @@ cargo test --locked --profile release-fast -p pir-query-server \
   --features status,native-reinspiring --lib status::
 cargo build --locked --profile release-fast -p pir-publisher --features status,native-reinspiring
 cargo build --locked --profile release-fast -p pir-query-server --features status,cuda
-RAYON_NUM_THREADS=4 LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64 \
-  target/release-fast/pir-publisher status validate-distributed --cuda \
-  --entries 1572864 --state-dir /tmp/status-pir-validation
+cargo test --locked --profile release-fast -p status-publisher \
+  --features fixtures,native-reinspiring --lib \
+  shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
 ```
 
-Omit `--features cuda` and `--cuda` for a CPU run. CUDA selection fails explicitly
-without a working GPU/runtime. Build with the intended CPU flags; the reference
-P4000 host supported Haswell, not the newer coordinator's AVX-512 target; the
-CPU Status host uses `x86-64-v3`.
+CUDA selection fails explicitly without a working GPU/runtime. CPU and native
+profile checks do not establish CUDA qualification. Build with the intended CPU
+flags; the CPU Status host uses `x86-64-v3`.
 
-`validate-distributed` starts `pir-query-server` worker and router processes
-beside a fixture publisher and checks encrypted answers and remote fencing. The
-`pir-query-server` Status tests cover the wallet boundary over real HTTP:
-an independent wallet decrypts every fixture case, and corrupt answers,
-malformed envelopes and stale manifests are refused. The `status-query-server`
-tests compare initial and updated composed hints with upstream full-database
-preprocessing and check recovery-epoch rejection of old views.
+The Status lifecycle runs the actual publisher routes and worker/router consumers
+over real TLS and checks independently encoded wallet answers. Query-host tests
+also cover malformed envelopes, expired observations, durable withdrawal/replay
+handling and failed authority persistence. The retired push-control
+`validate-distributed` diagnostic is removed; it cannot validate this transport.
 
 The unit tests deliberately construct a 257-entry bucket to exercise complete
 block eviction and refusal when mandatory mempool contents alone overflow.
@@ -119,7 +116,7 @@ ran on the Paperspace P4000 and were retired with that host on 2026-09-27; see
 [CPU Status host](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-cpu-host-2026-09-27/README.md).
 The single-process `serve`, `serve-live`, `validate` and `probe` modes are
 removed: wallet routes are served only by `pir-query-server` roles, so fixture
-experiments use `validate-distributed`.
+experiments use the native HTTPS lifecycle and live-source qualification.
 
 ## Boundaries before rollout
 

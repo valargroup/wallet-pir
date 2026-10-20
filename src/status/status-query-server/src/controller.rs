@@ -40,6 +40,14 @@ impl Controller {
     pub fn current(&self) -> Arc<Generation> {
         self.views.read().unwrap().active.clone()
     }
+    /// Exact anchors of every view that can still answer a request.
+    pub fn serving_manifests(&self) -> Vec<Manifest> {
+        let views = self.views.read().unwrap();
+        std::iter::once(&views.active)
+            .chain(views.retained.iter())
+            .map(|g| g.manifest().clone())
+            .collect()
+    }
     pub fn resolve(&self, id: Hash) -> Result<Arc<Generation>, StatusCode> {
         let views = self.views.read().unwrap();
         std::iter::once(&views.active)

@@ -221,6 +221,20 @@ impl Config {
             {
                 return Err("Status role listener must be loopback".into());
             }
+            let url = reqwest::Url::parse(&role.publisher)?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || url.path() != "/"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err("Status publisher must be an explicit HTTPS origin".into());
+            }
+            if role.role == status_query_server::distributed::Role::Router {
+                status_query_server::distributed::loopback_origin(&role.worker_origin)?;
+            }
             layout.listener("status", role.listen)?;
             if let Some(addr) = role.query_listen {
                 layout.listener("status", addr)?;

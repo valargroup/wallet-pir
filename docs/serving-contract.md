@@ -26,16 +26,17 @@ so adding one would break an older controller during a rolling deploy.
 
 ## Serving authority
 
-Enhance's packing router and query ingress, and every Status role, serve only
-while a controller has renewed their authority within five seconds
-(`pir_control::CONTROL_WATCHDOG`). The controller renews every second.
+Enhance's packing router and query ingress serve only while their controller
+has renewed authority within five seconds (`pir_control::CONTROL_WATCHDOG`).
+Status instead verifies publisher authority over HTTPS and rejects observations
+older than twenty seconds; polling, downloads and retries cannot renew their age.
 
 | | Enhance router and ingress | Status roles | Transparent worker |
 |---|---|---|---|
-| Handshake | prepare → `Ack{incarnation, digest, controller_epoch}` → activate → refresh | fence → prepare → activate → heartbeat | control-socket `prepare`/`activate` compare-and-swap on the predecessor `map_sha256` |
-| Renewal checks | incarnation, epoch and view digest | binding (epoch, incarnation) and generation; no digest | none; no lease |
-| Fence | monotonic controller epoch, recovery epoch and revoked-session superset | recovery epoch bumped on every controller open | reorg epoch; invalidation persisted |
-| Control errors | 503 | 409 binding mismatch, 429 busy prepare | CLI error |
+| Handshake | prepare → `Ack{incarnation, digest, controller_epoch}` → activate → refresh | HTTPS discovery → verified prepared load → authority recheck → local activation | control-socket `prepare`/`activate` compare-and-swap on the predecessor `map_sha256` |
+| Renewal checks | incarnation, epoch and view digest | publication/recovery high-water marks, exact anchors and original observation age | none; no lease |
+| Fence | monotonic controller epoch, recovery epoch and revoked-session superset | recovery epoch bumped on publisher recovery; durable consumer invalidations | reorg epoch; invalidation persisted |
+| Control errors | 503 | 503 unavailable/stale; 409 unknown generation; 410 revoked | CLI error |
 
 Transparent has no lease. The reconciler routes a worker only while it attests
 the active publication warm; transport failures remove a recent replica after

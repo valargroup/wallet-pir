@@ -110,6 +110,21 @@ processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
 or start a replacement while the previous process is still stopping.
 
+## Autonomous Status HTTPS publication
+
+Status captures complete source observations independently of consumers, prepares
+worker database units and router packing material on the publisher, and offers
+`/provider/status/v1/` behind the existing TLS edge. Its private configuration
+keeps `state_dir`, `salt_hex`, `window_blocks` and `private_listen`; worker/router
+control origins are removed. It never waits for consumer acknowledgments.
+
+Only a verified source observation supplies a new timestamp. Immutable artifacts
+are reused across metadata-only publications. Query servers independently fetch,
+verify, load and activate material through `pir-sync-manager`; Status no longer
+uses publisher heartbeats. The twenty-second wallet observation-age limit is
+unchanged. See [Status distribution and cutover](status/status_distributed.md).
+This describes source capability, not a production cutover record.
+
 ## Autonomous Transparent HTTP prototype
 
 History and transaction details can use `http_only: true` in their existing
