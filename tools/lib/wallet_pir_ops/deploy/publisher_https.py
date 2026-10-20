@@ -266,12 +266,16 @@ class HttpsServing(Serving):
                               'seed_paths': sorted(set(seed_paths)), 'legacy_active_record': legacy_active,
                               'legacy_shard_dir': legacy_shards})
         plan['https_consumers'] = consumers
+        from .publisher_warmup import SCRIPT
+        plan['snapshot_warmer_sha256'] = sha(SCRIPT)
         return plan
 
     def stage(self, parent, binary):
         super().stage(parent, binary)
         owner = self.cutover
         self.verify_production_snapshots(parent)
+        from .publisher_warmup import SnapshotWarmup
+        SnapshotWarmup(self).stage(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, target = consumer['host'], consumer['binary']
             owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
@@ -302,9 +306,13 @@ class HttpsServing(Serving):
             map_path = source + '/' + map_name
             raw_digest = owner.ex.sha256(owner.host, map_path)
             require(raw_digest is not None, 'production snapshot map is missing')
+            from .publisher_warmup import SnapshotWarmup
+            pin = SnapshotWarmup(self).pin_snapshot(parent, section, source)
+            map_path = pin + '/' + map_name
+            require(owner.ex.sha256(owner.host, map_path) == raw_digest, 'pinned production snapshot differs')
             if section == 'transparent_history':
                 code, output = owner.ex.run(owner.host,
-                    [parent['plan']['binary'], 'verify-filters', '--shard-dir', source], 120)
+                    [parent['plan']['binary'], 'verify-filters', '--shard-dir', pin], 120)
                 try:
                     canonical = json.loads(output)
                 except ValueError:
@@ -315,7 +323,7 @@ class HttpsServing(Serving):
             budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
             require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
                     'production snapshot verification would leave less than 20 percent memory')
-            settings = {data_key: source, 'cache_bytes': budget,
+            settings = {data_key: pin, 'cache_bytes': budget,
                         'listen': '127.0.0.1:18990'}
             if section == 'transaction_details':
                 settings['role'] = 'combined'
@@ -343,8 +351,11 @@ class HttpsServing(Serving):
                     'production snapshot changed during verification')
             parent.setdefault('production_snapshots', {})[section] = {
                 'directory': source, 'map_sha256': digest, 'verified': True,
+                'pin': pin,
                 'raw_map_sha256': raw_digest,
                 'query_binary_sha256': self.release['binary_sha256'], 'cache_bytes': budget}
+            if section == 'transparent_history':
+                parent['production_snapshots'][section]['identity'] = canonical
             owner.save(parent)
 
     def stage_binary(self, host, target, binary):
@@ -362,6 +373,8 @@ class HttpsServing(Serving):
 
     def activate(self, parent):
         super().activate(parent)
+        from .publisher_warmup import SnapshotWarmup
+        SnapshotWarmup(self).seed(parent)
         owner = self.cutover
         # The distribution prefixes can become reachable while consumers are stopped;
         # the publisher starts only after its old writer has released every lock.
@@ -477,6 +490,8 @@ class HttpsServing(Serving):
 
     def restore_guard(self, parent):
         super().restore_guard(parent)
+        from .publisher_warmup import SnapshotWarmup
+        SnapshotWarmup(self).guard(parent)
         edge = parent['plan']['serving']['history_edge']
         require(self.cutover.ex.read(edge['host'], '/etc/caddy/Caddyfile') in (edge['before'], edge['after']),
                 'history edge changed outside the HTTPS transaction')
@@ -538,3 +553,17 @@ class HttpsServing(Serving):
     @staticmethod
     def touched(parent, unit):
         return unit in parent.get('https_started', [])
+
+    def cleanup_staging(self, parent):
+        from .publisher_warmup import SnapshotWarmup
+        SnapshotWarmup(self).cleanup(parent)
+
+    def unchanged_during_staging(self, plan):
+        super().unchanged_during_staging(plan)
+        owner = self.cutover
+        require(all(stable_unit(owner.ex.probe_unit(c['host'], c['unit'])) == c['before']
+                    for c in plan['https_consumers']), 'Transparent consumer changed during staging')
+        edge = plan['history_edge']
+        require(owner.ex.read(edge['host'], '/etc/caddy/Caddyfile') == edge['before'] and
+                stable_unit(owner.ex.probe_unit(edge['host'], 'caddy.service')) == edge['unit'],
+                'history edge changed during staging')

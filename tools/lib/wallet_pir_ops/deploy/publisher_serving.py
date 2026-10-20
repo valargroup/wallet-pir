@@ -100,6 +100,15 @@ class Serving:
     def journal(self, parent):
         return ServingJournal(self.cutover, parent)
 
+    def unchanged_during_staging(self, plan):
+        owner = self.cutover
+        require(all(stable_unit(owner.ex.probe_unit(role['host'], role['unit'])) == before
+                    for role, before in zip(plan['roles'], plan['units'])),
+                'query service changed during staging')
+        require(owner.read(CADDY) == plan['edge_before'] and
+                stable_unit(owner.ex.probe_unit(owner.host, 'caddy.service')) == plan['edge'],
+                'wallet edge changed during staging')
+
     def stage(self, parent, binary):
         owner, deployer = self.cutover, self.deployer
         mutation_fence(owner.inventory, owner.ex, owner.lock)

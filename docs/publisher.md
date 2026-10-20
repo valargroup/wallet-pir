@@ -316,14 +316,30 @@ service invocation; changed ownership is refused. It verifies that the process
 has stopped and the writer locks are free before restoring the previous owner.
 Ordinary predecessor stops keep their existing shutdown behavior.
 
-Before stopping the publisher, the HTTPS path runs the new query server's
-read-only verifier against both complete active publication snapshots. It checks
+Before stopping the publisher, the HTTPS path pins both complete active public
+snapshots with hard links and runs the new query server's read-only verifier
+against those pins. It checks
 every revision and the runtime capacity while preserving the twenty percent
 memory reserve, and records each source directory, map digest and executable
 digest. This reads immutable publications; it neither copies nor opens a second
-writer on the live journals. Consumer readiness subsequently requires warmed
-HTTPS state. Wallet acceptance still uses the unchanged wallet at its existing
-TLS origin.
+writer on the live journals.
+
+The same staging phase warms every current runtime through the qualified
+query-server executable. A temporary
+service has a memory ceiling that preserves the coordinator's twenty percent
+reserve. History is checked one shard at a time; transaction details use combined
+holdings. Loopback readiness must report the expected map, executable, assignment
+and complete runtime coverage. Pending cache writes must finish without errors.
+The service and its children stop before staging can finish. A failed warmup
+leaves the existing publisher, workers and edges running; reconciliation cleans
+up the transaction-owned validator. Completed cache files remain reusable by a
+later attempt, with native validation against its fresh snapshot.
+
+After the old publisher stops and releases its writer locks, the cutover links
+those prepared cache files into its current publication. It then starts the new
+publisher and waits for canonical HTTPS metadata before starting consumers.
+Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
+the unchanged wallet at its existing TLS origin.
 
 Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
 and sustained-service qualification.
