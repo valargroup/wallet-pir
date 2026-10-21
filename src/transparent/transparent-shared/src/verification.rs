@@ -12,6 +12,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Older staging could attach a different object's identity to existing bytes.
+// Neither its download identities nor semantic checks are reusable evidence.
+const RECEIVED_VERSION: u32 = 2;
+const CHECK_DOMAIN: &[u8] = b"wallet-pir-local-check-v2\0";
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Received {
@@ -44,7 +49,7 @@ fn read_received(path: &Path, file: &File) -> Option<Received> {
     let received: Received = serde_json::from_slice(&raw).ok()?;
     let opened = file.metadata().ok()?;
     let named = std::fs::symlink_metadata(path).ok()?;
-    if received.version != 1
+    if received.version != RECEIVED_VERSION
         || !crate::publication::is_digest(&received.sha256)
         || !opened.is_file()
         || !named.is_file()
@@ -89,7 +94,7 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
         ));
     }
     let next = Received {
-        version: 1,
+        version: RECEIVED_VERSION,
         sha256: sha256.into(),
         bytes,
         object: std::fs::canonicalize(object)?,
@@ -119,7 +124,7 @@ impl Receipt {
     pub(crate) fn new(path: &Path, file: &File, context: &[u8]) -> Option<Self> {
         let received = read_received(path, file)?;
         let mut hash = Sha256::new();
-        hash.update(b"wallet-pir-local-check-v1\0");
+        hash.update(CHECK_DOMAIN);
         hash.update(received.sha256.as_bytes());
         hash.update(received.bytes.to_le_bytes());
         hash.update(context);
@@ -150,6 +155,39 @@ impl Receipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_download_and_semantic_receipts_are_not_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let object = dir.path().join("object");
+        std::fs::write(&object, b"network bytes").unwrap();
+        let sha = crate::publication::digest(b"network bytes");
+        let context = b"source-and-parameters";
+        let legacy = Received {
+            version: 1,
+            sha256: sha.clone(),
+            bytes: 13,
+            object: object.clone(),
+        };
+        persist(&marker(&object), &serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let mut hash = Sha256::new();
+        hash.update(b"wallet-pir-local-check-v1\0");
+        hash.update(sha.as_bytes());
+        hash.update(13u64.to_le_bytes());
+        hash.update(context);
+        let legacy_check =
+            object.with_file_name(format!("object.checked-{}", hex::encode(hash.finalize())));
+        persist(&legacy_check, b"checked-v1").unwrap();
+        let file = open(&object).unwrap();
+        assert!(!matches_received(&object, &file, &sha, 13));
+        assert!(Receipt::new(&object, &file, context).is_none());
+
+        received(&object, &sha, 13, &object).unwrap();
+        let check = Receipt::new(&object, &file, context).unwrap();
+        assert!(!check.matches(), "an old semantic receipt is not evidence");
+        check.record();
+        assert!(Receipt::new(&object, &file, context).unwrap().matches());
+    }
 
     #[test]
     fn received_files_reuse_checks_after_reopen_but_size_and_context_must_match() {
