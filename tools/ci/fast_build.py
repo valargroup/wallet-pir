@@ -4,9 +4,10 @@ Cargo unifies features for every package named in one command. Shared crates
 and product libraries stay on one command with a fixed feature set, so a warm
 cache still hits. Transparent publication tests live in those libraries.
 Enabling history and detail on the host binary links the publisher again and
-is not part of this command. Enhance and Status fixture features stay on a
-second command: they pull chain test nodes and wallet clients that would
-rebuild the shared graph. Campaign targets are never selected. Test programs
+is not part of this command. The in-process Enhance hint graph stays on a
+second command. Chain-node fixtures stay in qualification: they pull the
+wallet client and node stack into every crate on their command. Campaign
+targets are never selected. Test programs
 retain their package directory and Cargo environment.
 The Enhance HTTP smokes run alone, as does the filter library on fewer than
 eight cores. The remaining programs share a pool of at most three processes.
@@ -74,9 +75,10 @@ def compile_roots(selected, available):
 HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'})
 
 # Fixture features pull one product's wallet client and chain test node into
-# every crate on their command. Fast leaves those on the second command.
+# every crate on their command. Fast leaves the chain node in qualification.
+# The second command is only the in-process Enhance hint graph.
 PRODUCT_HOST_FEATURES = {
-    'enhance': 'pir-e2e-tests/enhance-tests',
+    'enhance': 'pir-e2e-tests/enhance-fast',
     'transparent': 'pir-e2e-tests/transparent-tests',
     'status': 'pir-publisher/status-tests',
 }
@@ -84,6 +86,7 @@ PRODUCT_HOST_FEATURES = {
 # A fast target that requires one of these is compiled only for a diff that
 # touches that product. Shared crates never receive them.
 PRODUCT_FEATURE_GATES = {
+    'enhance-fast': 'enhance',
     'enhance-tests': 'enhance',
     'transparent-tests': 'transparent',
     'status-tests': 'status',
@@ -135,13 +138,13 @@ def host_features_for(products, package_names):
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
     stay on the publisher library's dev-dependency edge. Turning them on for the
-    host binary links that library a second time.
+    host binary links that library a second time. Status `status-tests` enables
+    the chain node for fixture campaigns that fast does not run; qualification
+    enables it. The Enhance hint target uses `enhance-fast`, not `enhance-tests`.
     """
     features = set()
     if 'pir-e2e-tests' in package_names and 'enhance' in products:
         features.add(PRODUCT_HOST_FEATURES['enhance'])
-    if 'pir-publisher' in package_names and 'status' in products:
-        features.add(PRODUCT_HOST_FEATURES['status'])
     return features
 
 

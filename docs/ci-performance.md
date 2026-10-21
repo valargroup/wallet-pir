@@ -38,8 +38,8 @@ Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. Transparent publication tests use that
 command. History and detail reach the query host through the publisher
 library's dev-dependency; the publisher host binary does not enable them,
-because that links the same library again. Enhance and Status fixture features compile on a
-second command so their chain test node does not rebuild the shared graph.
+because that links the same library again. The in-process Enhance hint graph compiles on a
+second command. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
@@ -149,8 +149,8 @@ also names the stable fast dev-dependency roots, so a smaller affected set does
 not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
 dependency graph. Transparent publication tests are part of this command, and
 the publisher host is not relinked with history and detail. A second
-invocation is only the Enhance or Status fixture feature, which must not unify
-into the stable graph. The reader's receiver and status RPC targets stay in full
+invocation is only the in-process Enhance hint graph, which must not unify
+into the stable graph. Chain-node fixtures stay in qualification. The reader's receiver and status RPC targets stay in full
 qualification; those features are not part of the closure, and enabling them
 rebuilds every cached consumer. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most

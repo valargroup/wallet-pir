@@ -60,7 +60,8 @@ dependency graph; only affected packages run. Transparent publication tests
 stay in that closure. The query host still receives history and detail through
 the publisher library's dev-dependency. The publisher host binary does not:
 those features link the same library again. Publisher fixtures stay off this
-command. Enhance and Status fixture features stay on a separate command. A binary with no
+command. The in-process Enhance hint graph stays on a separate command. Chain-node
+fixtures for Enhance and Status stay in qualification. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,

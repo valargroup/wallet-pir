@@ -340,7 +340,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(host_bins, [])
         # Shared crates keep a feature set that does not name a product host.
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
-        self.assertEqual(host_features, ['pir-e2e-tests/enhance-tests'])
+        self.assertEqual(host_features, ['pir-e2e-tests/enhance-fast'])
         self.assertEqual(stable_tests, ['ci_smoke'])
         self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
 
@@ -358,12 +358,14 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('pir-publisher/transparent-history', features)
         self.assertIn('commands', tests)
         self.assertIn('operator', tests)
-        _packages, _bins, tests, features = self._command_parts(self._cargo_tests(['status-publisher'])[1])
-        self.assertEqual(features, ['pir-publisher/status-tests'])
+        status_builds = self._cargo_tests(['status-publisher'])
+        self.assertEqual(len(status_builds), 1)
+        _packages, _bins, tests, features = self._command_parts(status_builds[0])
+        self.assertNotIn('pir-publisher/status-tests', features)
         self.assertNotIn('ci_hint', tests)
         builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
         _packages, _bins, _tests, features = self._command_parts(builds[1])
-        self.assertEqual(features, ['pir-e2e-tests/enhance-tests'])
+        self.assertEqual(features, ['pir-e2e-tests/enhance-fast'])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):
         # Dependents of a shared crate are selected, but the diff itself is not a product.
