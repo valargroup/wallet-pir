@@ -734,9 +734,16 @@ mod tests {
         config.source.publisher_origin = "http://publisher.example".into();
         assert!(config.validate().is_err());
         let mut config = ingress.config.clone();
-        config
-            .routers
-            .insert(0, vec!["http://127.0.0.1:1".into(); 2]);
+        config.routers.insert(
+            0,
+            vec![
+                RouterPeer {
+                    control_origin: "http://127.0.0.1:1".into(),
+                    query_origin: "http://127.0.0.1:2".into(),
+                };
+                2
+            ],
+        );
         assert!(config.validate().is_err());
     }
 }
