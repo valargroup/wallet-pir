@@ -61,6 +61,22 @@ fn read_received(path: &Path, file: &File) -> Option<Received> {
     Some(received)
 }
 
+/// A completed download's recorded length remains authoritative on disk.
+pub(crate) fn check_received_size(path: &Path, file: &File) -> io::Result<()> {
+    let received = match File::open(marker(path)) {
+        Ok(input) => serde_json::from_reader::<_, Received>(input.take(8193))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if file.metadata()?.len() != received.bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "received artifact length mismatch",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn open(path: &Path) -> io::Result<File> {
     if !std::fs::symlink_metadata(path)?.is_file() {
         return Err(io::Error::new(
@@ -99,8 +115,16 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
         bytes,
         object: std::fs::canonicalize(object)?,
     };
-    if read_received(path, &file).as_ref() == Some(&next) {
-        return Ok(());
+    if let Some(previous) = read_received(path, &file) {
+        if previous.sha256 != next.sha256 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "completed artifact already has a different download identity",
+            ));
+        }
+        if previous == next {
+            return Ok(());
+        }
     }
     let raw = serde_json::to_vec(&next)?;
     persist(&marker(path), &raw)
@@ -108,13 +132,6 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
 
 pub(crate) fn matches_received(path: &Path, file: &File, sha256: &str, bytes: u64) -> bool {
     read_received(path, file).is_some_and(|r| r.sha256 == sha256 && r.bytes == bytes)
-}
-
-/// A small identity supplied by the already verified network download. This
-/// replaces rescanning a native body's internal checksum on received files.
-pub(crate) fn fingerprint(path: &Path, file: &File) -> Option<[u8; 32]> {
-    let received = read_received(path, file)?;
-    hex::decode(received.sha256).ok()?.try_into().ok()
 }
 
 pub(crate) struct Receipt {

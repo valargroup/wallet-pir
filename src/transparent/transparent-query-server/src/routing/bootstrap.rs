@@ -10,7 +10,7 @@ use crate::objects::{link_object, remove_partials, PARTIAL};
 pub(crate) use crate::source::sync_tree;
 pub use crate::source::Config;
 use crate::{
-    history::service::{ReadinessMode, ServiceConfig, ServiceState},
+    history::service::{ServiceConfig, ServiceState},
     routing::router::{plan, RosterEntry},
     source::Source,
 };
@@ -63,22 +63,19 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     let options = staged.options;
     let result = async {
         let root = stage.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+        let set = tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+            .await??;
         let state = ServiceState::build_with_runtimes(
             set,
             ServiceConfig {
                 cache_bytes: config.cache_bytes,
-                readiness: ReadinessMode::Warm,
                 ..ServiceConfig::default()
             },
             None,
             Some(ShippedRuntimes::required(stage.clone())),
         )?;
-        state.spawn_prewarm().await?;
-        if !state.is_warm() {
-            return Err("required prepared publication failed production loader/self-check".into());
-        }
+        let _prewarm = state.spawn_prewarm();
+        state.check_required_material()?;
         // HTTP current, not files or a last-success timestamp, is the bootstrap
         // freshness source. Supersession/withdrawal/outage cannot activate it.
         source.check_anchor(&config.directory, &current).await?;

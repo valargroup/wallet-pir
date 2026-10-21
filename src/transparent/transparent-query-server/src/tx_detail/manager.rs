@@ -200,7 +200,7 @@ impl DisplaySync {
         self.live
             .command(DisplayCommand::Status)
             .await
-            .is_ok_and(|s| s["active"].is_object() && s["warm"] == true)
+            .is_ok_and(|s| s["active"].is_object() && s["ready"] == true)
     }
     async fn download(&mut self, current: &Current) -> Result<DisplayPublication, Error> {
         let raw = self

@@ -23,10 +23,9 @@
 //! the set before it stops the running service, and a check deferred to first
 //! query would move that failure to after the cutover.
 //!
-//! Verification here is paranoid about *the operator's own files*, not only
-//! about a hostile network. A shard whose table no longer matches its manifest
-//! digest would be served as if it were the published shard, and every client
-//! would reject its rows as a PIR fault rather than as a corrupt shard.
+//! Publishers and explicit verification tools scan source contents. Serving
+//! loads use `open_for_serving`: they trust publisher preparation and check
+//! local source sizes without hashing or scanning rows.
 //!
 //! # Revisions
 //!
@@ -255,15 +254,8 @@ pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
 
 /// Where one segment's bytes are, and what they must be.
 ///
-/// Retained in place of the bytes themselves. `load` is the only way back to
-/// them, and it re-checks both length and digest, so a file replaced or
-/// truncated after startup fails the build rather than being packed into a
-/// runtime and served.
-///
-/// A verified input record: only the loaders construct one, from a manifest
-/// they have checked, and its fields are read-only. Naming a path and a digest
-/// is not enough to obtain one, so nothing outside the loader can present an
-/// arbitrary file as a verified segment.
+/// Publisher loads verify source contents; serving loads check only length.
+/// The manifest digest remains the runtime identity in both cases.
 #[derive(Clone, Debug)]
 pub struct SegmentSource {
     path: PathBuf,
@@ -282,6 +274,7 @@ pub struct SegmentSource {
     /// when that observation is certain enough to vouch for the file later;
     /// see [`FileStamp`]. In memory only, so a restart verifies everything.
     evidence: Option<FileStamp>,
+    size_only: bool,
 }
 
 /// The identity and change metadata of a file this process hashed.
@@ -422,7 +415,29 @@ impl SegmentSource {
             sha256,
             zero_from_row,
             evidence: None,
+            size_only: false,
         }
+    }
+
+    /// Trust publisher preparation and check only the local file's size.
+    pub fn for_serving(mut self) -> Result<Self, LoadError> {
+        let file = crate::verification::open(&self.path).map_err(|source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        if file
+            .metadata()
+            .map_err(|source| LoadError::Io {
+                path: self.path.clone(),
+                source,
+            })?
+            .len()
+            != self.bytes() as u64
+        {
+            return Err(LoadError::Invalid("source segment length mismatch".into()));
+        }
+        self.size_only = true;
+        Ok(self)
     }
 
     pub fn path(&self) -> &Path {
@@ -657,10 +672,14 @@ impl SegmentSource {
             .read_to_end(&mut bytes)
             .map_err(io)?;
         crate::runtime::filecache::consumed(&file);
-        // This process hashed this very file earlier and it is unchanged
-        // since: the same evidence `rebind` accepts, checked around this read.
-        let vouched = !inherited && self.vouches_for(&file, &before);
-        if vouched {
+        // Publisher evidence can avoid a second hash; serving loads trust the
+        // publisher and check only the length, even when evidence is present.
+        let vouched = !self.size_only && !inherited && self.vouches_for(&file, &before);
+        if self.size_only {
+            if bytes.len() != self.bytes() {
+                return Err(LoadError::Invalid("source segment length mismatch".into()));
+            }
+        } else if vouched {
             if bytes.len() != self.bytes() {
                 return Err(LoadError::Invalid("verified segment length changed".into()));
             }
@@ -984,6 +1003,7 @@ impl LoadedShard {
             meta,
             &Evidence::default(),
             &mut VerificationReport::default(),
+            false,
         )
     }
 
@@ -996,6 +1016,7 @@ impl LoadedShard {
         meta: RevisionMeta,
         evidence: &Evidence<'_>,
         report: &mut VerificationReport,
+        size_only: bool,
     ) -> Result<Self, LoadError> {
         let RevisionMeta {
             manifest,
@@ -1029,14 +1050,17 @@ impl LoadedShard {
                     kind.row_bytes(geometry),
                 )));
             }
-            SegmentSource::published(
+            let source = SegmentSource::published(
                 dir.join(format!("{}.{index}.bin", table.name())),
                 published.rows,
                 published.row_bytes,
                 published.sha256.clone(),
                 zero_from_row,
-            )
-            .verify_or_reuse(
+            );
+            if size_only {
+                return source.for_serving();
+            }
+            source.verify_or_reuse(
                 evidence.get(identity, kind, index as u32).iter().copied(),
                 report,
                 kind == Table::Pages,
@@ -1093,7 +1117,7 @@ impl LoadedShard {
                 segments,
             });
         }
-        if !directory_reused {
+        if !size_only && !directory_reused {
             verify_choice_routes(&manifest, geometry, &directory, report)?;
         }
 
@@ -1275,6 +1299,20 @@ impl ShardSet {
         options: &LoadOptions,
         previous: Option<&Self>,
     ) -> Result<Self, LoadError> {
+        Self::open_material(dir, options, previous, false)
+    }
+
+    /// Load publisher-prepared material without scanning table contents.
+    pub fn open_for_serving(dir: &Path, options: &LoadOptions) -> Result<Self, LoadError> {
+        Self::open_material(dir, options, None, true)
+    }
+
+    fn open_material(
+        dir: &Path,
+        options: &LoadOptions,
+        previous: Option<&Self>,
+        size_only: bool,
+    ) -> Result<Self, LoadError> {
         let clock = VerificationClock::start();
         let evidence = Evidence::of(previous);
         let mut verification = VerificationReport::default();
@@ -1420,8 +1458,13 @@ impl ShardSet {
             parent_digest = meta.digest.clone();
             current_revision.insert(entry.shard_id, (manifest.revision, manifest.sealed));
             if assigned(entry.shard_id) {
-                let shard =
-                    LoadedShard::verify_tables_reusing(&path, meta, &evidence, &mut verification)?;
+                let shard = LoadedShard::verify_tables_reusing(
+                    &path,
+                    meta,
+                    &evidence,
+                    &mut verification,
+                    size_only,
+                )?;
                 metadata.insert(
                     shard.digest.clone(),
                     RevisionMeta {
@@ -1518,6 +1561,7 @@ impl ShardSet {
                         meta,
                         &evidence,
                         &mut verification,
+                        size_only,
                     )?;
                     revisions.push(shard);
                 } else if options.prune_excess {
@@ -1757,6 +1801,25 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+
+    #[test]
+    fn serving_sources_need_no_receipt_and_never_rehash_local_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = small_source(dir.path());
+        let expected = std::fs::read(source.path()).unwrap();
+        let serving = source.clone().for_serving().unwrap();
+        let mut changed = expected.clone();
+        changed[0] ^= 1;
+        std::fs::write(source.path(), &changed).unwrap();
+        assert_eq!(serving.load().unwrap(), changed);
+        assert!(
+            source.verify().is_err(),
+            "publisher still checks source contents"
+        );
+        std::fs::write(source.path(), &expected[..expected.len() - 1]).unwrap();
+        assert!(serving.load().is_err());
+        assert!(source.for_serving().is_err());
     }
 
     #[test]

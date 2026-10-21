@@ -33,7 +33,9 @@ mod revision;
 use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::ShardManifest;
-use transparent_shared::history::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+use transparent_shared::history::shardset::{
+    LoadOptions, ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS,
+};
 use transparent_shared::runtime::metrics::Metrics;
 use transparent_shared::runtime::{reserved_bytes, CacheError, RuntimeCache, SharedParams};
 
@@ -710,8 +712,7 @@ async fn a_built_runtime_returns_its_unused_reservation_to_the_budget() {
 /// warm, nothing evicted or refused, each snapshot charged its file length.
 /// A restart restores both from disk at the same charge.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
-    use transparent_query_server::history::service::ReadinessMode;
+async fn background_warming_respects_memory_and_disk_budgets() {
     use transparent_shared::runtime::disk::DiskCache;
     use transparent_shared::runtime::warm_bytes;
     let root = tempfile::tempdir().unwrap();
@@ -745,15 +746,17 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
         .is_err());
     let config = |cache_bytes| ServiceConfig {
         cache_bytes,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
-    assert!(ServiceState::build_with_disk(
-        open(),
-        config(needed - 1),
-        Some(disk("cache", entries + excess))
-    )
-    .is_err());
+    assert!(
+        ServiceState::build_with_disk(
+            open(),
+            config(needed - 1),
+            Some(disk("cache", entries + excess))
+        )
+        .is_ok(),
+        "startup does not require the whole assignment to be resident"
+    );
 
     let warm = |state: ServiceState| async move {
         state.spawn_prewarm().await.unwrap();
@@ -801,7 +804,6 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     let root = tempfile::tempdir().unwrap();
     let a = root.path().join("initial");
@@ -812,7 +814,6 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
     let config = ServiceConfig {
         cache_bytes: pair * 8,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let disk =
@@ -867,10 +868,9 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         // Each pair is charged its built size, not its reservation.
         let built = [Table::Directory, Table::Pages]
             .map(|table| SharedParams::build(&GEOMETRY, table).unwrap().held_bytes());
-        assert_eq!(
-            metrics.cache_entries.load(Ordering::Relaxed),
-            4,
-            "only the current and preparing pair remain resident, even with spare cache capacity"
+        assert!(
+            metrics.cache_entries.load(Ordering::Relaxed) <= 4,
+            "preparing a cold candidate cannot require more than the current and preparing pair"
         );
         let resident = metrics.resident_bytes.load(Ordering::Relaxed);
         assert!(resident <= (built[0] + built[1]) * 2, "{resident}");
@@ -916,9 +916,9 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
         .count();
-    assert_eq!(
-        cached, 8,
-        "only the four live/retained revision pairs remain on disk"
+    assert!(
+        cached <= 8,
+        "at most the four live/retained revision pairs remain on disk"
     );
 }
 
@@ -1421,7 +1421,6 @@ async fn a_disconnected_activation_keeps_serialization_over_the_control_socket()
 #[tokio::test(flavor = "multi_thread")]
 async fn live_prepare_activate_and_invalidate() {
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     let root = tempfile::tempdir().unwrap();
     let a = root.path().join("a");
@@ -1434,7 +1433,6 @@ async fn live_prepare_activate_and_invalidate() {
     let old_map = set.map_digest.clone();
     let config = ServiceConfig {
         cache_bytes: 1 << 30,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let state = ServiceState::build(set, config).unwrap();
@@ -1640,7 +1638,6 @@ mod burst_query;
 async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
     use std::path::PathBuf;
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     use transparent_shared::runtime::prebuild::prepare_publication;
     let prepare = |dir: &Path, retained: &[PathBuf]| {
@@ -1659,7 +1656,6 @@ async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
     let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
     let config = ServiceConfig {
         cache_bytes: pair * 8,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let set = ShardSet::open(&initial, 3).unwrap();
@@ -1715,7 +1711,7 @@ async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
         assert_eq!(produced["built"], 0, "{reply}");
         assert_eq!(produced["restored"], 0, "{reply}");
         assert_eq!(produced["shipped_fallbacks"], 0, "{reply}");
-        assert!(produced["shipped"].as_u64().unwrap() > 0, "{reply}");
+        assert_eq!(reply["verification"]["bytes_hashed"], 0, "{reply}");
         live.command(Command::Activate {
             expected,
             map_sha256: map_sha256.clone(),
@@ -1822,141 +1818,61 @@ fn an_invalidated_preparation_stops_between_segments() {
     assert_eq!(prepared.built(), targets - 1);
 }
 
-/// A required provider verifies every runtime file of each publication it
-/// prepares. Material an earlier publication fully checked is not loaded or
-/// self-checked again when a new stage offers the same bytes under the same
-/// name, as hard-linked stages do even though each link moves the inode's
-/// change time. A new revision's runtimes are checked in full, and corrupt,
-/// rewritten, misnamed and missing files are refused whatever was proven.
+/// Restart and restaging do not require semantic evidence or read runtime bodies.
 #[tokio::test(flavor = "multi_thread")]
-async fn repeated_publications_self_check_only_changed_runtime_material() {
-    use std::path::PathBuf;
-    use transparent_query_server::history::service::MaterialVerification;
-    use transparent_shared::runtime::disk::ShippedRuntimes;
-    use transparent_shared::runtime::prebuild::prepare_publication;
-    let prepare = |dir: &Path, retained: &[PathBuf]| {
-        let prepared =
-            prepare_publication(&ShardSet::open(dir, 3).unwrap(), dir, retained, &|| false)
-                .unwrap();
-        assert!(prepared.failures.is_empty(), "{:?}", prepared.failures);
-    };
-    let runtimes = |dir: &Path| -> Vec<PathBuf> {
-        let mut files: Vec<_> = std::fs::read_dir(dir)
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .filter(|p| p.extension().is_some_and(|e| e == "runtime"))
-            .collect();
-        files.sort();
-        files
-    };
-    // A fresh stage of a publication's runtimes, hard-linked as staging does.
+async fn required_material_checks_size_without_warming_or_rehashing() {
+    use transparent_shared::runtime::{disk::ShippedRuntimes, prebuild::prepare_publication};
     let root = tempfile::tempdir().unwrap();
-    let stage = |name: &str, from: &Path| -> PathBuf {
-        let staged = root.path().join(name);
-        std::fs::create_dir(&staged).unwrap();
-        for file in runtimes(from) {
-            std::fs::hard_link(&file, staged.join(file.file_name().unwrap())).unwrap();
-        }
-        staged
-    };
-    let state = |set: &Path, runtimes: &Path| {
+    two_revisions(root.path());
+    let set = ShardSet::open(root.path(), 3).unwrap();
+    let prepared = prepare_publication(&set, root.path(), &[], &|| false).unwrap();
+    assert!(prepared.failures.is_empty());
+    let count = set
+        .current()
+        .map(|shard| {
+            shard
+                .tables()
+                .into_iter()
+                .map(|table| shard.segments(table) as usize)
+                .sum::<usize>()
+        })
+        .sum::<usize>();
+    let shard = set.current().next().unwrap();
+    let table = shard.tables().into_iter().next().unwrap();
+    let source = shard.segment(table, 0).unwrap();
+    let params = SharedParams::build(shard.geometry, table.kind()).unwrap();
+    let key = (shard.runtime_identity(table).to_string(), table.kind(), 0);
+    let path =
+        ShippedRuntimes::required(root.path().to_path_buf()).path(&key, &params, source.sha256());
+    let build = || {
         ServiceState::build_with_runtimes(
-            ShardSet::open(set, 3).unwrap(),
+            ShardSet::open_for_serving(root.path(), &LoadOptions::whole(3)).unwrap(),
             ServiceConfig::default(),
             None,
-            Some(ShippedRuntimes::required(runtimes.to_path_buf())),
+            Some(ShippedRuntimes::required(root.path().to_path_buf())),
         )
         .unwrap()
     };
-    let counts = |checked, reused| MaterialVerification { checked, reused };
-    let first = root.path().join("first");
-    std::fs::create_dir(&first).unwrap();
-    let (_, current) = two_revisions(&first);
-    prepare(&first, &[]);
+    assert_eq!(build().check_required_material().unwrap(), count);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[64] ^= 1;
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(build().check_required_material().unwrap(), count);
+    std::fs::write(&path, b"short").unwrap();
+    assert!(build().check_required_material().is_err());
+}
 
-    let initial = state(&first, &first);
-    // HTTPS bootstrap warms before any snapshot-level material check. Its
-    // first retry must reuse those successful native checks as well.
-    initial.spawn_prewarm().await.unwrap();
-    assert_eq!(
-        initial.verify_required_material(None).unwrap(),
-        counts(0, 2)
-    );
-    let restaged = state(&first, &stage("restaged", &first));
-    assert_eq!(
-        restaged.verify_required_material(Some(&initial)).unwrap(),
-        counts(0, 2)
-    );
-    // A new revision changes both runtimes; they are checked in full.
-    let next = root.path().join("next");
-    std::fs::create_dir(&next).unwrap();
-    let (digest, scripts) = write_revision(&next, FIRST + 81, 2, &current);
-    write_map(&next, &digest, FIRST + 81, 2, scripts);
-    prepare(&next, std::slice::from_ref(&first));
-    let advanced = state(&next, &next);
-    assert_eq!(
-        advanced.verify_required_material(Some(&restaged)).unwrap(),
-        counts(2, 0)
-    );
-    let proven = state(&next, &stage("again", &next));
-    assert_eq!(
-        proven.verify_required_material(Some(&advanced)).unwrap(),
-        counts(0, 2)
-    );
-
-    // Evidence binds bytes, not inodes: equal copies are reused, other
-    // bytes are checked and refused, each against the same proven snapshot.
-    let originals: Vec<(PathBuf, Vec<u8>)> = runtimes(&next)
-        .into_iter()
-        .map(|p| {
-            let bytes = std::fs::read(&p).unwrap();
-            (p, bytes)
-        })
-        .collect();
-    let replace = |path: &Path, bytes: &[u8]| {
-        let staged = path.with_extension("staged");
-        std::fs::write(&staged, bytes).unwrap();
-        std::fs::rename(&staged, path).unwrap();
-    };
-    let restore = || {
-        for (path, bytes) in &originals {
-            replace(path, bytes);
-        }
-    };
-    let mut stages = 0;
-    let mut verify = || {
-        stages += 1;
-        state(&next, &stage(&format!("stage-{stages}"), &next))
-            .verify_required_material(Some(&proven))
-    };
-    restore();
-    assert_eq!(verify().unwrap(), counts(0, 2));
-    for (path, bytes) in &originals {
-        let mut corrupt = bytes.clone();
-        let middle = corrupt.len() / 2;
-        corrupt[middle] ^= 0x40;
-        replace(path, &corrupt);
-    }
-    assert!(verify().is_err(), "corrupt runtimes");
-    restore();
-    for (path, bytes) in &originals {
-        use std::io::{Seek, SeekFrom, Write};
-        let middle = bytes.len() / 2;
-        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
-        file.seek(SeekFrom::Start(middle as u64)).unwrap();
-        file.write_all(&[bytes[middle] ^ 0x40]).unwrap();
-    }
-    assert!(verify().is_err(), "runtimes rewritten in place");
-    restore();
-    // Another runtime's valid bytes under this runtime's name.
-    for (path, _) in &originals[1..] {
-        replace(path, &originals[0].1);
-    }
-    assert!(verify().is_err(), "misnamed runtimes");
-    restore();
-    assert_eq!(verify().unwrap(), counts(0, 2));
-    for (path, _) in &originals {
-        std::fs::remove_file(path).unwrap();
-    }
-    assert!(verify().is_err(), "missing runtimes");
+#[tokio::test]
+async fn a_cold_archive_is_ready_before_any_runtime_is_loaded() {
+    let root = tempfile::tempdir().unwrap();
+    two_revisions(root.path());
+    let set = ShardSet::open_for_serving(root.path(), &LoadOptions::whole(3)).unwrap();
+    assert_eq!(set.verification().bytes_hashed, 0);
+    let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
+    let (status, body) = get(&state, "/v1/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(ready["ready"], true);
+    assert_eq!(ready["warm_runtimes"], 0);
+    assert_eq!(ready["prewarm_finished"], false);
 }

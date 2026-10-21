@@ -14,8 +14,8 @@
 //! same rows under the same scheme, and linking it costs nothing. It is
 //! linked only if it is complete: a renamed entry, never a `.partial` left by
 //! an interrupted write, with a valid length and its own identity in its
-//! header. Anything else is rebuilt. A worker checksums and self-checks every
-//! file it loads whichever way the publisher came by it.
+//! header. Anything else is rebuilt. The publisher validates material before
+//! publishing; workers hash downloads once and check sizes on disk reload.
 
 use super::disk::ShippedRuntimes;
 use super::{build_pool, RuntimeKey, SharedParams, TableRuntime};

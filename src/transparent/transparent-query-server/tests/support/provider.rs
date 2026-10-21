@@ -8,9 +8,7 @@ use zakura_pir_query_server::transparent::native as transparent_native;
 use super::{generated, genesis, hash_at, revision, script, FIRST};
 use std::sync::Arc;
 use transparent_filter::ShardMap;
-use transparent_query_server::history::service::{
-    router, ReadinessMode, ServiceConfig, ServiceState,
-};
+use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_query_server::routing::archive::Archive;
 use transparent_query_server::routing::router::plan;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
@@ -610,7 +608,6 @@ async fn owner_qualifies_archive_and_retains_inflight_ownership_across_handover(
     }
     let initial_options = options(v1.path(), &map, 0);
     let config = ServiceConfig {
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let old = ServiceState::build(
@@ -918,7 +915,6 @@ async fn recent_survives_archive_stall(operation: &str, stage: &str, ending: &st
         ServiceConfig {
             query_slots: 1,
             max_waiters: 0,
-            readiness: ReadinessMode::Warm,
             max_body_bytes: local_reserve + (body(1).len() as u64).div_ceil(1024) * 1024,
             query_deadline: Duration::from_secs(5),
             ..ServiceConfig::default()

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::{self, Read},
+    io,
     path::{Path, PathBuf},
 };
 
@@ -765,10 +765,10 @@ impl io::Write for HashWriter<'_> {
 }
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
     let file = crate::verification::open(path)?;
-    if crate::verification::matches_received(path, &file, &expected.sha256, expected.bytes) {
-        return Ok(());
+    if file.metadata()?.len() != expected.bytes {
+        return Err("artifact length mismatch".into());
     }
-    verify_open(&file, expected)
+    Ok(())
 }
 
 /// The caller has verified the network stream, or linked/copied its completed
@@ -778,28 +778,6 @@ pub fn record_received_file(path: &Path, expected: &Artifact, object: &Path) -> 
     Ok(())
 }
 
-fn verify_open(file: &std::fs::File, expected: &Artifact) -> Result<(), Error> {
-    let before = file.metadata()?;
-    if before.len() != expected.bytes {
-        return Err("artifact length mismatch".into());
-    }
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0; 1 << 20];
-    let mut input = file;
-    std::io::Seek::rewind(&mut input)?;
-    loop {
-        let n = input.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        hash.update(&buffer[..n]);
-    }
-    if hex::encode(hash.finalize()) != expected.sha256 {
-        return Err("artifact digest mismatch".into());
-    }
-    tracing::debug!(bytes = expected.bytes, "artifact fully hashed");
-    Ok(())
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -852,7 +830,7 @@ mod tests {
 
     #[test]
     fn native_hash_keeps_the_opened_inode_for_verification() {
-        use std::io::{Seek, SeekFrom};
+        use std::io::{Read, Seek, SeekFrom};
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
         let path = root.join("native.runtime");
@@ -934,7 +912,7 @@ mod tests {
     }
 
     #[test]
-    fn received_files_without_durable_evidence_are_checked_again() {
+    fn local_files_without_receipts_are_checked_only_for_size() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("object");
         let bytes = b"correct bytes";
@@ -947,12 +925,9 @@ mod tests {
         };
         verify_file(&path, &expected).unwrap();
         std::fs::write(&path, b"corrupt bytes").unwrap();
+        verify_file(&path, &expected).unwrap();
+        std::fs::write(&path, b"short").unwrap();
         assert!(verify_file(&path, &expected).is_err());
-        std::fs::write(&path, bytes).unwrap();
-        let file = std::fs::File::open(&path).unwrap();
-        verify_open(&file, &expected).unwrap();
-        // A caller's consumed descriptor must not make a retry hash EOF.
-        verify_open(&file, &expected).unwrap();
     }
 
     #[test]

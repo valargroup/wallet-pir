@@ -28,6 +28,10 @@ struct Args {
     anchor_height: u64,
     #[arg(long)]
     anchor_hash: String,
+    /// Smoke every table in the pinned fixture, covering every segment.
+    /// Run after the service is ready; this process never controls the service.
+    #[arg(long)]
+    all: bool,
 }
 #[derive(Deserialize)]
 struct Fixture {
@@ -97,84 +101,96 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
         .iter()
         // A page shard's table is `pages-<j>`; the rotation picks by kind.
         .filter(|t| {
-            t.geometry == wanted.0 && Table::parse(&t.table).map(Table::kind) == Some(wanted.1)
+            args.all
+                || (t.geometry == wanted.0
+                    && Table::parse(&t.table).map(Table::kind) == Some(wanted.1))
         })
         .collect();
     if tables.is_empty() {
         return Ok("oracle_invalid");
     }
-    let f = tables[(minute / 4) as usize % tables.len()];
-    let table = Table::parse(&f.table).ok_or("unknown table")?;
-    let g = geometry
-        .geometries
-        .iter()
-        .find(|g| g.name == f.geometry)
-        .ok_or("missing geometry")?;
-    let (rows, width, scheme, dithered) = match table {
-        Table::Directory => (
-            g.directory_rows,
-            g.directory_row_bytes,
-            &g.directory_scheme,
-            g.directory_scheme_dq44.as_ref(),
-        ),
-        Table::Pages(_) => (
-            g.page_rows,
-            g.page_row_bytes,
-            &g.pages_scheme,
-            g.pages_scheme_dq44.as_ref(),
-        ),
-    };
-    if rows != f.rows || width != f.row_bytes || f.segments == 0 || f.samples.is_empty() {
-        return Ok("oracle_invalid");
-    }
-    let sample = if minute % 5 == 0 {
-        &f.samples[(minute / 20) as usize % f.samples.len()]
+    let selected = if args.all {
+        tables
     } else {
-        f.samples
+        vec![tables[(minute / 4) as usize % tables.len()]]
+    };
+    for f in selected {
+        let table = Table::parse(&f.table).ok_or("unknown table")?;
+        let g = geometry
+            .geometries
             .iter()
-            .find(|s| s.nonempty)
-            .ok_or("oracle has no occupied row")?
-    };
-    if sample.sha256.len() != f.segments as usize {
-        return Ok("oracle_invalid");
-    }
-    // Bind the query to the schema just checked against both the service and
-    // the fixture, not to whichever schema this binary was compiled with.
-    let mut client = TableClient::new_with_schema(
-        &fixture.schema,
-        table,
-        &f.geometry,
-        rows,
-        width,
-        scheme,
-        dithered,
-    )?;
-    for segment in 0..f.segments {
-        let (bytes, _) = transport.setup(f.shard_id, &f.revision, table, segment)?;
-        let setup: Setup = serde_json::from_slice(&bytes)?;
-        client.open_segment(
-            &f.revision,
+            .find(|g| g.name == f.geometry)
+            .ok_or("missing geometry")?;
+        let (rows, width, scheme, dithered) = match table {
+            Table::Directory => (
+                g.directory_rows,
+                g.directory_row_bytes,
+                &g.directory_scheme,
+                g.directory_scheme_dq44.as_ref(),
+            ),
+            Table::Pages(_) => (
+                g.page_rows,
+                g.page_row_bytes,
+                &g.pages_scheme,
+                g.pages_scheme_dq44.as_ref(),
+            ),
+        };
+        if rows != f.rows || width != f.row_bytes || f.segments == 0 || f.samples.is_empty() {
+            return Ok("oracle_invalid");
+        }
+        let sample = if args.all {
+            f.samples
+                .iter()
+                .find(|s| s.nonempty)
+                .unwrap_or(&f.samples[0])
+        } else if minute % 5 == 0 {
+            &f.samples[(minute / 20) as usize % f.samples.len()]
+        } else {
+            f.samples
+                .iter()
+                .find(|s| s.nonempty)
+                .ok_or("oracle has no occupied row")?
+        };
+        if sample.sha256.len() != f.segments as usize {
+            return Ok("oracle_invalid");
+        }
+        // Bind the query to the schema just checked against both the service and
+        // the fixture, not to whichever schema this binary was compiled with.
+        let mut client = TableClient::new_with_schema(
+            &fixture.schema,
             table,
-            segment,
-            &setup.public_params,
-            &setup.public_params_sha256,
+            &f.geometry,
+            rows,
+            width,
+            scheme,
+            dithered,
         )?;
+        for segment in 0..f.segments {
+            let (bytes, _) = transport.setup(f.shard_id, &f.revision, table, segment)?;
+            let setup: Setup = serde_json::from_slice(&bytes)?;
+            client.open_segment(
+                &f.revision,
+                table,
+                segment,
+                &setup.public_params,
+                &setup.public_params_sha256,
+            )?;
+        }
+        let query = client.prepare(&f.revision, table, sample.row)?;
+        let response = transport.query(f.shard_id, &f.revision, table, &query.body)?;
+        let decoded = client.decode(&f.revision, table, f.segments, query, &response)?;
+        if !canonical(args)? {
+            return Ok("oracle_invalid");
+        }
+        let hashes: Vec<_> = decoded
+            .iter()
+            .map(|b| hex::encode(Sha256::digest(b)))
+            .collect();
+        if hashes != sample.sha256 {
+            return Ok("answer_mismatch");
+        }
     }
-    let query = client.prepare(&f.revision, table, sample.row)?;
-    let response = transport.query(f.shard_id, &f.revision, table, &query.body)?;
-    let decoded = client.decode(&f.revision, table, f.segments, query, &response)?;
-    if !canonical(args)? {
-        return Ok("oracle_invalid");
-    }
-    let hashes: Vec<_> = decoded
-        .iter()
-        .map(|b| hex::encode(Sha256::digest(b)))
-        .collect();
-    Ok(if hashes == sample.sha256 {
-        ""
-    } else {
-        "answer_mismatch"
-    })
+    Ok("")
 }
 fn main() {
     let args = Args::parse();

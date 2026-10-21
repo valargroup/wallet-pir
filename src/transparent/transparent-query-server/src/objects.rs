@@ -162,7 +162,7 @@ pub(crate) fn link_object(
 /// both are part of the proof that previously checked rows are still unchanged.
 /// Hold the collector's lock until the stage references its source; if collection
 /// owns it, refuse this attempt so the next synchronization can retry safely.
-/// An existing copy must match the downloaded content before receiving its receipt.
+/// Existing copies are checked for size; recorded download identities cannot change.
 pub(crate) fn stage_object(
     root: &std::path::Path,
     stage: &std::path::Path,
@@ -419,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_source_accepts_an_unmarked_copy_only_when_its_bytes_match() {
+    fn catalog_source_accepts_an_unmarked_copy_after_a_size_check() {
         let root = tempfile::tempdir().unwrap();
         let (object, artifact) = fixture(root.path());
         let stage = root.path().join("staging-first");
