@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The optional direct database reader decodes stored block and previous-transaction
+  bytes with the lightweight wire reader instead of constructing full node
+  transactions. It retains the existing node storage dependencies and database format.
+
 - Transactions are read with `zakura-transaction-wire` (wallet-libraries PR 287)
   instead of `zakura-primitives`, and block headers are framed and hashed locally.
   Transaction IDs, block hashes, Merkle roots, fees, compact fields, coinbase

@@ -47,8 +47,11 @@ and tools that read a node add `rpc`.
   independent spot checks make.
 - `rocksdb` (feature): `transparent::state::StateReader`, which opens an archive
   node's finalized state as a RocksDB secondary and reads the same transparent
-  blocks from it. It reads the snapshot visible when it opened and never catches
-  up; open a new reader to see later blocks, and reopen it periodically during a
+  blocks from it. Blocks and spent transactions are read as stored bytes and decoded with the
+  same lightweight reader as RPC, avoiding a full node decode and reserialization.
+  The node storage crates are still dependencies, so this feature still compiles
+  their shielded backends. It reads the snapshot visible when it opened and never
+  catches up; open a new reader to see later blocks, and reopen it periodically during a
   long backfill, since the node's compaction can retire files it still names. A database that pruned raw
   transactions, or was written by a pruned checkpoint-syncing node, is refused with
   an error. Its errors carry only this crate's types. Its `zakura-state` revision
