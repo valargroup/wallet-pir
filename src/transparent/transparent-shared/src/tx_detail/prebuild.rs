@@ -66,6 +66,24 @@ pub fn build_shipped_reusing(
     let revision = DisplayRevision::read(revision_dir)
         .and_then(DisplayRevision::verify_tables)
         .map_err(|error| error.to_string())?;
+    build_shipped_verified(&revision, out_dir, retained)
+}
+
+/// [`build_shipped_reusing`] for a revision whose tables the caller already
+/// verified, such as a held revision of a loaded `DisplaySet`, without
+/// reading or verifying them again. A segment that must be built is still
+/// rehashed by [`crate::history::shardset::SegmentSource::load`].
+pub fn build_shipped_verified(
+    revision: &DisplayRevision,
+    out_dir: &Path,
+    retained: &[std::path::PathBuf],
+) -> Result<Vec<Shipped>, String> {
+    if !revision.held() {
+        return Err(format!(
+            "display revision {} holds no verified tables",
+            revision.digest
+        ));
+    }
     let shipped = ShippedRuntimes::new(out_dir.to_path_buf());
     let retained: Vec<_> = retained.iter().cloned().map(ShippedRuntimes::new).collect();
     let mut params = HashMap::new();

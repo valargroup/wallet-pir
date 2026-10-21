@@ -589,14 +589,14 @@ impl Finalized {
 /// inventory. Names and whole-file digests are derived again on every prepare.
 #[derive(Debug, Default)]
 pub struct CheckedRuntimes {
-    passed: BTreeMap<String, String>,
+    pub(crate) passed: BTreeMap<String, String>,
     /// Native runtimes loaded and self-checked by the last attempt.
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
 }
 
-fn hash_artifacts(
+pub(crate) fn hash_artifacts(
     root: &Path,
     pending: Vec<(PathBuf, Kind)>,
 ) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {

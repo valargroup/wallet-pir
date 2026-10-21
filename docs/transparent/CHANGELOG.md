@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- Transaction-detail publishers reuse the previous verified display set and
+  its shipped-runtime builds, rehash every distributed artifact in parallel,
+  refuse sources that no longer match their manifests, and reload and
+  self-check only native runtime bytes not already checked in this process.
+
 - History publishers rehash every distributed artifact in parallel, then reload
   and self-check only native runtime bytes they have not already checked in
   this process. Missing or changed material is still verified before publishing.
