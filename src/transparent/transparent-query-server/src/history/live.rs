@@ -475,6 +475,11 @@ impl LiveService {
         })
     }
 
+    /// Whether revocation permanently cancelled the current snapshot.
+    pub(crate) fn is_invalidated(&self) -> bool {
+        self.0.active.read().unwrap().state.is_invalidated()
+    }
+
     pub fn router(&self) -> Router {
         let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
         Router::new()
@@ -888,7 +893,8 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
 }
 
 /// Collect unused publications and then revisions no remaining publication
-/// references. Staging uses the same file lock for linking and rsync. Defer
+/// references, including private HTTPS staging trees. Staging uses the same
+/// file lock while linking catalog sources. Defer
 /// rather than blocking control commands behind a slow transfer.
 fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
     use std::fs::{self, OpenOptions, TryLockError};
@@ -913,7 +919,15 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
     let mut publications = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        if digest(&entry.file_name()) && entry.file_type()?.is_dir() {
+        let name = entry.file_name();
+        let staged = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("staging-"))
+            .and_then(|name| name.split_once('-'))
+            .is_some_and(|(revision, time)| {
+                revision.parse::<u64>().is_ok() && time.parse::<u128>().is_ok()
+            });
+        if (digest(&name) || staged) && entry.file_type()?.is_dir() {
             publications.push(entry);
         }
     }
@@ -955,6 +969,48 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
 #[cfg(test)]
 mod collection_tests {
     use super::*;
+    #[test]
+    fn collection_keeps_https_staging_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = root.path().join(".sources");
+        std::fs::create_dir(&catalog).unwrap();
+        let mut keep = BTreeSet::new();
+        // Active, candidate and retained publications all use HTTPS names.
+        for n in 0..8 {
+            let revision = format!("{n:064x}");
+            std::fs::create_dir(catalog.join(&revision)).unwrap();
+            std::fs::write(catalog.join(&revision).join("rows.bin"), b"checked rows").unwrap();
+            let publication = root.path().join(format!("staging-{n}-100"));
+            std::fs::create_dir(&publication).unwrap();
+            std::os::unix::fs::symlink(
+                format!("../.sources/{revision}"),
+                publication.join(&revision),
+            )
+            .unwrap();
+            if n < 3 {
+                keep.insert(publication);
+            }
+        }
+        let orphan = catalog.join("f".repeat(64));
+        std::fs::create_dir(&orphan).unwrap();
+        collect_publications(root.path(), &keep).unwrap();
+        for (n, publication) in keep.iter().enumerate() {
+            assert_eq!(
+                std::fs::read(publication.join(format!("{n:064x}")).join("rows.bin")).unwrap(),
+                b"checked rows"
+            );
+        }
+        assert!(!orphan.exists());
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("staging-"))
+                .count(),
+            keep.len() + 3
+        );
+    }
+
     #[test]
     fn collection_keeps_referenced_sources_and_defers_during_staging() {
         let root = tempfile::tempdir().unwrap();

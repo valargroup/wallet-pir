@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- HTTPS history startup rebuilds a revoked private snapshot before accepting
+  higher-revision recovery of the same map. Publication collection preserves
+  active, preparing and retained HTTPS source links, and catalog staging defers
+  while collection owns the source lock.
+
 - Publishers and query workers share one server backend for publication loading,
   native runtime preparation and bounded caches. Query-worker tests no longer
   depend on chain ingestion or RocksDB. Existing executables, wallet routes and

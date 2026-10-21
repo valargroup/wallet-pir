@@ -1042,6 +1042,15 @@ async fn full_history_http_holdings_include_archive_runtimes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
+    cold_history_bootstrap_retry(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cold_history_bootstrap_recovers_the_same_map_after_withdrawal() {
+    cold_history_bootstrap_retry(true).await;
+}
+
+async fn cold_history_bootstrap_retry(withdraw: bool) {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = publication(root.path());
     let prepared =
@@ -1085,6 +1094,7 @@ async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
         .0
         .distribution_revision
         .fetch_add(1, Ordering::AcqRel);
+    authority.0.withdrawn.store(withdraw, Ordering::Release);
     std::fs::write(&tls.control, "").unwrap();
     let (mut manager, result) = checking.await.unwrap();
     assert!(
@@ -1096,6 +1106,17 @@ async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
         "unpublished checked data must remain private"
     );
     assert!(!consumer_root.join("active.json").exists());
+    if withdraw {
+        authority.0.withdrawn.store(false, Ordering::Release);
+        assert!(
+            manager.poll_once().await.is_err(),
+            "restoring a withdrawn map requires a higher source revision"
+        );
+        authority
+            .0
+            .distribution_revision
+            .fetch_add(1, Ordering::AcqRel);
+    }
     manager.poll_once().await.unwrap();
     assert!(manager.live().is_some());
     assert!(
