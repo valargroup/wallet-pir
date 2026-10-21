@@ -13,9 +13,18 @@ from wallet_pir_ops.deploy import cli, descriptors  # noqa: E402
 from tools.transparent.lib import load_repair as m  # noqa: E402
 
 OLD_SCRIPT = '/srv/transparent-activity/ops/sources/c9262e84/transparent/ops/scripts/transparent-quality-load.py'
-UNIT_TEXT = ('[Service]\nType=simple\nExecStart=/usr/bin/python3 -B %s --root %s --api v2 '
-             '--expected-worker-sha256-file %s/pins.json\nNice=10\nCPUQuota=200%%\nRestart=no\n'
-             % (OLD_SCRIPT, m.LOAD_ROOT, m.LOAD_ROOT))
+ARGS = ('--root %s --api v2 --expected-worker-sha256-file %s/pins.json --controller-url http://127.0.0.1:9400'
+        % (m.LOAD_ROOT, m.LOAD_ROOT))
+UNIT_TEXT = ('[Service]\nType=simple\nExecStart=/usr/bin/python3 -B %s %s\nNice=10\nCPUQuota=200%%\nRestart=no\n'
+             % (OLD_SCRIPT, ARGS))
+# The coordinator today: the publisher's overlay owns ExecStart, over an older
+# fragment command, with a separate limits drop-in.
+DROP_INS = m.FRAGMENT + '.d/'
+FRAGMENT_TEXT = UNIT_TEXT.replace(OLD_SCRIPT, '/srv/transparent-activity/ops/sources/0ld/transparent-quality-load.py')
+LIMITS = (DROP_INS + '50-limits.conf', '[Service]\nMemoryMax=2G\nTimeoutStopSec=30\n')
+OVERLAY = (DROP_INS + 'z' * 32 + '-publisher.conf',
+           '[Service]\nExecStart=\nExecStart=/usr/bin/python3 -B %s %s\nReadOnlyPaths=/srv/transparent-activity/ops\n'
+           % (OLD_SCRIPT, ARGS))
 WORKERS = {'transparent-pir-v12-archive': 'transparent-v12-archive.service',
            'transparent-pir-v12-recent': 'transparent-v12-recent.service'}
 SERVER = b'pir-query-server v12'
@@ -35,7 +44,7 @@ class LoadRepair(unittest.TestCase):
                       m.LOAD_ROOT + '/pins.json': json.dumps({i: sha256(SERVER) for i in WORKERS}),
                       m.LOAD_ROOT + '/rate-query': b'rate-query', m.LOAD_ROOT + '/fixture.json': b'{}',
                       m.LOAD_ROOT + '/permit': b'deny\n', m.LOAD_ROOT + '/incidents-20261021T00.jsonl.gz': b'history'}
-        self.fake.install('coordinator', m.UNIT, UNIT_TEXT, files=self.files)
+        self.fake.install('coordinator', m.UNIT, FRAGMENT_TEXT, drop_ins=[LIMITS, OVERLAY], files=self.files)
         self.fake.systemctl('coordinator', 'stop', m.UNIT)  # the crashed checker
         self.fake.log.clear()
         self.mode = 'running'
@@ -55,7 +64,8 @@ class LoadRepair(unittest.TestCase):
 
     def write_request(self, change=lambda r: None):
         request = {'schema': m.SCHEMA, 'host': 'coordinator',
-                   'previous': {'unit_sha256': sha256(UNIT_TEXT.encode()), 'script_path': OLD_SCRIPT,
+                   'previous': {'unit_sha256': sha256(FRAGMENT_TEXT.encode()), 'script_path': OLD_SCRIPT,
+                                'drop_ins': {p: sha256(t.encode()) for p, t in self.disk_drop_ins()},
                                 'script_sha256': sha256(b'old checker')},
                    'script': {'git_sha': '1' * 40, 'sha256': NEW},
                    'load': {'pins_sha256': sha256(self.files[m.LOAD_ROOT + '/pins.json'].encode()),
@@ -64,6 +74,14 @@ class LoadRepair(unittest.TestCase):
                    'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/transparent-exact-probe'], 'timeout': 600}}
         change(request)
         self.request.write_bytes(json.dumps(request).encode())
+
+    def disk_drop_ins(self):
+        files = self.fake.host('coordinator').files
+        return [(p, files[p].decode()) for p in self.fake.unit_paths('coordinator', m.UNIT)[1:]]
+
+    def unit_texts(self):
+        state = self.fake.probe_unit('coordinator', m.UNIT)
+        return [state['fragment_text']] + [d['text'] for d in state['drop_ins']]
 
     def run_cli(self, action, *extra):
         lines, now = [], [0.0]
@@ -89,16 +107,21 @@ class LoadRepair(unittest.TestCase):
             self.assertEqual(self.fake.sha256('coordinator', path), sha256(
                 self.files[path] if isinstance(self.files[path], bytes) else self.files[path].encode()), path)
 
-    def test_repair_installs_reviewed_script_and_starts_only_the_load(self):
+    def test_repair_rewrites_the_publisher_overlay_and_rolls_back_exactly(self):
+        before = self.unit_texts()
         code, lines = self.run_cli('preflight')
         self.assertEqual(code, 0, lines)
         self.assertIn('independent encrypted-answer check passed', lines)
         sha, self.fake.runs = self.plan_sha(), []
         code, lines = self.run_cli('deploy', '--expect-plan-sha256', sha)
         self.assertEqual(code, 0, lines)
-        unit = self.fake.probe_unit('coordinator', m.UNIT)
-        self.assertEqual(unit['active_state'], 'active')
-        self.assertEqual(unit['fragment_text'], UNIT_TEXT.replace(OLD_SCRIPT, m.script_path(NEW)))
+        unit = self.fake.host('coordinator').units[m.UNIT]
+        self.assertEqual(unit['active'], 'active')
+        # The running command is the old one, every argument kept, with the reviewed script.
+        self.assertEqual(unit['exec_start'], '/usr/bin/python3 -B %s %s' % (m.script_path(NEW), ARGS))
+        self.assertEqual(self.unit_texts(), [FRAGMENT_TEXT, LIMITS[1], OVERLAY[1].replace(OLD_SCRIPT, m.script_path(NEW))])
+        written = [d for h, op, d in self.fake.log if op == 'write']
+        self.assertEqual(written, [OVERLAY[0]])
         self.assertEqual(self.fake.sha256('coordinator', m.script_path(NEW)), NEW)
         self.preserved()
         restarts = [d for h, op, d in self.fake.log if op == 'systemctl' and d[0] != 'daemon-reload']
@@ -107,9 +130,52 @@ class LoadRepair(unittest.TestCase):
         self.assertEqual(self.run_cli('status')[0], 0)
         code, lines = self.run_cli('rollback')
         self.assertEqual(code, 0, lines)
-        unit = self.fake.probe_unit('coordinator', m.UNIT)
-        self.assertEqual((unit['active_state'], unit['fragment_text']), ('inactive', UNIT_TEXT))
+        self.assertEqual(self.fake.probe_unit('coordinator', m.UNIT)['active_state'], 'inactive')
+        self.assertEqual(self.unit_texts(), before)
         self.preserved()
+
+    def test_repair_of_a_fragment_owned_command(self):
+        for path, _ in (LIMITS, OVERLAY):
+            self.fake.host('coordinator').files.pop(path)
+        self.fake.edit('coordinator', m.FRAGMENT, UNIT_TEXT)
+        self.write_request(lambda r: r['previous'].update(unit_sha256=sha256(UNIT_TEXT.encode()), drop_ins={}))
+        code, lines = self.run_cli('deploy', '--expect-plan-sha256', self.plan_sha())
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.unit_texts(), [UNIT_TEXT.replace(OLD_SCRIPT, m.script_path(NEW))])
+
+    def test_refuses_unit_drift_and_rollback_over_drift(self):
+        sha = self.plan_sha()
+        # A drop-in added, then one changed, after review: refused under the lock, nothing written.
+        for path, text in ((DROP_INS + '60-extra.conf', '[Service]\nNice=0\n'), (LIMITS[0], '[Service]\nMemoryMax=8G\n')):
+            original = self.fake.host('coordinator').files.get(path)
+            self.fake.put('coordinator', path, text)
+            self.fake.systemctl('coordinator', 'daemon-reload')
+            code, lines = self.run_cli('deploy', '--expect-plan-sha256', sha)
+            self.assertEqual(code, 1)
+            self.assertTrue(any('differ from previous.drop_ins' in line for line in lines), lines)
+            if original is None:
+                self.fake.host('coordinator').files.pop(path)
+            else:
+                self.fake.put('coordinator', path, original)
+            self.fake.systemctl('coordinator', 'daemon-reload')
+        self.assertEqual([e for e in self.fake.log if e[1] == 'write'], [])
+        # A later override that would own ExecStart is refused by plan too.
+        self.fake.put('coordinator', DROP_INS + 'zzzz' + 'z' * 40 + '.conf', '[Service]\nExecStart=\nExecStart=/usr/bin/true\n')
+        self.fake.systemctl('coordinator', 'daemon-reload')
+        self.assertEqual(self.run_cli('plan')[0], 1)
+        self.fake.host('coordinator').files.pop(DROP_INS + 'zzzz' + 'z' * 40 + '.conf')
+        self.fake.systemctl('coordinator', 'daemon-reload')
+        code, lines = self.run_cli('deploy', '--expect-plan-sha256', sha)
+        self.assertEqual(code, 0, lines)
+        # The overlay edited outside the transaction: rollback refuses without --force.
+        self.fake.put('coordinator', OVERLAY[0], OVERLAY[1] + 'Nice=5\n')
+        code, lines = self.run_cli('rollback')
+        self.assertEqual(code, 1)
+        self.assertTrue(any('changed outside the transaction' in line for line in lines), lines)
+        self.assertEqual(self.fake.host('coordinator').files[OVERLAY[0]].decode(), OVERLAY[1] + 'Nice=5\n')
+        code, lines = self.run_cli('rollback', '--force')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.host('coordinator').files[OVERLAY[0]].decode(), OVERLAY[1])
 
     def test_refuses_latch_changed_binary_and_wrong_plan_without_changes(self):
         sha = self.plan_sha()
@@ -126,20 +192,20 @@ class LoadRepair(unittest.TestCase):
         code, lines = self.run_cli('deploy', '--expect-plan-sha256', '0' * 64)
         self.assertTrue(any('--expect-plan-sha256' in line for line in lines), lines)
         self.assertEqual([e for e in self.fake.log if e[0] == 'coordinator'], [])
-        self.assertEqual(self.fake.probe_unit('coordinator', m.UNIT)['fragment_text'], UNIT_TEXT)
+        self.assertEqual(self.unit_texts(), [FRAGMENT_TEXT, LIMITS[1], OVERLAY[1]])
 
     def test_failed_exact_check_or_unhealthy_load_leaves_previous_unit_stopped(self):
         sha = self.plan_sha()
         self.fake.exact_result = (1, 'decoded row differs')
         code, lines = self.run_cli('deploy', '--expect-plan-sha256', sha)
         self.assertNotEqual(code, 0)
-        self.assertEqual(self.fake.probe_unit('coordinator', m.UNIT)['fragment_text'], UNIT_TEXT)
+        self.assertEqual(self.unit_texts(), [FRAGMENT_TEXT, LIMITS[1], OVERLAY[1]])
         self.fake.exact_result = (0, 'ok')
         self.mode = 'paused'
         code, lines = self.run_cli('deploy', '--expect-plan-sha256', sha)
         self.assertNotEqual(code, 0)
-        unit = self.fake.probe_unit('coordinator', m.UNIT)
-        self.assertEqual((unit['active_state'], unit['fragment_text']), ('inactive', UNIT_TEXT))
+        self.assertEqual(self.fake.probe_unit('coordinator', m.UNIT)['active_state'], 'inactive')
+        self.assertEqual(self.unit_texts(), [FRAGMENT_TEXT, LIMITS[1], OVERLAY[1]])
         self.preserved()
 
 

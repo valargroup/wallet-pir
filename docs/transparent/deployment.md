@@ -3954,10 +3954,14 @@ component. `baseline` records both components.
 `transparent-load-repair-{plan,preflight,deploy,status,rollback}` (`tools/transparent/lib/load_repair.py`)
 restores a stopped `transparent-v2-5qps-continuous.service` when its checker script is at fault. It
 installs this operations release's `transparent-quality-load.py` at the immutable
-`/srv/transparent-activity/ops/load-scripts/<sha256>/` and changes only the unit's script path.
-It starts only that unit. The request (`transparent-load-repair/1`) pins:
+`/srv/transparent-activity/ops/load-scripts/<sha256>/` and changes only the script path in the
+file that owns the effective `ExecStart`. On the coordinator that is the publisher's
+`zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf` drop-in, not the fragment. The rewritten
+effective unit must equal the current one except for that path, so arguments, limits and controller
+bindings are kept. It starts only that unit. The request (`transparent-load-repair/1`) pins:
 
-- the fragment bytes (no drop-ins) and the script it runs now;
+- the fragment bytes, every drop-in as `previous.drop_ins` `{path: sha256}` (`{}` for none), and
+  the script the effective `ExecStart` runs now;
 - the load's `pins.json`, `rate-query` and `fixture.json`;
 - each pinned worker's `{host, unit}`;
 - an independent encrypted-answer `exact_check` `{host, argv, timeout}`. Copy it from the
@@ -3965,12 +3969,14 @@ It starts only that unit. The request (`transparent-load-repair/1`) pins:
 
 Plan and preflight are read-only; preflight also runs the exact check. Deploy takes the reviewed
 `plan_sha256` and holds the production lock. It refuses a `latched.json`, a worker that is not
-running its pinned binary, changed load inputs, a running unit or an unfinished transaction. It
-then stages the script and runs the exact check, and only after that writes the unit and starts
-it. It waits up to 300 s for `status.json` to report `running`. A failure or `rollback` stops the
-unit and restores the journaled previous fragment. The old script, pins, permit, latch and
-incident logs are never written. Deploy requires the installed operations release to be
-`script.git_sha`.
+running its pinned binary, changed load inputs or unit files, a running unit or an unfinished
+transaction. It then stages the script and runs the exact check, and only after that writes the
+owning file and starts the unit. It waits up to 300 s for `status.json` to report `running`. A
+failure or `rollback` stops the unit and restores the journaled previous bytes of that file;
+rollback refuses a file changed outside the transaction unless `--force`. The fragment and other
+drop-ins, old script, pins, permit, latch and incident logs are never written. Run from an unpacked
+operations release, deploy requires that release to be `script.git_sha`; a checkout without
+`operations.json` is accepted as for other recipes.
 
 ```sh
 D=tools/scripts/wallet-pir-deploy.py; R=(--request repair.json --request-sha256 "$(sha256sum < repair.json | cut -d' ' -f1)")
