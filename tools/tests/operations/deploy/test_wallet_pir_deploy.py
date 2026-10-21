@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 import sys
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
-from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor  # noqa: E402
+from wallet_pir_ops.deploy.remote import HELPER, LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
 class ImmutableWrapperSource(unittest.TestCase):
@@ -1189,6 +1190,11 @@ class MultiplexTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
+    def test_configuration_check_fits_in_a_multiplexed_command(self):
+        request = json.dumps({'op': 'run', 'argv': ['binary', '--config', 'x' * 8192], 'timeout': 60})
+        command = shlex.join(['python3', '-c', HELPER, request])
+        self.assertLess(len(command.encode()), 32768)
+
     def test_helper_file_operations_round_trip(self):
         executor = LocalExecutor(None)
         with tempfile.TemporaryDirectory() as tmp:
