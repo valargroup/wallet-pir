@@ -8,14 +8,14 @@ mod status_routes;
 use enhance_query_server::{
     protocol::{Geometry, Lifecycle},
     publication::{AuthorityResponse, Inventory, PREFIX},
-    runtime::Engine,
-    wire::encode_crs_blocks,
 };
+#[cfg(feature = "native-reinspiring")]
+use enhance_query_server::{runtime::Engine, wire::encode_crs_blocks};
 use pir_e2e_tests::enhance_fixture::record;
 #[path = "support/publication.rs"]
 #[allow(dead_code)]
 mod publication_source;
-async fn hint_matches_generic(count: u64) {
+async fn hint_matches_oracle(count: u64) {
     let fixture = publication_source::Published::with_records(count).await;
     let source = fixture.source();
     let certificate = reqwest::Certificate::from_pem(
@@ -47,14 +47,6 @@ async fn hint_matches_generic(count: u64) {
         .await
         .unwrap();
     let domain = &inventory.domains[0];
-    let root = tempfile::tempdir().unwrap();
-    let oracle = Engine::new(root.path())
-        .prepare(domain.plan.clone(), |start, n| {
-            Ok((start..start + n as u64).flat_map(record).collect())
-        })
-        .unwrap()
-        .0;
-    let expected = encode_crs_blocks(&oracle.hint().unwrap());
     let actual = http
         .get(format!(
             "{}{PREFIX}objects/{}",
@@ -68,9 +60,21 @@ async fn hint_matches_generic(count: u64) {
         .bytes()
         .await
         .unwrap();
-    assert_eq!(actual.as_ref(), expected);
+    #[cfg(feature = "native-reinspiring")]
+    {
+        let root = tempfile::tempdir().unwrap();
+        let oracle = Engine::new(root.path())
+            .prepare(domain.plan.clone(), |start, n| {
+                Ok((start..start + n as u64).flat_map(record).collect())
+            })
+            .unwrap()
+            .0;
+        assert_eq!(actual.as_ref(), encode_crs_blocks(&oracle.hint().unwrap()));
+    }
     #[cfg(not(feature = "native-reinspiring"))]
     {
+        // These existing fixed vectors pin the independently verified reference
+        // bytes. Native preparation uses the generic oracle above.
         use sha2::{Digest, Sha256};
         assert_eq!(
             hex::encode(Sha256::digest(&actual)),
@@ -83,13 +87,13 @@ async fn hint_matches_generic(count: u64) {
     }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn published_hint_matches_independent_generic_67() {
-    hint_matches_generic(67).await;
+async fn published_hint_matches_independent_oracle_67() {
+    hint_matches_oracle(67).await;
 }
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn published_hint_matches_independent_generic_68() {
-    hint_matches_generic(68).await;
+async fn published_hint_matches_independent_oracle_68() {
+    hint_matches_oracle(68).await;
 }
 #[test]
 fn published_hint_rejects_damage_before_loading() {
