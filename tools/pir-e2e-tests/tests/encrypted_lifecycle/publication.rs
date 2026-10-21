@@ -24,6 +24,109 @@ struct Tls {
     _child: tokio::process::Child,
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
+    use enhance_query_server::{
+        client::QuerySession,
+        prepared_packing,
+        protocol::{digest, QueryBinding},
+        synchronization::Config as SourceConfig,
+        worker::{Evaluate, Intermediate},
+        worker_sync::{self, Readiness, ReadinessRequest},
+        PackingBudget, RECORD_BYTES,
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("publication");
+        let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
+            axum::Json(serde_json::json!({"id": request["id"], "error": null, "result": "01".repeat(32)}))
+        }))).await;
+        let cookie = scratch.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
+        let upstream = serve(distribution.router()).await;
+        let transport = tls(scratch.path(), &upstream.url).await;
+        let preparing = root.clone();
+        let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
+            Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
+        let domain = &inventory.domains[0];
+        let manifest = Manifest {
+            recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: protocol::SCHEMA_VERSION, protocol_revision: protocol::PROTOCOL_REVISION.into(),
+            network: "main".into(), pool: "ironwood".into(), generation: 1, anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
+            sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
+        };
+        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        let config = worker_sync::Config { source: SourceConfig { publisher_origin: transport.origin.clone(),
+            trusted_ca: Some(scratch.path().join("ca.pem")), download_budget_bytes: 128 * 1024 * 1024,
+            cache_limit_bytes: 128 * 1024 * 1024 }, shards: [0].into() };
+        let worker_root = scratch.path().join("worker");
+        let worker = worker_sync::Worker::open(&worker_root, config.clone(), Default::default(), Default::default()).unwrap();
+        assert!(worker_sync::Worker::open(&worker_root, config.clone(), Default::default(), Default::default()).is_err());
+        let mut synchronizer = worker.synchronizer().unwrap();
+        let http = enhance_query_server::internal_auth::client_builder().build().unwrap();
+        let listener = serve(worker.clone().router()).await;
+        let readiness = format!("{}/internal/readiness", listener.url);
+        let request = ReadinessRequest { manifest_sha256: digest(&manifest) };
+        assert!(!http.post(&readiness).json(&request).send().await.unwrap().status().is_success());
+        for fault in ["corrupt", "truncated", "missing"] {
+            std::fs::write(scratch.path().join("fault"), fault).unwrap();
+            assert!(synchronizer.poll_once().await.is_err(), "damaged source must not activate");
+            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".part")));
+        }
+        std::fs::write(scratch.path().join("fault"), "").unwrap();
+        synchronizer.poll_once().await.unwrap();
+        let ready: Readiness = http.post(&readiness).json(&request).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        assert_eq!(ready.shards, [0].into());
+        assert_eq!(ready.manifest, manifest);
+        assert!(!worker_root.join("artifacts-9").exists(), "worker must not generate hint artifacts");
+        let requests = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
+        for object in [&domain.hint, &domain.public, &domain.packing_object()] {
+            assert!(!requests.contains(&object.sha256), "worker must download only its rows");
+        }
+        let packing = prepared_packing::load(&domain.packing_object().path(&root).unwrap(), &domain.packing,
+            domain.plan.shard.logical_rows, &PackingBudget::coordinator()).unwrap();
+        for position in [0, 32, 33, 66] {
+            let session = QuerySession::new(&manifest, packing.session(&manifest, 0)).unwrap();
+            let (query, slot) = session.prepare_position(position).unwrap();
+            let binding = QueryBinding::decode(query.body()).unwrap();
+            let request = Evaluate { binding: Some(binding.encode()), session_id: hex::encode(binding.session_id),
+                generation: manifest.generation, shard_id: 0, epoch: hex::encode(binding.epoch),
+                coefficients: packing.query_coefficients(query.body(), binding, session.query_rows()).unwrap() };
+            let intermediate: Intermediate = http.post(format!("{}/internal/evaluate", listener.url)).json(&request).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+            let answer = packing.pack(query.body(), &intermediate.coefficients, session.query_rows()).unwrap();
+            let row = session.decode(query, &answer).unwrap();
+            assert_eq!(&row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES], record(position));
+        }
+        let mut advanced = manifest.clone();
+        advanced.generation += 1;
+        distribution.publish(advanced.clone(), inventory.clone()).await.unwrap();
+        let before = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
+        synchronizer.poll_once().await.unwrap();
+        let after = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
+        assert!(!after[before.len()..].contains("/objects/"), "unchanged units are reused");
+        let advanced_request = ReadinessRequest { manifest_sha256: digest(&advanced) };
+        assert!(http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success());
+        let old_incarnation = worker.incarnation.clone();
+        listener.stop().await;
+        drop(synchronizer);
+        drop(worker);
+        let restarted = worker_sync::Worker::open(&worker_root, config, Default::default(), Default::default()).unwrap();
+        assert_ne!(old_incarnation, restarted.incarnation);
+        let listener = serve(restarted.clone().router()).await;
+        let readiness = format!("{}/internal/readiness", listener.url);
+        assert!(!http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success(), "cached rows do not authorize restart");
+        let mut synchronizer = restarted.synchronizer().unwrap();
+        synchronizer.poll_once().await.unwrap();
+        assert!(http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success());
+        distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [hex::encode(manifest.session_id(0).unwrap())].into() }).unwrap();
+        assert!(synchronizer.poll_once().await.is_err());
+        assert!(!http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success(), "revocation closes loaded material");
+    }).await.expect("autonomous worker lifecycle exceeded correctness budget");
+}
+
 async fn tls(root: &Path, upstream: &str) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");

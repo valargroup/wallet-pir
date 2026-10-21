@@ -68,6 +68,19 @@ and canonical authority are revalidated. Publishing and revocation remain
 independent of consumer acknowledgments. Public TLS routing and autonomous role
 configuration join the later complete cutover.
 
+The autonomous worker increment accepts an optional `synchronization` object in
+an Enhance worker's settings. It contains `publisher_origin` (an HTTPS origin),
+`trusted_ca` (an optional absolute PEM path), `download_budget_bytes`,
+`cache_limit_bytes`, and the operator-assigned `shards` array. Use a fresh worker
+state directory. The worker downloads only those domains' rows, checks the
+inventory's data and setup bindings, and constructs its configured evaluator
+without preparing hints. Its sequential manager follows publisher changes;
+private readiness and evaluation requests can obtain fresh source authority when
+the five-second authority window has expired between polls. Neither a successful
+poll nor a cached file renews that window. Restart requires a fresh publisher
+observation before any material is ready. Existing push-controlled roles remain
+until the complete consumer path is implemented and qualified for direct cutover.
+
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help
