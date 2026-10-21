@@ -296,7 +296,7 @@ class Cutover:
             self.effect(journal, 'start ' + name,
                         lambda r=role: self.systemctl(r['host'], 'start', r['unit'], deadline=deadline), deadline)
 
-    def restore(self, journal):
+    def recovery_plan(self, journal):
         plan = journal.data['plan']
         for role in plan['roles'].values():
             observed = self.ex.probe_unit(role['host'], role['unit'])
@@ -308,6 +308,10 @@ class Cutover:
             require(self.ex.read(item['host'], item['path']) in (item['before'], item['after']), 'foreign managed-file change; restoration refused')
         for role in plan['roles'].values():
             require(self.ex.sha256(role['host'], role['binary']) == role['before']['exe_sha256'], 'rollback executable changed')
+        return plan
+
+    def restore(self, journal):
+        plan = self.recovery_plan(journal)
         self.save(journal, 'rolling-back')
         for name in ('publisher', 'router', 'worker'):
             role = plan['roles'][name]
@@ -380,6 +384,44 @@ class Cutover:
                 except Exception:
                     self.save(journal, 'rollback-failed')
                     raise
+                raise
+            return {'transaction': journal.id, 'phase': journal.status}
+
+    def resume(self, expected):
+        """Resume a stopped cutover toward the candidate; hold on any failure."""
+        with self.lock_factory() as self.lock:
+            mutation_fence(self.inventory, self.ex, self.lock)
+            journal = Journal.load(self.state_dir, SERVICE)
+            require(journal is not None and journal.data['request'] == self.request, 'transaction/request mismatch')
+            require(journal.status in ('preparing', 'rolling-back', 'held'), 'transaction is not interrupted')
+            plan = self.recovery_plan(journal)
+            require(durable.digest(plan) == expected, 'plan changed since review')
+            deadline = self.clock() + WINDOW - (time.time() - journal.data['recovery_started_unix'])
+            self.check_deadline(deadline)
+            for host, machine in self.request['machine_ids'].items():
+                self.ex.check_identity(host)
+                require(self.run(host, ['cat', '/etc/machine-id']) == machine, 'machine identity changed: ' + host)
+            for role in self.roles.values():
+                state = self.ex.probe_unit(role['host'], role['unit'])
+                require(state['active_state'] in ('inactive', 'failed'), 'resume requires stopped services')
+                require(self.ex.sha256(role['host'], role['binary']) == role['binary_sha256'], 'staged binary differs')
+            self.save(journal, 'preparing')
+            try:
+                for item in plan['files']:
+                    if self.ex.read(item['host'], item['path']) != item['after']:
+                        self.effect(journal, 'resume ' + item['path'], lambda i=item: self.write(i, deadline=deadline), deadline)
+                for host in self.request['machine_ids']:
+                    self.effect(journal, 'reload service definitions',
+                                lambda h=host: self.systemctl(h, 'daemon-reload', deadline=deadline), deadline)
+                self.effect(journal, 'reload TLS edge',
+                            lambda: self.systemctl(self.host, 'reload', 'caddy.service', deadline=deadline), deadline)
+                self.restart(journal, plan, deadline=deadline)
+                self.wait_ready(plan, deadline=deadline)
+                self.checks(deadline)
+                self.check_deadline(deadline)
+                self.save(journal, 'committed')
+            except Exception:
+                self.save(journal, 'held')
                 raise
             return {'transaction': journal.id, 'phase': journal.status}
 

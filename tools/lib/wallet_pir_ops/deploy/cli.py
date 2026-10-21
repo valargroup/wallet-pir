@@ -295,11 +295,11 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+    for operation in ('plan', 'preflight', 'deploy', 'resume', 'status', 'rollback'):
         command = commands.add_parser('status-https-' + operation, help='Status autonomous HTTPS cutover')
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
+        if operation in ('deploy', 'resume'):
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
@@ -462,7 +462,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             check_installed(mutation=mutation, revision=request['source_sha'])
             cutover = Cutover(inventory, executor or SSHExecutor(inventory), args.state_dir, request, lock=options.get('lock'))
             operation = args.command.removeprefix('status-https-')
-            arguments = [args.expect_plan_sha256] if operation == 'deploy' else [args.transaction] if operation in ('status', 'rollback') else []
+            arguments = [args.expect_plan_sha256] if operation in ('deploy', 'resume') else [args.transaction] if operation in ('status', 'rollback') else []
             out(json.dumps(getattr(cutover, operation)(*arguments), sort_keys=True))
             return 0
         if args.command.startswith('status-routing-'):
