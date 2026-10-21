@@ -255,6 +255,9 @@ pub fn safe_path(path: &str) -> bool {
             !c.is_empty()
                 && c != "."
                 && c != ".."
+                // Publisher artifacts cannot overwrite private local receipts.
+                && !c.ends_with(".received.json")
+                && !c.contains(".checked-")
                 && c.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         })
@@ -619,6 +622,8 @@ mod tests {
     fn rejects_unsafe_paths_and_noncanonical_digests() {
         for p in [
             "../x",
+            "data.bin.received.json",
+            "data.bin.checked-receipt",
             "/x",
             "a//b",
             "a/./b",

@@ -130,7 +130,11 @@ impl Receipt {
         })
     }
     pub(crate) fn matches(&self) -> bool {
-        std::fs::read(&self.path).is_ok_and(|raw| raw == b"checked-v1")
+        let Ok(file) = File::open(&self.path) else {
+            return false;
+        };
+        let mut raw = Vec::new();
+        file.take(11).read_to_end(&mut raw).is_ok() && raw == b"checked-v1"
     }
     /// Save only after this complete semantic check succeeds. A failed write
     /// merely means the next load repeats the check.
