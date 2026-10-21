@@ -256,9 +256,20 @@ objects remain non-authoritative. On activation and every subsequent poll, the
 manager releases unused in-memory views with the owner's existing policy: retain
 three recent predecessors and any older snapshot still held by an admitted
 request. A long request does not retain other unused generations, and completing
-it permits collection on an unchanged poll. This collection never deletes source
-trees or immutable objects; disk-retention automation is not implemented
-in this slice, so operators must budget disk for retained trees and objects.
+it permits collection on an unchanged poll. After each successful activation the
+manager also collects disk with the owner's `Collect`: it keeps the active tree,
+every retained predecessor (including one an admitted request still holds), any
+candidate, the three most recent other trees and every catalog revision those
+reference, and removes other staging trees and catalog revisions. It then
+unlinks each completed object that no remaining tree links (link count one). It
+skips objects when the active stage was copied rather than linked, and defers
+while a stage holds the catalog lock. The publication switch has already committed
+and serving continues during collection. The synchronization call waits for
+collection before returning, delaying its next publisher poll; collection errors
+cannot fail or reverse the committed activation. A deferred or failed collection
+is logged and retried after the next activation. Unchanged polls and restarts do
+not collect disk. Retention has no fixed tree-count limit: every older view still
+held by a request is kept in addition to the three recent predecessors.
 
 `publisher-high-water.json` retains replay/withdrawal fencing. A failed write
 also attempts `publisher-high-water-fallback.json` with the same complete source
