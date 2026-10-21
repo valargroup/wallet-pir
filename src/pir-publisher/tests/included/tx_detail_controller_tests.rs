@@ -605,6 +605,12 @@ struct Fake {
     /// staging is lost and the prepare fails.
     restart_after_stages: Option<usize>,
     stages: usize,
+    /// Hold the next invalidation reply: signal the sender once the request
+    /// arrives, and reply once the receiver is released.
+    hold_invalidation: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 
 #[cfg(feature = "qualification-tests")]
@@ -732,14 +738,21 @@ fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
                     .await
                     .unwrap();
                 let mut command: Value = serde_json::from_str(&line).unwrap();
-                let (reply, delay) = {
+                let (reply, delay, hold) = {
                     let mut state = state.lock().unwrap();
                     let reply = fake_reply(&mut state, role, &mut command);
                     let staged = command["operation"] == "stage";
-                    (reply, state.stage_delay * u32::from(staged))
+                    let hold = (command["operation"] == "invalidate")
+                        .then(|| state.hold_invalidation.take())
+                        .flatten();
+                    (reply, state.stage_delay * u32::from(staged), hold)
                 };
                 tokio::time::sleep(delay).await;
                 log.lock().unwrap().push((name.clone(), command));
+                if let Some((started, release)) = hold {
+                    let _ = started.send(());
+                    let _ = release.await;
+                }
                 write
                     .write_all(format!("{reply}\n").as_bytes())
                     .await
@@ -2268,5 +2281,132 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
     assert!(
         resumed.active.tip > before.tip,
         "preparation resumed and activated"
+    );
+}
+
+/// A stop requested while an owed invalidation awaits its worker abandons
+/// the candidate once delivery returns: nothing activates, and the active
+/// record and saved rollback record are unchanged. A later run resumes.
+#[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 118);
+    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    let workers = vec![socket_worker(
+        temp.path(),
+        "recent",
+        WorkerRole::RecentReplica,
+    )];
+
+    // Tip 121 is published; the journal then rolls back to 119 and the next
+    // journal write fails, leaving an owed invalidation and a rollback record.
+    let steps = [ScriptStep::Advance(121), ScriptStep::FailAfterRollback(119)];
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(steps)),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(120), controller.run())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("scripted journal failure"));
+    drop(controller);
+    let saved = || -> Value {
+        serde_json::from_slice(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
+    };
+    let before_record = saved();
+    assert_eq!(before_record["pending"], json!({"recent": 120}));
+    assert!(
+        !before_record["rollback"].is_null(),
+        "a rollback is recorded"
+    );
+
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(vec![ScriptStep::Extend(fork(1, 120, 122))])),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let served = states["recent"].lock().unwrap().active.clone().unwrap().0;
+    while controller.cache.tip().map(|t| t.0) < Some(122) {
+        controller.poll_source().await.unwrap();
+    }
+    let Ok(Input::Work(candidate)) = controller.prepare_cycle().await else {
+        panic!("a candidate is due");
+    };
+    assert!(
+        invalidated(&log).is_empty(),
+        "the invalidation is still owed"
+    );
+    let (started, held) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    states["recent"].lock().unwrap().hold_invalidation = Some((started, released));
+    let shutdown = controller.shutdown.clone();
+    let (activated, ()) = tokio::join!(controller.activate_cycle(candidate), async move {
+        held.await.unwrap();
+        shutdown.request();
+        release.send(()).unwrap();
+    });
+    assert!(activated.is_ok(), "stopped as a normal outcome");
+    assert_eq!(
+        invalidated(&log),
+        vec![120],
+        "the invalidation was delivered"
+    );
+    assert!(
+        commands(&log, "recent")
+            .iter()
+            .skip_while(|c| c["operation"] != "invalidate")
+            .all(|c| c["operation"] != "prepare" && c["operation"] != "activate"),
+        "no worker activation began"
+    );
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        served
+    );
+    assert_eq!(controller.active().map_sha256, before.map_sha256);
+    let stored = ActiveRecord::load(&root).unwrap();
+    assert_eq!(
+        (stored.tip, stored.map_sha256),
+        (before.tip, before.map_sha256.clone())
+    );
+    let after_record = saved();
+    assert_eq!(after_record["pending"], json!({}));
+    assert_eq!(
+        after_record["rollback"], before_record["rollback"],
+        "the rollback record is kept"
+    );
+    // The stop also ends the loop before another cycle starts.
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    shutdown.request();
+    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+
+    let run = run_script(
+        &root,
+        &journal,
+        vec![ScriptStep::Advance(122)],
+        workers,
+        settings(),
+    )
+    .await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(run.active.tip, 122, "a later run activates");
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        run.active.map_sha256
     );
 }
