@@ -18,8 +18,8 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-struct Tls {
-    origin: String,
+pub(super) struct Tls {
+    pub(super) origin: String,
     client: reqwest::Client,
     _child: tokio::process::Child,
 }
@@ -47,7 +47,7 @@ impl Published {
             ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
         )
         .unwrap();
-        let publisher = serve(distribution.router()).await;
+        let publisher = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &publisher.url).await;
         let inventory = tokio::task::spawn_blocking(move || {
             enhance_publisher::publication::prepare(
@@ -452,7 +452,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
@@ -560,7 +560,16 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     }).await.expect("autonomous worker lifecycle exceeded correctness budget");
 }
 
-async fn tls(root: &Path, upstream: &str) -> Tls {
+/// A publisher's distribution routes with the service discovery that a
+/// unified publisher serves beside them.
+fn publisher(distribution: &Distribution) -> axum::Router {
+    distribution.router().route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
+pub(super) async fn tls(root: &Path, upstream: &str) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     assert!(tokio::process::Command::new("openssl")
@@ -678,7 +687,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();

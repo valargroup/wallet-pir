@@ -1,4 +1,6 @@
 //! Encrypted publication and restart through real listeners.
+#[path = "encrypted_lifecycle/discovery.rs"]
+mod discovery;
 #[path = "support/encrypted.rs"]
 mod encrypted;
 #[path = "encrypted_lifecycle/publication.rs"]

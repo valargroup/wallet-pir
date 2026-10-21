@@ -35,9 +35,22 @@ pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
     /// Domain responsibilities and private worker replicas are local configuration.
+    #[serde(deserialize_with = "domains")]
     pub workers: BTreeMap<u64, Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "domains")]
     pub preferred: BTreeMap<u64, BTreeSet<String>>,
+}
+/// JSON object keys are strings. Inside the host's tagged role and this
+/// flattened source they are not converted to integers, so parse them here.
+fn domains<'de, D, V>(deserializer: D) -> Result<BTreeMap<u64, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    V: Deserialize<'de>,
+{
+    BTreeMap::<String, V>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(domain, value)| Ok((domain.parse().map_err(serde::de::Error::custom)?, value)))
+        .collect()
 }
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
@@ -450,7 +463,7 @@ pub struct Synchronizer {
 }
 impl Synchronizer {
     async fn advance(&mut self) -> Result<(), Error> {
-        self.client.begin();
+        self.client.begin().await?;
         let response = self.client.current().await?;
         // An invalidated active view no longer promises service. In-flight
         // requests keep their Arcs and byte charges until their fenced bodies end.
@@ -673,6 +686,10 @@ impl SyncTask for Synchronizer {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance router synchronization deferred");
         }
+    }
+    /// Only a confirmed publisher contract version mismatch stops the host.
+    fn terminal(&self, error: &Error) -> bool {
+        pir_sync_manager::is_incompatible(error.as_ref())
     }
 }
 

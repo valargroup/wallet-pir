@@ -88,7 +88,8 @@ pub async fn run_worker_on(
         let manager = pir_sync_manager::SyncManager::new(synchronizer);
         tokio::select! {
             result = crate::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
-            _ = manager.run() => return Err("Enhance worker synchronization stopped".into()),
+            // Only a terminal error ends the loop; keep its type for the host.
+            error = manager.run() => return Err(error),
         }
         return Ok(());
     }
@@ -173,7 +174,8 @@ pub async fn run_router_on(
         };
         tokio::select! {
             result = serving => result?,
-            _ = manager.run() => return Err("Enhance router synchronization stopped".into()),
+            // Only a terminal error ends the loop; keep its type for the host.
+            error = manager.run() => return Err(error),
         }
         return Ok(());
     }
@@ -292,6 +294,22 @@ impl ServingRole {
             }
         }
         Ok(())
+    }
+    /// Check publisher service discovery for an autonomous worker or router.
+    /// The host runs this before binding listeners or opening state; legacy
+    /// push roles have no publisher origin and are not checked.
+    pub async fn discover(&self) -> Result<(), Error> {
+        match self {
+            Self::Worker {
+                synchronization: Some(sync),
+                ..
+            } => sync.source.discover().await,
+            Self::PackingRouter {
+                synchronization: Some(sync),
+                ..
+            } => sync.source.discover().await,
+            _ => Ok(()),
+        }
     }
     pub fn listens(&self) -> Vec<SocketAddr> {
         match self {

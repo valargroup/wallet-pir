@@ -231,7 +231,7 @@ impl Worker {
         {
             return Ok(lease);
         }
-        client.begin();
+        client.begin().await?;
         let lease = client.authority(manifest).await?;
         if let Some(view) = self.inner.lock().unwrap().views.get_mut(&id) {
             view.lease = lease.clone();
@@ -370,7 +370,7 @@ pub struct Synchronizer {
 
 impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
-        self.client.begin();
+        self.client.begin().await?;
         let response = self.client.current().await?;
         let manifest = response
             .current
@@ -464,6 +464,10 @@ impl SyncTask for Synchronizer {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance worker synchronization deferred");
         }
+    }
+    /// Only a confirmed publisher contract version mismatch stops the host.
+    fn terminal(&self, error: &Error) -> bool {
+        pir_sync_manager::is_incompatible(error.as_ref())
     }
 }
 

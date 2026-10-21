@@ -44,6 +44,13 @@ impl Config {
         HttpsSource::new(&self.publisher_origin, PREFIX, budget, &roots)
     }
 
+    /// Check the publisher's service discovery before any Enhance state is
+    /// opened. Uses the configured origin and trust roots; nothing is cached.
+    pub async fn discover(&self) -> Result<(), Error> {
+        self.source(0)?.discover().await?;
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.download_budget_bytes < METADATA_LIMIT * 3 || self.cache_limit_bytes == 0 {
             return Err("Enhance transfer and cache budgets are too small".into());
@@ -272,7 +279,7 @@ impl Authority {
         {
             return Ok(guard);
         }
-        client.begin();
+        client.begin().await?;
         let lease = client.authority(manifest).await?;
         self.install(manifest.clone(), lease)
     }
@@ -346,8 +353,13 @@ impl Client {
         })
     }
 
-    pub fn begin(&mut self) {
+    /// Start one pass or on-demand authority refresh: fresh service discovery
+    /// before any product request, then a fresh download budget. A confirmed
+    /// version mismatch is returned as a typed [`pir_sync_manager::DiscoveryError`].
+    pub async fn begin(&mut self) -> Result<(), Error> {
+        self.source.discover().await?;
         self.source.reset_budget();
+        Ok(())
     }
     pub fn root(&self) -> &Path {
         &self.root

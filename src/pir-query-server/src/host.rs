@@ -171,6 +171,10 @@ pub async fn verify(config: Config) -> Result<()> {
 /// before any listener is bound, product state is opened or task is started;
 /// any failure stops the whole query server. Legacy roles are not checked.
 async fn discover(config: &Config) -> Result<()> {
+    #[cfg(feature = "enhance")]
+    if let Some(role) = active(&config.enhance)? {
+        role.discover().await?;
+    }
     #[cfg(feature = "transparent-history")]
     if let Some(worker) = active(&config.transparent_history)? {
         worker.discover().await?;
