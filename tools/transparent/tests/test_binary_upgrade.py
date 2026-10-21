@@ -882,6 +882,63 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     running = HistoryUpgrade.running
     FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
 
+    def failed_archive_rollback(self):
+        self.run_cli('baseline')
+        unit = 'transparent-v12-archive.service'
+        def fail_once(host, operation, detail):
+            if operation == 'systemctl' and detail == ('restart', unit):
+                self.fake.unhealthy.update({('v12', sha256(OLD)), ('v12', sha256(NEW))})
+        recent = 'transparent-v12-recent.service'
+        self.fake.health_shapes[('v12', recent)] = lambda ready_, exe: {
+            **self.provider_ready(recent, self.map[0]), 'ready': True if exe == sha256(OLD) else ready_}
+        self.fake.observer = fail_once
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        from wallet_pir_ops.deploy.transaction import Journal
+        journal = Journal.load(self.state, 'transparent-history')
+        self.assertEqual(journal.status, 'rollback-failed', lines)
+        self.fake.observer = None
+        self.fake.unhealthy.remove(('v12', sha256(NEW)))
+        self.write_request(lambda r: r.update(repair={'transaction': journal.id, 'predecessors': {
+            'worker@v12:' + unit: sha256(OLD)}}))
+        return journal
+
+    def test_failed_rollback_can_be_replaced_without_claiming_it_was_ready(self):
+        old = self.failed_archive_rollback()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        from wallet_pir_ops.deploy.transaction import Journal
+        self.assertEqual(Journal.load(self.state, 'transparent-history', old.id).status, 'rollback-failed')
+        new = Journal.load(self.state, 'transparent-history')
+        self.assertTrue(any(e.get('transaction') == old.id for e in new.data['events']))
+
+    def test_repair_refuses_a_restarted_predecessor(self):
+        self.failed_archive_rollback()
+        self.fake.systemctl('v12', 'restart', 'transparent-v12-archive.service')
+        before = len(self.fake.log)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+        self.assertTrue(any('exact acknowledged restored processes' in line for line in lines), lines)
+
+    def test_repair_refuses_a_different_transaction(self):
+        self.failed_archive_rollback()
+        request = json.loads(self.request.read_text())
+        request['repair']['transaction'] = 'transparent-history-another'
+        self.request.write_text(json.dumps(request))
+        before = len(self.fake.log)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+
+    def test_repair_still_requires_the_replacement_to_be_ready(self):
+        self.failed_archive_rollback()
+        self.fake.unhealthy.add(('v12', sha256(NEW)))
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
     def lagging_archive(self, stays_old=False):
         self.map[0] = NEXT_MAP
         unit = 'transparent-v12-archive.service'
