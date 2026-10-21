@@ -7,6 +7,7 @@ use crate::{
     history::shardset::ShardSet,
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -419,6 +420,7 @@ impl Finalized {
         };
         let mut files = BTreeMap::new();
         let mut paths = BTreeSet::new();
+        let mut pending = Vec::new();
         let mut add = |path: PathBuf, kind: Kind| -> Result<(), Error> {
             let relative = path
                 .strip_prefix(root)?
@@ -441,23 +443,10 @@ impl Finalized {
             if !paths.insert(relative.clone()) {
                 return Ok(());
             }
-            let mut file = std::fs::File::open(&path)?;
-            if !file.metadata()?.is_file() {
+            if !std::fs::metadata(&path)?.is_file() {
                 return Err("artifact is not a regular file".into());
             }
-            let bytes = file.metadata()?.len();
-            let mut hash = Sha256::new();
-            io::copy(&mut file, &mut HashWriter(&mut hash))?;
-            let sha256 = hex::encode(hash.finalize());
-            if full || kind.local() {
-                files.insert(sha256.clone(), path);
-            }
-            inventory.artifacts.push(Artifact {
-                path: relative,
-                sha256,
-                bytes,
-                kind,
-            });
+            pending.push((path, kind));
             Ok(())
         };
         add(root.join("shards.json"), Kind::Metadata)?;
@@ -509,6 +498,14 @@ impl Finalized {
                 }
             }
         }
+        // Native checks above remain sequential to bound resident runtime memory.
+        // Hash independent immutable files on the existing bounded CPU pool.
+        for (artifact, path) in hash_artifacts(root, pending)? {
+            if full || artifact.kind.local() {
+                files.insert(artifact.sha256.clone(), path);
+            }
+            inventory.artifacts.push(artifact);
+        }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
         inventory.validate_map(&set.map)?;
@@ -522,6 +519,53 @@ impl Finalized {
         })
     }
 }
+fn hash_artifacts(
+    root: &Path,
+    pending: Vec<(PathBuf, Kind)>,
+) -> Result<Vec<(Artifact, PathBuf)>, Error> {
+    crate::runtime::build_pool().install(|| {
+        pending
+            .into_par_iter()
+            .map(|(path, kind)| {
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_str()
+                    .ok_or("non-UTF8 artifact")?
+                    .to_string();
+                if !safe_path(&relative) {
+                    return Err("unsafe publisher artifact path".into());
+                }
+                let mut checked = root.to_path_buf();
+                for component in relative.split('/') {
+                    checked.push(component);
+                    if std::fs::symlink_metadata(&checked)?
+                        .file_type()
+                        .is_symlink()
+                    {
+                        return Err("symlink in publisher artifact".into());
+                    }
+                }
+                let mut file = std::fs::File::open(&path)?;
+                let metadata = file.metadata()?;
+                if !metadata.is_file() {
+                    return Err("artifact is not a regular file".into());
+                }
+                let mut hash = Sha256::new();
+                io::copy(&mut file, &mut HashWriter(&mut hash))?;
+                Ok((
+                    Artifact {
+                        path: relative,
+                        sha256: hex::encode(hash.finalize()),
+                        bytes: metadata.len(),
+                        kind,
+                    },
+                    path,
+                ))
+            })
+            .collect()
+    })
+}
+
 struct HashWriter<'a>(&'a mut Sha256);
 impl io::Write for HashWriter<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -554,6 +598,56 @@ pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_hashes_match_the_complete_files_in_input_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let inputs = [
+            ("large.bin", vec![7u8; 128 << 10]),
+            ("small.bin", vec![3u8; 17]),
+        ];
+        let mut pending = Vec::new();
+        for (name, bytes) in &inputs {
+            let path = root.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            pending.push((path, Kind::RecentTable));
+        }
+        let actual = hash_artifacts(root, pending).unwrap();
+        for ((artifact, path), (name, bytes)) in actual.iter().zip(&inputs) {
+            assert_eq!(artifact.path, *name);
+            assert_eq!(*path, root.join(name));
+            assert_eq!(artifact.bytes, bytes.len() as u64);
+            assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
+            assert_eq!(artifact.kind, Kind::RecentTable);
+        }
+    }
+
+    #[test]
+    fn an_unreadable_artifact_prevents_finalization() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let valid = root.join("valid.bin");
+        std::fs::write(&valid, b"complete file").unwrap();
+        assert!(hash_artifacts(
+            root,
+            vec![
+                (valid, Kind::RecentTable),
+                (root.join("missing.bin"), Kind::RecentTable),
+            ]
+        )
+        .is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn artifact_hashing_refuses_a_symbolic_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(root.join("real.bin"), b"complete file").unwrap();
+        std::os::unix::fs::symlink(root.join("real.bin"), root.join("link.bin")).unwrap();
+        assert!(hash_artifacts(root, vec![(root.join("link.bin"), Kind::RecentTable)]).is_err());
+    }
     #[test]
     fn rejects_unsafe_paths_and_noncanonical_digests() {
         for p in [
