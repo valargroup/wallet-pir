@@ -402,6 +402,12 @@ pub fn transfer(data: &Path, rollback: bool, transaction: &str) -> Result<Value,
         }
     }
     state.recovery.merge(&old_recovery);
+    if !rollback {
+        // The stopped predecessor owns the repaired journal. Unlike monotonic
+        // recovery floors, a sealed crossing can be removed or replaced by a
+        // reorg while that runtime runs between two cutover attempts.
+        state.recovery.sealed = old_recovery.sealed.clone();
+    }
     state.recovery.epoch = state
         .recovery
         .epoch
@@ -619,6 +625,37 @@ mod tests {
             old["retained_operation_history"]
         );
         assert_eq!(restored["recovery"]["epoch"], "5");
+    }
+
+    #[test]
+    fn a_new_cutover_uses_the_predecessors_sealed_records_after_reorg() {
+        for sealed in [BTreeMap::new(), [(0, (3_428_200, "34".repeat(32)))].into()] {
+            let root = tempfile::tempdir().unwrap();
+            previous(root.path());
+            transfer(root.path(), false).unwrap();
+            transfer(root.path(), true).unwrap();
+
+            // The restored runtime has already fenced and repaired a deep reorg.
+            // A removed seal may stay absent or be replaced after finality.
+            let path = root.path().join("control/controller.json");
+            let mut old = previous_state(&path).unwrap();
+            old["recovery"]["epoch"] = json!("6");
+            old["recovery"]["domain_epochs"]["0"] = json!("6");
+            old["recovery"]["sealed"] = serde_json::to_value(&sealed).unwrap();
+            save(&root.path().join("control"), "controller.json", &old).unwrap();
+
+            super::transfer(root.path(), false, "publisher-after-reorg").unwrap();
+            let state: PublisherState =
+                read(&root.path().join("publication/publisher.json")).unwrap();
+            assert_eq!(
+                state.recovery.sealed, sealed,
+                "old HTTPS seals must not override the repaired predecessor"
+            );
+            assert_eq!(state.recovery.epoch, 6);
+            assert_eq!(state.recovery.domain_epochs[&0], "6");
+            assert!(state.recovery.revoked.contains(&"ab".repeat(32)));
+            verify_startup(root.path()).unwrap();
+        }
     }
 
     #[test]
