@@ -23,6 +23,23 @@ or incompatible recent runtime prevents finalization. It verifies native body
 checksums, public-mask binding and source self-consistency through the production
 loader; a header/length match alone is insufficient.
 
+Those checks apply to new publication bytes. Once they pass, and before the
+active pointer moves, the publisher writes `history-restore.json` beside the
+publication: the exact inventory bytes and SHA-256, map, chain and anchor
+identity, holdings mode and completed phases. `pir-publisher
+prepare-history-restore --config FILE --publication DIR --output RECORD` writes
+the same record for a pinned publication after the full checks, without a
+journal writer or service. A restarted publisher with such a record restores the
+same inventory from metadata digests, safe regular paths, exact lengths and
+runtime identity headers, and serves it only after fresh canonicality, intent
+and fleet checks. Missing or malformed evidence uses the full preparation path.
+After serving starts, one background thread hashes every listed artifact
+(`integrity_validation` in `/v1/status`) and then loads and self-checks each
+runtime under memory admission (`correctness_validation`). A correctness failure
+is reported and the publication keeps serving. A confirmed integrity mismatch is
+recorded in `integrity-failures.json` and withdraws every publication listing
+those bytes until freshly verified replacement bytes are published.
+
 All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
 | Route | Response |
