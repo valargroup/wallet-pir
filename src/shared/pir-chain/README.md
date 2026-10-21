@@ -3,9 +3,18 @@
 `zakura-server-chain` reads Zakura node data for the PIR services in wallet-pir and
 interprets it, returning plain values (bytes, heights, amounts, positions) that the
 services map onto their own records. It owns the chain interpretation boundary used by those services. RPC ingestion
-uses the published Common wallet primitives to decode transactions and calculate
-transaction IDs, with default features disabled to avoid wallet builders and
-proving circuits. It does not compile Zakura node packages or RocksDB.
+reads transactions with the borrowed wire reader `zakura-transaction-wire`
+(wallet-libraries, [PR 287](https://github.com/zakura-core/wallet-libraries/pull/287)),
+which checks the wire grammar, amount ranges and transaction boundaries and computes
+transaction IDs. It depends only on `zakura-protocol` and two hash crates, so the
+production RPC reader and the Transparent, Enhance and Status readers compile no
+`zakura-primitives`, Sapling, Orchard or Halo2 crate. The reader does not check that
+shielded fields are valid curve points, proofs or signatures: blocks come from a
+node that validated them, and that remains the node's responsibility. Block headers
+are framed and hashed here (version at least 4, a 36- or 1344-byte Equihash
+solution). `receiver` adds Orchard to check Ironwood tree roots; the `testing`
+fixtures and the `rocksdb` reader use the node's own crates. The reader does not
+compile Zakura node packages or RocksDB.
 
 Decoding and chain interpretation (block and transaction decoding, the product
 values below and `NodeError`) are synchronous and resolve no runtime or HTTP stack.

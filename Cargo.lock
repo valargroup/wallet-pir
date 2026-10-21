@@ -5034,12 +5034,11 @@ dependencies = [
  "tracing",
  "zakura-chain",
  "zakura-orchard",
- "zakura-primitives",
  "zakura-protocol",
  "zakura-receiver-crypto",
  "zakura-state",
  "zakura-test",
- "zakura-transparent",
+ "zakura-transaction-wire",
  "zcash_script",
 ]
 
@@ -5105,6 +5104,16 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "zakura-transaction-wire"
+version = "0.1.0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=9a8e903dc2f6373bcbe178c0d23194c35ff44c68#9a8e903dc2f6373bcbe178c0d23194c35ff44c68"
+dependencies = [
+ "blake2b_simd",
+ "sha2 0.10.9",
+ "zakura-protocol",
 ]
 
 [[package]]

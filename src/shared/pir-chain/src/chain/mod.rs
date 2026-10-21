@@ -1,6 +1,9 @@
-//! Minimal decoded chain data for RPC ingestion. Transaction decoding and IDs use
-//! Common's wallet primitives; consensus and proof verification remain the node's
-//! responsibility. The optional RocksDB adapter converts through canonical bytes.
+//! Minimal decoded chain data for RPC ingestion. Transactions are read with the
+//! borrowed wire reader `zcash_transaction_wire`, which checks the wire grammar and
+//! computes transaction IDs without the shielded proving stack. It does not check that
+//! shielded fields are valid curve points; consensus, cryptographic and proof
+//! verification remain the node's responsibility. The optional RocksDB adapter
+//! converts through canonical bytes.
 // Product features use different parts of the same private decoded wire data.
 // Keep the complete decoder available without requiring every product at once.
 #![allow(dead_code)]
@@ -15,9 +18,7 @@ use std::{
     io::{self, Read},
     sync::Arc,
 };
-use zcash_primitives::block::BlockHeader;
 use zcash_protocol::{encoding::CompactSize, value::Zatoshis};
-use zcash_script::script::Evaluable;
 
 pub(crate) type Amount = Zatoshis;
 pub(crate) const MAX_BLOCK_BYTES: u64 = 2_000_000;
@@ -72,11 +73,21 @@ pub(crate) struct Output {
     pub lock_script: Script,
 }
 impl Output {
+    /// Reads a value in the money range, then a length-prefixed script.
     pub(crate) fn zcash_deserialize(mut raw: impl Read) -> io::Result<Self> {
-        let output = transparent::bundle::TxOut::read(&mut raw)?;
+        let mut value = [0; 8];
+        raw.read_exact(&mut value)?;
+        let value = Zatoshis::from_nonnegative_i64_le_bytes(value)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "value out of range"))?;
+        let len = CompactSize::read(&mut raw)?;
+        let mut script = Vec::new();
+        raw.take(len).read_to_end(&mut script)?;
+        if script.len() as u64 != len {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
         Ok(Self {
-            value: output.value(),
-            lock_script: Script::new(&output.script_pubkey().0.to_bytes()),
+            value,
+            lock_script: Script(script),
         })
     }
     pub(crate) fn zcash_serialize_to_vec(&self) -> io::Result<Vec<u8>> {
@@ -103,16 +114,44 @@ pub(crate) struct Block {
     pub transactions: Vec<Arc<Transaction>>,
     hash: Hash,
 }
-impl Block {
-    pub(crate) fn zcash_deserialize(reader: impl Read) -> io::Result<Self> {
-        let mut reader = reader.take(MAX_BLOCK_BYTES);
-        let header = BlockHeader::read(&mut reader)?;
-        if (header.version as u32) < 4 || header.version < 0 {
+/// The serialized length of a header before its Equihash solution.
+const HEADER_FIXED_BYTES: usize = 4 + 32 + 32 + 32 + 4 + 4 + 32;
+impl Header {
+    /// Reads a header and returns it with its hash, the SHA-256d of its encoding.
+    fn read(input: &mut &[u8]) -> io::Result<(Self, Hash)> {
+        let start = *input;
+        let (fixed, mut rest) = input
+            .split_at_checked(HEADER_FIXED_BYTES)
+            .ok_or(io::ErrorKind::UnexpectedEof)?;
+        let version = i32::from_le_bytes(fixed[..4].try_into().expect("four bytes"));
+        if version < 4 {
             return Err(io::Error::other("invalid block version"));
         }
-        if !matches!(header.solution.len(), 36 | 1344) {
+        let solution = CompactSize::read(&mut rest)?;
+        if !matches!(solution, 36 | 1344) {
             return Err(io::Error::other("invalid Equihash solution length"));
         }
+        let rest = rest
+            .get(solution as usize..)
+            .ok_or(io::ErrorKind::UnexpectedEof)?;
+        let encoded = &start[..start.len() - rest.len()];
+        let hash = Hash(Sha256::digest(Sha256::digest(encoded)).into());
+        let field = |at: usize| -> [u8; 32] { fixed[at..at + 32].try_into().expect("32 bytes") };
+        let header = Self {
+            previous_block_hash: Hash(field(4)),
+            merkle_root: field(36),
+            time: u32::from_le_bytes(fixed[100..104].try_into().expect("four bytes")).into(),
+        };
+        *input = rest;
+        Ok((header, hash))
+    }
+}
+impl Block {
+    /// Reads one block from the start of `input` and advances it past the block. At
+    /// most [`MAX_BLOCK_BYTES`] are read.
+    pub(crate) fn zcash_deserialize(input: &mut &[u8]) -> io::Result<Self> {
+        let mut reader = &input[..input.len().min(MAX_BLOCK_BYTES as usize)];
+        let (header, hash) = Header::read(&mut reader)?;
         let count = CompactSize::read(&mut reader)?;
         if count == 0 || count > MAX_BLOCK_BYTES / MIN_TRANSPARENT_TX_SIZE {
             return Err(io::Error::other("invalid block transaction count"));
@@ -121,13 +160,10 @@ impl Block {
         for _ in 0..count {
             transactions.push(Arc::new(Transaction::zcash_deserialize(&mut reader)?));
         }
+        *input = &input[input.len().min(MAX_BLOCK_BYTES as usize) - reader.len()..];
         Ok(Self {
-            hash: Hash(header.hash().0),
-            header: Header {
-                previous_block_hash: Hash(header.prev_block.0),
-                merkle_root: header.merkle_root,
-                time: header.time.into(),
-            },
+            hash,
+            header,
             transactions,
         })
     }
