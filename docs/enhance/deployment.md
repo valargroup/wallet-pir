@@ -14,8 +14,7 @@ the memory observation is promising but not a completed qualification.
 
 The binaries are `enhance-pir-server` (package `enhance-publisher`),
 `pir-query-server` (package `pir-query-server`),
-`enhance-pir-cli` (`enhance-pir-client`), `enhance-pir-load-test` and the local
-`enhance-pir-exercise`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`enhance-pir-cli` (`enhance-pir-client`) and `enhance-pir-load-test`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
 `build-info`. `build-info` reports native reinspiring and the source revision
 and has no CUDA field. Each Enhance serving role (`worker`, `query-ingress`,
 `packing-router`) is its own `pir-query-server --config FILE` process.
@@ -62,7 +61,6 @@ complete cutover passes its gates.
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help
-python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
 
 The wallet counterpart must implement the v7/q48 contract described in
@@ -90,7 +88,7 @@ shared bearer token on the private APIs. Worker routes, packing-router control
 routes and query-ingress control routes (all `/internal/*` paths except the
 ingress `/internal/metrics` scrape) then reject requests without
 `Authorization: Bearer <token>` with HTTP 401. The coordinator, packing router
-and `enhance-pir-exercise` clients read the same variable and attach the header. Set it on
+clients read the same variable and attach the header. Set it on
 all roles together, or on none: a worker with the token and a coordinator
 without it stops publication. Unset keeps the previous behaviour. Provide the
 value through the unit's environment file, never on the command line.

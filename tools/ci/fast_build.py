@@ -38,7 +38,6 @@ def publisher_runs_alone(name, kinds):
 # packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
-    'enhance-pir-exercise',
     'enhance-pir-load-test',
     'enhance-publisher',
     'enhance-query-server',

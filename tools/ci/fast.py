@@ -118,7 +118,7 @@ def route(path):
                         'tools/infra/digitalocean/transparent/', 'tools/infra/digitalocean/transparent-tx-detail/')):
         # The txid display deploy pins this root's firewall sources.
         return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-contracts', 'check-ops-txid-display'}, {'enhance_infra', 'ops'}
-    if path in {'tools/status/status_qualification.py', 'tools/status/test_status_qualification.py'} or path.startswith(('tools/txid/txid-sizing/', 'tools/txid/txid-display/')):
+    if path in {'tools/status/status_qualification.py', 'tools/status/test_status_qualification.py'} or path.startswith('tools/txid/txid-display/'):
         return {'check-tools'}, {'ops'}
     if path.startswith('tools/status/'):
         # Status units and descriptor feed the role tests; its
@@ -136,8 +136,7 @@ def route(path):
         return set(), {'ops'}
     if path.startswith(('tools/scripts/wallet-pir-deploy', 'tools/scripts/deploy-')):
         return {'check-ops-contracts'}, {'ops'}
-    if path.startswith(('tools/transparent/filters/', 'tools/transparent/parent-filters/',
-                        'tools/enhance/v7-', 'tools/enhance/schema11-')):
+    if path.startswith(('tools/transparent/filters/', 'tools/transparent/parent-filters/')):
         return {'check-tools'}, {'ops'}
     if path.startswith('tools/enhance/'):
         return {'check-ops-enhance', 'check-ops-contracts'}, {'ops'}

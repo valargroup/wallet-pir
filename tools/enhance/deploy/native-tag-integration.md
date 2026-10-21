@@ -63,7 +63,7 @@ A v7-to-native cutover requires separate coordinator, worker, router and ingress
 roots: copy only a stopped/coherent canonical record journal, rebuild native
 control state, and retain the prior state. Never reuse v7 controller manifests
 as native state. Follow the production deployment lock and service coordination
-in [architecture2-ssh.md](architecture2-ssh.md); this document does not authorize
+in the [historical SSH runbook](https://github.com/valargroup/wallet-pir/blob/f26b9476fbcd37aca4b4882b9264e90c1896be16/tools/enhance/deploy/architecture2-ssh.md); this document does not authorize
 an automatic rollback.
 
 ## Focused validation

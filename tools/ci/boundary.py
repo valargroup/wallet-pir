@@ -119,7 +119,7 @@ TOOLS = 'tools/'
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
     'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-query-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-pir-client', 'enhance-pir-exercise', 'native-certificate', 'transparent-publisher',
+    'enhance-pir-client', 'native-certificate', 'transparent-publisher',
     'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
@@ -644,8 +644,8 @@ def main(argv=None):
     problems += serving_binary_violations(packages)
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
-    # these are the two workspaces used by the current services and sizing tool.
-    for name in ('Cargo.lock', 'tools/txid/txid-sizing/export/Cargo.lock'):
+    # this is the workspace used by the current services.
+    for name in ('Cargo.lock',):
         packages = tomllib.loads((ROOT / name).read_text())['package']
         problems += [f'{name}: {problem}'
                      for problem in common_family_violations(packages, patches)]

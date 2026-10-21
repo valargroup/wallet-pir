@@ -270,7 +270,7 @@ def enhance():
     r = Rehearsal('enhance-external-worker')
     binary = r.binary('pir-query-server')
     sha = sha256(binary)
-    # The synthetic coordinator needs a replicated group: two external workers.
+    # Two external worker instances, as a replicated group is deployed.
     listens = ['127.0.0.1:%d' % free_port() for _ in range(2)]
     instances = [({'listen': l, 'data_dir': str(r.work / ('worker-data-%d' % i))}, l, 'enhance-pir-worker-%d.service' % i)
                  for i, l in enumerate(listens)]
@@ -284,25 +284,6 @@ def enhance():
     r.executor.systemctl('local', 'restart', 'enhance-pir-worker-0.service')
     restarted = r.wait('restart', lambda: r.health('http://%s/internal/health' % listens[0]))
     r.step('restart', new_incarnation=restarted['incarnation'] != health['incarnation'])
-    # The fixture controller: the release's own isolated synthetic coordinator
-    # reserves, uploads, prepares, activates, commits and checks exact answers.
-    groups = r.work / 'workers.json'
-    groups.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': [
-        {'name': 'w%d' % i, 'url': 'http://' + l} for i, l in enumerate(listens)]}]}))
-    exercise = r.run(r.binary('enhance-pir-exercise'), '--isolated-workers', '--profile', 'smoke', '--data-dir', r.work / 'controller',
-                     '--worker-config', groups, '--listen', '127.0.0.1:%d' % free_port(), '--seconds', '120',
-                     '--min-publications', '2', '--publication-interval', '20', '--concurrency', '1',
-                     timeout=1800, check=False)
-    summary = {}
-    if (r.work / 'controller/exercise.json').exists():
-        summary = json.loads((r.work / 'controller/exercise.json').read_text())
-    r.step('controller-publications-and-exact-answers', returncode=exercise.returncode,
-           exact_answer=exercise.returncode == 0,
-           summary={k: summary.get(k) for k in ('status', 'publications', 'error', 'traffic',
-                                                 'exact_boundary_and_retained_probes')},
-           output=(exercise.stdout + exercise.stderr)[-600:])
-    published = r.health('http://%s/internal/health' % listens[0])
-    r.step('published-by-controller', published=published.get('published'), preparation=published.get('preparation'))
     report = r.report('enhance', inventory)
     r.step('report', report=report)
     r.deployer('enhance', inventory).rollback(journal.id)
