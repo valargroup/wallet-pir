@@ -85,10 +85,8 @@ CHAIN_READER = 'zakura-server-chain'
 CHAIN_READER_MANIFEST = 'src/shared/pir-chain/Cargo.toml'
 WALLET_TEST_MANIFEST = 'tools/pir-e2e-tests/Cargo.toml'
 CHAIN_READER_EDGES = {
-    'zakura-primitives': 'Common transaction decoding and transaction IDs for RPC reads',
     'zakura-protocol': 'Common network parameters and consensus branch identities',
-    'zakura-transparent': 'Common transparent bundle decoding',
-    'zakura-orchard': 'Common Ironwood action decoding',
+    'zakura-orchard': 'Ironwood tree root validation, enabled only by the receiver feature',
     'zakura-chain': 'node encoders for synthetic fixtures, the RocksDB block conversion and '
                     'the independent decoder oracle in tests',
     'zakura-state': "the opt-in RocksDB reader of the node's finalized state; its format "
