@@ -73,10 +73,24 @@ pub fn build_shipped_reusing(
 /// verified, such as a held revision of a loaded `DisplaySet`, without
 /// reading or verifying them again. A segment that must be built is still
 /// rehashed by [`crate::history::shardset::SegmentSource::load`].
+/// The error [`build_shipped_verified_until`] returns after a stop.
+pub const STOPPED: &str = "display runtime preparation stopped";
+
 pub fn build_shipped_verified(
     revision: &DisplayRevision,
     out_dir: &Path,
     retained: &[std::path::PathBuf],
+) -> Result<Vec<Shipped>, String> {
+    build_shipped_verified_until(revision, out_dir, retained, crate::history::shardset::NEVER)
+}
+
+/// [`build_shipped_verified`], asking `stop` before each runtime segment; a
+/// segment already being prepared finishes and is written atomically first.
+pub fn build_shipped_verified_until(
+    revision: &DisplayRevision,
+    out_dir: &Path,
+    retained: &[std::path::PathBuf],
+    stop: crate::history::shardset::Stop<'_>,
 ) -> Result<Vec<Shipped>, String> {
     if !revision.held() {
         return Err(format!(
@@ -89,6 +103,9 @@ pub fn build_shipped_verified(
     let mut params = HashMap::new();
     let mut written = Vec::new();
     for (table, segment) in revision.targets() {
+        if stop() {
+            return Err(STOPPED.into());
+        }
         let kind = kind(table);
         let shared = match params.entry(kind) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),

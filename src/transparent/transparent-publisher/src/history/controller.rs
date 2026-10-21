@@ -903,6 +903,22 @@ async fn prepare_candidate(
         hash,
     } = work;
     let started = std::time::Instant::now();
+    // A stop ends preparation as a normal outcome: the active publication is
+    // untouched and activation never begins. Blocking work is always awaited.
+    let stopped = || {
+        tracing::info!(height, "candidate preparation stopped by shutdown");
+        Ok(Input::Unchanged)
+    };
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
+    // Asked by every interruptible blocking step below, between its units.
+    let stop = {
+        let authority = authority.clone();
+        move || {
+            authority.0.shutdown.requested() || authority.0.epoch.load(Ordering::Acquire) != epoch
+        }
+    };
     let same = height == old.publication.height && hash == old.publication.hash;
     let directory = if same {
         old.publication.directory.clone()
@@ -932,22 +948,25 @@ async fn prepare_candidate(
             directory_choice: config.directory_choice,
             range_profile: config.range_profile.clone(),
         };
-        tokio::task::spawn_blocking(move || {
-            publication::publish_with(
+        let stop = stop.clone();
+        let published = tokio::task::spawn_blocking(move || {
+            publication::publish_until(
                 &options,
                 &snapshot,
                 BlockHash::from_internal_bytes([0; 32]),
                 &seal,
+                &stop,
             )
         })
-        .await??;
+        .await?;
+        match published {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
+                return Err("candidate invalidated while preparing".into())
+            }
+            result => drop(result?),
+        }
     }
-    // A stop ends preparation as a normal outcome: the active publication is
-    // untouched and activation never begins. Blocking work is always awaited.
-    let stopped = || {
-        tracing::info!(height, "candidate preparation stopped by shutdown");
-        Ok(Input::Unchanged)
-    };
     if authority.0.shutdown.requested() {
         return stopped();
     }
@@ -977,13 +996,7 @@ async fn prepare_candidate(
         let full = config.http_only;
         let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
-        let stop = {
-            let authority = authority.clone();
-            move || {
-                authority.0.shutdown.requested()
-                    || authority.0.epoch.load(Ordering::Acquire) != epoch
-            }
-        };
+        let stop = stop.clone();
         let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
             let result = transparent_shared::publication::Finalized::prepare_reusing_until(
                 &root,
@@ -1279,13 +1292,18 @@ async fn prepare_runtimes(
             prune_excess: true,
             ..LoadOptions::whole(transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS)
         };
-        match ShardSet::open_reusing(&directory, &options, previous.as_ref()) {
+        match ShardSet::open_reusing_until(&directory, &options, previous.as_ref(), &stop) {
             Ok(set) => {
                 let prepared = transparent_shared::runtime::prebuild::prepare_publication(
                     &set, &directory, &retained, &stop,
                 );
                 (Some(set), prepared.map_err(|e| e.to_string()))
             }
+            // A stopped scan proved nothing; the earlier set keeps its evidence.
+            Err(transparent_shared::history::shardset::LoadError::Stopped) => (
+                previous,
+                Err("candidate invalidated while preparing".to_string()),
+            ),
             Err(error) => (
                 previous,
                 Err(format!("the candidate did not verify: {error}")),
