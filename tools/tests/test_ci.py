@@ -152,6 +152,18 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def test_wallet_address_fixture_is_only_a_dev_edge_of_the_test_consumer(self):
+        fixture = {'name': 'pir-e2e-tests', 'manifest': boundary.WALLET_TEST_MANIFEST, 'publish': False,
+                   'dependencies': [self.edge('zakura-transparent', 'dev-dependencies')]}
+        self.assertEqual(boundary.violations([fixture], []), [])
+        for kind in ['dependencies', 'build-dependencies', 'target.cfg(unix).dev-dependencies']:
+            changed = {**fixture, 'dependencies': [self.edge('zakura-transparent', kind)]}
+            self.assertTrue(boundary.violations([changed], []), kind)
+        for change in [{'name': 'transparent-query-server'}, {'manifest': 'other/Cargo.toml'}, {'publish': True},
+                       {'dependencies': [self.edge('zakura-chain', 'dev-dependencies')]}]:
+            self.assertTrue(boundary.violations([{**fixture, **change}], []), change)
+
+
     def reader(self, *dependencies, manifest=boundary.CHAIN_READER_MANIFEST):
         return {'name': boundary.CHAIN_READER, 'manifest': manifest, 'dependencies': list(dependencies)}
 

@@ -8,8 +8,9 @@ wallet-pir packages. The receiver framing packages use only the library-owned
 wire codec, with cryptography disabled.
 
 No manifest may declare a direct dependency of any kind on a Zakura Common or
-node package except the ratcheted allowlist. Pure PIR packages may use only the
-canonical PIR packages and the explicit receiver codec adapter from
+node package except the chain reader, the ratcheted allowlist, and the address
+fixture dev-dependency of the unpublished end-to-end test consumer. Pure PIR
+packages may use only the canonical PIR packages and the explicit receiver codec adapter from
 wallet-libraries. Their normal/build graphs
 must contain no Common or node packages. Cargo unifies features in whole-workspace
 metadata, where the indexer enables receiver cryptography and client fixtures
@@ -82,6 +83,7 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # The chain reader and the only direct Common and node edges it may declare.
 CHAIN_READER = 'zakura-server-chain'
 CHAIN_READER_MANIFEST = 'src/shared/pir-chain/Cargo.toml'
+WALLET_TEST_MANIFEST = 'tools/pir-e2e-tests/Cargo.toml'
 CHAIN_READER_EDGES = {
     'zakura-primitives': 'Common transaction decoding and transaction IDs for RPC reads',
     'zakura-protocol': 'Common network parameters and consensus branch identities',
@@ -275,6 +277,7 @@ def manifests(root=ROOT):
                          'dependencies': dependencies,
                          'features': sorted(data.get('features', {})),
                          'autobins': data['package'].get('autobins', True),
+                         'publish': data['package'].get('publish', True),
                          'bins': [target.get('name') for target in data.get('bin', [])],
                          'preserved': relative.startswith(EXCLUDED)})
     return packages
@@ -341,6 +344,12 @@ def violations(packages, allowed):
                     reader_revisions.add((dependency['git'], dependency.get('rev', '')))
                 continue
             if name in COMMON or name in NODE:
+                if (package['name'] == 'pir-e2e-tests'
+                        and package['manifest'] == WALLET_TEST_MANIFEST
+                        and package.get('publish') is False
+                        and dependency['kind'] == 'dev-dependencies'
+                        and name == 'zakura-transparent'):
+                    continue
                 edge = f"{package['name']} -> {name}"
                 found.add(edge)
                 if edge not in allowed:
