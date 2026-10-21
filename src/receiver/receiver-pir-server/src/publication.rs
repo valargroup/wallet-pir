@@ -170,6 +170,11 @@ impl Publications {
         }
     }
 
+    /// The highest history correction revision accepted so far.
+    pub fn history_revision(&self) -> u64 {
+        self.0.read().unwrap().history_revision
+    }
+
     /// The recovery epoch. Every revocation advances it.
     pub fn epoch(&self) -> u64 {
         self.0.read().unwrap().epoch
