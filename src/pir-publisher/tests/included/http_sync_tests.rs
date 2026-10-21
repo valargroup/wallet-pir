@@ -839,6 +839,10 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
     })
     .await
     .unwrap();
+    if checking.is_finished() {
+        let (_, result) = checking.await.unwrap();
+        panic!("bootstrap stopped before the final source check: {result:?}");
+    }
     assert!(tls.control.with_extension("entered").exists());
     distribution
         .finalize(next.candidate.clone(), vec![initial.candidate])
