@@ -347,17 +347,7 @@ async fn collect_inner<'a>(
     log_stage("ingestion", started);
     if let Some(serving) = serving {
         let filter_started = std::time::Instant::now();
-        publish_filters(
-            args,
-            rpc,
-            store,
-            serving,
-            genesis,
-            &tip,
-            epoch.unwrap(),
-            history_revision,
-        )
-        .await?;
+        publish_filters(args, rpc, store, serving, genesis, &tip, epoch.unwrap()).await?;
         log_stage("block_filters", filter_started);
     }
     if serving.is_some_and(|s| s.ready_at().is_some()) {
@@ -379,9 +369,9 @@ async fn collect_inner<'a>(
 
 /// Activates the rolling filter window ending at `tip` on `serving`, fenced by `epoch`,
 /// before witness and PIR preparation; the canonical guard also checks its anchor while
-/// that runs, under correction `revision`. Only serving builds one: a one-shot run
-/// writes no filter artifact. A window `serving` already holds over the same blocks
-/// under the same correction revision is kept, so a caught-up service does not rebuild it every poll.
+/// that runs, under the correction revision the store records. Only serving builds
+/// one: a one-shot run writes no filter artifact. A window `serving` already holds over
+/// the same blocks under the same correction revision is kept, so a caught-up service does not rebuild it every poll.
 async fn publish_filters(
     args: &Config,
     rpc: &NodeClient,
@@ -390,8 +380,9 @@ async fn publish_filters(
     genesis: [u8; 32],
     tip: &Checkpoint,
     epoch: u64,
-    revision: u64,
 ) -> Result<()> {
+    // The revision this pass collects under, which `revision::advance` recorded.
+    let revision = store.history_revision()?;
     let first = (tip
         .height
         .saturating_sub(args.filter_blocks.saturating_sub(1)))
