@@ -276,9 +276,26 @@ impl DisplayState {
                 .and_then(|r| r.dir.parent())
                 .ok_or("display set has no root")?
                 .to_path_buf();
-            transparent_shared::tx_detail::distribution::Finalized::prepare(&root)
-                .map_err(|e| e.to_string())?;
-            set.shipped = Some(ShippedRuntimes::required(root));
+            let shipped = ShippedRuntimes::required(root);
+            // The set above already checked the map and source tables. Verify
+            // native files here without rebuilding a publisher distribution:
+            // provider-owned stable revision links are not publisher inputs.
+            for revision in set.current() {
+                for (table, segment) in revision.targets() {
+                    let source = revision
+                        .segment(table, segment)
+                        .ok_or("missing display source")?;
+                    let params = runtime.params(revision.geometry, kind(table))?;
+                    let key = runtime_key(&revision.digest, table, segment);
+                    let native = shipped
+                        .load(&key, &params, source.sha256())
+                        .map_err(|e| e.to_string())?;
+                    native
+                        .self_check(&params, &source.load().map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            set.shipped = Some(shipped);
         }
         let config = runtime.config;
         let mut params = HashMap::new();
