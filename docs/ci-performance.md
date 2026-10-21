@@ -242,8 +242,12 @@ that revision.
 Dependency cache priming runs independently on relevant main changes.
 Both PR and main feedback target three minutes from job start through final
 cleanup; report queueing separately. Validation finishes before main's final
-timing check enforces 180 seconds through reporting. Completed-run evidence
-also includes the remaining cleanup. PRs and manual runs report timings.
+timing check. A warm fast job, with no workspace crate rebuilt, must finish
+in 180 seconds through reporting. When that job relinked workspace crates and
+no third-party crate, the same 180 seconds covers everything except the
+release-fast compile, and the compile itself must finish within five minutes.
+Completed-run evidence also includes the remaining cleanup. PRs and manual
+runs report timings.
 A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
@@ -518,7 +522,9 @@ This needs at least 20 representative runs, coverage of all service families,
 shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
 remain visible. Warm means Cargo reported no third-party compilation; workspace
-source can still rebuild. Queueing and final job cleanup count. A missing sample
+source can still rebuild. The main gate adds that rebuild's compile time on top
+of the 180-second warm budget instead of failing the push for the relink alone.
+Queueing and final job cleanup count. A missing sample
 population is an unqualified target, not a measured guarantee.
 
 ## Prepared-artifact deployment

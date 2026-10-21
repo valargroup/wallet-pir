@@ -242,6 +242,10 @@ Temporarily, CI lets PR and main validation run to completion without a
 three-minute cancellation. Pushes to main enforce that target in a final timing
 check; PRs and manual runs only report timings. The check measures job start
 through validation and reporting, excluding queue time and final cleanup.
+A warm run, which recompiled no workspace crate, still has to finish in three
+minutes. A run that relinked workspace crates and no third-party crate may
+take that long plus the release-fast compile; a compile over five minutes
+still fails.
 
 Direct node database readers in the publisher and tools require
 `--features rocksdb-reader`: `pir-publisher ingest-events`, `shard-cutoff`,
