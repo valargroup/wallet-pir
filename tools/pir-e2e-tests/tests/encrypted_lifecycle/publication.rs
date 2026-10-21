@@ -229,7 +229,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [hex::encode(manifest.session_id(0).unwrap())].into() }).unwrap();
         assert_eq!(transport.client.post(&authority_url).json(&request).send().await.unwrap().status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
         assert!(distribution.publish(manifest, inventory).await.is_err());
-        drop(upstream);
+        upstream.stop().await;
         drop(distribution);
         let reopened = Distribution::open(&root, rpc).unwrap();
         let listener = serve(reopened.router()).await;
