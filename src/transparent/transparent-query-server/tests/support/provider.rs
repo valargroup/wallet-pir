@@ -1082,3 +1082,72 @@ async fn recent_query_survives_archive_disconnect_after_acceptance() {
 async fn recent_query_survives_archive_deadline_after_acceptance() {
     recent_survives_archive_stall("query", "query", "deadline").await
 }
+
+/// A later inventory skips only the native reload of runtimes whose exact
+/// bytes this process already self-checked; changed runtimes and segments
+/// are still refused.
+#[test]
+fn distribution_reuses_only_unchanged_checked_runtimes() {
+    use transparent_shared::publication::{CheckedRuntimes, Finalized, Kind};
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path();
+    fixture(source, &DECOUPLED_2K_8K);
+    let set = ShardSet::open(source, 0).unwrap();
+    let prepared =
+        transparent_shared::runtime::prebuild::prepare_publication(&set, source, &[], &|| false)
+            .unwrap();
+    assert!(prepared.failures.is_empty());
+    let mut checked = CheckedRuntimes::default();
+    let prepare = |checked: &mut CheckedRuntimes| {
+        Finalized::prepare_reusing(source, &set, FIRST + 2, true, checked)
+    };
+    let first = prepare(&mut checked).unwrap();
+    let runtimes: Vec<_> = first
+        .inventory()
+        .artifacts
+        .iter()
+        .filter(|a| matches!(a.kind, Kind::RecentRuntime | Kind::ArchiveRuntime))
+        .map(|a| source.join(&a.path))
+        .collect();
+    assert!(runtimes.len() > 1);
+    assert_eq!((checked.loaded, checked.reused), (runtimes.len(), 0));
+    let second = prepare(&mut checked).unwrap();
+    assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+    assert_eq!(second.sha256(), first.sha256());
+    assert_eq!(
+        second.sha256(),
+        Finalized::prepare_full(source, &set, FIRST + 2)
+            .unwrap()
+            .sha256()
+    );
+
+    // A replaced runtime is reloaded and its checksum refuses it, however
+    // often the name was proven before.
+    let flip = |path: &std::path::Path, at: usize| {
+        let mut bytes = std::fs::read(path).unwrap();
+        let at = at.min(bytes.len() - 1);
+        bytes[at] ^= 1;
+        std::fs::remove_file(path).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    };
+    let original = std::fs::read(&runtimes[0]).unwrap();
+    flip(&runtimes[0], usize::MAX);
+    assert!(prepare(&mut checked).is_err());
+    std::fs::remove_file(&runtimes[0]).unwrap();
+    std::fs::write(&runtimes[0], &original).unwrap();
+    prepare(&mut checked).unwrap();
+    assert_eq!((checked.loaded, checked.reused), (1, runtimes.len() - 1));
+
+    // A changed segment no longer matches its manifest, even where the
+    // runtime built from it is unchanged and already proven.
+    let segment = first
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .map(|a| source.join(&a.path))
+        .unwrap();
+    flip(&segment, 0);
+    let error = prepare(&mut checked).err().unwrap().to_string();
+    assert!(error.contains("differs from its manifest"), "{error}");
+}
