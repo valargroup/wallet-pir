@@ -453,7 +453,7 @@ mod tests {
             let publisher_root = root.path().join("publication");
             let publisher = Publisher::open(&publisher_root, rpc.clone()).unwrap();
             assert!(Publisher::open(&publisher_root, rpc.clone()).is_err());
-            let mut journal = journal(root.path());
+            let journal = journal(root.path());
             let stale = publisher.work(&journal).unwrap().unwrap();
             let before = publisher.distribution.durable_current();
             publisher.revoke_after(0).unwrap();
@@ -477,12 +477,11 @@ mod tests {
             let publisher = Publisher::open(&publisher_root, rpc).unwrap();
             assert!(!publisher.distribution.durable_current().eligible);
             assert!(publisher.distribution.durable_current().withdrawal_revision > before_restart.withdrawal_revision);
-            let work = publisher.work(&journal).unwrap().unwrap(); publisher.publish(work).await.unwrap();
-            assert!(publisher.distribution.durable_current().manifest.unwrap().generation > before_restart.manifest.unwrap().generation);
-            journal.append_block(2, format!("{:064x}", 2), &[vec![1u8; enhance_query_server::RECORD_BYTES]]).unwrap();
-            let stale = publisher.work(&journal).unwrap().unwrap();
+            let fresh = publisher.work(&journal).unwrap().unwrap();
+            assert!(fresh.manifest.generation > before_restart.manifest.unwrap().generation);
+            assert!(!publisher.distribution.durable_current().eligible, "reserving restart work cannot authorize service");
             publisher.revoke_after(0).unwrap();
-            assert!(publisher.publish(stale).await.is_err(), "an eligible predecessor cannot authorize pre-withdrawal work");
+            assert!(publisher.publish(fresh).await.is_err(), "restart work must also obey a later withdrawal");
             node.abort();
         }).await.expect("local publisher exceeded correctness budget");
     }
