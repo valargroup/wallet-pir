@@ -911,6 +911,7 @@ dependencies = [
  "pir-observability",
  "pir-runtime",
  "pir-serving",
+ "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
