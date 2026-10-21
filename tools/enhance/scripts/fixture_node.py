@@ -22,6 +22,7 @@ SHARD_RECORDS = 32768 * 33
 # are separate from the small CPU correctness suite and real-chain evidence.
 PROFILES = {
     'smoke': {'initial_blocks': 1, 'transactions': 1, 'confirmations': 0, 'domains': 1, 'worker_shards': 1},
+    'confirmation-smoke': {'initial_blocks': 1, 'transactions': 1, 'confirmations': 2, 'domains': 1, 'worker_shards': 1},
     'full-shard': {'initial_blocks': 2816, 'transactions': 192, 'confirmations': 0, 'domains': 2, 'worker_shards': 2},
     'five-shards': {'initial_blocks': 14079, 'transactions': 192, 'confirmations': 0, 'domains': 5, 'worker_shards': 5},
     'six-sealed': {'initial_blocks': 16896, 'transactions': 192, 'confirmations': 1000, 'domains': 7, 'worker_shards': 6},
