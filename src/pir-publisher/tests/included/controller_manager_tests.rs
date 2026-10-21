@@ -622,7 +622,7 @@ async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     drop(follow);
 
