@@ -2,6 +2,7 @@
 
 - [Unified publisher](publisher.md): source layout, configuration, managed services and gated cutover.
 - [Query server host](query-server.md): one serving process for any compiled subset of Enhance, Status, and Transparent.
+- [Service discovery releases](service-discovery-release.md): the publisher-query server contract crate and its crates.io publication.
 
 - [Fleet operator guide](operations.md): architecture, configuration ownership, packaged operations, lifecycle commands and recovery.
 

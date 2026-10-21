@@ -110,6 +110,23 @@ fn certificates(path: Option<PathBuf>) -> Result<Vec<reqwest::Certificate>, Erro
     })
 }
 
+impl DetailProcess {
+    /// For an HTTPS consumer, check the publisher's service discovery using
+    /// the configured origin and CA. Opens no state; a legacy role is a no-op.
+    pub async fn discover(&self) -> Result<(), Error> {
+        match &self.publisher {
+            Some(publisher) => {
+                crate::source::discover_publisher(
+                    publisher,
+                    &certificates(self.publisher_ca.clone())?,
+                )
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+}
+
 pub async fn run(config: DetailProcess) -> Result<(), Error> {
     run_with(config, None).await
 }
@@ -150,10 +167,11 @@ pub async fn run_with(
             query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
             readiness: ReadinessMode::Warm,
         };
-        let mut manager = crate::tx_detail::manager::Manager::new(bootstrap, service)?;
+        let mut manager = crate::tx_detail::manager::Manager::new(bootstrap, service).await?;
         loop {
             match manager.poll_once().await {
                 Ok(_) => break,
+                Err(error) if crate::source::is_incompatible(&error) => return Err(error),
                 Err(error) if manager.ready().await => {
                     tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
                     break;
@@ -180,7 +198,10 @@ pub async fn run_with(
                 result?;
             }
             result = &mut synchronization => {
-                return Err(format!("display synchronization stopped: {result:?}").into());
+                return Err(match result {
+                    Ok(error) => error,
+                    Err(join) => format!("display synchronization stopped: {join}").into(),
+                });
             }
         }
         return Ok(());

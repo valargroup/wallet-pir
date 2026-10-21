@@ -41,8 +41,9 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
     }))
 }
 
+#[cfg(feature = "qualification-tests")]
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
-    publication_fixture(root, 2, !cfg!(feature = "qualification-tests"))
+    publication_fixture(root, 2, false)
 }
 #[cfg(feature = "qualification-tests")]
 fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
@@ -285,7 +286,17 @@ async fn tls(root: &Path, authority: Authority) -> Tls {
     tls_router(root, authority.router()).await
 }
 
+/// The publisher's service discovery, which the unified host serves on its
+/// management router and an operator proxies at this exact public path.
+pub(crate) fn with_discovery(router: Router) -> Router {
+    router.route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
 pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
+    let router = with_discovery(router);
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     static MATERIAL: std::sync::LazyLock<(Vec<u8>, Vec<u8>)> = std::sync::LazyLock::new(|| {
@@ -372,10 +383,27 @@ fn config(tls: &Tls, directory: PathBuf) -> bootstrap::Config {
 #[tokio::test(flavor = "multi_thread")]
 async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() {
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
+    let directory = root.path().join("publication");
+    // The process already published this tree and prepared its recent runtimes.
+    manager_tests::copy_prepared_publication(2, &directory);
+    let set = ShardSet::open(&directory, 0).unwrap();
     // Incomplete preparation must fail finalization, never produce a current.
+    let saved: Vec<(PathBuf, Vec<u8>)> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(Result::unwrap)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "runtime"))
+        .map(|path| {
+            let bytes = std::fs::read(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            (path, bytes)
+        })
+        .collect();
+    assert!(!saved.is_empty());
     assert!(Finalized::prepare(&directory, &set, 2).is_err());
-    prepare_recent(&directory, &set);
+    for (path, bytes) in &saved {
+        std::fs::write(path, bytes).unwrap();
+    }
     // A full-length native file with a valid identity/header but corrupted
     // body cannot be finalized just because preprocessing previously completed.
     let native = std::fs::read_dir(&directory)
@@ -914,36 +942,28 @@ mod manager_tests;
 async fn full_history_http_holdings_include_archive_runtimes() {
     let root = tempfile::tempdir().unwrap();
     let (directory, set) = if cfg!(feature = "qualification-tests") {
-        publication_fixture(root.path(), 2, true)
+        let (directory, set) = publication_fixture(root.path(), 2, true);
+        let prepared = transparent_shared::runtime::prebuild::prepare_publication(
+            &set,
+            &directory,
+            &[],
+            &|| false,
+        )
+        .unwrap();
+        assert!(prepared.failures.is_empty());
+        (directory, set)
     } else {
+        // Built once in this process, from a copy that had recent files and no
+        // archive runtimes. Recent files were linked; archive files were built.
+        let build = manager_tests::archive_runtime_build(2);
+        assert!(build.recent_files > 0);
+        assert_eq!(build.linked, build.recent_files);
+        assert!(build.built > 0, "archive runtimes must still be prepared");
         let directory = root.path().join("publication");
-        manager_tests::copy_prepared_publication(2, &directory);
+        manager_tests::copy_archive_publication(2, &directory);
         let set = ShardSet::open(&directory, 0).unwrap();
         (directory, set)
     };
-    let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
-        .unwrap()
-        .map(Result::unwrap)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
-        .map(|entry| entry.file_name().into_string().unwrap())
-        .collect();
-    let prepared =
-        transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
-            false
-        })
-        .unwrap();
-    assert!(prepared.failures.is_empty());
-    if !cfg!(feature = "qualification-tests") {
-        assert!(!recent_files.is_empty());
-        assert_eq!(prepared.linked(), recent_files.len());
-        assert!(
-            prepared.built() > 0,
-            "archive runtimes must still be prepared"
-        );
-        for file in &prepared.files {
-            assert_eq!(file.linked, recent_files.contains(&file.name));
-        }
-    }
     let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
     assert!(finalized
         .inventory()
@@ -960,6 +980,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     manager.poll_once().await.unwrap();
@@ -985,6 +1006,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = restarted.poll_once().await.unwrap();
@@ -1033,6 +1055,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = damaged.poll_once().await.unwrap();
@@ -1041,38 +1064,210 @@ async fn full_history_http_holdings_include_archive_runtimes() {
     assert!(damaged.live().is_some());
 }
 
+/// A unified query server serving both Transparent products stops entirely,
+/// with the original typed error, when one publisher's contract major changes
+/// at runtime: management and every wallet listener close. A missing discovery
+/// document writes no consumer state, and a recovered active view cannot mask
+/// the mismatch.
 #[tokio::test(flavor = "multi_thread")]
-async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
-    cold_history_bootstrap_retry(false).await;
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn cold_history_bootstrap_recovers_the_same_map_after_withdrawal() {
-    cold_history_bootstrap_retry(true).await;
-}
-
-async fn cold_history_bootstrap_retry(withdraw: bool) {
+async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
+    use crate::tx_detail::{distribution::Distribution, fixture, publisher::bootstrap};
+    use transparent_query_server::history::process::{run, run_with, HistoryProcess};
+    use transparent_shared::journal::events::EventStore;
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication(root.path());
-    let prepared =
-        transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
-            false
-        })
+
+    // History publisher.
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let history_tls_root = root.path().join("history-tls");
+    std::fs::create_dir(&history_tls_root).unwrap();
+    let history = tls(
+        &history_tls_root,
+        authority(&directory, Some(finalized), rpc.client.clone()),
+    )
+    .await;
+    let history_consumer = root.path().join("history-consumer");
+    let history_process = |shard_dir: &Path, verify_only: bool| -> HistoryProcess {
+        serde_json::from_value(serde_json::json!({
+            "publisher": history.origin,
+            "publisher_network": "main",
+            "publisher_genesis": transparent_filter::MAINNET_GENESIS_DISPLAY,
+            "publisher_ca": history_tls_root.join("ca.pem"),
+            "shard_dir": shard_dir,
+            "cache_bytes": 4u64 << 30,
+            "bootstrap_max_bytes": 4u64 << 30,
+            "verify_only": verify_only,
+        }))
+        .unwrap()
+    };
+
+    // Verification refuses a publisher without discovery before any state.
+    let absent = root.path().join("absent-consumer");
+    std::fs::write(&history.control, "discovery-missing").unwrap();
+    let error = run(history_process(&absent, true)).await.unwrap_err();
+    assert!(error.to_string().contains("HTTP 404"), "{error}");
+    assert!(!transparent_query_server::is_incompatible(&error));
+    assert!(!absent.exists(), "verification opened consumer state");
+    std::fs::write(&history.control, "").unwrap();
+
+    // Display publisher.
+    let journal = root.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let display_root = root.path().join("display-publisher");
+    let initial = bootstrap(&store, &display_root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let node_address = listener.local_addr().unwrap();
+    let _node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let display_rpc =
+        crate::ingest::zakura::connect(format!("http://{node_address}"), cookie).unwrap();
+    let distribution = Distribution::new(&display_root, display_rpc).unwrap();
+    distribution
+        .finalize(initial.candidate.clone(), vec![])
+        .await
         .unwrap();
-    assert!(prepared.failures.is_empty());
+    let display_tls_root = root.path().join("display-tls");
+    std::fs::create_dir(&display_tls_root).unwrap();
+    let display = tls_router(&display_tls_root, distribution.router()).await;
+
+    let addrs: Vec<std::net::SocketAddr> = (0..3)
+        .map(|_| {
+            let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            held.local_addr().unwrap()
+        })
+        .collect();
+    let config: pir_query_server::config::Config = serde_json::from_value(serde_json::json!({
+        "management_listen": addrs[0],
+        "transparent_history": {"enabled": true, "settings": {
+            "publisher": history.origin,
+            "publisher_ca": history_tls_root.join("ca.pem"),
+            "publisher_network": "main",
+            "publisher_genesis": transparent_filter::MAINNET_GENESIS_DISPLAY,
+            "cache_bytes": 4u64 << 30,
+            "bootstrap_max_bytes": 4u64 << 30,
+            "listen": addrs[1],
+            "shard_dir": history_consumer,
+        }},
+        "transaction_details": {"enabled": true, "settings": {
+            "publisher": display.origin,
+            "publisher_ca": display_tls_root.join("ca.pem"),
+            "publisher_network": "main",
+            "publisher_genesis": fixture::GENESIS,
+            "cache_bytes": 4u64 << 30,
+            "role": "combined",
+            "listen": addrs[2],
+            "state_dir": root.path().join("display-consumer"),
+        }},
+    }))
+    .unwrap();
+    let running = tokio::spawn(pir_query_server::run(
+        config,
+        pir_pipeline::service::Shutdown::default(),
+    ));
+
+    // Both products serve before the publisher changes.
+    let ready = format!("http://{}/ready", addrs[0]);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        assert!(!running.is_finished(), "host stopped before serving");
+        if reqwest::get(&ready)
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both products never became ready"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    std::fs::write(
+        &display.control,
+        r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(60), running)
+        .await
+        .expect("an incompatible publisher must stop the unified host")
+        .unwrap()
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    let text = error.to_string();
+    assert!(
+        text.contains("2.0.0") && text.contains(&display.origin),
+        "{text}"
+    );
+    for addr in addrs {
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "{addr} outlived an incompatible publisher"
+        );
+    }
+
+    // The recovered active view on disk cannot mask a major mismatch at restart.
+    assert!(history_consumer.join("active.json").exists());
+    std::fs::write(
+        &history.control,
+        r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let error = run_with(history_process(&history_consumer, false), None)
+        .await
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+}
+
+/// A source change during the final check stays private. Clearing a withdrawal
+/// is not enough: that map is served again only after the source revision rises.
+#[tokio::test(flavor = "multi_thread")]
+async fn cold_history_bootstrap_keeps_checked_inputs_private_until_the_source_advances() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    manager_tests::copy_archive_publication(2, &directory);
+    let set = ShardSet::open(&directory, 0).unwrap();
     let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
     let rpc = canonical_rpc(root.path(), &set).await;
     let authority = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), authority.clone()).await;
+    cold_history_bootstrap_retry(&tls, &authority, &root.path().join("change"), false).await;
+    cold_history_bootstrap_retry(&tls, &authority, &root.path().join("withdraw"), true).await;
+}
+
+async fn cold_history_bootstrap_retry(
+    tls: &Tls,
+    authority: &Authority,
+    consumer_root: &Path,
+    withdraw: bool,
+) {
+    let _ = std::fs::remove_file(tls.control.with_extension("current-count"));
+    let _ = std::fs::remove_file(tls.control.with_extension("entered"));
     std::fs::write(&tls.control, "pause-current-2").unwrap();
-    let consumer_root = root.path().join("consumer");
     let mut manager = transparent_query_server::routing::manager::Manager::new(
-        config(&tls, consumer_root.clone()),
+        config(tls, consumer_root.to_path_buf()),
         transparent_query_server::config::ServiceConfig {
             cache_bytes: 4 << 30,
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let checking = tokio::spawn(async move {

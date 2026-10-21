@@ -100,7 +100,11 @@ def route(path):
         return {'check-docs', 'check-ops-shared'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'evidence/enhance/', 'evidence/transparent/', 'evidence/receiver/')):
         return {'check-docs'}, {'ops'}
-    if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
+    # CI workflows stay on the feedback-tooling path. Publish, deploy, configure
+    # and the other operational workflows do not change the Rust graph; selecting
+    # them as unknown inputs enables extra reader features and rebuilds the warm
+    # fast closure.
+    if path.startswith('.github/workflows/') and not path.startswith('.github/workflows/ci'):
         return {'check-tools', 'check-ops-contracts'}, {'ops'}
     if path.startswith(('tools/infra/digitalocean/enhance/worker-pool/', 'tools/infra/digitalocean/enhance-v4/')):
         # Pool plans qualify as Enhance infrastructure. The in-memory deploy suite is local only.
@@ -114,7 +118,7 @@ def route(path):
                         'tools/infra/digitalocean/transparent/', 'tools/infra/digitalocean/transparent-tx-detail/')):
         # The txid display deploy pins this root's firewall sources.
         return {'check-ops-shared', 'check-ops-control-sessions', 'check-ops-contracts', 'check-ops-txid-display'}, {'enhance_infra', 'ops'}
-    if path in {'tools/status/status_qualification.py', 'tools/status/test_status_qualification.py'} or path.startswith(('tools/txid/txid-sizing/', 'tools/txid/txid-display/')):
+    if path in {'tools/status/status_qualification.py', 'tools/status/test_status_qualification.py'} or path.startswith('tools/txid/txid-display/'):
         return {'check-tools'}, {'ops'}
     if path.startswith('tools/status/'):
         # Status units and descriptor feed the role tests; its
@@ -132,8 +136,7 @@ def route(path):
         return set(), {'ops'}
     if path.startswith(('tools/scripts/wallet-pir-deploy', 'tools/scripts/deploy-')):
         return {'check-ops-contracts'}, {'ops'}
-    if path.startswith(('tools/transparent/filters/', 'tools/transparent/parent-filters/',
-                        'tools/enhance/v7-', 'tools/enhance/schema11-')):
+    if path.startswith(('tools/transparent/filters/', 'tools/transparent/parent-filters/')):
         return {'check-tools'}, {'ops'}
     if path.startswith('tools/enhance/'):
         return {'check-ops-enhance', 'check-ops-contracts'}, {'ops'}
@@ -262,12 +265,51 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 
 
 
-def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1):
+def diff_products(packages, paths):
+    """Products whose host fixtures this diff must compile.
+
+    A product library selects that product. A host test file selects the
+    product that test asks for, and a shared test helper selects every product
+    the host's tests ask for. The host library and shared crates select none.
+    A workspace manifest or any other unscoped path still selects every product.
+    Tooling-only paths select none.
+    """
+    from fast_build import PRODUCT_HOST_FEATURES, product_of_package, products_for_host_path
+    relevant = [path for path in paths if not feedback_tooling(path)]
+    if not relevant:
+        return frozenset()
+    by_name = {package['name']: package for package in packages}
+
+    def unscoped(path):
+        workspace = path in {'Cargo.toml', 'Cargo.lock', 'Makefile'}
+        manifest = path.startswith('.cargo/') or path.endswith('/Cargo.toml')
+        if workspace or manifest:
+            return True
+        if owner(packages, path):
+            return False
+        return route(path) is None
+
+    if any(unscoped(path) for path in relevant):
+        return frozenset(PRODUCT_HOST_FEATURES)
+    found = set()
+    for path in relevant:
+        name = owner(packages, path)
+        if not name:
+            continue
+        host_products = products_for_host_path(by_name[name], path)
+        if host_products is not None:
+            found.update(host_products)
+            continue
+        found.add(product_of_package(by_name[name]))
+    return frozenset(found & set(PRODUCT_HOST_FEATURES))
+
+
+def rust_checks(selected, *, features='', test='', test_target='', offline=False, compile_only=False, unit_jobs=1, products=None):
     if not selected:
         return
     if not (features or test or test_target):
         from fast_build import execute
-        return execute(selected, offline=offline, compile_only=compile_only, jobs=unit_jobs)
+        return execute(selected, offline=offline, compile_only=compile_only, jobs=unit_jobs, products=products)
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
     run(['cargo', 'fmt', '--all', '--check'], stage='format')
     options = ['--locked', '--profile', 'release-fast']
@@ -412,6 +454,12 @@ def main():
                 out.write(f'{group}={str(group in selected["groups"]).lower()}\n')
     if args.select_only:
         return
+    # An explicit package list or a full run derives products from those packages.
+    # A diff passes the products its own paths touch, not every dependent.
+    products = None
+    compiling_everything = args.all or (args.committed_only and (not args.base or set(args.base) == {'0'}))
+    if not args.package and not compiling_everything:
+        products = diff_products(packages, selection_paths)
     # Workflow steps run scripts by path and no helper target exercises them; always check the paths exist.
     run(['python3', 'tools/ci/workflow_paths.py'], stage='workflow-paths')
     with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
@@ -423,7 +471,7 @@ def main():
             helpers = pool.submit(run, ['make', '-j4', *targets(selected['helpers'])],
                                   env=helper_env, stage='helpers')
             futures.append(helpers)
-        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only, unit_jobs=args.unit_jobs))
+        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline, compile_only=args.compile_only, unit_jobs=args.unit_jobs, products=products))
         errors = []
         for future in futures:
             try:

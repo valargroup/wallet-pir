@@ -8,6 +8,7 @@ import hashlib
 import http.client
 import http.server
 import json
+import os
 import ssl
 import sys
 import time
@@ -16,6 +17,10 @@ from pathlib import Path
 upstream, cert, key, control = sys.argv[1:5]
 # An optional fixed port lets a restarted terminator keep the configured origin.
 port = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+DISCOVERY = "/.well-known/pir-service-discovery"
+# A unified publisher serves discovery on its management listener; an edge
+# proxies that exact path there. Unset, discovery goes to `upstream`.
+discovery_upstream = os.environ.get("DISCOVERY_UPSTREAM") or upstream
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -23,13 +28,57 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
+    def reply(self, status, body, headers=()):
+        self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+            pass
+
+    def discovery_fault(self, fault):
+        """Answer discovery with a fault; False forwards it unchanged."""
+        if fault == "discovery-missing":
+            self.reply(404, b"not found")
+        elif fault == "discovery-redirect":
+            self.reply(302, b"", [("Location", "http://127.0.0.1:1" + DISCOVERY)])
+        elif fault == "discovery-oversize":
+            self.reply(200, b" " * (16 * 1024 + 1))
+        elif fault == "discovery-slow":
+            time.sleep(12)
+            self.reply(200, b"")
+        elif fault == "discovery-unavailable":
+            self.reply(503, b"unavailable")
+        elif fault.startswith("discovery-body:"):
+            self.reply(200, fault.removeprefix("discovery-body:").encode())
+        else:
+            return False
+        return True
+
     def do_GET(self):
         # Read a POSTed batch first so every early fault reply keeps the
         # connection framed; its bytes are forwarded unchanged.
         body = self.rfile.read(int(self.headers.get("Content-Length", "0"))) if self.command == "POST" else None
-        with Path(control + ".requests").open("a") as requests:
-            requests.write(self.path + "\n")
         fault = Path(control).read_text().strip()
+        # Service discovery is logged apart from product requests and only
+        # `discovery-*` faults apply to it; product faults leave it forwarded.
+        if self.path == DISCOVERY:
+            with Path(control + ".discovery").open("a") as requests:
+                requests.write(self.path + "\n")
+            if fault.startswith("discovery-") and self.discovery_fault(fault):
+                return
+            fault = ""
+        else:
+            with Path(control + ".requests").open("a") as requests:
+                requests.write(self.path + "\n")
+        if fault == "missing-inventory" and "/inventories/" in self.path:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if fault == "malformed-current" and self.path.endswith("/current"):
             self.send_response(200)
             self.send_header("Content-Length", "1")
@@ -70,7 +119,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == fault:
                 time.sleep(0.01)
-        if fault == "pause-artifact" and "/artifacts/" in self.path:
+        if fault == "pause-artifact" and ("/artifacts/" in self.path or "/objects/" in self.path):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":
                 time.sleep(0.01)
@@ -122,14 +171,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        connection = http.client.HTTPConnection(upstream, timeout=10)
+        target = discovery_upstream if self.path == DISCOVERY else upstream
+        connection = http.client.HTTPConnection(target, timeout=10)
         try:
             connection.request(self.command, self.path, body=body, headers={k: v for k, v in self.headers.items() if k.lower() in {"if-none-match", "cache-control", "content-type"}})
             response = connection.getresponse()
             # Faults affect actual transport bytes, never replace the producer
             # or the provider loader with a mock implementation.
             status = response.status
-            if fault == "missing" and "/artifacts/" in self.path:
+            if fault == "missing" and ("/artifacts/" in self.path or "/objects/" in self.path):
                 response.read()
                 self.send_response(404)
                 self.send_header("Content-Length", "0")
@@ -147,7 +197,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             first = True
             while chunk := response.read(1 << 20):
-                if first and "/artifacts/" in self.path:
+                if first and ("/artifacts/" in self.path or "/objects/" in self.path):
                     if fault == "corrupt":
                         chunk = bytes([chunk[0] ^ 1]) + chunk[1:]
                     if fault == "truncated":

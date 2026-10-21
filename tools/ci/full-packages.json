@@ -5,6 +5,7 @@
     "pir-runtime",
     "pir-pipeline",
     "pir-sync-manager",
+    "pir-service-discovery",
     "pir-serving",
     "pir-cuda",
     "zakura-server-chain"
@@ -15,7 +16,6 @@
     "status-publisher",
     "enhance-pir-client",
     "native-certificate",
-    "enhance-pir-exercise",
     "enhance-pir-load-test",
     "enhance-publisher",
     "pir-apm",

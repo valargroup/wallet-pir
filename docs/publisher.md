@@ -88,6 +88,23 @@ product probes. Running a task alone does not establish readiness. Existing
 product health and metrics endpoints retain their response contracts. An empty
 configuration is useful for management diagnostics and has no product work.
 
+### Service discovery
+
+The management listener also serves `GET /.well-known/pir-service-discovery`
+with `{"service":"pir-publisher","version":"1.0.0"}` and `Cache-Control:
+no-store`. The version comes from the
+[`pir-service-discovery`](../src/shared/pir-service-discovery/README.md) crate
+the publisher is built with; there is no configuration override. Query servers
+that synchronize over HTTPS (Transparent history and transaction details) read
+it from the configured publisher origin before they start and before every
+synchronization pass, and refuse to start without it.
+
+This is a cutover: before upgrading those query servers, the publisher's HTTPS
+edge must proxy exactly that path, for `GET` only, to the management listener.
+Do not proxy `/health`, `/ready` or any other management or control route. The
+document is compatibility metadata only; it is not health and grants no
+publication authority.
+
 Status retains a bounded dedicated runtime. Receiver also uses a dedicated
 runtime thread because its SQLite connections belong to their owner thread.
 Other product tasks remain independently scheduled with existing preparation
@@ -109,6 +126,21 @@ Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
 or start a replacement while the previous process is still stopping.
+
+## Autonomous Status HTTPS publication
+
+Status captures complete source observations independently of consumers, prepares
+worker database units and router packing material on the publisher, and offers
+`/provider/status/v1/` behind the existing TLS edge. Its private configuration
+keeps `state_dir`, `salt_hex`, `window_blocks` and `private_listen`; worker/router
+control origins are removed. It never waits for consumer acknowledgments.
+
+Only a verified source observation supplies a new timestamp. Immutable artifacts
+are reused across metadata-only publications. Query servers independently fetch,
+verify, load and activate material through `pir-sync-manager`; Status no longer
+uses publisher heartbeats. The twenty-second wallet observation-age limit is
+unchanged. See [Status distribution and cutover](status/status_distributed.md).
+This describes source capability, not a production cutover record.
 
 ## Autonomous Transparent HTTP prototype
 
@@ -243,6 +275,13 @@ ingress to change together. The `serving` object pins the matching query-server
 `--serving-binary` to plan, preflight and deploy. Existing workers retain their
 wallet wire protocol. Ordinary publisher updates do not restart Transparent workers.
 
+An ordinary `publisher-cutover/3` request may set `resume_load: false` when the
+continuous checker is already inactive or failed with `MainPID=0` and has no
+critical latch. The update and subsequent restart leave it stopped; rollback
+restores its captured activity. Omitting the option retains the running-checker
+requirement and resumes it after the independent encrypted-answer probes.
+
+
 Run plan and preflight with `--request` and its exact `--request-sha256`;
 preflight also takes the clean `pir-publisher` `--archive`. Review the returned
 `plan_sha256`, then deploy with `--expect-plan-sha256` and the same inputs.
@@ -271,13 +310,23 @@ release, serving and exact-check fields. Only `http_only` and `ship_runtimes` ma
 change to true for both Transparent products, plus `distribute_prepared` for
 history. All other installed product settings must match. The additional `https`
 object contains the existing publisher TLS `origin`, a `publisher_budget_bytes`
-staging allowance of at least 32 GiB, and three ordered `consumers`: history
-archive, history recent, and combined transaction details. Each consumer names
+positive allowance for additional staging writes, and three ordered `consumers`: history
+archive, history recent, and combined transaction details. Choose the additional
+allowance using the remaining work after completed runtime files are reused;
+the tool reserves 20 percent free disk and checks native cache capacity before
+switching the live fleet. Each consumer names
 its existing `host` and `unit`, a root-owned `config_path`, its root query-server
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate
 new state directories under `/srv`. The archive holds all shards; recent uses
-the archive's existing TLS origin. Fleet-controlled state cannot be reused.
+the archive's existing TLS origin. The archive's `cache_bytes` memory budget is
+explicit so complete holdings can be checked before cutover. Fleet-controlled serving authority cannot be
+reused. After stopping each predecessor, the tool hashes its immutable tables
+and runtime files into the new private object cache by hard link. The provider
+still checks every reused object against fresh HTTPS authority; no active-state
+or withdrawal record is imported. Each consumer's `bootstrap_max_bytes` must
+equal its explicit incremental disk budget. The cutover checks the memory and
+disk reserves again after synchronization.
 
 Pin `https.history_edge` with its `host`, existing archive TLS `origin` and
 installed Caddyfile `before_sha256`. The cutover replaces the frozen shard-number
@@ -289,6 +338,35 @@ limits and credential references remain intact. Archive readiness precedes the
 edge switch and recent startup; all product probes precede commit. Rollback
 restores the previous edges, executable overlays, workers and publisher together,
 while retaining the separate HTTPS state and its observed withdrawals.
+A stalled candidate receives sixty seconds for cooperative shutdown during
+rollback. The locked controller may then terminate that same executable and
+service invocation; changed ownership is refused. It verifies that the process
+has stopped and the writer locks are free before restoring the previous owner.
+Ordinary predecessor stops keep their existing shutdown behavior.
+
+Before stopping the publisher, the HTTPS path checks artifact identities,
+configuration, resource reserves and publication map metadata. It pins both
+active public snapshots with hard links and records their source directories,
+map digests and executable digests. These immutable files do not open another
+writer on the live journals.
+
+Staging reuses completed runtime files from the preceding transaction by hard
+link, including across builds. Native format, parameter, source and checksum
+checks still validate reused files during actual startup. The additional staging
+allowance covers new writes rather than files already present and preserves the
+twenty percent disk reserve. Staging does not load another full archive or start
+temporary query servers.
+
+The actual publisher and consumers load their state once during startup. The
+cutover waits for their readiness and checks encrypted answers before committing
+the cutover. A failed startup or answer check restores the saved fleet. Recovery
+also cleans up transaction-owned temporary validators retained by older attempts.
+
+After the old publisher stops and releases its writer locks, the cutover links
+the reusable cache files into its current publication. It then starts the new
+publisher and waits for canonical HTTPS metadata before starting consumers.
+Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
+the unchanged wallet at its existing TLS origin.
 
 Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
 and sustained-service qualification.

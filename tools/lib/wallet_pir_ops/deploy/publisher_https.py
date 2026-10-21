@@ -8,6 +8,7 @@ import base64
 import copy
 import json
 from pathlib import PurePosixPath
+import shlex
 from urllib.parse import urlsplit
 
 from ..role_config import directory, render, service_settings
@@ -16,6 +17,33 @@ from .publisher import require, sha, stable_unit
 from .publisher_serving import Serving
 
 KINDS = ('history-archive', 'history-recent', 'transaction-details')
+
+# The old workers have stopped before this runs. Only immutable bytes are
+# reused: the provider still verifies every object against fresh HTTPS authority.
+SEED_OBJECTS = r'''
+import hashlib,json,os,pathlib,stat,sys
+request=json.loads(sys.argv[1]); root=pathlib.Path(request['root'])
+assert root.is_dir() and not root.is_symlink()
+objects=root/'objects'; objects.mkdir(mode=0o700,exist_ok=True)
+assert objects.is_dir() and not objects.is_symlink()
+seen=set();count=0;size=0
+for source in request['sources']:
+    source=pathlib.Path(source)
+    if not source.exists():continue
+    assert source.is_dir() and not source.is_symlink()
+    for directory,dirs,files in os.walk(source,followlinks=False):
+        dirs[:]=[d for d in dirs if not (pathlib.Path(directory)/d).is_symlink()]
+        for name in files:
+            path=pathlib.Path(directory)/name; metadata=path.lstat()
+            key=(metadata.st_dev,metadata.st_ino)
+            if not stat.S_ISREG(metadata.st_mode) or key in seen:continue
+            seen.add(key)
+            with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+            target=objects/digest
+            if not target.exists():
+                os.link(path,target,follow_symlinks=False);count+=1;size+=metadata.st_size
+print(json.dumps({'linked_objects':count,'reused_bytes':size}))
+'''
 
 
 def validate(request, inventory):
@@ -26,8 +54,8 @@ def validate(request, inventory):
     require(origin.scheme == 'https' and origin.hostname and origin.port in (None, 443)
             and not origin.username and not origin.password and origin.path in ('', '/')
             and not origin.query and not origin.fragment, 'publisher must use a trusted HTTPS origin')
-    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] >= 32 << 30,
-            'full prepared publications need at least a 32 GiB publisher staging budget')
+    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] > 0,
+            'publisher preparation needs a positive additional disk allowance')
     consumers = settings['consumers']
     edge = settings['history_edge']
     require(isinstance(edge, dict) and set(edge) == {'host', 'origin', 'before_sha256'}
@@ -71,10 +99,14 @@ def validate(request, inventory):
             if consumer['kind'] == 'history-recent':
                 require(body.get('archive_upstream') == edge['origin'], 'recent consumer requires the terminal archive origin')
             else:
+                require(type(body.get('cache_bytes')) is int and body['cache_bytes'] > 0,
+                        'archive cache memory budget must be explicit')
                 require(not body.get('archive_upstream') and host == edge['host'],
                         'terminal archive must be local to its TLS edge')
         require(type(consumer['budget_bytes']) is int and consumer['budget_bytes'] > 0,
                 'consumer storage budget must be explicit')
+        require(body.get('bootstrap_max_bytes') == consumer['budget_bytes'],
+                'consumer transfer limit must match its storage budget')
     expected = set()
     listeners = {}
     for service in ('transparent-history', 'transparent-display'):
@@ -170,6 +202,20 @@ class HttpsServing(Serving):
             effective = units.effective([text, *(d['text'] for d in source['drop_ins'])])
             command = units.exec_start(effective)
             old_binary = units.split_exec(command)[1]
+            arguments = shlex.split(units.split_exec(command)[2])
+            seed_paths = []
+            legacy_active = None
+            legacy_shards = None
+            if specification['kind'] != 'transaction-details':
+                for flag in ('--shard-dir', '--runtime-cache-dir'):
+                    if flag in arguments:
+                        seed_paths.append(arguments[arguments.index(flag) + 1])
+                if '--shard-dir' in arguments:
+                    legacy_shards = arguments[arguments.index('--shard-dir') + 1]
+                if '--active-record' in arguments:
+                    legacy_active = arguments[arguments.index('--active-record') + 1]
+                require(all(path.startswith('/srv/') and '..' not in PurePosixPath(path).parts
+                            for path in seed_paths), 'legacy object sources must stay under /srv')
             require(self.cutover.ex.sha256(host, old_binary) == state['exe_sha256'],
                     'consumer rollback executable differs: ' + unit)
             config = specification['configuration']
@@ -201,13 +247,20 @@ class HttpsServing(Serving):
                         'consumer has an unmanaged launch overlay')
             consumers.append({**specification, 'before': state, 'binary': binary,
                               'old_binary': old_binary, 'root': root,
-                              'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path)})
+                              'unit_text': candidate, 'config_before': self.cutover.ex.read(host, path),
+                              'seed_paths': sorted(set(seed_paths)), 'legacy_active_record': legacy_active,
+                              'legacy_shard_dir': legacy_shards})
         plan['https_consumers'] = consumers
+        from .publisher_warmup import SCRIPT
+        plan['snapshot_warmer_sha256'] = sha(SCRIPT)
         return plan
 
     def stage(self, parent, binary):
         super().stage(parent, binary)
         owner = self.cutover
+        self.pin_production_snapshots(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).stage(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, target = consumer['host'], consumer['binary']
             owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
@@ -218,6 +271,44 @@ class HttpsServing(Serving):
                          self.write(host, path, json.dumps(config, indent=2, sort_keys=True) + '\n', 0o600))
             code, output = owner.ex.run(host, [target, '--config', config_path, '--check'], 60)
             require(code == 0, 'staged HTTPS consumer rejects its configuration: ' + output[-1000:])
+
+    def pin_production_snapshots(self, parent):
+        """Pin public inputs; the actual services validate their bytes at startup."""
+        owner = self.cutover
+        for section, root_key, map_name in (
+                ('transparent_history', 'publication_root', 'shards.json'),
+                ('transaction_details', 'root', 'txid-shards.json')):
+            root = owner.request['configuration'][section]['settings'][root_key]
+            snapshot = json.loads(owner.read(root + '/active.json'))
+            source, digest = snapshot['directory'], snapshot['map_sha256']
+            require(PurePosixPath(source).is_relative_to(root) and '..' not in PurePosixPath(source).parts,
+                    'production snapshot is outside its publication root')
+            map_path = source + '/' + map_name
+            raw_digest = owner.ex.sha256(owner.host, map_path)
+            require(raw_digest is not None, 'production snapshot map is missing')
+            from .publisher_warmup import SnapshotPreparation
+            pin = SnapshotPreparation(self).pin_snapshot(parent, section, source)
+            map_path = pin + '/' + map_name
+            require(owner.ex.sha256(owner.host, map_path) == raw_digest, 'pinned production snapshot differs')
+            if section == 'transparent_history':
+                code, output = owner.ex.run(owner.host,
+                    [parent['plan']['binary'], 'verify-filters', '--shard-dir', pin], 120)
+                try:
+                    canonical = json.loads(output)
+                except ValueError:
+                    canonical = {}
+                require(code == 0 and canonical.get('map_sha256') == digest,
+                        'production history snapshot differs from its active record')
+            else:
+                require(raw_digest == digest, 'production detail snapshot differs from its active record')
+            parent.setdefault('production_snapshots', {})[section] = {
+                'directory': source, 'map_sha256': digest, 'metadata_verified': True,
+                'pin': pin,
+                'raw_map_sha256': raw_digest,
+                'query_binary_sha256': self.release['binary_sha256']}
+            if section == 'transparent_history':
+                parent['production_snapshots'][section]['identity'] = canonical
+            owner.save(parent)
 
     def stage_binary(self, host, target, binary):
         owner = self.cutover
@@ -234,6 +325,8 @@ class HttpsServing(Serving):
 
     def activate(self, parent):
         super().activate(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).seed(parent)
         owner = self.cutover
         # The distribution prefixes can become reachable while consumers are stopped;
         # the publisher starts only after its old writer has released every lock.
@@ -267,8 +360,42 @@ class HttpsServing(Serving):
     def verify(self, parent, restored=False):
         super().verify(parent, restored)
         owner = self.cutover
+        owner.resources()
+        if not restored:
+            deadline = owner.clock() + 900
+            while True:
+                owner.lock.verify()
+                available = True
+                for prefix in ('/provider/v1/current', '/provider/txid/v1/current'):
+                    status, body = owner.ex.http_get(owner.host, owner.request['https']['origin'] + prefix)
+                    try:
+                        current = json.loads(body)
+                        available &= status == 200 and current.get('eligibility') == 'canonical'
+                        available &= current.get('network') == 'main' and len(current.get('inventory_sha256', '')) == 64
+                    except (ValueError, TypeError, AttributeError):
+                        available = False
+                if available:
+                    break
+                require(owner.clock() < deadline, 'prepared HTTPS publication readiness deadline exceeded')
+                owner.sleep(3)
+            owner.resources()
         for consumer in parent['plan']['serving']['https_consumers']:
             host, unit = consumer['host'], consumer['unit']
+            if not restored and consumer['seed_paths']:
+                def seed(consumer=consumer):
+                    sources = consumer['seed_paths']
+                    if consumer['legacy_active_record']:
+                        record = owner.ex.read(consumer['host'], consumer['legacy_active_record'])
+                        if record:
+                            active = json.loads(record)['directory']
+                            require(active.startswith('/srv/') and '..' not in PurePosixPath(active).parts,
+                                    'legacy active bytes are outside /srv')
+                            sources = [p for p in sources if p != consumer['legacy_shard_dir']] + [active]
+                    code, output = owner.ex.run(consumer['host'], ['python3', '-c', SEED_OBJECTS,
+                        json.dumps({'root': consumer['root'], 'sources': sources})], 300)
+                    require(code == 0, 'could not reuse legacy immutable objects: ' + output[-1000:])
+                    parent.setdefault('reused_objects', {})[consumer['unit']] = json.loads(output)
+                owner.effect(parent, 'reuse immutable objects ' + unit, seed)
             owner.effect(parent, ('restore start ' if restored else 'start HTTPS ') + unit,
                          lambda host=host, unit=unit: owner.ex.systemctl(host, 'start', unit))
             deadline = owner.clock() + 900
@@ -293,6 +420,11 @@ class HttpsServing(Serving):
                 # Recent startup verifies the terminal archive through this TLS
                 # origin, so expose the ready archive before starting recent.
                 self.route_history(parent)
+            resources = owner.ex.publisher_resources(host, [consumer['root'] + '/.capacity-check'])
+            require(all(disk['available'] >= disk['total'] * .2 for disk in resources['disks'].values()),
+                    'HTTPS synchronization used the reserved disk headroom')
+            require(resources['memory_available'] >= resources['memory_total'] * .2,
+                    'HTTPS synchronization used the reserved memory headroom')
 
     def route(self, parent):
         # Called early, before producer startup, then again by the common cutover.
@@ -310,6 +442,8 @@ class HttpsServing(Serving):
 
     def restore_guard(self, parent):
         super().restore_guard(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).guard(parent)
         edge = parent['plan']['serving']['history_edge']
         require(self.cutover.ex.read(edge['host'], '/etc/caddy/Caddyfile') in (edge['before'], edge['after']),
                 'history edge changed outside the HTTPS transaction')
@@ -371,3 +505,17 @@ class HttpsServing(Serving):
     @staticmethod
     def touched(parent, unit):
         return unit in parent.get('https_started', [])
+
+    def cleanup_staging(self, parent):
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).cleanup(parent)
+
+    def unchanged_during_staging(self, plan):
+        super().unchanged_during_staging(plan)
+        owner = self.cutover
+        require(all(stable_unit(owner.ex.probe_unit(c['host'], c['unit'])) == c['before']
+                    for c in plan['https_consumers']), 'Transparent consumer changed during staging')
+        edge = plan['history_edge']
+        require(owner.ex.read(edge['host'], '/etc/caddy/Caddyfile') == edge['before'] and
+                stable_unit(owner.ex.probe_unit(edge['host'], 'caddy.service')) == edge['unit'],
+                'history edge changed during staging')

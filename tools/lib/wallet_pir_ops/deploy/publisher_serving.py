@@ -20,12 +20,18 @@ CADDY = '/etc/caddy/Caddyfile'
 ROLES = ('packing-router', 'query-ingress')
 FALLBACK = '\thandle {\n\t\treverse_proxy 127.0.0.1:8080\n\t}'
 WALLET = '\thandle /v1/enhance/* {\n\t\treverse_proxy 127.0.0.1:8082\n\t}\n'
+DISCOVERY_PATH = '/.well-known/pir-service-discovery'
+DISCOVERY = '\thandle ' + DISCOVERY_PATH + ' {\n\t\treverse_proxy 127.0.0.1:18080\n\t}\n'
 
 
 def candidate(text):
     require(text.count(WALLET) == 1 and FALLBACK not in text
             and text.count('\thandle {\n\t\trespond 404\n\t}') == 1,
             'expected the deployed wallet ingress and private publisher routes')
+    require(text.count(DISCOVERY) <= 1 and text.count(DISCOVERY_PATH) == text.count(DISCOVERY),
+            'unknown publisher discovery route')
+    if DISCOVERY not in text:
+        text = text.replace(WALLET, WALLET + DISCOVERY)
     return text
 
 
@@ -99,6 +105,15 @@ class Serving:
 
     def journal(self, parent):
         return ServingJournal(self.cutover, parent)
+
+    def unchanged_during_staging(self, plan):
+        owner = self.cutover
+        require(all(stable_unit(owner.ex.probe_unit(role['host'], role['unit'])) == before
+                    for role, before in zip(plan['roles'], plan['units'])),
+                'query service changed during staging')
+        require(owner.read(CADDY) == plan['edge_before'] and
+                stable_unit(owner.ex.probe_unit(owner.host, 'caddy.service')) == plan['edge'],
+                'wallet edge changed during staging')
 
     def stage(self, parent, binary):
         owner, deployer = self.cutover, self.deployer

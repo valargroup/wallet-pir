@@ -6,14 +6,14 @@ use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 
 #[derive(Clone)]
 struct Mock {
     block_hex: String,
     hash: String,
-    mempool_id: String,
+    mempool_id: Arc<RwLock<String>>,
     tip_reads: Arc<AtomicUsize>,
     move_tip: bool,
     bad_block_hash: bool,
@@ -33,7 +33,7 @@ async fn rpc(State(mock): State<Mock>, Json(input): Json<Value>) -> Json<Value> 
             }
         }
         "getblock" => json!(mock.block_hex),
-        "getrawmempool" => json!([mock.mempool_id]),
+        "getrawmempool" => json!([mock.mempool_id.read().unwrap().clone()]),
         method => panic!("unexpected RPC {method}"),
     };
     Json(json!({"result":result,"error":null,"id":"enhance-pir"}))
@@ -43,7 +43,21 @@ pub(crate) async fn fixture(
     move_tip: bool,
     bad_block_hash: bool,
 ) -> (ZakuraClient, tokio::task::JoinHandle<()>) {
+    let (client, job, _) = controlled_fixture(move_tip, bad_block_hash).await;
+    (client, job)
+}
+
+pub(crate) async fn controlled_fixture(
+    move_tip: bool,
+    bad_block_hash: bool,
+) -> (
+    ZakuraClient,
+    tokio::task::JoinHandle<()>,
+    Arc<RwLock<String>>,
+) {
     let (block_hex, hash, mempool_id) = zakura_server_chain::testing::status::regtest_genesis();
+    let mempool_id = Arc::new(RwLock::new(mempool_id));
+    let control = mempool_id.clone();
     let mock = Mock {
         block_hex,
         hash,
@@ -66,7 +80,7 @@ pub(crate) async fn fixture(
     let cookie = dir.path().join("cookie");
     std::fs::write(&cookie, "user:password").unwrap();
     let client = ZakuraClient::from_cookie_file(format!("http://{addr}"), cookie).unwrap();
-    (client, job)
+    (client, job, control)
 }
 
 #[test]

@@ -1,13 +1,11 @@
-//! Status worker and router roles: private control, candidate preparation and
-//! the query routes. The router's query listener is the wallet front door for
-//! `/v1/status/*`. Transport authentication is supplied by restricted SSH
-//! forwarding; every listener and configured peer must be loopback-only.
+//! Autonomous Status HTTPS consumers. Private loopback routes carry evaluation,
+//! identity and readiness; only the publisher owns source observations.
 mod admission;
 mod serving;
+mod sync;
 mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]
 mod wallet_tests;
-
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
@@ -16,72 +14,27 @@ use axum::{
     Json, Router,
 };
 use ipir_sp::server::MatvecBackend;
-use pir_control::{admission::ClientSlots, Watchdog};
-use serde::{Deserialize, Serialize};
-use serving::{bounded, evaluate, query, serving_http_client, shared_bytes, HttpState};
-use sha2::{Digest, Sha256};
+use pir_control::admission::ClientSlots;
+use serving::{evaluate, query, serving_http_client, shared_bytes, HttpState};
+use status_query_server::publication::Failure;
 use status_query_server::{
-    distributed::*, now_ms, protocol::*, telemetry as counters, Controller, Generation,
+    distributed::*, now_ms, protocol::*, publication::*, telemetry as counters, Controller,
+    Generation,
 };
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::File,
     path::{Path as FsPath, PathBuf},
     sync::Arc,
-    time::{Duration, Instant},
 };
 use tokio::sync::Mutex;
-
-/// Concurrent wallet queries admitted per client address.
 pub const PER_CLIENT_CONCURRENCY: usize = 2;
-
-pub async fn serve_role_on(
-    config: RoleConfig,
-    listen: tokio::net::TcpListener,
-    query_listen: Option<tokio::net::TcpListener>,
-) -> Result<(), Failure> {
-    let RoleConfig {
-        role,
-        network_hex,
-        state_dir,
-        listen: _,
-        query_listen: _,
-        artifact_origin,
-        worker_origin,
-        cuda,
-    } = config;
-    let network: Hash = hex::decode(network_hex)?
-        .try_into()
-        .map_err(|_| "network must be 32 bytes")?;
-    Service::open(
-        role,
-        network,
-        state_dir,
-        artifact_origin,
-        worker_origin,
-        cuda,
-    )?
-    .serve_listeners(listen, query_listen)
-    .await?;
-    Ok(())
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Fence {
-    version: u32,
-    network: Hash,
-    epoch: u64,
-    generation: u64,
-    manifest: Option<Hash>,
-}
+#[derive(Default)]
 struct StateData {
-    fence: Fence,
-    candidate: Option<(Generation, Hash)>,
-    candidate_artifact: Option<Arc<Vec<u8>>>,
-    preparation_cache: Option<Arc<Generation>>,
     controller: Option<Controller>,
-    contact: Watchdog,
+    inventory: Option<Object>,
+    synchronization: String,
     poisoned: bool,
+    router_holds: Vec<Arc<Generation>>,
 }
 #[derive(Clone)]
 pub struct Service {
@@ -91,603 +44,225 @@ pub struct Service {
     dir: PathBuf,
     _lock: Arc<File>,
     state: Arc<Mutex<StateData>>,
-    /// Serializes the control handlers that change the fence or candidate, so
-    /// activation can persist its fence without holding the `state` lock that
-    /// every query takes.
-    control: Arc<Mutex<()>>,
-    preparation: Arc<Mutex<()>>,
-    // Query packing stays on the global pool; preparation cannot enqueue there.
-    preparation_pool: Option<Arc<rayon::ThreadPool>>,
-    http: reqwest::Client,
-    serving_http: reqwest::Client,
-    artifact_origin: String,
     worker_origin: String,
-    cuda: bool,
+    serving_http: reqwest::Client,
     permits: Arc<admission::Admission>,
     clients: Arc<ClientSlots>,
 }
-
-fn preparation_pool() -> Result<rayon::ThreadPool, Failure> {
-    let threads = std::env::var("STATUS_PREPARATION_THREADS")
-        .ok()
-        .map(|v| v.parse::<usize>())
-        .transpose()?
-        .unwrap_or(1);
-    build_preparation_pool(threads)
-}
-/// Preparation runs below the query path: on a shared CPU host the worker's
-/// evaluations and the router's packing must preempt candidate preparation.
-const PREPARATION_NICE: i32 = 10;
-fn build_preparation_pool(threads: usize) -> Result<rayon::ThreadPool, Failure> {
-    // Independent of RAYON_NUM_THREADS, the online query CPU budget. Explicitly
-    // bounded to prevent accidental CPU oversubscription from deployment config;
-    // these threads run below query priority, so up to eight is safe on the
-    // 8-vCPU host, where four let the serial pipeline exceed the freshness limit.
-    if !(1..=8).contains(&threads) {
-        return Err("STATUS_PREPARATION_THREADS must be between 1 and 8".into());
-    }
-    Ok(rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .thread_name(|i| format!("status-prepare-{i}"))
-        .start_handler(|_| lower_thread_priority(PREPARATION_NICE))
-        .build()?)
-}
-/// Lower only the calling thread's scheduling priority (Linux per-thread nice).
-fn lower_thread_priority(nice: i32) {
-    #[cfg(target_os = "linux")]
-    // SAFETY: setpriority on the calling thread's own tid touches no memory.
-    unsafe {
-        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
-        if libc::setpriority(libc::PRIO_PROCESS, tid, nice) != 0 {
-            tracing::warn!("could not lower Status preparation thread priority");
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = nice;
-}
-
-fn persist(dir: &FsPath, fence: &Fence) -> Result<(), Failure> {
-    let bytes = serde_json::to_vec(fence)?;
-    pir_control::durable::write_atomic(dir, "fence.json", |file| file.write_all(&bytes))?;
-    pir_control::durable::sync_dir(dir)?;
-    Ok(())
-}
-/// Persist a fence on the blocking pool. An ext4 journal commit can hold
-/// `fsync` for hundreds of milliseconds; on a runtime worker that froze every
-/// task queued behind it, including queries and lock-free telemetry.
-async fn persist_off_runtime(dir: &FsPath, fence: &Fence) -> Result<(), ()> {
-    let (dir, fence) = (dir.to_path_buf(), fence.clone());
-    tokio::task::spawn_blocking(move || persist(&dir, &fence).map_err(drop))
-        .await
-        .unwrap_or(Err(()))
-}
 impl Service {
-    pub fn open(
+    fn open(
         role: Role,
         network: Hash,
         dir: PathBuf,
-        artifact_origin: String,
         worker_origin: String,
-        cuda: bool,
     ) -> Result<Self, Failure> {
-        loopback_origin(&artifact_origin)?;
-        loopback_origin(&worker_origin)?;
-        if network == [0; 32] || (role == Role::Router && cuda) {
-            return Err("invalid Status role configuration".into());
+        if role == Role::Router {
+            loopback_origin(&worker_origin)?;
         }
-        fs::create_dir_all(&dir)?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(dir.join("role.lock"))?;
-        lock.try_lock().map_err(|e| e.to_string())?;
-        let fence = if dir.join("fence.json").exists() {
-            let f: Fence = serde_json::from_slice(&fs::read(dir.join("fence.json"))?)?;
-            if f.version != 1 || f.network != network {
-                return Err("incompatible Status fence".into());
-            }
-            f
-        } else {
-            Fence {
-                version: 1,
-                network,
-                epoch: 0,
-                generation: 0,
-                manifest: None,
-            }
-        };
-        let incarnation = hex::encode(rand::random::<[u8; 32]>());
+        let lock = pir_pipeline::service::lock(&dir)?;
         Ok(Self {
             role,
             network,
-            incarnation,
+            incarnation: hex::encode(rand::random::<[u8; 32]>()),
             dir,
             _lock: Arc::new(lock),
-            state: Arc::new(Mutex::new(StateData {
-                fence,
-                candidate: None,
-                candidate_artifact: None,
-                preparation_cache: None,
-                controller: None,
-                contact: Watchdog::default(),
-                poisoned: false,
-            })),
-            control: Arc::new(Mutex::new(())),
-            preparation: Arc::new(Mutex::new(())),
-            preparation_pool: Some(Arc::new(preparation_pool()?)),
-            serving_http: serving_http_client()?,
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
-            artifact_origin,
+            state: Arc::new(Mutex::new(StateData::default())),
             worker_origin,
-            cuda,
+            serving_http: serving_http_client()?,
             permits: Arc::new(admission::Admission::production()),
             clients: Arc::new(ClientSlots::new(PER_CLIENT_CONCURRENCY)),
         })
     }
-    fn binding(&self, state: &StateData) -> Binding {
-        Binding {
-            epoch: state.fence.epoch,
-            incarnation: self.incarnation.clone(),
-        }
-    }
-    fn check(&self, state: &StateData, binding: &Binding) -> Result<(), StatusCode> {
-        if state.poisoned || binding != &self.binding(state) || binding.epoch == 0 {
-            Err(StatusCode::CONFLICT)
-        } else {
-            Ok(())
-        }
-    }
     async fn serving(&self) -> Result<Controller, StatusCode> {
         let state = self.state.lock().await;
-        let role = match self.role {
-            Role::Worker => "worker",
-            Role::Router => "router",
-        };
         if state.poisoned {
-            counters::admission_rejected(role, "poisoned");
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        if !state.contact.live() {
-            counters::admission_rejected(role, "watchdog_expired");
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        }
-        state.controller.clone().ok_or_else(|| {
-            counters::admission_rejected(role, "no_controller");
-            StatusCode::SERVICE_UNAVAILABLE
-        })
+        let c = state
+            .controller
+            .clone()
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        c.check(&c.current())?;
+        Ok(c)
     }
-    /// Control, artifact, public material, worker evaluation and telemetry.
-    /// Never contains the public query route.
     pub fn control_routes(&self) -> Router {
         Router::new()
             .route("/control/health", get(health))
             .route("/control/identity", get(identity))
-            .route("/control/fence", post(fence))
-            .route("/control/prepare", post(prepare))
-            .route("/control/prepare-refresh", post(prepare_refresh))
-            .route("/control/activate", post(activate))
-            .route("/control/heartbeat", post(heartbeat))
-            .route("/artifact/:id", get(artifact))
-            .route("/public/:id", get(public))
+            .route("/v1/provider-status", get(provider_status))
+            .route("/v1/provider-ready/:id", get(provider_ready))
+            .route("/v1/provider-pin/:id", post(provider_pin))
+            .route("/v1/provider-commit/:id", post(provider_commit))
             .route("/evaluate", post(worker_query))
-            .layer(axum::middleware::from_fn(|request, next| {
-                telemetry::observe("worker", request, next)
+            .layer(axum::middleware::from_fn(|req, next| {
+                telemetry::observe("worker", req, next)
             }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
             .merge(telemetry::routes())
     }
-    /// The router's wallet-facing routes, with the same body limit and
-    /// admission as the merged listener.
     pub fn query_routes(&self) -> Router {
         Router::new()
             .route("/v1/status/init", get(router_init))
             .route("/v1/status/session/:id", get(router_session))
             .route("/v1/status/query", post(router_query))
-            .layer(axum::middleware::from_fn(|request, next| {
-                telemetry::observe("router", request, next)
+            .layer(axum::middleware::from_fn(|req, next| {
+                telemetry::observe("router", req, next)
             }))
             .layer(DefaultBodyLimit::max(512 * 1024))
             .with_state(self.clone())
     }
-    /// Merged single-listener layout.
     pub fn routes(&self) -> Router {
         self.control_routes().merge(self.query_routes())
     }
-    /// With `query_listen`, a router serves only the wallet routes there and
-    /// everything else on `listen`. Without it, both share `listen`.
-    pub async fn serve_listeners(
-        self,
-        listen: tokio::net::TcpListener,
-        query_listen: Option<tokio::net::TcpListener>,
-    ) -> Result<(), Failure> {
-        let listen_addr = listen.local_addr()?;
-        let query_addr = query_listen
-            .as_ref()
-            .map(|listener| listener.local_addr())
-            .transpose()?;
-        if !listen_addr.ip().is_loopback()
-            || query_addr.is_some_and(|addr| !addr.ip().is_loopback())
-        {
-            return Err("Status role listener must be loopback".into());
-        }
-        let Some(queries) = query_listen else {
-            axum::serve(listen, self.routes()).await?;
-            return Ok(());
-        };
-        if self.role != Role::Router {
-            return Err("query_listen applies only to the router role".into());
-        }
-        if query_addr == Some(listen_addr) {
-            return Err("Status query listener must differ from the control listener".into());
-        }
-        let control = axum::serve(listen, self.control_routes());
-        let queries = axum::serve(queries, self.query_routes());
-        tokio::select! {
-            result = control => result?,
-            result = queries => result?,
-        }
-        Ok(())
-    }
 }
-/// The executable this process runs and its incarnation. Kept off
-/// [`Health`], which refuses unknown fields, so an older controller can still
-/// read a newer role's health during a rolling deploy.
+pub async fn serve_role_on(
+    config: RoleConfig,
+    listen: tokio::net::TcpListener,
+    query_listen: Option<tokio::net::TcpListener>,
+) -> Result<(), Failure> {
+    let network = hex::decode(&config.network_hex)?
+        .try_into()
+        .map_err(|_| "network must be 32 bytes")?;
+    let service = Service::open(
+        config.role,
+        network,
+        config.state_dir.clone(),
+        config.worker_origin.clone(),
+    )?;
+    let task = sync::StatusSync::new(service.clone(), &config)?;
+    let mut manager = pir_sync_manager::SyncManager::new(task);
+    if let Err(error) = manager.poll_once().await {
+        tracing::warn!(%error, "Status initial synchronization deferred");
+    }
+    let mut tasks = pir_pipeline::service::Tasks::default();
+    let polling = tokio::spawn(manager.run());
+    tasks.own(&polling);
+    if let Some(query_listener) = query_listen {
+        let app = service.query_routes();
+        let wallet = tokio::spawn(async move { axum::serve(query_listener, app).await });
+        tasks.own(&wallet);
+        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = wallet => { result??; }, result = polling => { result?; return Err("Status synchronization stopped".into()); } }
+    } else {
+        tokio::select! { result = axum::serve(listen, service.routes()) => result?, result = polling => { result?; return Err("Status synchronization stopped".into()); } }
+    }
+    Ok(())
+}
 async fn identity(State(s): State<Service>) -> Json<serde_json::Value> {
-    let state = s.state.lock().await;
-    let process = pir_control::Identity::process();
-    Json(serde_json::json!({
-        "binary_sha256": process.binary_sha256,
-        "incarnation": s.binding(&state).incarnation,
-        "started_unix": process.started_unix,
-    }))
+    Json(
+        serde_json::json!({"binary_sha256":pir_control::Identity::process().binary_sha256,"incarnation":s.incarnation}),
+    )
 }
 async fn health(State(s): State<Service>) -> Json<Health> {
     let state = s.state.lock().await;
-    Json(Health {
-        role: s.role,
-        binding: s.binding(&state),
-        cached_rows: state
-            .preparation_cache
-            .as_ref()
-            .map(|g| g.manifest().rows_digest),
-        active: state
+    let manifest = state
+        .controller
+        .as_ref()
+        .map(|c| c.current().manifest().clone());
+    let ready = !state.poisoned
+        && state
             .controller
             .as_ref()
-            .map(|c| c.current().manifest().id()),
-        ready: !state.poisoned
-            && state.contact.live()
-            && state
-                .controller
-                .as_ref()
-                .is_some_and(|c| c.current().manifest().fresh(now_ms()).is_ok()),
+            .is_some_and(|c| c.check(&c.current()).is_ok());
+    Json(Health {
+        role: s.role,
+        binding: Binding {
+            epoch: manifest.as_ref().map_or(0, |m| m.recovery_epoch),
+            incarnation: s.incarnation.clone(),
+        },
+        active: manifest.as_ref().map(Manifest::id),
+        cached_rows: manifest.as_ref().map(|m| m.rows_digest),
+        ready,
     })
 }
-async fn fence(
-    State(s): State<Service>,
-    Json(b): Json<Binding>,
-) -> Result<Json<Binding>, StatusCode> {
-    let _control = s.control.lock().await;
-    let mut state = s.state.lock().await;
-    if state.poisoned
-        || b.incarnation != s.incarnation
-        || b.epoch < state.fence.epoch
-        || b.epoch == 0
-    {
-        return Err(StatusCode::CONFLICT);
-    }
-    if b.epoch > state.fence.epoch || state.controller.is_none() {
-        if let Some(c) = &state.controller {
-            c.revoke();
-        }
-        state.controller = None;
-        state.candidate = None;
-        state.candidate_artifact = None;
-        state.contact.clear();
-        state.fence.epoch = b.epoch;
-        state.fence.manifest = None;
-        if persist_off_runtime(&s.dir, &state.fence).await.is_err() {
-            state.poisoned = true;
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
-    Ok(Json(s.binding(&state)))
-}
-async fn prepare(
-    State(s): State<Service>,
-    Json(p): Json<Prepare>,
-) -> Result<Json<Ready>, StatusCode> {
-    let began = Instant::now();
-    let _permit = s
-        .preparation
-        .try_lock()
-        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
-    p.manifest
-        .fresh(now_ms())
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let previous = {
-        let state = s.state.lock().await;
-        s.check(&state, &p.binding)?;
-        if p.manifest.network != s.network
-            || p.manifest.recovery_epoch != p.binding.epoch
-            || p.manifest.generation <= state.fence.generation
-        {
-            return Err(StatusCode::CONFLICT);
-        }
-        if let Some((g, digest)) = &state.candidate {
-            if g.manifest() == &p.manifest && digest == &p.artifact_digest {
-                return Ok(Json(Ready {
-                    binding: p.binding,
-                    manifest: g.manifest().clone(),
-                    artifact_digest: *digest,
-                }));
-            }
-        }
-        if state.controller.as_ref().is_some_and(|c| !c.can_prepare()) {
-            return Err(StatusCode::TOO_MANY_REQUESTS);
-        }
-        state
-            .preparation_cache
-            .clone()
-            .or_else(|| state.controller.as_ref().map(Controller::current))
-    };
-    let limit = artifact_limit(s.role);
-    let response = s
-        .http
-        .get(format!(
-            "{}/artifact/{}",
-            s.artifact_origin,
-            hex::encode(p.artifact_digest)
-        ))
-        .send()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let bytes = bounded(response, limit).await?;
-    if (s.role == Role::Router && bytes.len() != limit)
-        || <Hash>::from(Sha256::digest(&bytes)) != p.artifact_digest
-    {
-        return Err(StatusCode::BAD_GATEWAY);
-    }
-    let fetch_ms = began.elapsed().as_millis();
-    let manifest = p.manifest.clone();
-    let role = s.role;
-    let cuda = s.cuda;
-    let preparation_pool = s.preparation_pool.clone();
-    let g = tokio::task::spawn_blocking(move || {
-        let backend = if cuda {
-            MatvecBackend::Cuda { device: 0 }
-        } else {
-            MatvecBackend::Cpu
-        };
-        preparation_pool
+async fn provider_status(State(s): State<Service>) -> Json<ProviderStatus> {
+    let state = s.state.lock().await;
+    Json(ProviderStatus {
+        inventory: state.inventory.clone(),
+        manifest: state
+            .controller
             .as_ref()
-            .ok_or(Error::Unavailable)?
-            .install(|| prepare_candidate(role, manifest, bytes, previous.as_deref(), backend))
+            .map(|c| c.current().manifest().clone()),
+        synchronization: state.synchronization.clone(),
     })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
-    let prepare_ms = began.elapsed().as_millis();
-    let (g, artifact, digest) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
-        let artifact = if role == Role::Worker {
-            Some(Arc::new(g.hint_bytes()?))
-        } else {
-            None
-        };
-        let digest = artifact.as_ref().map_or(g.manifest().public_digest, |a| {
-            Sha256::digest(a.as_slice()).into()
-        });
-        Ok((g, artifact, digest))
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    tracing::info!(
-        ?role,
-        fetch_ms,
-        prepare_ms,
-        total_ms = began.elapsed().as_millis(),
-        source_age_ms = now_ms().saturating_sub(g.manifest().observed_ms),
-        "Status role preparation"
-    );
-    let _control = s.control.lock().await;
-    let mut state = s.state.lock().await;
-    // Cached calculations are never authority. They may survive a fence, but
-    // all serving requires a new matching prepare/activation decision.
-    release_off_runtime(state.preparation_cache.replace(Arc::new(g.clone())));
-    s.check(&state, &p.binding)?;
-    g.manifest()
-        .fresh(now_ms())
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let ready = Ready {
-        binding: p.binding,
-        manifest: g.manifest().clone(),
-        artifact_digest: digest,
-    };
-    release_off_runtime(state.candidate.replace((g, digest)));
-    release_off_runtime(std::mem::replace(&mut state.candidate_artifact, artifact));
-    Ok(Json(ready))
 }
-/// Free replaced generations and artifacts on a blocking thread. Queries wait
-/// on the role state and views locks, and freeing a generation's material while
-/// holding them stalled the router's query path for hundreds of milliseconds.
-fn release_off_runtime<T: Send + 'static>(value: T) {
-    tokio::task::spawn_blocking(move || drop(value));
-}
-/// Reaffirm only identical content and coverage; the coordinator must have
-/// completed a fresh identical source observation. This never rebuilds material.
-async fn prepare_refresh(
+async fn provider_ready(
     State(s): State<Service>,
-    Json(a): Json<Activate>,
-) -> Result<Json<Ready>, StatusCode> {
-    let _permit = s
-        .preparation
-        .try_lock()
-        .map_err(|_| StatusCode::TOO_MANY_REQUESTS)?;
-    let _control = s.control.lock().await;
-    let mut state = s.state.lock().await;
-    s.check(&state, &a.binding)?;
-    a.manifest
-        .fresh(now_ms())
+    Path(id): Path<String>,
+) -> Result<Json<bool>, StatusCode> {
+    let id: Hash = hex::decode(id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let c = state.controller.as_ref().ok_or(StatusCode::CONFLICT)?;
-    if a.manifest.generation <= state.fence.generation {
-        return Err(StatusCode::CONFLICT);
-    }
-    let previous = c.current();
-    let mut expected = previous.manifest().clone();
-    if a.manifest.observed_ms < expected.observed_ms {
-        return Err(StatusCode::CONFLICT);
-    }
-    expected.generation = a.manifest.generation;
-    expected.observed_ms = a.manifest.observed_ms;
-    if expected != a.manifest {
-        return Err(StatusCode::CONFLICT);
-    }
-    let mut g = (*previous).clone();
-    g.assign_manifest(a.manifest.clone());
-    release_off_runtime(state.candidate.replace((g, a.manifest.public_digest)));
-    release_off_runtime(state.candidate_artifact.take());
-    Ok(Json(Ready {
-        binding: a.binding,
-        manifest: a.manifest.clone(),
-        artifact_digest: a.manifest.public_digest,
-    }))
+    let c = s.serving().await?;
+    let g = c.resolve(id)?;
+    c.check(&g)?;
+    Ok(Json(true))
 }
-
-async fn activate(
+/// The single colocated router pins its old and incoming views until its local
+/// activation is durable. These references provide backpressure through the
+/// core's existing retention bound; they never renew source observation age.
+async fn provider_pin(
     State(s): State<Service>,
-    Json(a): Json<Activate>,
-) -> Result<Json<Ready>, StatusCode> {
-    // Holding `control` keeps the fence and candidate unchanged while the new
-    // fence is persisted, so queries keep serving the current generation
-    // instead of waiting on the fsync behind the `state` lock.
-    let _control = s.control.lock().await;
-    let next = {
-        let state = s.state.lock().await;
-        s.check(&state, &a.binding)?;
-        a.manifest
-            .fresh(now_ms())
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        if let Some(c) = &state.controller {
-            if c.current().manifest() == &a.manifest {
-                return Ok(Json(Ready {
-                    binding: a.binding,
-                    manifest: a.manifest.clone(),
-                    artifact_digest: a.manifest.public_digest,
-                }));
-            }
-        }
-        let (candidate, _) = state.candidate.as_ref().ok_or(StatusCode::CONFLICT)?;
-        let mut expected = candidate.manifest().clone();
-        // The worker binds the router's public digest only at the durable activation decision.
-        if s.role == Role::Worker {
-            expected.public_digest = a.manifest.public_digest;
-        }
-        if expected != a.manifest || a.manifest.generation <= state.fence.generation {
-            return Err(StatusCode::CONFLICT);
-        }
-        let mut next = state.fence.clone();
-        next.generation = a.manifest.generation;
-        next.manifest = Some(a.manifest.id());
-        next
-    };
-    let persisted = persist_off_runtime(&s.dir, &next).await;
-    let mut state = s.state.lock().await;
-    if persisted.is_err() {
-        if let Some(c) = &state.controller {
-            c.revoke();
-        }
-        state.poisoned = true;
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    // Every handler that changes the fence or candidate holds `control`, so the
-    // state validated above cannot have moved; refuse rather than assume.
-    if state.fence.epoch != next.epoch
-        || state.fence.generation >= next.generation
-        || state.candidate.is_none()
-    {
-        state.poisoned = true;
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    state.poisoned = true;
-    let (mut candidate, _) = state.candidate.take().unwrap();
-    release_off_runtime(state.candidate_artifact.take());
-    candidate.assign_manifest(a.manifest.clone());
-    if let Some(c) = &state.controller {
-        release_off_runtime(
-            c.activate_deferring_release(candidate)
-                .map_err(|_| StatusCode::CONFLICT)?,
-        );
-    } else {
-        state.controller = Some(Controller::new(candidate));
-    }
-    state.fence = next;
-    state.poisoned = false;
-    state.contact.renew();
-    Ok(Json(Ready {
-        binding: a.binding,
-        manifest: a.manifest.clone(),
-        artifact_digest: a.manifest.public_digest,
-    }))
-}
-async fn heartbeat(
-    State(s): State<Service>,
-    Json(a): Json<Activate>,
-) -> Result<Json<Binding>, StatusCode> {
-    let mut state = s.state.lock().await;
-    s.check(&state, &a.binding)?;
-    let c = state.controller.as_ref().ok_or(StatusCode::CONFLICT)?;
-    // Contact is bound to authority and process incarnation, not to the
-    // retention lifetime of a session. Fast successive publications can evict
-    // a heartbeat's old session while the same authority is still valid.
-    if a.manifest.network != s.network
-        || a.manifest.recovery_epoch != state.fence.epoch
-        || a.manifest.generation == 0
-        || a.manifest.generation > state.fence.generation
-        || c.revoked()
-    {
-        return Err(StatusCode::CONFLICT);
-    }
-    state.contact.renew();
-    Ok(Json(a.binding))
-}
-async fn artifact(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
+    Path(id): Path<String>,
+) -> Result<Json<bool>, StatusCode> {
     if s.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);
     }
-    let shared = {
-        let state = s.state.lock().await;
-        let (_, digest) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-        if hex::encode(digest) != id || state.poisoned {
-            return Err(StatusCode::NOT_FOUND);
-        }
-        state
-            .candidate_artifact
-            .clone()
-            .ok_or(StatusCode::NOT_FOUND)?
-    };
-    // Copying ~100 MB while holding the role state lock stalled every query
-    // waiting on that lock; serve the shared bytes after releasing it.
-    Ok(shared_bytes(shared))
+    let id: Hash = hex::decode(id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut state = s.state.lock().await;
+    if state.poisoned {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let controller = state
+        .controller
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let generation = controller.resolve(id)?;
+    controller.check(&generation)?;
+    state
+        .router_holds
+        .retain(|g| g.manifest().fresh(now_ms()).is_ok());
+    if state.router_holds.iter().any(|g| g.manifest().id() == id) {
+        return Ok(Json(true));
+    }
+    if state.router_holds.len() >= 2 {
+        return Err(StatusCode::CONFLICT);
+    }
+    state.router_holds.push(generation);
+    Ok(Json(true))
 }
-async fn public(State(s): State<Service>, Path(id): Path<String>) -> Result<Bytes, StatusCode> {
-    let shared = {
-        let state = s.state.lock().await;
-        let (g, _) = state.candidate.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-        if s.role != Role::Router || hex::encode(g.manifest().public_digest) != id || state.poisoned
-        {
-            return Err(StatusCode::NOT_FOUND);
-        }
-        g.public().clone()
-    };
-    Ok(shared_bytes(shared))
+async fn provider_commit(
+    State(s): State<Service>,
+    Path(id): Path<String>,
+) -> Result<Json<bool>, StatusCode> {
+    if s.role != Role::Worker {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let id: Hash = hex::decode(id)
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .try_into()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut state = s.state.lock().await;
+    if state.poisoned {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let controller = state
+        .controller
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let generation = controller.resolve(id)?;
+    controller.check(&generation)?;
+    if !state.router_holds.iter().any(|g| g.manifest().id() == id) {
+        return Err(StatusCode::CONFLICT);
+    }
+    state.router_holds.retain(|g| g.manifest().id() == id);
+    Ok(Json(true))
 }
+
 async fn worker_query(State(s): State<Service>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
     if s.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);
@@ -753,386 +328,4 @@ async fn router_query(
     let result = query(State(http_state), body).await?;
     s.serving().await?;
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rayon::prelude::*;
-    fn open(role: Role, dir: &FsPath) -> Service {
-        Service::open(
-            role,
-            [1; 32],
-            dir.to_path_buf(),
-            "http://127.0.0.1:1".into(),
-            "http://127.0.0.1:2".into(),
-            false,
-        )
-        .unwrap()
-    }
-    fn material(epoch: u64, generation: u64) -> Generation {
-        Generation::public_only(
-            Manifest {
-                protocol: PROTOCOL.into(),
-                network: [1; 32],
-                salt: [2; 32],
-                generation,
-                recovery_epoch: epoch,
-                coverage_start: 1,
-                anchor_height: 1,
-                anchor_hash: [3; 32],
-                observed_ms: now_ms(),
-                entries: 0,
-                rows_digest: [4; 32],
-                public_digest: [5; 32],
-            },
-            Arc::new(Vec::new()),
-        )
-    }
-    async fn establish(s: &Service, epoch: u64) -> Binding {
-        let binding = Binding {
-            epoch,
-            incarnation: s.incarnation.clone(),
-        };
-        assert_eq!(
-            fence(State(s.clone()), Json(binding.clone()))
-                .await
-                .unwrap()
-                .0,
-            binding
-        );
-        binding
-    }
-    #[tokio::test]
-    async fn distributed_http_telemetry_counts_rejected_queries_on_both_listener_layouts() {
-        use axum::{
-            body::{to_bytes, Body},
-            http::Request,
-        };
-        use tower::ServiceExt;
-        for role in [Role::Router, Role::Worker] {
-            let dir = tempfile::tempdir().unwrap();
-            let service = open(role, dir.path());
-            let (path, operation) = if role == Role::Router {
-                ("/v1/status/query", "router_query")
-            } else {
-                ("/evaluate", "worker_evaluate")
-            };
-            for split in [false, true] {
-                let routes = if !split {
-                    service.routes()
-                } else if role == Role::Router {
-                    service.query_routes()
-                } else {
-                    service.control_routes()
-                };
-                let response = routes
-                    .oneshot(Request::post(path).body(Body::empty()).unwrap())
-                    .await
-                    .unwrap();
-                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-                let response = service
-                    .control_routes()
-                    .oneshot(
-                        Request::get("/internal/status-apm")
-                            .body(Body::empty())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                let value: serde_json::Value =
-                    serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
-                        .unwrap();
-                assert_eq!(value["http_observation_version"], 1);
-                assert!(!value["http_instance"].as_str().unwrap().is_empty());
-                assert!(
-                    value["operations"][operation]["server_errors"]
-                        .as_u64()
-                        .unwrap()
-                        >= 1
-                );
-                assert!(value["operations"][operation]["failures"].as_u64().unwrap() >= 1);
-                assert_eq!(
-                    value["operations"][operation]["buckets"]
-                        .as_array()
-                        .unwrap()
-                        .len(),
-                    12
-                );
-            }
-        }
-    }
-    #[tokio::test]
-    async fn restart_changes_incarnation_and_never_restores_readiness() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Worker, dir.path());
-        let binding = establish(&s, 7).await;
-        let g = material(7, 3);
-        let manifest = g.manifest().clone();
-        s.state.lock().await.candidate = Some((g, [6; 32]));
-        let _ = activate(
-            State(s.clone()),
-            Json(Activate {
-                binding: binding.clone(),
-                manifest: manifest.clone(),
-            }),
-        )
-        .await
-        .unwrap();
-        assert!(s.serving().await.is_ok());
-        drop(s);
-        let recovered = open(Role::Worker, dir.path());
-        assert!(recovered.serving().await.is_err());
-        assert_ne!(binding.incarnation, recovered.incarnation);
-        assert!(heartbeat(
-            State(recovered.clone()),
-            Json(Activate { binding, manifest })
-        )
-        .await
-        .is_err());
-        assert_eq!(recovered.state.lock().await.fence.generation, 3);
-    }
-    #[tokio::test]
-    async fn fence_revokes_already_pinned_controller_and_rejects_old_activation() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        let b = establish(&s, 1).await;
-        let g = material(1, 1);
-        let manifest = g.manifest().clone();
-        s.state.lock().await.candidate = Some((g, [6; 32]));
-        let a = Activate {
-            binding: b,
-            manifest,
-        };
-        let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        let pinned = s.serving().await.unwrap();
-        let generation = pinned.current();
-        establish(&s, 2).await;
-        assert_eq!(pinned.check(&generation), Err(StatusCode::GONE));
-        assert!(activate(State(s.clone()), Json(a)).await.is_err());
-        assert!(s.serving().await.is_err());
-    }
-    #[tokio::test]
-    async fn wrong_digest_activation_is_rejected_and_repeat_is_idempotent() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        let b = establish(&s, 1).await;
-        let g = material(1, 1);
-        let manifest = g.manifest().clone();
-        s.state.lock().await.candidate = Some((g, [6; 32]));
-        let mut a = Activate {
-            binding: b,
-            manifest,
-        };
-        a.manifest.rows_digest = [9; 32];
-        assert!(activate(State(s.clone()), Json(a.clone())).await.is_err());
-        a.manifest.rows_digest = [4; 32];
-        let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        let _ = activate(State(s.clone()), Json(a)).await.unwrap();
-        assert_eq!(s.state.lock().await.fence.generation, 1);
-    }
-    #[tokio::test]
-    async fn refresh_cannot_launder_changed_source_or_coverage() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        let b = establish(&s, 1).await;
-        let g = material(1, 1);
-        let mut a = Activate {
-            binding: b,
-            manifest: g.manifest().clone(),
-        };
-        s.state.lock().await.candidate = Some((g, [6; 32]));
-        let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        a.manifest.generation = 2;
-        a.manifest.rows_digest = [9; 32];
-        assert!(prepare_refresh(State(s.clone()), Json(a.clone()))
-            .await
-            .is_err());
-        a.manifest.rows_digest = [4; 32];
-        a.manifest.anchor_height = 2;
-        assert!(prepare_refresh(State(s.clone()), Json(a.clone()))
-            .await
-            .is_err());
-        a.manifest.anchor_height = 1;
-        let _ = prepare_refresh(State(s.clone()), Json(a.clone()))
-            .await
-            .unwrap();
-        let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        assert_eq!(s.serving().await.unwrap().current().manifest(), &a.manifest);
-    }
-
-    #[tokio::test]
-    async fn stale_source_does_not_revoke_valid_control_authority() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        let b = establish(&s, 1).await;
-        let g = material(1, 1).reobserved(now_ms() - MAX_AGE_MS - 1);
-        let a = Activate {
-            binding: b,
-            manifest: g.manifest().clone(),
-        };
-        s.state.lock().await.controller = Some(Controller::new(g));
-        s.state.lock().await.fence.generation = 1;
-        let _ = heartbeat(State(s.clone()), Json(a.clone())).await.unwrap();
-        let c = s.serving().await.unwrap();
-        assert_eq!(c.check(&c.current()), Err(StatusCode::SERVICE_UNAVAILABLE));
-        assert!(!health(State(s.clone())).await.0.ready);
-        assert_eq!(s.state.lock().await.fence.epoch, 1);
-    }
-
-    #[tokio::test]
-    async fn watchdog_does_not_renew_source_freshness() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        let b = establish(&s, 1).await;
-        let g = material(1, 1);
-        let a = Activate {
-            binding: b,
-            manifest: g.manifest().clone(),
-        };
-        s.state.lock().await.candidate = Some((g, [6; 32]));
-        let _ = activate(State(s.clone()), Json(a.clone())).await.unwrap();
-        s.state.lock().await.contact = Watchdog::renewed_at(
-            Instant::now() - pir_control::CONTROL_WATCHDOG - Duration::from_secs(1),
-        );
-        assert!(s.serving().await.is_err());
-        let _ = heartbeat(State(s.clone()), Json(a.clone())).await.unwrap();
-        assert_eq!(
-            s.serving().await.unwrap().current().manifest().observed_ms,
-            a.manifest.observed_ms
-        );
-    }
-    #[tokio::test]
-    async fn split_listeners_keep_query_route_off_the_control_router() {
-        use axum::{body::Body, http::Request};
-        use tower::ServiceExt;
-        let dir = tempfile::tempdir().unwrap();
-        let s = open(Role::Router, dir.path());
-        async fn status(router: Router, method: &str, path: &str) -> StatusCode {
-            router
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(path)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-                .status()
-        }
-        // Control router: no query route; control routes present.
-        assert_eq!(
-            status(s.control_routes(), "POST", "/v1/status/query").await,
-            StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            status(s.control_routes(), "GET", "/control/health").await,
-            StatusCode::OK
-        );
-        let session = format!("/v1/status/session/{}", hex::encode([7; 32]));
-        for (method, path) in [("GET", "/v1/status/init"), ("GET", session.as_str())] {
-            assert_eq!(
-                status(s.control_routes(), method, path).await,
-                StatusCode::NOT_FOUND
-            );
-        }
-        // Query router: only the wallet routes (unready role answers 503, not 404).
-        for (method, path) in [
-            ("POST", "/v1/status/query"),
-            ("GET", "/v1/status/init"),
-            ("GET", session.as_str()),
-        ] {
-            assert_eq!(
-                status(s.query_routes(), method, path).await,
-                StatusCode::SERVICE_UNAVAILABLE,
-                "{method} {path}"
-            );
-        }
-        for path in [
-            "/control/health",
-            "/control/fence",
-            "/control/prepare",
-            "/control/activate",
-            "/control/heartbeat",
-            "/artifact/00",
-            "/public/00",
-            "/evaluate",
-            "/internal/metrics",
-            "/internal/health",
-        ] {
-            for method in ["GET", "POST"] {
-                assert_eq!(
-                    status(s.query_routes(), method, path).await,
-                    StatusCode::NOT_FOUND,
-                    "{method} {path}"
-                );
-            }
-        }
-        // Merged layout still serves both.
-        assert_eq!(
-            status(s.routes(), "POST", "/v1/status/query").await,
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            status(s.routes(), "GET", "/control/health").await,
-            StatusCode::OK
-        );
-        // A split worker or a non-loopback query listener is refused.
-        let bind = |address: &'static str| tokio::net::TcpListener::bind(address);
-        let worker_dir = tempfile::tempdir().unwrap();
-        let worker = open(Role::Worker, worker_dir.path());
-        assert!(worker
-            .serve_listeners(
-                bind("127.0.0.1:0").await.unwrap(),
-                Some(bind("127.0.0.1:0").await.unwrap())
-            )
-            .await
-            .is_err());
-        assert!(s
-            .clone()
-            .serve_listeners(
-                bind("127.0.0.1:0").await.unwrap(),
-                Some(bind("0.0.0.0:0").await.unwrap())
-            )
-            .await
-            .is_err());
-    }
-    #[test]
-    fn preparation_rejects_unbounded_threads() {
-        assert!(build_preparation_pool(0).is_err());
-        assert!(build_preparation_pool(9).is_err());
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn preparation_threads_run_below_query_priority() {
-        let pool = build_preparation_pool(2).unwrap();
-        let nice = pool.install(|| {
-            // SAFETY: getpriority on the calling thread's own tid touches no memory.
-            unsafe {
-                let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
-                libc::getpriority(libc::PRIO_PROCESS, tid)
-            }
-        });
-        assert_eq!(nice, PREPARATION_NICE);
-    }
-
-    #[test]
-    fn preparation_uses_its_own_bounded_pool() {
-        let pool = build_preparation_pool(2).unwrap();
-        pool.install(|| {
-            assert_eq!(rayon::current_num_threads(), 2);
-            (0..16).into_par_iter().for_each(|_| {
-                assert!(std::thread::current()
-                    .name()
-                    .unwrap()
-                    .starts_with("status-prepare-"));
-            });
-        });
-        assert!(!std::thread::current()
-            .name()
-            .unwrap_or("")
-            .starts_with("status-prepare-"));
-    }
 }

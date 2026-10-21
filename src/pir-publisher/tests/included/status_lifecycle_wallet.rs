@@ -1,7 +1,10 @@
-//! Status wallet lifecycle. Compiled into status-publisher with `fixtures`
-//! and native packing, where it can drive the private publication task.
+//! Full native Status publication and wallet recovery through real TLS consumers.
 use super::*;
-use pir_query_server::status::Service;
+use pir_query_server::status::serve_role_on;
+use status_query_server::distributed::{Role, RoleConfig};
+use std::sync::atomic::AtomicBool;
+#[path = "../../../pir-query-server/tests/support/status_tls.rs"]
+mod tls;
 #[allow(dead_code)]
 mod transport {
     include!(concat!(
@@ -9,136 +12,177 @@ mod transport {
         "/../../pir-query-server/tests/support/status_http.rs"
     ));
 }
-use transport::Loopback;
 use zakura_pir_client::status as wallet;
+struct Abort(tokio::task::JoinHandle<()>);
+impl Drop for Abort {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
 
+async fn wait_manifest(
+    http: &reqwest::Client,
+    origin: &str,
+    previous_rows: Option<Hash>,
+) -> Manifest {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+    loop {
+        if let Ok(response) = http.get(format!("{origin}/v1/status/init")).send().await {
+            if response.status().is_success() {
+                let manifest: Manifest = response.json().await.unwrap();
+                if previous_rows != Some(manifest.rows_digest) {
+                    return manifest;
+                }
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "HTTPS consumers did not activate the expected material"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles() {
-    // Exercise full production geometry with a bounded four-CPU preparation
-    // lane, as the Transparent unit runner does. A child confines the existing
-    // role constructor's environment setting; concurrent tests never see it.
-    // The outer case budget includes child startup, work and teardown.
-    const CHILD: &str = "WALLET_PIR_STATUS_LIFECYCLE_CHILD";
-    if std::env::var_os(CHILD).is_none() {
-        let output = tokio::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "publisher::lifecycle_wallet_tests::shared_status_lifecycle_collects_publishes_and_advances_over_real_roles"])
-                .env(CHILD, "1").env("STATUS_PREPARATION_THREADS", "4")
-                .kill_on_drop(true).output().await.unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return;
-    }
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("warn")
+        .with_test_writer()
+        .try_init();
     let root = tempfile::tempdir().unwrap();
-    let (rpc, source_task) = source::tests::fixture(false, false).await;
-    let (tx, rx) = watch::channel(None);
-    let mut input = ObservationTask {
-        source: source::RollingWindow::open(root.path().join("source"), [1; 32], 1).unwrap(),
-        rpc: rpc.clone(),
-        tx,
-    };
-    pir_pipeline::Task::run(&mut input)
-        .await
-        .map_err(|_| "source collection")
-        .unwrap();
-    let observed = rx.borrow().clone().unwrap();
+    let (rpc, source_task, mempool) = source::tests::controlled_fixture(false, false).await;
+    let _source = Abort(source_task);
+    *mempool.write().unwrap() = "77".repeat(32);
+    let observed = source::observe(&rpc, [1; 32], 1).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let publisher_origin = format!("http://{}", listener.local_addr().unwrap());
-    let worker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let worker_origin = format!("http://{}", worker_listener.local_addr().unwrap());
-    let router_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let router_origin = format!("http://{}", router_listener.local_addr().unwrap());
+    let address = listener.local_addr().unwrap();
     let publisher = Publisher::new(Config {
         state_dir: root.path().join("publisher"),
         salt_hex: hex::encode([1; 32]),
         window_blocks: 1,
-        worker_origin: worker_origin.clone(),
-        router_origin: router_origin.clone(),
-        private_listen: listener.local_addr().unwrap(),
+        private_listen: address,
     })
     .unwrap();
-    let app = publisher.private_routes();
-    let publisher_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let worker = Service::open(
+    let held = Arc::new(tokio::sync::Mutex::new(Some(listener)));
+    let http = pir_pipeline::service::Http::new(move |_, routes| {
+        let held = held.clone();
+        async move { axum::serve(held.lock().await.take().unwrap(), routes).await }
+    });
+    let source_rpc = rpc.clone();
+    let publisher_owner = publisher.clone();
+    let _publisher = Abort(tokio::spawn(async move {
+        publisher
+            .run_managed(source_rpc, http, pir_pipeline::service::Shutdown::default())
+            .await
+            .unwrap()
+    }));
+    // Start consumers after the source has a complete publication. Transport
+    // outage and empty/restarted consumer behavior have separate focused tests.
+    let ready = reqwest::Client::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if ready
+            .get(format!("http://{address}/provider/status/v1/current"))
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "publisher not ready"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let tls = tls::Tls::start(&format!("http://{address}")).await;
+    let worker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let worker_origin = format!("http://{}", worker_listener.local_addr().unwrap());
+    let router_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let router_origin = format!("http://{}", router_listener.local_addr().unwrap());
+    let config = |role, state, listen| RoleConfig {
+        role,
+        network_hex: hex::encode(observed.snapshot.network),
+        state_dir: root.path().join(state),
+        listen,
+        query_listen: None,
+        publisher: tls.origin.clone(),
+        publisher_ca: Some(tls.certificate.clone()),
+        worker_origin: worker_origin.clone(),
+        cuda: false,
+    };
+    let worker = config(
         Role::Worker,
-        observed.snapshot.network,
-        root.path().join("worker"),
-        publisher_origin.clone(),
-        worker_origin.clone(),
-        false,
-    )
-    .unwrap();
-    let router = Service::open(
+        "worker",
+        worker_listener.local_addr().unwrap(),
+    );
+    let router = config(
         Role::Router,
-        observed.snapshot.network,
-        root.path().join("router"),
-        worker_origin.clone(),
-        worker_origin,
-        false,
-    )
-    .unwrap();
-    let worker_routes = worker.routes();
-    let router_routes = router.routes();
-    let worker_task =
-        tokio::spawn(async move { axum::serve(worker_listener, worker_routes).await.unwrap() });
-    let router_task =
-        tokio::spawn(async move { axum::serve(router_listener, router_routes).await.unwrap() });
-    // Reuse RAII listener cleanup from the existing independent-client test.
-    let _services = [
-        transport::Listening {
-            origin: publisher_origin.clone(),
-            task: publisher_task,
-        },
-        transport::Listening {
-            origin: String::new(),
-            task: worker_task,
-        },
-        transport::Listening {
-            origin: String::new(),
-            task: router_task,
-        },
-        transport::Listening {
-            origin: String::new(),
-            task: source_task,
-        },
-    ];
-    let mut authority = authority::Authority::open(
-        root.path().join("authority"),
-        observed.snapshot.network,
-        [1; 32],
-    )
-    .unwrap();
-    let bindings = publisher
-        .fence_roles(authority.next_identity().unwrap().1)
-        .await
+        "router",
+        router_listener.local_addr().unwrap(),
+    );
+    let _worker = Abort(tokio::spawn(async move {
+        serve_role_on(worker, worker_listener, None).await.unwrap()
+    }));
+    let _router = Abort(tokio::spawn(async move {
+        serve_role_on(router, router_listener, None).await.unwrap()
+    }));
+    let poll = reqwest::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
         .unwrap();
-    let first = publisher
-        .publish(&observed, &mut authority, &bindings, &rpc)
-        .await
-        .unwrap();
-    assert!(root.path().join("source/source.bin").exists());
-    // Wallets reach the router role; the publisher has no wallet routes.
-    let transport = Loopback {
-        origin: router_origin,
-        http: reqwest::Client::new(),
+    let first = wait_manifest(&poll, &router_origin, None).await;
+    let transport = transport::Loopback {
+        origin: router_origin.clone(),
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap(),
         corrupt_answer: AtomicBool::new(false),
     };
     let anchor = wallet::AcceptedAnchor {
-        network: first.network,
-        height: first.anchor_height,
-        hash: first.anchor_hash,
+        network: observed.snapshot.network,
+        height: observed.snapshot.height,
+        hash: observed.snapshot.anchor,
     };
-    let coverage = wallet::LocalCoverageContext {
-        earliest_possible_inclusion: Some(1),
-        required_through: Some(1),
+    let local = wallet::LocalCoverageContext {
+        earliest_possible_inclusion: Some(observed.snapshot.start),
+        required_through: Some(observed.snapshot.height),
     };
-    let txid = zakura_server_chain::hash::parse_display(
-        &zakura_server_chain::testing::status::regtest_genesis().2,
+    let client = wallet::transport::PendingClient::fetch(
+        &transport,
+        "https://status-wallet.invalid",
+        now_ms,
     )
+    .await
+    .unwrap()
+    .accept(&transport, &anchor)
+    .await
     .unwrap();
+    // Expected answers come from the node's complete mempool, independently of
+    // the publisher's inventory and the consumer's prepared material.
+    let txid = rpc.status_mempool().await.unwrap()[0];
+    assert_eq!(
+        client.observe(&transport, &txid, local).await.unwrap(),
+        wallet::Observation::Mempool
+    );
+    assert_eq!(
+        client
+            .observe(&transport, &[0xfe; 32], local)
+            .await
+            .unwrap(),
+        wallet::Observation::NotFound
+    );
+    // A disconnected candidate withdraws the publication during preparation.
+    // Even with its active manifest cleared, the next publication must reopen
+    // authority so consumers can distinguish the recovery from ordinary updates.
+    publisher_owner.withdraw();
+    *mempool.write().unwrap() = "88".repeat(32);
+    let second = wait_manifest(&poll, &router_origin, Some(first.rows_digest)).await;
+    assert!(second.generation > first.generation);
+    assert!(second.recovery_epoch > first.recovery_epoch);
+    assert!(second.observed_ms > first.observed_ms);
     let client = wallet::transport::PendingClient::fetch(
         &transport,
         "https://status-wallet.invalid",
@@ -150,35 +194,22 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     .await
     .unwrap();
     assert_eq!(
-        client.observe(&transport, &txid, coverage).await.unwrap(),
-        wallet::Observation::Mined(1)
+        client
+            .observe(&transport, &[0x88; 32], local)
+            .await
+            .unwrap(),
+        wallet::Observation::Mempool
     );
-    pir_pipeline::Task::run(&mut input)
-        .await
-        .map_err(|_| "next source collection")
-        .unwrap();
-    let next_observed = rx.borrow().clone().unwrap();
-    let next = publisher
-        .publish(&next_observed, &mut authority, &bindings, &rpc)
-        .await
-        .unwrap();
-    assert_eq!(next.generation, first.generation + 1);
-    assert_eq!(next.rows_digest, first.rows_digest);
-    assert_eq!(next.observed_ms, next_observed.observed_ms);
-    let current = wallet::transport::PendingClient::fetch(
-        &transport,
-        "https://status-wallet.invalid",
-        now_ms,
-    )
-    .await
-    .unwrap()
-    .accept(&transport, &anchor)
-    .await
-    .unwrap();
     assert_eq!(
-        current.observe(&transport, &txid, coverage).await.unwrap(),
-        wallet::Observation::Mined(1)
+        client.observe(&transport, &txid, local).await.unwrap(),
+        wallet::Observation::NotFound
     );
-    // Keep the original real HTTP wallet regression's malformed and
-    // independent synthetic observation cases unchanged in its own target.
+    assert!(root
+        .path()
+        .join("worker/publisher-high-water.json")
+        .is_file());
+    assert!(root
+        .path()
+        .join("router/publisher-high-water.json")
+        .is_file());
 }

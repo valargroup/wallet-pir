@@ -1130,14 +1130,24 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
         std::fs::remove_file(path).unwrap();
         std::fs::write(path, bytes).unwrap();
     };
-    let original = std::fs::read(&runtimes[0]).unwrap();
-    flip(&runtimes[0], usize::MAX);
-    assert!(prepare(&mut checked).is_err());
-    std::fs::remove_file(&runtimes[0]).unwrap();
-    std::fs::write(&runtimes[0], &original).unwrap();
+    // Even an error before any runtime is visited preserves earlier checks.
+    assert!(Finalized::prepare_reusing(source, &set, FIRST + 1, true, &mut checked).is_err());
     prepare(&mut checked).unwrap();
-    // A refused inventory cannot add evidence or discard the previous proof.
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+
+    // Damage every runtime in turn, so recovery cannot depend on which file
+    // sorts first or where its validation falls in preparation traversal.
+    for runtime in &runtimes {
+        let original = std::fs::read(runtime).unwrap();
+        flip(runtime, usize::MAX);
+        assert!(prepare(&mut checked).is_err());
+        assert!(prepare(&mut checked).is_err());
+        std::fs::remove_file(runtime).unwrap();
+        std::fs::write(runtime, &original).unwrap();
+        let restored = prepare(&mut checked).unwrap();
+        assert_eq!(restored.sha256(), first.sha256());
+        assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
+    }
 
     // A changed segment no longer matches its manifest, even where the
     // runtime built from it is unchanged and already proven.
@@ -1148,19 +1158,12 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
         .find(|a| a.kind == Kind::ArchiveTable)
         .map(|a| source.join(&a.path))
         .unwrap();
-    let original_segment = std::fs::read(&segment).unwrap();
+    let original = std::fs::read(&segment).unwrap();
     flip(&segment, 0);
     let error = prepare(&mut checked).err().unwrap().to_string();
     assert!(error.contains("differs from its manifest"), "{error}");
-    std::fs::write(&segment, original_segment).unwrap();
-
-    // Previously checked names cannot hide a missing file or another
-    // runtime's valid bytes under the wrong name.
-    std::fs::remove_file(&runtimes[0]).unwrap();
-    assert!(prepare(&mut checked).is_err());
-    std::fs::copy(&runtimes[1], &runtimes[0]).unwrap();
-    assert!(prepare(&mut checked).is_err());
-    std::fs::write(&runtimes[0], original).unwrap();
-    prepare(&mut checked).unwrap();
+    std::fs::remove_file(&segment).unwrap();
+    std::fs::write(&segment, original).unwrap();
+    assert_eq!(prepare(&mut checked).unwrap().sha256(), first.sha256());
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
 }

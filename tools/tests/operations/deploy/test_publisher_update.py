@@ -8,6 +8,72 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def test_interrupted_verification_resumes_without_restarting_publisher(self):
+        self.ex.fail_probe = True
+        with self.assertRaises(DeployError):
+            self.deploy()
+        before = self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id']
+        self.ex.fail_probe = False
+        self.ex.effects.clear()
+        self.assertEqual(self.target.verify()['phase'], 'committed')
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id'], before)
+        self.assertFalse(any(publisher.UNIT in args and args[0] in ('start', 'stop', 'restart')
+                             for args in self.ex.effects))
+
+    def test_verification_recovery_refuses_changed_configuration(self):
+        self.ex.fail_probe = True
+        with self.assertRaises(DeployError):
+            self.deploy()
+        self.ex.put('coordinator', publisher.CONFIG, 'foreign configuration')
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'managed file changed'):
+            self.target.verify()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_rollback_terminates_only_the_stalled_candidate_invocation(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                self.ex.effects.append(args)
+                return  # Native preparation ignores SIGTERM until its current work finishes.
+            if args == ('kill', publisher.UNIT, '--signal=SIGKILL'):
+                self.ex.effects.append(args)
+                return original(host, 'stop', publisher.UNIT)
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        journal = self.target.rollback()
+        self.assertEqual(journal['phase'], 'rolled-back')
+        self.assertIn('terminate stalled candidate publisher', journal['completed'])
+        self.assertIn(('kill', publisher.UNIT, '--signal=SIGKILL'), self.ex.effects)
+        self.assertGreaterEqual(self.ex.clock(), 60)
+
+    def test_recovery_checks_teardown_after_an_auxiliary_signal_error(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                return
+            if args == ('kill', publisher.UNIT, '--signal=SIGKILL'):
+                original(host, 'stop', publisher.UNIT)
+                raise RemoteError('Failed to send signal SIGKILL to auxiliary processes: Invalid argument')
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+
+    def test_recovery_refuses_to_terminate_a_replaced_invocation(self):
+        self.deploy()
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            if args == ('stop', publisher.UNIT, '--no-block'):
+                self.ex.host(host).units[publisher.UNIT]['pid'] += 1
+                return
+            return original(host, *args)
+        self.ex.systemctl = systemctl
+        with self.assertRaisesRegex(DeployError, 'invocation changed'):
+            self.target.rollback()
+        self.assertFalse(any(args[0] == 'kill' for args in self.ex.effects))
+
     def test_plan_and_preflight_do_not_mutate(self):
         self.target.plan()
         self.assertEqual(self.ex.mutations(), [])
@@ -88,3 +154,95 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         recovered = self.make_target(recovery=True)
         with self.assertRaisesRegex(DeployError, 'recovery-only'):
             recovered.plan()
+
+    def test_default_mode_resumes_the_checker_after_deploy_restart_and_rollback(self):
+        self.deploy()
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
+        self.target.restart()
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
+        self.target.rollback()
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
+
+    def stopped_load_target(self, active='inactive'):
+        self.ex.systemctl('coordinator', 'stop', publisher.LOAD)
+        self.ex.host('coordinator').units[publisher.LOAD]['active'] = active
+        self.request['resume_load'] = False
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.ex.effects.clear()
+
+    def assert_load_stopped(self):
+        state = self.ex.probe_unit('coordinator', publisher.LOAD)
+        self.assertIn(state['active_state'], ('inactive', 'failed'))
+        self.assertEqual(state['main_pid'], 0)
+        self.assertNotIn(('start', publisher.LOAD), self.ex.effects)
+        self.assertNotIn(('restart', publisher.LOAD), self.ex.effects)
+
+    def test_stopped_checker_remains_stopped_through_deploy_restart_and_rollback(self):
+        for active in ('inactive', 'failed'):
+            with self.subTest(active=active):
+                self.stopped_load_target(active)
+                journal = self.deploy()
+                self.assertEqual(journal['phase'], 'committed')
+                self.assertEqual(set(journal['checks']), set(publisher.EXPANDED_PRODUCTS))
+                self.assert_load_stopped()
+                self.target.restart()
+                self.assert_load_stopped()
+                restored = self.target.rollback()
+                self.assertEqual(restored['phase'], 'rolled-back')
+                self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+                self.assert_load_stopped()
+
+    def test_probe_failure_restores_publisher_without_starting_stopped_checker(self):
+        self.stopped_load_target('failed')
+        self.ex.fail_probe = True
+        with self.assertRaisesRegex(DeployError, 'encrypted-answer probe failed'):
+            self.deploy()
+        self.assert_load_stopped()
+        self.ex.fail_probe = False
+        self.target.rollback()
+        self.assert_load_stopped()
+
+    def test_checker_mode_must_match_the_request(self):
+        self.request['resume_load'] = False
+        target = self.make_target()
+        with self.assertRaisesRegex(DeployError, 'requires.*stopped'):
+            target.plan()
+        self.ex.systemctl('coordinator', 'stop', publisher.LOAD)
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'must be running'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_stopped_checker_with_a_process_or_critical_latch_refuses(self):
+        self.stopped_load_target('failed')
+        state = self.ex.host('coordinator').units[publisher.LOAD]
+        state['pid'] = 42
+        with self.assertRaisesRegex(DeployError, 'MainPID 0'):
+            self.target.plan()
+        state['pid'] = 0
+        self.ex.put('coordinator', publisher.LOAD_LATCH, '{"reason":"incorrect encrypted answer"}')
+        with self.assertRaisesRegex(DeployError, 'critical latch'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_stopped_checker_restart_refuses_a_new_latch(self):
+        self.stopped_load_target()
+        self.deploy()
+        self.ex.put('coordinator', publisher.LOAD_LATCH, '{"reason":"incorrect encrypted answer"}')
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'critical latch'):
+            self.target.restart()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_resume_load_option_is_boolean_and_only_for_normal_serving_updates(self):
+        for value in (None, 0, 1, 'false'):
+            with self.subTest(value=value):
+                self.request['resume_load'] = value
+                with self.assertRaisesRegex(DeployError, 'boolean.*publisher-cutover/3'):
+                    self.make_target()
+        self.request['resume_load'] = False
+        self.request['schema'] = publisher.EXPANDED_SCHEMA
+        self.request.pop('serving')
+        with self.assertRaisesRegex(DeployError, 'publisher-cutover/3 only'):
+            self.make_target(recovery=True)

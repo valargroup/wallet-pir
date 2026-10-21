@@ -2,7 +2,7 @@
 //! and calls [`run`]; the query-server host uses the same function.
 use super::service::{router, ReadinessMode, ServiceConfig, ServiceState};
 use serde::Deserialize;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{future::IntoFuture, net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::limit::RequestBodyLimitLayer;
 use transparent_shared::history::assignment::Assignment;
 use transparent_shared::history::shardset::{
@@ -120,6 +120,23 @@ fn certificates(path: Option<PathBuf>) -> Result<Vec<reqwest::Certificate>, Erro
     })
 }
 
+impl HistoryProcess {
+    /// For an HTTPS consumer, check the publisher's service discovery using
+    /// the configured origin and CA. Opens no state; a legacy role is a no-op.
+    pub async fn discover(&self) -> Result<(), Error> {
+        match &self.publisher {
+            Some(publisher) => {
+                crate::source::discover_publisher(
+                    publisher,
+                    &certificates(self.publisher_ca.clone())?,
+                )
+                .await
+            }
+            None => Ok(()),
+        }
+    }
+}
+
 pub async fn run(config: HistoryProcess) -> Result<(), Error> {
     run_with(config, None).await
 }
@@ -161,7 +178,7 @@ pub async fn run_with(
                 query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
                 readiness: ReadinessMode::Warm,
             };
-            let mut manager = crate::routing::manager::Manager::new(provider, service)?;
+            let mut manager = crate::routing::manager::Manager::new(provider, service).await?;
             if config.full_holdings {
                 manager = manager.with_full_holdings();
             }
@@ -174,6 +191,7 @@ pub async fn run_with(
             loop {
                 match manager.poll_once().await {
                     Ok(_) => break,
+                    Err(error) if crate::source::is_incompatible(&error) => return Err(error),
                     Err(error) if manager.live().is_some() => {
                         tracing::warn!(%error, "initial synchronization refused; recovered checked predecessor");
                         break;
@@ -200,9 +218,21 @@ pub async fn run_with(
                 Some(listener) => listener,
                 None => tokio::net::TcpListener::bind(config.listen).await?,
             };
-            let polling = tokio::spawn(manager.run());
-            axum::serve(listener, app).await?;
-            polling.abort();
+            let mut polling = tokio::spawn(manager.run());
+            // Supervise synchronization: a terminal error stops wallet serving
+            // and is returned with its original type.
+            tokio::select! {
+                result = axum::serve(listener, app).into_future() => {
+                    polling.abort();
+                    result?;
+                }
+                result = &mut polling => {
+                    return Err(match result {
+                        Ok(error) => error,
+                        Err(join) => format!("history synchronization stopped: {join}").into(),
+                    });
+                }
+            }
             return Ok(());
         }
         let report = crate::routing::bootstrap::verify(provider).await?;

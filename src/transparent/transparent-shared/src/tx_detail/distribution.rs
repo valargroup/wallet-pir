@@ -98,7 +98,11 @@ impl Finalized {
     /// Verify source tables and every required native runtime before publication.
     pub fn prepare(root: &Path) -> Result<Self, Error> {
         let set = DisplaySet::open(root, 0, DisplayRole::Combined)?;
-        Self::prepare_reusing(root, &set, &mut CheckedRuntimes::default())
+        Self::prepare_set(root, &set)
+    }
+    /// Finalize an already verified set without reading and checking its tables again.
+    pub fn prepare_set(root: &Path, set: &DisplaySet) -> Result<Self, Error> {
+        Self::prepare_reusing(root, set, &mut CheckedRuntimes::default())
     }
     /// Finalize the inventory of `set`, loaded from `root`, reusing only
     /// native runtimes whose exact bytes this process already loaded and

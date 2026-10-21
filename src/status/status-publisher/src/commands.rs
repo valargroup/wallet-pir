@@ -2,7 +2,7 @@
 //! this binary never serves wallets.
 use crate::cli;
 use clap::{Parser, Subcommand};
-use std::{net::SocketAddr, path::PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 struct Args {
@@ -24,29 +24,6 @@ enum Command {
         seconds: u64,
         #[arg(long)]
         report_dir: PathBuf,
-    },
-    /// Encrypted oracle validation across real `pir-query-server` router and
-    /// worker child processes.
-    ValidateDistributed {
-        #[arg(long, default_value_t = 32)]
-        entries: usize,
-        #[arg(long)]
-        cuda: bool,
-        #[arg(long)]
-        state_dir: PathBuf,
-        /// `pir-query-server` built with the `status` feature (and `cuda` for
-        /// `--cuda`). Default: beside this executable.
-        #[arg(long)]
-        query_server: Option<PathBuf>,
-        /// Validate an already installed synthetic-fixture worker instead of spawning one.
-        #[arg(long)]
-        existing_worker: Option<String>,
-        /// Fixture artifact listener; must match an existing worker's artifact origin.
-        #[arg(long, default_value = "127.0.0.1:0")]
-        artifact_listen: SocketAddr,
-        /// Diagnostic request deadline, separate from production transport policy.
-        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..=900))]
-        request_timeout_seconds: u64,
     },
     /// Read a consistent live block/mempool window without publishing it.
     ObserveLive {
@@ -89,26 +66,6 @@ pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), cli::AnyError> {
             seconds,
             report_dir,
         } => cli::probe_live_load(origin, rpc_url, cookie, seconds, report_dir).await?,
-        Command::ValidateDistributed {
-            entries,
-            cuda,
-            state_dir,
-            query_server,
-            existing_worker,
-            artifact_listen,
-            request_timeout_seconds,
-        } => {
-            cli::validate_distributed(
-                entries,
-                cuda,
-                state_dir,
-                query_server,
-                existing_worker,
-                artifact_listen,
-                request_timeout_seconds,
-            )
-            .await?
-        }
         Command::ObserveLive {
             rpc_url,
             cookie,
@@ -146,12 +103,7 @@ mod tests {
     #[test]
     fn standalone_controller_is_rejected_and_probes_remain() {
         assert!(Args::try_parse_from(["pir-publisher status", "serve-distributed"]).is_err());
-        for command in [
-            "probe-live",
-            "probe-live-load",
-            "observe-live",
-            "validate-distributed",
-        ] {
+        for command in ["probe-live", "probe-live-load", "observe-live"] {
             let error = Args::try_parse_from(["pir-publisher status", command, "--help"])
                 .err()
                 .unwrap();

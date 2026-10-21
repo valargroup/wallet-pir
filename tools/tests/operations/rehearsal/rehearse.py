@@ -270,7 +270,7 @@ def enhance():
     r = Rehearsal('enhance-external-worker')
     binary = r.binary('pir-query-server')
     sha = sha256(binary)
-    # The synthetic coordinator needs a replicated group: two external workers.
+    # Two external worker instances, as a replicated group is deployed.
     listens = ['127.0.0.1:%d' % free_port() for _ in range(2)]
     instances = [({'listen': l, 'data_dir': str(r.work / ('worker-data-%d' % i))}, l, 'enhance-pir-worker-%d.service' % i)
                  for i, l in enumerate(listens)]
@@ -284,25 +284,6 @@ def enhance():
     r.executor.systemctl('local', 'restart', 'enhance-pir-worker-0.service')
     restarted = r.wait('restart', lambda: r.health('http://%s/internal/health' % listens[0]))
     r.step('restart', new_incarnation=restarted['incarnation'] != health['incarnation'])
-    # The fixture controller: the release's own isolated synthetic coordinator
-    # reserves, uploads, prepares, activates, commits and checks exact answers.
-    groups = r.work / 'workers.json'
-    groups.write_text(json.dumps({'groups': [{'name': 'g0', 'replicas': [
-        {'name': 'w%d' % i, 'url': 'http://' + l} for i, l in enumerate(listens)]}]}))
-    exercise = r.run(r.binary('enhance-pir-exercise'), '--isolated-workers', '--profile', 'smoke', '--data-dir', r.work / 'controller',
-                     '--worker-config', groups, '--listen', '127.0.0.1:%d' % free_port(), '--seconds', '120',
-                     '--min-publications', '2', '--publication-interval', '20', '--concurrency', '1',
-                     timeout=1800, check=False)
-    summary = {}
-    if (r.work / 'controller/exercise.json').exists():
-        summary = json.loads((r.work / 'controller/exercise.json').read_text())
-    r.step('controller-publications-and-exact-answers', returncode=exercise.returncode,
-           exact_answer=exercise.returncode == 0,
-           summary={k: summary.get(k) for k in ('status', 'publications', 'error', 'traffic',
-                                                 'exact_boundary_and_retained_probes')},
-           output=(exercise.stdout + exercise.stderr)[-600:])
-    published = r.health('http://%s/internal/health' % listens[0])
-    r.step('published-by-controller', published=published.get('published'), preparation=published.get('preparation'))
     report = r.report('enhance', inventory)
     r.step('report', report=report)
     r.deployer('enhance', inventory).rollback(journal.id)
@@ -376,12 +357,11 @@ def history():
 def status_worker():
     r = Rehearsal('status-external-worker')
     binary = r.binary('pir-query-server')
-    publisher = r.binary('pir-publisher')
     sha = sha256(binary)
     port = free_port()
     listen = '127.0.0.1:%d' % port
     artifact_port = free_port()
-    settings = {'network_hex': '31' * 32, 'listen': listen, 'artifact_origin': 'http://127.0.0.1:%d' % artifact_port,
+    settings = {'network_hex': '31' * 32, 'listen': listen, 'publisher': 'https://localhost:%d' % artifact_port,
                 'state_dir': str(r.work / 'worker-state')}
     inventory = r.inventory('status', 'external-worker', settings, listen)
     deployer = r.deployer('status', inventory)
@@ -392,20 +372,15 @@ def status_worker():
     r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
     again = r.wait('restart', lambda: r.health('http://%s/control/identity' % listen))
     r.step('restart', new_incarnation=again['incarnation'] != identity['incarnation'])
-    # Exercise the installed unit, including a new publication after restart.
-    for phase in ('first-publication', 'publication-after-restart'):
-        if phase == 'publication-after-restart':
-            r.executor.systemctl('local', 'restart', 'status-pir-worker.service')
-            r.wait('second restart', lambda: r.health('http://%s/control/identity' % listen))
-        validation = r.run(publisher, 'status', 'validate-distributed', '--entries', '32',
-                           '--state-dir', r.work / phase, '--existing-worker', 'http://%s' % listen,
-                           '--artifact-listen', '127.0.0.1:%d' % artifact_port,
-                           '--request-timeout-seconds', '120', timeout=1800, check=False)
-        r.step(phase, returncode=validation.returncode, exact_answer=validation.returncode == 0,
-               scope='the installed external worker, with fixture controller and router',
-               output=(validation.stdout + validation.stderr)[-600:])
-        if validation.returncode:
-            raise RuntimeError('installed Status worker failed exact encrypted validation: %s' % phase)
+    # This rehearsal owns no source snapshot or HTTPS publisher. An empty
+    # consumer can prove installation/identity but cannot prove serving authority.
+    # The native TLS lifecycle and independent live-source campaign own that gate.
+    health = r.health('http://%s/control/health' % listen)
+    if health['ready']:
+        raise RuntimeError('an unconfigured HTTPS publication unexpectedly became ready')
+    r.step('publication-qualification', scope='installation and restart only',
+           exact_answer='not-executed', ready=False,
+           required='Status native HTTPS lifecycle and independent live-source qualification')
     report = r.report('status', inventory)
     r.step('report', report=report)
     r.deployer('status', inventory).rollback(journal.id)

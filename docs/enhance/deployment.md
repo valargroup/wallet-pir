@@ -14,8 +14,7 @@ the memory observation is promising but not a completed qualification.
 
 The binaries are `enhance-pir-server` (package `enhance-publisher`),
 `pir-query-server` (package `pir-query-server`),
-`enhance-pir-cli` (`enhance-pir-client`), `enhance-pir-load-test` and the local
-`enhance-pir-exercise`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
+`enhance-pir-cli` (`enhance-pir-client`) and `enhance-pir-load-test`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
 `build-info`. `build-info` reports native reinspiring and the source revision
 and has no CUDA field. Each Enhance serving role (`worker`, `query-ingress`,
 `packing-router`) is its own `pir-query-server --config FILE` process.
@@ -43,10 +42,35 @@ and artifact receipt.
 
 ## Build and local validation
 
+The first increment of [autonomous HTTPS synchronization](https-sync-development-plan.md)
+can prepare a complete publication offline from a stopped canonical journal and
+its matching wallet manifest:
+
+```sh
+pir-publisher enhance prepare-publication --source /path/to/enhance-journal --manifest /path/to/wallet-manifest.json --output /path/to/prepared-publication
+```
+
+The command checks the journal's committed anchor and record count against the
+manifest, prepares rows, hints and packing locally, then verifies the generated
+session identities against that manifest. It installs the immutable inventory
+last and prints its digest. Repeating it reuses verified domain material. This
+maintenance command does not grant serving authority or change consumer state;
+production synchronization still follows the deployed implementation until the
+complete cutover passes its gates.
+
+The next increment exposes complete prepared inventories and immutable objects
+under `/provider/enhance/v1/` on the root publisher's configured Enhance artifact
+listener. `current` and the bounded `authority` POST validate the requested
+retained anchor against the node; their source observation time is separate from
+the durable publication identity and retains Enhance's five-second authority
+window. Source failures cannot renew it. Restart starts withdrawn until material
+and canonical authority are revalidated. Publishing and revocation remain
+independent of consumer acknowledgments. Public TLS routing and autonomous role
+configuration join the later complete cutover.
+
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help
-python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
 
 The wallet counterpart must implement the v7/q48 contract described in
@@ -74,7 +98,7 @@ shared bearer token on the private APIs. Worker routes, packing-router control
 routes and query-ingress control routes (all `/internal/*` paths except the
 ingress `/internal/metrics` scrape) then reject requests without
 `Authorization: Bearer <token>` with HTTP 401. The coordinator, packing router
-and `enhance-pir-exercise` clients read the same variable and attach the header. Set it on
+clients read the same variable and attach the header. Set it on
 all roles together, or on none: a worker with the token and a coordinator
 without it stops publication. Unset keeps the previous behaviour. Provide the
 value through the unit's environment file, never on the command line.

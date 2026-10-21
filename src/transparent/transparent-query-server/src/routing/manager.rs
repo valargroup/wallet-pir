@@ -31,7 +31,10 @@ pub struct Manager {
     sync: pir_sync_manager::SyncManager<HistorySync>,
 }
 impl Manager {
-    pub fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+    /// Check publisher discovery, then open the provider root. An unreachable or
+    /// incompatible publisher opens no state.
+    pub async fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+        crate::source::discover(&config).await?;
         Ok(Self {
             sync: pir_sync_manager::SyncManager::new(HistorySync::new(config, service)?),
         })
@@ -57,8 +60,10 @@ impl Manager {
     pub async fn poll_once(&mut self) -> Result<Progress, Error> {
         self.sync.poll_once().await
     }
-    pub async fn run(self) {
-        self.sync.run().await;
+    /// Synchronize until a publisher contract version mismatch, which is
+    /// returned unchanged. Every other failure is retried.
+    pub async fn run(self) -> Error {
+        self.sync.run().await
     }
 }
 
@@ -210,12 +215,16 @@ impl HistorySync {
             return Ok(Input::Unchanged);
         };
         let mut recovered = false;
-        if self.live.is_none() && self.config.directory.join("active.json").exists() {
+        if self.live.is_none()
+            && self.pending.is_none()
+            && self.config.directory.join("active.json").exists()
+        {
             // A failed update does not discard the complete predecessor across
             // restart. Recovery still requires a fresh source snapshot and exact
             // retained anchors; loading this record alone never opens a listener.
             match self.recover(&current).await {
                 Ok(live) => {
+                    self.pending = None;
                     self.live = Some(live);
                     recovered = true;
                 }
@@ -317,6 +326,10 @@ impl HistorySync {
         live.fence_recovered(
             &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
         )?;
+        // Warming is reusable work, not serving authority. If the publisher
+        // advances during recovery, keep these checked inputs private so the
+        // next fresh update does not warm the saved publication all over again.
+        self.pending = Some(live.clone());
         let checked = live.clone();
         let source = &mut self.source;
         let config = &self.config;
@@ -425,7 +438,13 @@ impl pir_sync_manager::SyncTask for HistorySync {
         self.synchronization.write().unwrap()["in_progress"] = true.into();
     }
     async fn synchronize(&mut self) -> Result<Progress, Error> {
+        // Every pass, unchanged ones included, rechecks the publisher's contract
+        // version before any product request.
+        self.source.discover().await?;
         self.reconcile().await
+    }
+    fn terminal(&self, error: &Error) -> bool {
+        crate::source::is_incompatible(error)
     }
     fn finished(
         &mut self,

@@ -1,10 +1,13 @@
-"""Compile the selected CPU fast tests once, then run their reported binaries.
+"""Compile the selected CPU fast tests, then run their reported binaries.
 
-Cargo unifies features for the complete selection. Unit tests and the named
-fast integration targets share that build; campaign targets are never selected.
-Test programs retain their package directory and Cargo environment. The Enhance
-HTTP smokes run alone, as does the filter library on fewer than eight cores.
-The remaining programs share a pool of at most three processes.
+Cargo unifies features for every package named in one command. Shared crates
+and product libraries stay on one command with a fixed feature set, so a warm
+cache still hits. The publisher, query server, and end-to-end hosts are a
+second command that enables only the products this diff touches. Campaign
+targets are never selected. Test programs retain their package directory and
+Cargo environment. The Enhance HTTP smokes run alone, as does the filter
+library on fewer than eight cores. The remaining programs share a pool of at
+most three processes.
 """
 import json
 import os
@@ -12,6 +15,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import tomllib
 
 from stage import ROOT, run, inherited_fds
 
@@ -32,13 +36,10 @@ def publisher_runs_alone(name, kinds):
 
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
-# packages define the fast closure. The host test features compile the wallet
-# client and chain fixtures once for Enhance, Status and Transparent. A smaller
-# affected set still compiles them so the warm cache is reused; only affected
-# packages are executed.
+# packages define the fast closure. Their feature set does not follow the diff.
+# Only affected packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
-    'enhance-pir-exercise',
     'enhance-pir-load-test',
     'enhance-publisher',
     'enhance-query-server',
@@ -63,6 +64,113 @@ def compile_roots(selected, available):
         raise ValueError('selected fast packages are missing from Cargo metadata: '
                          + ', '.join(sorted(missing)))
     return selected | (FAST_FEATURE_ROOTS & available)
+
+
+# These three hosts were the slow tail: one feature list compiled Enhance,
+# Status, and Transparent into each of them, including the wallet client and
+# the chain reader's test node.
+HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'})
+
+# Each feature pulls one product's wallet client and chain fixtures into the hosts.
+PRODUCT_HOST_FEATURES = {
+    'enhance': 'pir-e2e-tests/enhance-tests',
+    'transparent': 'pir-e2e-tests/transparent-tests',
+    'status': 'pir-publisher/status-tests',
+}
+
+# A fast target that requires one of these is compiled only for a diff that
+# touches that product. Shared crates never receive them.
+PRODUCT_FEATURE_GATES = {
+    'enhance-tests': 'enhance',
+    'transparent-tests': 'transparent',
+    'status-tests': 'status',
+    'wallet-recovery-tests': 'transparent',
+}
+
+PACKAGE_PRODUCTS = ('enhance', 'status', 'transparent', 'receiver')
+
+
+def product_of_package(package):
+    """The product that owns this package, or None for a host or shared crate."""
+    manifest = Path(package.get('manifest_path', ''))
+    try:
+        relative = manifest.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        relative = manifest.as_posix().lstrip('/')
+    parts = relative.split('/')
+    if len(parts) >= 2 and parts[0] in {'src', 'tools'} and parts[1] in PACKAGE_PRODUCTS:
+        return parts[1]
+    name = package.get('name', '')
+    for product in PACKAGE_PRODUCTS:
+        if name.startswith(product + '-'):
+            return product
+    return None
+
+
+def products_of_packages(names, packages_by_name):
+    """Products named directly by this package list."""
+    found = set()
+    for name in names:
+        package = packages_by_name.get(name)
+        if package is None:
+            continue
+        product = product_of_package(package)
+        if product in PRODUCT_HOST_FEATURES:
+            found.add(product)
+    return frozenset(found)
+
+
+def feature_serves(feature, products):
+    """Whether this feature belongs to one of the products being compiled."""
+    gate = PRODUCT_FEATURE_GATES.get(str(feature).rsplit('/', 1)[-1])
+    return gate is None or gate in products
+
+
+def host_features_for(products, package_names):
+    """Host features for the products this diff touches."""
+    features = set()
+    if 'pir-e2e-tests' in package_names:
+        if 'enhance' in products:
+            features.add(PRODUCT_HOST_FEATURES['enhance'])
+        if 'transparent' in products:
+            features.add(PRODUCT_HOST_FEATURES['transparent'])
+    if 'pir-publisher' in package_names and 'status' in products:
+        features.add(PRODUCT_HOST_FEATURES['status'])
+    return features
+
+
+def products_for_host_path(package, path):
+    """Products a changed host file needs, or None when the package is not a host.
+
+    One test file selects the products that test asks for. A shared test helper
+    selects every product the host's tests ask for. The host library selects none.
+    """
+    if package.get('name') not in HOST_PACKAGES:
+        return None
+    manifest_path = Path(package['manifest_path'])
+    try:
+        root = manifest_path.resolve().parent.relative_to(ROOT).as_posix()
+    except ValueError:
+        return set()
+    data = tomllib.loads(manifest_path.read_text())
+    matched, every = [], set()
+    for test in data.get('test', []):
+        gates = {PRODUCT_FEATURE_GATES[feature.rsplit('/', 1)[-1]]
+                 for feature in test.get('required-features', [])
+                 if feature.rsplit('/', 1)[-1] in PRODUCT_FEATURE_GATES}
+        every |= gates
+        test_path = test.get('path')
+        if not test_path:
+            continue
+        repo_path = f'{root}/{test_path}'
+        stem = repo_path[:-3] if repo_path.endswith('.rs') else repo_path
+        if path == repo_path or path.startswith(stem + '/'):
+            matched.append(gates)
+    if matched:
+        return set().union(*matched)
+    if path.startswith(root + '/tests/'):
+        return every
+    return set()
 
 
 _TEST_ATTRIBUTE = re.compile(r'#\[(?:[\w:]+::)?test\b|#\[tokio::test\b')
@@ -135,8 +243,35 @@ def bounded_programs(program, names):
                  case_count=len(cases)) for cases in partitions]
 
 
+def _compile_command(group, options):
+    """One cargo test --no-run for a feature-stable package group."""
+    if not group['names'] or (not group['kinds'] and not group['integrations']):
+        return None
+    command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
+    for name in sorted(group['names']):
+        command += ['-p', name]
+    if 'lib' in group['kinds']:
+        command.append('--lib')
+    # --bins also links harnesses for binaries that contain no tests. Name the
+    # bins that declare one. With no skip, keep --bins so an unreadable target
+    # stays fail-open.
+    if 'bin' in group['kinds']:
+        skipped_any = any(skipped for skipped, _included in group['bins'])
+        if skipped_any:
+            included = sorted({bin_name for _skipped, names in group['bins'] for bin_name in names})
+            for bin_name in included:
+                command += ['--bin', bin_name]
+        else:
+            command.append('--bins')
+    command += [arg for target in sorted(group['integrations']) for arg in ('--test', target)]
+    if group['features']:
+        command += ['--features', ','.join(sorted(group['features']))]
+    return command
+
+
 def execute(selected, *, offline=False, compile_only=False, jobs=3,
-            additional_features=(), environment=None, case_log=None, enforce_budget=True):
+            additional_features=(), environment=None, case_log=None, enforce_budget=True,
+            products=None):
     from integration_tests import inventory
     if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
         raise ValueError('ordinary CPU correctness cannot enable CUDA')
@@ -149,12 +284,30 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1', *options],
         cwd=ROOT, env=environment, **inherited_fds()))
     run_packages = set(selected)
-    compile_packages = compile_roots(run_packages, {p['name'] for p in metadata['packages']})
+    by_name = {p['name']: p for p in metadata['packages']}
+    if products is None:
+        products = products_of_packages(run_packages, by_name)
+    else:
+        unknown = set(products) - set(PRODUCT_HOST_FEATURES)
+        if unknown:
+            raise ValueError('unknown host products: ' + ', '.join(sorted(unknown)))
+        products = frozenset(products)
+    compile_packages = compile_roots(run_packages, set(by_name))
     packages = {p['id']: p for p in metadata['packages'] if p['name'] in compile_packages}
     if {p['name'] for p in packages.values()} != compile_packages:
         raise ValueError('selected fast packages are missing from Cargo metadata')
+
+    def integration_allowed(name, target):
+        matches = [item for item in by_name[name]['targets']
+                   if item['name'] == target and 'test' in item.get('kind', [])]
+        if not matches:
+            return True
+        allowed = products if name in HOST_PACKAGES else frozenset()
+        return all(feature_serves(feature, allowed) for feature in matches[0].get('required-features', []))
+
     compile_integrations = {(name, target) for name in compile_packages
-                            for target in registry.get(name, {}).get('fast', [])}
+                            for target in registry.get(name, {}).get('fast', [])
+                            if integration_allowed(name, target)}
     expected_integrations = {item for item in compile_integrations if item[0] in run_packages}
     integration_names = {target for _, target in compile_integrations}
     # Name collisions are checked for every compiled root. Campaign targets of
@@ -164,12 +317,18 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                   if target in integration_names}
     if collisions:
         raise ValueError(f'fast target names also select campaign targets: {sorted(collisions)}')
-    features = set()
-    kinds = set()
+    groups = {
+        'stable': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
+        'hosts': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
+    }
     expected_units = set()
-    package_bins = []
     for package in packages.values():
         name = package['name']
+        group = groups['hosts' if name in HOST_PACKAGES else 'stable']
+        group['names'].add(name)
+        # Product gates stay on the host command. The stable command's features
+        # do not change when the diff moves from one product to another.
+        allowed = products if name in HOST_PACKAGES else frozenset()
         classified = {f for entry in slow.get(name, {}).values() if isinstance(entry, dict)
                       for f in entry.get('features', [])}
         units = [t for t in package['targets'] if t.get('test', True)
@@ -177,10 +336,12 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         enabled = classified | {f for t in units for f in t.get('required-features', []) if f == 'cli'}
         for target in package['targets']:
             if (name, target['name']) in compile_integrations and 'test' in target['kind']:
-                enabled.update(target.get('required-features', []))
+                enabled.update(feature for feature in target.get('required-features', [])
+                               if feature_serves(feature, allowed))
         if any(f.rsplit('/', 1)[-1] in {'native-reinspiring', 'cuda'} for f in enabled):
             raise ValueError(f'{name}: CPU fast builds must keep reference arithmetic separate from native/CUDA features')
-        features.update(f if '/' in f else f'{name}/{f}' for f in enabled)
+        group['features'].update(f if '/' in f else f'{name}/{f}' for f in enabled
+                                if feature_serves(f, allowed))
         included_bins, skipped_bin = [], False
         for target in units:
             if not set(target.get('required-features', [])) <= enabled:
@@ -188,49 +349,33 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             if 'bin' in target['kind'] and not target_declares_tests(target):
                 skipped_bin = True
                 continue
-            kinds.update(set(target['kind']) & {'lib', 'bin'})
+            group['kinds'].update(set(target['kind']) & {'lib', 'bin'})
             if name in run_packages:
                 expected_units.add((name, target['name']))
             if 'bin' in target['kind']:
                 included_bins.append(target['name'])
-        package_bins.append((skipped_bin, included_bins))
-    if not kinds and not integration_names:
+        group['bins'].append((skipped_bin, included_bins))
+        group['integrations'].update(target for pkg, target in compile_integrations if pkg == name)
+    groups['hosts']['features'].update(host_features_for(products, groups['hosts']['names']))
+    for feature in additional_features:
+        if feature_serves(feature, products):
+            groups['hosts']['features'].add(feature)
+        if feature_serves(feature, frozenset()):
+            groups['stable']['features'].add(feature)
+    commands = []
+    for group in (groups['stable'], groups['hosts']):
+        command = _compile_command(group, options)
+        if command:
+            commands.append(command)
+    if not commands:
         return
-    # Product fixture modules compile only when the host enables them. One
-    # feature set builds the wallet client and chain fixtures for every product.
-    # A compile set that does not include the host leaves its feature list alone.
-    if 'pir-e2e-tests' in compile_packages:
-        features.update({
-            'pir-e2e-tests/enhance-tests',
-            'pir-e2e-tests/transparent-tests',
-        })
-    if 'pir-publisher' in compile_packages:
-        features.add('pir-publisher/status-tests')
-    features.update(additional_features)
-    command = ['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options]
-    for name in sorted(compile_packages):
-        command += ['-p', name]
-    if 'lib' in kinds:
-        command.append('--lib')
-    # --bins also links harnesses for binaries that contain no tests. Name the
-    # bins that declare one. With no skip, keep --bins so an unreadable target
-    # stays fail-open.
-    if 'bin' in kinds:
-        skipped_any = any(skipped for skipped, _included in package_bins)
-        if skipped_any:
-            included = sorted({name for _skipped, names in package_bins for name in names})
-            for name in included:
-                command += ['--bin', name]
-        else:
-            command.append('--bins')
-    command += [arg for target in sorted(integration_names) for arg in ('--test', target)]
-    if features:
-        command += ['--features', ','.join(sorted(features))]
     # Qualification controls cannot expand a routine correctness fixture.
     env = {key: value for key, value in (os.environ if environment is None else environment).items() if not key.startswith('QUALIFY_')}
     run(['cargo', 'fmt', '--all', '--check'], env=env, stage='format')
-    artifacts = run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
-                    test_details=True)
+    artifacts = []
+    for command in commands:
+        artifacts.extend(run(command, env=env, stage='compile:fast', collect_tests=not compile_only,
+                             test_details=True) or [])
     if compile_only:
         return
     programs = []

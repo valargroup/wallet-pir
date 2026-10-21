@@ -21,6 +21,17 @@ class IntegrationTests(unittest.TestCase):
         host = registry['pir-e2e-tests']
         self.assertIn('ci_hint', host['fast'])
         self.assertIn('encrypted_lifecycle', host['full'])
+        # receiver and status select extra reader features. Fast compiles that
+        # enable them rebuild every consumer of the cached reader library.
+        reader = registry['zakura-server-chain']
+        self.assertEqual(reader['fast'], ['enhance', 'transparent'])
+        self.assertEqual(reader['full'], ['receiver', 'state', 'status'])
+        manifest = tomllib.loads((ROOT / 'src/shared/pir-chain/Cargo.toml').read_text())
+        required = {target['name']: set(target.get('required-features', []))
+                    for target in manifest['test']}
+        covered = {'enhance', 'testing-node', 'transparent'}
+        for name in reader['fast']:
+            self.assertLessEqual(required[name], covered, name)
 
     def test_publisher_smoke_feedback_runs_its_encrypted_smoke_only(self):
         registry = {'enhance-publisher': {'fast': ['ci_smoke', 'layout'], 'full': []}}

@@ -317,7 +317,7 @@ identity, never serving authority:
 | Role | Controller and dependencies | Ready when |
 |---|---|---|
 | Enhance worker | the coordinator reserves, uploads rows, prepares, activates and commits over `/internal/*` with `ENHANCE_INTERNAL_TOKEN`; a packing router must list it | `published` is nonempty, after the coordinator activates it |
-| Status worker | the Status controller fences, prepares, activates and heartbeats over loopback control routes (SSH forwarding); artifacts come from the router's artifact origin | control health `ready`, under a fresh heartbeat |
+| Status worker | the worker downloads prepared database units from its configured HTTPS publisher; wallet/evaluation forwarding remains separate | control health `ready`, with a fresh, verified and eligible publication |
 | Transparent history worker | the publication controller prepares and activates over the root-only control socket; the staged set or active record loads at start | `/v1/ready` once its runtimes are warm |
 | Transparent display worker | the display controller stages, prepares and activates over its control socket; starts empty | `/v1/ready` after its first activation |
 | Receiver `serve-publication` | the operator's publication record; a node for canonical checks; the publisher remains trusted for completeness | `serving` set, once the record verifies and its anchor is canonical |

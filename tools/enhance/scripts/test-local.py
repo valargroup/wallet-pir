@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
@@ -86,11 +85,7 @@ def main():
                         help='Fail unless this many generations publish during the load campaign')
     parser.add_argument('--expand-inventory', action='store_true',
                         help='Register a second idle replica pair while the coordinator serves')
-    parser.add_argument('--journal-script', type=Path,
-                        help='Exercise durable demand observation before fixture inventory expansion')
     args = parser.parse_args()
-    if args.journal_script and not args.expand_inventory:
-        parser.error('--journal-script requires --expand-inventory')
     if args.seconds < 1 or args.records < 1:
         parser.error('seconds and records must be positive')
     if args.require_publications < 0:
@@ -191,24 +186,6 @@ def main():
                 pending = manifest['initial_capacity']['requested']
                 if not pending or manifest['initial_capacity']['requests'][pending]['target_groups'] != 2:
                     raise RuntimeError('configured forecast did not request a second replica pair')
-                if args.journal_script:
-                    policy = work / 'infrastructure-policy.json'
-                    policy.write_text(json.dumps({'mode': 'isolated-fixture', 'region': 'ams3',
-                                                  'project_id': 'fixture-only', 'vpc_id': 'fixture-only'}))
-                    state_dir = work / 'infra-journal'
-                    command = [sys.executable, str(args.journal_script.resolve()), '--state-dir', str(state_dir),
-                               '--coordinator-url', operator, '--inventory', str(config), '--policy', str(policy)]
-                    summaries = []
-                    snapshots = []
-                    for _ in range(2):
-                        result = subprocess.run(command, capture_output=True, text=True, timeout=20, check=True)
-                        summaries.append(json.loads(result.stdout))
-                        snapshots.append(json.loads((state_dir / 'journal.json').read_text()))
-                    if snapshots[0] != snapshots[1] or summaries[0]['operation'] != pending:
-                        raise RuntimeError('demand observation did not survive a journal process restart')
-                    (args.out / 'expansion-journal.json').write_text(json.dumps(snapshots[1], indent=2))
-                    manifest['expansion_journal'] = {'summaries': summaries,
-                        'script_sha256': hashlib.sha256(args.journal_script.read_bytes()).hexdigest()}
                 groups.append({'name': 'group-2', 'replicas': replicas[2:]})
                 replacement = config.with_suffix('.next')
                 replacement.write_text(json.dumps({'groups': groups}))

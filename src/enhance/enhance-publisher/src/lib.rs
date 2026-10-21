@@ -19,11 +19,13 @@ pub mod application;
 pub mod capacity;
 pub mod control;
 pub mod coordinator;
+pub mod distribution;
 pub mod ingest;
 #[cfg(feature = "local-serving")]
 pub mod local_serving;
 pub mod operator;
 pub mod pool;
+pub mod publication;
 pub mod rebuild;
 mod serving_control;
 pub mod store;

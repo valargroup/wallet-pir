@@ -29,12 +29,8 @@ pattern = "src/enhance/enhance-query-server/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]
-pattern = "src/pir-e2e-tests/tests/fixtures/*.json"
+pattern = "tools/pir-e2e-tests/tests/fixtures/*.json"
 reason = "Independent Ironwood record oracle consumed by the host's Enhance regressions."
-
-[[allow_data]]
-pattern = "tools/enhance/fixtures/*.json"
-reason = "Frozen operator API payloads used by operations tests."
 
 [[allow_data]]
 pattern = "tools/tests/operations/fixtures/*.json"
@@ -79,10 +75,6 @@ reason = "User-selectable scenarios consumed by the load driver."
 [[allow_data]]
 pattern = "tools/transparent/fixtures/regression/*.json"
 reason = "Independent accepted-anchor regression and workflow inputs."
-
-[[allow_data]]
-pattern = "tools/enhance/noise-analysis/sampler-cdf.json"
-reason = "Sampling distribution input consumed by noise-analysis."
 
 [[allow_data]]
 pattern = "evidence/enhance/native-certificate-2026-09-26/*.json"
@@ -167,10 +159,6 @@ reason = "Interpretation of the txid display certificate and correctness screen.
 [[allow_data]]
 pattern = "evidence/txid/txid-display-4k8-2026-10-13/raw/reports-and-verdicts.tar.gz"
 reason = "Essential certificates and checker verdicts for the txid display tables."
-
-[[allow_data]]
-pattern = "tools/txid/txid-sizing/fixtures/*.json"
-reason = "Independent canonical codec and packing input consumed by sizing tests."
 
 [[allow_data]]
 pattern = "tools/transparent/fixtures/observation/failed-observation-20260912T003121Z.tar.gz"

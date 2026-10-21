@@ -38,7 +38,7 @@ separate the bounded findings from subsequent implementation and release work.
 The sampled 128-byte recommendation above remains unchanged. Roman reports an
 independent genesis display ingest running to height 3,508,673 on the coordinator;
 this checkout has neither run that ingest nor received its result. The new
-[read-only journal census command](../../tools/txid/txid-sizing/JOURNAL-CENSUS.md)
+[read-only journal census command](https://github.com/valargroup/wallet-pir/blob/f26b9476fbcd37aca4b4882b9264e90c1896be16/tools/txid/txid-sizing/JOURNAL-CENSUS.md)
 uses the existing committed-index and checksum-validating sidecar readers, shared
 fee states and current display codec. It reports the requested size frontiers,
 era/coinbase breakdowns, 40,000-record archive page demand, shared k-archive pages,

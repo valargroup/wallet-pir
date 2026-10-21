@@ -95,7 +95,7 @@ def worker_settings(listen):
 def status_settings(role):
     return dict(network_hex='08' * 32, state_dir='/var/lib/status-pir-' + role + '-native',
                 listen='127.0.0.1:' + ('8481' if role == 'worker' else '8482'),
-                artifact_origin='http://127.0.0.1:' + ('8495' if role == 'worker' else '8481'),
+                publisher='https://publisher.example',
                 worker_origin='http://127.0.0.1:8481',
                 **({'query_listen': '127.0.0.1:8484'} if role == 'router' else {}))
 
@@ -739,7 +739,7 @@ class RollbackTests(Fleet):
 
 class StatusTests(Fleet):
     LIVE = {'worker': [('MemoryMax=12G', 'MemoryMax=6G')],
-            'router': [('STATUS_PREPARATION_THREADS=6', 'STATUS_PREPARATION_THREADS=4')]}
+            'router': [('RAYON_NUM_THREADS=4', 'RAYON_NUM_THREADS=2')]}
 
     def test_template_drift_from_the_live_unit_is_refused(self):
         deployer = self.status_fleet(self.LIVE)

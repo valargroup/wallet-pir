@@ -1,6 +1,8 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
 use zakura_pir_publisher::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent::layout::Geometry;
+use zakura_pir_publisher::transparent::seal::DecoupledPolicy;
 
 pub(crate) use crate::history::distribution::advance_distribution_revision;
 #[cfg(all(test, feature = "fixtures"))]
@@ -760,11 +762,34 @@ struct HistoryCandidate {
     prepared: serde_json::Value,
 }
 
+type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
+
 async fn publish_once(
     config: &Config,
     rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
+) -> Result<(), BoxError> {
+    publish_candidate(
+        config,
+        rpc,
+        store,
+        authority,
+        DecoupledPolicy::for_geometry,
+        Some(config.archive_geometry.clone()),
+        Some(config.recent_from),
+    )
+    .await
+}
+
+async fn publish_candidate(
+    config: &Config,
+    rpc: &NodeClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+    seal: HistorySeal,
+    archive_geometry: Option<String>,
+    recent_from: Option<u64>,
 ) -> Result<(), BoxError> {
     let input = pir_pipeline::acquire(
         acquire_history(config, rpc, store, authority),
@@ -773,7 +798,17 @@ async fn publish_once(
     .await?;
     pir_pipeline::advance(
         input,
-        |work| prepare_history(config, rpc, authority, work),
+        |work| {
+            prepare_candidate(
+                config,
+                rpc,
+                authority,
+                work,
+                seal,
+                archive_geometry.clone(),
+                recent_from,
+            )
+        },
         |candidate| activate_history(config, rpc, authority, candidate),
         &mut HistoryProgress,
     )
@@ -843,11 +878,14 @@ async fn acquire_history(
     }))
 }
 
-async fn prepare_history(
+async fn prepare_candidate(
     config: &Config,
     rpc: &NodeClient,
     authority: &Authority,
     work: HistoryWork,
+    seal: HistorySeal,
+    archive_geometry: Option<String>,
+    recent_from: Option<u64>,
 ) -> Result<Input<HistoryCandidate>, BoxError> {
     let HistoryWork {
         old,
@@ -876,8 +914,8 @@ async fn prepare_history(
             output: directory.clone(),
             previous: Some(old.publication.directory.clone()),
             recent_geometry: config.recent_geometry.clone(),
-            archive_geometry: Some(config.archive_geometry.clone()),
-            recent_from: Some(config.recent_from),
+            archive_geometry,
+            recent_from,
             zakura_rpc_url: config.rpc_url.clone(),
             zakura_cookie: config.rpc_cookie.clone(),
             through: Some(height),
@@ -887,7 +925,12 @@ async fn prepare_history(
             range_profile: config.range_profile.clone(),
         };
         tokio::task::spawn_blocking(move || {
-            publication::publish(&options, &snapshot, BlockHash::from_internal_bytes([0; 32]))
+            publication::publish_with(
+                &options,
+                &snapshot,
+                BlockHash::from_internal_bytes([0; 32]),
+                &seal,
+            )
         })
         .await??;
     }
@@ -1870,6 +1913,57 @@ mod tests {
 
     use super::*;
     use axum::{routing::post, Json};
+
+    /// A few empty blocks close a shard. The service follow path does not use this.
+    #[cfg(not(feature = "qualification-tests"))]
+    fn two_script_seal(geometry: &Geometry) -> DecoupledPolicy {
+        let mut policy = DecoupledPolicy::for_geometry(geometry);
+        policy.scripts.target = 2;
+        policy
+    }
+
+    async fn publish_follow(
+        config: &Config,
+        rpc: &NodeClient,
+        store: &Arc<tokio::sync::Mutex<EventStore>>,
+        authority: &Authority,
+    ) -> Result<(), BoxError> {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            return publish_candidate(config, rpc, store, authority, two_script_seal, None, None)
+                .await;
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            publish_once(config, rpc, store, authority).await
+        }
+    }
+
+    async fn prepare_follow(
+        config: &Config,
+        rpc: &NodeClient,
+        authority: &Authority,
+        work: HistoryWork,
+    ) -> Result<Input<HistoryCandidate>, BoxError> {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            return prepare_candidate(config, rpc, authority, work, two_script_seal, None, None)
+                .await;
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            prepare_candidate(
+                config,
+                rpc,
+                authority,
+                work,
+                DecoupledPolicy::for_geometry,
+                Some(config.archive_geometry.clone()),
+                Some(config.recent_from),
+            )
+            .await
+        }
+    }
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
     struct MockNode {
         chain: Chain,
@@ -1975,8 +2069,16 @@ mod tests {
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
-            recent_from: Some(2),
+            archive_geometry: if cfg!(feature = "qualification-tests") {
+                Some("decoupled-32k-32k".into())
+            } else {
+                None
+            },
+            recent_from: if cfg!(feature = "qualification-tests") {
+                Some(2)
+            } else {
+                None
+            },
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
             through: None,
@@ -1985,7 +2087,16 @@ mod tests {
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
+        #[cfg(feature = "qualification-tests")]
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
+        #[cfg(not(feature = "qualification-tests"))]
+        publication::publish_with(
+            &options,
+            &journal,
+            BlockHash::from_internal_bytes([0; 32]),
+            &two_script_seal,
+        )
+        .unwrap();
         let hook = root.path().join("fleet.py");
         std::fs::write(&hook, r#"#!/usr/bin/env python3
 import json,sys,time
@@ -2069,7 +2180,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         assert_eq!(store.lock().await.covered_through(), Some(4));
         let fail = config.fleet_command.with_extension("fail");
         std::fs::write(&fail, []).unwrap();
-        assert!(publish_once(&config, &client, &store, &authority)
+        assert!(publish_follow(&config, &client, &store, &authority)
             .await
             .is_err());
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
@@ -2090,7 +2201,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         else {
             panic!("new durable work expected");
         };
-        let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
+        let Input::Work(ready) = prepare_follow(&config, &client, &authority, work)
             .await
             .unwrap()
         else {
@@ -2134,7 +2245,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         let entered = config.fleet_command.with_extension("entered");
         std::fs::write(&pause, []).unwrap();
         {
-            let publication = publish_once(&config, &client, &store, &authority);
+            let publication = publish_follow(&config, &client, &store, &authority);
             tokio::pin!(publication);
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 loop {
@@ -2176,7 +2287,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             std::fs::remove_file(&pause).unwrap();
             assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         }
-        publish_once(&config, &client, &store, &authority)
+        publish_follow(&config, &client, &store, &authority)
             .await
             .unwrap();
         assert_eq!(authority.0.active.read().unwrap().publication.height, 4);
@@ -2188,7 +2299,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .publication
             .map_sha256
             .clone();
-        // Same-height fork beginning inside the sealed first shard.
+        // Same-height fork of the published tip.
         {
             let mut blocks = chain.write().unwrap();
             blocks.truncate(1);
@@ -2223,7 +2334,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             ingest.await.unwrap();
         }
         assert!(authority.0.withdrawn.load(Ordering::Acquire));
-        publish_once(&config, &client, &store, &authority)
+        publish_follow(&config, &client, &store, &authority)
             .await
             .unwrap();
         assert!(!authority.0.withdrawn.load(Ordering::Acquire));
@@ -2312,16 +2423,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: if !failures_only && !cfg!(feature = "qualification-tests") {
-                None
-            } else {
-                Some("decoupled-32k-32k".into())
-            },
-            recent_from: if !failures_only && !cfg!(feature = "qualification-tests") {
-                None
-            } else {
-                Some(2)
-            },
+            archive_geometry: Some("decoupled-32k-32k".into()),
+            recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
             through: None,
@@ -2414,68 +2517,6 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 })
                 .collect()
         };
-
-        if !failures_only && !cfg!(feature = "qualification-tests") {
-            // Exercise the real cold preparation, fleet offer and activation
-            // phases on a minimal valid publication. The qualified branch
-            // below also acquires new blocks and builds both deployed tiers.
-            let old = authority.0.active.read().unwrap().clone();
-            let height = old.publication.height;
-            let hash = old.publication.hash.clone();
-            let snapshot = {
-                let journal = store.lock().await;
-                Snapshot::capture(&journal, old.filters.map(), config.snapshot_dir()).unwrap()
-            };
-            let epoch = authority.0.epoch.load(Ordering::Acquire);
-            let work = HistoryWork {
-                old,
-                epoch,
-                snapshot,
-                height,
-                hash,
-            };
-            let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
-                .await
-                .unwrap()
-            else {
-                panic!("cold preparation must produce a candidate")
-            };
-            let first = ready.candidate.publication.clone();
-            let files = runtime_files(&first.directory);
-            let set =
-                transparent_shared::history::shardset::ShardSet::open(&first.directory, 3).unwrap();
-            assert!(!files.is_empty());
-            assert_eq!(files.len(), set.warm_targets().len());
-            assert_eq!(ready.runtimes.as_ref().unwrap()["built"], files.len());
-            let offered = requests();
-            let request = offered
-                .iter()
-                .find(|r| r["operation"] == "prepare")
-                .unwrap();
-            assert_eq!(request["runtimes"], serde_json::json!(first.directory));
-            activate_history(&config, &client, &authority, ready)
-                .await
-                .unwrap();
-            assert_eq!(
-                authority.0.active.read().unwrap().publication.map_sha256,
-                first.map_sha256
-            );
-
-            // A separately staged candidate must link the verified completed
-            // runtimes of the active publication, preserving their inodes.
-            let next = config.publication_root.join("candidate-bounded-linked");
-            candidate_inputs(&first.directory, &next);
-            let report = prepare_runtimes(&config, &authority, &next, epoch)
-                .await
-                .unwrap();
-            assert_eq!(report["built"], 0);
-            assert_eq!(report["linked"], files.len());
-            let linked = runtime_files(&next);
-            assert_eq!(files, linked);
-            assert_eq!(authority.0.runtime_preparations.load(Ordering::Relaxed), 2);
-            server.abort();
-            return;
-        }
 
         let source = if failures_only {
             authority.0.active.read().unwrap().publication.clone()

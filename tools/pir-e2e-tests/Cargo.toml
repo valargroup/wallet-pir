@@ -1,0 +1,251 @@
+[package]
+name = "pir-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Regressions that run a publisher and a query server together"
+autotests = false
+autobins = false
+
+[features]
+default = []
+# The copied query-host entrypoint selects its diagnostic subcommands with this feature.
+enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:pir-query-server", "pir-query-server/enhance"]
+native-reinspiring = ["enhance-publisher?/native-reinspiring"]
+# The Enhance hint cache records whether this build includes CUDA.
+cuda = ["enhance-query-server?/cuda"]
+# Larger hint oracles. Ordinary correctness leaves this off.
+qualification-tests = []
+# The copied query-host entrypoint the process tests start.
+query-host = ["dep:pir-query-server"]
+publisher-host = ["dep:pir-publisher"]
+transparent-history = []
+transparent-detail = []
+status = ["dep:status-publisher", "pir-publisher/status"]
+rocksdb-reader = ["transparent-history", "pir-publisher/rocksdb-reader"]
+# Wallet-client and chain-fixture regressions.
+enhance-tests = [
+    "publisher-host",
+    "pir-publisher/enhance",
+    "enhance",
+    "query-host",
+    "dep:enhance-publisher",
+    "enhance-publisher/fault-injection",
+    "enhance-publisher/fixtures",
+    "enhance-publisher/local-serving",
+    "dep:enhance-query-server",
+    "enhance-query-server/client",
+    "dep:pir-query-server",
+    "pir-query-server/enhance",
+    "dep:zakura-server-chain",
+    "zakura-server-chain/enhance",
+    "zakura-server-chain/testing-node",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/enhance",
+    "zakura-pir-client/testing",
+]
+transparent-tests = [
+    "wallet-recovery-tests",
+    "publisher-host",
+    "transparent-history",
+    "transparent-detail",
+    "pir-publisher/transparent-history",
+    "pir-publisher/transparent-detail",
+    "query-host",
+    "pir-query-server/transparent-history",
+    "pir-query-server/transparent-detail",
+    # The copied shard-assign administration tool.
+    "dep:hex",
+    "dep:sha2",
+    "dep:transparent-publisher",
+    "transparent-publisher/fixtures",
+    "dep:transparent-query-server",
+    "dep:transparent-shared",
+    "transparent-shared/test-support",
+    "dep:zakura-server-chain",
+    "zakura-server-chain/transparent",
+    "zakura-server-chain/testing-node",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/testing",
+    "dep:zakura-pir-publisher",
+    "zakura-pir-publisher/transparent",
+    "dep:zakura-pir-protocol",
+    "zakura-pir-protocol/transparent",
+    "reqwest/blocking",
+]
+# The wallet consumer regression does not need node fixtures or host binaries.
+wallet-recovery-tests = [
+    "transparent-history",
+    "dep:hex",
+    "dep:transparent-query-server",
+    "dep:transparent-shared",
+    "transparent-shared/test-support",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/engine-store",
+    "zakura-pir-client/recovery",
+    "zakura-pir-client/reqwest",
+    "zakura-pir-client/testing",
+    "dep:zakura-pir-publisher",
+    "zakura-pir-publisher/transparent",
+    "dep:zakura-pir-protocol",
+    "zakura-pir-protocol/transparent",
+    "reqwest/blocking",
+]
+
+[dependencies]
+pir-publisher = { path = "../../src/pir-publisher", optional = true }
+status-publisher = { path = "../../src/status/status-publisher", optional = true }
+enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
+transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
+enhance-query-server = { path = "../../src/enhance/enhance-query-server", optional = true }
+pir-query-server = { path = "../../src/pir-query-server", optional = true }
+transparent-query-server = { path = "../../src/transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
+transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
+zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
+pir-pipeline = { path = "../../src/shared/pir-pipeline" }
+hex = { version = "0.4", optional = true }
+sha2 = { version = "0.10", optional = true }
+axum = "0.7"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The tests start these processes beside the in-process publishers.
+[[bin]]
+name = "pir-publisher-test"
+path = "../../src/pir-publisher/src/main.rs"
+required-features = ["publisher-host"]
+test = false
+
+[[bin]]
+name = "pir-query-server-test"
+path = "../../src/pir-query-server/src/main.rs"
+required-features = ["query-host"]
+test = false
+
+
+# Transparent administration tools, built from their transparent-tools sources.
+[[bin]]
+name = "shard-assign-test"
+path = "../transparent/src/bin/shard-assign.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[[bin]]
+name = "shard-prune-test"
+path = "../transparent/src/bin/shard-prune.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[[bin]]
+name = "txid-control-test"
+path = "../transparent/src/bin/txid-control.rs"
+required-features = ["transparent-tests"]
+test = false
+
+[dev-dependencies]
+# Address fixtures belong to the wallet consumer tests, never serving libraries.
+transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false }
+pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+libc = "0.2"
+tokio-stream = "0.1"
+
+[[test]]
+name = "canonical_record"
+path = "tests/canonical_record.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "ci_hint"
+path = "tests/ci_hint.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "encrypted_lifecycle"
+path = "tests/encrypted_lifecycle.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "http"
+path = "tests/http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "note_recovery"
+path = "tests/note_recovery.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "packing_http"
+path = "tests/packing_http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "row_repair_http"
+path = "tests/row_repair_http.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "rpc"
+path = "tests/rpc.rs"
+required-features = ["enhance-tests"]
+
+[[test]]
+name = "enhance_wallet_native"
+path = "tests/enhance_wallet_native.rs"
+required-features = ["enhance-tests", "native-reinspiring"]
+
+[[test]]
+name = "controller_update_campaign"
+path = "tests/controller_update_campaign.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "event_codec_bounds"
+path = "tests/event_codec_bounds.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "service_round_trip"
+path = "tests/service_round_trip.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "shard_filters"
+path = "tests/shard_filters.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "unified_http_sync_campaign"
+path = "tests/unified_http_sync_campaign.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "transparent_host_processes"
+path = "tests/transparent_host_processes.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "transparent_provider_installation"
+path = "tests/transparent_provider_installation.rs"
+required-features = ["transparent-tests"]
+
+[[test]]
+name = "wallet_revision_reuse"
+path = "tests/wallet_revision_reuse.rs"
+required-features = ["wallet-recovery-tests"]

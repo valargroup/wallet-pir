@@ -79,10 +79,7 @@
   },
   "pir-e2e-tests": {
     "fast": [
-      "boundary_recovery_model",
-      "ci_hint",
-      "record_layout",
-      "status_routes"
+      "ci_hint"
     ],
     "full": [
       "canonical_record",
@@ -99,18 +96,19 @@
       "shard_filters",
       "transparent_host_processes",
       "transparent_provider_installation",
-      "unified_http_sync_campaign"
+      "unified_http_sync_campaign",
+      "wallet_revision_reuse"
     ]
   },
   "zakura-server-chain": {
     "fast": [
       "enhance",
-      "receiver",
-      "status",
       "transparent"
     ],
     "full": [
-      "state"
+      "receiver",
+      "state",
+      "status"
     ]
   }
 }

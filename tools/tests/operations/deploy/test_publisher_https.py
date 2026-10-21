@@ -1,10 +1,14 @@
 """A guarded distribution switch preserves worker ownership and can recover."""
 import json
+import hashlib
+import os
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
 from publisher_fixture import PublisherFixture
-from wallet_pir_ops.deploy import publisher, units
+from wallet_pir_ops.deploy import publisher, publisher_https, units
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import RemoteError
 
@@ -26,7 +30,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             host, unit = entry['host'], entry['unit']
             section = 'transaction_details' if kind == 'transaction-details' else 'transparent_history'
             body = {'publisher': 'https://example.test', 'publisher_network': 'main',
-                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen']}
+                    'publisher_genesis': '0' * 64, 'listen': entry['vars']['listen'],
+                    'cache_bytes': 8 << 30, 'bootstrap_max_bytes': 1 << 30}
             root = '/srv/https-' + kind
             if section == 'transaction_details':
                 body.update(role='combined', state_dir=root)
@@ -52,23 +57,112 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.request['https']['history_edge']['before_sha256'] = publisher.sha(old_edge)
         self.ex.install(host, 'caddy.service', '[Service]\nExecStart=/bin/caddy run --config /etc/caddy/Caddyfile\n',
                         files={'/bin/caddy': b'caddy'})
+        for section, key in [('transparent_history', 'publication_root'), ('transaction_details', 'root')]:
+            root = self.request['configuration'][section]['settings'][key]
+            source = root + '/immutable-snapshot'
+            content = '{\n  "production": true\n}'
+            digest = publisher.sha('{"production":true}') if section == 'transparent_history' else publisher.sha(content)
+            self.ex.put('coordinator', root + '/active.json',
+                        json.dumps({'directory': source, 'map_sha256': digest}))
+            name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
+            self.ex.put('coordinator', source + '/' + name, content)
         self.target = self.make_target()
         self.target.serving.binary = self.serving_binary
         self.ex.effects.clear()
         original_run, original_get = self.ex.run, self.ex.http_get
+        self.ex.put('coordinator', '/usr/bin/python3', b'host Python interpreter')
         def run(host, argv, timeout):
+            if len(argv) > 2 and argv[1].endswith('/snapshot-warmer.py'):
+                self.ex.runs.append((host, argv))
+                if argv[2] == 'pin':
+                    source, destination = argv[3:]
+                    for path, content in list(self.ex.host(host).files.items()):
+                        if path.startswith(source + '/'):
+                            self.ex.put(host, destination + path[len(source):], content)
+                    return 0, '{"pinned_files":1}'
+                if argv[2] == 'seed':
+                    self.assertEqual(self.ex.probe_unit(host, publisher.UNIT)['main_pid'], 0)
+                    return 0, '{"linked_runtimes":1,"runtime_bytes":1024}'
+                if argv[2] == 'reuse':
+                    return 0, '{"reused_runtimes":0,"runtime_bytes":1024}'
+            if len(argv) > 1 and argv[1] == 'verify-filters':
+                raw = self.ex.read(host, argv[argv.index('--shard-dir') + 1] + '/shards.json')
+                return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':'))), 'schema': 'transparent-shard-v1', 'network': 'main', 'genesis_hash': '0' * 64, 'shards': 1, 'start_height': 0, 'covered_through': 1})
             if '--check' in argv and argv[0].endswith('/pir-query-server'):
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 if 'transparent_history' in config or 'transaction_details' in config:
                     return 0, 'configuration accepted'
             return original_run(host, argv, timeout)
         def get(host, url, timeout=5):
+            if url.endswith('/current'):
+                return 200, json.dumps({'eligibility': 'canonical', 'network': 'main', 'inventory_sha256': 'a' * 64})
             if ':1830' in url:
                 return 200, '{"ready":true}'
             return original_get(host, url, timeout)
         self.addCleanup(patch.stopall)
         patch.object(self.ex, 'run', side_effect=run).start()
         patch.object(self.ex, 'http_get', side_effect=get).start()
+
+    def test_cutover_loads_only_the_real_services(self):
+        self.deploy()
+        self.assertNotIn('warm_snapshots', self.target.latest())
+        self.assertFalse(any(args[0] == 'start' and args[1].startswith('pir-snapshot-')
+                             for args in self.ex.effects if len(args) > 1))
+        self.assertFalse(any('--verify-only' in argv or any(value in ('warm', 'capacity') for value in argv)
+                             for _, argv in self.ex.runs))
+
+    def test_recovery_still_removes_a_retained_temporary_validator(self):
+        from wallet_pir_ops.deploy.publisher_warmup import SnapshotPreparation
+        from wallet_pir_ops.deploy.remote import production_lock
+        name = 'pir-snapshot-retained.service'
+        text = '[Service]\nExecStart=/bin/retained-validator\n'
+        self.ex.install('coordinator', name, text,
+                        files={'/bin/retained-validator': b'retained temporary validator'})
+        record = {'unit': name, 'unit_text': text, 'inputs': {}}
+        with production_lock(self.target.inventory, self.ex) as self.target.lock:
+            SnapshotPreparation(self.target.serving).cleanup({'warm_snapshots': {'transparent_history': record}})
+        self.assertEqual(self.ex.probe_unit('coordinator', name)['load_state'], 'not-found')
+
+    def test_changed_cache_helper_is_never_executed_during_reuse(self):
+        from wallet_pir_ops.deploy.publisher_warmup import SnapshotPreparation
+        self.deploy()
+        journal = self.target.latest()
+        script = journal['prepared_snapshots']['transparent_history']['script']
+        self.ex.put('coordinator', script, 'changed helper')
+        self.ex.runs.clear()
+        with self.assertRaisesRegex(DeployError, 'snapshot cache helper changed'):
+            SnapshotPreparation(self.target.serving).seed(journal)
+        self.assertEqual(self.ex.runs, [])
+
+    def test_reused_files_do_not_consume_the_additional_staging_allowance(self):
+        self.deploy()
+        snapshots = self.target.latest()['prepared_snapshots']
+        for record in snapshots.values():
+            self.assertEqual(record['retained_runtime_bytes'], 1024)
+
+    def test_smaller_additional_allowance_still_preserves_free_disk(self):
+        self.request['https']['publisher_budget_bytes'] = 16 << 30
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.deploy()
+        self.assertEqual(self.target.latest()['phase'], 'committed')
+
+        self.request['https']['publisher_budget_bytes'] = 1 << 60
+        self.target = self.make_target()
+        with self.assertRaisesRegex(DeployError, '20 percent disk headroom'):
+            self.target.plan()
+
+    def test_additional_allowance_must_be_positive(self):
+        for allowance in (0, -1, True):
+            self.request['https']['publisher_budget_bytes'] = allowance
+            with self.assertRaisesRegex(DeployError, 'positive additional disk allowance'):
+                self.make_target()
+
+    def test_archive_memory_budget_cannot_be_an_implicit_native_default(self):
+        del self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['cache_bytes']
+        with self.assertRaisesRegex(DeployError, 'archive cache memory budget must be explicit'):
+            self.make_target()
+        self.assertEqual(self.ex.mutations(), [])
 
     def test_plan_captures_consumers_and_scoped_public_routes_without_mutation(self):
         plan = self.target.plan()['plan']
@@ -113,6 +207,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
 
     def test_consumer_disk_budget_is_checked_before_staging(self):
         self.request['https']['consumers'][0]['budget_bytes'] = 70 << 30
+        self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['bootstrap_max_bytes'] = 70 << 30
         self.target = self.make_target()
         self.target.serving.binary = self.serving_binary
         with self.assertRaisesRegex(DeployError, 'disk headroom'):
@@ -131,6 +226,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         before = self.target.plan()['plan']
         journal = self.deploy()
         self.assertEqual(journal['phase'], 'committed')
+        self.assertEqual(set(journal['production_snapshots']), {'transparent_history', 'transaction_details'})
         for consumer in before['serving']['https_consumers']:
             self.assertEqual(self.ex.probe_unit(consumer['host'], consumer['unit'])['exe_sha256'],
                              self.request['serving']['binary_sha256'])
@@ -192,6 +288,46 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             with self.assertRaisesRegex(DeployError, 'consumer readiness deadline exceeded'):
                 self.deploy()
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+
+    def test_collected_production_snapshot_refuses_before_stopping_owners(self):
+        root = self.request['configuration']['transparent_history']['settings']['publication_root']
+        self.ex.remove('coordinator', root + '/immutable-snapshot/shards.json')
+        with self.assertRaisesRegex(DeployError, 'snapshot map is missing'):
+            self.deploy()
+        result = self.target.rollback()
+        self.assertTrue(result['staging_only'])
+        self.assertFalse(any(action[0] == 'stop' for action in self.ex.effects))
+
+    def test_lifecycle_ready_publisher_without_a_prepared_view_cannot_start_consumers(self):
+        original = self.ex.http_get
+        def get(host, url, timeout=5):
+            if url.endswith('/current'):
+                return 503, '{"error":"preparing"}'
+            return original(host, url, timeout)
+        with patch.object(self.ex, 'http_get', side_effect=get):
+            with self.assertRaisesRegex(DeployError, 'prepared HTTPS publication readiness deadline exceeded'):
+                self.deploy()
+        units = {c['unit'] for c in self.request['https']['consumers']}
+        self.assertFalse(any(action[0] == 'restart' and action[1] in units for action in self.ex.effects))
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+
+    def test_reusing_legacy_bytes_does_not_copy_authority_or_follow_symlinks(self):
+        source, root = self.root / 'legacy', self.root / 'provider'
+        source.mkdir(); root.mkdir()
+        (source / 'table.bin').write_bytes(b'immutable table')
+        (source / 'active.json').write_bytes(b'old authority')
+        os.link(source / 'table.bin', source / 'same-table.bin')
+        outside = self.root / 'outside'
+        outside.write_bytes(b'outside the legacy tree')
+        (source / 'link').symlink_to(outside)
+        result = subprocess.run([sys.executable, '-c', publisher_https.SEED_OBJECTS,
+            json.dumps({'root': str(root), 'sources': [str(source)]})], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['linked_objects'], 2)
+        digest = hashlib.sha256(b'immutable table').hexdigest()
+        self.assertEqual((root / 'objects' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
+        self.assertFalse((root / 'active.json').exists())
+        self.assertFalse((root / 'objects' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
 
 
 if __name__ == '__main__':

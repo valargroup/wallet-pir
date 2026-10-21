@@ -45,7 +45,10 @@ package that declares direct Common and node dependencies; `tools/ci/boundary.py
 lists each permitted edge and `tools/ci/chain_graph.py` checks its fresh
 consumers. Fast feedback resolves those consumers and applies the graph rules.
 The standalone tool also type-checks each one; that compile stays out of the
-fast job. Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
+fast job. Fast feedback runs the Enhance and Transparent reader RPC targets.
+Receiver, status and RocksDB reader targets stay in full qualification so a
+fast compile does not toggle those features and rebuild every consumer.
+Each `zakura-server-chain` consumer selects its product (`transparent`, `enhance`,
 `status` or `receiver`) with default features disabled. Test dependencies add
 `testing` alongside that same product; fixture support alone does not enable an
 adapter. Database readers additionally enable the existing `rocksdb-reader` feature.
@@ -239,6 +242,10 @@ Temporarily, CI lets PR and main validation run to completion without a
 three-minute cancellation. Pushes to main enforce that target in a final timing
 check; PRs and manual runs only report timings. The check measures job start
 through validation and reporting, excluding queue time and final cleanup.
+A warm run, which recompiled no workspace crate, still has to finish in three
+minutes. A run that relinked workspace crates and no third-party crate may
+take that long plus the release-fast compile; a compile over five minutes
+still fails.
 
 Direct node database readers in the publisher and tools require
 `--features rocksdb-reader`: `pir-publisher ingest-events`, `shard-cutoff`,
@@ -261,9 +268,10 @@ Cargo package names and standalone commands are preserved. See the
 ## Shared HTTPS synchronization
 
 `pir-sync-manager` is the internal transport and polling library under
-`src/shared/`. Transparent history and transaction-detail consumers supply its
+`src/shared/`. Transparent history, transaction-detail and Status consumers supply its
 product adapters. The library accounts all consumed response bytes against one
 attempt budget and schedules complete passes sequentially with bounded backoff.
 It does not interpret publications or grant serving authority. Product code
 retains schemas, replay records, directory locks, validation, preparation and
-activation. Other PIR products do not use it yet.
+activation. Enhance does not use it yet. Status uses the same polling and backoff; its
+wallet still rejects observations older than twenty seconds.

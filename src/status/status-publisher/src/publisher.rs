@@ -1,385 +1,246 @@
-//! Independently scheduled Status publisher. It never faces wallets: the
-//! router role serves `/v1/status/*`; this process prepares, activates and
-//! heartbeats the roles and keeps only private routes.
-use super::{distributed::*, *};
-use crate::zakura::ZakuraClient;
+//! Status source capture and prepared HTTPS publications. Consumers never
+//! participate in publication completion or renew its source observation time.
+use crate::{authority, source, zakura::ZakuraClient};
 use axum::{
-    body::Bytes,
+    body::Body,
     extract::{Path, State},
-    http::StatusCode,
-    response::IntoResponse,
-    routing::get,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
     Json, Router,
 };
+use ipir_sp::server::MatvecBackend;
 use pir_pipeline::Input;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use status_query_server::protocol::*;
+use serde::Deserialize;
+use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
 use std::{
-    fs::{self, File},
-    io::Write,
+    fs,
     net::SocketAddr,
     path::PathBuf,
-};
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, RwLock},
     time::Duration,
 };
 use tokio::sync::watch;
 
+type Failure = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub state_dir: PathBuf,
     pub salt_hex: String,
     pub window_blocks: u32,
-    pub worker_origin: String,
-    pub router_origin: String,
     pub private_listen: SocketAddr,
 }
-type SharedArtifact = Arc<RwLock<Option<(Hash, Arc<Vec<u8>>)>>>;
-
+#[derive(Default)]
+struct Published {
+    current: Option<Current>,
+    manifest: Option<Manifest>,
+}
 #[derive(Clone)]
 pub struct Publisher {
     config: Config,
-    controller: Arc<RwLock<Option<Controller>>>,
-    artifact: SharedArtifact,
-    last_rows: SharedArtifact,
-    healthy: Arc<AtomicBool>,
-    fenced: Arc<AtomicBool>,
-    http: reqwest::Client,
+    published: Arc<RwLock<Published>>,
+    rpc: Arc<RwLock<Option<ZakuraClient>>>,
+    exported: Arc<std::sync::Mutex<Option<Inventory>>>,
 }
 impl Publisher {
     pub fn new(config: Config) -> Result<Self, Failure> {
-        loopback_origin(&config.worker_origin)?;
-        loopback_origin(&config.router_origin)?;
-        if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 {
-            return Err("invalid private Status configuration".into());
-        }
         let salt: Hash = hex::decode(&config.salt_hex)?
             .try_into()
             .map_err(|_| "salt must be 32 bytes")?;
-        if salt == [0; 32] {
-            return Err("zero Status salt".into());
+        if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 || salt == [0; 32]
+        {
+            return Err("invalid private Status configuration".into());
         }
         Ok(Self {
             config,
-            controller: Arc::new(RwLock::new(None)),
-            artifact: Arc::new(RwLock::new(None)),
-            last_rows: Arc::new(RwLock::new(None)),
-            healthy: Arc::new(AtomicBool::new(false)),
-            fenced: Arc::new(AtomicBool::new(false)),
-            http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
+            published: Arc::new(RwLock::new(Published::default())),
+            rpc: Arc::new(RwLock::new(None)),
+            exported: Arc::new(std::sync::Mutex::new(None)),
         })
     }
-    /// Loopback-only: telemetry, the candidate artifact the worker pulls, and
-    /// the active manifest the host's readiness probe reads.
     pub fn private_routes(&self) -> Router {
         Router::new()
-            .route("/artifact/:id", get(artifact))
             .route("/control/active", get(active))
+            .route(&format!("{PREFIX}current"), get(current))
+            .route(&format!("{PREFIX}objects/:id"), get(object))
+            .route(&format!("{PREFIX}anchors/check"), post(anchors))
+            .layer(axum::extract::DefaultBodyLimit::max(METADATA_LIMIT))
             .with_state(self.clone())
             .merge(telemetry_routes())
     }
-    fn stop(&self) {
-        self.healthy.store(false, Ordering::SeqCst);
-        if let Some(c) = self.controller.write().unwrap().take() {
-            c.revoke();
-        }
+    fn root(&self) -> PathBuf {
+        self.config.state_dir.join("distribution")
     }
-    async fn post<T: Serialize, R: serde::de::DeserializeOwned>(
-        &self,
-        origin: &str,
-        path: &str,
-        body: &T,
-    ) -> Result<R, Failure> {
-        let response = self
-            .http
-            .post(format!("{origin}{path}"))
-            .json(body)
-            .send()
-            .await?;
-        let bytes = bounded(response, 16 * 1024)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(serde_json::from_slice(&bytes)?)
+    fn revision(&self) -> Result<u64, Failure> {
+        let root = self.root();
+        fs::create_dir_all(&root)?;
+        let path = root.join("revision.json");
+        let previous = match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice::<u64>(&bytes)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.into()),
+        };
+        let next = previous.checked_add(1).ok_or("Status revision exhausted")?;
+        durable(&root, "revision.json", &serde_json::to_vec(&next)?)?;
+        Ok(next)
     }
-    async fn fence_roles(&self, epoch: u64) -> Result<[Binding; 2], Failure> {
-        let mut bindings = Vec::new();
-        for (origin, role) in [
-            (&self.config.worker_origin, Role::Worker),
-            (&self.config.router_origin, Role::Router),
-        ] {
-            let bytes = bounded(
-                self.http
-                    .get(format!("{origin}/control/health"))
-                    .send()
-                    .await?,
-                16 * 1024,
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-            let health: Health = serde_json::from_slice(&bytes)?;
-            if health.role != role || health.binding.epoch > epoch {
-                return Err("Status authority behind role fence".into());
-            }
-            let binding = Binding {
-                epoch,
-                incarnation: health.binding.incarnation,
-            };
-            let ack: Binding = self.post(origin, "/control/fence", &binding).await?;
-            if ack != binding {
-                return Err("incorrect Status fence acknowledgment".into());
-            }
-            bindings.push(binding);
+    fn withdraw(&self) {
+        let mut state = self.published.write().unwrap();
+        if let Some(current) = &mut state.current {
+            current.eligible = false;
         }
-        Ok(bindings.try_into().unwrap())
+        state.manifest = None;
+    }
+    fn store(&self, bytes: &[u8]) -> Result<Object, Failure> {
+        let object = Object::new(bytes);
+        let root = self.root().join("objects");
+        fs::create_dir_all(&root)?;
+        let path = root.join(&object.sha256);
+        if path.exists() {
+            object.verify(&fs::read(path)?)?;
+        } else {
+            durable(&root, &object.sha256, bytes)?;
+        }
+        Ok(object)
+    }
+    /// Keep the current material even after expiry, plus all still-fresh
+    /// predecessors. Query transfers pin open inodes; old observations cannot
+    /// activate after their original freshness deadline.
+    fn collect(&self, inventory: Inventory) -> Result<(), Failure> {
+        let root = self.root();
+        let mut retained: Vec<Inventory> = match fs::read(root.join("retained.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => return Err(error.into()),
+        };
+        retained.retain(|old| {
+            old.manifest.fresh(now_ms()).is_ok() && old.manifest.id() != inventory.manifest.id()
+        });
+        retained.push(inventory);
+        let mut keep = std::collections::BTreeSet::new();
+        for inventory in &retained {
+            keep.insert(digest(&serde_json::to_vec(inventory)?));
+            for object in inventory
+                .units
+                .iter()
+                .chain(&inventory.packing)
+                .chain(std::iter::once(&inventory.public))
+            {
+                keep.insert(object.sha256.clone());
+            }
+        }
+        durable(&root, "retained.json", &serde_json::to_vec(&retained)?)?;
+        for entry in fs::read_dir(root.join("objects"))? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
     }
     async fn publish(
         &self,
-        observed: &source::Observation,
+        observed: Arc<source::Observation>,
         authority: &mut authority::Authority,
-        bindings: &[Binding; 2],
+        cache: &mut Option<Generation>,
         rpc: &ZakuraClient,
-    ) -> Result<Manifest, Failure> {
-        // Identity is selected by the product authority; shared progress never
-        // grants authority. A failed activation still requires outer fencing.
-        let identity = authority.next_identity()?;
-        match pir_pipeline::advance(
-            Input::Work(observed),
-            |observed| async move {
-                self.prepare(observed, identity, bindings)
-                    .await
-                    .map(Input::Work)
-            },
-            |(manifest, public)| self.commit_activate(authority, bindings, manifest, public, rpc),
-            &mut StatusProgress,
-        )
-        .await?
-        {
-            Input::Work(manifest) => Ok(manifest),
-            Input::Unchanged | Input::Deferred => {
-                unreachable!("Status preparation returns a candidate")
-            }
-        }
-    }
-    async fn prepare(
-        &self,
-        observed: &source::Observation,
-        (generation, recovery_epoch): (u64, u64),
-        bindings: &[Binding; 2],
-    ) -> Result<(Manifest, Arc<Vec<u8>>), Failure> {
-        let snapshot = &observed.snapshot;
-        let manifest = Manifest {
-            protocol: PROTOCOL.into(),
-            network: snapshot.network,
-            salt: snapshot.salt,
-            generation,
-            recovery_epoch,
-            coverage_start: snapshot.start,
-            anchor_height: snapshot.height,
-            anchor_hash: snapshot.anchor,
-            observed_ms: observed.observed_ms,
-            entries: snapshot.entries,
-            rows_digest: snapshot.digest,
-            public_digest: [0; 32],
-        };
-        manifest.fresh(now_ms())?;
-        let previous = self
-            .controller
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(Controller::current);
-        if let Some(previous) = previous.filter(|g| same_source(snapshot, g.manifest())) {
-            let mut refreshed = previous.manifest().clone();
-            refreshed.generation = generation;
-            refreshed.observed_ms = observed.observed_ms;
-            for (origin, binding) in [
-                (&self.config.worker_origin, &bindings[0]),
-                (&self.config.router_origin, &bindings[1]),
-            ] {
-                let ack: Ready = self
-                    .post(
-                        origin,
-                        "/control/prepare-refresh",
-                        &Activate {
-                            binding: binding.clone(),
-                            manifest: refreshed.clone(),
-                        },
-                    )
-                    .await?;
-                if ack.binding != *binding || ack.manifest != refreshed {
-                    return Err("wrong refresh acknowledgment".into());
-                }
-            }
-            return Ok((refreshed, previous.public().clone()));
-        }
-        // Immutable candidate bytes are durable before remote preparation begins.
-        let dir = self.config.state_dir.join("candidate");
-        fs::create_dir_all(&dir)?;
-        let mut file = File::create(dir.join("rows.tmp"))?;
-        file.write_all(&snapshot.rows)?;
-        file.sync_all()?;
-        fs::rename(dir.join("rows.tmp"), dir.join("rows.bin"))?;
-        let mut metadata = File::create(dir.join("manifest.tmp"))?;
-        metadata.write_all(&serde_json::to_vec(&manifest)?)?;
-        metadata.sync_all()?;
-        fs::rename(dir.join("manifest.tmp"), dir.join("manifest.json"))?;
-        File::open(&dir)?.sync_all()?;
-        let health_bytes = bounded(
-            self.http
-                .get(format!("{}/control/health", self.config.worker_origin))
-                .send()
-                .await?,
-            16 * 1024,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        let health: Health = serde_json::from_slice(&health_bytes)?;
-        if health.binding != bindings[0] {
-            return Err("worker incarnation changed before transfer".into());
-        }
-        let previous = self.last_rows.read().unwrap().clone();
-        let base = previous
-            .as_ref()
-            .filter(|(digest, _)| health.cached_rows == Some(*digest));
-        let encoded = super::artifact::encode(
-            &snapshot.rows,
-            base.map(|(digest, rows)| (*digest, rows.as_slice())),
-        )?;
-        let transfer_digest = Sha256::digest(&encoded).into();
-        tracing::info!(
-            bytes = encoded.len(),
-            full_bytes = snapshot.rows.len(),
-            "Status snapshot transfer"
-        );
-        *self.artifact.write().unwrap() = Some((transfer_digest, Arc::new(encoded)));
-        *self.last_rows.write().unwrap() = Some((snapshot.digest, Arc::new(snapshot.rows.clone())));
-        let worker: Ready = self
-            .post(
-                &self.config.worker_origin,
-                "/control/prepare",
-                &Prepare {
-                    binding: bindings[0].clone(),
-                    manifest: manifest.clone(),
-                    artifact_digest: transfer_digest,
-                },
-            )
-            .await?;
-        if worker.binding != bindings[0] || worker.manifest != manifest {
-            return Err("worker prepared another candidate".into());
-        }
-        let router: Ready = self
-            .post(
-                &self.config.router_origin,
-                "/control/prepare",
-                &Prepare {
-                    binding: bindings[1].clone(),
-                    manifest: manifest.clone(),
-                    artifact_digest: worker.artifact_digest,
-                },
-            )
-            .await?;
-        let mut expected = manifest.clone();
-        expected.public_digest = router.manifest.public_digest;
-        if router.binding != bindings[1]
-            || router.manifest != expected
-            || router.artifact_digest != expected.public_digest
-        {
-            return Err("router prepared another candidate".into());
-        }
-        let public = bounded(
-            self.http
-                .get(format!(
-                    "{}/public/{}",
-                    self.config.router_origin,
-                    hex::encode(expected.public_digest)
-                ))
-                .send()
-                .await?,
-            2 * 1024 * 1024,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        if <Hash>::from(Sha256::digest(&public)) != expected.public_digest {
-            return Err("public material digest mismatch".into());
-        }
-        Ok((expected, Arc::new(public)))
-    }
-    async fn commit_activate(
-        &self,
-        authority: &mut authority::Authority,
-        bindings: &[Binding; 2],
-        expected: Manifest,
-        public: Arc<Vec<u8>>,
-        rpc: &ZakuraClient,
-    ) -> Result<Manifest, Failure> {
-        if canonical_hash(rpc, expected.anchor_height).await? != expected.anchor_hash {
-            return Err("candidate anchor disconnected".into());
-        }
-        expected.fresh(now_ms())?;
-        authority.commit(&expected)?;
-        for (origin, binding) in [
-            (&self.config.worker_origin, &bindings[0]),
-            (&self.config.router_origin, &bindings[1]),
-        ] {
-            let ack: Ready = self
-                .post(
-                    origin,
-                    "/control/activate",
-                    &Activate {
-                        binding: binding.clone(),
-                        manifest: expected.clone(),
-                    },
-                )
-                .await?;
-            if ack.binding != *binding || ack.manifest != expected {
-                return Err("wrong activation acknowledgment".into());
-            }
-        }
-        let g = Generation::public_only(expected.clone(), public);
-        {
-            let mut controller = self.controller.write().unwrap();
-            if let Some(c) = controller.as_ref() {
-                c.activate(g)?;
+    ) -> Result<Generation, Failure> {
+        let (generation, epoch) = authority.next_identity()?;
+        let previous = cache.clone();
+        let prepared = tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
+            let (g, _) = Generation::prepare(
+                &observed.snapshot,
+                generation,
+                epoch,
+                observed.observed_ms,
+                previous.as_ref(),
+                MatvecBackend::Cpu,
+            )?;
+            Ok(g)
+        })
+        .await??;
+        *cache = Some(prepared.clone());
+        let publisher = self.clone();
+        let candidate = prepared.clone();
+        let inventory = tokio::task::spawn_blocking(move || -> Result<Inventory, Failure> {
+            let mut cache = publisher.exported.lock().unwrap();
+            let inventory = if let Some(old) = cache.as_ref().filter(|i| {
+                i.manifest.network == candidate.manifest().network
+                    && i.manifest.salt == candidate.manifest().salt
+                    && i.manifest.rows_digest == candidate.manifest().rows_digest
+            }) {
+                let mut inventory = old.clone();
+                inventory.manifest = candidate.manifest().clone();
+                inventory
             } else {
-                *controller = Some(Controller::new(g));
-            }
+                candidate.export_prepared(|bytes| publisher.store(bytes))?
+            };
+            *cache = Some(inventory.clone());
+            Ok(inventory)
+        })
+        .await??;
+        let manifest = inventory.manifest.clone();
+        let object = self.store(&serde_json::to_vec(&inventory)?)?;
+        if rpc.block_hash(u64::from(manifest.anchor_height)).await? != manifest.anchor_hash {
+            self.withdraw();
+            return Err("Status candidate anchor disconnected".into());
         }
-        self.healthy.store(true, Ordering::SeqCst);
+        manifest.fresh(now_ms())?;
+        authority.commit(&manifest)?;
+        let current = Current {
+            schema: SCHEMA.into(),
+            revision: self.revision()?,
+            recovery_epoch: epoch,
+            network: manifest.network,
+            salt: manifest.salt,
+            generation: manifest.generation,
+            inventory: Some(object),
+            eligible: true,
+        };
+        // The current pointer is durable only after all referenced objects and
+        // authority. A restart allocates a new revision and recovery epoch.
+        durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
+        *self.published.write().unwrap() = Published {
+            current: Some(current),
+            manifest: Some(manifest.clone()),
+        };
         tracing::info!(
-            generation = expected.generation,
-            recovery_epoch = expected.recovery_epoch,
-            source_observed_ms = expected.observed_ms,
-            queryable_ms = now_ms(),
-            "Status live publication"
+            generation,
+            recovery_epoch = epoch,
+            source_observed_ms = manifest.observed_ms,
+            published_ms = now_ms(),
+            "Status prepared publication"
         );
-        Ok(expected)
+        let publisher = self.clone();
+        if let Err(error) =
+            tokio::task::spawn_blocking(move || publisher.collect(inventory)).await?
+        {
+            tracing::warn!(%error, "Status artifact collection deferred");
+        }
+        Ok(prepared)
     }
-    /// Runs on a dedicated runtime, with all auxiliary work owned by this call.
     pub async fn run_managed(
         &self,
         rpc: ZakuraClient,
         http: pir_pipeline::service::Http<Router>,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<(), Failure> {
-        struct Fence(Publisher);
-        impl Drop for Fence {
+        let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
+        *self.rpc.write().unwrap() = Some(rpc.clone());
+        self.revision()?;
+        struct Withdraw(Publisher);
+        impl Drop for Withdraw {
             fn drop(&mut self) {
-                self.0.stop();
+                self.0.withdraw();
             }
         }
-        let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
-        let _fence = Fence(self.clone());
+        let _withdraw = Withdraw(self.clone());
         let mut tasks = pir_pipeline::service::Tasks::default();
         let server = tokio::spawn(http.serve(self.config.private_listen, self.private_routes()));
         tasks.own(&server);
-        let salt: Hash = hex::decode(&self.config.salt_hex)?
+        let salt = hex::decode(&self.config.salt_hex)?
             .try_into()
             .map_err(|_| "invalid salt")?;
         let source = source::RollingWindow::open(
@@ -389,18 +250,7 @@ impl Publisher {
         )?;
         let (tx, mut rx) = watch::channel(None::<Arc<source::Observation>>);
         let source_rpc = rpc.clone();
-        let failed_owner = self.clone();
-        let input_stop = shutdown.clone();
         let observer = tokio::spawn(async move {
-            struct FenceSource(Publisher, pir_pipeline::service::Shutdown);
-            impl Drop for FenceSource {
-                fn drop(&mut self) {
-                    self.0.fenced.store(true, Ordering::SeqCst);
-                    self.0.stop();
-                    self.1.request();
-                }
-            }
-            let _fence = FenceSource(failed_owner, input_stop);
             let mut task = ObservationTask {
                 source,
                 rpc: source_rpc,
@@ -409,150 +259,193 @@ impl Publisher {
             pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending()).await
         });
         tasks.own(&observer);
+        let mut authority = None;
+        let mut previous = None;
         let mut last_observed = 0;
-        let mut recovering = false;
         loop {
             if shutdown.requested() {
                 return Ok(());
             }
-            self.stop();
             if server.is_finished() || observer.is_finished() {
                 return Err("Status background service stopped".into());
             }
-            if rx.borrow().is_none() {
-                tokio::select! { result = rx.changed() => result?, _ = shutdown.cancelled() => return Ok(()) };
-            }
-            let first = rx.borrow().clone().ok_or("Status source unavailable")?;
-            let mut authority = authority::Authority::open(
-                self.config.state_dir.join("authority"),
-                first.snapshot.network,
-                salt,
-            )?;
-            let (_, epoch) = authority.next_identity()?;
-            let bindings = match self.fence_roles(epoch).await {
-                Ok(b) => b,
-                Err(error) => {
-                    tracing::warn!(%error, "Status role fencing deferred");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                    continue;
-                }
-            };
-            // Roles keep serving the old view until fenced, so recovery backs
-            // off only after the fence.
-            if std::mem::take(&mut recovering) {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-            // Heartbeats never change observation freshness or authorize a recovery.
-            let (active_tx, active_rx) = watch::channel(None::<Manifest>);
-            let heartbeat_owner = self.clone();
-            let heartbeat_bindings = bindings.clone();
-            let heartbeat_rpc = rpc.clone();
-            let heartbeat = tokio::spawn(async move {
-                struct StopOnExit(Publisher);
-                impl Drop for StopOnExit {
-                    fn drop(&mut self) {
-                        self.0.stop();
-                    }
-                }
-                let _guard = StopOnExit(heartbeat_owner.clone());
-                let mut task = HeartbeatTask {
-                    owner: heartbeat_owner,
-                    bindings: heartbeat_bindings,
-                    rpc: heartbeat_rpc,
-                    active: active_rx,
-                };
-                pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending())
-                    .await
-            });
-            let mut heartbeat_tasks = pir_pipeline::service::Tasks::default();
-            heartbeat_tasks.own(&heartbeat);
-            loop {
-                if shutdown.requested() {
-                    return Ok(());
-                }
-                if server.is_finished() || observer.is_finished() {
-                    return Err("Status background service stopped".into());
-                }
-                let observed = rx
-                    .borrow_and_update()
-                    .clone()
-                    .ok_or("Status source unavailable")?;
-                if observed.observed_ms <= last_observed {
-                    let mut changed = Ok(());
-                    pir_pipeline::wait(
-                        tokio::time::Instant::now() + Duration::from_secs(1),
-                        async {
-                            changed = rx.changed().await;
-                        },
-                        shutdown.cancelled(),
+            let observed = rx.borrow().clone();
+            if let Some(observed) = observed.filter(|o| o.observed_ms > last_observed) {
+                // Detect invalidation independently of the publication outcome.
+                let (active, withdrawn) = {
+                    let published = self.published.read().unwrap();
+                    (
+                        published.manifest.clone(),
+                        published.current.as_ref().is_some_and(|c| !c.eligible),
                     )
-                    .await;
-                    changed?;
-                    if heartbeat.is_finished() {
-                        break;
+                };
+                // Candidate validation can withdraw after the active-anchor
+                // check. Its cleared manifest must not hide the recovery fence.
+                if withdrawn {
+                    authority = None;
+                    previous = None;
+                }
+                if let Some(active) = active {
+                    if rpc.block_hash(u64::from(active.anchor_height)).await? != active.anchor_hash
+                    {
+                        self.withdraw();
+                        authority = None;
+                        previous = None;
                     }
-                    continue;
+                }
+                if authority.is_none() {
+                    authority = Some(authority::Authority::open(
+                        self.config.state_dir.join("authority"),
+                        observed.snapshot.network,
+                        salt,
+                    )?);
                 }
                 last_observed = observed.observed_ms;
-                if let Some(current) = active_tx.borrow().as_ref() {
-                    if same_source(&observed.snapshot, current)
-                        && observed.observed_ms.saturating_sub(current.observed_ms) < 5_000
-                    {
-                        continue;
-                    }
-                }
-                if heartbeat.is_finished() {
-                    break;
-                }
-                let identity_before = authority.next_identity()?;
                 match self
-                    .publish(&observed, &mut authority, &bindings, &rpc)
+                    .publish(observed, authority.as_mut().unwrap(), &mut previous, &rpc)
                     .await
                 {
-                    Ok(manifest) => {
-                        if heartbeat.is_finished() {
-                            self.stop();
-                            break;
-                        }
-                        active_tx.send(Some(manifest))?;
-                    }
+                    Ok(g) => previous = Some(g),
                     Err(error) => {
-                        if authority.next_identity().ok() == Some(identity_before)
-                            && !heartbeat.is_finished()
-                        {
-                            // Preparation/backpressure cannot grant serving authority.
-                            // Preserve the committed view and try the next observation.
-                            tracing::warn!(%error, "Status preparation deferred; committed view retained");
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            continue;
+                        if error.downcast_ref::<authority::AuthorityError>().is_some() {
+                            self.withdraw();
+                            authority = None;
                         }
-                        tracing::warn!(%error, "Status activation uncertain; fencing before recovery");
-                        break;
+                        tracing::warn!(%error, "Status publication deferred");
                     }
                 }
             }
-            self.stop();
-            heartbeat.abort();
-            let _ = heartbeat.await;
-            recovering = true;
+            tokio::select! { result = rx.changed() => result?, _ = shutdown.cancelled() => return Ok(()) }
         }
     }
 }
-// Observation only: these timings do not renew source freshness or a role lease.
-struct StatusProgress;
-impl pir_pipeline::Observer for StatusProgress {
-    fn finished(&mut self, phase: pir_pipeline::Phase, elapsed: Duration, succeeded: bool) {
-        tracing::debug!(
-            ?phase,
-            seconds = elapsed.as_secs_f64(),
-            succeeded,
-            "Status lifecycle phase"
+fn durable(root: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    pir_control::durable::write_atomic(root, name, |f| f.write_all(bytes))?;
+    fs::set_permissions(root.join(name), {
+        use std::os::unix::fs::PermissionsExt;
+        fs::Permissions::from_mode(0o444)
+    })?;
+    pir_control::durable::sync_dir(root)
+}
+async fn active(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
+    let manifest = s
+        .published
+        .read()
+        .unwrap()
+        .manifest
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    manifest
+        .fresh(now_ms())
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(manifest))
+}
+async fn current(State(s): State<Publisher>, headers: HeaderMap) -> Result<Response, StatusCode> {
+    let current = s
+        .published
+        .read()
+        .unwrap()
+        .current
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let token = format!("\"{}-{}\"", current.revision, current.eligible);
+    let mut response = if headers.get("if-none-match").and_then(|s| s.to_str().ok()) == Some(&token)
+    {
+        StatusCode::NOT_MODIFIED.into_response()
+    } else {
+        Json(current).into_response()
+    };
+    response.headers_mut().insert(
+        "etag",
+        token
+            .parse()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+    );
+    response
+        .headers_mut()
+        .insert("cache-control", "no-store".parse().unwrap());
+    Ok(response)
+}
+async fn object(
+    State(s): State<Publisher>,
+    Path(id): Path<String>,
+) -> Result<Response, StatusCode> {
+    if !valid_digest(&id) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let file = tokio::fs::File::open(s.root().join("objects").join(id))
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let stream = tokio_util::io::ReaderStream::new(file);
+    Ok(Body::from_stream(stream).into_response())
+}
+async fn anchors(
+    State(s): State<Publisher>,
+    Json(request): Json<AnchorRequest>,
+) -> Result<Json<AnchorResponse>, StatusCode> {
+    if request.anchors.is_empty() || request.anchors.len() > MAX_ANCHORS {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let before = s
+        .published
+        .read()
+        .unwrap()
+        .current
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    if request.current != before || !before.eligible {
+        return Err(StatusCode::CONFLICT);
+    }
+    let rpc = s
+        .rpc
+        .read()
+        .unwrap()
+        .clone()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut canonical = Vec::new();
+    for (height, hash) in request.anchors {
+        canonical.push(
+            rpc.block_hash(u64::from(height))
+                .await
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+                == hash,
         );
     }
+    if s.published.read().unwrap().current.as_ref() != Some(&before) {
+        return Err(StatusCode::CONFLICT);
+    }
+    Ok(Json(AnchorResponse {
+        current: before,
+        canonical,
+    }))
 }
-
-/// Observation owns the checkpoint cache; it continues while publication waits
-/// on remote preparation. Sending progress cannot refresh a served manifest.
+fn telemetry_routes() -> Router {
+    Router::new()
+        .route(
+            "/internal/status-apm",
+            get(|| async {
+                Json(
+                    tokio::task::spawn_blocking(telemetry::snapshot)
+                        .await
+                        .unwrap_or_default(),
+                )
+            }),
+        )
+        .route(
+            "/internal/metrics",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4",
+                    )],
+                    telemetry::prometheus(),
+                )
+                    .into_response()
+            }),
+        )
+        .route("/internal/health", get(|| async { "ok\n" }))
+}
 struct ObservationTask {
     source: source::RollingWindow,
     rpc: ZakuraClient,
@@ -586,462 +479,6 @@ impl pir_pipeline::Task for ObservationTask {
             }
             ObservationError::Closed => pir_pipeline::FailurePolicy::Stop,
         }
-    }
-}
-
-struct HeartbeatTask {
-    owner: Publisher,
-    bindings: [Binding; 2],
-    rpc: ZakuraClient,
-    active: watch::Receiver<Option<Manifest>>,
-}
-impl pir_pipeline::Task for HeartbeatTask {
-    type Error = Failure;
-    async fn run(&mut self) -> Result<(), Failure> {
-        let active = self.active.borrow().clone();
-        if let Some(manifest) = active {
-            if canonical_hash(&self.rpc, manifest.anchor_height).await? != manifest.anchor_hash {
-                self.owner.stop();
-                return Err::<(), Failure>("active Status anchor disconnected".into());
-            }
-            for (origin, binding) in [
-                (&self.owner.config.worker_origin, &self.bindings[0]),
-                (&self.owner.config.router_origin, &self.bindings[1]),
-            ] {
-                let ack: Binding = self
-                    .owner
-                    .post(
-                        origin,
-                        "/control/heartbeat",
-                        &Activate {
-                            binding: binding.clone(),
-                            manifest: manifest.clone(),
-                        },
-                    )
-                    .await?;
-                if ack != *binding {
-                    return Err("wrong Status heartbeat acknowledgment".into());
-                }
-            }
-        } else {
-            for (origin, binding) in [
-                (&self.owner.config.worker_origin, &self.bindings[0]),
-                (&self.owner.config.router_origin, &self.bindings[1]),
-            ] {
-                let bytes = bounded(
-                    self.owner
-                        .http
-                        .get(format!("{origin}/control/health"))
-                        .send()
-                        .await?,
-                    16 * 1024,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-                let health: Health = serde_json::from_slice(&bytes)?;
-                if health.binding != *binding {
-                    return Err("Status role restarted before initial publication".into());
-                }
-            }
-        }
-        Ok(())
-    }
-    fn failed(&mut self, _: &Failure) -> pir_pipeline::FailurePolicy {
-        // The outer owner revokes and fences before attempting recovery.
-        pir_pipeline::FailurePolicy::Stop
-    }
-}
-
-fn same_source(s: &index::Snapshot, m: &Manifest) -> bool {
-    s.network == m.network
-        && s.salt == m.salt
-        && s.digest == m.rows_digest
-        && s.start == m.coverage_start
-        && s.height == m.anchor_height
-        && s.anchor == m.anchor_hash
-        && s.entries == m.entries
-}
-/// The active manifest while this publisher is healthy and its view is fresh.
-/// Readiness only; wallets read the router.
-async fn active(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
-    if !s.healthy.load(Ordering::SeqCst) || s.fenced.load(Ordering::SeqCst) {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
-    let c = s
-        .controller
-        .read()
-        .unwrap()
-        .clone()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let g = c.current();
-    c.check(&g)?;
-    Ok(Json(g.manifest().clone()))
-}
-fn telemetry_routes() -> Router {
-    Router::new()
-        .route(
-            "/internal/status-apm",
-            get(|| async {
-                Json(
-                    tokio::task::spawn_blocking(telemetry::snapshot)
-                        .await
-                        .unwrap_or_default(),
-                )
-            }),
-        )
-        .route(
-            "/internal/metrics",
-            get(|| async {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "text/plain; version=0.0.4",
-                    )],
-                    telemetry::prometheus(),
-                )
-                    .into_response()
-            }),
-        )
-        .route("/internal/health", get(|| async { "ok\n" }))
-}
-async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, StatusCode> {
-    if !response.status().is_success() {
-        return Err(
-            StatusCode::from_u16(response.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
-        );
-    }
-    let mut out = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?
-    {
-        if chunk.len() > limit.saturating_sub(out.len()) {
-            return Err(StatusCode::BAD_GATEWAY);
-        }
-        out.extend(&chunk);
-    }
-    Ok(out)
-}
-/// Response body over the shared candidate artifact, without copying it.
-struct SharedBytes(Arc<Vec<u8>>);
-impl AsRef<[u8]> for SharedBytes {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-}
-async fn artifact(
-    State(s): State<Publisher>,
-    Path(id): Path<String>,
-) -> Result<axum::body::Bytes, StatusCode> {
-    let bytes = {
-        let artifact = s.artifact.read().unwrap();
-        let (digest, bytes) = artifact.as_ref().ok_or(StatusCode::NOT_FOUND)?;
-        if hex::encode(digest) != id {
-            return Err(StatusCode::NOT_FOUND);
-        }
-        bytes.clone()
-    };
-    Ok(Bytes::from_owner(SharedBytes(bytes)))
-}
-
-async fn canonical_hash(rpc: &ZakuraClient, height: u32) -> Result<Hash, Failure> {
-    let hash = rpc.block_hash(u64::from(height)).await?;
-    Ok(hash)
-}
-
-#[cfg(test)]
-mod query_transport_tests {
-    use super::*;
-    fn config() -> Config {
-        serde_json::from_value(serde_json::json!({
-            "state_dir":"/unused", "salt_hex":hex::encode([1u8;32]), "window_blocks":1,
-            "worker_origin":"http://127.0.0.1:8481", "router_origin":"http://127.0.0.1:8482",
-            "private_listen":"127.0.0.1:8480"
-        }))
-        .unwrap()
-    }
-    #[tokio::test]
-    async fn active_manifest_is_unavailable_until_publication() {
-        use axum::{body::Body, http::Request};
-        use tower::ServiceExt;
-        let publisher = Publisher::new(config()).unwrap();
-        let routes = publisher.private_routes();
-        let response = routes
-            .clone()
-            .oneshot(Request::get("/control/active").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        for path in ["/v1/status/init", "/v1/status/query"] {
-            let response = routes
-                .clone()
-                .oneshot(Request::get(path).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
-        }
-    }
-    /// Exercise the existing publisher API at its HTTP control/source boundaries:
-    /// neither failed refresh preparation nor failed anchor revalidation may advance
-    /// authority or replace the previously committed public observation.
-    #[cfg(feature = "fixtures")]
-    #[tokio::test]
-    async fn refresh_preparation_and_source_failures_keep_committed_observation_and_retry() {
-        use axum::response::IntoResponse;
-        use axum::routing::post;
-        use serde_json::{json, Value};
-        let root = tempfile::tempdir().unwrap();
-        let (source_rpc, source_service) = source::tests::fixture(false, false).await;
-        let checkpoint = root.path().join("source/source.bin");
-        let mut rolling =
-            source::RollingWindow::open(root.path().join("source"), [1; 32], 1).unwrap();
-        let observed = rolling.observe(&source_rpc).await.unwrap();
-        let snapshot = &observed.snapshot;
-        let public = Arc::new(vec![1, 2, 3]);
-        let manifest = Manifest {
-            protocol: PROTOCOL.into(),
-            network: snapshot.network,
-            salt: snapshot.salt,
-            generation: 1,
-            recovery_epoch: 1,
-            coverage_start: snapshot.start,
-            anchor_height: snapshot.height,
-            anchor_hash: snapshot.anchor,
-            observed_ms: observed.observed_ms,
-            entries: snapshot.entries,
-            rows_digest: snapshot.digest,
-            public_digest: Sha256::digest(public.as_slice()).into(),
-        };
-        let refuse_prepare = Arc::new(AtomicBool::new(true));
-        let pause_prepare = Arc::new(AtomicBool::new(false));
-        let preparing = Arc::new(tokio::sync::Notify::new());
-        let release = Arc::new(tokio::sync::Notify::new());
-        let heartbeats = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let role = Router::new()
-            .route(
-                "/control/prepare-refresh",
-                post({
-                    let refuse = refuse_prepare.clone();
-                    let pause = pause_prepare.clone();
-                    let preparing = preparing.clone();
-                    let release = release.clone();
-                    move |Json(input): Json<Activate>| {
-                        let (refuse, pause, preparing, release) = (
-                            refuse.clone(),
-                            pause.clone(),
-                            preparing.clone(),
-                            release.clone(),
-                        );
-                        async move {
-                            if pause.load(Ordering::SeqCst) {
-                                preparing.notify_one();
-                                release.notified().await;
-                            }
-                            if refuse.load(Ordering::SeqCst) {
-                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                            }
-                            Json(Ready {
-                                binding: input.binding,
-                                artifact_digest: input.manifest.public_digest,
-                                manifest: input.manifest,
-                            })
-                            .into_response()
-                        }
-                    }
-                }),
-            )
-            .route(
-                "/control/activate",
-                post(|Json(input): Json<Activate>| async move {
-                    Json(Ready {
-                        binding: input.binding,
-                        artifact_digest: input.manifest.public_digest,
-                        manifest: input.manifest,
-                    })
-                }),
-            );
-        let role = role.route(
-            "/control/heartbeat",
-            post({
-                let heartbeats = heartbeats.clone();
-                move |Json(input): Json<Activate>| {
-                    heartbeats.fetch_add(1, Ordering::SeqCst);
-                    async move { Json(input.binding) }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let role_task = tokio::spawn(async move { axum::serve(listener, role).await.unwrap() });
-        let source_down = Arc::new(AtomicBool::new(true));
-        let rpc_routes = Router::new().route(
-            "/",
-            post({
-                let source_down = source_down.clone();
-                let anchor = snapshot.anchor;
-                move |Json(request): Json<Value>| {
-                    let source_down = source_down.clone();
-                    async move {
-                        assert_eq!(request["method"], "getblockhash");
-                        if source_down.load(Ordering::SeqCst) {
-                            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-                        }
-                        Json(
-                            json!({"result": zakura_server_chain::hash::display(&anchor),
-                        "error": null, "id": request["id"]}),
-                        )
-                        .into_response()
-                    }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let rpc_origin = format!("http://{}", listener.local_addr().unwrap());
-        let rpc_task =
-            tokio::spawn(async move { axum::serve(listener, rpc_routes).await.unwrap() });
-        std::fs::write(root.path().join("cookie"), "test:test").unwrap();
-        let rpc = ZakuraClient::from_cookie_file(&rpc_origin, root.path().join("cookie")).unwrap();
-        let mut config = config();
-        config.state_dir = root.path().join("publisher");
-        config.worker_origin = origin.clone();
-        config.router_origin = origin;
-        config.salt_hex = hex::encode(snapshot.salt);
-        let publisher = Publisher::new(config).unwrap();
-        *publisher.controller.write().unwrap() = Some(Controller::new(Generation::public_only(
-            manifest.clone(),
-            public,
-        )));
-        publisher.healthy.store(true, Ordering::SeqCst);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let init = format!("http://{}/control/active", listener.local_addr().unwrap());
-        let routes = publisher.private_routes();
-        let public_task = tokio::spawn(async move { axum::serve(listener, routes).await.unwrap() });
-        let mut authority = authority::Authority::open(
-            root.path().join("authority"),
-            snapshot.network,
-            snapshot.salt,
-        )
-        .unwrap();
-        authority.commit(&manifest).unwrap();
-        let identity = authority.next_identity().unwrap();
-        let bindings = [
-            Binding {
-                epoch: 1,
-                incarnation: "worker".into(),
-            },
-            Binding {
-                epoch: 1,
-                incarnation: "router".into(),
-            },
-        ];
-        for preparation_fails in [true, false] {
-            refuse_prepare.store(preparation_fails, Ordering::SeqCst);
-            assert!(publisher
-                .publish(&observed, &mut authority, &bindings, &rpc)
-                .await
-                .is_err());
-            assert_eq!(authority.next_identity().unwrap(), identity);
-            let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
-            assert_eq!(served, manifest);
-        }
-        source_down.store(false, Ordering::SeqCst);
-        // Run the production heartbeat task while actual shared preparation is
-        // held at a real HTTP reply. Its renewals retain the old observation.
-        pause_prepare.store(true, Ordering::SeqCst);
-        let (_active_tx, active) = watch::channel(Some(manifest.clone()));
-        let mut heartbeat = HeartbeatTask {
-            owner: publisher.clone(),
-            bindings: bindings.clone(),
-            rpc: rpc.clone(),
-            active,
-        };
-        let checkpoint_before = std::fs::read(&checkpoint).unwrap();
-        let authority_before = std::fs::read(root.path().join("authority/authority.json")).unwrap();
-        let (observations, source_progress) = watch::channel(None);
-        let mut input = ObservationTask {
-            source: rolling,
-            rpc: source_rpc,
-            tx: observations,
-        };
-        {
-            let publication = publisher.publish(&observed, &mut authority, &bindings, &rpc);
-            tokio::pin!(publication);
-            tokio::select! {
-                result = &mut publication => panic!("preparation did not pause: {result:?}"),
-                _ = preparing.notified() => {},
-            }
-            let (source_shutdown, source_stopped) = tokio::sync::oneshot::channel();
-            let source_task = tokio::spawn(async move {
-                pir_pipeline::supervise(&mut input, Duration::from_secs(1), async {
-                    let _ = source_stopped.await;
-                })
-                .await
-            });
-            let (shutdown, stopped) = tokio::sync::oneshot::channel();
-            let heartbeat_task = tokio::spawn(async move {
-                pir_pipeline::supervise(&mut heartbeat, Duration::from_secs(1), async {
-                    let _ = stopped.await;
-                })
-                .await
-            });
-            tokio::time::timeout(Duration::from_secs(4), async {
-                while heartbeats.load(Ordering::SeqCst) < 6 {
-                    assert!(
-                        !heartbeat_task.is_finished(),
-                        "heartbeat stopped during preparation"
-                    );
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .unwrap();
-            shutdown.send(()).unwrap();
-            heartbeat_task.await.unwrap().unwrap();
-            assert_eq!(heartbeats.load(Ordering::SeqCst), 6);
-            let progressed = source_progress
-                .borrow()
-                .clone()
-                .expect("observation continues during prepare");
-            assert!(progressed.observed_ms > manifest.observed_ms);
-            assert_eq!(progressed.snapshot.digest, observed.snapshot.digest);
-            assert_eq!(
-                std::fs::read(&checkpoint).unwrap(),
-                checkpoint_before,
-                "unchanged source tip preserves the committed checkpoint"
-            );
-            assert!(!std::fs::read(&checkpoint).unwrap().is_empty());
-            assert_eq!(
-                std::fs::read(root.path().join("authority/authority.json")).unwrap(),
-                authority_before
-            );
-            source_shutdown.send(()).unwrap();
-            source_task
-                .await
-                .unwrap()
-                .map_err(|_| "observation supervision failed")
-                .unwrap();
-            let served: Manifest = reqwest::get(&init).await.unwrap().json().await.unwrap();
-            assert_eq!(served, manifest, "heartbeats cannot refresh source time");
-            pause_prepare.store(false, Ordering::SeqCst);
-            release.notify_one();
-            // Both role preparations use the same HTTP fixture; after the
-            // first is released the second no longer pauses.
-            publication.await.unwrap();
-        }
-        let activated = publisher
-            .publish(&observed, &mut authority, &bindings, &rpc)
-            .await
-            .unwrap();
-        assert_eq!(activated.generation, identity.0 + 1);
-        assert_eq!(activated.observed_ms, observed.observed_ms);
-        let served: Manifest = reqwest::get(init).await.unwrap().json().await.unwrap();
-        assert_eq!(served, activated);
-        role_task.abort();
-        rpc_task.abort();
-        public_task.abort();
-        source_service.abort();
-        let _ = source_service.await;
     }
 }
 

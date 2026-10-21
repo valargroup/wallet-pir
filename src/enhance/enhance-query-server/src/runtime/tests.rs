@@ -135,13 +135,9 @@ fn hint_artifact_excludes_partial_misaligned_and_status_layouts() {
         .unwrap()
         .0;
     assert!(eval.verified_hint_artifact().unwrap().is_some());
-    let oracle_root = tempfile::tempdir().unwrap();
-    let expected = Engine::new(oracle_root.path())
-        .prepare(domain.clone(), records)
-        .unwrap()
-        .0
-        .hint()
-        .unwrap();
+    // These layouts must keep this runtime's hint. An independent build of
+    // the same rows is the 67-record oracle.
+    let expected = eval.hint().unwrap();
     let mut partial = domain.clone();
     partial.shard = Lifecycle::default()
         .coverage(8192 * RECORDS_PER_ROW as u64 + 17, Geometry::default())

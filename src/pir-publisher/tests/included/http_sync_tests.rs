@@ -16,7 +16,7 @@ use transparent_shared::journal::events::EventStore;
 
 use super::display_world;
 
-fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
+async fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
     Manager::new(
         Config {
             publisher: origin.into(),
@@ -32,6 +32,7 @@ fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
 }
 
@@ -97,18 +98,20 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             &scratch.path().join(format!("refused-{fault}")),
             &tls.origin,
             tls.cert.clone(),
-        );
+        )
+        .await;
         assert!(refused.poll_once().await.is_err(), "accepted {fault}");
         assert!(!refused.ready().await, "served {fault}");
     }
     std::fs::write(&tls.control, "").unwrap();
     let first_root = scratch.path().join("first");
-    let mut first = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut first = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     let mut second = manager(
         &scratch.path().join("second"),
         &tls.origin,
         tls.cert.clone(),
-    );
+    )
+    .await;
     first.poll_once().await.unwrap();
     second.poll_once().await.unwrap();
     assert!(first.ready().await && second.ready().await);
@@ -154,7 +157,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     stop.send(()).unwrap();
     query_task.await.unwrap();
     drop(first);
-    let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut restarted = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     let result = restarted.poll_once().await.unwrap();
     assert!(restarted.ready().await);
     // The budget includes live metadata and attestations, not cached runtime bodies.
@@ -240,7 +243,7 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     assert!(restarted.poll_once().await.is_err());
     assert!(second.poll_once().await.is_err());
     drop(restarted);
-    let mut refused = manager(&first_root, &tls.origin, tls.cert.clone());
+    let mut refused = manager(&first_root, &tls.origin, tls.cert.clone()).await;
     assert!(refused.poll_once().await.is_err());
     assert!(
         !refused.ready().await,
@@ -476,7 +479,7 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
     let consumer_root = scratch.path().join("consumer");
-    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
     consumer.poll_once().await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -596,7 +599,7 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
     query_task.abort();
     let _ = query_task.await;
     drop(consumer);
-    let mut restarted = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    let mut restarted = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
     restarted.poll_once().await.unwrap();
     assert!(restarted.ready().await);
     if reorg {
@@ -612,6 +615,173 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
         );
     }
     node_task.abort();
+}
+
+/// Publisher service discovery gates startup and every pass of a real HTTPS
+/// display consumer. Only a confirmed major version mismatch stops the process.
+#[tokio::test(flavor = "multi_thread")]
+async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass() {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let _node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let cookie = scratch.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    distribution
+        .finalize(initial.candidate.clone(), vec![])
+        .await
+        .unwrap();
+    let tls_root = scratch.path().join("tls");
+    std::fs::create_dir(&tls_root).unwrap();
+    let tls = tls_router(&tls_root, distribution.router()).await;
+    let requests = tls.control.with_extension("requests");
+    let product_requests = || std::fs::read_to_string(&requests).unwrap_or_default();
+    let config = |directory: &Path| Config {
+        publisher: tls.origin.clone(),
+        network: "main".into(),
+        genesis_hash: fixture::GENESIS.into(),
+        directory: directory.into(),
+        cache_bytes: 4 << 30,
+        max_download_bytes: 4 << 30,
+        roots: vec![tls.cert.clone()],
+    };
+    let service = || ServiceConfig {
+        cache_bytes: 4 << 30,
+        ..Default::default()
+    };
+    let newer = r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#;
+
+    // Startup refuses every discovery failure before opening any state or
+    // sending any product request.
+    for (fault, expected) in [
+        ("discovery-missing", "HTTP 404"),
+        ("discovery-redirect", "HTTP 302"),
+        ("discovery-unavailable", "HTTP 503"),
+        ("discovery-oversize", "exceeds"),
+        ("discovery-body:{", "malformed"),
+        (
+            r#"discovery-body:{"service":"other","version":"1.0.0"}"#,
+            "expected \"pir-publisher\"",
+        ),
+        (
+            r#"discovery-body:{"service":"pir-publisher","version":"0.9.0"}"#,
+            "0.x",
+        ),
+        (newer, "upgrade the query server"),
+    ] {
+        std::fs::write(&tls.control, fault).unwrap();
+        std::fs::write(&requests, "").unwrap();
+        let directory = scratch.path().join("refused");
+        let error = match Manager::new(config(&directory), service()).await {
+            Ok(_) => panic!("started against {fault}"),
+            Err(error) => error,
+        };
+        let text = error.to_string();
+        assert!(text.contains(expected), "{fault}: {text}");
+        assert!(text.contains(&tls.origin), "{fault}: {text}");
+        assert_eq!(
+            transparent_query_server::is_incompatible(&error),
+            fault == newer,
+            "{fault}"
+        );
+        assert!(!directory.exists(), "{fault} opened consumer state");
+        assert_eq!(product_requests(), "", "{fault} fetched product data");
+    }
+    let mut untrusted = config(&scratch.path().join("untrusted"));
+    untrusted.roots.clear();
+    std::fs::write(&tls.control, "").unwrap();
+    assert!(Manager::new(untrusted, service()).await.is_err());
+
+    // A compatible publisher proceeds into the existing product validation.
+    let directory = scratch.path().join("consumer");
+    let mut consumer = Manager::new(config(&directory), service()).await.unwrap();
+    consumer.poll_once().await.unwrap();
+    assert!(consumer.ready().await);
+
+    // An ordinary discovery failure skips the whole pass and keeps serving.
+    std::fs::write(&tls.control, "discovery-unavailable").unwrap();
+    std::fs::write(&requests, "").unwrap();
+    let error = consumer.poll_once().await.unwrap_err();
+    assert!(
+        !transparent_query_server::is_incompatible(&error),
+        "{error}"
+    );
+    assert_eq!(
+        product_requests(),
+        "",
+        "a refused pass fetched product data"
+    );
+    assert!(consumer.ready().await, "temporary refusal withdrew serving");
+    std::fs::write(&tls.control, "").unwrap();
+    assert_eq!(consumer.poll_once().await.unwrap()["unchanged"], true);
+    drop(consumer);
+
+    // A live process stops wallet serving and returns the original typed error
+    // when the publisher's major version changes.
+    let process: transparent_query_server::tx_detail::process::DetailProcess =
+        serde_json::from_value(serde_json::json!({
+            "publisher": tls.origin,
+            "state_dir": directory,
+            "publisher_network": "main",
+            "publisher_genesis": fixture::GENESIS,
+            "publisher_ca": tls_root.join("ca.pem"),
+            "role": "combined",
+        }))
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let serving = listener.local_addr().unwrap();
+    let running = tokio::spawn(transparent_query_server::tx_detail::process::run_with(
+        process.clone(),
+        Some(listener),
+    ));
+    let status = format!("http://{serving}/v1/provider-status");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    while reqwest::get(&status).await.is_err() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process never served"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    std::fs::write(&tls.control, newer).unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(60), running)
+        .await
+        .expect("an incompatible publisher must stop the process")
+        .unwrap()
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    assert!(error.to_string().contains("2.0.0"), "{error}");
+    assert!(
+        tokio::net::TcpStream::connect(serving).await.is_err(),
+        "wallet serving outlived an incompatible publisher"
+    );
+
+    // The recovered predecessor on disk cannot mask the mismatch at restart.
+    let error = transparent_query_server::tx_detail::process::run_with(process, None)
+        .await
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -657,7 +827,7 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
     let tls = tls_router(&tls_root, distribution.router()).await;
     std::fs::write(&tls.control, "pause-current-2").unwrap();
     let consumer_root = scratch.path().join("consumer");
-    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone());
+    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
     let checking = tokio::spawn(async move {
         let result = consumer.poll_once().await;
         (consumer, result)

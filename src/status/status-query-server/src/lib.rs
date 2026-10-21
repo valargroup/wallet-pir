@@ -4,7 +4,6 @@
 //! This library is runtime-free. `pir-query-server` owns the role listeners,
 //! admission and outbound HTTP; chain observation, publication and the CLI live
 //! in `status-publisher`. Neither may be reached from here.
-pub mod artifact;
 mod backend;
 mod controller;
 pub mod distributed;
@@ -12,6 +11,7 @@ pub mod fixture;
 mod generation;
 pub mod index;
 pub mod protocol;
+pub mod publication;
 pub mod telemetry;
 use crate::protocol::*;
 pub use controller::Controller;

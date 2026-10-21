@@ -25,6 +25,7 @@ class ServingTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(result['phase'], 'committed')
         edge = self.ex.read('coordinator', publisher_serving.CADDY)
         self.assertIn('handle /v1/enhance/*', edge)
+        self.assertEqual(edge.count(publisher_serving.DISCOVERY), 1)
         self.assertIn('respond 404', edge)
         self.assertNotIn('127.0.0.1:8080', edge)
         self.assertTrue(all(r['phase'] == 'verified' for r in result['serving_journal']['hosts']))
@@ -35,8 +36,25 @@ class ServingTests(PublisherFixture, unittest.TestCase):
     def test_subsequent_update_keeps_the_installed_wallet_routes(self):
         self.deploy()
         edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        self.request['serving']['caddy_sha256'] = publisher.sha(edge)
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
         self.assertEqual(self.deploy()['phase'], 'committed')
         self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), edge)
+
+    def test_foreign_discovery_route_is_refused(self):
+        edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        foreign = publisher_serving.DISCOVERY.replace('127.0.0.1:18080', '127.0.0.1:8080')
+        self.ex.put('coordinator', publisher_serving.CADDY,
+                    edge.replace(publisher_serving.WALLET, publisher_serving.WALLET + foreign))
+        self.request['serving']['caddy_sha256'] = publisher.sha(
+            self.ex.read('coordinator', publisher_serving.CADDY))
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'unknown publisher discovery route'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
 
     def test_retained_cutover_journal_restores_its_saved_wallet_routes(self):
         result = self.deploy()

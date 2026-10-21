@@ -92,6 +92,86 @@ pub(super) fn copy_prepared_publication(through: u64, directory: &Path) {
     copy_fixture_tree(&prepared_fixture(through).join("publication"), directory);
 }
 
+/// Archive runtimes prepared once per process. The input is a copy of the
+/// recent-only fixture, so recent files are linked and archive files are built.
+struct ArchiveRuntimeBuild {
+    root: PathBuf,
+    built: usize,
+    linked: usize,
+    recent_files: usize,
+}
+
+fn archive_runtimes(through: u64) -> &'static ArchiveRuntimeBuild {
+    fn build(through: u64) -> ArchiveRuntimeBuild {
+        let mut outcome = None;
+        let root = owned_fixture(|dir| {
+            let directory = dir.join("publication");
+            copy_fixture_tree(&prepared_fixture(through).join("publication"), &directory);
+            let set = ShardSet::open(&directory, 0).unwrap();
+            let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+                .map(|entry| entry.file_name().into_string().unwrap())
+                .collect();
+            let prepared = transparent_shared::runtime::prebuild::prepare_publication(
+                &set,
+                &directory,
+                &[],
+                &|| false,
+            )
+            .unwrap();
+            assert!(prepared.failures.is_empty());
+            assert!(!recent_files.is_empty());
+            assert_eq!(prepared.linked(), recent_files.len());
+            assert!(
+                prepared.built() > 0,
+                "archive runtimes must still be prepared"
+            );
+            for file in &prepared.files {
+                assert_eq!(file.linked, recent_files.contains(&file.name));
+            }
+            outcome = Some((prepared.built(), prepared.linked(), recent_files.len()));
+        });
+        let (built, linked, recent_files) = outcome.unwrap();
+        ArchiveRuntimeBuild {
+            root,
+            built,
+            linked,
+            recent_files,
+        }
+    }
+    static FIRST: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(3));
+    match through {
+        2 => &FIRST,
+        3 => &NEXT,
+        _ => panic!("no archive runtime fixture through height {through}"),
+    }
+}
+
+pub(super) struct ArchiveRuntimeCounts {
+    pub(super) built: usize,
+    pub(super) linked: usize,
+    pub(super) recent_files: usize,
+}
+
+pub(super) fn archive_runtime_build(through: u64) -> ArchiveRuntimeCounts {
+    let build = archive_runtimes(through);
+    ArchiveRuntimeCounts {
+        built: build.built,
+        linked: build.linked,
+        recent_files: build.recent_files,
+    }
+}
+
+pub(super) fn copy_archive_publication(through: u64, directory: &Path) {
+    copy_fixture_tree(
+        &archive_runtimes(through).root.join("publication"),
+        directory,
+    );
+}
+
 // Reuse only the immutable publisher side. Every manager still owns a fresh
 // consumer directory and verifies all bytes over its own real HTTP boundary.
 // Corruption and changing-holdings cases use independently copied files below.
@@ -171,6 +251,17 @@ fn fixture_exit_control(both: bool, fail: bool) {
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
 }
 
+/// A single `--exact` filter naming `name`, and no other test filter.
+fn exact_child_entry(args: &[String], name: &str) -> bool {
+    let filters = args
+        .iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.iter().any(|arg| arg == "--exact") && filters == [name]
+}
+
 // Only an explicitly selected private entry consumes the child mode. Public
 // controls always spawn a fresh process and check its scratch after exit, even
 // when their caller inherited the internal environment variable.
@@ -181,14 +272,9 @@ fn prepared_fixtures_exit_child() {
         module_path!().split_once("::").unwrap().1
     );
     let args: Vec<_> = std::env::args().collect();
-    // The private caller uses --option=value switches. A runner partition can
-    // also use --exact, but its multiple case filters are not child entry mode.
-    let filters = args
-        .iter()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .collect::<Vec<_>>();
-    if !args.iter().any(|arg| arg == "--exact") || filters != [&name] {
+    // A runner partition can pass --exact with several filters. That is not
+    // child entry mode, so an inherited failure mode must not run.
+    if !exact_child_entry(&args, &name) {
         return;
     }
     let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
@@ -247,49 +333,32 @@ fn prepared_fixtures_exit_child() {
 }
 
 #[test]
-fn prepared_fixture_child_mode_requires_a_single_explicit_entry() {
+fn prepared_fixtures_exit_on_success() {
     let prefix = module_path!().split_once("::").unwrap().1;
     let child = format!("{prefix}::prepared_fixtures_exit_child");
-    let control = format!("{prefix}::prepared_fixtures_exit_first_only");
-    for exact_first in [true, false] {
-        let scratch = tempfile::tempdir().unwrap();
-        let filters = if exact_first {
-            vec!["--exact", child.as_str(), control.as_str()]
-        } else {
-            vec![child.as_str(), control.as_str(), "--exact"]
-        };
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(filters)
-            .args(["--test-threads=1", "--nocapture"])
-            .env("WALLET_PIR_FIXTURE_EXIT_CHILD", "fail")
-            .env("TMPDIR", scratch.path())
-            .env("TMP", scratch.path())
-            .env("TEMP", scratch.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("2 passed"));
-        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
-    }
-}
-
-#[test]
-fn prepared_fixtures_exit_first_only() {
-    fixture_exit_control(false, false);
-}
-
-#[test]
-fn prepared_fixtures_exit_both() {
+    let other = format!("{prefix}::prepared_fixtures_exit_on_success");
+    assert!(exact_child_entry(
+        &["test-bin".into(), child.clone(), "--exact".into()],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &[
+            "test-bin".into(),
+            "--exact".into(),
+            child.clone(),
+            other.clone()
+        ],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &["test-bin".into(), child.clone(), other, "--exact".into()],
+        &child
+    ));
     fixture_exit_control(true, false);
 }
 
 #[test]
-fn prepared_fixtures_exit_failed_test() {
+fn prepared_fixtures_exit_on_failure() {
     fixture_exit_control(true, true);
 }
 
@@ -326,7 +395,7 @@ fn fixture_copies_are_independent_and_refuse_symlinks() {
     }
 }
 
-fn manager(tls: &Tls, root: &Path) -> Manager {
+async fn manager(tls: &Tls, root: &Path) -> Manager {
     Manager::new(
         config(tls, root.to_path_buf()),
         ServiceConfig {
@@ -334,6 +403,7 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
             ..ServiceConfig::default()
         },
     )
+    .await
     .unwrap()
 }
 // In-process retirement can outlive the last manager or listener handle while
@@ -348,7 +418,9 @@ async fn restart_manager(tls: &Tls, root: &Path) -> Manager {
                 cache_bytes: 4 << 30,
                 ..ServiceConfig::default()
             },
-        ) {
+        )
+        .await
+        {
             Ok(manager) => return manager,
             Err(error)
                 if error.to_string() == "another publication consumer owns this directory"
@@ -542,6 +614,57 @@ impl CheckedAnswer {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    drop(follow);
+
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let mut restarted = restart_manager(&tls, &state).await;
+    let work = tokio::spawn(async move {
+        let result = restarted.poll_once().await;
+        (restarted, result)
+    });
+    entered(&tls).await;
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    std::fs::write(&tls.control, "missing-inventory").unwrap();
+    let (mut restarted, refused) = work.await.unwrap();
+    assert!(refused.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "checked files alone cannot serve"
+    );
+    assert!(restarted.router().is_err());
+
+    rpc.available.store(false, Ordering::Release);
+    assert!(restarted.poll_once().await.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "a source outage cannot activate recovery"
+    );
+    rpc.available.store(true, Ordering::Release);
+    std::fs::write(&tls.control, "").unwrap();
+    let progress = restarted.poll_once().await.unwrap();
+    let stages = progress
+        .stages
+        .expect("activate the privately checked inputs");
+    assert_eq!(stages.loading_seconds, 0.0, "do not reload the saved set");
+    assert_eq!(
+        stages.prewarm_seconds, 0.0,
+        "do not repeat completed warmup"
+    );
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.stop().await;
+}
+
 /// Reusing immutable transfers through a failed update rebuilds the same
 /// publication the lifecycle and interrupted-activation cases already serve.
 #[cfg(feature = "qualification-tests")]
@@ -553,7 +676,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let stages = first.stages.expect("a changed pass reports its stages");
@@ -725,7 +848,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -792,7 +915,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     std::fs::write(&tls.control, "pause-artifact").unwrap();
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     let work = tokio::spawn(async move { follow.poll_once().await });
     entered(&tls).await;
     assert!(!state.join("active.json").exists());
@@ -881,7 +1004,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let owner = authority(&directory, Some(original), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -928,7 +1051,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     );
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -981,7 +1104,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     if high_water_fault.is_some() {
         owner.0.distribution_revision.store(10, Ordering::Release);
     }
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -1128,7 +1251,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         } else {
             std::fs::write(startup_root.join(record), b"{").unwrap();
         }
-        let mut startup = manager(&tls, &startup_root);
+        let mut startup = manager(&tls, &startup_root).await;
         assert!(startup.poll_once().await.is_err());
         assert!(startup.live().is_none());
     }
@@ -1209,7 +1332,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -1310,7 +1433,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     drop(follow);
     let mut restarted = restart_manager(&tls, &state).await;
@@ -1386,7 +1509,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     std::fs::create_dir(state.join("publisher-high-water.tmp")).unwrap();
@@ -1488,7 +1611,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     let encrypted = query_and_upload(&origin, &set).await;
@@ -1797,7 +1920,17 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     else {
         panic!("committed work expected");
     };
-    let Input::Work(ready) = prepare_history(&config, &rpc, &owner, work).await.unwrap() else {
+    let Input::Work(ready) = prepare_candidate(
+        &config,
+        &rpc,
+        &owner,
+        work,
+        DecoupledPolicy::for_geometry,
+        Some(config.archive_geometry.clone()),
+        Some(config.recent_from),
+    )
+    .await
+    .unwrap() else {
         panic!("prepared work expected");
     };
     pause.enabled.store(true, Ordering::Release);

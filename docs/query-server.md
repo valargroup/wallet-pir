@@ -54,7 +54,13 @@ only for CUDA). Query ingress needs `data_dir`, `listen`, `control_listen`,
 and optional `requests` (default 16) and `uploads` (default 256). A packing
 router needs `data_dir`, `artifact_origin`, `listen`, `control_listen`, and
 optional `max_objects` (default 6) and `requests` (default 4). Status settings
-name `worker` or `router`. Those roles stay separate processes. History and
+name `worker` or `router`. Both require `publisher` (an HTTPS origin),
+`network_hex`, an exclusively owned `state_dir`, and loopback listeners.
+`publisher_ca` optionally adds an installed PEM trust root. The router also
+requires its loopback `worker_origin`; workers use `cuda` only when compiled for
+that backend. Those roles stay separate processes. The publisher prepares their
+material; neither query role computes hints or packing matrices. See
+[Status distribution](status/status_distributed.md). History and
 transaction-detail settings are described under [Transparent](#transparent).
 
 Listeners need distinct fixed loopback or private addresses. State directories
@@ -106,6 +112,31 @@ other product. It binds no listener, prints the same JSON report and keeps the
 same exit status. It conflicts with `--check` and the Enhance subcommands.
 Configuration files never set `verify_only`; ordinary startup rejects
 `verify_only: true`.
+
+### Publisher compatibility
+
+A section with `publisher` set synchronizes over HTTPS. Before the host binds
+any listener, opens state or starts a product, it fetches the publisher's
+`/.well-known/pir-service-discovery` document from that origin, trusting the
+configured `publisher_ca` roots, following no redirect, within 10 seconds and
+16 KiB. The publisher's contract version must have the same major version as
+the query server's
+[`pir-service-discovery`](../src/shared/pir-service-discovery/README.md)
+version; minor and patch versions may differ in either direction. Any failure
+(unreachable publisher, HTTP error or missing endpoint, another service, a
+malformed document or version, or a different major version) stops the whole
+query server with the publisher origin and reason. A mismatch names both
+versions: an older query server is told to upgrade; a newer one is told the
+publisher is older and must be upgraded, or replaced by a query server release
+for the publisher's major version. There is no bypass. `--check` stays offline;
+`--verify-only` also checks discovery.
+
+Every synchronization pass, unchanged ones included, checks discovery again
+before any product request. A network error or invalid response skips that
+pass, keeps the current serving view and retries with the usual backoff. A
+confirmed major version mismatch stops wallet serving and exits the whole
+process with that error; a saved predecessor publication cannot mask it.
+Sections without `publisher` are not checked.
 
 ## Readiness
 

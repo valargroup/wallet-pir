@@ -442,6 +442,12 @@ cannot inherit an earlier runtime check. Missing or malformed receipts repeat
 the semantic check. Files used directly by the publisher or developer, without
 network receipts, retain their full verification path.
 
+Existing catalog copies must match the downloaded artifact before receiving
+its identity. Receipt generation 2 invalidates older download and semantic
+receipts, which could have been assigned to different same-size catalog bytes.
+The first load after upgrading repeats the semantic checks; later loads reuse
+the new receipts normally.
+
 Receipts establish checked content, not serving authority. Fresh publisher
 information, canonical anchors, withdrawal records and activation fences still
 apply. Changes to semantic verification must bump the local receipt version.
@@ -3985,6 +3991,52 @@ component. `baseline` records both components.
   beyond the binary refuses. Shipping stays disabled for history.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
+
+## Continuous load repair
+
+`transparent-load-repair-{plan,preflight,deploy,status,rollback}` (`tools/transparent/lib/load_repair.py`)
+restores a stopped `transparent-v2-5qps-continuous.service` when its checker script is at fault. It
+installs this operations release's `transparent-quality-load.py` at the immutable
+`/srv/transparent-activity/ops/load-scripts/<sha256>/` and changes only the script path in the
+file that owns the effective `ExecStart`. On the coordinator that is the publisher's
+`zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf` drop-in, not the fragment. The rewritten
+effective unit must equal the current one except for that path, so arguments, limits and controller
+bindings are kept. It starts only that unit. The request (`transparent-load-repair/1`) pins:
+
+- the fragment bytes, every drop-in as `previous.drop_ins` `{path: sha256}` (`{}` for none), and
+  the script the effective `ExecStart` runs now;
+- the load's `pins.json`, `rate-query` and `fixture.json`;
+- each pinned worker's `{host, unit}`;
+- an independent encrypted-answer `exact_check` `{host, argv, timeout}`. Copy it from the
+  inventory's History exact check.
+
+If a prior upgrade left stale load pins, `load.replacement_pins` may explicitly map
+every worker ID to its reviewed running binary hash. The operation still pins the
+old `pins.json` bytes and refuses worker or input drift. It writes replacement pins
+only after the independent encrypted-answer check, alongside the repaired unit file.
+Rollback restores both previous files and leaves the checker stopped. Without this
+field, the existing worker pins must match and are never changed.
+
+Plan and preflight are read-only; preflight also runs the exact check. Deploy takes the reviewed
+`plan_sha256` and holds the production lock. It refuses a `latched.json`, a worker that is not
+running its pinned binary, changed load inputs or unit files, a running unit or an unfinished
+transaction. It then stages the script and runs the exact check, and only after that writes the
+owning file and starts the unit. It waits up to 300 s for `status.json` to report `running`. A
+failure or `rollback` stops the unit and restores the journaled previous bytes of that file;
+rollback refuses a file changed outside the transaction unless `--force`. The fragment and other
+drop-ins, old script, pins, permit, latch and incident logs are never written. Run from an unpacked
+operations release, deploy requires that release to be `script.git_sha`; a checkout without
+`operations.json` is accepted as for other recipes.
+
+```sh
+D=tools/scripts/wallet-pir-deploy.py; R=(--request repair.json --request-sha256 "$(sha256sum < repair.json | cut -d' ' -f1)")
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-plan "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-preflight "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-deploy "${R[@]}" --expect-plan-sha256 <plan_sha256>
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-status "${R[@]}"
+```
+
+Tests: `tools/transparent/tests/test_load_repair.py`, in `make check-ops-deploy`.
 
 ## Transparent alert activation
 
