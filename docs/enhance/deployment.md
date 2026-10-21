@@ -80,6 +80,31 @@ the five-second authority window has expired between polls. Neither a successful
 poll nor a cached file renews that window. Restart requires a fresh publisher
 observation before any material is ready. Existing push-controlled roles remain
 until the complete consumer path is implemented and qualified for direct cutover.
+Autonomous workers and routers check publisher service discovery at startup,
+before every pass and before every on-demand authority refresh; see
+[publisher compatibility](../query-server.md#publisher-compatibility). Forward
+the publisher's `/.well-known/pir-service-discovery` path on the same HTTPS
+origin. There is no bypass.
+
+The autonomous packing-router increment accepts `synchronization` settings with
+the same HTTPS source and budgets, plus a `workers` map from domain IDs to one or
+two private worker origins and an optional `preferred` map. Omit the legacy
+`artifact_origin`. The router fetches prepared packing, verifies its public setup
+against the publication, and waits for exact worker readiness before activating.
+Static responsibility lists may include domains that the publisher has not created
+yet; they consume no material and do not block existing domains from becoming ready.
+Worker promises expire after thirty seconds, cover the existing private evaluation
+deadline, and are renewed during transfers, loading and manager waits. Admitted
+queries retain their old material and promises until their response bodies end.
+A restarted worker must report its new incarnation before it is selected again.
+
+`max_objects` limits the steady assignment. The complete replacement must also
+fit the existing byte budget, including retained queries and one mapping
+workspace. A replacement that cannot overlap with a still-valid assignment is
+deferred before loading; reduce responsibilities or qualify sufficient capacity.
+Explicit invalidation closes and retires the obsolete active view, while admitted
+queries remain charged and fenced. Neither memory limits nor source-authority
+windows are increased to force an update through.
 
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance

@@ -44,6 +44,13 @@ impl Config {
         HttpsSource::new(&self.publisher_origin, PREFIX, budget, &roots)
     }
 
+    /// Check the publisher's service discovery before any Enhance state is
+    /// opened. Uses the configured origin and trust roots; nothing is cached.
+    pub async fn discover(&self) -> Result<(), Error> {
+        self.source(0)?.discover().await?;
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         if self.download_budget_bytes < METADATA_LIMIT * 3 || self.cache_limit_bytes == 0 {
             return Err("Enhance transfer and cache budgets are too small".into());
@@ -200,6 +207,92 @@ pub struct Lease {
     deadline: Instant,
 }
 
+/// A response fence keeps the exact manifest's observation through evaluation.
+#[derive(Clone)]
+pub struct Guard {
+    pub manifest: Manifest,
+    lease: Lease,
+    safety: Safety,
+}
+impl Guard {
+    pub fn check(&self) -> Result<(), String> {
+        self.lease.check(&self.manifest, &self.safety)
+    }
+}
+
+/// On-demand authority shares replay floors with the sequential download task.
+#[derive(Clone)]
+pub struct Authority {
+    pub safety: Safety,
+    client: Arc<tokio::sync::Mutex<Client>>,
+    leases: Arc<Mutex<std::collections::BTreeMap<String, Guard>>>,
+}
+impl Authority {
+    pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
+        Ok(Self {
+            client: Arc::new(tokio::sync::Mutex::new(Client::new(
+                root,
+                config,
+                safety.clone(),
+            )?)),
+            safety,
+            leases: Default::default(),
+        })
+    }
+    pub fn install(&self, manifest: Manifest, lease: Lease) -> Result<Guard, Error> {
+        let guard = Guard {
+            manifest,
+            lease,
+            safety: self.safety.clone(),
+        };
+        guard.check()?;
+        let mut leases = self.leases.lock().unwrap();
+        leases.retain(|_, lease| lease.check().is_ok());
+        if leases.len() >= 2 * crate::protocol::RETAINED_GENERATIONS
+            && !leases.contains_key(&digest(&guard.manifest))
+        {
+            return Err("Enhance authority retention capacity reached".into());
+        }
+        leases.insert(digest(&guard.manifest), guard.clone());
+        Ok(guard)
+    }
+    pub async fn fresh(&self, manifest: &Manifest) -> Result<Guard, Error> {
+        let id = digest(manifest);
+        if let Some(guard) = self
+            .leases
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|guard| guard.check().is_ok())
+            .cloned()
+        {
+            return Ok(guard);
+        }
+        let mut client = self.client.lock().await;
+        if let Some(guard) = self
+            .leases
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|guard| guard.check().is_ok())
+            .cloned()
+        {
+            return Ok(guard);
+        }
+        client.begin().await?;
+        let lease = client.authority(manifest).await?;
+        self.install(manifest.clone(), lease)
+    }
+    pub fn check(&self, manifest: &Manifest) -> Result<(), String> {
+        self.leases
+            .lock()
+            .unwrap()
+            .get(&digest(manifest))
+            .ok_or("no fresh Enhance authority")?
+            .check()
+    }
+}
+
 pub fn now_ms() -> Result<u64, Error> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?
@@ -260,8 +353,13 @@ impl Client {
         })
     }
 
-    pub fn begin(&mut self) {
+    /// Start one pass or on-demand authority refresh: fresh service discovery
+    /// before any product request, then a fresh download budget. A confirmed
+    /// version mismatch is returned as a typed [`pir_sync_manager::DiscoveryError`].
+    pub async fn begin(&mut self) -> Result<(), Error> {
+        self.source.discover().await?;
         self.source.reset_budget();
+        Ok(())
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -346,9 +444,17 @@ impl Client {
         object.validate()?;
         let root = self.root.clone();
         let checked = object.clone();
-        if tokio::task::spawn_blocking(move || checked.verify(&root))
-            .await?
-            .is_ok()
+        if tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let path = checked.path(&root)?;
+            if fs::metadata(&path).map_err(|e| e.to_string())?.len() != checked.bytes
+                || crate::prepared_packing::hash_file(&path)? != checked.sha256
+            {
+                return Err("cached publication object checksum or length mismatch".into());
+            }
+            Ok(())
+        })
+        .await?
+        .is_ok()
         {
             return Ok(object.path(&self.root)?);
         }

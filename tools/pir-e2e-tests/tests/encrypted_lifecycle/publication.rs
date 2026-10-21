@@ -18,10 +18,420 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-struct Tls {
-    origin: String,
+pub(super) struct Tls {
+    pub(super) origin: String,
     client: reqwest::Client,
     _child: tokio::process::Child,
+}
+
+struct Published {
+    scratch: tempfile::TempDir,
+    distribution: Distribution,
+    inventory: Inventory,
+    manifest: Manifest,
+    transport: Tls,
+    _node: super::encrypted::Listening,
+    _publisher: super::encrypted::Listening,
+}
+impl Published {
+    async fn new() -> Self {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("publication");
+        let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
+            axum::Json(serde_json::json!({"id": request["id"], "error": null, "result": "01".repeat(32)}))
+        }))).await;
+        let cookie = scratch.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let distribution = Distribution::open(
+            &root,
+            ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
+        )
+        .unwrap();
+        let publisher = serve(publisher(&distribution)).await;
+        let transport = tls(scratch.path(), &publisher.url).await;
+        let inventory = tokio::task::spawn_blocking(move || {
+            enhance_publisher::publication::prepare(
+                &root,
+                Lifecycle::default()
+                    .coverage(67, Geometry::default())
+                    .unwrap(),
+                &[(0, "0".into())].into(),
+                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
+            )
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .inventory()
+        .clone();
+        let domain = &inventory.domains[0];
+        let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 1,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: protocol::SCHEMA_VERSION,
+            protocol_revision: protocol::PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 3428143,
+            anchor_block_hash: "01".repeat(32),
+            geometry: Geometry::default(),
+            coverage: inventory.coverage.clone(),
+            sessions: vec![domain.reference().unwrap()],
+            unit_identities: [(0, domain.plan.units.clone())].into(),
+        };
+        distribution
+            .publish(manifest.clone(), inventory.clone())
+            .await
+            .unwrap();
+        Self {
+            scratch,
+            distribution,
+            inventory,
+            manifest,
+            transport,
+            _node: node,
+            _publisher: publisher,
+        }
+    }
+    fn source(&self) -> enhance_query_server::synchronization::Config {
+        enhance_query_server::synchronization::Config {
+            publisher_origin: self.transport.origin.clone(),
+            trusted_ca: Some(self.scratch.path().join("ca.pem")),
+            download_budget_bytes: 2 * 1024 * 1024 * 1024,
+            cache_limit_bytes: 2 * 1024 * 1024 * 1024,
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
+    use enhance_query_server::{router_sync, worker_sync};
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let fixture = Published::new().await;
+        let worker = worker_sync::Worker::open(
+            &fixture.scratch.path().join("worker"),
+            worker_sync::Config {
+                source: fixture.source(),
+                shards: [0].into(),
+            },
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut worker_sync = worker.synchronizer().unwrap();
+        let worker_http = serve(worker.router()).await;
+        worker_sync.poll_once().await.unwrap();
+        let router = router_sync::PackingRouter::open(
+            &fixture.scratch.path().join("router"),
+            router_sync::Config {
+                source: fixture.source(),
+                workers: [(0, vec![worker_http.url.clone()])].into(),
+                preferred: Default::default(),
+            },
+            1,
+            1,
+        )
+        .unwrap();
+        let mut router_sync = router.synchronizer().unwrap();
+        let control = serve(router.control_router()).await;
+        let http = enhance_query_server::internal_auth::client_builder()
+            .build()
+            .unwrap();
+        let health = format!("{}/internal/health", control.url);
+        router_sync.poll_once().await.unwrap();
+        let before: serde_json::Value = http
+            .get(&health)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(before["packing_charged_bytes"].as_u64().unwrap() > 0);
+        fixture
+            .distribution
+            .withdraw(&Revocation {
+                recovery_epoch: 1,
+                sessions: [hex::encode(fixture.manifest.session_id(0).unwrap())].into(),
+            })
+            .unwrap();
+        assert!(router_sync.poll_once().await.is_err());
+        let after: serde_json::Value = http
+            .get(&health)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(after["active"], serde_json::Value::Null);
+        assert_eq!(
+            after["packing_charged_bytes"], 0,
+            "obsolete active ownership must not prevent recovery admission"
+        );
+        let mut inventory = fixture.inventory.clone();
+        for domain in &mut inventory.domains {
+            for unit in &mut domain.plan.units {
+                unit.recovery_epoch = 1;
+            }
+        }
+        let mut recovery = fixture.manifest.clone();
+        recovery.generation += 1;
+        recovery.recovery_epoch = 1;
+        recovery.domain_recovery_epochs.insert(0, "1".into());
+        recovery
+            .unit_identities
+            .insert(0, inventory.domains[0].plan.units.clone());
+        fixture
+            .distribution
+            .publish(recovery.clone(), inventory)
+            .await
+            .unwrap();
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        let after: serde_json::Value = http
+            .get(&health)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(after["active"], protocol::digest(&recovery));
+        assert!(after["packing_charged_bytes"].as_u64().unwrap() > 0);
+    })
+    .await
+    .expect("router recovery exceeded correctness budget");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_during_activation() {
+    use enhance_query_server::{
+        client::QuerySession, protocol::ShardSession, router_sync, worker_sync, RECORD_BYTES,
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let fixture = Published::new().await;
+        let worker_root = fixture.scratch.path().join("worker");
+        let worker_config = worker_sync::Config {
+            source: fixture.source(),
+            shards: [0, 1].into(),
+        };
+        let worker = worker_sync::Worker::open(
+            &worker_root,
+            worker_config.clone(),
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut worker_sync = worker.synchronizer().unwrap();
+        let pause = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let released = Arc::new(tokio::sync::Notify::new());
+        let pausing = pause.clone();
+        let entering = entered.clone();
+        let releasing = released.clone();
+        let worker_http = serve(worker.clone().router().layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let should_pause = request.uri().path() == "/internal/evaluate"
+                    && pausing.swap(false, Ordering::AcqRel);
+                let entering = entering.clone();
+                let releasing = releasing.clone();
+                async move {
+                    let response = next.run(request).await;
+                    if should_pause {
+                        entering.notify_one();
+                        releasing.notified().await;
+                    }
+                    response
+                }
+            },
+        )))
+        .await;
+        let router = router_sync::PackingRouter::open(
+            &fixture.scratch.path().join("router"),
+            router_sync::Config {
+                source: fixture.source(),
+                workers: [
+                    (0, vec![worker_http.url.clone()]),
+                    (1, vec![worker_http.url.clone()]),
+                ]
+                .into(),
+                preferred: Default::default(),
+            },
+            6,
+            4,
+        )
+        .unwrap();
+        let mut router_sync = router.synchronizer().unwrap();
+        let public = serve(router.public_router()).await;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let session_url = format!(
+            "{}/v1/enhance/session/{}",
+            public.url,
+            hex::encode(fixture.manifest.session_id(0).unwrap())
+        );
+        router_sync.poll_once().await.unwrap();
+        assert!(
+            !http
+                .get(&session_url)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success(),
+            "publisher finalization does not imply worker readiness"
+        );
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        let session: ShardSession = http
+            .get(&session_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let session = QuerySession::new(&fixture.manifest, session).unwrap();
+        let (query, slot) = session.prepare_position(66).unwrap();
+        pause.store(true, Ordering::Release);
+        let endpoint = format!("{}/v1/enhance/query", public.url);
+        let body = query.body().to_vec();
+        let running_http = http.clone();
+        let running_endpoint = endpoint.clone();
+        let in_flight = tokio::spawn(async move {
+            running_http
+                .post(running_endpoint)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        let mut advanced = fixture.manifest.clone();
+        advanced.generation += 1;
+        fixture
+            .distribution
+            .publish(advanced.clone(), fixture.inventory.clone())
+            .await
+            .unwrap();
+        router_sync.poll_once().await.unwrap();
+        let before: ShardSession = http
+            .get(&session_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            before.generation, 1,
+            "router keeps its old view while the worker loads"
+        );
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        released.notify_one();
+        let row = session.decode(query, &in_flight.await.unwrap()).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(66)
+        );
+        let session: ShardSession = http
+            .get(&session_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(session.generation, 2);
+        let session = QuerySession::new(&advanced, session).unwrap();
+        let (query, slot) = session.prepare_position(33).unwrap();
+        let response = http
+            .post(&endpoint)
+            .body(query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let row = session.decode(query, &response).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(33)
+        );
+        let worker_address = worker_http
+            .url
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .unwrap();
+        worker_http.stop().await;
+        drop(worker_sync);
+        drop(worker);
+        let worker = worker_sync::Worker::open(
+            &worker_root,
+            worker_config,
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut worker_sync = worker.synchronizer().unwrap();
+        worker_sync.poll_once().await.unwrap();
+        let _worker_http = super::encrypted::serve_at(worker.router(), worker_address).await;
+        let (query, _) = session.prepare_position(0).unwrap();
+        assert!(
+            !http
+                .post(&endpoint)
+                .body(query.body().to_vec())
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success(),
+            "a changed worker process needs fresh readiness"
+        );
+        router_sync.poll_once().await.unwrap();
+        let (query, slot) = session.prepare_position(0).unwrap();
+        let response = http
+            .post(&endpoint)
+            .body(query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let row = session.decode(query, &response).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(0)
+        );
+    })
+    .await
+    .expect("autonomous router handover exceeded correctness budget");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -44,12 +454,12 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
             Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -70,7 +480,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let http = enhance_query_server::internal_auth::client_builder().build().unwrap();
         let listener = serve(worker.clone().router()).await;
         let readiness = format!("{}/internal/readiness", listener.url);
-        let request = ReadinessRequest { manifest_sha256: digest(&manifest) };
+        let request = ReadinessRequest { manifest_sha256: digest(&manifest), holder: None };
         assert!(!http.post(&readiness).json(&request).send().await.unwrap().status().is_success());
         for fault in ["corrupt", "truncated", "missing"] {
             std::fs::write(scratch.path().join("fault"), fault).unwrap();
@@ -132,7 +542,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         synchronizer.poll_once().await.unwrap();
         let after = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
         assert!(!after[before.len()..].contains("/objects/"), "unchanged units are reused");
-        let advanced_request = ReadinessRequest { manifest_sha256: digest(&advanced) };
+        let advanced_request = ReadinessRequest { manifest_sha256: digest(&advanced), holder: None };
         assert!(http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success());
         let old_incarnation = worker.incarnation.clone();
         listener.stop().await;
@@ -152,7 +562,16 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     }).await.expect("autonomous worker lifecycle exceeded correctness budget");
 }
 
-async fn tls(root: &Path, upstream: &str) -> Tls {
+/// A publisher's distribution routes with the service discovery that a
+/// unified publisher serves beside them.
+fn publisher(distribution: &Distribution) -> axum::Router {
+    distribution.router().route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
+pub(super) async fn tls(root: &Path, upstream: &str) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     assert!(tokio::process::Command::new("openssl")
@@ -270,7 +689,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
