@@ -87,6 +87,15 @@ COMPONENTS = ('workers', 'controller')
 # The unified owner, as installed by `publisher-cutover-*`.
 PUBLISHER_UNIT = 'pir-publisher.service'
 PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
+# Autonomous HTTPS History providers (publisher `http_only`): each worker pins its
+# configuration and unit, and its holdings decide the only ready identity it may
+# report. A full-holdings provider has no assignment; a recent provider owns the
+# `assignment.json` its own bootstrap staged (routing/manager.rs). Settings are
+# the enabled `transparent_history.settings` of the `--config FILE`, whose whole
+# bytes are pinned.
+PROVIDER_PIN_KEYS = {'ready_identity', 'limits', 'args', 'config_sha256', 'unit_sha256'}
+PROVIDER_IDENTITY = {True: {'role': None, 'worker_id': None},
+                     False: {'role': 'recent-replica', 'worker_id': 'provider'}}
 
 
 def problem_if(condition, message, problems):
@@ -115,7 +124,14 @@ def validate(request):
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
     require(request['component'] in COMPONENTS, 'component must be one of %s' % list(COMPONENTS))
     load = request['load']
-    if product['load'] is None:
+    workers = request['workers']
+    require(isinstance(workers, dict) and workers, 'workers maps target keys to pinned state')
+    providers = request['service'] == 'transparent-history' and all(
+        isinstance(p, dict) and set(p) == PROVIDER_PIN_KEYS for p in workers.values())
+    if providers:
+        require(request['component'] == 'workers' and load is None,
+                'HTTPS providers have only worker transactions and no fleet load pins; load must be null')
+    elif product['load'] is None:
         require(load is None, '%s has no continuous load to coordinate; load must be null' % request['service'])
     else:
         require(isinstance(load, dict) and set(load) == {'host', 'pins_sha256', 'resume_after_upgrade'} and isinstance(load['host'], str)
@@ -140,15 +156,19 @@ def validate(request):
         # Which file holds the settings depends on the owner; controller_problems checks it.
         require(product['config'] in files or PUBLISHER_CONFIG in files,
                 'controller.files must pin %s or %s' % (product['config'], PUBLISHER_CONFIG))
-    workers = request['workers']
-    require(isinstance(workers, dict) and workers, 'workers maps target keys to pinned state')
     for key, pinned in workers.items():
-        require(isinstance(pinned, dict) and set(pinned) == {'ready_identity', 'limits', 'args'},
-                '%s is {ready_identity, limits, args}' % key)
-        ready = pinned['ready_identity']
-        require(isinstance(ready, dict) and set(ready) == set(product['ready_keys']),
-                '%s.ready_identity pins exactly %s' % (key, list(product['ready_keys'])))
-        require(ready['role'] in product['roles'], '%s.ready_identity.role must be one of %s' % (key, list(product['roles'])))
+        if providers:
+            require(all(SHA256.match(pinned[k] or '') for k in ('config_sha256', 'unit_sha256')),
+                    '%s pins config_sha256 and unit_sha256' % key)
+            require(pinned['ready_identity'] in PROVIDER_IDENTITY.values(),
+                    '%s.ready_identity must be a full or recent provider identity' % key)
+        else:
+            require(isinstance(pinned, dict) and set(pinned) == {'ready_identity', 'limits', 'args'},
+                    '%s is {ready_identity, limits, args}, or every worker pins %s' % (key, sorted(PROVIDER_PIN_KEYS)))
+            ready = pinned['ready_identity']
+            require(isinstance(ready, dict) and set(ready) == set(product['ready_keys']),
+                    '%s.ready_identity pins exactly %s' % (key, list(product['ready_keys'])))
+            require(ready['role'] in product['roles'], '%s.ready_identity.role must be one of %s' % (key, list(product['roles'])))
         require(isinstance(pinned['limits'], dict) and isinstance(pinned['args'], list), '%s limits/args' % key)
     adapter = request.get('staging_adapter')
     if 'staging_adapter' in request:
@@ -230,6 +250,7 @@ class Upgrade:
         self.publisher = publisher
         self.unified = False
         self.digest = durable.digest(request)
+        self.providers = all('config_sha256' in pinned for pinned in request['workers'].values())
 
     def unified_owner(self, controllers):
         """The single pir-publisher server managing this product, None when none does, or refusal."""
@@ -345,12 +366,19 @@ class Upgrade:
         if 'config' in self.product:
             for key, value in self.product['config_equals'].items():
                 problem_if(config.get(key) != value, 'controller %s is %r, expected %r' % (key, config.get(key), value), problems)
-            for key, value in self.product['config_absent_or'].items():
-                problem_if(config.get(key, value) != value, 'controller %s must stay %r' % (key, value), problems)
             for key, value in self.request['publication'].items():
                 problem_if(config.get(key) != value, 'publication %s is %r, request pins %r' % (key, config.get(key), value), problems)
-            for key in ('fleet_config', 'fleet_command'):
-                problem_if(config.get(key) not in files, 'controller %s is not a pinned file' % key, problems)
+            http_only = config.get('http_only') is True
+            if self.providers:
+                # Providers synchronize from the publisher's HTTPS publication with its runtimes.
+                problem_if(not self.unified or not http_only or config.get('ship_runtimes') is not True,
+                           'HTTPS provider workers need %s with http_only and ship_runtimes' % PUBLISHER_UNIT, problems)
+            else:
+                problem_if(http_only, 'controller is http_only; pin each provider worker configuration instead', problems)
+                for key, value in self.product['config_absent_or'].items():
+                    problem_if(config.get(key, value) != value, 'controller %s must stay %r' % (key, value), problems)
+                for key in ('fleet_config', 'fleet_command'):
+                    problem_if(config.get(key) not in files, 'controller %s is not a pinned file' % key, problems)
         else:
             root = self.request['publication']['root']
             if self.unified:
@@ -394,6 +422,19 @@ class Upgrade:
                    and words[:1] != ['--config'],
                    '%s runs a retired executable with command-line settings; %s takes only --config FILE, '
                    'so install its configured unit before a binary-only upgrade' % (target.key, SERVER), problems)
+        if self.providers:
+            problem_if(unit_digest(state) != pinned['unit_sha256'], '%s unit changed from the pinned bytes' % target.key, problems)
+            try:
+                path, config = self.provider_config(ex, target)
+                problem_if(ex.sha256(target.host, path) != pinned['config_sha256'],
+                           '%s configuration %s differs from its pinned digest' % (target.key, path), problems)
+                expected = PROVIDER_IDENTITY[config.get('full_holdings') is True]
+                problem_if(pinned['ready_identity'] != expected, '%s configuration makes it %r, request pins %r'
+                           % (target.key, expected, pinned['ready_identity']), problems)
+                problem_if(not config.get('publisher') or config.get('assignment') or config.get('worker_id'),
+                           '%s is not an autonomous HTTPS provider configuration' % target.key, problems)
+            except (TypeError, KeyError, ValueError) as error:
+                problems.append('%s provider configuration: %s' % (target.key, error))
         for index in range(0, len(pinned['args']), 2):
             pair = pinned['args'][index:index + 2]
             present = any(words[i:i + len(pair)] == pair for i in range(len(words)))
@@ -452,7 +493,7 @@ class Upgrade:
                        '%s is not ready and warm' % key, problems)
             problem_if(type(document.get('covered_through')) is not int, '%s has no covered_through' % key, problems)
         else:
-            problems += self.assignment_problems(ex, key, document)
+            problems += self.provider_problems(ex, key, document) if self.providers else self.assignment_problems(ex, key, document)
             problem_if(document.get('ready') is not True, '%s is not ready' % key, problems)
             problem_if(type(document.get('target_runtimes')) is not int or document.get('target_runtimes', 0) <= 0
                        or type(document.get('warm_runtimes')) is not int,
@@ -483,6 +524,57 @@ class Upgrade:
             return ['%s: no valid controller assignment for map %r (%s)' % (key, map_sha256, error)]
         problems = [] if require_ else ['%s: assignment for %s names another map' % (key, map_sha256)]
         return problems + ['%s ready %s is %r, the controller assignment says %r' % (key, field, document.get(field), value)
+                           for field, value in sorted(expected.items()) if document.get(field) != value]
+
+    def provider_config(self, ex, target):
+        """The `--config FILE` path of a provider unit and its parsed settings."""
+        state = ex.probe_unit(target.host, target.unit)
+        service = units.effective([state['fragment_text'] or ''] + [d['text'] for d in state['drop_ins']]).get('Service', {})
+        words = units.split_exec(service['ExecStart'][-1])[2].split()
+        if words[:1] != ['--config'] or len(words) < 2:
+            raise ValueError('unit does not run --config FILE')
+        document = json.loads(ex.read(target.host, words[1]) or 'null')
+        history = document.get('transparent_history') if isinstance(document, dict) else None
+        if not isinstance(history, dict) or history.get('enabled') is not True:
+            raise ValueError('%s does not enable transparent_history' % words[1])
+        config = history.get('settings')
+        if not isinstance(config, dict):
+            raise ValueError('%s has no transparent_history.settings object' % words[1])
+        return words[1], config
+
+    def provider_problems(self, ex, key, document):
+        """Provider ownership from its own `<shard_dir>/active.json` record (history/live.rs Publication).
+
+        Full holdings own every shard and record no assignment. A recent provider
+        records the `assignment.json` it staged inside its publication directory;
+        the ready identity must match that assignment's `provider` entry.
+        """
+        from tools.transparent.lib import activity_schema_routing as routing
+        target = next(t for t in self.workers if t.key == key)
+        map_sha256 = document.get('map_sha256')
+        try:
+            _, config = self.provider_config(ex, target)
+            root = config['shard_dir'].rstrip('/')
+            active = json.loads(ex.read(target.host, root + '/active.json') or 'null')
+            directory = active['directory'].rstrip('/')
+            problems = [] if active['map_sha256'] == map_sha256 else [
+                '%s active record names map %r, ready serves %r' % (key, active['map_sha256'], map_sha256)]
+            problem_if(not directory.startswith(root + '/'), '%s active publication escapes %s' % (key, root), problems)
+            if config.get('full_holdings') is True:
+                problem_if(active.get('assignment') is not None, '%s full provider records an assignment' % key, problems)
+                return problems
+            problem_if(active.get('assignment') != directory + '/assignment.json',
+                       '%s active assignment is %r, not its staged publication\'s' % (key, active.get('assignment')), problems)
+            assignment = json.loads(ex.read(target.host, active['assignment']) or 'null')
+            problem_if(assignment['set']['map_sha256'] != map_sha256, '%s assignment names another map' % key, problems)
+            entry = [w for w in assignment['workers'] if w['id'] == 'provider']
+            expected = {'assignment_sha256': routing.assignment_digest(assignment),
+                        'worker_assignment_sha256': routing.worker_assignment_digest(assignment, 'provider'),
+                        'role': entry[0]['role'], 'replica_group': entry[0]['replica_group'],
+                        'assigned_shards': len(entry[0]['shards'])}
+        except (TypeError, KeyError, IndexError, ValueError, AttributeError) as error:
+            return ['%s: no valid provider active record for map %r (%s)' % (key, map_sha256, error)]
+        return problems + ['%s ready %s is %r, its active assignment says %r' % (key, field, document.get(field), value)
                            for field, value in sorted(expected.items()) if document.get(field) != value]
 
     def problems(self, ex, targets=None):
