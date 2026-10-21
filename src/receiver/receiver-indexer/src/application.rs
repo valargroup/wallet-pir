@@ -351,7 +351,9 @@ async fn collect_inner<'a>(
 
 /// Activates the rolling filter window ending at `tip` on `serving`, fenced by `epoch`,
 /// before witness and PIR preparation; the canonical guard also checks its anchor while
-/// that runs. Only serving builds one: a one-shot run writes no filter artifact.
+/// that runs. Only serving builds one: a one-shot run writes no filter artifact. A
+/// window `serving` already holds over the same blocks under the same correction
+/// revision is kept, so a caught-up service does not rebuild it every poll.
 async fn publish_filters(
     args: &Config,
     rpc: &NodeClient,
@@ -365,6 +367,19 @@ async fn publish_filters(
         .height
         .saturating_sub(args.filter_blocks.saturating_sub(1)))
     .max(args.start_height);
+    let current = serving.filter_window();
+    if current.is_some_and(|window| {
+        let head = window.head();
+        (
+            head.genesis,
+            head.revision,
+            head.first,
+            head.tip.height,
+            head.tip.hash,
+        ) == (genesis, args.history_revision, first, tip.height, tip.hash)
+    }) {
+        return Ok(());
+    }
     let filters = store.block_filters(args.filter_blocks, args.history_revision)?;
     let window =
         receiver_pir_server::blocks::BlockWindow::new(genesis, args.history_revision, filters)?;
@@ -974,6 +989,48 @@ mod tests {
         let written = std::fs::read_dir(paused.dir.path().join("publications")).unwrap();
         assert!(written.count() > 0);
         assert!(paused.refresh().await.is_err());
+    }
+
+    /// A caught-up service keeps the rolling window it serves while the tip and
+    /// correction revision stay put, rather than rebuilding it every poll, and builds a
+    /// new one once the tip moves.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unchanged_tip_keeps_the_rolling_window() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let window = paused.publications.filter_window().unwrap();
+        paused.refresh().await.unwrap();
+        assert!(Arc::ptr_eq(
+            &window,
+            &paused.publications.filter_window().unwrap()
+        ));
+        // An empty block after the tip, indexed and on the node's chain.
+        let next = crate::blocks::ironwood_activation() + 1;
+        paused
+            .store()
+            .append(&receiver_store::IndexedBlock {
+                height: next,
+                hash: [4; 32],
+                parent: [3; 32],
+                start_position: 0,
+                end_position: 0,
+                coinbase_actions: 0,
+                payments: Vec::new(),
+                commitments: Vec::new(),
+            })
+            .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(next);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(next), [4; 32]);
+        paused.refresh().await.unwrap();
+        assert!(!Arc::ptr_eq(
+            &window,
+            &paused.publications.filter_window().unwrap()
+        ));
     }
 
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.

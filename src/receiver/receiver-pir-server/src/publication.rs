@@ -144,6 +144,11 @@ impl Publications {
         true
     }
 
+    /// The rolling window served now, if any; a revocation clears it.
+    pub fn filter_window(&self) -> Option<Arc<crate::blocks::BlockWindow>> {
+        self.0.read().unwrap().filters.clone()
+    }
+
     /// The current rolling window, whether or not a PIR publication is ready.
     pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
         self.0
