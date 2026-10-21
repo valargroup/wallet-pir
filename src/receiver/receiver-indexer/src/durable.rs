@@ -172,9 +172,13 @@ impl Durable {
             kind: Kind::Payments,
             revision: snapshot.manifest.revision()?,
         };
-        let (payments, server) = match self.stored.contains_key(&name) {
-            true => (self.payment_source(name)?, None),
-            false => {
+        let stored = match self.stored.contains_key(&name) {
+            true => self.reuse(name, |d| d.payment_source(name))?,
+            false => None,
+        };
+        let (payments, server) = match stored {
+            Some(source) => (source, None),
+            None => {
                 // Rows are written before preparation consumes them; the manifest, written
                 // last, marks the table stored.
                 self.write_file(name, "rows", &snapshot.data)?;
@@ -259,14 +263,39 @@ impl Durable {
             .map(|(name, _)| *name)
             .collect();
         for name in dropped {
-            for extension in name.kind.extensions() {
-                match std::fs::remove_file(self.path(name, extension)) {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-                    _ => {}
-                }
-            }
-            self.stored.remove(&name);
+            self.forget(name)?;
         }
+        Ok(())
+    }
+
+    /// The source `source` builds over stored table `name`, or `None` after removing
+    /// that table's files when they do not form a valid source, such as a public setup
+    /// that is not the one its manifest binds, so the caller prepares it again.
+    fn reuse(
+        &mut self,
+        name: Name,
+        source: impl FnOnce(&Self) -> Result<Arc<Source>, Error>,
+    ) -> Result<Option<Arc<Source>>, Error> {
+        match source(self) {
+            Ok(source) => Ok(Some(source)),
+            Err(error) => {
+                tracing::warn!(table = %name.stem(), %error, "stored table invalid; preparing it again");
+                self.forget(name)
+                    .map_err(|e| Error::Transport(format!("table {}: {e}", name.stem())))?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Removes stored entry `name` and its files.
+    fn forget(&mut self, name: Name) -> std::io::Result<()> {
+        for extension in name.kind.extensions() {
+            match std::fs::remove_file(self.path(name, extension)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                _ => {}
+            }
+        }
+        self.stored.remove(&name);
         Ok(())
     }
 
@@ -283,7 +312,9 @@ impl Durable {
             revision: witnesses.manifest.revision()?,
         };
         if self.stored.contains_key(&name) {
-            return self.witness_source(name, payments.clone());
+            if let Some(source) = self.reuse(name, |d| d.witness_source(name, payments.clone()))? {
+                return Ok(source);
+            }
         }
         let resident;
         let server = match server {
@@ -310,6 +341,9 @@ impl Durable {
     /// change the geometry or grow the allocation.
     fn payment_source(&self, name: Name) -> Result<Arc<Source>, Error> {
         let manifest: Manifest = serde_json::from_slice(&self.manifest(name)?)?;
+        if manifest.directory.revision()? != name.revision {
+            return Err(Error::Malformed);
+        }
         let rows = manifest.directory.rows;
         let public = read(
             &self.path(name, "public"),
@@ -329,6 +363,9 @@ impl Durable {
     /// [`Self::payment_source`] does.
     fn witness_source(&self, name: Name, payments: Arc<Source>) -> Result<Arc<Source>, Error> {
         let manifest: WitnessManifest = serde_json::from_slice(&self.manifest(name)?)?;
+        if manifest.table.revision()? != name.revision {
+            return Err(Error::Malformed);
+        }
         let rows = manifest.table.rows;
         let public = read(
             &self.path(name, "public"),

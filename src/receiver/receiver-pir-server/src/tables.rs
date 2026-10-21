@@ -38,6 +38,18 @@ pub const fn resident_bytes(rows: u32) -> usize {
     3 * rows as usize * ROW_BYTES
 }
 
+/// Refuses a public setup `public` that is not `rows` rows' length with SHA-256 `digest`,
+/// the setup a session manifest binds.
+fn check_public(public: &[u8], digest: &Hash, rows: u32) -> Result<(), Error> {
+    use sha2::Digest;
+    match public.len() == receiver_pir::public_bytes(rows)?
+        && sha2::Sha256::digest(public)[..] == digest[..]
+    {
+        true => Ok(()),
+        false => Err(Error::Malformed),
+    }
+}
+
 /// A table's prepared state.
 #[derive(Clone)]
 pub enum Loaded {
@@ -79,12 +91,14 @@ enum Described {
 
 impl Source {
     /// A payment table described by `manifest` with `public` setup, rebuilt by `load`.
-    /// The loaded server must answer under the manifest's session ID.
+    /// The loaded server must answer under the manifest's session ID. A `public` that is
+    /// not the setup the manifest binds is refused.
     pub fn payments(
         manifest: Manifest,
         public: Vec<u8>,
         load: impl Fn() -> Result<Server, Error> + Send + Sync + 'static,
     ) -> Result<Self, Error> {
+        check_public(&public, &manifest.public_digest, manifest.directory.rows)?;
         Ok(Self {
             id: manifest.id()?,
             rows: manifest.directory.rows,
@@ -97,13 +111,15 @@ impl Source {
 
     /// A companion witness table described by `manifest` with `public` setup, bound to
     /// the payment table `payments`; `load` supplies its table, which is prepared beside
-    /// that payment table's server.
+    /// that payment table's server. A `public` that is not the setup the manifest binds
+    /// is refused.
     pub fn witnesses(
         manifest: WitnessManifest,
         public: Vec<u8>,
         payments: Arc<Source>,
         load: impl Fn() -> Result<receiver_directory::witness::Table, Error> + Send + Sync + 'static,
     ) -> Result<Self, Error> {
+        check_public(&public, &manifest.public_digest, manifest.table.rows)?;
         Ok(Self {
             id: manifest.id()?,
             rows: manifest.table.rows,
