@@ -1928,7 +1928,8 @@ mod tests {
             before.shards[0].manifest_digest,
             replacement.shards[0].manifest_digest
         );
-        assert_eq!(replacement.shards[0].revision, 0);
+        // The replacement never reuses a revision the old publication exposed.
+        assert!(replacement.shards[0].revision > before.shards[0].revision);
         transparent_shared::history::shardset::ShardSet::open(&b, 3).unwrap();
         // Original immutable artifact remains exactly the original map.
         let old: transparent_filter::ShardMap =
