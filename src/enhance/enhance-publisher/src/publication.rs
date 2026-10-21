@@ -128,9 +128,10 @@ pub fn prepare(
 /// (timestamps advance in coarse ticks), so a hash taken now is not reused.
 const SETTLED: Duration = Duration::from_secs(1);
 
-/// The exact file a hash was read from. A write, truncation, rename over the
-/// path or metadata restore changes at least one of these fields; the status
-/// change time cannot be set back by a writer.
+/// Filesystem identity of an immutable publisher object. Ordinary writes,
+/// truncation, replacement and metadata restoration change these fields.
+/// This is not an integrity boundary against unrelated writers, such as a
+/// process holding a writable mapping of the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileIdentity {
     dev: u64,
@@ -151,7 +152,7 @@ impl FileIdentity {
         }
     }
 
-    /// Whether any later change to the file must move its status change time.
+    /// Whether the recorded status change predates the timestamp safety window.
     fn settled_before(&self, started: SystemTime) -> bool {
         let (Ok(seconds), Ok(nanos)) = (u64::try_from(self.ctime.0), u32::try_from(self.ctime.1))
         else {
@@ -176,6 +177,7 @@ pub struct Hashed {
 /// An inventory whose objects this process hashed from disk, with the identity
 /// of each file it hashed. The evidence exists only in memory and is never
 /// accepted from another process or a file.
+/// Reuse assumes immutable objects and writers that honor the preparation lock.
 #[derive(Debug)]
 pub struct Prepared {
     inventory: Inventory,
@@ -211,8 +213,7 @@ fn verify_with(
     prior: &BTreeMap<String, FileIdentity>,
 ) -> Result<Prepared, String> {
     inventory.validate()?;
-    let mut evidence: BTreeMap<String, FileIdentity> = BTreeMap::new();
-    let mut hashed = Hashed::default();
+    let mut pass = VerificationPass::default();
     for domain in &inventory.domains {
         let packing = domain.packing_object();
         for object in domain
@@ -220,22 +221,44 @@ fn verify_with(
             .iter()
             .chain([&domain.hint, &domain.public, &packing])
         {
-            if let Some(identity) = evidence.get(&object.sha256) {
-                if identity.len != object.bytes {
-                    return Err("publication object checksum or length mismatch".into());
-                }
-                continue;
-            }
-            if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
-                evidence.insert(object.sha256.clone(), identity);
-            }
+            pass.check(root, object, prior.get(&object.sha256))?;
         }
     }
     Ok(Prepared {
         inventory,
-        evidence,
-        hashed,
+        evidence: pass.evidence,
+        hashed: pass.hashed,
     })
+}
+
+/// A fresh object can be checked once in this pass without retaining evidence
+/// that would allow a later pass to skip its contents.
+#[derive(Default)]
+struct VerificationPass {
+    checked: BTreeMap<String, u64>,
+    evidence: BTreeMap<String, FileIdentity>,
+    hashed: Hashed,
+}
+
+impl VerificationPass {
+    fn check(
+        &mut self,
+        root: &Path,
+        object: &Object,
+        prior: Option<&FileIdentity>,
+    ) -> Result<(), String> {
+        if let Some(bytes) = self.checked.get(&object.sha256) {
+            if *bytes != object.bytes {
+                return Err("publication object checksum or length mismatch".into());
+            }
+            return Ok(());
+        }
+        if let Some(identity) = check(root, object, prior, &mut self.hashed)? {
+            self.evidence.insert(object.sha256.clone(), identity);
+        }
+        self.checked.insert(object.sha256.clone(), object.bytes);
+        Ok(())
+    }
 }
 
 /// Check one object, reusing `prior` while the path still names the same,
@@ -468,6 +491,38 @@ mod tests {
         assert!(!identity.settled_before(ctime));
         assert!(!identity.settled_before(ctime + SETTLED - Duration::from_nanos(1)));
         assert!(identity.settled_before(ctime + SETTLED));
+    }
+
+    #[test]
+    fn a_fresh_object_is_hashed_once_per_pass() {
+        let root = tempfile::tempdir().unwrap();
+        let object = object(root.path(), b"fresh object");
+        let mut first = VerificationPass::default();
+        first.check(root.path(), &object, None).unwrap();
+        assert!(first.evidence.is_empty());
+        first.check(root.path(), &object, None).unwrap();
+        let once = Hashed {
+            files: 1,
+            bytes: object.bytes,
+            reused: 0,
+        };
+        assert_eq!(first.hashed, once);
+
+        let mut second = VerificationPass::default();
+        second
+            .check(root.path(), &object, first.evidence.get(&object.sha256))
+            .unwrap();
+        assert_eq!(
+            second.hashed, once,
+            "a later pass must hash fresh files again"
+        );
+
+        let contradictory = Object {
+            bytes: object.bytes + 1,
+            ..object
+        };
+        assert!(first.check(root.path(), &contradictory, None).is_err());
+        assert_eq!(first.hashed, once);
     }
 
     #[test]
