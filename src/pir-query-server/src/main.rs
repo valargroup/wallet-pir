@@ -30,13 +30,6 @@ enum EnhanceCommand {
         #[command(flatten)]
         matvec: enhance_query_server::matvec::MatvecConfig,
     },
-    /// Offline repair of journal-referenced rows from a peer row archive.
-    RepairRows {
-        #[arg(long)]
-        data_dir: std::path::PathBuf,
-        #[arg(long)]
-        source_rows: std::path::PathBuf,
-    },
 }
 
 #[cfg(feature = "enhance")]
@@ -44,19 +37,6 @@ fn enhance_command(command: EnhanceCommand) -> pir_query_server::Result<()> {
     match command {
         EnhanceCommand::CheckBackend { matvec } => {
             matvec.validate()?;
-            Ok(())
-        }
-        EnhanceCommand::RepairRows {
-            data_dir,
-            source_rows,
-        } => {
-            let restored =
-                enhance_query_server::worker::Worker::repair_rows(&data_dir, &source_rows)?;
-            println!(
-                "{}",
-                serde_json::json!({"status":"rows_verified", "restored_units":restored,
-                "readiness":"requires_worker_restart", "qualification":"unqualified"})
-            );
             Ok(())
         }
     }

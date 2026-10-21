@@ -4,7 +4,7 @@
 //!
 //! This library serves prepared publications. It must not depend on
 //! `enhance-publisher`, chain readers, ingestion or tools; the publisher
-//! drives it only through the roles' private control routes.
+//! exposes prepared material through HTTPS; the serving roles own activation.
 //! `tools/ci/boundary.py` enforces the boundary.
 //!
 //! Record types and constants are exported at the crate root. The serving
@@ -38,10 +38,7 @@ pub mod matvec;
 mod memory_observation;
 mod response_body;
 
-pub mod packing_router;
-pub mod query_ingress;
 mod query_serving;
-mod serving_fence;
 pub mod shutdown;
 
 mod http_metrics;

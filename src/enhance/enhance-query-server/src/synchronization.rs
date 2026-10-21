@@ -9,7 +9,6 @@ use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -19,16 +18,43 @@ use tokio::io::AsyncWriteExt;
 
 pub type Error = pir_sync_manager::Error;
 
-/// JSON object keys are strings. Inside the host's tagged role and this
-/// flattened source they are not converted to integers, so parse them here.
-pub(crate) fn domains<'de, D, V>(deserializer: D) -> Result<BTreeMap<u64, V>, D::Error>
+pub(crate) fn peer_origin(origin: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(origin).map_err(|e| e.to_string())?;
+    if url.scheme() != "http"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("expected private HTTP origin".into());
+    }
+    Ok(())
+}
+
+/// Tagged/flattened role documents deserialize through Serde's intermediate
+/// representation, where JSON object keys remain strings. Decode domain keys
+/// explicitly and reject aliases rather than depending on JSON's key coercion.
+pub(crate) fn domain_map<'de, D, T>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<u64, T>, D::Error>
 where
     D: serde::Deserializer<'de>,
-    V: Deserialize<'de>,
+    T: Deserialize<'de>,
 {
-    BTreeMap::<String, V>::deserialize(deserializer)?
+    let values = std::collections::BTreeMap::<String, T>::deserialize(deserializer)?;
+    values
         .into_iter()
-        .map(|(domain, value)| Ok((domain.parse().map_err(serde::de::Error::custom)?, value)))
+        .map(|(key, value)| {
+            let id: u64 = key.parse().map_err(serde::de::Error::custom)?;
+            if id.to_string() != key || id >= crate::protocol::MAX_QUERY_SHARDS {
+                return Err(serde::de::Error::custom(
+                    "domain key must be canonical and below the protocol ceiling",
+                ));
+            }
+            Ok((id, value))
+        })
         .collect()
 }
 
@@ -229,6 +255,19 @@ pub struct Guard {
     safety: Safety,
 }
 impl Guard {
+    /// Renew only from a real observation of this exact manifest. The admission
+    /// withdrawal marker survives renewal, so withdrawal and reauthorization
+    /// cannot resurrect an already-admitted response.
+    pub async fn fresh_for_release(&self, authority: &Authority) -> Result<Self, Error> {
+        self.safety
+            .permits_observation(&self.manifest, Some(&self.lease.observation.current))?;
+        let fresh = authority.fresh(&self.manifest).await?;
+        if !fresh.lease.continues(&self.lease) {
+            return Err("publication withdrawn during request".into());
+        }
+        fresh.check()?;
+        Ok(fresh)
+    }
     pub fn check(&self) -> Result<(), String> {
         self.lease.check(&self.manifest, &self.safety)
     }
@@ -277,7 +316,7 @@ impl Authority {
             .lock()
             .unwrap()
             .get(&id)
-            .filter(|guard| guard.check().is_ok())
+            .filter(|guard| guard.check().is_ok() && guard.lease.has_release_time())
             .cloned()
         {
             return Ok(guard);
@@ -288,7 +327,7 @@ impl Authority {
             .lock()
             .unwrap()
             .get(&id)
-            .filter(|guard| guard.check().is_ok())
+            .filter(|guard| guard.check().is_ok() && guard.lease.has_release_time())
             .cloned()
         {
             return Ok(guard);
@@ -315,6 +354,14 @@ pub fn now_ms() -> Result<u64, Error> {
 }
 
 impl Lease {
+    pub(crate) fn has_release_time(&self) -> bool {
+        self.deadline.saturating_duration_since(Instant::now()) >= Duration::from_secs(1)
+    }
+    pub(crate) fn continues(&self, previous: &Self) -> bool {
+        self.manifest == previous.manifest
+            && self.observation.current.withdrawal_revision
+                == previous.observation.current.withdrawal_revision
+    }
     pub fn current(&self) -> &Current {
         &self.observation.current
     }

@@ -8,7 +8,6 @@ use enhance_publisher::rebuild::{adopt_staged, Adoption, Receipt};
 use enhance_publisher::zakura::{Prevouts, ZakuraClient};
 use enhance_query_server::client::EnhancePirClient;
 use enhance_query_server::protocol::Manifest;
-use enhance_query_server::worker::Worker;
 use enhance_query_server::ACTIVATION_HEIGHT;
 use enhance_query_server::{
     EnhanceRecord, FLAG_HAS_FEE, FLAG_HAS_TRANSPARENT_INPUTS, FLAG_HAS_TRANSPARENT_OUTPUTS,
@@ -92,7 +91,13 @@ fn rebuild_command(root: &Path, rpc: &str) -> Command {
     command
 }
 
-async fn published(process: &mut Process, root: &Path, origin: &str, hash: &str) -> Manifest {
+async fn published(
+    process: &mut Process,
+    root: &Path,
+    origin: &str,
+    hash: &str,
+    roles: &crate::serving::Roles,
+) -> Manifest {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -104,9 +109,10 @@ async fn published(process: &mut Process, root: &Path, origin: &str, hash: &str)
             "coordinator stopped: {}",
             read_log(root)
         );
+        roles.synchronize().await;
         if let Ok(response) = client.get(format!("{origin}/v1/enhance/init")).send().await {
             if let Ok(manifest) = response.json::<Manifest>().await {
-                if manifest.anchor_block_hash == hash {
+                if manifest.anchor_block_hash == hash && roles.accepts(&manifest) {
                     return manifest;
                 }
             }
@@ -268,23 +274,6 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         check(&read_record(&live, position), position, false);
     }
 
-    let mut workers = Vec::new();
-    let mut replicas = Vec::new();
-    for i in 0..2 {
-        let (url, task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router(),
-        )
-        .await;
-        workers.push(task);
-        replicas.push(json!({"name": format!("r{i}"), "url": url}));
-    }
-    std::fs::write(
-        root.path().join("workers.json"),
-        serde_json::to_vec(&json!({"groups": [{"name": "g0", "replicas": replicas}]})).unwrap(),
-    )
-    .unwrap();
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = socket.local_addr().unwrap().to_string();
     drop(socket);
@@ -293,7 +282,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         .unwrap();
     let origin = roles.origin.clone();
     let mut process = start(root.path(), &address, &rpc_url, &roles);
-    published(&mut process, root.path(), &origin, &hashes[3]).await;
+    published(&mut process, root.path(), &origin, &hashes[3], &roles).await;
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     let positions = [0, 2, 4, 8];
     for (position, answer) in positions
@@ -397,9 +386,9 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         copy_dir(&good, &copy.join("enhance-staged"));
         let before = journal_digests(&copy.join("enhance"));
         if sealed {
-            std::fs::create_dir_all(copy.join("control")).unwrap();
+            std::fs::create_dir_all(copy.join("publication")).unwrap();
             std::fs::write(
-                copy.join("control/controller.json"),
+                copy.join("publication/publisher.json"),
                 serde_json::to_vec(&json!({"recovery": {"sealed": {"0": [H, hashes[0]]}}}))
                     .unwrap(),
             )
@@ -498,7 +487,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         .await;
         assert!(!staged.exists(), "{name}");
         assert_eq!(journal_digests(&live), before, "{name}");
-        published(&mut process, root.path(), &origin, &hashes[3]).await;
+        published(&mut process, root.path(), &origin, &hashes[3], &roles).await;
     }
     let rejected = std::fs::read_dir(&data)
         .unwrap()
@@ -537,7 +526,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     );
     assert!(live.join("rebuild.json").exists());
     let next = chain.lock().unwrap().push_block(H + 4, &[fixture()], 4);
-    published(&mut process, root.path(), &origin, &next).await;
+    published(&mut process, root.path(), &origin, &next, &roles).await;
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     let positions: Vec<_> = (0..12).collect();
     for (position, answer) in positions
@@ -548,7 +537,4 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
     }
     drop(process);
     rpc_task.abort();
-    for worker in workers {
-        worker.abort();
-    }
 }

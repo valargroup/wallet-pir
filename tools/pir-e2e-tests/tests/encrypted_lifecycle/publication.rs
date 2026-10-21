@@ -1,109 +1,21 @@
 //! The real publisher distribution router, node RPC and TLS transport.
 use super::encrypted::{record, serve};
+use crate::publication_source::Published;
 use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, PREFIX},
     worker::Revocation,
 };
+use pir_e2e_tests::enhance_fixture::{tls, Tls};
 use sha2::{Digest, Sha256};
 use std::{
-    path::Path,
-    process::Stdio,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::Duration,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
-
-pub(super) struct Tls {
-    pub(super) origin: String,
-    client: reqwest::Client,
-    _child: tokio::process::Child,
-}
-
-struct Published {
-    scratch: tempfile::TempDir,
-    distribution: Distribution,
-    inventory: Inventory,
-    manifest: Manifest,
-    transport: Tls,
-    _node: super::encrypted::Listening,
-    _publisher: super::encrypted::Listening,
-}
-impl Published {
-    async fn new() -> Self {
-        let scratch = tempfile::tempdir().unwrap();
-        let root = scratch.path().join("publication");
-        let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
-            axum::Json(serde_json::json!({"id": request["id"], "error": null, "result": "01".repeat(32)}))
-        }))).await;
-        let cookie = scratch.path().join("cookie");
-        std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let distribution = Distribution::open(
-            &root,
-            ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
-        )
-        .unwrap();
-        let publisher = serve(publisher(&distribution)).await;
-        let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(
-                &root,
-                Lifecycle::default()
-                    .coverage(67, Geometry::default())
-                    .unwrap(),
-                &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap()
-        .inventory()
-        .clone();
-        let domain = &inventory.domains[0];
-        let manifest = Manifest {
-            recovery_epoch: 0,
-            placement_revision: 1,
-            domain_recovery_epochs: [(0, "0".into())].into(),
-            schema_version: protocol::SCHEMA_VERSION,
-            protocol_revision: protocol::PROTOCOL_REVISION.into(),
-            network: "main".into(),
-            pool: "ironwood".into(),
-            generation: 1,
-            anchor_height: 3428143,
-            anchor_block_hash: "01".repeat(32),
-            geometry: Geometry::default(),
-            coverage: inventory.coverage.clone(),
-            sessions: vec![domain.reference().unwrap()],
-            unit_identities: [(0, domain.plan.units.clone())].into(),
-        };
-        distribution
-            .publish(manifest.clone(), inventory.clone())
-            .await
-            .unwrap();
-        Self {
-            scratch,
-            distribution,
-            inventory,
-            manifest,
-            transport,
-            _node: node,
-            _publisher: publisher,
-        }
-    }
-    fn source(&self) -> enhance_query_server::synchronization::Config {
-        enhance_query_server::synchronization::Config {
-            publisher_origin: self.transport.origin.clone(),
-            trusted_ca: Some(self.scratch.path().join("ca.pem")),
-            download_budget_bytes: 2 * 1024 * 1024 * 1024,
-            cache_limit_bytes: 2 * 1024 * 1024 * 1024,
-        }
-    }
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_updates() {
@@ -166,8 +78,20 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         let ingress_config = ingress_sync::Config {
             source: fixture.source(),
             routers: [
-                (0, vec![router_http.url.clone()]),
-                (1, vec![router_http.url.clone()]),
+                (
+                    0,
+                    vec![ingress_sync::RouterPeer {
+                        control_origin: router_http.url.clone(),
+                        query_origin: router_http.url.clone(),
+                    }],
+                ),
+                (
+                    1,
+                    vec![ingress_sync::RouterPeer {
+                        control_origin: router_http.url.clone(),
+                        query_origin: router_http.url.clone(),
+                    }],
+                ),
             ]
             .into(),
         };
@@ -826,12 +750,12 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
-        let upstream = serve(publisher(&distribution)).await;
+        let upstream = serve(distribution.router()).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
             Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -934,81 +858,6 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     }).await.expect("autonomous worker lifecycle exceeded correctness budget");
 }
 
-/// A publisher's distribution routes with the service discovery that a
-/// unified publisher serves beside them.
-fn publisher(distribution: &Distribution) -> axum::Router {
-    distribution.router().route(
-        pir_service_discovery::PATH,
-        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
-    )
-}
-
-pub(super) async fn tls(root: &Path, upstream: &str) -> Tls {
-    let cert = root.join("ca.pem");
-    let key = root.join("key.pem");
-    assert!(tokio::process::Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=localhost",
-            "-addext",
-            "subjectAltName=DNS:localhost",
-            "-addext",
-            "basicConstraints=critical,CA:FALSE",
-            "-keyout",
-        ])
-        .arg(&key)
-        .arg("-out")
-        .arg(&cert)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .unwrap()
-        .success());
-    let control = root.join("fault");
-    std::fs::write(&control, "").unwrap();
-    let mut child = tokio::process::Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../src/pir-publisher/tests/support/distribution_tls.py"
-        ))
-        .arg(upstream.strip_prefix("http://").unwrap())
-        .arg(&cert)
-        .arg(key)
-        .arg(control)
-        .kill_on_drop(true)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut port = String::new();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        BufReader::new(child.stdout.take().unwrap()).read_line(&mut port),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let certificate = reqwest::Certificate::from_pem(&std::fs::read(cert).unwrap()).unwrap();
-    let client = reqwest::Client::builder()
-        .add_root_certificate(certificate)
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap();
-    Tls {
-        origin: format!("https://localhost:{}", port.trim()),
-        client,
-        _child: child,
-    }
-}
-
 async fn check_object(tls: &Tls, path: &str, object: &Object) {
     let mut response = tls
         .client
@@ -1061,19 +910,18 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(publisher(&distribution)).await;
+        let upstream = serve(distribution.router()).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!before.current.eligible);
         assert_eq!(before.observed_unix_ms, 0);
         let prepare_root = root.clone();
-        let prepared = tokio::task::spawn_blocking(move || {
+        let inventory = tokio::task::spawn_blocking(move || {
             enhance_publisher::publication::prepare(&prepare_root,
                 Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
                 |start, count| Ok((start..start + count as u64).flat_map(record).collect()))
         }).await.unwrap().unwrap();
-        let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -1082,7 +930,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
             anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
             sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
         };
-        distribution.publish_prepared(manifest.clone(), prepared).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
         let current: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
@@ -1182,7 +1030,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         let initial = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(
             &prepare_root, Lifecycle::default().coverage(1, Geometry::default()).unwrap(),
             &[(0, "0".into())].into(), |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-        )).await.unwrap().unwrap().inventory().clone();
+        )).await.unwrap().unwrap();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
@@ -1218,7 +1066,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         pinned.read_to_string(&mut bytes).unwrap();
         assert_eq!(bytes, "interrupted candidate", "already-open streams survive collection");
         assert!(root.join("objects/operator-note").exists());
-        enhance_publisher::publication::verify(&root, initial).unwrap();
+        initial.verify(&root).unwrap();
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());

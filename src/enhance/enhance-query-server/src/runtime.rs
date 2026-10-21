@@ -256,57 +256,6 @@ impl Evaluation {
         }
         combined.ok_or_else(|| "empty query domain".into())
     }
-
-    /// Borrow the existing MPH1 publication only when the generic combiner is
-    /// the identity operation. Construction by Engine binds the layout, setup
-    /// slice and padded rows; this check also excludes partial/composed domains
-    /// and incompatible output parameters. Unallocated domain rows are zero.
-    pub(crate) fn verified_hint_artifact(
-        &self,
-    ) -> Result<Option<crate::artifact::PublicationArtifact>, String> {
-        let ([unit], [identity], [spec]) = (
-            self.units.as_slice(),
-            self.plan.units.as_slice(),
-            self.plan.shard.units.as_slice(),
-        ) else {
-            return Ok(None);
-        };
-        let params = parameters(self.plan.shard.logical_rows)?;
-        let runtime = unit.runtime();
-        let local = runtime.server.params();
-        let layout = DatabaseLayout {
-            shard_rows: identity.allocated_rows as usize,
-            ..ENHANCE_LAYOUT
-        };
-        let (ring, expected) = crate::ipir::shard_parameters(&layout).map_err(|e| e.to_string())?;
-        if self.plan.validate().is_err()
-            || self.plan.shard.composed()
-            || spec.local_row_start != 0
-            || identity.allocated_rows > self.plan.shard.logical_rows
-            || !layout.shard_rows.is_multiple_of(rlwe().d)
-            || runtime.query_row_start != 0
-            || runtime.shard_id != self.plan.shard.id
-            || runtime.rows_sha256 != identity.content_sha256
-            || ring.d != rlwe().d
-            || ring.q != rlwe().q
-            || local.db_rows != expected.db_rows
-            || local.db_cols != expected.db_cols
-            || local.p != expected.p
-            || local.item_size_bits != expected.item_size_bits
-            || local.query_bits != expected.query_bits
-            || local.q_prime_1 != expected.q_prime_1
-            || local.db_cols != params.db_cols
-            || local.p != params.p
-        {
-            return Ok(None);
-        }
-        // The same scanner as hint(), without allocating decoded matrices.
-        // Includes the pinned reader's digest, exact length and clean EOF.
-        unit.publication()
-            .validate(params.db_cols / rlwe().d, rlwe().d)
-            .map_err(|e| e.to_string())?;
-        Ok(Some(unit.publication().clone()))
-    }
 }
 
 #[cfg(not(feature = "native-reinspiring"))]

@@ -1,9 +1,7 @@
 {
   "enhance-query-server": {
     "fast": [],
-    "full": [
-      "routing_contract"
-    ]
+    "full": []
   },
   "receiver-indexer": {
     "fast": [],
@@ -89,15 +87,16 @@
       "event_codec_bounds",
       "http",
       "note_recovery",
-      "packing_http",
-      "row_repair_http",
+      "publication_binding_http",
+      "cache_recovery_http",
       "rpc",
       "service_round_trip",
       "shard_filters",
       "transparent_host_processes",
       "transparent_provider_installation",
       "unified_http_sync_campaign",
-      "wallet_revision_reuse"
+      "wallet_revision_reuse",
+      "publication_renewal"
     ]
   },
   "zakura-server-chain": {

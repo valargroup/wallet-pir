@@ -29,12 +29,7 @@ fn maintenance_commands_remain() {
     let output = server().arg("--help").output().unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    for name in [
-        "rebuild-journal",
-        "prepare-packing-artifacts",
-        "restore-legacy-placement",
-        "build-info",
-    ] {
+    for name in ["rebuild-journal", "prepare-publication", "build-info"] {
         assert!(help.contains(name), "{name} missing from:\n{help}");
     }
 }

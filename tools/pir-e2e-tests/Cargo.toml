@@ -29,12 +29,12 @@ enhance-fast = ["enhance"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
     "enhance-fast",
+    "dep:tempfile",
     "publisher-host",
     "pir-publisher/enhance",
     "query-host",
     "enhance-publisher/fault-injection",
-    "enhance-publisher/fixtures",
-    "enhance-publisher/local-serving",
+    "dep:enhance-query-server",
     "enhance-query-server/client",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
@@ -94,6 +94,7 @@ wallet-recovery-tests = [
 ]
 
 [dependencies]
+tempfile = { version = "3", optional = true }
 pir-publisher = { path = "../../src/pir-publisher", optional = true }
 status-publisher = { path = "../../src/status/status-publisher", optional = true }
 enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
@@ -191,13 +192,13 @@ path = "tests/note_recovery.rs"
 required-features = ["enhance-tests"]
 
 [[test]]
-name = "packing_http"
-path = "tests/packing_http.rs"
+name = "publication_binding_http"
+path = "tests/publication_binding_http.rs"
 required-features = ["enhance-tests"]
 
 [[test]]
-name = "row_repair_http"
-path = "tests/row_repair_http.rs"
+name = "cache_recovery_http"
+path = "tests/cache_recovery_http.rs"
 required-features = ["enhance-tests"]
 
 [[test]]
@@ -249,3 +250,8 @@ required-features = ["transparent-tests"]
 name = "wallet_revision_reuse"
 path = "tests/wallet_revision_reuse.rs"
 required-features = ["wallet-recovery-tests"]
+
+[[test]]
+name = "publication_renewal"
+path = "tests/publication_renewal.rs"
+required-features = ["enhance-tests"]

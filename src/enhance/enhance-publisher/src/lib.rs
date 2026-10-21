@@ -1,35 +1,17 @@
-//! The Enhance PIR publisher: chain reading, ingestion and the record journals,
-//! durable control state, publication decisions, preparation orchestration,
-//! activation, recovery, retention, placement and capacity planning, and the
-//! `pir-publisher enhance` maintenance commands. Status publication is a separate process.
-//!
-//! Query serving lives in `enhance-query-server`, which never depends on this
-//! package. The publisher never faces wallets: query ingress serves them from
-//! views the coordinator activates, and the coordinator keeps only its private
-//! [`operator::OperatorStatus`] routes.
+//! Enhance publication: canonical ingestion, durable recovery floors and local
+//! preparation. Workers, packing routers and ingress synchronize independently.
 
 // Query-server modules the publication code builds on, named at the crate root
 // so publisher modules refer to them alongside their own.
-use enhance_query_server::{
-    artifact, internal_auth, packing_router, prepared_packing, query_ingress, runtime, types, wire,
-    worker, PackingBudget,
-};
+use enhance_query_server::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
 
 pub mod application;
-pub mod capacity;
-pub mod control;
-pub mod coordinator;
 pub mod distribution;
 pub mod ingest;
-#[cfg(feature = "local-serving")]
-pub mod local_serving;
-pub mod operator;
-pub mod pool;
 pub mod publication;
+pub mod publisher;
 pub mod rebuild;
-mod serving_control;
 pub mod store;
-mod telemetry;
 pub mod zakura;
 
 pub mod service;

@@ -82,7 +82,7 @@ binary = "pir-query-server"
 mode = "role"
 template = "enhance-pir-packing-router.role.service"
 renderer = "tools.enhance.lib.roles:packing_router"
-# Settings: data_dir, artifact_origin, listen, control_listen, credentials.
+# Settings: data_dir, synchronization, listen, control_listen, credentials.
 # Ready once the running coordinator re-activates it. Health uses vars.control_listen.
 health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }

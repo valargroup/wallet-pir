@@ -1,5 +1,5 @@
 //! Enhance publisher diagnostics and offline maintenance.
-use crate::{coordinator::Coordinator, zakura::ZakuraClient};
+use crate::zakura::ZakuraClient;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -22,16 +22,6 @@ enum Command {
         manifest: PathBuf,
         #[arg(long)]
         output: PathBuf,
-    },
-    /// Confirm retained sessions already have router-prepared packing artifacts.
-    PreparePackingArtifacts {
-        #[arg(long)]
-        data_dir: PathBuf,
-    },
-    /// Offline bridge for rolling back to coordinator packing without losing recovery history.
-    RestoreLegacyPlacement {
-        #[arg(long)]
-        control_dir: PathBuf,
     },
     /// Offline re-derivation of a coordinator journal's records from chain into
     /// a staged journal that a restarted coordinator adopts. Reads the source
@@ -102,10 +92,6 @@ pub async fn run(
                     "source_revision": option_env!("WALLET_PIR_SOURCE_REVISION"),
                 })
             );
-        }
-        Command::PreparePackingArtifacts { data_dir } => Coordinator::backfill_prepared(&data_dir)?,
-        Command::RestoreLegacyPlacement { control_dir } => {
-            crate::control::Store::open(&control_dir)?.restore_legacy_placement()?;
         }
         Command::RebuildJournal {
             source,

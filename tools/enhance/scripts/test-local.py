@@ -1,51 +1,18 @@
 #!/usr/bin/env python3
-"""Run disposable processes and an exact-answer HTTP load sweep.
+"""Exercise independently synchronizing local processes under encrypted load.
 
-This is local functional/performance evidence, not 8 GiB hardware qualification.
-No cloud resources or existing services are touched.
+This produces local evidence only. Full-size and hardware qualification use
+separate gates. No installed services or cloud resources are touched.
 """
 import argparse
 import hashlib
 import json
+from pathlib import Path
 import platform
 import re
-from pathlib import Path
-import socket
+import shutil
 import subprocess
 import tempfile
-import time
-import urllib.request
-
-
-ROOT = Path(__file__).resolve().parents[3]
-
-
-def free_port():
-    with socket.socket() as stream:
-        stream.bind(('127.0.0.1', 0))
-        return stream.getsockname()[1]
-
-
-def write_role_config(path, management_listen, settings):
-    """One Enhance role for pir-query-server --config."""
-    path.write_text(json.dumps({
-        'management_listen': management_listen,
-        'enhance': {'enabled': True, 'settings': settings},
-    }))
-
-
-def write_worker_config(path, listen, data_dir, management_listen, sealed_shards=6):
-    write_role_config(path, management_listen, {
-        'role': 'worker',
-        'listen': listen,
-        'data_dir': str(data_dir),
-        'sealed_shards': sealed_shards,
-    })
-
-
-def fetch(url):
-    with urllib.request.urlopen(url, timeout=5) as response:
-        return json.load(response)
 
 
 def provenance(bin_dir):
@@ -72,141 +39,43 @@ def provenance(bin_dir):
             'revision_source': 'checkout'}
 
 
+
 def main():
+    from local_fleet import Fleet, fetch
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--publisher', type=Path, help='Matching pir-publisher binary (default: --bin-dir/pir-publisher)')
     parser.add_argument('--bin-dir', type=Path, default=Path('target/release-fast'))
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--seconds', type=int, default=30)
     parser.add_argument('--concurrency', default='1,2,4,8')
-    parser.add_argument('--records', type=int, default=67)
     parser.add_argument('--open-loop', action='store_true')
-    parser.add_argument('--require-publications', type=int, default=0,
-                        help='Fail unless this many generations publish during the load campaign')
-    parser.add_argument('--expand-inventory', action='store_true',
-                        help='Register a second idle replica pair while the coordinator serves')
+    parser.add_argument('--require-publications', type=int, default=0)
     args = parser.parse_args()
-    if args.seconds < 1 or args.records < 1:
-        parser.error('seconds and records must be positive')
-    if args.require_publications < 0:
-        parser.error('require-publications must be nonnegative')
+    concurrencies = [int(value) for value in args.concurrency.split(',')]
+    if args.seconds < 1 or args.require_publications < 0 or not concurrencies or min(concurrencies) < 1:
+        parser.error('duration and concurrency must be positive')
+    if args.open_loop and 2 not in concurrencies:
+        parser.error('--open-loop needs a concurrency=2 baseline')
     args.out.mkdir(parents=True, exist_ok=False)
-    publisher = args.publisher.resolve() if args.publisher else args.bin_dir.resolve() / 'pir-publisher'
-    query_server = args.bin_dir.resolve() / 'pir-query-server'
-    load = args.bin_dir.resolve() / 'enhance-pir-load-test'
+    binaries = args.bin_dir.resolve()
+    load = binaries / 'enhance-pir-load-test'
     manifest = {'kind': 'local-smoke-not-hardware-qualification', 'platform': platform.platform(),
-                **provenance(args.bin_dir.resolve()),
-                'binaries': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                             for p in [publisher, query_server, load]},
-                'seconds_per_step': args.seconds, 'records': args.records, 'results': []}
-    processes = []
-    logs = []
-    with tempfile.TemporaryDirectory(prefix='enhance-') as work:
-        work = Path(work)
+                **provenance(binaries), 'binaries': {
+                    name: hashlib.sha256((binaries / name).read_bytes()).hexdigest()
+                    for name in ['pir-query-server', 'pir-publisher', 'enhance-pir-load-test']},
+                'seconds_per_step': args.seconds, 'results': []}
+    with tempfile.TemporaryDirectory(prefix='enhance-pull-') as directory:
+        fleet = Fleet(binaries, directory, args.out)
         try:
-            replicas = []
-            used_ports = set()
-
-            def take_port():
-                while True:
-                    candidate = free_port()
-                    if candidate not in used_ports:
-                        used_ports.add(candidate)
-                        return candidate
-
-            for index in range(4 if args.expand_inventory else 2):
-                port = take_port()
-                replicas.append({'name': f'replica-{index}', 'url': f'http://127.0.0.1:{port}'})
-                config = work / f'worker-{index}.json'
-                write_worker_config(config, f'127.0.0.1:{port}', work / f'worker-{index}',
-                                    f'127.0.0.1:{take_port()}')
-                log = (args.out / f'worker-{index}.log').open('w')
-                logs.append(log)
-                processes.append(subprocess.Popen([str(query_server), '--config', str(config)],
-                                                   stdout=log, stderr=log))
-            # Wallets and the load driver reach query ingress; the coordinator
-            # answers only operator routes and serves artifacts to the router.
-            artifact_listen = f'127.0.0.1:{take_port()}'
-            router_control, router_query = (f'127.0.0.1:{take_port()}' for _ in range(2))
-            ingress_control, ingress_listen = (f'127.0.0.1:{take_port()}' for _ in range(2))
-            roles = {
-                'packing-router': {'role': 'packing-router', 'data_dir': str(work / 'packing-router'),
-                                   'artifact_origin': f'http://{artifact_listen}',
-                                   'listen': router_query, 'control_listen': router_control},
-                'query-ingress': {'role': 'query-ingress', 'data_dir': str(work / 'query-ingress'),
-                                  'listen': ingress_listen, 'control_listen': ingress_control},
-            }
-            for name, settings in roles.items():
-                role_config = work / f'{name}.json'
-                write_role_config(role_config, f'127.0.0.1:{take_port()}', settings)
-                log = (args.out / f'{name}.log').open('w')
-                logs.append(log)
-                processes.append(subprocess.Popen([str(query_server), '--config', str(role_config)],
-                                                   stdout=log, stderr=log))
-            routers = work / 'packing-routers.json'
-            routers.write_text(json.dumps([{'name': 'packing-router', 'url': f'http://{router_control}',
-                                            'query_url': f'http://{router_query}'}]))
-            config = work / 'workers.json'
-            groups = [{'name': 'group-1', 'replicas': replicas[:2]}]
-            config.write_text(json.dumps({'groups': groups}))
-            port = take_port()
-            operator = f'http://127.0.0.1:{port}'
-            origin = f'http://{ingress_listen}'
-            log = (args.out / 'coordinator.log').open('w')
-            logs.append(log)
-            publisher_config = work / 'publisher.json'
-            publisher_config.write_text(json.dumps({
-                'management_listen': f'127.0.0.1:{take_port()}',
-                'enhance': {'enabled': True, 'settings': {
-                    'listen': f'127.0.0.1:{port}', 'data_dir': str(work / 'coordinator'),
-                    'worker_config': str(config), 'isolated_fixture': True,
-                    'fixture_records': args.records, 'fixture_append_records': 1, 'poll_seconds': 5,
-                    'packing_router_config': str(routers), 'query_ingress': [f'http://{ingress_control}'],
-                    'artifact_listen': artifact_listen, 'frontier_replicas': 2,
-                    'zakura_rpc_url': 'http://127.0.0.1:8232', 'prevout_cache_outputs': 250000,
-                    'capacity_fallback_rows_per_second': 8 if args.expand_inventory else 1,
-                    'capacity_readiness_seconds': 21600, 'capacity_burst_rows': 4096, 'sealed_shards': 6,
-                }},
-            }))
-            processes.append(subprocess.Popen([str(publisher), '--config', str(publisher_config)],
-                                               stdout=log, stderr=log))
-            deadline = time.monotonic() + 300
-            while True:
-                if any(p.poll() is not None for p in processes):
-                    raise RuntimeError('a process exited during startup')
-                try:
-                    manifest['initial_manifest'] = fetch(origin + '/v1/enhance/init')
-                    break
-                except Exception:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError('initial publication timed out') from None
-                    time.sleep(1)
-            if args.expand_inventory:
-                manifest['initial_capacity'] = fetch(operator + '/v1/health')['capacity']
-                pending = manifest['initial_capacity']['requested']
-                if not pending or manifest['initial_capacity']['requests'][pending]['target_groups'] != 2:
-                    raise RuntimeError('configured forecast did not request a second replica pair')
-                groups.append({'name': 'group-2', 'replicas': replicas[2:]})
-                replacement = config.with_suffix('.next')
-                replacement.write_text(json.dumps({'groups': groups}))
-                replacement.replace(config)
-                deadline = time.monotonic() + 60
-                while True:
-                    health = fetch(operator + '/v1/health')
-                    if health.get('registered_groups') == 2:
-                        if not health['capacity']['requests'][pending]['registered']:
-                            raise RuntimeError('registered pair did not satisfy durable expansion demand')
-                        manifest['inventory_expansion'] = health
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError('online inventory expansion timed out')
-                    time.sleep(1)
+            fleet.start_roles()
+            fleet.start_publisher()
+            manifest['initial_manifest'] = fleet.wait_ready()
+            origin, operator = fleet.origin, 'http://' + fleet.operator
             manifest['load_start_manifest'] = fetch(origin + '/v1/enhance/init')
             for concurrency in map(int, args.concurrency.split(',')):
                 report = args.out / f'load-c{concurrency}.json'
-                command = [str(load),  '--fixture-oracle', '--server', origin,
+                command = [str(load),  '--oracle', str(fleet.oracle), '--server', origin,
                     '--parallelism', str(concurrency), '--warmup', '2s', '--duration', f'{args.seconds}s',
-                    '--seed', '20260922', '--max-error-rate', '1', '--json-out', str(report)]
+                    '--seed', '20260922', '--max-error-rate', '0', '--json-out', str(report)]
                 (args.out / f'load-c{concurrency}.command.json').write_text(json.dumps(command, indent=2))
                 with (args.out / f'load-c{concurrency}.log').open('w') as output:
                     result = subprocess.run(command, stdout=output, stderr=output, timeout=args.seconds + 180)
@@ -219,9 +88,9 @@ def main():
                 baseline = json.loads((args.out / 'load-c2.json').read_text())['correct_queries_per_second']
                 for fraction in [0.5, 0.75, 1.0, 1.25]:
                     report = args.out / f'open-loop-{fraction}.json'
-                    command = [str(load),  '--fixture-oracle', '--server', origin,
+                    command = [str(load),  '--oracle', str(fleet.oracle), '--server', origin,
                         '--parallelism', '8', '--rate', str(baseline * fraction), '--warmup', '2s',
-                        '--duration', f'{args.seconds}s', '--seed', '20260922', '--max-error-rate', '1',
+                        '--duration', f'{args.seconds}s', '--seed', '20260922', '--max-error-rate', '0',
                         '--json-out', str(report)]
                     (args.out / f'open-loop-{fraction}.command.json').write_text(json.dumps(command, indent=2))
                     with (args.out / f'open-loop-{fraction}.log').open('w') as output:
@@ -239,17 +108,13 @@ def main():
                                             'passed': published >= args.require_publications}
             if published < args.require_publications:
                 raise RuntimeError('insufficient completed publications during load; inspect retained evidence')
+
         finally:
-            for process in reversed(processes):
-                process.terminate()
-            for process in processes:
-                try:
-                    process.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
-            for log in logs:
-                log.close()
+            fleet.close()
+            source = Path(directory) / 'publisher'
+            for name in ['source-mode']:
+                if (source / name).exists():
+                    shutil.copyfile(source / name, args.out / name)
             (args.out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
 
 

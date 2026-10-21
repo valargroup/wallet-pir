@@ -1,31 +1,16 @@
 # Enhance PIR deployment
 
-The most recent production change is the [October 11 deploy of `eae5641a`](../../evidence/enhance/production-deploy-eae5641a-2026-10-11/README.md): every Enhance role, now including the GPU worker on its CUDA build, moved to that release, which adds worker and router memory reporting and the shadow `capacity` alerts. Before it came the [October 10 deploy of `9d2cbda0`](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-9d2cbda0-2026-10-10/README.md): every Enhance and Status role moved to that full-CI release through the deploy CLI, which adds acceptance of a growing domain's query-row prefix. It followed the [October 9 deploy of `06a972db`](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-06a972db-2026-10-09/README.md), which added acceptance of 44-bit dithered selections without advertising them. Before them, the [October 6 mixed-transaction fee repair](../../evidence/enhance/mixed-fee-production-2026-10-06/README.md) was a coordinator-only deploy of `2474cdbb` (native v9), with historical records rebuilt from chain and adopted. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
+Production changes use `tools/scripts/wallet-pir-deploy.py` under the shared
+production lock. Run plan and preflight first, pin exact executable/configuration
+identities, and preserve a verified rollback baseline. Source examples and local
+smoke tests do not establish the live deployment. Historical receipts remain in
+[retained evidence](../../evidence/enhance/README.md).
 
-The initial v7 SSH rollout used `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
-under `/srv/enhance-pir-v7`. The [dated evidence](../../evidence/enhance/immutable-v7-2026-09-24/README.md)
-records the final deployment status, checksums, tests and capacity limitations.
-The previous release and `/srv/enhance-pir-v6` data remain available for rollback.
-
-The subsequent [cache-reclaim update](../../evidence/enhance/worker-cache-reclaim-2026-09-24/README.md)
-deployed source `ac7cf9d` in `/opt/enhance-pir-v7/releases/ac7cf9d` on the same
-three hosts. Its focused workload was stopped early at the operator's request;
-the memory observation is promising but not a completed qualification.
-
-The binaries are `enhance-pir-server` (package `enhance-publisher`),
-`pir-query-server` (package `pir-query-server`),
-`enhance-pir-cli` (`enhance-pir-client`) and `enhance-pir-load-test`. `enhance-pir-server` maintenance commands are `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
-`build-info`. `build-info` reports native reinspiring and the source revision
-and has no CUDA field. Each Enhance serving role (`worker`, `query-ingress`,
-`packing-router`) is its own `pir-query-server --config FILE` process.
-`pir-query-server check-backend [--matvec-backend cpu|cuda] [--cuda-device N]`
-checks the evaluator without opening worker state.
-`pir-query-server repair-rows --data-dir DIR --source-rows DIR` is the offline
-row repair. Protocol v7 retains schema-11 records and q48, but changes
-routing, session identity and framing. v6 clients and serving state are incompatible.
-Use fresh controller, worker, hint and cache directories. A schema-11 canonical
-journal may be copied while stopped and validated; older-width journals must be
-re-ingested. Never open v6 controller or worker state with the v7 binary.
+The direct HTTPS cutover changes the publisher and all three serving roles as
+one qualified operation. Intermediate PRs are not independent production modes.
+There are no users requiring a compatibility window. Keep the prior executable,
+configuration, canonical journal and recovery state for restoration, while
+preserving every floor or invalidation observed after cutover.
 
 ## Node RPC policy
 
@@ -42,304 +27,131 @@ and artifact receipt.
 
 ## Build and local validation
 
-The first increment of [autonomous HTTPS synchronization](https-sync-development-plan.md)
-can prepare a complete publication offline from a stopped canonical journal and
-its matching wallet manifest:
+Use the pinned toolchain and the repository's affected checks. CPU/native tests
+and deploy-profile artifacts are distinct. Build `pir-publisher` with `enhance`
+and the selected reference/native format; build `pir-query-server` with `enhance`
+and that same format, adding CUDA only for qualified GPU workers.
 
-```sh
-pir-publisher enhance prepare-publication --source /path/to/enhance-journal --manifest /path/to/wallet-manifest.json --output /path/to/prepared-publication
-```
+`pir-publisher enhance prepare-publication` prepares a complete publication from
+a stopped canonical journal and an exact wallet manifest. Runtime publishing
+uses canonical node RPC only; the isolated smoke checks supply a trusted RPC fixture,
+which writes `source-mode=synthetic-fixture` and refuses to adopt existing state.
+A canonical publisher rejects a directory carrying that synthetic marker.
 
-The command checks the journal's committed anchor and record count against the
-manifest, prepares rows, hints and packing locally, then verifies the generated
-session identities against that manifest. It installs the immutable inventory
-last and prints its digest. Repeating it reuses verified domain material. This
-maintenance command does not grant serving authority or change consumer state;
-production synchronization still follows the deployed implementation until the
-complete cutover passes its gates.
-
-The next increment exposes complete prepared inventories and immutable objects
-under `/provider/enhance/v1/` on the root publisher's configured Enhance artifact
-listener. `current` and the bounded `authority` POST validate the requested
-retained anchor against the node; their source observation time is separate from
-the durable publication identity and retains Enhance's five-second authority
-window. Source failures cannot renew it. Restart starts withdrawn until material
-and canonical authority are revalidated. Publishing and revocation remain
-independent of consumer acknowledgments. Public TLS routing and autonomous role
-configuration join the later complete cutover.
-
-The autonomous worker increment accepts an optional `synchronization` object in
-an Enhance worker's settings. It contains `publisher_origin` (an HTTPS origin),
-`trusted_ca` (an optional absolute PEM path), `download_budget_bytes`,
-`cache_limit_bytes`, and the operator-assigned `shards` array. Use a fresh worker
-state directory. The worker downloads only those domains' rows, checks the
-inventory's data and setup bindings, and constructs its configured evaluator
-without preparing hints. Its sequential manager follows publisher changes;
-private readiness and evaluation requests can obtain fresh source authority when
-the five-second authority window has expired between polls. Neither a successful
-poll nor a cached file renews that window. Restart requires a fresh publisher
-observation before any material is ready. Existing push-controlled roles remain
-until the complete consumer path is implemented and qualified for direct cutover.
-Autonomous workers and routers check publisher service discovery at startup,
-before every pass and before every on-demand authority refresh; see
-[publisher compatibility](../query-server.md#publisher-compatibility). Forward
-the publisher's `/.well-known/pir-service-discovery` path on the same HTTPS
-origin. There is no bypass.
-
-The autonomous packing-router increment accepts `synchronization` settings with
-the same HTTPS source and budgets, plus a `workers` map from domain IDs to one or
-two private worker origins and an optional `preferred` map. Omit the legacy
-`artifact_origin`. The router fetches prepared packing, verifies its public setup
-against the publication, and waits for exact worker readiness before activating.
-Static responsibility lists may include domains that the publisher has not created
-yet; they consume no material and do not block existing domains from becoming ready.
-Worker promises expire after thirty seconds, cover the existing private evaluation
-deadline, and are renewed during transfers, loading and manager waits. Admitted
-queries retain their old material and promises until their response bodies end.
-A restarted worker must report its new incarnation before it is selected again.
-
-`max_objects` limits the steady assignment. The complete replacement must also
-fit the existing byte budget, including retained queries and one mapping
-workspace. A replacement that cannot overlap with a still-valid assignment is
-deferred before loading; reduce responsibilities or qualify sufficient capacity.
-Explicit invalidation closes and retires the obsolete active view, while admitted
-queries remain charged and fenced. Neither memory limits nor source-authority
-windows are increased to force an update through.
-
-The autonomous ingress accepts `synchronization` with the HTTPS source settings
-and a `routers` map from domain IDs to private router origins. It downloads
-metadata only and requires compatible router readiness for every published domain
-before advertising a manifest. It keeps each upstream promise through the active
-view and admitted response bodies, then releases it; lost releases expire after
-thirty seconds. Requests bind the selected router incarnation and are forwarded
-once. Existing upload, client and forwarding limits remain in force, and a stale
-wallet generation still receives `stale_routing`. Restarted ingress acquires
-fresh publisher and router authority before becoming ready.
-
-```sh
-cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
-python3 tools/enhance/scripts/test-local.py --help
-```
-
-The wallet counterpart must implement the v7/q48 contract described in
-[integration](integration.md). Use the
-checksummed `enhance-pir` release artifact; its `candidate.json` records the
-source revision and declares qualification `unqualified`. A green build or
-bundle verification does not grant hardware qualification.
+The small native fixtures cover independent record bytes, wallet decryption,
+real HTTPS, process restart and journal repair. `tools/enhance/scripts/test-local.py`
+runs two disposable worker processes, a router, ingress, TLS distribution and the
+synthetic workload. The workload can advance while consumers follow it; its own
+measurement phase waits for readiness. It never counts a report as production or
+hardware qualification. `test-local.py` adds encrypted load sweeps. Both retain
+logs/reports outside Git. Full profiles use explicit static consumer assignments;
+there is no publisher-owned inventory expansion.
 
 ## Fresh deployment layout
 
-Install the same checked binary revision on the coordinator and worker hosts.
-Use new `/srv/enhance-pir-v7/canonical` and `/srv/enhance-pir-v7/worker` directories,
-with an inventory at `/etc/enhance-pir/workers.json`. The inventory contains
-ordered groups, each with a name and two replicas carrying `name` and private
-`url`; [workers.example.json](../../tools/enhance/deploy/workers.example.json) shows the shape.
-Keep worker port 8091 on the private network and expose only the coordinator's
-client routes through the public origin. Network isolation is the primary
-control; the optional shared token below is an additional layer, not a
-replacement.
+Autonomous workers and routers check publisher service discovery at startup,
+before every pass and before each on-demand authority refresh; see
+[publisher compatibility](../query-server.md#publisher-compatibility). Forward
+`/.well-known/pir-service-discovery` on the configured publisher HTTPS origin.
+
+Use the root host examples in `tools/deploy/publisher/` and
+`tools/deploy/query-server/`, and the Enhance role renderer. Publisher settings
+contain only canonical RPC/cookie references, state, polling and private operator
+and artifact listeners. They contain no worker, router or ingress destinations.
+
+Each serving role requires `synchronization` settings:
+
+- `publisher_origin`: the configured HTTPS origin, without path or credentials.
+- `trusted_ca`: optional absolute path to a trusted CA file, readable in its sandbox.
+- `download_budget_bytes` and `cache_limit_bytes`: explicit transport and disk budgets.
+- Worker `shards`, router `workers`/optional `preferred`, or ingress `routers`:
+  static responsibilities and private downstream endpoints. Each ingress router
+  entry contains `control_origin` and `query_origin`.
+
+Configuration checking parses real JSON and validates capabilities, limits,
+origins and responsibilities without opening state, reading credentials/CA files
+or loading a GPU driver. Runtime startup performs those checks before loading.
+Keep control/evaluation listeners on the private network and process management
+on loopback. Preserve the existing internal bearer-token credential references;
+all private peers must use the same installed policy.
 
 ### Internal control token
 
-Setting `ENHANCE_INTERNAL_TOKEN` in the environment of every role enables a
-shared bearer token on the private APIs. Worker routes, packing-router control
-routes and query-ingress control routes (all `/internal/*` paths except the
-ingress `/internal/metrics` scrape) then reject requests without
-`Authorization: Bearer <token>` with HTTP 401. The coordinator, packing router
-clients read the same variable and attach the header. Set it on
-all roles together, or on none: a worker with the token and a coordinator
-without it stops publication. Unset keeps the previous behaviour. Provide the
-value through the unit's environment file, never on the command line.
-
-### Worker preparation outcomes and refusals
-
-A worker's preparation reports how it produced each unit's runtime: reused
-live, restored from its verified artifact, or rebuilt from staged rows bound to
-the committed digest. Its private `/internal/health` carries the latest
-`preparation` (generation, unit counts, or the refusal), in memory only.
-Control refusals are classified once, as invalid source, runtime, memory,
-admission or superseded, and reach the coordinator with the same statuses and
-text as before: 507 for a reservation that does not fit, 503 otherwise. An
-operator-added worker is the `enhance.external-worker` role
-([operations](../operations.md#external-workers)); it serves only after
-the coordinator activates it and a packing router lists it.
+`PIR_INTERNAL_TOKEN` protects private evaluation, readiness and peer handover.
+Read it from the installed credential environment, sourced from Infisical.
+Never put its value in configuration, manifests, reports or commands. TLS
+publication distribution is a separate read-only artifact/authority API.
+Caddy exposes `/provider/enhance/v1/*` through its trusted HTTPS origin and sends
+wallet `/v1/enhance/*` traffic to ingress. It must not expose publisher management
+or private peer APIs.
 
 ### Query ingress uploads
 
-The ingress role (`query-ingress`, loopback 8082) buffers each complete request
-body (at most 512 KiB, 30-second deadline) before it takes one of its
-`requests` forwarding permits (default 16) and forwards the buffered body to a
-packing router. Buffering is bounded by `uploads` (default 256 concurrent
-bodies) and by four concurrent uploads per client, identified by the first
-`X-Forwarded-For` address, else `X-Real-IP`, else the socket peer. Either limit
-answers HTTP 429 `overloaded` without charging a forwarding permit. Caddy must
-keep sending `X-Forwarded-For` so the per-client cap does not collapse onto the
-proxy's loopback address.
-
-The coordinator admits four active queries and lets up to 16 more wait for two
-seconds. A full or expired queue returns HTTP 429 with `Retry-After: 1`; a busy
-replica is retried on its peer. The public Caddy query route disables upstream
-keepalive so overload responses are not lost on stale local connections. Check
-the `enhance_query_*` metrics and public 429/502 counts after rollout.
-
-Run the publication application with `pir-publisher --config FILE`, enabling
-the `enhance` section in the [publisher configuration](../publisher.md).
-A worker, query ingress, or packing router is
-a separate `pir-query-server --config` process, one Enhance role in that file.
-The role file carries the listen address, absolute data directory, sealed-shard
-count, and, for a worker, the matrix backend. `ENHANCE_INTERNAL_TOKEN`, when
-used, stays in the unit environment file and never on the command line. Point
-`/opt/enhance-pir/current` to the verified release on each host and create the
-non-root worker account and its private data directory. The default sealed-shard
-count is six; seven requires separate hardware qualification. Keep existing
-Terraform resource addresses, droplet names, and tags when reconciling
-infrastructure.
+Ingress retains bounded upload slots, per-client limits and a thirty-second body
+deadline. It validates the complete binding before forwarding and never replays
+an accepted or acceptance-unknown evaluation. Worker evaluation retains its two
+permits and fixed request limits. Stale routing and incompatible sessions keep
+the existing refusal behavior; a client refresh does not authorize a different
+anchor on the wallet's behalf.
 
 ## Cutover checks
 
-1. Confirm the wallet fleet accepts schema 11 and the recorded protocol revision.
-   Preserve the old release and data for rollback from its pinned checkout.
-2. Prepare fresh state from canonical RPC and start both workers before the
-   coordinator. Verify their private health and matching placement policy.
-3. Check the public manifest's schema, anchor, coverage, and two-replica
-   publication. Run exact-answer queries against an independent record oracle,
-   including a row boundary, a retained session, and a refreshed expired session.
-4. Check worker memory, disk, swap, publication time, and query latency under
-   the target placement. Use [qualification](qualification.md) for the remaining
-   sustained acceptance evidence.
-5. Switch traffic together with compatible wallets. Rollback switches traffic
-   and clients to the preserved old release and data; it does not reuse new state.
+Qualify the complete path before requesting the production gate. The reviewable
+plan must bind source/artifact digests, live topology, prior units/configuration,
+private peer identities, exact independent answer checks and all enabled products
+of the shared publisher. Retain resource and hardware evidence separately from
+fast CI, including cold and incremental preparation, scratch/free disk, RSS,
+full-size overlap, recovery and sustained encrypted answers.
 
-The physical hosts have recorded `v4` resource names in Terraform. Those names
-are live identities and are deliberately left unchanged. The direct SSH
-cutover did not run Terraform.
+Rollback must transfer recovery authority, not merely restore old files. Import
+old recovery/domain floors, invalidations, lifecycle and the next reserved wallet
+generation before the new publisher starts. Before restoring the previous
+runtime, merge every new floor and invalidation back and require fresh preparation
+under a strictly reserved recovery epoch. Keep the old consumer state separate
+from the autonomous caches. A stale backup must never erase later invalidations.
+
+Immediately before the first serving interruption, durably record the one-hour
+window and arm a persistent transaction-owned watchdog that actually executes
+rollback if the shell disappears. Retries do not reset the deadline. Under the
+production lock, commit only after readiness, fresh advancement and independent
+answers have passed for every affected enabled product. If they have not passed
+within one hour, stop forward progress and begin rollback; restoration may finish
+later. Verify all enabled products again after restoration. A saved deadline,
+local test result or successful process restart alone does not meet this gate.
 
 ## Deploy CLI
 
-`tools/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
-for Enhance and Status. It has deployed production releases since 2026-10-06
-(coordinator only) and 2026-10-09 (every Enhance and Status role); the manual
-runbook below remains the fallback.
-
-The tool runs on the coordinator, or on a workstation with the production SSH
-access, and takes a local inventory (`--inventory` or
-`WALLET_PIR_DEPLOY_INVENTORY`) of hosts, SSH settings and the production lock.
-The repository does not describe the live fleet; see
-[deploy-inventory.example.json](../../tools/enhance/deploy/deploy-inventory.example.json)
-for the shape. Roles, units, readiness checks and rollout order (workers,
-packing router, query ingress, coordinator) are in
-[deploy.toml](../../tools/enhance/deploy/deploy.toml).
-
-```sh
-wallet-pir-deploy.py capture-baseline enhance
-wallet-pir-deploy.py plan enhance --binary ./enhance-pir-server
-wallet-pir-deploy.py preflight enhance --binary ./enhance-pir-server [--stage]
-wallet-pir-deploy.py deploy enhance --binary ./enhance-pir-server --retire-historical
-wallet-pir-deploy.py status enhance
-wallet-pir-deploy.py rollback enhance [--transaction ID]
-```
-
-`--archive <bundle> --sha <rev>` takes a checksummed `tools/ci/release.py` bundle
-instead of `--binary`. `--sha256 <digest>` names a binary without supplying it,
-which is enough for a no-op check or an already staged release.
-
-- `capture-baseline` records each unit's running executable digest and complete
-  unit text. `preflight` and `deploy` refuse if anything changed since, and
-  `deploy` refreshes the baseline after it commits or rolls back.
-- The coordinator binary is installed as
-  `/opt/enhance-pir/releases/<sha256>/enhance-pir-server` and must pass `--help`
-  on each host before any unit changes. A serving role installs
-  `pir-query-server` the same way and starts with `--config`. The release
-  directory is named by the sha256 of the file that host runs.
-- Each unit gets one managed drop-in whose name (32 `z`s, then
-  `-wallet-pir-release.conf`) sorts after the drop-ins the manual rollouts
-  stacked. It clears `ExecStart` and sets it to the release binary with the live
-  argument tail. A serving role does not keep an `enhance-pir-server` `worker`,
-  `query-ingress`, or `packing-router` tail: its `ExecStart` is
-  `{release}/pir-query-server --config /etc/enhance-pir/<role>.json`.
-  A second external worker on the same host is a separate unit. Its config file
-  is named for that unit, and its management listener is another loopback port,
-  so it does not share the first worker's file or `127.0.0.1:18091`.
-  Earlier drop-ins that set `ExecStart` stay in place and are
-  shadowed; one that would sort after the managed drop-in is refused. With
-  `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
-  instead moved into the host's transaction directory.
-- `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
-  targets, so the replicated workers can roll while single-instance roles keep
-  running.
-- The GPU worker runs the CUDA `pir-query-server` from the
-  `enhance-pir-native-cuda` build. That host does not run `enhance-pir-server`
-  as the worker. Its inventory entry names `"artifact_kind":
-  "enhance-pir-native-cuda"`, and every plan, preflight or deploy that selects it
-  needs `--extra-archive enhance-pir-native-cuda=<bundle>` with the same `--sha`;
-  without it the command refuses rather than skipping the GPU. CPU-only
-  qualification omits that artifact: request `include-cuda=true` when qualifying
-  the exact revision before selecting the GPU for deployment. See
-  [CUDA deployment](cuda_workers.md#deployment). The GPU then rolls
-  in its own transaction, in rollout order, with its own exact-answer check. Leave
-  it out deliberately with `--only`. The GPU is the packing router's preferred
-  worker, so a release is not complete until it runs too.
-- A worker built from `main` after 2026-09-30 stops gracefully on SIGTERM: it
-  closes its listener, so the packing router retries new evaluations once on
-  the other replica, and it finishes and delivers the evaluations it already
-  accepted. Rolling the workers one at a time with `--only` then loses no
-  admitted query. Earlier worker binaries stop immediately, so replacing one of
-  them fails the few evaluations in flight at that moment. The packing router,
-  query ingress, coordinator and the Status roles are single instances, and
-  restarting any of them interrupts service.
-- In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
-  may jump through the coordinator to private addresses.
-- A unit whose running executable and effective configuration already match is
-  skipped, so deploying the running binary is a no-op.
-- Every host must accept the deploy identity before anything changes. Mutating
-  commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
-- `enhance-pir-server build-info` has no CUDA field. Staging a GPU worker runs
-  `pir-query-server check-backend --matvec-backend cuda --cuda-device N` on
-  that host, using its configured device, before restarting the working service.
-  This checks compiled support and driver initialization without opening worker
-  state; publication readiness and encrypted answers remain separate activation
-  checks.
-- After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
-  to have the release digest, and the role's health endpoint to report ready
-  (and the same `binary_sha256`, when the endpoint reports one). After all roles
-  it runs the inventory's exact-answer command. `--skip-exact-check` applies only when the
-  inventory has no `exact_check`; a configured check runs on every transaction. The
-  check's SSH session has no client-side timeout, so a dropped connection leaves the
-  transaction `verifying` until the process is stopped and the transaction rolled back.
-- Every step is journaled in `~/.local/state/wallet-pir-deploy/<id>.json` before
-  it happens; each host keeps the previous files in
-  `/opt/enhance-pir/transactions/<id>/`. A failure restores the touched units in
-  reverse order and checks that the previous executable is running again.
-  `rollback` does the same for a committed or interrupted transaction, and is
-  safe to repeat.
-
-The tool does not drain or pause public queries, so plan the query-route
-maintenance window as in the September 24 rollout.
+Use the repository deployment CLI for plan, preflight, deploy, status and
+rollback. Preserve its transaction journal and production-lock ownership. Do not
+copy binaries, signal processes or change units by hand. The HTTPS cutover's
+recovery adapter, watchdog rehearsal and complete qualification are required
+before its production operation is enabled. The operator confirms the concrete
+production plan after these artifacts and checks are reviewable.
 
 ## Repairing historical fees
 
-Coordinators built before the [whole-transaction fee rule](architecture.md#record-metadata-and-fees)
+Publishers built before the [whole-transaction fee rule](architecture.md#record-metadata-and-fees)
 published fee-absent records for Ironwood transactions with transparent, Sapling or
 Orchard parts. The journal stores only encoded records, so installing and restarting
 the fixed binary repairs new blocks only. History is repaired offline from chain and
-then adopted by the coordinator at startup. Neither step touches `control/`,
+then adopted by the publisher at startup. Neither step touches the publication safety state,
 workers, routers or ingress.
 
 1. Build the server with its source revision recorded in the receipt:
-   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-publisher --bin enhance-pir-server`.
-2. While the coordinator keeps serving, rebuild into the staged directory of its
+   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-publisher --bin pir-publisher`.
+2. While the publisher keeps serving, rebuild into the staged directory of its
    data directory:
 
    ```sh
-   enhance-pir-server rebuild-journal \
+   pir-publisher enhance rebuild-journal \
      --source <data-dir> --output <data-dir>/enhance-staged \
      --zakura-rpc-url <archive RPC> --zakura-cookie <cookie> \
      [--through-height H] [--concurrency 8] [--cache-outputs 250000]
    ```
 
-   It reads `<data-dir>/enhance` without the coordinator's journal lock, stops at
+   It reads `<data-dir>/enhance` without the publisher's journal lock, stops at
    the source tip (or `H`), checks every block hash with batched `getblockhash`,
-   re-derives every non-empty block with the coordinator's producer and the final
+   re-derives every non-empty block with the publisher's producer and the final
    Ironwood tree size with `getblock` verbosity 2. A regenerated record may differ
    from the old one only in flag bit 2 and bytes 645..653, and only where the old
    record had no fee. Any other difference, a hash or action-count mismatch, or an
@@ -352,7 +164,7 @@ workers, routers or ingress.
    binary SHA-256, `H`, its block hash and tree size, SHA-256 digests of
    `records.bin` and `manifest.json`, the changed-record count and the count still
    without a fee (coinbase outputs). A completed output is never overwritten.
-4. Restart the coordinator. Before opening its journal it verifies the receipt
+4. Restart the publisher. Before opening its journal it verifies the receipt
    digests, that the staged blocks (height, hash, first position, action count) are a
    prefix of the live journal, that every staged record differs from the live one
    only in the fee fields, and that no changed position lies in a sealed shard
@@ -369,7 +181,7 @@ workers, routers or ingress.
 
 Adoption verification is one streaming pass over both journals: fixed-size chunks,
 two reused buffers, the staged records digest computed during the comparison, and
-no in-memory copy of either journal. It runs before the coordinator opens its
+no in-memory copy of either journal. It runs before the publisher opens its
 control state and binds its HTTP listener, so the adopted journal is in place before
 serving resumes; block catch-up and spent-output fetching stay in the poll loop after
 the listener serves the restored snapshot. A restart without a completed staged
@@ -389,14 +201,14 @@ whose fee is repaired no longer matches an oracle captured before the repair. Fo
 historical record repair:
 
 1. Regenerate both oracles from an independent chain oracle (canonical transactions
-   read from the node and decoded without the coordinator's producer), not from the
+   read from the node and decoded without the publisher's producer), not from the
    repaired journal or a served answer. Record the new oracle digests.
 2. Put the external monitor in shadow mode (`PIR_MONITOR_ALERT_MODE=shadow`) for the
-   whole window, from the coordinator restart until the repaired generation is
+   whole window, from the publisher restart until the repaired generation is
    published and verified.
 3. Deploy with `--skip-exact-check`, because before adoption and the next publication
-   the coordinator still serves the old bytes and neither oracle can pass.
-4. After the coordinator logs the adoption and publishes the next block's
+   the publisher still serves the old bytes and neither oracle can pass.
+4. After the publisher logs the adoption and publishes the next block's
    generation, run the exact-answer check by hand with the regenerated oracle. Then
    install the regenerated, re-pinned monitor oracle and return the monitor to
    active mode only after its canary passes.
@@ -404,21 +216,8 @@ historical record repair:
 Adoption refuses changes in sealed shards; repairing a sealed shard requires a
 recovery-fenced republication that this procedure does not provide.
 
-To roll back the data, stop the coordinator, move `enhance` aside, rename
-`enhance.before-rebuild-<receipt id>` back to `enhance` and start the coordinator.
+To roll back the data, stop the publisher, move `enhance` aside, rename
+`enhance.before-rebuild-<receipt id>` back to `enhance` and start the publisher.
 Its next publication serves the old records again. Keep the preserved directory
 until the repaired publication has been checked; it is the only copy of the
 pre-rebuild journal.
-
-## Deployment and qualification
-
-The unified publisher and Enhance query roles use the locked deployment tool
-and retained transaction journals described in [Publisher operations](../publisher.md).
-The former v6/v7 SSH rollout and focused v7 assessment are retired. Do not
-restore standalone coordinator units or qualify the current native fleet using
-those older workloads. Keep retained raw evidence and binaries needed by a
-saved rollback transaction.
-
-Use the current native wallet and encrypted-answer checks, independent live
-oracles, and host resource observations. A focused run does not replace the
-six-hour hardware qualification or permit higher placement/admission limits.

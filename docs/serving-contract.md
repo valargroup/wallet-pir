@@ -16,26 +16,27 @@ PIR parameter, evaluation and packing integration they share lives in
 |---|---|---|---|---|---|
 | `binary_sha256` | SHA-256 of the started executable (`/proc/self/exe` on Linux) | `/internal/health` | `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
 | `incarnation` | Random per serving instance; changes on restart | `/internal/health` | `/control/health` (`binding.incarnation`), `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
-| `started_unix` | Process start, seconds | `/internal/health` | `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
+| `started_unix` | Process start, seconds | not exposed | `/control/identity` | `/v1/ready`, `/v1/health` | `/v1/receiver/health` |
 
 A deploy confirms a restart by a changed `incarnation` and the expected
-`binary_sha256`. The Enhance coordinator's private operator `/v1/health` does not carry
+`binary_sha256`. The Enhance publisher's private operator `/v1/health` does not carry
 identity; deploys read the executable hash through systemd instead. Status keeps
 identity off `/control/health` because its `Health` type refuses unknown fields,
 so adding one would break an older controller during a rolling deploy.
 
 ## Serving authority
 
-Enhance's packing router and query ingress serve only while their controller
-has renewed authority within five seconds (`pir_control::CONTROL_WATCHDOG`).
+Enhance workers, packing routers and ingress independently obtain real canonical
+publisher observations over HTTPS. Authority lasts five seconds
+(`pir_control::CONTROL_WATCHDOG`); polling alone cannot renew it.
 Status instead verifies publisher authority over HTTPS and rejects observations
 older than twenty seconds; polling, downloads and retries cannot renew their age.
 
 | | Enhance router and ingress | Status roles | Transparent worker |
 |---|---|---|---|
-| Handshake | prepare → `Ack{incarnation, digest, controller_epoch}` → activate → refresh | HTTPS discovery → verified prepared load → authority recheck → local activation | control-socket `prepare`/`activate` compare-and-swap on the predecessor `map_sha256` |
-| Renewal checks | incarnation, epoch and view digest | publication/recovery high-water marks, exact anchors and original observation age | none; no lease |
-| Fence | monotonic controller epoch, recovery epoch and revoked-session superset | recovery epoch bumped on publisher recovery; durable consumer invalidations | reorg epoch; invalidation persisted |
+| Handshake | HTTPS verified material → exact downstream readiness/incarnation → local activation | HTTPS discovery → verified prepared load → authority recheck → local activation | control-socket `prepare`/`activate` compare-and-swap on the predecessor `map_sha256` |
+| Renewal checks | exact manifest, canonical observation, withdrawal revision and live durable safety floors | publication/recovery high-water marks, exact anchors and original observation age | none; no lease |
+| Fence | monotonic publication/withdrawal/recovery floors and revoked-session superset | recovery epoch bumped on publisher recovery; durable consumer invalidations | reorg epoch; invalidation persisted |
 | Control errors | 503 | 503 unavailable/stale; 409 unknown generation; 410 revoked | CLI error |
 
 Transparent has no lease. The reconciler routes a worker only while it attests
@@ -55,10 +56,11 @@ Each product classifies why a preparation or control command did not complete,
 internally, as invalid source (the input does not verify), runtime (restoring
 or building failed on verified input), admission (budget or a conflicting
 hold) or superseded (the predecessor, epoch or record moved on). The wire is
-unchanged: Enhance workers still answer 507 or 503 with the same text,
-Transparent control replies carry the same `error` string, and Receiver's
+product-owned: Enhance synchronization defers unsafe candidates and keeps
+private failures out of public responses; Transparent control replies carry the
+same `error` string, and Receiver's
 public refusals below are untouched. The kind appears only in private reports
-(`preparation` on Enhance worker health, `last_preparation` in Transparent
+(`last_preparation` in Transparent
 control status, `publication.refusal` on Receiver health) and in the
 operations `worker-report`, which keeps process, identity, publication,
 preparation and readiness separate and never infers encrypted correctness.
@@ -72,7 +74,7 @@ read it through accessors and change it only through the owner's operations:
 
 | | Prepared candidate | Owner | Handle given to requests |
 |---|---|---|---|
-| Enhance | `EnhanceJournal` appends and rewinds (continuity checked); `PreparedShard` → `CachedShard` on persist or verified load | coordinator; router and ingress `ControlledView` | `Arc` of the activated view or shard |
+| Enhance | `EnhanceJournal` appends/rewinds; complete hashed inventories bind rows/setup/packing | publisher owns publication; each serving role owns local activation | `Arc` of the activated view or shard |
 | Status | `Generation`; identity changes only by `reidentified`/`reobserved`, content only by preparing anew | `Controller`, distributed roles | `Arc<Generation>` |
 | Transparent | staged candidate under the control socket | shard and display `live` modules | active publication runtimes |
 | Receiver | `PublicationRecord::read` | `serve-publication` loop | `Publication` |
