@@ -26,6 +26,10 @@ pub(crate) struct Source {
     transport: pir_sync_manager::HttpsSource,
     observed: Option<Current>,
     schema: &'static str,
+    /// Cached objects this handle fully hashed, by digest name, with the inode
+    /// identity observed after hashing. Never persisted: a new handle hashes
+    /// every reused object again.
+    pub(crate) checked: std::collections::HashMap<String, crate::objects::Checked>,
 }
 impl Source {
     #[cfg_attr(not(feature = "transparent-history"), allow(dead_code))]
@@ -46,6 +50,7 @@ impl Source {
             )?,
             observed: None,
             schema,
+            checked: Default::default(),
         })
     }
     pub(crate) fn downloaded(&self) -> u64 {
