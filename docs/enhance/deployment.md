@@ -41,10 +41,11 @@ A canonical publisher rejects a directory carrying that synthetic marker.
 The small native fixtures cover independent record bytes, wallet decryption,
 real HTTPS, process restart and journal repair. `tools/enhance/scripts/test-local.py`
 runs two disposable worker processes, a router, ingress, TLS distribution and the
-synthetic workload. The workload can advance while consumers follow it; its own
-measurement phase waits for readiness. It never counts a report as production or
-hardware qualification. `test-local.py` adds encrypted load sweeps. Both retain
-logs/reports outside Git. Full profiles use explicit static consumer assignments;
+canonical publisher against a trusted RPC fixture containing public transactions
+and synthetic block envelopes. Encrypted load starts after readiness while the
+fixture chain continues advancing. The script retains
+logs/reports outside Git and cannot establish consensus or hardware qualification.
+Full profiles use explicit static consumer assignments;
 there is no publisher-owned inventory expansion.
 
 ## Fresh deployment layout
@@ -77,7 +78,7 @@ all private peers must use the same installed policy.
 
 ### Internal control token
 
-`PIR_INTERNAL_TOKEN` protects private evaluation, readiness and peer handover.
+`ENHANCE_INTERNAL_TOKEN` protects private evaluation, readiness and peer handover.
 Read it from the installed credential environment, sourced from Infisical.
 Never put its value in configuration, manifests, reports or commands. TLS
 publication distribution is a separate read-only artifact/authority API.

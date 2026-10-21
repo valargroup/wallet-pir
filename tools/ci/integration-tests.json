@@ -1,8 +1,4 @@
 {
-  "enhance-query-server": {
-    "fast": [],
-    "full": []
-  },
   "receiver-indexer": {
     "fast": [],
     "full": [

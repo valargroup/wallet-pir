@@ -72,7 +72,9 @@
       "transparent:transparent-tools:example:transparent-txid-demo",
       "transparent:transparent-tools:test:compact_export",
       "transparent:transparent-tools:test:txid_shipped_runtimes",
-      "transparent:pir-publisher:test:commands"
+      "transparent:pir-publisher:test:commands",
+      "transparent:pir-e2e-tests:lib:pir_e2e_tests",
+      "transparent:pir-e2e-tests:doc:pir_e2e_tests"
     ]
   },
   "transparent-backend": {
@@ -154,7 +156,9 @@
       "native:pir-query-server:lib:pir_query_server",
       "native:pir-query-server:test:operator",
       "native:pir-publisher:test:commands",
-      "native:pir-e2e-tests:test:publication_renewal"
+      "native:pir-e2e-tests:test:publication_renewal",
+      "native:pir-e2e-tests:lib:pir_e2e_tests",
+      "native:pir-e2e-tests:doc:pir_e2e_tests"
     ]
   },
   "enhance-http": {

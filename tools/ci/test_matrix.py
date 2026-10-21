@@ -26,8 +26,8 @@ REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::',
                          'runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation',
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
-REFERENCE_TESTS = {('enhance-query-server', 'routing_contract'),
-                   ('pir-e2e-tests', 'ci_hint'), ('pir-e2e-tests', 'encrypted_lifecycle')}
+REFERENCE_TESTS = {('pir-e2e-tests', 'ci_hint'), ('pir-e2e-tests', 'encrypted_lifecycle'),
+                   ('pir-e2e-tests', 'publication_renewal')}
 # Real-process campaigns are compiled and listed here but run only by their
 # scripts under tools/transparent/scripts; every case must stay ignored.
 MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'controller_update_campaign'),
