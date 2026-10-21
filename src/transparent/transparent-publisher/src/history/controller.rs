@@ -2763,6 +2763,330 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         );
         server.abort();
     }
+
+    /// A five-block node whose journal and publication end at height two, and
+    /// a fleet hook that logs every request and, while `fleet.pause` exists,
+    /// holds an activation after touching `fleet.entered`.
+    struct Follow {
+        _root: tempfile::TempDir,
+        server: tokio::task::JoinHandle<()>,
+        client: NodeClient,
+        config: Config,
+        store: Arc<tokio::sync::Mutex<EventStore>>,
+    }
+    async fn follow_fixture() -> Follow {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let chain: Chain = Arc::new(RwLock::new(Vec::new()));
+        extend(&mut chain.write().unwrap(), 5, 1);
+        let node = Arc::new(MockNode {
+            chain: chain.clone(),
+            pause_ancestor: AtomicBool::new(false),
+            ancestor_started: tokio::sync::Notify::new(),
+            resume: tokio::sync::Notify::new(),
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route("/", post(rpc)).with_state(node);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let cookie = root.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let client = crate::ingest::zakura::connect(format!("http://{address}"), &cookie).unwrap();
+        let journal_dir = root.path().join("journal");
+        let mut journal = EventStore::open(
+            &journal_dir,
+            &hash(&chain.read().unwrap()[0]).to_display_hex(),
+            0,
+        )
+        .unwrap();
+        for h in 0..3 {
+            journal
+                .append_block(h, hash(&chain.read().unwrap()[h as usize]), &[])
+                .unwrap();
+        }
+        journal.commit().unwrap();
+        let initial = root.path().join("initial");
+        let qualification = cfg!(feature = "qualification-tests");
+        let options = PublishOptions {
+            data_dir: journal_dir.clone(),
+            output: initial.clone(),
+            previous: None,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: qualification.then(|| "decoupled-32k-32k".into()),
+            recent_from: qualification.then_some(2),
+            zakura_rpc_url: String::new(),
+            zakura_cookie: cookie.clone(),
+            through: None,
+            record: None,
+            source_sha: None,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+        };
+        publication::publish_with(
+            &options,
+            &journal,
+            BlockHash::from_internal_bytes([0; 32]),
+            &follow_seal,
+        )
+        .unwrap();
+        let hook = root.path().join("fleet.py");
+        std::fs::write(&hook, r#"#!/usr/bin/env python3
+import json,sys,time
+from pathlib import Path
+r=json.load(sys.stdin)
+with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
+pause=Path(__file__).with_suffix('.pause')
+if r['operation']=='activate' and pause.exists():
+    pause.with_suffix('.entered').touch()
+    deadline=time.monotonic()+60
+    while pause.exists():
+        if time.monotonic()>deadline: raise RuntimeError('fixture activation pause expired')
+        time.sleep(.01)
+print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
+"#).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let publications = root.path().join("publications");
+        std::fs::create_dir(&publications).unwrap();
+        let config = Config {
+            data_dir: journal_dir,
+            publication_root: publications,
+            initial_publication: initial,
+            recent_from: 2,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
+            rpc_url: format!("http://{address}"),
+            rpc_cookie: cookie,
+            fleet_command: hook,
+            fleet_config: root.path().join("unused"),
+            listen: address,
+            source_sha: "fixture".into(),
+            shadow: false,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            follow_journal: false,
+            snapshot_dir: None,
+            ship_runtimes: false,
+            distribute_prepared: false,
+            http_only: false,
+        };
+        let store = Arc::new(tokio::sync::Mutex::new(journal));
+        Follow {
+            _root: root,
+            server,
+            client,
+            config,
+            store,
+        }
+    }
+    /// The seal policy [`publish_follow`] publishes under.
+    fn follow_seal(geometry: &Geometry) -> DecoupledPolicy {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            two_script_seal(geometry)
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            DecoupledPolicy::for_geometry(geometry)
+        }
+    }
+    impl Follow {
+        /// The authority a publisher starting now would hold: the publication
+        /// `active.json` names, checked against its map as at startup, or the
+        /// initial one.
+        fn authority(&self, shutdown: pir_pipeline::service::Shutdown) -> Authority {
+            let saved = self.config.publication_root.join("active.json");
+            let public = if saved.exists() {
+                let saved: ActivePublication =
+                    serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+                let loaded = read_public(saved.directory, saved.upstreams).unwrap();
+                assert_eq!(loaded.publication.map_sha256, saved.map_sha256);
+                loaded
+            } else {
+                read_public(self.config.initial_publication.clone(), Vec::new()).unwrap()
+            };
+            Authority(Arc::new(Inner {
+                cycle_duration: Default::default(),
+                publication_freshness: Default::default(),
+                telemetry: Default::default(),
+                publication_attempts: AtomicU64::new(0),
+                publication_failures: AtomicU64::new(0),
+                last_publication: AtomicU64::new(0),
+                active: RwLock::new(Arc::new(public)),
+                withdrawn: AtomicBool::new(false),
+                epoch: AtomicU64::new(0),
+                distribution_revision: AtomicU64::new(1),
+                distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+                canonicality: None,
+                invalidated_from: AtomicU64::new(u64::MAX),
+                publication_gate: std::sync::Mutex::new(()),
+                last_init: std::sync::Mutex::new(None),
+                status: RwLock::new(serde_json::json!({})),
+                observed: RwLock::new(BTreeMap::new()),
+                http: reqwest::Client::new(),
+                membership: None,
+                prepared_set: std::sync::Mutex::new(None),
+                shutdown,
+                checked_runtimes: Default::default(),
+                runtime_preparations: AtomicU64::new(0),
+                runtime_preparation_failures: AtomicU64::new(0),
+            }))
+        }
+        /// Brings the journal to the node's tip, height four.
+        async fn ingest(&self, authority: &Authority) {
+            let (notify, _) = tokio::sync::watch::channel(0);
+            ingest_once(
+                &self.config,
+                &self.client,
+                &self.store,
+                authority,
+                &mut OutputCache::new(100),
+                &notify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(self.store.lock().await.covered_through(), Some(4));
+        }
+        /// The operations of every fleet request so far.
+        fn operations(&self) -> Vec<String> {
+            std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
+                .unwrap_or_default()
+                .lines()
+                .map(|line| {
+                    let request: serde_json::Value = serde_json::from_str(line).unwrap();
+                    request["operation"].as_str().unwrap().to_string()
+                })
+                .collect()
+        }
+    }
+
+    /// A stop requested while the candidate is being published ends its
+    /// preparation as a normal outcome: the build writes no map, the fleet is
+    /// not asked, nothing is activated and no failure is counted. A
+    /// publisher started afterwards prepares and activates the same height.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_during_the_candidate_build_is_unchanged_and_a_restart_resumes() {
+        static STOPPING: std::sync::LazyLock<pir_pipeline::service::Shutdown> =
+            std::sync::LazyLock::new(Default::default);
+        // Asked as the build starts, after preparation checked for a stop.
+        fn stopping_seal(geometry: &Geometry) -> DecoupledPolicy {
+            STOPPING.request();
+            follow_seal(geometry)
+        }
+        let follow = follow_fixture().await;
+        let config = &follow.config;
+        let authority = follow.authority(STOPPING.clone());
+        follow.ingest(&authority).await;
+        let Input::Work(work) = acquire_history(config, &follow.client, &follow.store, &authority)
+            .await
+            .unwrap()
+        else {
+            panic!("new durable work expected");
+        };
+        let qualification = cfg!(feature = "qualification-tests");
+        let prepared = prepare_candidate(
+            config,
+            &follow.client,
+            &authority,
+            work,
+            stopping_seal,
+            qualification.then(|| config.archive_geometry.clone()),
+            qualification.then_some(config.recent_from),
+        )
+        .await;
+        assert!(STOPPING.requested());
+        assert!(
+            matches!(prepared, Ok(Input::Unchanged)),
+            "stopped as a normal outcome: {:?}",
+            prepared.err()
+        );
+        assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+        assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
+        assert!(follow.operations().is_empty(), "the fleet was not asked");
+        for name in ["active.json", "activation.json"] {
+            assert!(!config.publication_root.join(name).exists(), "{name}");
+        }
+        let candidates: Vec<_> = std::fs::read_dir(&config.publication_root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.is_dir())
+            .collect();
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert!(
+            !candidates[0].join("shards.json").exists(),
+            "no map written"
+        );
+
+        let restarted = follow.authority(Default::default());
+        publish_follow(config, &follow.client, &follow.store, &restarted)
+            .await
+            .unwrap();
+        assert_eq!(restarted.0.active.read().unwrap().publication.height, 4);
+        assert_eq!(follow.operations(), ["prepare", "activate"]);
+        follow.server.abort();
+    }
+
+    /// A stop requested once fleet activation has begun does not abandon the
+    /// cycle: it completes the post-activation canonicality check and the
+    /// pointer commit, counts no failure, sends no further fleet request,
+    /// and a publisher started afterwards loads the same active record.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_during_fleet_activation_still_commits_the_publication() {
+        let follow = follow_fixture().await;
+        let config = &follow.config;
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let authority = follow.authority(shutdown.clone());
+        follow.ingest(&authority).await;
+        let pause = config.fleet_command.with_extension("pause");
+        let entered = config.fleet_command.with_extension("entered");
+        std::fs::write(&pause, []).unwrap();
+        let publication = publish_follow(config, &follow.client, &follow.store, &authority);
+        tokio::pin!(publication);
+        loop {
+            tokio::select! {
+                result = &mut publication => panic!("activation did not pause: {result:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                    if entered.exists() { break; }
+                }
+            }
+        }
+        shutdown.request();
+        std::fs::remove_file(&pause).unwrap();
+        publication.await.unwrap();
+
+        let active = authority.0.active.read().unwrap().publication.clone();
+        assert_eq!(active.height, 4);
+        let saved: ActivePublication = serde_json::from_slice(
+            &std::fs::read(config.publication_root.join("active.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (&saved.directory, &saved.map_sha256, saved.height),
+            (&active.directory, &active.map_sha256, active.height)
+        );
+        assert!(!config.publication_root.join("activation.json").exists());
+        assert!(!authority.0.withdrawn.load(Ordering::Acquire));
+        assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
+        {
+            let status = authority.0.status.read().unwrap();
+            assert_eq!(status["phase"], "serving");
+            assert_eq!(status["public_height"], 4);
+            assert!(status.get("publication_error").is_none());
+        }
+        // Nothing is left to retry.
+        publish_follow(config, &follow.client, &follow.store, &authority)
+            .await
+            .unwrap();
+        assert_eq!(follow.operations(), ["prepare", "activate"]);
+
+        let restarted = follow.authority(Default::default());
+        assert_eq!(
+            restarted.0.active.read().unwrap().publication.map_sha256,
+            active.map_sha256
+        );
+        follow.server.abort();
+    }
 }
 
 #[cfg(all(test, feature = "fixtures"))]
