@@ -36,6 +36,7 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         membership: None,
         prepared_set: std::sync::Mutex::new(None),
         shutdown: Default::default(),
+        checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
     }))
@@ -386,22 +387,36 @@ fn config(tls: &Tls, directory: PathBuf) -> bootstrap::Config {
 #[test]
 fn finalization_lists_present_bytes_and_stops_when_asked() {
     use std::os::unix::fs::FileExt;
-    use transparent_shared::publication::{digest, Stopped};
+    use transparent_shared::publication::{digest, CheckedRuntimes, Stopped};
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().join("publication");
     manager_tests::copy_prepared_publication(2, &directory);
     // Settle the copies so the set's verification leaves reusable evidence.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let set = ShardSet::open(&directory, 0).unwrap();
-    let error = Finalized::prepare_until(&directory, &set, 2, false, &|| true)
-        .err()
-        .unwrap();
+    let error = Finalized::prepare_reusing_until(
+        &directory,
+        &set,
+        2,
+        false,
+        &mut CheckedRuntimes::default(),
+        &|| true,
+    )
+    .err()
+    .unwrap();
     assert!(error.is::<Stopped>(), "{error}");
     let asked = std::cell::Cell::new(0);
-    let error = Finalized::prepare_until(&directory, &set, 2, false, &|| {
-        asked.set(asked.get() + 1);
-        asked.get() > 4
-    })
+    let error = Finalized::prepare_reusing_until(
+        &directory,
+        &set,
+        2,
+        false,
+        &mut CheckedRuntimes::default(),
+        &|| {
+            asked.set(asked.get() + 1);
+            asked.get() > 4
+        },
+    )
     .err()
     .unwrap();
     assert!(error.is::<Stopped>(), "{error}");
@@ -418,53 +433,29 @@ fn finalization_lists_present_bytes_and_stops_when_asked() {
     }
     assert!(tables > 0);
     // Same-size change after the set verified it, modification time restored:
-    // a recent table no longer self-checks its runtime; an archive table is
-    // listed by the bytes present, never by the stale verified digest.
-    let table = |kind: Kind| {
-        finalized
+    // the stale verified digest is never listed, so finalization refuses it.
+    for kind in [Kind::RecentTable, Kind::ArchiveTable] {
+        let table = finalized
             .inventory()
             .artifacts
             .iter()
             .find(|a| a.kind == kind)
-            .cloned()
-    };
-    let recent = table(Kind::RecentTable).unwrap();
-    let changed = table(Kind::ArchiveTable).unwrap();
-    let path = directory.join(&recent.path);
-    let file = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .unwrap();
-    let modified = file.metadata().unwrap().modified().unwrap();
-    let mut first = [0u8; 1];
-    file.read_exact_at(&mut first, 0).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
-    file.set_modified(modified).unwrap();
-    assert!(Finalized::prepare(&directory, &set, 2).is_err());
-    file.write_all_at(&first, 0).unwrap();
-    let path = directory.join(&changed.path);
-    let file = std::fs::File::options()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .unwrap();
-    let modified = file.metadata().unwrap().modified().unwrap();
-    let mut first = [0u8; 1];
-    file.read_exact_at(&mut first, 0).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
-    file.set_modified(modified).unwrap();
-    let relisted = Finalized::prepare(&directory, &set, 2).unwrap();
-    let listed = relisted
-        .inventory()
-        .artifacts
-        .iter()
-        .find(|a| a.path == changed.path)
-        .unwrap();
-    assert_ne!(listed.sha256, changed.sha256);
-    assert_eq!(listed.sha256, digest(&std::fs::read(&path).unwrap()));
+            .unwrap()
+            .clone();
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(directory.join(&table.path))
+            .unwrap();
+        let modified = file.metadata().unwrap().modified().unwrap();
+        let mut first = [0u8; 1];
+        file.read_exact_at(&mut first, 0).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+        file.set_modified(modified).unwrap();
+        assert!(Finalized::prepare(&directory, &set, 2).is_err(), "{kind:?}");
+        file.write_all_at(&first, 0).unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

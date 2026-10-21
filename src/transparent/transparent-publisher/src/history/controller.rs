@@ -158,6 +158,9 @@ struct Inner {
     /// The service's stop request. Candidate preparation observes it between
     /// files and segments and ends without activating; activation completes.
     shutdown: pir_pipeline::service::Shutdown,
+    /// Distributed runtimes this process already loaded and self-checked; the
+    /// next inventory rehashes them but checks only changed bytes again.
+    checked_runtimes: std::sync::Mutex<transparent_shared::publication::CheckedRuntimes>,
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
@@ -342,6 +345,7 @@ pub async fn run_managed(
         membership: membership_path(&config.fleet_config),
         prepared_set: std::sync::Mutex::new(None),
         shutdown: shutdown.clone(),
+        checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
     }));
@@ -971,6 +975,8 @@ async fn prepare_candidate(
         let root = directory.clone();
         let cutoff = config.recent_from;
         let full = config.http_only;
+        let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
+        let started = std::time::Instant::now();
         let stop = {
             let authority = authority.clone();
             move || {
@@ -978,13 +984,25 @@ async fn prepare_candidate(
                     || authority.0.epoch.load(Ordering::Acquire) != epoch
             }
         };
-        let (set, distribution) = tokio::task::spawn_blocking(move || {
-            let result = transparent_shared::publication::Finalized::prepare_until(
-                &root, &set, cutoff, full, &stop,
+        let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
+            let result = transparent_shared::publication::Finalized::prepare_reusing_until(
+                &root,
+                &set,
+                cutoff,
+                full,
+                &mut checked,
+                &stop,
             );
-            (set, result)
+            (set, checked, result)
         })
         .await?;
+        tracing::info!(
+            loaded = checked.loaded,
+            reused = checked.reused,
+            seconds = started.elapsed().as_secs_f64(),
+            "prepared distribution inventory"
+        );
+        *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
         candidate.distribution = Some(match distribution {
             Err(_) if authority.0.shutdown.requested() => return stopped(),
@@ -2183,6 +2201,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
             shutdown: Default::default(),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
         }));
@@ -2519,6 +2538,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
             shutdown: Default::default(),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
         }));

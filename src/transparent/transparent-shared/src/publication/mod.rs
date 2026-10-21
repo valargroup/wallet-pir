@@ -386,7 +386,14 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
-        Self::prepare_until(root, set, recent_from_height, false, &|| false)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            false,
+            &mut CheckedRuntimes::default(),
+            &|| false,
+        )
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -394,24 +401,56 @@ impl Finalized {
         set: &ShardSet,
         recent_from_height: u64,
     ) -> Result<Self, Error> {
-        Self::prepare_until(root, set, recent_from_height, true, &|| false)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            true,
+            &mut CheckedRuntimes::default(),
+            &|| false,
+        )
     }
-    /// [`Self::prepare`], or [`Self::prepare_full`] when `full`, asking
-    /// `stop` before each file it reads; once it answers true the preparation
-    /// ends with [`Stopped`] and nothing is finalized.
-    ///
-    /// A table whose bytes `set` verified in this process, and whose file is
-    /// unchanged since, is listed with that verified digest instead of being
-    /// hashed again; any other file is hashed. Each runtime is loaded with its
-    /// checksum and self-checked against its source, and is listed with the
-    /// digest of those checked bytes.
-    pub fn prepare_until(
+    /// [`Self::prepare`] or [`Self::prepare_full`], skipping the load and
+    /// self-check of runtimes whose exact bytes `checked` already proved.
+    /// A failed preparation preserves the preceding successful inventory's
+    /// evidence; a retry still hashes every file before reusing any check.
+    pub fn prepare_reusing(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
+        checked: &mut CheckedRuntimes,
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked, &|| false)
+    }
+    /// [`Self::prepare_reusing`], asking `stop` before each file it reads;
+    /// once it answers true the preparation ends with [`Stopped`], nothing is
+    /// finalized and `checked` keeps its earlier evidence.
+    pub fn prepare_reusing_until(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
         stop: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
+    }
+    /// A table whose bytes `set` verified in this process, and whose file is
+    /// unchanged since, is listed with that verified digest instead of being
+    /// hashed again; any other file is hashed.
+    fn prepare_holdings(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Self, Error> {
+        let previous = &checked.passed;
+        let mut passed = BTreeMap::new();
+        checked.loaded = 0;
+        checked.reused = 0;
         let recent = set
             .map
             .shards
@@ -431,13 +470,15 @@ impl Finalized {
             artifacts: Vec::new(),
         };
         let mut files = BTreeMap::new();
-        let mut paths = BTreeSet::new();
-        // `known`: a digest and length this process verified for the file
-        // with this stamp. Used only while the opened file still has it.
+        let mut paths = BTreeMap::new();
+        // Returns the digest and, the first time a path is added, the open
+        // handle it was computed from. `known`: a digest and length this
+        // process verified for the file with this stamp, used only while the
+        // opened file still has it.
         let mut add = |path: PathBuf,
                        kind: Kind,
                        known: Option<(&str, u64, FileStamp)>|
-         -> Result<(), Error> {
+         -> Result<(String, Option<std::fs::File>), Error> {
             if stop() {
                 return Err(Box::new(Stopped));
             }
@@ -459,21 +500,22 @@ impl Finalized {
                     return Err("symlink in publisher artifact".into());
                 }
             }
-            if !paths.insert(relative.clone()) {
-                return Ok(());
+            if let Some(sha256) = paths.get(&relative) {
+                return Ok((String::clone(sha256), None));
             }
-            let file = std::fs::File::open(&path)?;
-            let (sha256, bytes) = listed_digest(&path, file, known)?;
+            let mut file = std::fs::File::open(&path)?;
+            let (sha256, bytes) = listed_digest(&path, &mut file, known)?;
             if full || kind.local() {
                 files.insert(sha256.clone(), path);
             }
+            paths.insert(relative.clone(), sha256.clone());
             inventory.artifacts.push(Artifact {
                 path: relative,
-                sha256,
+                sha256: sha256.clone(),
                 bytes,
                 kind,
             });
-            Ok(())
+            Ok((sha256, Some(file)))
         };
         add(root.join("shards.json"), Kind::Metadata, None)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -501,7 +543,7 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
-                    add(
+                    let (source_sha256, _) = add(
                         source.path().to_path_buf(),
                         if local {
                             Kind::RecentTable
@@ -512,26 +554,46 @@ impl Finalized {
                             .evidence()
                             .map(|stamp| (source.sha256(), source.bytes() as u64, stamp)),
                     )?;
-                    if let Some(shared) = params {
+                    // The inventory publishes the bytes just hashed; they must
+                    // be the committed segment whether or not a runtime is loaded.
+                    if source_sha256 != source.sha256() {
+                        return Err("source segment differs from its manifest".into());
+                    }
+                    if let Some(shared) = &params {
                         let key = (
                             shard.runtime_identity(table).to_string(),
                             table.kind(),
                             segment,
                         );
-                        if stop() {
-                            return Err(Box::new(Stopped));
+                        let path = shipped.path(&key, shared, source.sha256());
+                        let kind = if local {
+                            Kind::RecentRuntime
+                        } else {
+                            Kind::ArchiveRuntime
+                        };
+                        // The file name binds the runtime key, parameters and
+                        // source digest; the digest computed by `add` binds
+                        // every byte. A pair this process already loaded and
+                        // self-checked therefore names the same proven input.
+                        let name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or("non-UTF8 runtime name")?
+                            .to_string();
+                        let (sha256, file) = add(path, kind, None)?;
+                        if previous.get(&name) == Some(&sha256) {
+                            checked.reused += 1;
+                        } else {
+                            // Load from the handle just hashed, so the bytes
+                            // checked are the inode the inventory publishes
+                            // and caches, not a later replacement of the path.
+                            let file = file.ok_or("runtime listed twice")?;
+                            // Header/length checks alone cannot finalize malformed native bytes.
+                            ShippedRuntimes::load_file(file, &key, shared, source.sha256())?
+                                .self_check(shared, &source.load()?)?;
+                            checked.loaded += 1;
                         }
-                        let (sha256, bytes, stamp) =
-                            shipped.check_for_inventory(&key, shared, source)?;
-                        add(
-                            shipped.path(&key, shared, source.sha256()),
-                            if local {
-                                Kind::RecentRuntime
-                            } else {
-                                Kind::ArchiveRuntime
-                            },
-                            stamp.map(|stamp| (sha256.as_str(), bytes, stamp)),
-                        )?;
+                        passed.insert(name, sha256);
                     }
                 }
             }
@@ -541,6 +603,7 @@ impl Finalized {
         inventory.validate_map(&set.map)?;
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
+        checked.passed = passed;
         Ok(Self {
             inventory,
             bytes,
@@ -548,6 +611,19 @@ impl Finalized {
             files,
         })
     }
+}
+/// Runtimes one process loaded and self-checked while finalizing, by file
+/// name and whole-file SHA-256. A successful preparation replaces the evidence
+/// with its own publication's runtimes; a failed one leaves it intact. Retained
+/// evidence therefore never grows past one successful inventory. Neither
+/// value is trusted from disk: the name is derived and the digest recomputed.
+#[derive(Debug, Default)]
+pub struct CheckedRuntimes {
+    passed: BTreeMap<String, String>,
+    /// Runtimes the last preparation attempt loaded and self-checked.
+    pub loaded: usize,
+    /// Runtimes the last preparation attempt accepted from an earlier check.
+    pub reused: usize,
 }
 /// A finalization ended because its caller asked it to stop: a normal end
 /// of the lifecycle, not a faulty publication.
@@ -571,7 +647,7 @@ thread_local! {
 /// as opened and as the path names it now; otherwise those of a full read.
 fn listed_digest(
     path: &Path,
-    mut file: std::fs::File,
+    file: &mut std::fs::File,
     known: Option<(&str, u64, FileStamp)>,
 ) -> Result<(String, u64), Error> {
     let opened = file.metadata()?;
@@ -591,7 +667,7 @@ fn listed_digest(
     LISTED_HASHED.with(|n| n.set(n.get() + 1));
     let bytes = opened.len();
     let mut hash = Sha256::new();
-    io::copy(&mut file, &mut HashWriter(&mut hash))?;
+    io::copy(file, &mut HashWriter(&mut hash))?;
     Ok((hex::encode(hash.finalize()), bytes))
 }
 
@@ -660,7 +736,7 @@ mod tests {
         let sha = digest(b"verified table");
         let open = || std::fs::File::open(&path).unwrap();
         let before = listed_hashes();
-        let listed = listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
         assert_eq!(listed, (sha.clone(), 14));
         assert_eq!(listed_hashes(), before);
         // Same size, different bytes: the stamp no longer matches, so the
@@ -672,13 +748,13 @@ mod tests {
             .unwrap()
             .write_all_at(b"V", 0)
             .unwrap();
-        let listed = listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
         assert_eq!(listed, (digest(b"Verified table"), 14));
         assert_eq!(listed_hashes(), before + 1);
         // A replaced path is another inode.
         std::fs::write(dir.path().join("next"), b"verified table").unwrap();
         std::fs::rename(dir.path().join("next"), &path).unwrap();
-        listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
         assert_eq!(listed_hashes(), before + 2);
     }
 

@@ -143,6 +143,30 @@ class LoadRepair(unittest.TestCase):
         self.assertEqual(code, 0, lines)
         self.assertEqual(self.unit_texts(), [UNIT_TEXT.replace(OLD_SCRIPT, m.script_path(NEW))])
 
+    def test_reviewed_worker_pins_replace_stale_pins_and_rollback_restores_them(self):
+        path = m.LOAD_ROOT + '/pins.json'
+        stale = json.dumps({worker: sha256(b'previous worker release') for worker in WORKERS})
+        self.files[path] = stale
+        self.fake.put('coordinator', path, stale)
+        replacement = {worker: sha256(SERVER) for worker in WORKERS}
+        self.write_request(lambda r: r['load'].update(replacement_pins=replacement))
+        code, lines = self.run_cli('deploy', '--expect-plan-sha256', self.plan_sha())
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(json.loads(self.fake.read('coordinator', path)), replacement)
+        self.assertEqual(self.run_cli('status')[0], 0)
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.read('coordinator', path), stale)
+        self.assertEqual(self.fake.probe_unit('coordinator', m.UNIT)['active_state'], 'inactive')
+
+    def test_replacement_pins_refuse_a_worker_binary_mismatch_without_writes(self):
+        replacement = {worker: sha256(b'not the running worker') for worker in WORKERS}
+        self.write_request(lambda r: r['load'].update(replacement_pins=replacement))
+        code, lines = self.run_cli('preflight')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('the load pins' in line for line in lines), lines)
+        self.assertEqual([e for e in self.fake.log if e[1] == 'write'], [])
+        self.preserved()
+
     def test_refuses_unit_drift_and_rollback_over_drift(self):
         sha = self.plan_sha()
         # A drop-in added, then one changed, after review: refused under the lock, nothing written.

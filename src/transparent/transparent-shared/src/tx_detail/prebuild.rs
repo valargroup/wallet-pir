@@ -66,6 +66,18 @@ pub fn build_shipped_reusing(
     let revision = DisplayRevision::read(revision_dir)
         .and_then(DisplayRevision::verify_tables)
         .map_err(|error| error.to_string())?;
+    build_shipped_verified(&revision, out_dir, retained)
+}
+
+/// [`build_shipped_reusing`] for a revision the caller holds already
+/// verified, such as one of a just opened `DisplaySet`, so its tables are
+/// not hashed and row-checked again. A segment that must be built is still
+/// loaded against its manifest digest.
+pub fn build_shipped_verified(
+    revision: &DisplayRevision,
+    out_dir: &Path,
+    retained: &[std::path::PathBuf],
+) -> Result<Vec<Shipped>, String> {
     let shipped = ShippedRuntimes::new(out_dir.to_path_buf());
     let retained: Vec<_> = retained.iter().cloned().map(ShippedRuntimes::new).collect();
     let mut params = HashMap::new();

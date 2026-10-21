@@ -180,24 +180,11 @@ impl DiskCache {
     }
 
     fn load_file_checked_at(
-        file: File,
-        key: &RuntimeKey,
-        shared: &SharedParams,
-        source_sha: &str,
-        path: Option<&Path>,
-    ) -> io::Result<(TableRuntime, [u8; 32])> {
-        Self::load_file_hashing(file, key, shared, source_sha, path, None)
-    }
-
-    /// [`Self::load_file_checked_at`], also feeding every byte of the file,
-    /// header included, to `whole` from the same read.
-    fn load_file_hashing(
         mut file: File,
         key: &RuntimeKey,
         shared: &SharedParams,
         source_sha: &str,
         path: Option<&Path>,
-        whole: Option<&mut Sha256>,
     ) -> io::Result<(TableRuntime, [u8; 32])> {
         file.seek(SeekFrom::Start(0))?;
         let length = file.metadata()?.len();
@@ -212,19 +199,11 @@ impl DiskCache {
         let received = path.and_then(|path| crate::verification::fingerprint(path, &file));
         let reused = received.is_some();
         let fixed = Self::fixed_bytes(shared);
-        // The whole-file digest streams header, fixed sections and then the
-        // mapped preprocessing, in file order, without a second read.
-        let started_whole = whole.is_some().then(|| {
-            let mut hash = Sha256::new();
-            hash.update(header);
-            hash
-        });
         let mut reader = BufReader::with_capacity(
             1 << 20,
             HashReader {
                 input: (&file).take(fixed - HEADER_BYTES),
                 hash: (!reused).then(Sha256::new),
-                whole: started_whole,
             },
         );
         let profile = &shared.profile;
@@ -239,11 +218,7 @@ impl DiskCache {
         };
         let mut public = vec![0u8; shared.scheme().public_bytes];
         reader.read_exact(&mut public)?;
-        let HashReader {
-            mut hash,
-            whole: fixed_whole,
-            ..
-        } = reader.into_inner();
+        let mut hash = reader.into_inner().hash;
         // SAFETY: the entry's inode is never modified after its atomic rename;
         // writers replace paths and collection only unlinks, which leaves an
         // existing mapping valid. The mapped bytes are checksummed and then
@@ -257,10 +232,6 @@ impl DiskCache {
             if hash.clone().finalize().as_slice() != &header[32..] {
                 return Err(invalid("runtime cache checksum mismatch"));
             }
-        }
-        if let (Some(whole), Some(mut streamed)) = (whole, fixed_whole) {
-            streamed.update(&map[fixed as usize..]);
-            *whole = streamed;
         }
         let preprocessed = reinspiring::prepared_native::read(
             map,
@@ -712,47 +683,6 @@ impl ShippedRuntimes {
         Ok(started.elapsed().as_micros() as u64)
     }
 
-    /// Checks the file for `key` completely, for a publisher's inventory:
-    /// loads it with its body checksum, self-checks it against `source`'s
-    /// rows, and returns the whole file's SHA-256 and length from that same
-    /// read. The digest is that of the checked bytes only when the file kept
-    /// one stamp throughout and its path still names it; otherwise the stamp
-    /// is `None` and the caller must hash the file it lists itself.
-    pub(crate) fn check_for_inventory(
-        &self,
-        key: &RuntimeKey,
-        shared: &SharedParams,
-        source: &crate::history::shardset::SegmentSource,
-    ) -> io::Result<(String, u64, Option<crate::history::shardset::FileStamp>)> {
-        use crate::history::shardset::FileStamp;
-        let path = self.path(key, shared, source.sha256());
-        let file = crate::verification::open(&path)?;
-        let before = file.metadata()?;
-        let mut whole = Sha256::new();
-        let (runtime, _) = DiskCache::load_file_hashing(
-            file.try_clone()?,
-            key,
-            shared,
-            source.sha256(),
-            Some(&path),
-            Some(&mut whole),
-        )?;
-        // Header/length checks alone cannot finalize malformed native bytes.
-        let rows = source.load().map_err(|error| invalid(&error.to_string()))?;
-        runtime
-            .self_check(shared, &rows)
-            .map_err(|error| invalid(&error))?;
-        let stamp = FileStamp::of(&before).filter(|stamp| {
-            file.metadata().ok().as_ref().and_then(FileStamp::of) == Some(*stamp)
-                && fs::symlink_metadata(&path)
-                    .ok()
-                    .as_ref()
-                    .and_then(FileStamp::of)
-                    == Some(*stamp)
-        });
-        Ok((hex::encode(whole.finalize()), before.len(), stamp))
-    }
-
     pub fn new(directory: PathBuf) -> Self {
         Self(
             DiskCache {
@@ -884,17 +814,12 @@ impl ShippedRuntimes {
 struct HashReader<R> {
     input: R,
     hash: Option<Sha256>,
-    /// The whole file's digest, for an inventory, from the same read.
-    whole: Option<Sha256>,
 }
 impl<R: Read> Read for HashReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let n = self.input.read(bytes)?;
         if let Some(hash) = &mut self.hash {
             hash.update(&bytes[..n]);
-        }
-        if let Some(whole) = &mut self.whole {
-            whole.update(&bytes[..n]);
         }
         Ok(n)
     }

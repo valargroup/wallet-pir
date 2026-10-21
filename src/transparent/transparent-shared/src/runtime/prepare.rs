@@ -191,49 +191,6 @@ mod tests {
         ShippedRuntimes::new(path)
     }
 
-    /// The inventory digest comes from the same read as the checked load, and
-    /// equals an independent hash of the file; a same-size corrupt body or a
-    /// runtime for another source is refused.
-    #[test]
-    fn inventory_check_lists_the_checked_bytes_and_refuses_corrupt_or_foreign_runtimes() {
-        use std::os::unix::fs::FileExt;
-        let dir = tempfile::tempdir().unwrap();
-        let (shared, source) = segment(dir.path(), 3);
-        let other = crate::runtime::tests::recovery_rows(&shared, true);
-        fs::write(dir.path().join("other.bin"), &other).unwrap();
-        let foreign = SegmentSource::published(
-            dir.path().join("other.bin"),
-            source.rows(),
-            source.row_bytes(),
-            hex::encode(Sha256::digest(&other)),
-            source.zero_from_row(),
-        );
-        assert_ne!(foreign.sha256(), source.sha256());
-        let key = ("12".repeat(32), shared.table, 0);
-        let out = publication(dir.path(), "inventory");
-        let rows = fs::read(source.path()).unwrap();
-        let runtime = crate::runtime::tests::prepared_fixture(&shared, &rows).unwrap();
-        out.write(&key, &shared, source.sha256(), &runtime).unwrap();
-        let file = out.path(&key, &shared, source.sha256());
-        let (sha256, bytes, stamp) = out.check_for_inventory(&key, &shared, &source).unwrap();
-        let written = fs::read(&file).unwrap();
-        assert_eq!(sha256, hex::encode(Sha256::digest(&written)));
-        assert_eq!(bytes, written.len() as u64);
-        assert!(stamp.is_some(), "an unchanged file binds its digest");
-        assert!(
-            out.check_for_inventory(&key, &shared, &foreign).is_err(),
-            "a runtime is never listed for another source"
-        );
-        let last = written.len() as u64 - 1;
-        fs::File::options()
-            .write(true)
-            .open(&file)
-            .unwrap()
-            .write_all_at(&[written[last as usize] ^ 1], last)
-            .unwrap();
-        assert!(out.check_for_inventory(&key, &shared, &source).is_err());
-    }
-
     #[tokio::test]
     async fn required_prepared_refuses_missing_and_corrupt_on_later_cache_misses() {
         use crate::runtime::{metrics::Metrics, Produced, RuntimeCache};
