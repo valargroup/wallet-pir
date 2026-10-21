@@ -438,7 +438,9 @@ mod tests {
         assert_eq!(reused.verification().segments_hashed, 0);
         assert_eq!(reused.verification().bytes_row_checked, 0);
         for revision in reused.current() {
-            for shipped in build_shipped_verified(revision, &next, &[dir.clone()]).unwrap() {
+            for shipped in
+                build_shipped_verified(revision, &next, std::slice::from_ref(&dir)).unwrap()
+            {
                 assert_eq!(shipped.build_seconds, 0.0);
             }
         }
