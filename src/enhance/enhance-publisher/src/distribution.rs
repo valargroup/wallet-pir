@@ -81,6 +81,7 @@ impl Distribution {
                 current: Current {
                     version: VERSION,
                     revision: 1,
+                    withdrawal_revision: 1,
                     recovery_epoch: 0,
                     revoked: BTreeSet::new(),
                     eligible: false,
@@ -108,6 +109,7 @@ impl Distribution {
             .revision
             .checked_add(1)
             .ok_or("distribution revision exhausted")?;
+        disk.current.withdrawal_revision = disk.current.revision;
         disk.current.eligible = false;
         persist(root, &disk)?;
         Ok(Self {
@@ -258,6 +260,7 @@ impl Distribution {
             .revision
             .checked_add(1)
             .ok_or("distribution revision exhausted")?;
+        next.current.withdrawal_revision = next.current.revision;
         self.commit(&mut disk, next)
     }
 

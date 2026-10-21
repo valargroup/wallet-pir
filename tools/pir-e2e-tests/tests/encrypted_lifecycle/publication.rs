@@ -106,6 +106,25 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
             let row = session.decode(query, &answer).unwrap();
             assert_eq!(&row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES], record(position));
         }
+        // A shallow withdrawal does not revoke unchanged material, but it does
+        // invalidate authorization observed before that withdrawal.
+        let safety_root = scratch.path().join("independent-consumer");
+        let safety = enhance_query_server::synchronization::Safety::open(&safety_root, &transport.origin).unwrap();
+        let current_url = format!("{}{PREFIX}current", transport.origin);
+        let initial: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
+        let old_lease = enhance_query_server::synchronization::Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        distribution.withdraw(&Revocation::default()).unwrap();
+        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        let republished: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
+        assert_eq!(republished.current.recovery_epoch, initial.current.recovery_epoch);
+        assert_eq!(republished.current.revoked, initial.current.revoked);
+        assert!(republished.current.withdrawal_revision > initial.current.withdrawal_revision);
+        safety.observe(&republished.current).unwrap();
+        assert!(old_lease.check(&manifest, &safety).is_err());
+        let authorized: AuthorityResponse = transport.client.post(format!("{}{PREFIX}authority", transport.origin))
+            .json(&AuthorityRequest { manifest_sha256: digest(&manifest) }).send().await.unwrap().json().await.unwrap();
+        enhance_query_server::synchronization::Lease::from_response(authorized, &manifest, &safety).unwrap().check(&manifest, &safety).unwrap();
+        synchronizer.poll_once().await.unwrap();
         let mut advanced = manifest.clone();
         advanced.generation += 1;
         distribution.publish(advanced.clone(), inventory.clone()).await.unwrap();
@@ -276,6 +295,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let current: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
+        assert_eq!(current.current.withdrawal_revision, before.current.withdrawal_revision);
         assert_ne!(current.observed_unix_ms, 0);
         current.fresh(current.observed_unix_ms).unwrap();
         current.fresh(current.observed_unix_ms + 5000).unwrap();
@@ -345,6 +365,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let listener = serve(reopened.router()).await;
         let restored: AuthorityResponse = reqwest::get(format!("{}{PREFIX}current", listener.url)).await.unwrap().json().await.unwrap();
         assert!(!restored.current.eligible);
+        assert!(restored.current.withdrawal_revision > current.current.withdrawal_revision);
         assert_eq!(restored.current.recovery_epoch, 1);
         assert_eq!(restored.current.revoked.len(), 1);
         assert_eq!(restored.observed_unix_ms, 0);

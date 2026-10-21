@@ -160,13 +160,25 @@ impl Safety {
     }
 
     pub fn permits(&self, manifest: &Manifest) -> Result<(), String> {
+        self.permits_observation(manifest, None)
+    }
+
+    fn permits_observation(
+        &self,
+        manifest: &Manifest,
+        observed: Option<&Current>,
+    ) -> Result<(), String> {
         let state = self.state.lock().unwrap();
         let current = state
             .floor
             .current
             .as_ref()
             .ok_or("no publisher authority")?;
-        if state.poisoned || !current.eligible || manifest.recovery_epoch > current.recovery_epoch {
+        if state.poisoned
+            || !current.eligible
+            || manifest.recovery_epoch > current.recovery_epoch
+            || observed.is_some_and(|seen| seen.withdrawal_revision != current.withdrawal_revision)
+        {
             return Err("publisher authority withdrawn".into());
         }
         for shard in &manifest.coverage.shards {
@@ -210,7 +222,7 @@ impl Lease {
         if response.authorized_manifest_sha256 != digest(manifest) {
             return Err("publisher authorized another manifest".into());
         }
-        safety.permits(manifest)?;
+        safety.permits_observation(manifest, Some(&response.current))?;
         let remaining = pir_control::CONTROL_WATCHDOG
             .saturating_sub(Duration::from_millis(now - response.observed_unix_ms));
         Ok(Self {
@@ -226,7 +238,7 @@ impl Lease {
         }
         self.observation
             .fresh(now_ms().map_err(|e| e.to_string())?)?;
-        safety.permits(manifest)
+        safety.permits_observation(manifest, Some(&self.observation.current))
     }
 }
 
@@ -444,6 +456,7 @@ mod tests {
             current: Current {
                 version: crate::publication::VERSION,
                 revision: 1,
+                withdrawal_revision: 1,
                 recovery_epoch: 0,
                 revoked: Default::default(),
                 eligible: true,
@@ -487,6 +500,49 @@ mod tests {
         assert!(reopened.observe(&erased).is_err());
         drop(reopened);
         assert!(Safety::open(root.path(), "https://another.example").is_err());
+    }
+
+    #[test]
+    fn missed_withdrawal_closes_old_authority_without_revoking_unchanged_sessions() {
+        let root = tempfile::tempdir().unwrap();
+        let safety = Safety::open(root.path(), "https://publisher.example").unwrap();
+        let manifest = manifest();
+        let initial = response(&manifest);
+        let lease = Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        let mut advanced = initial.clone();
+        advanced.current.revision += 1;
+        safety.observe(&advanced.current).unwrap();
+        lease.check(&manifest, &safety).unwrap();
+
+        // The consumer sees republication without ever seeing the ineligible pointer.
+        advanced.current.revision += 2;
+        advanced.current.withdrawal_revision = advanced.current.revision - 1;
+        safety.observe(&advanced.current).unwrap();
+        assert!(lease.check(&manifest, &safety).is_err());
+        assert!(Lease::from_response(initial, &manifest, &safety).is_err());
+        let renewed = Lease::from_response(advanced.clone(), &manifest, &safety).unwrap();
+        renewed.check(&manifest, &safety).unwrap();
+        let mut erased = advanced.current.clone();
+        erased.revision += 1;
+        erased.withdrawal_revision -= 1;
+        assert!(safety.observe(&erased).is_err());
+        drop(safety);
+        let reopened = Safety::open(root.path(), "https://publisher.example").unwrap();
+        assert!(reopened.observe(&erased).is_err());
+        assert!(lease.check(&manifest, &reopened).is_err());
+
+        let mut withdrawn = advanced.current.clone();
+        withdrawn.revision += 1;
+        withdrawn.withdrawal_revision = withdrawn.revision;
+        withdrawn.eligible = false;
+        reopened.observe(&withdrawn).unwrap();
+        withdrawn.revision += 1;
+        withdrawn.eligible = true;
+        reopened.observe(&withdrawn).unwrap();
+        assert!(
+            renewed.check(&manifest, &reopened).is_err(),
+            "observed withdrawal cannot resurrect old authority either"
+        );
     }
 
     #[test]
