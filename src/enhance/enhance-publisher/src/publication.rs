@@ -211,28 +211,54 @@ fn verify_with(
     prior: &BTreeMap<String, FileIdentity>,
 ) -> Result<Prepared, String> {
     inventory.validate()?;
-    let mut evidence = BTreeMap::new();
-    let mut hashed = Hashed::default();
+    let mut objects = Vec::new();
     for domain in &inventory.domains {
-        let packing = domain.packing_object();
-        for object in domain
-            .rows
-            .iter()
-            .chain([&domain.hint, &domain.public, &packing])
-        {
-            if evidence.contains_key(&object.sha256) {
-                continue;
-            }
-            if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
-                evidence.insert(object.sha256.clone(), identity);
-            }
-        }
+        objects.extend(domain.rows.iter().cloned());
+        objects.extend([
+            domain.hint.clone(),
+            domain.public.clone(),
+            domain.packing_object(),
+        ]);
     }
+    let (evidence, hashed) = check_all(root, &objects, prior)?;
     Ok(Prepared {
         inventory,
         evidence,
         hashed,
     })
+}
+
+/// Check every reference, hashing each distinct object once. All references
+/// to one digest must declare the same length before any file is read.
+/// Returns the settled identities that a later pass may reuse.
+fn check_all(
+    root: &Path,
+    objects: &[Object],
+    prior: &BTreeMap<String, FileIdentity>,
+) -> Result<(BTreeMap<String, FileIdentity>, Hashed), String> {
+    let mut lengths = BTreeMap::new();
+    let mut distinct = Vec::new();
+    for object in objects {
+        object.validate()?;
+        match lengths.get(&object.sha256) {
+            Some(&bytes) if bytes != object.bytes => {
+                return Err("publication object checksum or length mismatch".into());
+            }
+            Some(_) => {}
+            None => {
+                lengths.insert(object.sha256.clone(), object.bytes);
+                distinct.push(object);
+            }
+        }
+    }
+    let mut evidence = BTreeMap::new();
+    let mut hashed = Hashed::default();
+    for object in distinct {
+        if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
+            evidence.insert(object.sha256.clone(), identity);
+        }
+    }
+    Ok((evidence, hashed))
 }
 
 /// Check one object, reusing `prior` while the path still names the same,
@@ -454,6 +480,56 @@ mod tests {
         let mut hashed = Hashed::default();
         check(root, &object, Some(&identity), &mut hashed).unwrap();
         assert_eq!((hashed.files, hashed.reused), (1, 0));
+    }
+
+    #[test]
+    fn a_duplicate_fresh_object_is_hashed_once_without_evidence() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let fresh = object(root, b"fresh duplicate");
+        let (evidence, hashed) =
+            check_all(root, &[fresh.clone(), fresh.clone()], &BTreeMap::new()).unwrap();
+        assert!(evidence.is_empty(), "an unsettled file mints no evidence");
+        assert_eq!(
+            hashed,
+            Hashed {
+                files: 1,
+                bytes: fresh.bytes,
+                reused: 0,
+            }
+        );
+        settle();
+        let (evidence, hashed) =
+            check_all(root, &[fresh.clone(), fresh.clone()], &BTreeMap::new()).unwrap();
+        assert_eq!((hashed.files, evidence.len()), (1, 1));
+        let (_, hashed) = check_all(root, &[fresh.clone(), fresh], &evidence).unwrap();
+        assert_eq!((hashed.files, hashed.reused), (0, 1));
+    }
+
+    #[test]
+    fn references_with_conflicting_lengths_are_rejected_before_reading() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let stored = object(root, b"declared once");
+        settle();
+        let (evidence, _) = check_all(root, &[stored.clone()], &BTreeMap::new()).unwrap();
+        let other = Object {
+            bytes: stored.bytes + 1,
+            ..stored.clone()
+        };
+        for prior in [BTreeMap::new(), evidence] {
+            for objects in [
+                [stored.clone(), other.clone()],
+                [other.clone(), stored.clone()],
+            ] {
+                assert!(check_all(root, &objects, &prior).is_err());
+            }
+        }
+        // Reusable evidence never vouches for a length the file does not have.
+        let mut hashed = Hashed::default();
+        let identity = verified(root, &stored);
+        assert!(check(root, &other, Some(&identity), &mut hashed).is_err());
+        assert_eq!(hashed.reused, 0);
     }
 
     #[test]
