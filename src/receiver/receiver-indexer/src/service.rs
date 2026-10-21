@@ -135,6 +135,11 @@ impl Config {
         receiver_pir::validate_rows(self.min_rows)?;
         crate::seal::Policy::new(self.shard_rows, self.shard_target)
             .map_err(|_| "invalid shard rows or target")?;
+        // Sealed segments are served at these rows; staged serving refuses fewer than
+        // the advertised minimum.
+        if self.shard_rows < self.min_rows {
+            return Err("--shard-rows must be at least --min-rows".into());
+        }
         let floor = receiver_pir_server::tables::MIN_BUDGET as u64 >> 20;
         if self.table_memory_mib < floor {
             return Err(format!(
@@ -347,5 +352,29 @@ mod tests {
         }
         assert!(config(1536).validate().is_ok());
         assert!(config(4096).validate().is_ok());
+    }
+
+    /// Sealed segments are published at `--shard-rows`, so it may not be below the
+    /// advertised `--min-rows`.
+    #[test]
+    fn shard_rows_must_reach_the_minimum() {
+        let config = |shard: u32, min: u32| {
+            Config::try_parse_from([
+                "receiver-directory",
+                "--data-dir",
+                "/srv/receiver",
+                "--rpc-url",
+                "http://127.0.0.1:8232",
+                "--no-auth",
+                "--shard-rows",
+                &shard.to_string(),
+                "--min-rows",
+                &min.to_string(),
+            ])
+            .unwrap()
+        };
+        assert!(config(8192, 16384).validate().is_err());
+        assert!(config(16384, 16384).validate().is_ok());
+        assert!(config(65536, 8192).validate().is_ok());
     }
 }

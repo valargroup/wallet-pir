@@ -148,7 +148,8 @@ generation on one chain, then a recent tier rebuilt each publication. The recent
 tier's table starts at half occupancy and grows as a single table always has.
 
 A Receiver-specific sealer follows Transparent's rules on what a shard holds. Every
-sealed segment uses the pinned `--shard-rows` geometry (default 65536) with salts
+sealed segment uses the pinned `--shard-rows` geometry (default 65536, at least
+`--min-rows`) with salts
 fixed by the block before the shard, so the sealer projects placement exactly as
 blocks arrive. A block stays in the open shard only if some salt still places every
 payment and the companion table still holds one payload per payment (524,288 at the
