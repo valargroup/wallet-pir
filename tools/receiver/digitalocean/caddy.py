@@ -10,7 +10,7 @@ named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
     flock -n /run/lock/wallet-pir-production.lock caddy.py apply <candidate Caddyfile>
 
 It validates the candidate beside the live file, keeps the live file as
-/etc/caddy/Caddyfile.before-<UTC time>, renames the candidate over it, reloads
+/etc/caddy/Caddyfile.before-<UTC time>-<random>, renames the candidate over it, reloads
 Caddy and verifies: the inventory's exact check from the running release,
 and `/v1/receiver/health`
 and `/metrics` answering exactly 404 at the public origin. On failure it puts
@@ -37,6 +37,7 @@ probe then fails is an unknown outcome, since both changed.
 import contextlib
 import functools
 import json
+import secrets
 import os
 from pathlib import Path
 import shlex
@@ -164,7 +165,9 @@ def install(droplet, candidate):
     Returns the backup's path and the reload's failures, or `(None, [])` when the
     candidate is invalid and nothing changed.
     """
-    backup = '%s.before-%s' % (LIVE, time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()))
+    # The random part keeps two runs in one second from colliding on the same backup,
+    # which would fail the link before the live file is replaced.
+    backup = '%s.before-%s-%s' % (LIVE, time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()), secrets.token_hex(4))
     reply = droplet.call({'op': 'apply', 'backup': backup}, candidate)
     if reply.get('invalid'):
         print('caddy.py: candidate invalid; nothing replaced:\n' + reply['output'], file=sys.stderr)

@@ -20,9 +20,11 @@
 //! Updates are serial. A newer record supersedes one still preparing; a record that
 //! does not verify is refused and the valid publication already served stays. A
 //! A validated higher history revision revokes old answers before loading its rows,
-//! even if replacement preparation fails. A restart reads the record again and
-//! verifies everything before serving: the
-//! status file in the state directory is a report for operators, never an input.
+//! even if replacement preparation fails, and is recorded in the state directory's
+//! [`HISTORY_FILE`] first, so a restart never serves older, uncorrected history again
+//! even if the record still names it. A restart reads the record again and verifies
+//! everything before serving: the status file in the state directory is a report for
+//! operators, never an input.
 //!
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
@@ -56,6 +58,9 @@ const MAX_RECORD_BYTES: u64 = 4096;
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 /// The report this mode writes into its state directory.
 pub const STATUS_FILE: &str = "serve-publication.json";
+/// The highest history revision this service has accepted, in its state directory: a
+/// record below it is refused. Deleting it is an explicit operator rollback.
+pub const HISTORY_FILE: &str = "history-revision.json";
 
 #[derive(clap::Parser)]
 #[command(name = "receiver-directory serve-publication")]
@@ -305,12 +310,16 @@ pub fn load(
             manifest.rows, config.min_rows
         )));
     }
+    if manifest.history_revision < accepted_revision(&config.state_dir)? {
+        return Err(invalid("history revision moved backwards".into()));
+    }
     // A trusted operator correction invalidates old answers immediately, even if
     // replacement rows are missing or preparation later fails.
-    if serving.is_some_and(|publications| {
-        !publications.advance_history_revision(manifest.history_revision)
-    }) {
-        return Err(invalid("history revision moved backwards".into()));
+    if let Some(publications) = serving {
+        accept_revision(&config.state_dir, manifest.history_revision)?;
+        if !publications.advance_history_revision(manifest.history_revision) {
+            return Err(invalid("history revision moved backwards".into()));
+        }
     }
     let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
     let data =
@@ -409,6 +418,26 @@ impl Reporter {
     fn json(&self) -> serde_json::Value {
         serde_json::to_value(&*self.status.lock().unwrap()).unwrap_or_default()
     }
+}
+
+/// The highest history revision `state_dir` records as accepted, zero if none.
+fn accepted_revision(state_dir: &Path) -> std::result::Result<u64, Refusal> {
+    let unavailable = |e: String| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"));
+    match read_bounded(&state_dir.join(HISTORY_FILE), 64) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| unavailable(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(unavailable(e.to_string())),
+    }
+}
+
+/// Durably records `revision` in `state_dir` as accepted, if it is higher than the
+/// recorded one, before anything is served under it.
+fn accept_revision(state_dir: &Path, revision: u64) -> std::result::Result<(), Refusal> {
+    if revision > accepted_revision(state_dir)? {
+        write_atomic(&state_dir.join(HISTORY_FILE), &revision)
+            .map_err(|e| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}")))?;
+    }
+    Ok(())
 }
 
 fn write_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -689,6 +718,8 @@ pub async fn run(config: Config) -> Result<()> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let genesis = Network::Mainnet.genesis_hash();
     let publications = Publications::default();
+    // Older sessions stay fenced across a restart; see `HISTORY_FILE`.
+    publications.advance_history_revision(accepted_revision(&config.state_dir)?);
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let app = receiver_pir_server::router_with_health(publications.clone(), {
         let reporter = reporter.clone();
@@ -809,11 +840,63 @@ mod tests {
             directory: dir.path().to_owned(),
             revision,
         };
-        let failure = load(&record, &config(), Some(&publications)).err().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let config = Config {
+            state_dir: state.path().to_owned(),
+            ..config()
+        };
+        let failure = load(&record, &config, Some(&publications)).err().unwrap();
         assert!(failure.to_string().contains("rows:"));
         assert!(publications.current_anchor().is_none());
         assert_eq!(publications.epoch(), 1);
         assert!(publications.ready_at().is_none());
+    }
+
+    /// A correction's revision outlives a restart: once revision 1 was accepted, a fresh
+    /// service, or a check, refuses a record of revision 0 even though nothing serves.
+    #[test]
+    fn an_accepted_correction_survives_a_restart() {
+        let (dir, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let config = Config {
+            state_dir: state.path().to_owned(),
+            ..config()
+        };
+        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        manifest.genesis = Network::Mainnet.genesis_hash();
+        manifest.start_height = crate::blocks::ironwood_activation();
+        manifest.end_height = manifest.start_height;
+        let stage = |manifest: &Manifest| {
+            let revision = hex::encode(manifest.revision().unwrap());
+            std::fs::write(
+                dir.path().join(format!("{revision}.json")),
+                serde_json::to_vec(manifest).unwrap(),
+            )
+            .unwrap();
+            PublicationRecord {
+                directory: dir.path().to_owned(),
+                revision,
+            }
+        };
+        let old = stage(&manifest);
+        manifest.history_revision = 1;
+        let corrected = stage(&manifest);
+        // Accepted, then refused for its missing rows.
+        let failure = load(&corrected, &config, Some(&Publications::default()));
+        assert!(failure.err().unwrap().to_string().contains("rows:"));
+        assert_eq!(accepted_revision(state.path()).unwrap(), 1);
+        let restarted = Publications::default();
+        restarted.advance_history_revision(accepted_revision(state.path()).unwrap());
+        for serving in [Some(&restarted), None] {
+            let failure = load(&old, &config, serving).err().unwrap();
+            assert!(failure.to_string().contains("moved backwards"), "{failure}");
+        }
+        // A missing record is no floor; an unreadable one refuses rather than guess.
+        std::fs::write(state.path().join(HISTORY_FILE), "x").unwrap();
+        assert!(matches!(
+            accepted_revision(state.path()),
+            Err(Refusal::Unavailable(_))
+        ));
+        assert_eq!(accepted_revision(dir.path()).unwrap(), 0);
     }
 
     #[test]
