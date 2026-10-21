@@ -227,7 +227,9 @@ impl Finalized {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tx_detail::prebuild::{build_shipped, build_shipped_verified};
+    #[cfg(feature = "qualification-tests")]
+    use crate::tx_detail::prebuild::build_shipped;
+    use crate::tx_detail::prebuild::build_shipped_verified;
     use crate::tx_detail::synth::{self, ShardSpec};
     use zakura_pir_protocol::transparent::shard::display::{DisplaySealParams, TXID_2K8};
 
@@ -270,21 +272,123 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    /// A later inventory skips only the native reload of runtimes whose
-    /// exact bytes this process already self-checked, and still rehashes
-    /// every source a reused set took over; changed bytes are refused.
+    /// One archive and one recent shard, linked into two candidates.
+    fn publication(root: &Path) -> (PathBuf, PathBuf, Vec<synth::Published>) {
+        let records = synth::records(40, 7);
+        let archive = synth::write_shard(root, &spec(0, 10, 19, true), &records[..20]).unwrap();
+        let mut recent = spec(1, 20, 29, false);
+        recent.parent_manifest_digest = archive.digest.clone();
+        let recent = synth::write_shard(root, &recent, &records[20..]).unwrap();
+        let shards = vec![archive, recent];
+        let (dir, _) = synth::write_candidate(root, &params(), &shards, "c0").unwrap();
+        let (next, _) = synth::write_candidate(root, &params(), &shards, "c1").unwrap();
+        (dir, next, shards)
+    }
+
+    /// Evidence of earlier checks spares only the native reload of the exact
+    /// bytes it names. Building real runtimes is a qualification cost, so
+    /// these stand-ins are never valid runtimes: every load refuses them.
+    #[test]
+    fn checked_evidence_never_replaces_rehashing() {
+        let root = tempfile::tempdir().unwrap();
+        let (dir, _, _) = publication(root.path());
+        let set = DisplaySet::open(&dir, 0, DisplayRole::Combined).unwrap();
+        let shipped = ShippedRuntimes::required(dir.clone());
+        let mut evidence = BTreeMap::new();
+        let mut runtimes = Vec::new();
+        for revision in set.current() {
+            for (table, segment) in revision.targets() {
+                let source = revision.segment(table, segment).unwrap();
+                let shared = SharedParams::build_display(revision.geometry, kind(table)).unwrap();
+                let key = runtime_key(&revision.digest, table, segment);
+                let path = shipped.path(&key, &shared, source.sha256());
+                let bytes = format!("stand-in for {}", path.display()).into_bytes();
+                std::fs::write(&path, &bytes).unwrap();
+                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                evidence.insert(name, digest(&bytes));
+                runtimes.push(path);
+            }
+        }
+        assert_eq!(runtimes.len(), 2);
+        // Without evidence the stand-ins are loaded and refused.
+        assert!(Finalized::prepare(&dir).is_err());
+        let mut checked = CheckedRuntimes::default();
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        assert!(checked.passed.is_empty());
+
+        let mut checked = CheckedRuntimes {
+            passed: evidence.clone(),
+            ..Default::default()
+        };
+        let reused = Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!((checked.loaded, checked.reused), (0, 2));
+        assert_eq!(checked.passed, evidence);
+        let hashed = |path: &Path| {
+            let relative = path.strip_prefix(&dir).unwrap().to_str().unwrap();
+            let artifact = reused
+                .inventory
+                .artifacts
+                .iter()
+                .find(|a| a.path == relative)
+                .unwrap();
+            assert_eq!(artifact.sha256, digest(&std::fs::read(path).unwrap()));
+        };
+        for revision in set.current() {
+            hashed(&revision.dir.join(MANIFEST_FILE));
+            for (table, segment) in revision.targets() {
+                hashed(revision.segment(table, segment).unwrap().path());
+            }
+        }
+        runtimes.iter().for_each(|path| hashed(path));
+        hashed(&dir.join(MAP_FILE));
+
+        // Changed bytes under a proven name are loaded and refused, and a
+        // refused inventory neither adds evidence nor discards it.
+        let original = std::fs::read(&runtimes[0]).unwrap();
+        flip(&runtimes[0], usize::MAX);
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        assert_eq!(checked.passed, evidence);
+        // So are a missing file and another runtime's proven bytes.
+        std::fs::remove_file(&runtimes[0]).unwrap();
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        std::fs::copy(&runtimes[1], &runtimes[0]).unwrap();
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        assert_eq!(checked.passed, evidence);
+        replace(&runtimes[0], &original);
+        Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!((checked.loaded, checked.reused), (0, 2));
+
+        // Sources and the map the set already verified are hashed again: a
+        // change after loading no longer matches its manifest or map digest.
+        for revision in set.current() {
+            let segment = revision.buckets[0][0].path().to_path_buf();
+            let original = std::fs::read(&segment).unwrap();
+            flip(&segment, 0);
+            let error = Finalized::prepare_reusing(&dir, &set, &mut checked)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(error.contains("differs from its manifest"), "{error}");
+            replace(&segment, &original);
+        }
+        let map = dir.join(MAP_FILE);
+        let original = std::fs::read(&map).unwrap();
+        flip(&map, 0);
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        replace(&map, &original);
+        Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!(checked.passed, evidence);
+    }
+
+    /// The same, end to end with real runtimes: a later inventory skips only
+    /// the native reload of runtimes whose exact bytes this process already
+    /// self-checked, and still rehashes every source a reused set took over.
+    /// Two native builds exceed the ordinary per-case budget.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn distribution_reuses_only_unchanged_checked_runtimes() {
         let root = tempfile::tempdir().unwrap();
-        let records = synth::records(40, 7);
-        let archive =
-            synth::write_shard(root.path(), &spec(0, 10, 19, true), &records[..20]).unwrap();
-        let mut recent = spec(1, 20, 29, false);
-        recent.parent_manifest_digest = archive.digest.clone();
-        let recent = synth::write_shard(root.path(), &recent, &records[20..]).unwrap();
-        let shards = vec![archive, recent];
-        let (dir, _) = synth::write_candidate(root.path(), &params(), &shards, "c0").unwrap();
-        let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
+        let (dir, next, shards) = publication(root.path());
         for shard in &shards {
             build_shipped(&dir.join(&shard.digest), &dir).unwrap();
         }
