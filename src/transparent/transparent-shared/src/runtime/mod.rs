@@ -1448,6 +1448,35 @@ impl RuntimeCache {
         );
     }
 
+    /// Remove these idle entries and persisted derivatives of their runtime
+    /// identities before a withdrawn shard is repaired. A live query, load or
+    /// snapshot writer keeps its accounting until it finishes. A busy disk
+    /// writer defers eviction rather than blocking the cache on its file lock.
+    pub fn evict_keys(&self, keys: &[RuntimeKey]) -> std::io::Result<bool> {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        if keys.iter().any(|key| {
+            inner
+                .entries
+                .get(key)
+                .is_some_and(|entry| Arc::strong_count(&entry.slot) != 1)
+        }) {
+            return Ok(false);
+        }
+        if let Some(disk) = &self.disk {
+            if !disk.invalidate(keys)? {
+                return Ok(false);
+            }
+        }
+        for key in keys {
+            if let Some(entry) = inner.entries.remove(key) {
+                inner.resident -= entry.reserved;
+                Metrics::incr(&self.metrics.evictions);
+            }
+        }
+        self.publish(&inner);
+        Ok(true)
+    }
+
     /// Prune unused persisted runtimes while retaining the caller's active keys.
     pub fn prune_disk(
         &self,
@@ -1466,6 +1495,84 @@ impl RuntimeCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[test]
+    fn repair_evicts_only_affected_idle_runtime_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let disk = disk::DiskCache::new(root.path().to_path_buf(), 1024).unwrap();
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default())).with_disk(Some(disk));
+        let affected = ("affected".to_string(), Table::Directory, 0);
+        let healthy = ("healthy".to_string(), Table::Directory, 0);
+        use sha2::{Digest, Sha256};
+        let affected_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(affected.0.as_bytes()))
+        ));
+        let healthy_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(healthy.0.as_bytes()))
+        ));
+        std::fs::write(&affected_disk, b"derived from corrupt source").unwrap();
+        std::fs::write(&healthy_disk, b"unrelated runtime").unwrap();
+        let pinned = Arc::new(Slot {
+            runtime: tokio::sync::OnceCell::new(),
+        });
+        {
+            let mut inner = cache.inner.lock().unwrap();
+            inner.entries.insert(
+                affected.clone(),
+                Entry {
+                    slot: pinned.clone(),
+                    reserved: 10,
+                    last_used: 0,
+                },
+            );
+            inner.entries.insert(
+                healthy.clone(),
+                Entry {
+                    slot: Arc::new(Slot {
+                        runtime: tokio::sync::OnceCell::new(),
+                    }),
+                    reserved: 20,
+                    last_used: 0,
+                },
+            );
+            inner.resident = 30;
+        }
+        assert!(!cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            affected_disk.exists(),
+            "an active snapshot writer keeps its file"
+        );
+        assert_eq!(
+            cache.resident_bytes(),
+            30,
+            "an in-flight request retains its budget"
+        );
+        drop(pinned);
+        let writer = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".lock"))
+            .unwrap();
+        writer.lock().unwrap();
+        assert!(
+            !cache.evict_keys(std::slice::from_ref(&affected)).unwrap(),
+            "an unrelated disk writer must defer repair without blocking the cache"
+        );
+        assert!(affected_disk.exists());
+        drop(writer);
+        assert!(cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            !affected_disk.exists(),
+            "a repaired source cannot restore its old derivative"
+        );
+        assert!(healthy_disk.exists());
+        assert_eq!(cache.resident_bytes(), 20);
+        assert!(cache.inner.lock().unwrap().entries.contains_key(&healthy));
+    }
 
     /// The scan shape keys every prepared runtime and disk cache entry. The
     /// digest was captured on the base commit before the shared runtime

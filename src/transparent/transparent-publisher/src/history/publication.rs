@@ -193,6 +193,22 @@ pub fn publish_with(
     base_parent: BlockHash,
     policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
 ) -> Result<transparent_filter::ShardMap, BoxError> {
+    publish_until(cli, store, base_parent, policy_of, &|| false)
+}
+
+/// [`publish_with`], asking `stop` before each journal block and before
+/// staging or publishing each shard that block completes. A stop returns
+/// [`transparent_shared::publication::Stopped`] before the map is written,
+/// so the output never names a set; a shard already being written finishes
+/// its files first.
+pub fn publish_until(
+    cli: &PublishOptions,
+    store: &impl Journal,
+    base_parent: BlockHash,
+    policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
+    stop: &dyn Fn() -> bool,
+) -> Result<transparent_filter::ShardMap, BoxError> {
+    let stopped = || -> BoxError { Box::new(transparent_shared::publication::Stopped) };
     if store.journal_version() != 3 {
         return Err("v12 publication requires a v3 journal with transaction metadata".into());
     }
@@ -331,6 +347,9 @@ pub fn publish_with(
         if entry.start_height != resume_height {
             return Err("previous map is not contiguous".into());
         }
+        if stop() {
+            return Err(stopped());
+        }
         link_revision(previous_dir, &cli.output, &entry.manifest_digest)?;
         entries.push(entry.clone());
         resume_height = entry.end_height + 1;
@@ -403,6 +422,9 @@ pub fn publish_with(
                          parent_manifest_digest: &mut String|
      -> Result<(), BoxError> {
         for item in built {
+            if stop() {
+                return Err(stopped());
+            }
             match item {
                 Built::Child(child) => {
                     let geometry = geometry_at(child.start_height);
@@ -441,6 +463,9 @@ pub fn publish_with(
     };
 
     for height in resume_height..=covered {
+        if stop() {
+            return Err(stopped());
+        }
         // The tiers divide at a height, so the archive directory shard is
         // closed before the first recent block is offered to anything. A
         // shard's rows are addressed at one row count; one spanning the change
@@ -472,6 +497,9 @@ pub fn publish_with(
             &mut parent_block_hash,
             &mut parent_manifest_digest,
         )?;
+    }
+    if stop() {
+        return Err(stopped());
     }
     let built = stream.finish(&terminal)?;
     publish_built(
@@ -1235,6 +1263,43 @@ mod tests {
         let repeated = publish(&options(&b, None), &journal, zero).unwrap();
         assert_eq!(after, repeated);
         transparent_shared::history::shardset::ShardSet::open(&b, 3).unwrap();
+    }
+    /// A stop during a build ends it between units of work, before the map
+    /// names a set; publishing again without a stop completes the same set.
+    #[test]
+    fn a_stopped_build_writes_no_map_and_can_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let out = root.path().join("out");
+        let policy = DecoupledPolicy::for_geometry;
+        // Already requested: no block is read.
+        let asked = std::cell::Cell::new(0);
+        let error = publish_until(&options(&out, None), &journal, zero, &policy, &|| {
+            asked.set(asked.get() + 1);
+            true
+        })
+        .unwrap_err();
+        assert!(error.is::<transparent_shared::publication::Stopped>());
+        assert_eq!(asked.get(), 1);
+        // Requested after the second unit.
+        let asked = std::cell::Cell::new(0);
+        let error = publish_until(&options(&out, None), &journal, zero, &policy, &|| {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        })
+        .unwrap_err();
+        assert!(error.is::<transparent_shared::publication::Stopped>());
+        assert_eq!(asked.get(), 3);
+        assert!(!out.join("shards.json").exists());
+        let resumed = publish_with(&options(&out, None), &journal, zero, &policy).unwrap();
+        let reference = publish(&options(&root.path().join("full"), None), &journal, zero).unwrap();
+        assert_eq!(resumed, reference);
+        transparent_shared::history::shardset::ShardSet::open(&out, 3).unwrap();
     }
     /// A reorg of the tail never reuses a revision a wallet may already hold:
     /// its replacement, and every later growth, numbers above every revision

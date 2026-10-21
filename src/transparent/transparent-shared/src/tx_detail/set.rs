@@ -16,7 +16,9 @@
 
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
-use crate::history::shardset::{LoadError, SegmentSource, VerificationClock, VerificationReport};
+use crate::history::shardset::{
+    LoadError, SegmentSource, Stop, VerificationClock, VerificationReport, NEVER,
+};
 use crate::runtime::disk::ShippedRuntimes;
 use crate::tx_detail::{kind, runtime_key, serves, DisplayRole};
 use sha2::{Digest, Sha256};
@@ -154,12 +156,12 @@ impl DisplayRevision {
     /// Verifies every segment against the manifest, then every row, and
     /// returns the revision holding its sources.
     pub fn verify_tables(self) -> Result<Self, LoadError> {
-        self.verify_tables_reusing(None, &mut VerificationReport::default(), false)
+        self.verify_tables_reusing(None, &mut VerificationReport::default(), false, NEVER)
     }
 
     /// Trust publisher preparation and check every held segment's size.
     pub fn for_serving(self) -> Result<Self, LoadError> {
-        self.verify_tables_reusing(None, &mut VerificationReport::default(), true)
+        self.verify_tables_reusing(None, &mut VerificationReport::default(), true, NEVER)
     }
 
     /// Verifies the revision, taking over any segment `earlier` — a held
@@ -171,6 +173,7 @@ impl DisplayRevision {
         earlier: Option<&Self>,
         report: &mut VerificationReport,
         size_only: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let earlier = earlier.filter(|earlier| earlier.digest == self.digest && earlier.held());
         let geometry = self.geometry;
@@ -209,6 +212,7 @@ impl DisplayRevision {
                         earlier.and_then(|earlier| earlier.segment(table, index as u32)),
                         report,
                         false,
+                        stop,
                     )?
                 };
                 sources.push(source);
@@ -242,13 +246,18 @@ impl DisplayRevision {
         let seeds = self.manifest.placement_seeds();
         let width = geometry.directory_row_bytes;
         let mut row_checked = 0u64;
-        display::verify_rows(
+        let mut stopped = false;
+        let checked = display::verify_rows(
             shard_id,
             geometry,
             &directory_segments,
             &records,
             &seeds,
             |table, segment, row| {
+                if stop() {
+                    stopped = true;
+                    return Err(txid::Error("stopped".into()));
+                }
                 let file = directory_files
                     .get_mut(table.bucket() as usize)
                     .and_then(|files| files.get_mut(segment))
@@ -261,8 +270,11 @@ impl DisplayRevision {
                 row_checked += width as u64;
                 Ok(bytes)
             },
-        )
-        .map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
+        );
+        if stopped {
+            return Err(LoadError::Stopped);
+        }
+        checked.map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
         report.bytes_row_checked += row_checked;
         self.buckets = buckets;
         Ok(self)
@@ -307,7 +319,21 @@ impl DisplaySet {
         staged: &[&DisplayRevision],
         role: DisplayRole,
     ) -> Result<Self, LoadError> {
-        Self::open_material(dir, retain, previous, staged, role, false)
+        Self::open_material(dir, retain, previous, staged, role, false, NEVER)
+    }
+
+    /// [`Self::open_reusing`] for the publisher, asking `stop` before each
+    /// revision, each bounded read of a hash and each row check. A stop
+    /// returns [`LoadError::Stopped`] and loads nothing.
+    pub fn open_reusing_until(
+        dir: &Path,
+        retain: usize,
+        previous: Option<&Self>,
+        staged: &[&DisplayRevision],
+        role: DisplayRole,
+        stop: Stop<'_>,
+    ) -> Result<Self, LoadError> {
+        Self::open_material(dir, retain, previous, staged, role, false, stop)
     }
 
     /// Load received material with metadata and file-size checks only.
@@ -316,7 +342,7 @@ impl DisplaySet {
         retain: usize,
         role: DisplayRole,
     ) -> Result<Self, LoadError> {
-        Self::open_material(dir, retain, None, &[], role, true)
+        Self::open_material(dir, retain, None, &[], role, true, NEVER)
     }
 
     fn open_material(
@@ -326,6 +352,7 @@ impl DisplaySet {
         staged: &[&DisplayRevision],
         role: DisplayRole,
         size_only: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let map_path = dir.join(MAP_FILE);
         let raw = read(&map_path)?;
@@ -382,7 +409,10 @@ impl DisplaySet {
                 .copied()
                 .chain(previous.and_then(|set| set.held(&revision.digest)))
                 .find(|old| old.digest == revision.digest && old.held());
-            revision.verify_tables_reusing(earlier, &mut verification, size_only)
+            if stop() {
+                return Err(LoadError::Stopped);
+            }
+            revision.verify_tables_reusing(earlier, &mut verification, size_only, stop)
         };
 
         let mut revisions = Vec::with_capacity(map.shards.len());

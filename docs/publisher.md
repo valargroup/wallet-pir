@@ -122,11 +122,21 @@ rather than attempting recovery over potentially unfinished work.
 
 SIGINT and SIGTERM request cooperative shutdown. Publishers finish their current
 publication operations and stop owned auxiliary tasks before releasing state.
-History candidate preparation is the exception: runtime preparation and
-inventory finalization check the stop request between segments and files, and
-a stopped candidate is abandoned as a normal outcome without beginning
-activation or changing the active publication. Blocking candidate work is
-awaited before state is released. Activation that has begun still completes.
+History candidate preparation is the exception: the candidate build checks the
+stop request before each journal block and each shard that block completes;
+source-set verification before each revision, each 1 MiB read of a hash and
+route checks; runtime preparation between segments; and inventory finalization
+before each file, each 1 MiB read and each runtime self-check. A stopped
+candidate is abandoned as a normal outcome without beginning activation or
+changing the active publication; the build writes no map, and an interrupted
+hash records no evidence or receipt. Display stops the same way while it
+restores its saved distribution at startup (verification, row checks, runtime
+segments, finalization) and between the recent-shard build, candidate write and
+runtime prebuild of a cycle. Blocking work is awaited before state is released:
+the unit already running when the stop arrives, one shard's files, one runtime
+build or self-check, or one Display recent-shard build or prebuild, finishes
+first. Activation that has begun still completes, including the Display
+inventory finalized after its workers activate.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -158,8 +168,8 @@ The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.
 
-History finalization lists a table with the digest its verified set proved
-when this process hashed that same file and its device, inode, length,
+History and Display finalization list a source table with the digest their
+verified set proved when this process hashed that same file and its device, inode, length,
 modification and change times are unchanged; any other table is hashed again,
 and every listed table must match its manifest digest. A runtime self-check
 reads its source rows under the same rule. Every runtime is hashed; one whose

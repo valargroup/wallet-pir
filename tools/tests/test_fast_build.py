@@ -345,15 +345,25 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
 
     def test_each_product_compiles_only_its_own_host_features(self):
-        _packages, _bins, _tests, features = self._command_parts(self._cargo_tests(['transparent-publisher'])[1])
-        self.assertEqual(features, ['pir-e2e-tests/transparent-tests'])
+        # History and detail reach the query host through the publisher
+        # library's dev-dependency. Enabling them on pir-publisher links that
+        # library again. The fixture feature would compile it a third time.
+        builds = self._cargo_tests(['transparent-publisher'])
+        self.assertEqual(len(builds), 1)
+        packages, _bins, tests, features = self._command_parts(builds[0])
+        self.assertIn('pir-publisher', packages)
+        self.assertIn('pir-query-server', packages)
+        self.assertEqual(features, [])
+        self.assertNotIn('pir-e2e-tests/transparent-tests', features)
+        self.assertNotIn('pir-publisher/transparent-history', features)
+        self.assertIn('commands', tests)
+        self.assertIn('operator', tests)
         _packages, _bins, tests, features = self._command_parts(self._cargo_tests(['status-publisher'])[1])
         self.assertEqual(features, ['pir-publisher/status-tests'])
         self.assertNotIn('ci_hint', tests)
         builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
         _packages, _bins, _tests, features = self._command_parts(builds[1])
-        self.assertEqual(features, [
-            'pir-e2e-tests/enhance-tests', 'pir-e2e-tests/transparent-tests'])
+        self.assertEqual(features, ['pir-e2e-tests/enhance-tests'])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):
         # Dependents of a shared crate are selected, but the diff itself is not a product.
@@ -393,6 +403,11 @@ class DiffProductTests(unittest.TestCase):
         self.assertEqual(diff_products(packages, ['src/pir-publisher/src/lib.rs']), frozenset())
         self.assertEqual(diff_products(packages, ['src/pir-publisher/tests/lifecycle.rs']), frozenset())
         self.assertEqual(diff_products(packages, ['src/pir-query-server/src/lib.rs']), frozenset())
+        self.assertEqual(diff_products(packages, ['src/pir-query-server/Cargo.toml']), frozenset())
+        self.assertEqual(diff_products(packages, ['src/transparent/transparent-publisher/Cargo.toml']),
+                         frozenset({'transparent'}))
+        self.assertEqual(diff_products(packages, ['crates/deleted/Cargo.toml']),
+                         frozenset({'enhance', 'status', 'transparent'}))
         self.assertEqual(diff_products(packages, ['tools/pir-e2e-tests/tests/ci_hint.rs']),
                          frozenset({'enhance'}))
         self.assertEqual(diff_products(packages, ['tools/pir-e2e-tests/tests/shard_filters.rs']),

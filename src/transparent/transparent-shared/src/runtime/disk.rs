@@ -22,7 +22,8 @@
 //! replace paths atomically and collection only unlinks, so a runtime keeps its
 //! mapping valid for as long as it lives.
 //!
-//! Serving trusts publisher preparation. Downloads verify length and SHA-256;
+//! Serving trusts publisher preparation. Downloads check length; their SHA-256
+//! validation follows activation on the query server's background thread;
 //! local restores check size and parse the format without rescanning checksums
 //! or comparing with source rows. The publisher runs the consistency test
 //! before publishing. Separate HTTP smoke tests check answers after startup.
@@ -113,6 +114,41 @@ impl DiskCache {
             hex::encode(Sha256::digest(key.0.as_bytes())),
             hex::encode(Self::identity(key, shared, source_sha))
         ))
+    }
+
+    /// Discard persisted derivatives of withdrawn runtime identities. The
+    /// caller keeps their resident slots unpinned, including snapshot writers,
+    /// until this completes. Unrelated identities remain cached.
+    pub(super) fn invalidate(&self, keys: &[RuntimeKey]) -> io::Result<bool> {
+        let prefixes: std::collections::HashSet<_> = keys
+            .iter()
+            .map(|key| hex::encode(Sha256::digest(key.0.as_bytes())))
+            .collect();
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join(".lock"))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+        }
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".runtime")
+                && name
+                    .split_once('-')
+                    .is_some_and(|(prefix, _)| prefixes.contains(prefix))
+            {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        File::open(&self.directory)?.sync_all()?;
+        Ok(true)
     }
 
     /// Bytes before the preprocessing: header, database and published masks.

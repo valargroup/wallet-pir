@@ -1,7 +1,8 @@
 //! Digest-bound display distribution, separate from the wallet's display protocol.
+use crate::history::shardset::{Stop, NEVER};
 use crate::publication::{
-    digest, hash_artifacts, is_digest, safe_path, Artifact, CheckedRuntimes, Error, Kind, PROFILE,
-    RUNTIME,
+    digest, hash_listed, is_digest, safe_path, Artifact, CheckedRuntimes, Error, Kind, Known,
+    Stopped, PROFILE, RUNTIME,
 };
 use crate::runtime::{disk::ShippedRuntimes, SharedParams};
 use crate::tx_detail::{
@@ -106,12 +107,24 @@ impl Finalized {
     }
     /// Finalize the inventory of `set`, loaded from `root`, reusing only
     /// native runtimes whose exact bytes this process already loaded and
-    /// self-checked. Every artifact is rehashed, and every source segment
-    /// must still match its manifest whatever `set` took over.
+    /// self-checked. A source table `set` hashed in this process is listed
+    /// with that digest while its file is unchanged since; every other
+    /// artifact is hashed, and every source must match its manifest.
     pub fn prepare_reusing(
         root: &Path,
         set: &DisplaySet,
         checked: &mut CheckedRuntimes,
+    ) -> Result<Self, Error> {
+        Self::prepare_reusing_until(root, set, checked, NEVER)
+    }
+    /// [`Self::prepare_reusing`], asking `stop` before each file, each
+    /// bounded read of a hash and each runtime self-check. A stop ends with
+    /// [`Stopped`]; nothing is finalized and `checked` keeps its evidence.
+    pub fn prepare_reusing_until(
+        root: &Path,
+        set: &DisplaySet,
+        checked: &mut CheckedRuntimes,
+        stop: Stop<'_>,
     ) -> Result<Self, Error> {
         if set.role != DisplayRole::Combined {
             return Err("display distribution needs every revision held".into());
@@ -137,18 +150,18 @@ impl Finalized {
         let mut native = Vec::new();
         let mut params = std::collections::HashMap::new();
         // Paths are checked again, symlinks included, while hashing.
-        let mut add = |path: PathBuf, kind: Kind| -> bool {
+        let mut add = |path: PathBuf, kind: Kind, known: Option<Known>| -> bool {
             if !paths.insert(path.clone()) {
                 return false;
             }
-            pending.push((path, kind));
+            pending.push((path, kind, known));
             true
         };
         let map = root.join(MAP_FILE);
         expected.insert(map.clone(), set.map_digest.clone());
-        add(map, Kind::Metadata);
+        add(map, Kind::Metadata, None);
         for revision in set.current() {
-            add(revision.dir.join(MANIFEST_FILE), Kind::Metadata);
+            add(revision.dir.join(MANIFEST_FILE), Kind::Metadata, None);
             let (table_kind, runtime_kind) = if revision.manifest.sealed {
                 (Kind::ArchiveTable, Kind::ArchiveRuntime)
             } else {
@@ -159,7 +172,7 @@ impl Finalized {
                     .segment(table, segment)
                     .ok_or("missing display source")?;
                 expected.insert(source.path().to_path_buf(), source.sha256().to_owned());
-                add(source.path().to_path_buf(), table_kind);
+                add(source.path().to_path_buf(), table_kind, Known::of(source));
                 let shared = match params.entry((revision.geometry.name, kind(table))) {
                     std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::hash_map::Entry::Vacant(entry) => {
@@ -171,7 +184,7 @@ impl Finalized {
                 };
                 let key = runtime_key(&revision.digest, table, segment);
                 let path = shipped.path(&key, shared, source.sha256());
-                if add(path.clone(), runtime_kind) {
+                if add(path.clone(), runtime_kind, None) {
                     native.push((path, key, shared.clone(), source));
                 }
             }
@@ -179,7 +192,7 @@ impl Finalized {
         // Hash immutable artifacts on the bounded CPU pool. Native handles
         // stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
-        for (artifact, path, file) in hash_artifacts(root, pending)? {
+        for (artifact, path, file) in hash_listed(root, pending, stop)? {
             if expected
                 .get(&path)
                 .is_some_and(|sha256| *sha256 != artifact.sha256)
@@ -205,6 +218,9 @@ impl Finalized {
             if previous.get(&name) == Some(&sha256) {
                 checked.reused += 1;
             } else {
+                if stop() {
+                    return Err(Box::new(Stopped));
+                }
                 // Header/length checks alone cannot finalize malformed native bytes.
                 ShippedRuntimes::load_file(file, &key, &shared, source.sha256())?
                     .self_check(&shared, &source.load()?)?;
@@ -382,6 +398,130 @@ mod tests {
         replace(&map, &original);
         Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
         assert_eq!(checked.passed, evidence);
+    }
+
+    /// A source table the set hashed with settled evidence is listed with
+    /// that digest while its file is unchanged; an in-place change with its
+    /// modification time restored, or a replaced path, is hashed again.
+    #[test]
+    fn unchanged_verified_sources_are_listed_without_another_hash() {
+        use std::os::unix::fs::FileExt;
+        let root = tempfile::tempdir().unwrap();
+        let (dir, _, _) = publication(root.path());
+        let shipped = ShippedRuntimes::required(dir.clone());
+        let mut evidence = BTreeMap::new();
+        let mut sources = Vec::new();
+        let mut runtimes = 0;
+        let mut metadata = 1;
+        {
+            let set = DisplaySet::open(&dir, 0, DisplayRole::Combined).unwrap();
+            for revision in set.current() {
+                metadata += 1;
+                for (table, segment) in revision.targets() {
+                    let source = revision.segment(table, segment).unwrap();
+                    let shared =
+                        SharedParams::build_display(revision.geometry, kind(table)).unwrap();
+                    let key = runtime_key(&revision.digest, table, segment);
+                    let path = shipped.path(&key, &shared, source.sha256());
+                    let bytes = format!("stand-in for {}", path.display()).into_bytes();
+                    std::fs::write(&path, &bytes).unwrap();
+                    let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                    evidence.insert(name, digest(&bytes));
+                    sources.push(source.path().to_path_buf());
+                    runtimes += 1;
+                }
+            }
+        }
+        // Stamps vouch only for files settled before they were hashed.
+        let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for source in &sources {
+            std::fs::File::options()
+                .write(true)
+                .open(source)
+                .unwrap()
+                .set_modified(modified)
+                .unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let set = DisplaySet::open(&dir, 0, DisplayRole::Combined).unwrap();
+        let mut checked = CheckedRuntimes {
+            passed: evidence,
+            ..Default::default()
+        };
+        let hashed = || crate::publication::listed_hashes(&dir);
+        let before = hashed();
+        let first = Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!(
+            hashed() - before,
+            metadata + runtimes,
+            "only the map, manifests and runtimes are hashed; sources are not"
+        );
+        for source in &sources {
+            let relative = source.strip_prefix(&dir).unwrap().to_str().unwrap();
+            let listed = first
+                .inventory
+                .artifacts
+                .iter()
+                .find(|a| a.path == relative);
+            assert_eq!(
+                listed.unwrap().sha256,
+                digest(&std::fs::read(source).unwrap())
+            );
+        }
+
+        // Same size, changed bytes, modification time restored: the changed
+        // ctime voids the evidence, so the source is hashed and refused.
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(&sources[0])
+            .unwrap();
+        let mut byte = [0u8; 1];
+        file.read_exact_at(&mut byte, 0).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        file.write_all_at(&[byte[0] ^ 1], 0).unwrap();
+        file.set_modified(modified).unwrap();
+        let before = hashed();
+        let error = Finalized::prepare_reusing(&dir, &set, &mut checked)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("differs from its manifest"), "{error}");
+        assert!(hashed() > before);
+        file.write_all_at(&byte, 0).unwrap();
+
+        // A path replaced by another inode, even with identical bytes, is
+        // hashed again before it is listed.
+        let original = std::fs::read(&sources[1]).unwrap();
+        replace(&sources[1], &original);
+        let before = hashed();
+        Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!(hashed() - before, metadata + runtimes + 2);
+        let changed = flip_in_place_keeping_size(&sources[1]);
+        assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
+        drop(changed);
+
+        // A stop during finalization lists nothing and keeps the evidence.
+        let passed = checked.passed.clone();
+        let error = Finalized::prepare_reusing_until(&dir, &set, &mut checked, &|| true)
+            .err()
+            .unwrap();
+        assert!(error.is::<Stopped>());
+        assert_eq!(checked.passed, passed);
+    }
+
+    /// Flips the first byte of `path` in place, returning the open file.
+    fn flip_in_place_keeping_size(path: &Path) -> std::fs::File {
+        use std::os::unix::fs::FileExt;
+        let file = std::fs::File::options()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        let mut byte = [0u8; 1];
+        file.read_exact_at(&mut byte, 0).unwrap();
+        file.write_all_at(&[byte[0] ^ 1], 0).unwrap();
+        file
     }
 
     /// The same, end to end with real runtimes: a later inventory skips only
