@@ -1796,23 +1796,6 @@ fn seal_event(job: &SealJob) -> Value {
     })
 }
 
-/// Serves the controller's status as JSON, and its metrics in the
-/// Prometheus text format on `/metrics`, on a private address.
-pub async fn serve_status(
-    listen: std::net::SocketAddr,
-    status: Arc<RwLock<Value>>,
-    metrics: Arc<Metrics>,
-) -> Result<(), BoxError> {
-    let app = status_router(status, metrics);
-    let listener = tokio::net::TcpListener::bind(listen).await?;
-    tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
-            tracing::error!(%error, "status service failed");
-        }
-    });
-    Ok(())
-}
-
 /// Unchanged controller status and metrics routes, mounted by the application host.
 pub fn status_router(status: Arc<RwLock<Value>>, metrics: Arc<Metrics>) -> axum::Router {
     use axum::{routing::get, Json, Router};

@@ -468,10 +468,6 @@ impl SegmentSource {
         &self.sha256
     }
 
-    pub fn zero_from_row(&self) -> u64 {
-        self.zero_from_row
-    }
-
     /// Bytes this segment occupies on disk, and transiently in memory while a
     /// runtime is built from it.
     ///
@@ -772,7 +768,7 @@ impl SegmentSource {
         .expect("segment identity serializes")
     }
 
-    /// Byte offset of [`Self::zero_from_row`].
+    /// Byte offset of the first row whose bytes must be zero.
     fn zero_from(&self) -> usize {
         self.zero_from_row.min(self.rows) as usize * self.row_bytes as usize
     }

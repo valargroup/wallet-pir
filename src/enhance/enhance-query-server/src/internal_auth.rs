@@ -35,9 +35,6 @@ impl Token {
     pub fn new(token: Option<&str>) -> Self {
         Self(token.filter(|t| !t.is_empty()).map(Arc::from))
     }
-    pub fn is_set(&self) -> bool {
-        self.0.is_some()
-    }
     fn accepts(&self, headers: &HeaderMap) -> bool {
         let Some(expected) = &self.0 else {
             return true;
