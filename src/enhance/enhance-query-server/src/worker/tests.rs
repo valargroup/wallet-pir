@@ -34,7 +34,7 @@ async fn evaluation_failure_over_http(backend: MatvecConfig) {
     use crate::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};
     use crate::{
         matvec::testing::{scoped, Faults},
-        runtime::{modulus, plan, Packing},
+        runtime::{modulus, plan, PublishedPacking},
     };
     use std::sync::atomic::Ordering::SeqCst;
     let root = tempfile::tempdir().unwrap();
@@ -44,8 +44,11 @@ async fn evaluation_failure_over_http(backend: MatvecConfig) {
     let coverage = Lifecycle::default()
         .coverage(67, Geometry::default())
         .unwrap();
-    let source = |_: u64, count: usize| Ok(vec![7; count * crate::RECORD_BYTES]);
+    let source = crate::test_support::records;
     let plan = plan(coverage.shards[0].clone(), source).unwrap();
+    // The worker checks the session reference, then evaluates the runtime.
+    // Reuse the shared publication and skip decoding its hint into packing.
+    crate::test_support::seed_published_fixture(root.path(), &plan);
     let faults = Arc::new(Faults::default());
     let eval = scoped(&faults, || {
         worker
@@ -59,12 +62,7 @@ async fn evaluation_failure_over_http(backend: MatvecConfig) {
     })
     .unwrap()
     .0;
-    let packing = Packing::new(
-        4096,
-        &eval.hint().unwrap(),
-        &crate::packing_budget::PackingBudget::coordinator(),
-    )
-    .unwrap();
+    let packing = PublishedPacking::metadata(4096, b"evaluation-failure-session".to_vec());
     let manifest = Manifest {
         recovery_epoch: 0,
         placement_revision: 0,
