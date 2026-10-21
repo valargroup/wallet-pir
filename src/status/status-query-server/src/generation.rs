@@ -202,15 +202,6 @@ impl Generation {
         next
     }
 
-    /// Adopts the manifest a distributed controller assigned to this material.
-    ///
-    /// Only the Status roles call it, after checking the
-    /// assigned manifest against their own (same content; only the identity,
-    /// observation time and, on workers, the router's public digest differ).
-    pub fn assign_manifest(&mut self, manifest: Manifest) {
-        self.manifest = manifest;
-    }
-
     /// A coordinator's generation: the manifest and public parameters only, with
     /// no serving units; the workers hold the database.
     pub fn public_only(manifest: Manifest, public: Arc<Vec<u8>>) -> Self {

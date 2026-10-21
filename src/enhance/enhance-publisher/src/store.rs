@@ -1,6 +1,5 @@
 use crate::types::{DatabaseId, DatabaseLayout};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -75,16 +74,6 @@ impl RecordJournal {
         layout: DatabaseLayout,
     ) -> Result<Self, StoreError> {
         Self::open_inner(path.as_ref(), table.as_str(), Some(table), layout)
-    }
-
-    /// Opens a journal that is not itself a served table (a log other tables
-    /// are built from).
-    pub fn open_log(
-        path: impl AsRef<Path>,
-        name: &str,
-        layout: DatabaseLayout,
-    ) -> Result<Self, StoreError> {
-        Self::open_inner(path.as_ref(), name, None, layout)
     }
 
     fn open_inner(
@@ -356,19 +345,6 @@ impl RecordJournal {
         file.seek(SeekFrom::Start(start * record_bytes as u64))?;
         file.read_exact(&mut bytes)?;
         Ok(bytes)
-    }
-
-    pub fn populated_positions_in_shard(&self, shard_id: u64) -> u64 {
-        let shard_positions = self.layout.shard_positions() as u64;
-        let start = shard_id.saturating_mul(shard_positions);
-        self.manifest
-            .tree_size
-            .saturating_sub(start)
-            .min(shard_positions)
-    }
-
-    pub fn rows_digest(rows: &[u8]) -> String {
-        hex::encode(Sha256::digest(rows))
     }
 
     fn manifest_path(&self) -> PathBuf {

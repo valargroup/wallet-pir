@@ -28,10 +28,6 @@ impl HttpClient {
         }
     }
 
-    pub fn clear_session(&mut self) {
-        self.session = None;
-    }
-
     async fn initialize<F, A>(&mut self, accepted_anchor: &mut F) -> Result<(), HttpError>
     where
         F: FnMut(&Manifest) -> Result<A, Error>,
