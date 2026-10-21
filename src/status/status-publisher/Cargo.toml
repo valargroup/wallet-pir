@@ -44,6 +44,7 @@ zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 
 [dev-dependencies]
+pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
 # The lifecycle regression drives real worker and router roles.
 pir-query-server = { path = "../../pir-query-server", features = ["status"] }
 tempfile = "3"

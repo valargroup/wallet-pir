@@ -61,6 +61,15 @@ candidate preparation reopens publisher authority before the next publication.
 A disk failure persisting authority closes admission. Restart reuses completed
 immutable objects, but requires fresh HTTPS authority before serving.
 
+Publisher service discovery is checked before startup opens product state or
+binds listeners, and before each synchronization pass. An incompatible contract
+major version stops the query-server host; ordinary failures during polling use
+the shared retry schedule. Discovery never grants serving authority. Status uses
+the shared `pir-pipeline` acquisition, preparation and publication phases, while
+retaining its own revocation, freshness and worker/router handover checks.
+The shared streaming helper enforces exact lengths and Status object hashes;
+Status still owns durable file promotion and verifies objects before activation.
+
 Each state directory has one exclusive owner. Downloads use temporary files,
 verify their full length/digest, fsync, then publish read-only immutable inodes.
 Collection only unlinks objects; mappings and admitted requests pin their inodes

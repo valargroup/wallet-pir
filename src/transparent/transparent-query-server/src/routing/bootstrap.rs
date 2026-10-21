@@ -15,9 +15,7 @@ use crate::{
     source::Source,
 };
 use serde::Serialize;
-use sha2::Digest;
 use std::{path::PathBuf, sync::Arc};
-use tokio::io::AsyncWriteExt;
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
@@ -199,28 +197,17 @@ pub(crate) async fn stage_holdings(
                     .write(true)
                     .open(&target)
                     .await?;
-                let mut response = source
+                let response = source
                     .get(&format!("artifacts/{}", artifact.sha256))
                     .await?;
-                let mut remaining = artifact.bytes;
-                let mut hash =
-                    (artifact.kind == publication::Kind::Metadata).then(sha2::Sha256::new);
-                while let Some(chunk) = response.chunk().await? {
-                    if chunk.len() as u64 > remaining {
-                        return Err("artifact exceeds declared length".into());
-                    }
-                    if let Some(hash) = &mut hash {
-                        hash.update(&chunk);
-                    }
-                    output.write_all(&chunk).await?;
-                    remaining -= chunk.len() as u64;
-                }
-                if remaining != 0 {
-                    return Err("artifact incomplete".into());
-                }
-                if hash.is_some_and(|hash| hex::encode(hash.finalize()) != artifact.sha256) {
-                    return Err("artifact digest mismatch".into());
-                }
+                let verification = if artifact.kind == publication::Kind::Metadata {
+                    pir_sync_manager::Verification::Sha256(&artifact.sha256)
+                } else {
+                    pir_sync_manager::Verification::Length
+                };
+                response
+                    .copy_to(&mut output, artifact.bytes, verification)
+                    .await?;
                 transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);

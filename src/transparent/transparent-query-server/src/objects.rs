@@ -1,6 +1,5 @@
 //! Verified objects and stable revision directories shared by both HTTPS consumers.
 use crate::source::Source;
-use tokio::io::AsyncWriteExt;
 use transparent_shared::publication::{self, Error};
 
 pub(crate) const PARTIAL: &str = ".partial-";
@@ -143,28 +142,17 @@ pub(crate) async fn ensure_object(
             .write(true)
             .open(&partial)
             .await?;
-        let mut response = source
+        let response = source
             .get(&format!("artifacts/{}", artifact.sha256))
             .await?;
-        use sha2::Digest;
-        let mut hash = check_metadata.then(sha2::Sha256::new);
-        let mut remaining = artifact.bytes;
-        while let Some(chunk) = response.chunk().await? {
-            if chunk.len() as u64 > remaining {
-                return Err::<(), Error>("artifact exceeds declared length".into());
-            }
-            if let Some(hash) = &mut hash {
-                hash.update(&chunk);
-            }
-            output.write_all(&chunk).await?;
-            remaining -= chunk.len() as u64;
-        }
-        if remaining != 0 {
-            return Err("artifact incomplete".into());
-        }
-        if hash.is_some_and(|hash| hex::encode(hash.finalize()) != artifact.sha256) {
-            return Err("artifact digest mismatch".into());
-        }
+        let verification = if check_metadata {
+            pir_sync_manager::Verification::Sha256(&artifact.sha256)
+        } else {
+            pir_sync_manager::Verification::Length
+        };
+        response
+            .copy_to(&mut output, artifact.bytes, verification)
+            .await?;
         let mut permissions = output.metadata().await?.permissions();
         permissions.set_readonly(true);
         output.set_permissions(permissions).await?;

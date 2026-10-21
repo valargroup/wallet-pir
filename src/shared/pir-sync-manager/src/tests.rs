@@ -559,3 +559,74 @@ async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error(
     let manager = SyncManager::new(Terminal(0));
     assert_eq!(manager.run().await, "fatal");
 }
+
+#[tokio::test]
+async fn streamed_objects_preserve_length_digest_and_aggregate_budget() {
+    let tls = Tls::new().await;
+    let digest = "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721";
+    let mut source = tls.source(100);
+    for (length, verification, succeeds) in [
+        (6, Verification::Sha256(digest), true),
+        (6, Verification::Length, true),
+        (7, Verification::Length, false),
+        (5, Verification::Length, false),
+        (6, Verification::Sha256(&"00".repeat(32)), false),
+    ] {
+        let mut output = Vec::new();
+        let result = source
+            .request("ok", None)
+            .await
+            .unwrap()
+            .copy_to(&mut output, length, verification)
+            .await;
+        assert_eq!(result.is_ok(), succeeds);
+        if let Ok(report) = result {
+            assert_eq!(report.bytes, 6);
+            assert_eq!(output, b"abcdef");
+        }
+    }
+    assert_eq!(source.downloaded(), 30);
+    let mut source = tls.source(10);
+    source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut Vec::new(), 6, Verification::Length)
+        .await
+        .unwrap();
+    assert!(source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut Vec::new(), 6, Verification::Length)
+        .await
+        .is_err());
+    assert_eq!(source.downloaded(), 12);
+}
+
+#[tokio::test]
+async fn streamed_objects_propagate_writer_errors_and_reject_refused_bodies() {
+    let tls = Tls::new().await;
+    let mut source = tls.source(100);
+    let (mut closed_writer, reader) = tokio::io::duplex(2);
+    drop(reader);
+    let error = source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut closed_writer, 6, Verification::Length)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.downcast_ref::<std::io::Error>().is_some());
+    let mut output = Vec::new();
+    assert!(source
+        .request("fail", None)
+        .await
+        .unwrap()
+        .copy_to(&mut output, 7, Verification::Length)
+        .await
+        .is_err());
+    assert!(output.is_empty());
+    assert_eq!(source.downloaded(), 13);
+}

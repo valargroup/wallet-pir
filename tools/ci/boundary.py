@@ -128,12 +128,12 @@ SHARED_SCOPES = {
     'src/shared/pir-serving/': ('src/enhance/', 'src/status/'),
 }
 
-# Lifecycle code has no product, chain, wallet or cryptographic dependency.
+# Lifecycle code has no product, chain, wallet or PIR-engine dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
 # graph. Every kind of edge counts, including optional and target-specific edges.
 # Synchronization is transport and scheduling, never a product or PIR engine.
 SYNC_MANAGER = 'pir-sync-manager'
-SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'tokio',
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}

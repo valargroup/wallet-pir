@@ -1,10 +1,10 @@
 //! Status publication policy hosted by the product-neutral HTTPS loop.
 use super::*;
+use pir_pipeline::Input;
 use pir_sync_manager::{HttpsSource, SyncTask};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, io::Read};
-use tokio::io::AsyncWriteExt;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,11 +23,7 @@ pub(super) struct StatusSync {
 }
 impl StatusSync {
     pub fn new(service: Service, config: &RoleConfig) -> Result<Self, Failure> {
-        let roots = match &config.publisher_ca {
-            Some(path) => vec![reqwest::Certificate::from_pem(&fs::read(path)?)?],
-            None => Vec::new(),
-        };
-        let source = HttpsSource::new(&config.publisher, PREFIX, attempt_limit(), &roots)?;
+        let source = super::source(config)?;
         let floor = match fs::read(service.dir.join("publisher-high-water.json")) {
             Ok(bytes) => serde_json::from_slice::<Floor>(&bytes)?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Floor::default(),
@@ -166,21 +162,13 @@ impl StatusSync {
                 .create_new(true)
                 .open(&temporary)
                 .await?;
-            let mut hash = Sha256::new();
-            let mut length = 0u64;
-            while let Some(chunk) = response.chunk().await? {
-                length = length
-                    .checked_add(chunk.len() as u64)
-                    .ok_or("Status object length overflow")?;
-                if length > object.bytes {
-                    return Err("Status object exceeds advertised length".into());
-                }
-                file.write_all(&chunk).await?;
-                hash.update(&chunk);
-            }
-            if length != object.bytes || hex::encode(hash.finalize()) != object.sha256 {
-                return Err("Status object digest or length differs".into());
-            }
+            response
+                .copy_to(
+                    &mut file,
+                    object.bytes,
+                    pir_sync_manager::Verification::Sha256(&object.sha256),
+                )
+                .await?;
             file.sync_all().await?;
             drop(file);
             use std::os::unix::fs::PermissionsExt;
@@ -297,6 +285,24 @@ impl StatusSync {
         Ok(())
     }
     async fn update(&mut self) -> Result<u64, Failure> {
+        let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
+        match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
+            Input::Work(generation) => Ok(generation),
+            Input::Deferred => Ok(self
+                .service
+                .state
+                .lock()
+                .await
+                .controller
+                .as_ref()
+                .map_or(0, |c| c.current().manifest().generation)),
+            Input::Unchanged => {
+                unreachable!("Status rechecks authority even for unchanged material")
+            }
+        }
+    }
+    async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Failure> {
+        self.source.discover().await?;
         self.source.reset_budget();
         let current = self.current().await?;
         self.service
@@ -322,7 +328,7 @@ impl StatusSync {
         let inventory_object = if self.service.role == Role::Router {
             let Some(inventory) = self.worker_inventory().await? else {
                 self.deferred = true;
-                return Ok(0);
+                return Ok(Input::Deferred);
             };
             inventory
         } else {
@@ -362,11 +368,9 @@ impl StatusSync {
                 .is_some_and(|c| !c.can_prepare())
         {
             self.deferred = true;
-            return Ok(previous.as_ref().unwrap().manifest().generation);
+            return Ok(Input::Deferred);
         }
-        let candidate = if unchanged {
-            previous.as_ref().map(|g| g.as_ref().clone())
-        } else {
+        if !unchanged {
             for object in
                 std::iter::once(&inventory.public).chain(if self.service.role == Role::Worker {
                     inventory.units.iter()
@@ -376,10 +380,48 @@ impl StatusSync {
             {
                 self.object(object).await?;
             }
-            let root = self.service.dir.join("objects");
+        }
+        Ok(Input::Work(Acquired {
+            sync: self,
+            inventory,
+            inventory_object,
+            previous,
+            unchanged,
+        }))
+    }
+}
+
+// Tokens borrow the sole synchronization owner. No phase can run twice or
+// overlap another pass; only publication may persist and switch the active view.
+struct Acquired<'a> {
+    sync: &'a mut StatusSync,
+    inventory: Inventory,
+    inventory_object: Object,
+    previous: Option<Arc<Generation>>,
+    unchanged: bool,
+}
+struct Prepared<'a> {
+    sync: &'a mut StatusSync,
+    inventory: Inventory,
+    inventory_object: Object,
+    candidate: Option<Generation>,
+}
+impl<'a> Acquired<'a> {
+    async fn prepare(self) -> Result<Input<Prepared<'a>>, Failure> {
+        let Self {
+            sync,
+            inventory,
+            inventory_object,
+            previous,
+            unchanged,
+        } = self;
+        let candidate = if unchanged {
+            previous.as_ref().map(|g| g.as_ref().clone())
+        } else {
+            let root = sync.service.dir.join("objects");
             let i = inventory.clone();
-            let worker = self.service.role == Role::Worker;
-            let backend = self.backend;
+            let worker = sync.service.role == Role::Worker;
+            let backend = sync.backend;
             Some(
                 tokio::task::spawn_blocking(move || {
                     Generation::load_prepared(
@@ -393,22 +435,38 @@ impl StatusSync {
                 .await??,
             )
         };
-        let latest = self.current().await?;
+        Ok(Input::Work(Prepared {
+            sync,
+            inventory,
+            inventory_object,
+            candidate,
+        }))
+    }
+}
+impl Prepared<'_> {
+    async fn publish(self) -> Result<u64, Failure> {
+        let Self {
+            sync,
+            inventory,
+            inventory_object,
+            candidate,
+        } = self;
+        let latest = sync.current().await?;
         inventory.validate(&latest)?;
-        self.authority(latest, &inventory.manifest).await?;
-        self.pin_worker(&inventory.manifest).await?;
+        sync.authority(latest, &inventory.manifest).await?;
+        sync.pin_worker(&inventory.manifest).await?;
         inventory.manifest.fresh(now_ms())?;
         if let Some(candidate) = candidate {
-            let root = self.service.dir.clone();
+            let root = sync.service.dir.clone();
             let bytes = serde_json::to_vec(&inventory_object)?;
             if let Err(error) =
                 tokio::task::spawn_blocking(move || persist(&root, "active.json", &bytes)).await?
             {
-                self.revoke().await;
-                self.service.state.lock().await.poisoned = true;
+                sync.revoke().await;
+                sync.service.state.lock().await.poisoned = true;
                 return Err(error.into());
             }
-            let mut state = self.service.state.lock().await;
+            let mut state = sync.service.state.lock().await;
             let mut retired_owner = None;
             let retired = match state.controller.as_ref() {
                 Some(controller) if !controller.revoked() => {
@@ -429,21 +487,21 @@ impl StatusSync {
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
             }
-            self.retained.push(inventory_object.clone());
-            if self.retained.len() > 2 {
-                self.retained.remove(0);
+            sync.retained.push(inventory_object.clone());
+            if sync.retained.len() > 2 {
+                sync.retained.remove(0);
             }
-            let root = self.service.dir.join("objects");
-            let retained = self.retained.clone();
+            let root = sync.service.dir.join("objects");
+            let retained = sync.retained.clone();
             tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
         }
-        if self.service.role == Role::Router {
-            let release = self
+        if sync.service.role == Role::Router {
+            let release = sync
                 .service
                 .serving_http
                 .post(format!(
                     "{}/v1/provider-commit/{}",
-                    self.service.worker_origin,
+                    sync.service.worker_origin,
                     hex::encode(inventory.manifest.id())
                 ))
                 .send()
@@ -451,7 +509,7 @@ impl StatusSync {
             match release {
                 Ok(response) if response.status().is_success() => {}
                 _ => {
-                    self.deferred = true;
+                    sync.deferred = true;
                     tracing::warn!("Status router handover acknowledgment deferred");
                 }
             }
@@ -459,6 +517,7 @@ impl StatusSync {
         Ok(inventory.manifest.generation)
     }
 }
+
 impl SyncTask for StatusSync {
     type Report = u64;
     type Error = Failure;
@@ -475,6 +534,9 @@ impl SyncTask for StatusSync {
         }
         .into();
         result
+    }
+    fn terminal(&self, error: &Failure) -> bool {
+        pir_sync_manager::is_incompatible(error.as_ref())
     }
     fn report(&self, result: &Result<u64, Failure>) {
         if let Err(error) = result {

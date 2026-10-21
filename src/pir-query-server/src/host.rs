@@ -171,6 +171,10 @@ pub async fn verify(config: Config) -> Result<()> {
 /// before any listener is bound, product state is opened or task is started;
 /// any failure stops the whole query server. Legacy roles are not checked.
 async fn discover(config: &Config) -> Result<()> {
+    #[cfg(feature = "status")]
+    if let Some(role) = active(&config.status)? {
+        crate::status::discover(role).await?;
+    }
     #[cfg(feature = "enhance")]
     if let Some(role) = active(&config.enhance)? {
         role.discover().await?;
@@ -607,5 +611,39 @@ mod tests {
                 "{addr} outlived the host"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "status"))]
+mod status_discovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn status_discovery_runs_before_listeners_and_state_are_opened() {
+        let root = tempfile::tempdir().unwrap();
+        let management = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let status = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let publisher = format!("https://localhost:{}", closed.local_addr().unwrap().port());
+        drop(closed);
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": management.local_addr().unwrap(),
+            "status": {"enabled": true, "settings": {
+                "role": "worker", "network_hex": "01".repeat(32),
+                "state_dir": root.path().join("worker"),
+                "listen": status.local_addr().unwrap(), "publisher": publisher,
+                "worker_origin": "",
+            }},
+        }))
+        .unwrap();
+        config.validate().unwrap();
+        let error = run(config, Shutdown::default()).await.unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<pir_sync_manager::DiscoveryError>()
+                .is_some(),
+            "{error}"
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

@@ -3,9 +3,11 @@
 //! Products own schemas, replay protection, durable authority, preparation and
 //! activation. A successful transfer or poll confers no permission to serve.
 mod discovery;
+mod transfer;
 mod transport;
 pub use discovery::{is_incompatible, DiscoveryError, DISCOVERY_DEADLINE};
 pub use pir_service_discovery as service_discovery;
+pub use transfer::{Transfer, Verification};
 pub use transport::{HttpsSource, Response};
 
 use std::{
