@@ -177,6 +177,17 @@ fn offline_publication_loads_and_answers_without_consumers() {
         },
         "publication rereads no unchanged object"
     );
+    // A hint naming the settled rows object keeps its role-required length, so
+    // only the object check can see that those bytes have another length.
+    let mut aliased = inventory.clone();
+    let rows = aliased.domains[0].rows[0].clone();
+    assert_ne!(rows.bytes, aliased.domains[0].hint.bytes);
+    aliased.domains[0].hint.sha256 = rows.sha256;
+    aliased.validate().unwrap();
+    assert!(
+        enhance_publisher::publication::verify(root.path(), aliased).is_err(),
+        "a reference is checked against its own length, not an earlier one"
+    );
     let rows_path = domain.rows[0].path(root.path()).unwrap();
     std::fs::OpenOptions::new()
         .write(true)
