@@ -508,7 +508,14 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
     assert_eq!(report.runtime_preparation["shipped_fallbacks"], 0);
     assert_eq!(report.runtime_preparation["built"], 0);
     assert_eq!(report.runtime_preparation["restored"], 0);
-    assert!(report.runtime_preparation["shipped"].as_u64().unwrap() > 0);
+    // Bootstrap checks required prepared runtimes by size and loads them on
+    // first use, so none are loaded yet; the byte comparison below proves the
+    // shipped runtimes themselves arrived intact.
+    assert_eq!(report.runtime_preparation["runtimes_offered"], true);
+    assert!(expected
+        .artifacts
+        .iter()
+        .any(|f| f.kind.local() && f.path.ends_with(".runtime")));
     assert_eq!(report.map_sha256, set.map_digest);
     assert_eq!(report.archive_tables_downloaded, 0);
     assert!(expected
@@ -1667,6 +1674,7 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
             inventory_sha256: sha256.clone(),
             height: expected.anchor_height,
             hash: expected.anchor_hash.clone(),
+            epoch: owner.0.epoch.load(Ordering::Acquire),
         },
         inventory: inventory.clone(),
         validation: restored.validation,
@@ -1736,4 +1744,85 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
     drop(validator);
     assert!(queue.held().is_empty());
     file.write_all_at(&first, 0).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_result_about_a_superseded_publication_changes_nothing() {
+    use crate::history::validator::{Event, Identity};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    let (set, _finalized, record, expected) = restore_fixture(&directory);
+    let restored =
+        Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
+            .unwrap();
+    let sha256 = restored.finalized.sha256().to_string();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
+    let state = root.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    let identity = Identity {
+        directory: directory.clone(),
+        map_sha256: set.map_digest.clone(),
+        inventory_sha256: sha256,
+        height: expected.anchor_height,
+        hash: expected.anchor_hash.clone(),
+        epoch: owner.0.epoch.load(Ordering::Acquire),
+    };
+    let before = owner.0.status.read().unwrap().clone();
+    // A reorg or activation advanced the epoch after the job was submitted.
+    owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+    validation_event(&state, &owner, &identity, Event::Started("integrity"));
+    validation_event(&state, &owner, &identity, Event::Integrity(Ok(1)));
+    validation_event(
+        &state,
+        &owner,
+        &identity,
+        Event::Correctness(Err(
+            transparent_shared::publication::CorrectnessError::Failed("stale".into()),
+        )),
+    );
+    assert_eq!(*owner.0.status.read().unwrap(), before);
+    // A different inventory under the current epoch is equally stale.
+    let other = Identity {
+        inventory_sha256: "00".repeat(32),
+        epoch: owner.0.epoch.load(Ordering::Acquire),
+        ..identity
+    };
+    validation_event(&state, &owner, &other, Event::Integrity(Ok(1)));
+    assert_eq!(*owner.0.status.read().unwrap(), before);
+
+    // A confirmed mismatch of bytes the current publication lists withdraws it
+    // even when reported by a stale job, and an unreadable failure record is
+    // kept as is rather than replaced.
+    std::fs::write(state.join(INTEGRITY_FAILURES), b"not json").unwrap();
+    let artifact = owner
+        .0
+        .active
+        .read()
+        .unwrap()
+        .distribution
+        .as_ref()
+        .unwrap()
+        .inventory()
+        .artifacts[0]
+        .clone();
+    validation_event(
+        &state,
+        &owner,
+        &other,
+        Event::Integrity(Err(
+            transparent_shared::publication::IntegrityError::Mismatch {
+                path: artifact.path.clone(),
+                expected_sha256: artifact.sha256.clone(),
+                found_sha256: Some("11".repeat(32)),
+                reason: "changed".into(),
+            },
+        )),
+    );
+    assert!(owner.0.withdrawn.load(Ordering::Acquire));
+    assert!(owner.0.integrity_failed.load(Ordering::Acquire));
+    assert_eq!(
+        std::fs::read(state.join(INTEGRITY_FAILURES)).unwrap(),
+        b"not json"
+    );
 }
