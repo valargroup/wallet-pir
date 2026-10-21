@@ -3,9 +3,11 @@
 //! Products own schemas, replay protection, durable authority, preparation and
 //! activation. A successful transfer or poll confers no permission to serve.
 mod discovery;
+mod transfer;
 mod transport;
 pub use discovery::{is_incompatible, DiscoveryError, DISCOVERY_DEADLINE};
 pub use pir_service_discovery as service_discovery;
+pub use transfer::{Transfer, Verification};
 pub use transport::{HttpsSource, Response};
 
 use std::{
@@ -36,6 +38,11 @@ pub trait SyncTask: Send {
     /// retried. By default every failure is retried.
     fn terminal(&self, _error: &Self::Error) -> bool {
         false
+    }
+    /// Wait between publication passes. Products may maintain peer promises
+    /// during this wait; the next publication pass still starts only at the deadline.
+    fn wait_until(&mut self, deadline: tokio::time::Instant) -> impl Future<Output = ()> + Send {
+        tokio::time::sleep_until(deadline)
     }
 }
 
@@ -80,12 +87,9 @@ impl<T: SyncTask> SyncManager<T> {
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            pir_pipeline::wait(
-                tokio::time::Instant::now() + delay(failures, jitter),
-                std::future::pending(),
-                std::future::pending(),
-            )
-            .await;
+            self.task
+                .wait_until(tokio::time::Instant::now() + delay(failures, jitter))
+                .await;
         }
     }
 }

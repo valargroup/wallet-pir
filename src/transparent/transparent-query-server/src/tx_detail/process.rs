@@ -2,7 +2,7 @@
 //! and calls [`run`]; the query-server host uses the same function.
 use super::live::{DisplayLive, DisplayPublication};
 use super::service::{body_limit, router, DisplayRuntime, DisplayState};
-use crate::config::{ReadinessMode, ServiceConfig};
+use crate::config::ServiceConfig;
 use serde::Deserialize;
 use std::future::IntoFuture;
 use std::net::SocketAddr;
@@ -92,8 +92,6 @@ pub struct DetailProcess {
     #[serde(default = "default_query_deadline")]
     pub query_deadline_secs: u64,
     #[serde(default)]
-    pub loaded_only: bool,
-    #[serde(default)]
     pub verify_only: bool,
     #[serde(default)]
     pub control_socket: Option<PathBuf>,
@@ -165,15 +163,22 @@ pub async fn run_with(
             max_body_bytes: config.body_bytes,
             upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
             query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
-            readiness: ReadinessMode::Warm,
         };
         let mut manager = crate::tx_detail::manager::Manager::new(bootstrap, service).await?;
-        if let Err(error) = manager.poll_once().await {
-            // A recovered predecessor never masks an incompatible publisher.
-            if crate::source::is_incompatible(&error) || !manager.ready().await {
-                return Err(error);
+        loop {
+            match manager.poll_once().await {
+                Ok(_) => break,
+                Err(error) if crate::source::is_incompatible(&error) => return Err(error),
+                Err(error) if manager.ready().await => {
+                    tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
+                    break;
+                }
+                Err(error) if config.verify_only => return Err(error),
+                Err(error) => {
+                    tracing::warn!(%error, "initial display synchronization refused; retrying with checked inputs");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
             }
-            tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
         }
         if config.verify_only {
             return Ok(());
@@ -211,11 +216,6 @@ pub async fn run_with(
         max_body_bytes: config.body_bytes,
         upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
         query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
-        readiness: if config.loaded_only {
-            ReadinessMode::LoadedOnly
-        } else {
-            ReadinessMode::Warm
-        },
     };
     let disk = config
         .runtime_cache_dir
@@ -234,7 +234,7 @@ pub async fn run_with(
     let runtime = DisplayRuntime::new(service, disk);
     let initial = match &directory {
         Some(dir) => {
-            let set = DisplaySet::open(dir, config.retain_revisions, config.role)?;
+            let set = DisplaySet::open_for_serving(dir, config.retain_revisions, config.role)?;
             tracing::info!(
                 role = config.role.as_str(),
                 map_sha256 = set.map_digest,

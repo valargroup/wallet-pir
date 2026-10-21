@@ -6,7 +6,7 @@ use crate::{
     control::persist,
     history::{
         live::{Command, LiveService, Publication},
-        service::{ReadinessMode, ServiceConfig, ServiceState},
+        service::{ServiceConfig, ServiceState},
     },
     routing::bootstrap::{self, Config},
     source::Source,
@@ -75,6 +75,8 @@ struct HistorySync {
     source: Source,
     _lock: std::sync::Arc<std::fs::File>,
     live: Option<LiveService>,
+    /// Checked bootstrap data kept privately until fresh source checks pass.
+    pending: Option<LiveService>,
     /// Only a successfully activated snapshot may supply a conditional token.
     current: Option<Current>,
     /// Exact-anchor negatives need their own revision floor: eligible Current
@@ -106,7 +108,7 @@ pub struct Stages {
     pub activation_seconds: f64,
 }
 impl HistorySync {
-    pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
+    pub fn new(mut config: Config, service: ServiceConfig) -> Result<Self, Error> {
         let source = Source::new(&config)?;
         std::fs::create_dir_all(&config.directory)?;
         if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
@@ -120,6 +122,7 @@ impl HistorySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another publication consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let invalid: BTreeSet<String> =
             match std::fs::read(config.directory.join("active.invalid.json")) {
                 Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -137,7 +140,6 @@ impl HistorySync {
             intent.digests.extend(invalid);
             persist_floor(&config.directory, &intent)?;
         }
-        service.readiness = ReadinessMode::Warm;
         // No disk-cache restore/build path in this mode, including after restart.
         Ok(Self {
             config,
@@ -147,6 +149,7 @@ impl HistorySync {
             source,
             _lock: std::sync::Arc::new(lock),
             live: None,
+            pending: None,
             current: None,
             revocations: intent,
             synchronization: std::sync::Arc::new(std::sync::RwLock::new(
@@ -208,16 +211,23 @@ impl HistorySync {
             &mut self.revocations,
         )
         .await?;
+        // Repair after refreshing authority, before staging can refuse a
+        // withdrawn object shared with the next publication.
+        crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         let Some(current) = current else {
             return Ok(Input::Unchanged);
         };
         let mut recovered = false;
-        if self.live.is_none() && self.config.directory.join("active.json").exists() {
+        if self.live.is_none()
+            && self.pending.is_none()
+            && self.config.directory.join("active.json").exists()
+        {
             // A failed update does not discard the complete predecessor across
             // restart. Recovery still requires a fresh source snapshot and exact
             // retained anchors; loading this record alone never opens a listener.
             match self.recover(&current).await {
                 Ok(live) => {
+                    self.pending = None;
                     self.live = Some(live);
                     recovered = true;
                 }
@@ -283,9 +293,10 @@ impl HistorySync {
             }
         };
         let load_options = options.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&directory, &load_options))
-                .await??;
+        let set = tokio::task::spawn_blocking(move || {
+            ShardSet::open_for_serving(&directory, &load_options)
+        })
+        .await??;
         if set.map_digest != publication.map_sha256
             || set.map.network != self.config.network
             || set.map.genesis_hash != self.config.genesis_hash
@@ -307,7 +318,8 @@ impl HistorySync {
             Some(archive) => state.with_archive(archive.clone()),
             None => state,
         };
-        state.spawn_prewarm().await?;
+        state.check_required_material()?;
+        let _prewarm = state.spawn_prewarm();
         let live = LiveService::new_required(
             state,
             publication.clone(),
@@ -319,6 +331,10 @@ impl HistorySync {
         live.fence_recovered(
             &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
         )?;
+        // Warming is reusable work, not serving authority. If the publisher
+        // advances during recovery, keep these checked inputs private so the
+        // next fresh update does not warm the saved publication all over again.
+        self.pending = Some(live.clone());
         let checked = live.clone();
         let source = &mut self.source;
         let config = &self.config;
@@ -508,15 +524,25 @@ impl<'a> Acquired<'a> {
             map_sha256: staged.inventory.map_sha256.clone(),
             runtimes: Some(staged.directory.clone()),
         };
-        let initial = owner.live.is_none();
-        let live = if let Some(live) = &owner.live {
+        let cold = owner.live.is_none();
+        // Revocation permanently cancels a snapshot, even when the publisher
+        // later restores its map. Rebuild private data before that recovery.
+        if owner
+            .pending
+            .as_ref()
+            .is_some_and(LiveService::is_invalidated)
+        {
+            owner.pending = None;
+        }
+        let live = if let Some(live) = owner.live.as_ref().or(owner.pending.as_ref()) {
             live.clone()
         } else {
             let loading = std::time::Instant::now();
             let root = staged.directory.clone();
             let options = staged.options.clone();
             let set =
-                tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+                tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+                    .await??;
             let state = ServiceState::build_with_runtimes(
                 set,
                 owner.service,
@@ -529,10 +555,8 @@ impl<'a> Acquired<'a> {
             };
             stages.loading_seconds = loading.elapsed().as_secs_f64();
             let warming = std::time::Instant::now();
-            state.spawn_prewarm().await?;
-            if !state.is_warm() {
-                return Err("required publication failed prewarm".into());
-            }
+            let _prewarm = state.spawn_prewarm();
+            state.check_required_material()?;
             stages.prewarm_seconds = warming.elapsed().as_secs_f64();
             LiveService::new_required(
                 state,
@@ -543,7 +567,8 @@ impl<'a> Acquired<'a> {
                 owner._lock.clone(),
             )?
         };
-        if initial {
+        if cold {
+            owner.pending = Some(live.clone());
             live.fence_recovered(
                 &combined_floor(&owner.config.directory, &mut owner.revocations)?.digests,
             )?;
@@ -553,13 +578,25 @@ impl<'a> Acquired<'a> {
             .as_str()
             .ok_or("owner has no predecessor")?
             .to_string();
+        // An unchanged private bootstrap view still needs its first durable
+        // activation. A changed map uses the normal prepared-candidate path.
+        let initial = cold && expected == publication.map_sha256;
         if !initial {
             let reply = live
                 .command(Command::Prepare {
                     expected: expected.clone(),
                     publication: publication.clone(),
                 })
-                .await?;
+                .await;
+            let reply = match reply {
+                Ok(reply) => reply,
+                Err(error) => {
+                    if cold {
+                        owner.pending = None;
+                    }
+                    return Err(error.into());
+                }
+            };
             stages.loading_seconds = reply["loading_seconds"].as_f64().unwrap_or_default();
             stages.prewarm_seconds = reply["warming_seconds"].as_f64().unwrap_or_default();
         }
@@ -664,9 +701,10 @@ impl Prepared<'_> {
             &staged.directory.join("verified-inventory.json"),
             &staged.inventory,
         )?;
-        live.collect_memory().await?;
-        owner.live = Some(live);
+        owner.pending = None;
+        owner.live = Some(live.clone());
         owner.current = Some(current.clone());
+        collect_disk(&live, &owner.config.directory, &staged.directory).await;
         stages.activation_seconds = activating.elapsed().as_secs_f64();
         Ok(Progress {
             unchanged: false,
@@ -675,6 +713,32 @@ impl Prepared<'_> {
             downloaded_files: staged.downloaded_files,
             stages: Some(stages),
         })
+    }
+}
+/// Disk retention after an activation follows the owner's snapshot policy:
+/// `Collect` keeps the active, retained and candidate trees, three more unused
+/// ones and the catalog revisions they reference; objects that no remaining
+/// tree links are then unlinked. Activation already succeeded, so a failed or
+/// deferred collection is logged and retried after the next activation.
+async fn collect_disk(live: &LiveService, root: &Path, active: &Path) {
+    match live.command(Command::Collect).await {
+        Ok(reply) if reply["source_collection_deferred"] == false => {
+            let (root, linked) = (root.to_path_buf(), active.join("shards.json"));
+            match tokio::task::spawn_blocking(move || {
+                crate::objects::collect_objects(&root, &linked).map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(Ok(Some((files, bytes)))) => {
+                    tracing::info!(files, bytes, "collected unreferenced objects")
+                }
+                Ok(Ok(None)) => tracing::info!("object collection deferred"),
+                Ok(Err(error)) => tracing::warn!(%error, "object collection failed"),
+                Err(error) => tracing::warn!(%error, "object collection task failed"),
+            }
+        }
+        Ok(_) => tracing::info!("publication source collection deferred"),
+        Err(error) => tracing::warn!(%error, "publication disk collection failed"),
     }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]

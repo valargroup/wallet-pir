@@ -2,7 +2,6 @@
 import json
 import hashlib
 import os
-import shlex
 import subprocess
 import sys
 import unittest
@@ -71,9 +70,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.target.serving.binary = self.serving_binary
         self.ex.effects.clear()
         original_run, original_get = self.ex.run, self.ex.http_get
-        original_systemctl = self.ex.systemctl
         self.ex.put('coordinator', '/usr/bin/python3', b'host Python interpreter')
-        self.warm_failure = False
         def run(host, argv, timeout):
             if len(argv) > 2 and argv[1].endswith('/snapshot-warmer.py'):
                 self.ex.runs.append((host, argv))
@@ -91,17 +88,6 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             if len(argv) > 1 and argv[1] == 'verify-filters':
                 raw = self.ex.read(host, argv[argv.index('--shard-dir') + 1] + '/shards.json')
                 return 0, json.dumps({'map_sha256': publisher.sha(json.dumps(json.loads(raw), separators=(',', ':'))), 'schema': 'transparent-shard-v1', 'network': 'main', 'genesis_hash': '0' * 64, 'shards': 1, 'start_height': 0, 'covered_through': 1})
-            if argv[:3] == ['python3', '-c', publisher_https.VERIFY_SNAPSHOT]:
-                argv = [argv[3], '--config', argv[4], '--verify-only']
-            if argv[0].endswith('/pir-query-server') and '--config' in argv and '--check' not in argv:
-                config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
-                sections = ('transparent_history', 'transaction_details')
-                if any(config.get(section, {}).get('settings', {}).get('verify_only') is True
-                       for section in sections):
-                    return 1, 'product verify_only requires the root command flag'
-                if '--verify-only' in argv:
-                    source = config.get('transaction_details', {}).get('settings', {}).get('publication_dir')
-                    return 0, json.dumps({'verified': True, 'map_sha256': self.ex.sha256(host, source + '/txid-shards.json') if source else None})
             if '--check' in argv and argv[0].endswith('/pir-query-server'):
                 config = json.loads(self.ex.read(host, argv[argv.index('--config') + 1]))
                 if 'transparent_history' in config or 'transaction_details' in config:
@@ -113,47 +99,64 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             if ':1830' in url:
                 return 200, '{"ready":true}'
             return original_get(host, url, timeout)
-        def systemctl(host, *args):
-            result = original_systemctl(host, *args)
-            if args[0] == 'start' and args[1].startswith('pir-snapshot-'):
-                self.assertNotEqual(self.ex.probe_unit(host, publisher.UNIT)['exe_sha256'], self.request['release']['binary_sha256'])
-                state = self.ex.host(host).units[args[1]]
-                command = units.exec_start(units.effective([self.ex.read(host, '/etc/systemd/system/' + args[1])]))
-                specification = json.loads(self.ex.read(host, shlex.split(command)[-1]))
-                if self.warm_failure:
-                    state.update(active='failed', pid=0, exe=None)
-                else:
-                    shards = range(specification['identity']['shards']) if 'identity' in specification else [None]
-                    report = {'complete': True, 'map_sha256': specification['map_sha256'],
-                              'binary_sha256': specification['binary_sha256'],
-                              'checks': [{'shard': shard, 'ready': {'ready': True}} for shard in shards]}
-                    self.ex.put(host, specification['work'] + '/report.json', json.dumps(report))
-            return result
         self.addCleanup(patch.stopall)
-        patch.object(self.ex, 'systemctl', side_effect=systemctl).start()
         patch.object(self.ex, 'run', side_effect=run).start()
         patch.object(self.ex, 'http_get', side_effect=get).start()
 
-    def test_runtime_warmup_failure_keeps_the_live_fleet_running(self):
-        before = self.ex.probe_unit('coordinator', publisher.UNIT)
-        self.warm_failure = True
-        with self.assertRaisesRegex(RuntimeError, 'snapshot warmer failed'):
-            self.deploy()
-        self.target.rollback()
-        self.assertEqual(self.target.latest()['phase'], 'rolled-back')
-        self.assertTrue(self.target.latest()['staging_only'])
-        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT), before)
-        self.assertNotIn(('stop', publisher.UNIT), self.ex.effects)
-        self.assertFalse(any(name.startswith('pir-snapshot-') for name in self.ex.host('coordinator').units))
+    def test_cutover_loads_only_the_real_services(self):
+        self.deploy()
+        self.assertNotIn('warm_snapshots', self.target.latest())
+        self.assertFalse(any(args[0] == 'start' and args[1].startswith('pir-snapshot-')
+                             for args in self.ex.effects if len(args) > 1))
+        self.assertFalse(any('--verify-only' in argv or any(value in ('warm', 'capacity') for value in argv)
+                             for _, argv in self.ex.runs))
+
+    def test_recovery_still_removes_a_retained_temporary_validator(self):
+        from wallet_pir_ops.deploy.publisher_warmup import SnapshotPreparation
+        from wallet_pir_ops.deploy.remote import production_lock
+        name = 'pir-snapshot-retained.service'
+        text = '[Service]\nExecStart=/bin/retained-validator\n'
+        self.ex.install('coordinator', name, text,
+                        files={'/bin/retained-validator': b'retained temporary validator'})
+        record = {'unit': name, 'unit_text': text, 'inputs': {}}
+        with production_lock(self.target.inventory, self.ex) as self.target.lock:
+            SnapshotPreparation(self.target.serving).cleanup({'warm_snapshots': {'transparent_history': record}})
+        self.assertEqual(self.ex.probe_unit('coordinator', name)['load_state'], 'not-found')
+
+    def test_changed_cache_helper_is_never_executed_during_reuse(self):
+        from wallet_pir_ops.deploy.publisher_warmup import SnapshotPreparation
+        self.deploy()
+        journal = self.target.latest()
+        script = journal['prepared_snapshots']['transparent_history']['script']
+        self.ex.put('coordinator', script, 'changed helper')
+        self.ex.runs.clear()
+        with self.assertRaisesRegex(DeployError, 'snapshot cache helper changed'):
+            SnapshotPreparation(self.target.serving).seed(journal)
+        self.assertEqual(self.ex.runs, [])
 
     def test_reused_files_do_not_consume_the_additional_staging_allowance(self):
         self.deploy()
-        snapshots = self.target.latest()['warm_snapshots']
+        snapshots = self.target.latest()['prepared_snapshots']
         for record in snapshots.values():
             self.assertEqual(record['retained_runtime_bytes'], 1024)
-            self.assertEqual(record['disk_bytes'] - 1024, self.request['https']['publisher_budget_bytes'])
-        archive = self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']
-        self.assertEqual(snapshots['transparent_history']['verification_cache_bytes'], archive['cache_bytes'])
+
+    def test_smaller_additional_allowance_still_preserves_free_disk(self):
+        self.request['https']['publisher_budget_bytes'] = 16 << 30
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.deploy()
+        self.assertEqual(self.target.latest()['phase'], 'committed')
+
+        self.request['https']['publisher_budget_bytes'] = 1 << 60
+        self.target = self.make_target()
+        with self.assertRaisesRegex(DeployError, '20 percent disk headroom'):
+            self.target.plan()
+
+    def test_additional_allowance_must_be_positive(self):
+        for allowance in (0, -1, True):
+            self.request['https']['publisher_budget_bytes'] = allowance
+            with self.assertRaisesRegex(DeployError, 'positive additional disk allowance'):
+                self.make_target()
 
     def test_archive_memory_budget_cannot_be_an_implicit_native_default(self):
         del self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['cache_bytes']
@@ -325,36 +328,6 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         self.assertEqual((root / 'objects' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
         self.assertFalse((root / 'active.json').exists())
         self.assertFalse((root / 'objects' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
-
-
-class SnapshotReportTests(unittest.TestCase):
-    def test_large_report_survives_the_remote_output_limit(self):
-        import tempfile
-        from pathlib import Path
-        from wallet_pir_ops.deploy import host_helper
-        with tempfile.TemporaryDirectory() as directory:
-            binary = Path(directory) / 'verifier'
-            config = Path(directory) / 'snapshot.json'
-            config.write_text('{}')
-            report = {'verified': True, 'map_sha256': 'a' * 64, 'held': ['b' * 64] * 96}
-            binary.write_text('#!' + sys.executable + '\nimport sys\n'
-                              + 'assert sys.argv[1:] == ' + repr(['--config', str(config), '--verify-only']) + '\n'
-                              + 'print(' + repr(json.dumps(report)) + ')\n'
-                              + 'print("diagnostic", file=sys.stderr)\n')
-            binary.chmod(0o700)
-            reply = host_helper.run(['python3', '-c', publisher_https.VERIFY_SNAPSHOT,
-                                     str(binary), str(config)], 5)
-            self.assertEqual(reply['returncode'], 0, reply['output'])
-            self.assertEqual(json.loads(reply['output']), {'verified': True, 'map_sha256': 'a' * 64})
-            saved = Path(str(config) + '.verification.stdout')
-            self.assertGreater(saved.stat().st_size, 4000)
-            self.assertEqual(json.loads(saved.read_text()), report)
-            self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(Path(str(config) + '.verification.stderr').read_text(), 'diagnostic\n')
-            binary.write_text('#!' + sys.executable + '\nimport sys\nprint(' + repr('{"verified":true}') + ')\nsys.exit(7)\n')
-            reply = host_helper.run(['python3', '-c', publisher_https.VERIFY_SNAPSHOT,
-                                     str(binary), str(config)], 5)
-            self.assertEqual(reply['returncode'], 7)
 
 
 if __name__ == '__main__':

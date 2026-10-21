@@ -184,6 +184,17 @@ impl RecordJournal {
         &self.layout
     }
 
+    pub(crate) fn snapshot(&self) -> Result<JournalSnapshot, StoreError> {
+        self.ensure_healthy()?;
+        JournalSnapshot::read(
+            &self.dir,
+            self.table.ok_or_else(|| {
+                StoreError::Invariant("publication requires a named table".into())
+            })?,
+            self.layout,
+        )
+    }
+
     pub fn tree_size(&self) -> u64 {
         self.manifest.tree_size
     }

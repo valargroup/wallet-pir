@@ -17,7 +17,7 @@ const STREAM_QUEUE_CHUNKS: usize = 2;
 
 /// Best-effort release of clean artifact pages. The file remains durable and
 /// readable; this only avoids charging cold disk copies to the worker cgroup.
-pub(crate) fn release_file_cache(_file: &File) {
+pub fn release_file_cache(_file: &File) {
     #[cfg(target_os = "linux")]
     {
         let result =
@@ -42,7 +42,7 @@ pub struct PublicationArtifact {
 }
 
 impl PublicationArtifact {
-    pub(crate) fn open(path: &Path, length: u64, digest: String) -> io::Result<Self> {
+    pub fn open(path: &Path, length: u64, digest: String) -> io::Result<Self> {
         let file = File::open(path)?;
         if file.metadata()?.len() != length {
             return Err(invalid("persisted CRS has the wrong size"));

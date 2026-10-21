@@ -20,7 +20,6 @@ from full_packages import inventory, commands as full_commands, qualification_fe
 from stage import ROOT, run, install_cancellation, inherited_fds
 
 REGISTRY = ROOT / 'tools/ci/test-matrix.json'
-EXPORT = 'tools/txid/txid-sizing/export/Cargo.toml'
 # Reference arithmetic runs the query server's protocol units and composed-runtime
 # oracles, its protocol contract tests, and the publisher's independent hint,
 # damaged-artifact and encrypted lifecycle checks.
@@ -38,7 +37,6 @@ MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'controller_update_campaign'),
 def variants(groups):
     return {
         'transparent': dict(family='transparent', packages=[*groups['transparent'], *TRANSPARENT_HOSTS], features=TRANSPARENT + qualification_features([*groups['transparent'], *TRANSPARENT_HOSTS])),
-        'export': dict(family='transparent', packages=['txid-sizing-export'], features=[], manifest=EXPORT),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-e2e-tests'],
                           features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-e2e-tests'])),
@@ -116,7 +114,7 @@ def load_plan(registry=None, packages=None):
     registry = json.loads(REGISTRY.read_text()) if registry is None else registry
     contexts = variants(inventory())
     if packages is None:
-        packages = {p['name']: p for data in (metadata(), metadata(EXPORT)) for p in data['packages']}
+        packages = {p['name']: p for data in (metadata(),) for p in data['packages']}
     targets = target_inventory(contexts, packages)
     assigned = [key for shard in registry.values() for key in shard['targets']]
     if len(assigned) != len(set(assigned)):

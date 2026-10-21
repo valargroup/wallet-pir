@@ -22,10 +22,11 @@
 //! replace paths atomically and collection only unlinks, so a runtime keeps its
 //! mapping valid for as long as it lives.
 //!
-//! On restore the checksum covers every byte, the preprocessing is re-validated
-//! by `prepared_native::read`, and the masks it publishes must equal the stored
-//! bytes — so a restored runtime cannot publish masks its preprocessing does
-//! not answer under.
+//! Serving trusts publisher preparation. Downloads check length; their SHA-256
+//! validation follows activation on the query server's background thread;
+//! local restores check size and parse the format without rescanning checksums
+//! or comparing with source rows. The publisher runs the consistency test
+//! before publishing. Separate HTTP smoke tests check answers after startup.
 #[cfg(test)]
 use zakura_pir_client::transparent::native::TableClientExt as _;
 
@@ -115,6 +116,41 @@ impl DiskCache {
         ))
     }
 
+    /// Discard persisted derivatives of withdrawn runtime identities. The
+    /// caller keeps their resident slots unpinned, including snapshot writers,
+    /// until this completes. Unrelated identities remain cached.
+    pub(super) fn invalidate(&self, keys: &[RuntimeKey]) -> io::Result<bool> {
+        let prefixes: std::collections::HashSet<_> = keys
+            .iter()
+            .map(|key| hex::encode(Sha256::digest(key.0.as_bytes())))
+            .collect();
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.directory.join(".lock"))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+        }
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".runtime")
+                && name
+                    .split_once('-')
+                    .is_some_and(|(prefix, _)| prefixes.contains(prefix))
+            {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        File::open(&self.directory)?.sync_all()?;
+        Ok(true)
+    }
+
     /// Bytes before the preprocessing: header, database and published masks.
     fn fixed_bytes(shared: &SharedParams) -> u64 {
         HEADER_BYTES + shared.profile.database_bytes() + shared.scheme().public_bytes as u64
@@ -148,7 +184,36 @@ impl DiskCache {
         shared: &SharedParams,
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
-        let mut file = File::open(self.path(key, shared, source_sha))?;
+        let path = self.path(key, shared, source_sha);
+        Self::load_file_at(
+            crate::verification::open(&path)?,
+            key,
+            shared,
+            source_sha,
+            Some(&path),
+        )
+    }
+
+    fn load_file(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        Self::load_file_at(file, key, shared, source_sha, None)
+    }
+
+    fn load_file_at(
+        mut file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+        path: Option<&Path>,
+    ) -> io::Result<TableRuntime> {
+        file.seek(SeekFrom::Start(0))?;
+        if let Some(path) = path {
+            crate::verification::check_received_size(path, &file)?;
+        }
         let length = file.metadata()?.len();
         if !Self::entry_bytes_range(shared).contains(&length) {
             return Err(invalid("runtime cache length mismatch"));
@@ -159,17 +224,10 @@ impl DiskCache {
             return Err(invalid("runtime cache identity mismatch"));
         }
         let fixed = Self::fixed_bytes(shared);
-        let mut reader = BufReader::with_capacity(
-            1 << 20,
-            HashReader {
-                input: (&file).take(fixed - HEADER_BYTES),
-                hash: Sha256::new(),
-            },
-        );
+        let mut reader = BufReader::with_capacity(1 << 20, (&file).take(fixed - HEADER_BYTES));
         let profile = &shared.profile;
         let db = if shared.transport.is_none() {
-            // Interleaved bytes, restored as stored; self_check and the
-            // checksum cover them.
+            // The publisher checked these interleaved bytes before publication.
             let mut db = vec![0u8; profile.rows * profile.cols];
             reader.read_exact(&mut db)?;
             super::Database::Bytes(db)
@@ -178,18 +236,14 @@ impl DiskCache {
         };
         let mut public = vec![0u8; shared.scheme().public_bytes];
         reader.read_exact(&mut public)?;
-        let mut hash = reader.into_inner().hash;
+        drop(reader);
         // SAFETY: the entry's inode is never modified after its atomic rename;
         // writers replace paths and collection only unlinks, which leaves an
-        // existing mapping valid. The mapped bytes are checksummed and then
-        // re-validated by `prepared_native::read` before anything uses them.
+        // existing mapping valid. The format is parsed by `prepared_native::read`
+        // without rehashing the persisted body.
         let map = unsafe { memmap2::Mmap::map(&file) }?;
         if map.len() as u64 != length {
             return Err(invalid("runtime cache changed while restoring"));
-        }
-        hash.update(&map[fixed as usize..]);
-        if hash.finalize().as_slice() != &header[32..] {
-            return Err(invalid("runtime cache checksum mismatch"));
         }
         let preprocessed = reinspiring::prepared_native::read(
             map,
@@ -209,8 +263,6 @@ impl DiskCache {
         Ok(runtime)
     }
 
-    /// A 16-bit table's column-major u16 database, fed straight into the
-    /// server so it is never held twice.
     fn read_wide(
         shared: &SharedParams,
         reader: &mut impl Read,
@@ -350,7 +402,7 @@ impl DiskCache {
 
     /// Required additional persistent bytes and one atomic-write temporary.
     /// Source tables have already passed ShardSet verification. Cache contents
-    /// are still checksum-validated on restore; a length in range is only sizing.
+    /// are parsed on restore without rescanning their content checksum.
     ///
     /// Entries are charged as [`Self::save`] leaves them: each missing entry at
     /// its planned four-byte-word length, plus the bound's excess once, for the
@@ -510,6 +562,21 @@ impl DiskCache {
 pub struct ShippedRuntimes(DiskCache, bool);
 
 impl ShippedRuntimes {
+    /// Check local material without loading it or hashing its body.
+    pub fn check_size(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<()> {
+        let path = self.path(key, shared, source_sha);
+        let file = crate::verification::open(&path)?;
+        if !DiskCache::entry_bytes_range(shared).contains(&file.metadata()?.len()) {
+            return Err(invalid("runtime cache length mismatch"));
+        }
+        crate::verification::check_received_size(&path, &file)
+    }
+
     pub fn new(directory: PathBuf) -> Self {
         Self(
             DiskCache {
@@ -556,11 +623,32 @@ impl ShippedRuntimes {
         self.0.load(key, shared, source_sha)
     }
 
+    /// [`Self::load`] from a handle the caller opened at [`Self::path`], so
+    /// the loaded bytes are those of the inode the caller already read.
+    pub fn load_file(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        DiskCache::load_file(file, key, shared, source_sha)
+    }
+
+    pub(crate) fn load_received_file(
+        path: &Path,
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        DiskCache::load_file_at(file, key, shared, source_sha, Some(path))
+    }
+
     /// The length of the completed file this directory holds for `key`, if
     /// it is one a publisher may link into a later publication: a renamed
     /// entry (never a `.partial`), whose length is one a valid entry can
     /// have and whose header names this exact identity. The body is not
-    /// read; every worker that loads the file checksums and self-checks it.
+    /// read; the publisher validates material before publication.
     pub fn completed(
         &self,
         key: &RuntimeKey,
@@ -593,17 +681,6 @@ impl ShippedRuntimes {
     }
 }
 
-struct HashReader<R> {
-    input: R,
-    hash: Sha256,
-}
-impl<R: Read> Read for HashReader<R> {
-    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        let n = self.input.read(bytes)?;
-        self.hash.update(&bytes[..n]);
-        Ok(n)
-    }
-}
 /// Limit dirty data produced by this optional snapshot writer before waiting
 /// for writeback. Otherwise an entire runtime can accumulate before its final
 /// fsync and interfere with the small, latency-sensitive publication record.
@@ -896,7 +973,10 @@ mod tests {
             let mut file = OpenOptions::new().write(true).open(&path).unwrap();
             file.seek(SeekFrom::End(-32)).unwrap();
             file.write_all(&[0; 32]).unwrap();
-            assert!(disk.load(&key, &shared, &source_sha).is_err());
+            assert!(
+                disk.load(&key, &shared, &source_sha).is_ok(),
+                "local reload does not rehash content"
+            );
             file.set_len(16).unwrap();
             assert!(disk.load(&key, &shared, &source_sha).is_err());
             // Replace a rejected entry atomically; abandoned partial is recoverable.
@@ -1290,6 +1370,34 @@ mod shipped_tests {
         ShippedRuntimes::new(path)
     }
 
+    #[test]
+    fn local_runtime_checks_only_size_without_a_semantic_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 3, 1);
+        let shipped = candidate(dir.path(), "candidate");
+        let runtime = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &runtime)
+            .unwrap();
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[HEADER_BYTES as usize] ^= 1;
+        fs::write(&path, &bytes).unwrap();
+        shipped
+            .check_size(&s.key, &s.shared, s.source.sha256())
+            .unwrap();
+        // Loading must not rehash the body either. The publisher owns correctness.
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_ok());
+        fs::write(&path, b"short").unwrap();
+        assert!(shipped
+            .check_size(&s.key, &s.shared, s.source.sha256())
+            .is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(shipped
+            .check_size(&s.key, &s.shared, s.source.sha256())
+            .is_err());
+    }
+
     /// A runtime loaded from a shipped file is the runtime this worker would
     /// have built: the same published masks, digest and epoch, byte-identical
     /// answers and correctly decoded rows, for a full directory and a partly
@@ -1361,6 +1469,41 @@ mod shipped_tests {
         }
     }
 
+    /// A load from an open handle checks that inode, not whatever the path
+    /// names by then: a publisher that hashed a corrupt file is refused even
+    /// if a valid one replaces it before the check, and the reverse holds.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_handle_load_checks_the_opened_inode_not_its_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        let shipped = candidate(dir.path(), "replaced");
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &local)
+            .unwrap();
+        let valid = fs::read(&path).unwrap();
+        let mut corrupt = valid.clone();
+        corrupt[0] ^= 0x40;
+        let replace = |bytes: &[u8]| {
+            let staged = path.with_extension("staged");
+            fs::write(&staged, bytes).unwrap();
+            fs::rename(&staged, &path).unwrap();
+        };
+        let load = |file| ShippedRuntimes::load_file(file, &s.key, &s.shared, s.source.sha256());
+
+        replace(&corrupt);
+        let opened = File::open(&path).unwrap();
+        replace(&valid);
+        assert!(load(opened).is_err());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_ok());
+
+        let opened = File::open(&path).unwrap();
+        replace(&corrupt);
+        assert!(load(opened).is_ok());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_err());
+    }
+
     /// Missing, truncated, corrupted and wrongly named shipped files are all
     /// refused. The self-check test exercises the common counted fallback;
     /// this test also distinguishes ordinary builds without an offered file.
@@ -1395,8 +1538,7 @@ mod shipped_tests {
                         .write(&s.key, &s.shared, s.source.sha256(), &local)
                         .unwrap();
                     let mut bytes = fs::read(&path).unwrap();
-                    let middle = bytes.len() / 2;
-                    bytes[middle] ^= 0x40;
+                    bytes[0] ^= 0x40;
                     fs::write(&path, bytes).unwrap();
                 }),
             ),
@@ -1468,73 +1610,20 @@ mod shipped_tests {
         assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
     }
 
-    /// The disk format's own checks cannot tell whether a database matches
-    /// its preprocessing, or is the segment's at all. The self-check can: a
-    /// file holding rows A's database with rows B's preprocessing, saved
-    /// under A's identity, loads, but fails the self-check and is replaced by
-    /// a local build. A consistent runtime of B under A's name is also refused;
-    /// qualification repeats the rebuild for that case.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn the_self_check_refuses_a_database_its_preprocessing_was_not_built_from() {
+    #[test]
+    fn publisher_self_check_rejects_inconsistent_preparation() {
         let dir = tempfile::tempdir().unwrap();
         let a = segment(dir.path(), Table::TxDirectory, 2_048, 4);
         let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
         let from_a = crate::runtime::tests::prepared_fixture(&a.shared, &a.rows).unwrap();
-        let expected = from_a.public_params.clone();
-        // The matching runtime is checked before its parts are moved into the forgery.
-        assert!(from_a.self_check(&a.shared, &a.rows).unwrap() < 2_048);
+        assert!(from_a.self_check(&a.shared, &a.rows).is_ok());
         let from_b = crate::runtime::tests::prepared_fixture(&b.shared, &b.rows).unwrap();
-        // Other rows while that runtime is still whole; forging moves its preprocessing.
-        expect_self_check_fallback(dir.path(), "other rows", &a, &from_b, &expected, true).await;
+        assert!(from_b.self_check(&a.shared, &a.rows).is_err());
         let TableRuntime { native, db, .. } = from_a;
         let forged = TableRuntime::assemble(native, db, from_b.preprocessed).unwrap();
-        expect_self_check_fallback(dir.path(), "forged", &a, &forged, &expected, false).await;
+        assert!(forged.self_check(&a.shared, &a.rows).is_err());
     }
 
-    async fn expect_self_check_fallback(
-        dir: &Path,
-        name: &str,
-        segment: &Segment,
-        runtime: &TableRuntime,
-        expected: &[u8],
-        database_differs: bool,
-    ) {
-        let a = segment;
-        let shipped = candidate(dir, name);
-        shipped
-            .write(&a.key, &a.shared, a.source.sha256(), runtime)
-            .unwrap();
-        let loaded = shipped.load(&a.key, &a.shared, a.source.sha256()).unwrap();
-        let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
-        assert_eq!(
-            refused.contains("differs from the segment"),
-            database_differs,
-            "{name}: {refused}"
-        );
-        if database_differs && !cfg!(feature = "qualification-tests") {
-            return;
-        }
-        let metrics = Arc::new(Metrics::default());
-        let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
-        let (handle, produced) = cache
-            .get_from(
-                a.key.clone(),
-                a.shared.clone(),
-                a.source.clone(),
-                Some(shipped),
-            )
-            .await
-            .unwrap();
-        assert_eq!(produced, Produced::Fallback, "{name}");
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-        assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
-        assert_eq!(Metrics::get(&metrics.builds), 1);
-        assert_eq!(handle.get().public_params, expected);
-    }
-
-    /// A history segment of `table` at `decoupled-2k-8k` whose first
-    /// `filled` rows hold bytes drawn from `seed`, keyed as a page shard's
-    /// or a directory's runtime is.
     fn history_segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
         use transparent_shard::layout::DECOUPLED_2K_8K;
         let (geometry, table) = super::super::tests::fixture_shape(&DECOUPLED_2K_8K, table);
@@ -1684,42 +1773,6 @@ mod shipped_tests {
         }
     }
 
-    /// A shipped file is never trusted over its segment: a source changed
-    /// since it was verified fails the request as a build would, and is not
-    /// counted as a refused file.
-    #[cfg(feature = "qualification-tests")]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_corrupt_source_fails_even_with_a_valid_shipped_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Pages, 1_200, 4);
-        let shipped = candidate(dir.path(), "candidate");
-        shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
-            )
-            .unwrap();
-        let mut corrupt = s.rows.clone();
-        corrupt[17] ^= 1;
-        fs::write(s.source.path(), &corrupt).unwrap();
-        let metrics = Arc::new(Metrics::default());
-        let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
-        let result = cache
-            .get_from(
-                s.key.clone(),
-                s.shared.clone(),
-                s.source.clone(),
-                Some(shipped),
-            )
-            .await;
-        assert!(matches!(result, Err(crate::runtime::CacheError::Failed(_))));
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
-        assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
-        assert_eq!(cache.resident_bytes(), 0);
-    }
-
     /// Concurrent requests and a prewarm for one cold runtime are one
     /// production operation: one shipped load, one handle, no build.
     #[cfg(feature = "qualification-tests")]
@@ -1770,235 +1823,5 @@ mod shipped_tests {
         assert_eq!(Metrics::get(&metrics.shipped_loads), 1);
         assert_eq!(Metrics::get(&metrics.builds), 0);
         assert_eq!(cache.entries(), 1);
-    }
-
-    /// Replaces a segment's file with a FIFO that holds its next reader
-    /// until the returned sender is used: the test then knows a load of that
-    /// segment is in progress. Once released, the rows are written and the
-    /// FIFO is replaced by the plain file again.
-    #[cfg(all(unix, feature = "qualification-tests"))]
-    fn held_source(
-        source: &SegmentSource,
-        rows: Vec<u8>,
-    ) -> (
-        tokio::sync::oneshot::Receiver<()>,
-        std::sync::mpsc::Sender<()>,
-        std::thread::JoinHandle<()>,
-    ) {
-        let path = source.path().to_path_buf();
-        fs::remove_file(&path).unwrap();
-        assert!(std::process::Command::new("mkfifo")
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success());
-        let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-        let writer = std::thread::spawn(move || {
-            // Opening for writing waits for the loader to open for reading.
-            let mut file = File::create(&path).unwrap();
-            let _ = opened_tx.send(());
-            let _ = release_rx.recv();
-            file.write_all(&rows).unwrap();
-            drop(file);
-            fs::remove_file(&path).unwrap();
-            fs::write(&path, &rows).unwrap();
-        });
-        (opened_rx, release_tx, writer)
-    }
-
-    /// A shipped file refused by an operation that then cannot be admitted
-    /// to restore or build is counted once: the operation's admission retry
-    /// goes straight to restore or build without loading or checking the
-    /// file again, and reports a fallback. A later operation for the same
-    /// key, after the runtime was produced and evicted, is a new operation
-    /// and tries what is offered afresh.
-    #[cfg(all(unix, feature = "qualification-tests"))]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_refusal_is_counted_once_across_admission_retries() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Pages, 700, 6);
-        let other = history_segment(dir.path(), Table::Pages, 700, 9);
-        let shipped = candidate(dir.path(), "candidate");
-        // A consistent runtime of other rows under this segment's identity:
-        // it loads, and fails the self-check.
-        shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &crate::runtime::tests::prepared_fixture(&other.shared, &other.rows).unwrap(),
-            )
-            .unwrap();
-        let disk = DiskCache::new(dir.path().join("cache"), s.shared.reserved_bytes() * 4).unwrap();
-        let metrics = Arc::new(Metrics::default());
-        let cache = Arc::new(
-            RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone())
-                .with_disk(Some(disk)),
-        );
-        // Three of the four restore slots are held, so the operation can be
-        // stopped between refusing the file and restoring.
-        let mut slots: Vec<_> = (0..3)
-            .map(|_| cache.restore_slots.clone().try_acquire_owned().unwrap())
-            .collect();
-        let (opened, release, writer) = held_source(&s.source, s.rows.clone());
-        let first = {
-            let (cache, key, shared, source, shipped) = (
-                cache.clone(),
-                s.key.clone(),
-                s.shared.clone(),
-                s.source.clone(),
-                shipped.clone(),
-            );
-            tokio::spawn(async move { cache.get_from(key, shared, source, Some(shipped)).await })
-        };
-        // The file is loaded, its slot released, and its self-check is
-        // reading the segment: take the last slot, then let the check fail.
-        tokio::time::timeout(std::time::Duration::from_secs(30), opened)
-            .await
-            .unwrap()
-            .unwrap();
-        slots.push(cache.restore_slots.clone().try_acquire_owned().unwrap());
-        release.send(()).unwrap();
-        writer.join().unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            while Metrics::get(&metrics.shipped_fallbacks) == 0
-                || cache.work_memory.reserved_bytes() != 0
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .expect("the file was refused");
-        // Memory pressure arrives while the operation waits to restore:
-        // nothing more can be reserved.
-        let pressure = cache.work_memory.reserve_at(u64::MAX, None).unwrap();
-        drop(slots);
-        let refused = first.await.unwrap();
-        assert!(matches!(
-            refused,
-            Err(crate::runtime::CacheError::Overloaded)
-        ));
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-        assert_eq!(
-            cache.resident_bytes(),
-            0,
-            "a refused operation holds nothing"
-        );
-        drop(pressure);
-        // The admission retry: loading and checking the same file again
-        // would refuse, and count, it a second time.
-        let (handle, produced) = crate::runtime::prewarm::retry(
-            &std::sync::atomic::AtomicBool::new(false),
-            std::time::Duration::from_secs(30),
-            || {
-                cache.get_from(
-                    s.key.clone(),
-                    s.shared.clone(),
-                    s.source.clone(),
-                    Some(shipped.clone()),
-                )
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(produced, Produced::Fallback);
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-        assert_eq!(Metrics::get(&metrics.builds), 1);
-        assert_eq!(Metrics::get(&metrics.shipped_loads), 0);
-        assert!(cache.refused_shipped.lock().unwrap().is_empty());
-        let expected = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
-        assert_eq!(handle.get().public_params, expected.public_params);
-        // A new production operation, once the runtime is gone, tries the
-        // offered file afresh: a valid one now.
-        drop(handle);
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            while Metrics::get(&metrics.disk_save_pending) != 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-        cache.evict_unpinned();
-        let _ = cache.prune_disk(&Default::default());
-        shipped
-            .write(&s.key, &s.shared, s.source.sha256(), &expected)
-            .unwrap();
-        let (_, produced) = cache
-            .get_from(
-                s.key.clone(),
-                s.shared.clone(),
-                s.source.clone(),
-                Some(shipped),
-            )
-            .await
-            .unwrap();
-        assert!(matches!(produced, Produced::Shipped { .. }), "{produced:?}");
-        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
-    }
-
-    /// Cancelling the caller of a shipped load in progress releases nothing
-    /// the load still uses: once the file is read its read slot is free for
-    /// the next file, while its memory reservation and the cache's charge
-    /// for its key stay held until the self-check's blocking read ends.
-    #[cfg(all(unix, feature = "qualification-tests"))]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_cancelled_shipped_load_keeps_its_reservations_until_it_ends() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = history_segment(dir.path(), Table::Directory, 300, 7);
-        let shipped = candidate(dir.path(), "candidate");
-        shipped
-            .write(
-                &s.key,
-                &s.shared,
-                s.source.sha256(),
-                &crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap(),
-            )
-            .unwrap();
-        let metrics = Arc::new(Metrics::default());
-        let cache = Arc::new(RuntimeCache::new(
-            s.shared.reserved_bytes() * 2,
-            1,
-            metrics.clone(),
-        ));
-        let (opened, release, writer) = held_source(&s.source, s.rows.clone());
-        let request = {
-            let (cache, key, shared, source, shipped) = (
-                cache.clone(),
-                s.key.clone(),
-                s.shared.clone(),
-                s.source.clone(),
-                shipped.clone(),
-            );
-            tokio::spawn(async move { cache.get_from(key, shared, source, Some(shipped)).await })
-        };
-        tokio::time::timeout(std::time::Duration::from_secs(30), opened)
-            .await
-            .unwrap()
-            .unwrap();
-        request.abort();
-        assert!(matches!(request.await, Err(error) if error.is_cancelled()));
-        let reserved = s.shared.reserved_bytes();
-        assert_eq!(
-            cache.restore_slots.available_permits(),
-            1,
-            "the read slot is free"
-        );
-        assert_eq!(
-            cache.work_memory.reserved_bytes(),
-            reserved * 2,
-            "its memory"
-        );
-        assert_eq!(cache.resident_bytes(), reserved, "the key's charge");
-        release.send(()).unwrap();
-        writer.join().unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            while cache.work_memory.reserved_bytes() != 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the ended load released its reservation");
-        assert_eq!(Metrics::get(&metrics.shipped_loads), 1);
     }
 }

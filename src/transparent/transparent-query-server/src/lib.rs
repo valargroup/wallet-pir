@@ -28,11 +28,13 @@ pub mod config;
 pub mod control;
 #[cfg(feature = "transparent-history")]
 pub mod history;
+mod objects;
 pub mod preparation;
 pub mod request;
 #[cfg(feature = "transparent-history")]
 pub mod routing;
 mod source;
+mod validation;
 pub use source::{discover, is_incompatible};
 #[cfg(feature = "transparent-detail")]
 pub mod tx_detail;

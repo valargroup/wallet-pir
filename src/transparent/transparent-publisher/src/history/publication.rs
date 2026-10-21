@@ -193,6 +193,22 @@ pub fn publish_with(
     base_parent: BlockHash,
     policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
 ) -> Result<transparent_filter::ShardMap, BoxError> {
+    publish_until(cli, store, base_parent, policy_of, &|| false)
+}
+
+/// [`publish_with`], asking `stop` before each journal block and before
+/// staging or publishing each shard that block completes. A stop returns
+/// [`transparent_shared::publication::Stopped`] before the map is written,
+/// so the output never names a set; a shard already being written finishes
+/// its files first.
+pub fn publish_until(
+    cli: &PublishOptions,
+    store: &impl Journal,
+    base_parent: BlockHash,
+    policy_of: &dyn Fn(&Geometry) -> DecoupledPolicy,
+    stop: &dyn Fn() -> bool,
+) -> Result<transparent_filter::ShardMap, BoxError> {
+    let stopped = || -> BoxError { Box::new(transparent_shared::publication::Stopped) };
     if store.journal_version() != 3 {
         return Err("v12 publication requires a v3 journal with transaction metadata".into());
     }
@@ -331,6 +347,9 @@ pub fn publish_with(
         if entry.start_height != resume_height {
             return Err("previous map is not contiguous".into());
         }
+        if stop() {
+            return Err(stopped());
+        }
         link_revision(previous_dir, &cli.output, &entry.manifest_digest)?;
         entries.push(entry.clone());
         resume_height = entry.end_height + 1;
@@ -347,6 +366,16 @@ pub fn publish_with(
     if reorg && previous_dir == &cli.output {
         return Err("reorg replacement requires a separate output directory".into());
     }
+    // Every revision a shard has ever been published under, carried across
+    // reorgs and into every later output directory. A reorg drops the changed
+    // suffix from `previous`, so without this its replacement would restart
+    // at revision 0 and reuse a number a wallet already accepted for other
+    // content, which it must withdraw as an equivocation.
+    let mut floor = revision_floor(previous_dir)?;
+    for entry in previous.values() {
+        raise_floor(&mut floor, entry.shard_id, entry.revision);
+    }
+    let highest_revision = floor.values().copied().max();
     if reorg {
         previous.retain(|id, _| *id < entries.len() as u64);
     }
@@ -393,6 +422,9 @@ pub fn publish_with(
                          parent_manifest_digest: &mut String|
      -> Result<(), BoxError> {
         for item in built {
+            if stop() {
+                return Err(stopped());
+            }
             match item {
                 Built::Child(child) => {
                     let geometry = geometry_at(child.start_height);
@@ -411,6 +443,7 @@ pub fn publish_with(
                         cli,
                         store,
                         &previous,
+                        highest_revision,
                         previous_dir,
                         &staging,
                         built,
@@ -430,6 +463,9 @@ pub fn publish_with(
     };
 
     for height in resume_height..=covered {
+        if stop() {
+            return Err(stopped());
+        }
         // The tiers divide at a height, so the archive directory shard is
         // closed before the first recent block is offered to anything. A
         // shard's rows are addressed at one row count; one spanning the change
@@ -461,6 +497,9 @@ pub fn publish_with(
             &mut parent_block_hash,
             &mut parent_manifest_digest,
         )?;
+    }
+    if stop() {
+        return Err(stopped());
     }
     let built = stream.finish(&terminal)?;
     publish_built(
@@ -510,6 +549,15 @@ pub fn publish_with(
     }
     map.validate_supported()
         .map_err(|error| format!("the published map is malformed: {error}"))?;
+    // Recorded before the map, so no set is ever served whose revisions the
+    // next publication cannot see.
+    for entry in &map.shards {
+        raise_floor(&mut floor, entry.shard_id, entry.revision);
+    }
+    write_atomic(
+        &cli.output.join(REVISION_FLOOR),
+        &serde_json::to_vec_pretty(&floor)?,
+    )?;
     // Written last, and atomically. The map is what names every shard, so a
     // truncated one is a set that cannot be loaded at all; and until it names
     // them, the shard directories beside it are simply not part of any set.
@@ -636,6 +684,7 @@ fn publish_directory(
     cli: &PublishOptions,
     store: &impl Journal,
     previous: &std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry>,
+    highest_revision: Option<u32>,
     previous_dir: &Path,
     staging: &Path,
     built: BuiltDirectory,
@@ -756,8 +805,31 @@ fn publish_directory(
         _ => wanted_choice,
     };
     let published = published.map(|(previous, _)| previous);
-    let (revision, supersedes) =
-        PublishedRevision::next(built.shard_id, published.as_ref(), reproduced)?;
+    let (revision, supersedes) = if reproduced {
+        PublishedRevision::next(built.shard_id, published.as_ref(), reproduced)?
+    } else {
+        // Wallet sources follow geometry and start height, not shard numbers.
+        // A reorg can change sealing boundaries and renumber a later source,
+        // so new content must exceed the history of every shard number.
+        let highest = published
+            .as_ref()
+            .map(|p| p.revision)
+            .into_iter()
+            .chain(highest_revision)
+            .max();
+        let revision = match highest {
+            None => 0,
+            Some(highest) => highest.checked_add(1).ok_or_else(|| {
+                format!(
+                    "shard {} has exhausted its revision numbers at {highest}",
+                    built.shard_id
+                )
+            })?,
+        };
+        // Check exhaustion before the helper increments the predecessor.
+        let (_, supersedes) = PublishedRevision::next(built.shard_id, published.as_ref(), false)?;
+        (revision, supersedes)
+    };
     let manifest = make(revision, supersedes, with_choice);
     // The builder and sealer agreed on every page shard; this is the shape
     // every loader and wallet checks, so a set that fails it is not written.
@@ -835,6 +907,64 @@ fn publish_directory(
         revision,
         sealed: manifest.sealed,
     })
+}
+
+/// The highest revision published under each shard number.
+///
+/// Allocation uses the maximum across all numbers because reorgs can renumber
+/// the geometry/start-height sources whose revisions wallets remember.
+pub type RevisionFloor = std::collections::BTreeMap<u64, u32>;
+
+/// The file beside a publication's map that records its [`RevisionFloor`].
+///
+/// Not protocol data: wallets never read it. Each publication writes the floor
+/// it inherited raised by what it published, so the record only ever rises. An
+/// operator recovering from a publication that predates it may write one into
+/// the previous directory, holding the highest revision any retained
+/// publication shows for each shard; it is only ever raised from there.
+pub const REVISION_FLOOR: &str = "revision-floor.json";
+
+fn raise_floor(floor: &mut RevisionFloor, shard_id: u64, revision: u32) {
+    let current = floor.entry(shard_id).or_insert(revision);
+    *current = (*current).max(revision);
+}
+
+/// The floor `dir` records, raised by every manifest retained in it.
+///
+/// A publication from before the floor was recorded still holds its
+/// superseded tails, so its manifests are the evidence the floor starts from;
+/// a recorded floor is raised by them too, so it never sits below a revision
+/// the directory still holds. A manifest that is present but cannot be read
+/// or parsed is refused rather than skipped: it may be the highest revision.
+pub fn revision_floor(dir: &Path) -> Result<RevisionFloor, BoxError> {
+    let recorded = dir.join(REVISION_FLOOR);
+    let mut floor = match std::fs::read(&recorded) {
+        Ok(raw) => serde_json::from_slice::<RevisionFloor>(&raw)
+            .map_err(|error| format!("{}: {error}", recorded.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => RevisionFloor::new(),
+        Err(error) => return Err(format!("{}: {error}", recorded.display()).into()),
+    };
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(floor),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let path = entry.path().join("manifest.json");
+        let raw = match std::fs::read(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display()).into()),
+        };
+        let manifest = serde_json::from_slice::<ShardManifest>(&raw)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        raise_floor(&mut floor, manifest.shard_id, manifest.revision);
+    }
+    Ok(floor)
 }
 
 /// SHA-256 of a file, streamed.
@@ -1134,6 +1264,264 @@ mod tests {
         assert_eq!(after, repeated);
         transparent_shared::history::shardset::ShardSet::open(&b, 3).unwrap();
     }
+    /// A stop during a build ends it between units of work, before the map
+    /// names a set; publishing again without a stop completes the same set.
+    #[test]
+    fn a_stopped_build_writes_no_map_and_can_resume() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let out = root.path().join("out");
+        let policy = DecoupledPolicy::for_geometry;
+        // Already requested: no block is read.
+        let asked = std::cell::Cell::new(0);
+        let error = publish_until(&options(&out, None), &journal, zero, &policy, &|| {
+            asked.set(asked.get() + 1);
+            true
+        })
+        .unwrap_err();
+        assert!(error.is::<transparent_shared::publication::Stopped>());
+        assert_eq!(asked.get(), 1);
+        // Requested after the second unit.
+        let asked = std::cell::Cell::new(0);
+        let error = publish_until(&options(&out, None), &journal, zero, &policy, &|| {
+            asked.set(asked.get() + 1);
+            asked.get() > 2
+        })
+        .unwrap_err();
+        assert!(error.is::<transparent_shared::publication::Stopped>());
+        assert_eq!(asked.get(), 3);
+        assert!(!out.join("shards.json").exists());
+        let resumed = publish_with(&options(&out, None), &journal, zero, &policy).unwrap();
+        let reference = publish(&options(&root.path().join("full"), None), &journal, zero).unwrap();
+        assert_eq!(resumed, reference);
+        transparent_shared::history::shardset::ShardSet::open(&out, 3).unwrap();
+    }
+    /// A reorg of the tail never reuses a revision a wallet may already hold:
+    /// its replacement, and every later growth, numbers above every revision
+    /// the shard was published under, across output directories.
+    #[test]
+    fn a_tail_reorg_never_reuses_a_revision() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let journal = |name: &str, tip: u64, fork: Option<u64>| {
+            let mut store = EventStore::open(root.path().join(name), &"00".repeat(32), 0).unwrap();
+            for h in 0..=tip {
+                let forked = if fork.is_some_and(|f| h >= f) {
+                    0x80
+                } else {
+                    0
+                };
+                let tag = forked | (h as u8 + 1);
+                block(&mut store, h, tag);
+            }
+            store
+        };
+        let dir = |name: &str| root.path().join(name);
+        let mut published = Vec::new();
+        let mut previous: Option<PathBuf> = None;
+        for tip in 3..=6 {
+            let name = format!("p{tip}");
+            let map = publish(
+                &options(&dir(&name), previous.as_deref()),
+                &journal(&format!("j{tip}"), tip, None),
+                zero,
+            )
+            .unwrap();
+            published.push(map.shards.last().unwrap().clone());
+            previous = Some(dir(&name));
+        }
+        assert_eq!(published.last().unwrap().revision, 3);
+        // One block replaced at the tip.
+        let reorged = journal("fork", 6, Some(6));
+        let replaced = publish(&options(&dir("r"), previous.as_deref()), &reorged, zero).unwrap();
+        let tail = replaced.shards.last().unwrap();
+        assert_eq!(tail.shard_id, published[0].shard_id);
+        assert_eq!(tail.end_height, 6);
+        assert_eq!(tail.revision, 4, "a reorg continues above revision 3");
+        assert_eq!(read_tail(&dir("r"), tail).supersedes, "");
+        transparent_shared::history::shardset::ShardSet::open(&dir("r"), 3).unwrap();
+        // A publication continuing the replacement keeps rising.
+        let mut grown = journal("fork2", 6, Some(6));
+        block(&mut grown, 7, 0x88);
+        let next = publish(&options(&dir("n"), Some(&dir("r"))), &grown, zero).unwrap();
+        assert_eq!(next.shards.last().unwrap().revision, 5);
+        assert_eq!(revision_floor(&dir("n")).unwrap()[&tail.shard_id], 5);
+    }
+
+    #[test]
+    fn a_reorg_that_renumbers_a_source_exceeds_its_old_revisions() {
+        use transparent_shard::seal::Limit;
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let policy = |geometry: &Geometry| DecoupledPolicy {
+            scripts: Limit::new(2, 2).unwrap(),
+            ..DecoupledPolicy::for_geometry(geometry)
+        };
+        let mut original = EventStore::open(root.path().join("old"), &"00".repeat(32), 0).unwrap();
+        for (height, tag) in [1, 1, 1, 2, 5].into_iter().enumerate() {
+            block(&mut original, height as u64, tag);
+        }
+        let options = |name: &str, previous: Option<&Path>| PublishOptions {
+            archive_geometry: None,
+            recent_from: None,
+            ..options(&root.path().join(name), previous)
+        };
+        let first = root.path().join("first");
+        let initial = publish_with(&options("first", None), &original, zero, &policy).unwrap();
+        block(&mut original, 5, 5);
+        let previous = root.path().join("previous");
+        let grown =
+            publish_with(&options("previous", Some(&first)), &original, zero, &policy).unwrap();
+        let old_tail = grown.shards.last().unwrap();
+        assert_eq!(old_tail.start_height, 4);
+        assert_eq!(old_tail.shard_id, 1);
+        assert!(old_tail.revision > initial.shards.last().unwrap().revision);
+
+        let mut fork = EventStore::open(root.path().join("fork"), &"00".repeat(32), 0).unwrap();
+        for (height, tag) in [1, 2, 3, 4, 5, 5].into_iter().enumerate() {
+            block(&mut fork, height as u64, tag);
+        }
+        let repaired =
+            publish_with(&options("repaired", Some(&previous)), &fork, zero, &policy).unwrap();
+        let new_tail = repaired.shards.last().unwrap();
+        assert_eq!(new_tail.start_height, old_tail.start_height);
+        assert_eq!(new_tail.geometry, old_tail.geometry);
+        assert_eq!(new_tail.shard_id, 2);
+        assert!(new_tail.revision > old_tail.revision);
+    }
+
+    #[test]
+    fn an_exhausted_previous_manifest_returns_an_error_before_incrementing() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let previous = root.path().join("previous");
+        let mut map = publish(&options(&previous, None), &journal, zero).unwrap();
+        let entry = map.shards.last_mut().unwrap();
+        let mut manifest = read_tail(&previous, entry);
+        manifest.revision = u32::MAX;
+        let digest = manifest.digest();
+        link_revision(&previous, &root.path().join("copy"), &entry.manifest_digest).unwrap();
+        std::fs::rename(
+            root.path().join("copy").join(&entry.manifest_digest),
+            previous.join(&digest),
+        )
+        .unwrap();
+        std::fs::write(
+            previous.join(&digest).join("manifest.json"),
+            manifest.canonical_bytes(),
+        )
+        .unwrap();
+        entry.revision = u32::MAX;
+        entry.manifest_digest = digest;
+        std::fs::write(
+            previous.join("shards.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        block(&mut journal, 4, 5);
+        let error = publish(
+            &options(&root.path().join("next"), Some(&previous)),
+            &journal,
+            zero,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("exhausted"), "{error}");
+        assert!(!root.path().join("next/shards.json").exists());
+    }
+
+    /// An operator-recorded floor from retained evidence is honoured and
+    /// never lowered, and an exhausted revision space is refused.
+    #[test]
+    fn a_recorded_floor_is_raised_never_lowered_and_overflow_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let mut store = EventStore::open(root.path().join("j"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut store, h, h as u8 + 1);
+        }
+        let a = root.path().join("a");
+        let first = publish(&options(&a, None), &store, zero).unwrap();
+        let shard = first.shards.last().unwrap().shard_id;
+        let record = |floor: RevisionFloor| {
+            std::fs::write(a.join(REVISION_FLOOR), serde_json::to_vec(&floor).unwrap()).unwrap()
+        };
+        record(RevisionFloor::from([(shard, 2309)]));
+        block(&mut store, 4, 5);
+        let b = root.path().join("b");
+        let grown = publish(&options(&b, Some(&a)), &store, zero).unwrap();
+        assert_eq!(grown.shards.last().unwrap().revision, 2310);
+        assert_eq!(revision_floor(&b).unwrap()[&shard], 2310);
+
+        record(RevisionFloor::from([(shard, u32::MAX)]));
+        let error = publish(&options(&root.path().join("c"), Some(&a)), &store, zero)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("exhausted"), "{error}");
+    }
+
+    /// Retained manifests above a stale recorded floor raise it, and a
+    /// present manifest that cannot be parsed stops the publication.
+    #[test]
+    fn retained_evidence_raises_a_stale_floor_and_corrupt_evidence_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let mut store = EventStore::open(root.path().join("j"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut store, h, h as u8 + 1);
+        }
+        let a = root.path().join("a");
+        let first = publish(&options(&a, None), &store, zero).unwrap();
+        let tail = first.shards.last().unwrap().clone();
+        // A retained tail at revision 7 beside a floor recording only 2.
+        let mut manifest = read_tail(&a, &tail);
+        manifest.revision = 7;
+        let retained = a.join(manifest.digest());
+        std::fs::create_dir(&retained).unwrap();
+        for file in std::fs::read_dir(a.join(&tail.manifest_digest)).unwrap() {
+            let file = file.unwrap();
+            std::fs::copy(file.path(), retained.join(file.file_name())).unwrap();
+        }
+        std::fs::write(
+            retained.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            a.join(REVISION_FLOOR),
+            serde_json::to_vec(&RevisionFloor::from([(tail.shard_id, 2)])).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(revision_floor(&a).unwrap()[&tail.shard_id], 7);
+        block(&mut store, 4, 5);
+        let grown = publish(&options(&root.path().join("b"), Some(&a)), &store, zero).unwrap();
+        assert_eq!(grown.shards.last().unwrap().revision, 8);
+
+        std::fs::write(retained.join("manifest.json"), b"{\"truncated").unwrap();
+        let error = publish(&options(&root.path().join("c"), Some(&a)), &store, zero)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("manifest.json"), "{error}");
+        assert!(!root.path().join("c").join("shards.json").exists());
+    }
+
+    fn read_tail(dir: &Path, e: &transparent_filter::ShardMapEntry) -> ShardManifest {
+        serde_json::from_slice(
+            &std::fs::read(dir.join(&e.manifest_digest).join("manifest.json")).unwrap(),
+        )
+        .unwrap()
+    }
+
     /// A block where a few busy scripts receive several times, so events are
     /// pushed out of the directory every block, and a new script appears.
     #[cfg(feature = "qualification-tests")]
@@ -1698,7 +2086,8 @@ mod tests {
             before.shards[0].manifest_digest,
             replacement.shards[0].manifest_digest
         );
-        assert_eq!(replacement.shards[0].revision, 0);
+        // The replacement never reuses a revision the old publication exposed.
+        assert!(replacement.shards[0].revision > before.shards[0].revision);
         transparent_shared::history::shardset::ShardSet::open(&b, 3).unwrap();
         // Original immutable artifact remains exactly the original map.
         let old: transparent_filter::ShardMap =

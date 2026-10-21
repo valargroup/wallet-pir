@@ -63,9 +63,17 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     })
     .unwrap();
     let held = Arc::new(tokio::sync::Mutex::new(Some(listener)));
-    let http = pir_pipeline::service::Http::new(move |_, routes| {
+    let http = pir_pipeline::service::Http::new(move |_, routes: axum::Router| {
         let held = held.clone();
-        async move { axum::serve(held.lock().await.take().unwrap(), routes).await }
+        async move {
+            let routes = routes.route(
+                pir_service_discovery::PATH,
+                axum::routing::get(|| async {
+                    axum::Json(pir_service_discovery::Document::publisher())
+                }),
+            );
+            axum::serve(held.lock().await.take().unwrap(), routes).await
+        }
     });
     let source_rpc = rpc.clone();
     let publisher_owner = publisher.clone();

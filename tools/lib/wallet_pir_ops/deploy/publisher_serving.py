@@ -20,12 +20,18 @@ CADDY = '/etc/caddy/Caddyfile'
 ROLES = ('packing-router', 'query-ingress')
 FALLBACK = '\thandle {\n\t\treverse_proxy 127.0.0.1:8080\n\t}'
 WALLET = '\thandle /v1/enhance/* {\n\t\treverse_proxy 127.0.0.1:8082\n\t}\n'
+DISCOVERY_PATH = '/.well-known/pir-service-discovery'
+DISCOVERY = '\thandle ' + DISCOVERY_PATH + ' {\n\t\treverse_proxy 127.0.0.1:18080\n\t}\n'
 
 
 def candidate(text):
     require(text.count(WALLET) == 1 and FALLBACK not in text
             and text.count('\thandle {\n\t\trespond 404\n\t}') == 1,
             'expected the deployed wallet ingress and private publisher routes')
+    require(text.count(DISCOVERY) <= 1 and text.count(DISCOVERY_PATH) == text.count(DISCOVERY),
+            'unknown publisher discovery route')
+    if DISCOVERY not in text:
+        text = text.replace(WALLET, WALLET + DISCOVERY)
     return text
 
 
@@ -33,7 +39,10 @@ def validate_request(request, inventory):
     serving = request['serving']
     require(isinstance(serving, dict) and set(serving) == {'git_sha', 'binary_sha256', 'binary_bytes', 'caddy_sha256'},
             'serving release fields must be explicit')
-    require(serving['git_sha'] == request['release']['git_sha'], 'publisher and serving source revisions differ')
+    require(request.get('preserve_serving') or serving['git_sha'] == request['release']['git_sha'],
+            'publisher and serving source revisions differ')
+    require(isinstance(serving['git_sha'], str) and re.fullmatch('[a-f0-9]{40}', serving['git_sha']),
+            'serving source revision must be explicit')
     require(all(isinstance(serving[k], str) and re.fullmatch('[a-f0-9]{64}', serving[k])
                 for k in ('binary_sha256', 'caddy_sha256')), 'invalid serving executable or edge digest')
     require(type(serving['binary_bytes']) is int and serving['binary_bytes'] > 0, 'invalid serving executable size')
@@ -84,6 +93,9 @@ class Serving:
         plans, problems = deployer.assess(self.release['binary_sha256'], binary=self.binary,
                                          allow_drift=True, retire_historical=True, require_baseline=False)
         require(not problems, 'serving preflight refused: ' + '; '.join(problems))
+        if owner.request.get('preserve_serving'):
+            require(all(p.action == 'skip' and not p.changes for p in plans),
+                    'preserve_serving requires every serving role already running the pinned binary and configuration')
         before = owner.read(CADDY)
         require(before is not None and sha(before) == self.release['caddy_sha256'], 'wallet edge differs from request')
         code, output = owner.ex.run(owner.host, ['stat', '-c', '%a:%u:%g', CADDY], 10)
@@ -93,9 +105,12 @@ class Serving:
                 and '--config /etc/caddy/Caddyfile' in edge['fragment_text'], 'Caddy is not active on the installed configuration')
         after = candidate(before)
         self.validate_edge(after)
+        # Snapshot pinning (History restore preparation, HTTPS staging) runs
+        # only this reviewed helper.
+        from .publisher_warmup import SCRIPT
         return {'roles': [deployer.record(p) for p in plans],
                 'units': [stable_unit(p.state) for p in plans], 'edge': edge,
-                'edge_before': before, 'edge_after': after}
+                'edge_before': before, 'edge_after': after, 'snapshot_warmer_sha256': sha(SCRIPT)}
 
     def journal(self, parent):
         return ServingJournal(self.cutover, parent)

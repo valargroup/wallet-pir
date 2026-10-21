@@ -9,6 +9,29 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- HTTPS staging refuses conflicting content at an existing catalog path before
+  assigning a download receipt. Older receipt generations are discarded so
+  checks made with an incorrectly assigned identity cannot be reused.
+
+- Transaction-detail publishers reuse the previous verified display set and
+  its shipped-runtime builds, rehash every distributed artifact in parallel,
+  refuse sources that no longer match their manifests, and reload and
+  self-check only native runtime bytes not already checked in this process.
+
+- History publishers rehash every distributed artifact in parallel, then reload
+  and self-check only native runtime bytes they have not already checked in
+  this process. Missing or changed material is still verified before publishing.
+
+- HTTPS history startup rebuilds a revoked private snapshot before accepting
+  higher-revision recovery of the same map. Publication collection preserves
+  active, preparing and retained HTTPS source links, and catalog staging defers
+  while collection owns the source lock.
+
+- Publisher revisions continue above the historical maximum even when a reorg
+  changes shard numbering. Exhausted revision numbers stop publication with an
+  error. Wallet recovery regressions run in the end-to-end consumer package,
+  keeping Common address dependencies out of serving libraries.
+
 - Publishers and query workers share one server backend for publication loading,
   native runtime preparation and bounded caches. Query-worker tests no longer
   depend on chain ingestion or RocksDB. Existing executables, wallet routes and

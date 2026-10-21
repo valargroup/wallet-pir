@@ -8,13 +8,17 @@ through the reference HTTP adapters and SQLite persistence.
 ## Shipped history runtime correctness
 
 The controller's shipped-runtime success case cold-builds runtimes and checks
-fleet offering, activation order and inode-preserving links during handover.
-The bounded positive case runs the real cold preparation, fleet offer and
-activation phases on one valid recent publication, then verifies inode-preserving
-links into a separately staged candidate. Qualification additionally acquires
-new blocks and builds both distinct deployed geometries: `decoupled-2k-8k`
-recent and `decoupled-32k-32k` archive. The refusal companion independently checks source verification,
+fleet offering, activation order and inode-preserving links during handover,
+including links into a separately staged candidate.
+That case runs under `qualification-tests`, which also acquires new blocks and
+builds both deployed geometries: `decoupled-2k-8k` recent and `decoupled-32k-32k`
+archive. The refusal companion independently checks source verification,
 supersession, linked-table replacement and counted runtime write failures.
+The ordinary follow case publishes one `decoupled-2k-8k` geometry under a
+two-script seal and checks empty-block publication, a failed preparation, a
+refused activation, a journal-only fork, and genesis withdrawal. The
+controller's own follow always uses the configured archive tier and each
+geometry's seal.
 No unit case is omitted by name.
 
 Cache, admission, file identity and corruption matrices use narrow supported
@@ -24,17 +28,23 @@ Every malformed file and changed identity goes through the real file loader.
 Ordinary checks exercise cold fallback for missing files, damaged content and
 a changed identity; qualification repeats cold fallback for every refusal.
 `qualification-tests` also restores their original history shapes and the complete
-history/display reconstruction comparisons. The ordinary history HTTP smoke
-and stored-mask tampering check retain actual history data and independent
-answer/refusal evidence.
+history/display reconstruction comparisons. Ordinary history HTTP keeps one live
+stop: a publisher major closes management and both wallet listeners, a missing
+discovery document writes no consumer state, and a recovered active view cannot
+mask that mismatch. One cold check keeps a source change during the final check
+private, then requires a higher revision before a withdrawn map is served again.
+Archive runtimes are built once per process from a copy that does not yet have
+them; later cases reuse that tree.
 
 Publisher tests share immutable producer bytes and finalized inventories within
 each test process. Every consumer owns a fresh directory and independently
 verifies the real HTTP transfer. Cases that mutate publisher files retain owned
-copies. Exit cleanup controls exercise the same owner registry with tiny files;
-certificate material is immutable but listeners, trust checks and fault controls
-remain fresh. Reused encrypted requests stay inside one recovery scenario and
-are first decoded against the original producer rows.
+copies. Exit cleanup is two child processes: one prepares both fixture heights
+and one fails after preparing them. Each must leave its scratch directory empty.
+A multi-filter invocation is not child entry mode. Certificate material is
+immutable but listeners, trust checks and fault controls remain fresh. Reused
+encrypted requests stay inside one recovery scenario and are first decoded
+against the original producer rows.
 
 Publisher unit-test processes use up to four available build threads, respecting
 an explicit `TRANSPARENT_BUILD_THREADS`; integration programs and serving defaults

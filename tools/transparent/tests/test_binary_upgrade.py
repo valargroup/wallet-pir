@@ -164,6 +164,26 @@ class HistoryUpgrade(Harness):
     def load_active(self):
         return self.fake.probe_unit('coordinator', LOAD_UNIT)['active_state'] == 'active'
 
+    def test_ready_worker_finishes_background_warming_before_acceptance(self):
+        self.run_cli('baseline')
+        original = self.fake.http_get
+        polls = [0]
+        def warming(host, url, timeout=5):
+            status, body = original(host, url, timeout)
+            if host == 'v12' and ':8093/' in url and url.endswith('/v1/ready'):
+                current = self.fake.probe_unit(host, 'transparent-v12-archive.service')['exe_sha256']
+                if current == sha256(NEW) and polls[0] < 3:
+                    polls[0] += 1
+                    document = json.loads(body)
+                    document.update(ready=True, warm_runtimes=1)
+                    return status, json.dumps(document)
+            return status, body
+        self.fake.http_get = warming
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(polls[0], 3)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+
     def test_archive_restore_uses_the_product_warmup_budget(self):
         self.run_cli('baseline')
         http_get = self.fake.http_get
@@ -860,6 +880,288 @@ class UnifiedHistoryUpgrade(UnifiedOwner, Harness):
             self.refuses()
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
         self.publisher_untouched()
+
+
+PUBLISHER_ORIGIN = 'https://enhance-pir.example'
+
+
+def provider_shard_dir(unit):
+    return '/srv/transparent-activity/provider/%s' % unit.removesuffix('.service')
+
+
+def provider_assignment(map_sha256):
+    """The assignment a recent provider's own bootstrap stages: one `provider` entry."""
+    plan = assignment(map_sha256)
+    entry = dict(plan['workers'][1], id='provider')
+    return {**plan, 'workers': [entry]}
+
+
+class ProviderHistoryUpgrade(UnifiedOwner, Harness):
+    """Autonomous HTTPS providers under an http_only publisher: archive full holdings, recent self-assigned."""
+    standalone_request = HistoryUpgrade.base_request
+    running = HistoryUpgrade.running
+    FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
+
+    def failed_archive_rollback(self):
+        self.run_cli('baseline')
+        unit = 'transparent-v12-archive.service'
+        def fail_once(host, operation, detail):
+            if operation == 'systemctl' and detail == ('restart', unit):
+                self.fake.unhealthy.update({('v12', sha256(OLD)), ('v12', sha256(NEW))})
+        recent = 'transparent-v12-recent.service'
+        self.fake.health_shapes[('v12', recent)] = lambda ready_, exe: {
+            **self.provider_ready(recent, self.map[0]), 'ready': True if exe == sha256(OLD) else ready_}
+        self.fake.observer = fail_once
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        from wallet_pir_ops.deploy.transaction import Journal
+        journal = Journal.load(self.state, 'transparent-history')
+        self.assertEqual(journal.status, 'rollback-failed', lines)
+        self.fake.observer = None
+        self.fake.unhealthy.remove(('v12', sha256(NEW)))
+        self.write_request(lambda r: r.update(repair={'transaction': journal.id, 'predecessors': {
+            'worker@v12:' + unit: sha256(OLD)}}))
+        return journal
+
+    def test_failed_rollback_can_be_replaced_without_claiming_it_was_ready(self):
+        old = self.failed_archive_rollback()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        from wallet_pir_ops.deploy.transaction import Journal
+        self.assertEqual(Journal.load(self.state, 'transparent-history', old.id).status, 'rollback-failed')
+        new = Journal.load(self.state, 'transparent-history')
+        self.assertTrue(any(e.get('transaction') == old.id for e in new.data['events']))
+
+    def test_repair_refuses_a_restarted_predecessor(self):
+        self.failed_archive_rollback()
+        self.fake.systemctl('v12', 'restart', 'transparent-v12-archive.service')
+        before = len(self.fake.log)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+        self.assertTrue(any('exact acknowledged restored processes' in line for line in lines), lines)
+
+    def test_repair_refuses_a_different_transaction(self):
+        self.failed_archive_rollback()
+        request = json.loads(self.request.read_text())
+        request['repair']['transaction'] = 'transparent-history-another'
+        self.request.write_text(json.dumps(request))
+        before = len(self.fake.log)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+
+    def test_repair_still_requires_the_replacement_to_be_ready(self):
+        self.failed_archive_rollback()
+        self.fake.unhealthy.add(('v12', sha256(NEW)))
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
+    def lagging_archive(self, stays_old=False):
+        self.map[0] = NEXT_MAP
+        unit = 'transparent-v12-archive.service'
+        def health(ready_, exe):
+            digest = MAP if exe == sha256(OLD) or stays_old else NEXT_MAP
+            self.install_active(unit, digest)
+            return {**self.provider_ready(unit, digest), 'ready': ready_}
+        self.fake.health_shapes[('v12', unit)] = health
+        self.install_active('transparent-v12-recent.service', NEXT_MAP)
+
+    def pin_previous_archive(self, digest=MAP):
+        self.write_request(lambda r: r.update(previous_maps={
+            'worker@v12:transparent-v12-archive.service': digest}))
+
+    def test_reviewed_older_provider_can_upgrade_but_replacement_must_be_current(self):
+        self.lagging_archive()
+        self.run_cli('baseline')
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.pin_previous_archive()
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        self.publisher_untouched()
+
+    def test_previous_publication_permission_does_not_apply_to_replacement(self):
+        self.lagging_archive(stays_old=True)
+        self.run_cli('baseline')
+        self.pin_previous_archive()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
+    def test_replacement_can_catch_up_within_the_existing_readiness_deadline(self):
+        self.lagging_archive()
+        unit = 'transparent-v12-archive.service'
+        attempts = [0]
+        def health(ready_, exe):
+            attempts[0] += exe == sha256(NEW)
+            digest = NEXT_MAP if attempts[0] >= 6 else MAP
+            self.install_active(unit, digest)
+            return {**self.provider_ready(unit, digest), 'ready': ready_}
+        self.fake.health_shapes[('v12', unit)] = health
+        self.run_cli('baseline')
+        self.pin_previous_archive()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertGreaterEqual(attempts[0], 6)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+
+    def test_unreviewed_older_publication_still_refuses_before_change(self):
+        self.lagging_archive()
+        self.run_cli('baseline')
+        self.pin_previous_archive('f' * 64)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
+    def setUp(self):
+        HistoryUpgrade.setUp(self)
+        self.adopt(CONTROLLER, 'http://%s/v1/status' % HISTORY_LISTEN)
+        self.configuration['transparent_history']['settings'].update(
+            http_only=True, ship_runtimes=True, distribute_prepared=True)
+        self.place('coordinator', PUBLISHER_CONFIG, self.configuration)
+        for unit, full in self.FULL.items():
+            root = provider_shard_dir(unit)
+            self.place('v12', history_config(unit), self.provider_document(full, root))
+            self.install_active(unit, MAP)
+            self.fake.health_shapes[('v12', unit)] = lambda ready_, exe, unit=unit: {
+                **self.provider_ready(unit, self.map[0]), 'ready': ready_,
+                **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
+        self.discovery = (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))
+        http_get = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            self.discovery if url == PUBLISHER_ORIGIN + binary_upgrade.DISCOVERY_PATH else http_get(host, url, timeout))
+        self.write_request()
+        self.fake.log.clear()
+
+    @staticmethod
+    def provider_document(full, root):
+        """The installed `pir-query-server --config FILE` shape: settings under enabled transparent_history."""
+        return {'management_listen': '127.0.0.1:18393', 'transparent_history': {'enabled': True, 'settings': {
+            'publisher': PUBLISHER_ORIGIN, 'publisher_network': 'main', 'publisher_genesis': '00' * 32,
+            'listen': '10.142.0.9:8093', 'shard_dir': root, 'full_holdings': full}}}
+
+    def place(self, host, path, value):
+        """Fixture state, not a deployment write."""
+        self.fake.host(host).files[path] = json.dumps(value).encode()
+
+    def install_active(self, unit, map_sha256):
+        root = provider_shard_dir(unit)
+        directory = '%s/stage-%s' % (root, map_sha256[:8])
+        active = {'directory': directory, 'assignment': None, 'map_sha256': map_sha256, 'runtimes': directory}
+        if not self.FULL[unit]:
+            active['assignment'] = directory + '/assignment.json'
+            self.place('v12', active['assignment'], provider_assignment(map_sha256))
+        self.place('v12', root + '/active.json', active)
+
+    def provider_ready(self, unit, map_sha256):
+        counts = {'ready': True, 'map_sha256': map_sha256, 'warm_runtimes': 4, 'target_runtimes': 4, 'prewarm_failed': 0}
+        if self.FULL[unit]:
+            return counts
+        plan = provider_assignment(map_sha256)
+        entry = plan['workers'][0]
+        return {**counts, 'assignment_sha256': canonical(plan),
+                'worker_assignment_sha256': canonical(['transparent-worker-assignment-v1', plan['schema'], plan['set'], entry]),
+                'worker_id': 'provider', 'role': 'recent-replica', 'replica_group': 'recent-a', 'assigned_shards': 1}
+
+    def base_request(self, component):
+        request = UnifiedOwner.base_request(self, component)
+        request['load'] = None
+        for unit in WORKERS:
+            pinned = request['workers']['worker@v12:' + unit]
+            pinned['ready_identity'] = binary_upgrade.PROVIDER_IDENTITY[self.FULL[unit]]
+            pinned['config_sha256'] = self.fake.sha256('v12', history_config(unit))
+            pinned['unit_sha256'] = binary_upgrade.unit_digest(self.fake.probe_unit('v12', unit))
+        return request
+
+    def test_full_and_recent_provider_upgrade_and_rollback_keep_publisher(self):
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 0, lines)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        self.publisher_untouched()
+        self.assertEqual(self.run_cli('rollback')[0], 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
+    def test_provider_mismatches_refuse_before_any_change(self):
+        self.run_cli('baseline')
+        recent, archive = 'worker@v12:transparent-v12-recent.service', 'worker@v12:transparent-v12-archive.service'
+
+        def swap_identities(r):
+            r['workers'][recent]['ready_identity'], r['workers'][archive]['ready_identity'] = (
+                r['workers'][archive]['ready_identity'], r['workers'][recent]['ready_identity'])
+        cases = {
+            'wrong mode': (swap_identities, 'configuration makes it'),
+            'config changed': (lambda r: r['workers'][recent].update(config_sha256='0' * 64), 'differs from its pinned digest'),
+            'unit changed': (lambda r: r['workers'][archive].update(unit_sha256='0' * 64), 'unit changed from the pinned bytes'),
+            'fleet pins on http_only': (lambda r: [p.pop(k) for p in r['workers'].values()
+                                                   for k in ('config_sha256', 'unit_sha256')], None),
+        }
+        for name, (change, message) in cases.items():
+            with self.subTest(name):
+                self.refuses(change_request=change, message=message)
+                self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.write_request()
+
+    def test_provider_configuration_without_enabled_history_refuses(self):
+        self.run_cli('baseline')
+        recent = 'transparent-v12-recent.service'
+        root = provider_shard_dir(recent)
+        disabled = self.provider_document(False, root)
+        disabled['transparent_history']['enabled'] = False
+        cases = {'disabled': disabled, 'missing': {'management_listen': '127.0.0.1:18393'},
+                 'top-level settings': disabled['transparent_history']['settings']}
+        for name, document in cases.items():
+            with self.subTest(name):
+                self.place('v12', history_config(recent), document)
+                self.write_request()  # pins the changed bytes, so only the shape refuses
+                self.refuses(message='transparent_history')
+                self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.place('v12', history_config(recent), self.provider_document(False, root))
+        self.write_request()
+
+    def test_publisher_without_discovery_refuses_before_any_change(self):
+        self.run_cli('baseline')
+        for name, reply in {'404': (404, 'not found'),
+                            'other major': (200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'}))}.items():
+            with self.subTest(name):
+                self.discovery = reply
+                self.refuses(message='upgrade the publisher first')
+                self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
+    def test_provider_ownership_or_readiness_mismatch_refuses(self):
+        self.run_cli('baseline')
+        recent = 'transparent-v12-recent.service'
+        cases = {
+            'active map': (lambda: self.install_active(recent, NEXT_MAP), 'active record names map'),
+            'foreign assignment': (lambda: self.place('v12', '%s/stage-%s/assignment.json' % (
+                provider_shard_dir(recent), MAP[:8]), provider_assignment(NEXT_MAP)),
+                'assignment names another map'),
+            'not warm': (lambda: self.shift.update({recent: {'warm_runtimes': 3}}), None),
+        }
+        for name, (break_, message) in cases.items():
+            with self.subTest(name):
+                break_()
+                if name == 'not warm':
+                    self.fake.health_shapes[('v12', recent)] = lambda ready_, exe: {
+                        **self.provider_ready(recent, self.map[0]), 'ready': ready_, 'warm_runtimes': 3}
+                    message = 'warm_runtimes 3 of target 4'
+                self.refuses(message=message)
+                self.install_active(recent, MAP)
+
+    def test_fleet_controlled_pins_still_refuse_against_http_only_publisher(self):
+        self.run_cli('baseline')
+        self.refuses(change_request=lambda r: [p.pop(k) for p in r['workers'].values()
+                                               for k in ('config_sha256', 'unit_sha256')])
 
 
 class UnifiedDisplayUpgrade(UnifiedOwner, Harness):

@@ -4,14 +4,11 @@
 use zakura_pir_client::transparent::native as transparent_native;
 #[cfg(test)]
 use zakura_pir_client::transparent::native::TableClientExt as _;
-#[cfg(feature = "qualification-tests")]
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
-#[cfg(feature = "qualification-tests")]
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::*;
-#[cfg(feature = "qualification-tests")]
 use transparent_events::TransparentEvent;
 use transparent_query_server::history::live::Command;
 use transparent_query_server::history::service::ServiceConfig;
@@ -32,7 +29,7 @@ extern "C" fn cleanup_prepared_fixtures() {
         .clear();
 }
 
-fn copy_fixture_tree(source: &Path, target: &Path) {
+pub(super) fn copy_fixture_tree(source: &Path, target: &Path) {
     std::fs::create_dir(target).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
@@ -69,7 +66,7 @@ fn owned_fixture(build: impl FnOnce(&Path)) -> PathBuf {
     path
 }
 
-fn prepared_fixture(through: u64) -> &'static Path {
+pub(super) fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
         owned_fixture(|root| {
             let (directory, set) =
@@ -90,6 +87,86 @@ fn prepared_fixture(through: u64) -> &'static Path {
 /// Copy files rather than link them: callers may replace or corrupt artifacts.
 pub(super) fn copy_prepared_publication(through: u64, directory: &Path) {
     copy_fixture_tree(&prepared_fixture(through).join("publication"), directory);
+}
+
+/// Archive runtimes prepared once per process. The input is a copy of the
+/// recent-only fixture, so recent files are linked and archive files are built.
+struct ArchiveRuntimeBuild {
+    root: PathBuf,
+    built: usize,
+    linked: usize,
+    recent_files: usize,
+}
+
+fn archive_runtimes(through: u64) -> &'static ArchiveRuntimeBuild {
+    fn build(through: u64) -> ArchiveRuntimeBuild {
+        let mut outcome = None;
+        let root = owned_fixture(|dir| {
+            let directory = dir.join("publication");
+            copy_fixture_tree(&prepared_fixture(through).join("publication"), &directory);
+            let set = ShardSet::open(&directory, 0).unwrap();
+            let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+                .map(|entry| entry.file_name().into_string().unwrap())
+                .collect();
+            let prepared = transparent_shared::runtime::prebuild::prepare_publication(
+                &set,
+                &directory,
+                &[],
+                &|| false,
+            )
+            .unwrap();
+            assert!(prepared.failures.is_empty());
+            assert!(!recent_files.is_empty());
+            assert_eq!(prepared.linked(), recent_files.len());
+            assert!(
+                prepared.built() > 0,
+                "archive runtimes must still be prepared"
+            );
+            for file in &prepared.files {
+                assert_eq!(file.linked, recent_files.contains(&file.name));
+            }
+            outcome = Some((prepared.built(), prepared.linked(), recent_files.len()));
+        });
+        let (built, linked, recent_files) = outcome.unwrap();
+        ArchiveRuntimeBuild {
+            root,
+            built,
+            linked,
+            recent_files,
+        }
+    }
+    static FIRST: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(3));
+    match through {
+        2 => &FIRST,
+        3 => &NEXT,
+        _ => panic!("no archive runtime fixture through height {through}"),
+    }
+}
+
+pub(super) struct ArchiveRuntimeCounts {
+    pub(super) built: usize,
+    pub(super) linked: usize,
+    pub(super) recent_files: usize,
+}
+
+pub(super) fn archive_runtime_build(through: u64) -> ArchiveRuntimeCounts {
+    let build = archive_runtimes(through);
+    ArchiveRuntimeCounts {
+        built: build.built,
+        linked: build.linked,
+        recent_files: build.recent_files,
+    }
+}
+
+pub(super) fn copy_archive_publication(through: u64, directory: &Path) {
+    copy_fixture_tree(
+        &archive_runtimes(through).root.join("publication"),
+        directory,
+    );
 }
 
 // Reuse only the immutable publisher side. Every manager still owns a fresh
@@ -171,6 +248,17 @@ fn fixture_exit_control(both: bool, fail: bool) {
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
 }
 
+/// A single `--exact` filter naming `name`, and no other test filter.
+fn exact_child_entry(args: &[String], name: &str) -> bool {
+    let filters = args
+        .iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.iter().any(|arg| arg == "--exact") && filters == [name]
+}
+
 // Only an explicitly selected private entry consumes the child mode. Public
 // controls always spawn a fresh process and check its scratch after exit, even
 // when their caller inherited the internal environment variable.
@@ -181,14 +269,9 @@ fn prepared_fixtures_exit_child() {
         module_path!().split_once("::").unwrap().1
     );
     let args: Vec<_> = std::env::args().collect();
-    // The private caller uses --option=value switches. A runner partition can
-    // also use --exact, but its multiple case filters are not child entry mode.
-    let filters = args
-        .iter()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .collect::<Vec<_>>();
-    if !args.iter().any(|arg| arg == "--exact") || filters != [&name] {
+    // A runner partition can pass --exact with several filters. That is not
+    // child entry mode, so an inherited failure mode must not run.
+    if !exact_child_entry(&args, &name) {
         return;
     }
     let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
@@ -247,49 +330,32 @@ fn prepared_fixtures_exit_child() {
 }
 
 #[test]
-fn prepared_fixture_child_mode_requires_a_single_explicit_entry() {
+fn prepared_fixtures_exit_on_success() {
     let prefix = module_path!().split_once("::").unwrap().1;
     let child = format!("{prefix}::prepared_fixtures_exit_child");
-    let control = format!("{prefix}::prepared_fixtures_exit_first_only");
-    for exact_first in [true, false] {
-        let scratch = tempfile::tempdir().unwrap();
-        let filters = if exact_first {
-            vec!["--exact", child.as_str(), control.as_str()]
-        } else {
-            vec![child.as_str(), control.as_str(), "--exact"]
-        };
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(filters)
-            .args(["--test-threads=1", "--nocapture"])
-            .env("WALLET_PIR_FIXTURE_EXIT_CHILD", "fail")
-            .env("TMPDIR", scratch.path())
-            .env("TMP", scratch.path())
-            .env("TEMP", scratch.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("2 passed"));
-        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
-    }
-}
-
-#[test]
-fn prepared_fixtures_exit_first_only() {
-    fixture_exit_control(false, false);
-}
-
-#[test]
-fn prepared_fixtures_exit_both() {
+    let other = format!("{prefix}::prepared_fixtures_exit_on_success");
+    assert!(exact_child_entry(
+        &["test-bin".into(), child.clone(), "--exact".into()],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &[
+            "test-bin".into(),
+            "--exact".into(),
+            child.clone(),
+            other.clone()
+        ],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &["test-bin".into(), child.clone(), other, "--exact".into()],
+        &child
+    ));
     fixture_exit_control(true, false);
 }
 
 #[test]
-fn prepared_fixtures_exit_failed_test() {
+fn prepared_fixtures_exit_on_failure() {
     fixture_exit_control(true, true);
 }
 
@@ -545,6 +611,57 @@ impl CheckedAnswer {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state).await;
+    follow.poll_once().await.unwrap();
+    drop(follow);
+
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let mut restarted = restart_manager(&tls, &state).await;
+    let work = tokio::spawn(async move {
+        let result = restarted.poll_once().await;
+        (restarted, result)
+    });
+    entered(&tls).await;
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    std::fs::write(&tls.control, "missing-inventory").unwrap();
+    let (mut restarted, refused) = work.await.unwrap();
+    assert!(refused.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "checked files alone cannot serve"
+    );
+    assert!(restarted.router().is_err());
+
+    rpc.available.store(false, Ordering::Release);
+    assert!(restarted.poll_once().await.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "a source outage cannot activate recovery"
+    );
+    rpc.available.store(true, Ordering::Release);
+    std::fs::write(&tls.control, "").unwrap();
+    let progress = restarted.poll_once().await.unwrap();
+    let stages = progress
+        .stages
+        .expect("activate the privately checked inputs");
+    assert_eq!(stages.loading_seconds, 0.0, "do not reload the saved set");
+    assert_eq!(
+        stages.prewarm_seconds, 0.0,
+        "do not repeat completed warmup"
+    );
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.stop().await;
+}
+
 /// Reusing immutable transfers through a failed update rebuilds the same
 /// publication the lifecycle and interrupted-activation cases already serve.
 #[cfg(feature = "qualification-tests")]
@@ -614,7 +731,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
             observed["verified_publication"]["map_sha256"],
             set.map_digest
         );
-        assert_eq!(observed["runtime_readiness"]["warm"], true);
+        assert_eq!(get(&origin, "/v1/ready").await.status(), StatusCode::OK);
         assert_eq!(
             live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
             set.map_digest
@@ -1200,6 +1317,77 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
     control_write_failure(None, "active.invalid.tmp").await;
 }
 
+// Different producer contents exercise reclamation through the real TLS manager,
+// rather than calling Collect directly or populating a synthetic object cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_collects_obsolete_objects_after_publication_contents_change() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let first_objects: std::collections::BTreeSet<_> = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.sha256.clone())
+        .collect();
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state).await;
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let first_tree = PathBuf::from(
+        live.command(Command::Status).await.unwrap()["active"]["directory"]
+            .as_str()
+            .unwrap(),
+    );
+    let downloaded: std::collections::BTreeSet<_> = first_objects
+        .into_iter()
+        .filter(|digest| state.join("objects").join(digest).is_file())
+        .collect();
+    let (next_dir, next_set, next_distribution) = immutable_publication(3);
+    let next_objects: std::collections::BTreeSet<_> = next_distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.sha256.clone())
+        .collect();
+    let obsolete: Vec<_> = downloaded.difference(&next_objects).collect();
+    let shared: Vec<_> = downloaded.intersection(&next_objects).collect();
+    assert!(
+        !obsolete.is_empty(),
+        "publications must contain different objects"
+    );
+    assert!(
+        !shared.is_empty(),
+        "publications must also share immutable objects"
+    );
+    advance(&owner, &next_dir, next_distribution);
+    follow.poll_once().await.unwrap();
+    // The first predecessor and its reusable downloads survive early collection.
+    assert!(first_tree.is_dir());
+    assert!(obsolete
+        .iter()
+        .all(|digest| state.join("objects").join(digest).is_file()));
+    // Retire the first tree beyond both predecessor and unused-tree retention.
+    for _ in 0..7 {
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        follow.poll_once().await.unwrap();
+    }
+    assert!(!first_tree.exists());
+    assert!(obsolete
+        .iter()
+        .all(|digest| !state.join("objects").join(digest).exists()));
+    assert!(shared
+        .iter()
+        .all(|digest| state.join("objects").join(digest).is_file()));
+    let active = live.command(Command::Status).await.unwrap();
+    assert_eq!(active["active"]["map_sha256"], next_set.map_digest);
+    let (origin, task) = worker(live).await;
+    query(&origin, &next_set).await;
+    task.stop().await;
+}
+
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
@@ -1215,6 +1403,11 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
+    let held = PathBuf::from(
+        live.command(Command::Status).await.unwrap()["active"]["directory"]
+            .as_str()
+            .unwrap(),
+    );
     let (origin, task) = worker(live.clone()).await;
     let shard = set.get(1).unwrap();
     let width = shard.geometry.directory_row_bytes;
@@ -1255,7 +1448,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     // Same immutable map, new complete owner snapshots: no expensive fixture
     // growth, and no helper-only fake activation or explicit Collect command.
-    for _ in 0..7 {
+    // More activations than disk retention keeps, so trees are collected.
+    for _ in 0..10 {
         owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
         follow.poll_once().await.unwrap();
         let status = live.command(Command::Status).await.unwrap();
@@ -1287,15 +1481,29 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     query(&origin, &set).await;
     assert!(state.join("objects").is_dir());
+    // Eleven activations leave the active tree, three retained predecessors,
+    // the tree the admitted request held and three unused trees on disk.
+    let trees: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path().canonicalize().unwrap())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("staging-")
+        })
+        .collect();
+    assert_eq!(trees.len(), 8, "{trees:?}");
     assert!(
-        std::fs::read_dir(&state)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
-            .count()
-            >= 8,
-        "memory collection does not delete disk trees"
+        trees.contains(&held),
+        "the admitted request's tree survived"
     );
+    let active = live.command(Command::Status).await.unwrap()["active"]["directory"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap();
+    assert!(trees.contains(&active));
     task.stop().await;
 }
 
@@ -1564,12 +1772,21 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
+    history_lifecycle(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_during_node_checks_never_starts_history_activation() {
+    history_lifecycle(true).await;
+}
+
+async fn history_lifecycle(bounded: bool) {
     use std::os::unix::fs::PermissionsExt;
     use transparent_query_server::history::live::{LiveService, Publication};
     use transparent_query_server::history::service::ServiceState;
     use transparent_shared::history::shardset::LoadScope;
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication_through(root.path(), 2);
+    let (directory, set) = publication_fixture(root.path(), 2, bounded);
     let service_config = ServiceConfig {
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()
@@ -1794,13 +2011,96 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     };
     pir_pipeline::Task::run(&mut input).await.unwrap();
     assert_eq!(reader.lock().await.covered_through(), Some(3));
+    // A stop during either node check must abandon the candidate before any
+    // activation intent is written, even when the node's answer is canonical.
+    if bounded {
+        for stop_during_preparation in [true, false] {
+            let stopped_owner = authority(&directory, None, rpc.clone());
+            let Input::Work(work) = acquire_history(&config, &rpc, &reader, &stopped_owner)
+                .await
+                .unwrap()
+            else {
+                panic!("committed work expected");
+            };
+            pause
+                .enabled
+                .store(stop_during_preparation, Ordering::Release);
+            let attempt = async {
+                let candidate = prepare_candidate(
+                    &config,
+                    &rpc,
+                    &stopped_owner,
+                    work,
+                    |geometry| {
+                        let mut policy = DecoupledPolicy::for_geometry(geometry);
+                        policy.scripts.target = 2;
+                        policy
+                    },
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                if stop_during_preparation {
+                    assert!(matches!(candidate, Input::Unchanged));
+                } else {
+                    let Input::Work(ready) = candidate else {
+                        panic!("prepared work expected");
+                    };
+                    pause.enabled.store(true, Ordering::Release);
+                    activate_history(&config, &rpc, &stopped_owner, ready)
+                        .await
+                        .unwrap();
+                }
+            };
+            tokio::pin!(attempt);
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::select! {
+                    _ = &mut attempt => panic!("node check did not pause"),
+                    _ = pause.entered.notified() => {},
+                }
+            })
+            .await
+            .unwrap();
+            stopped_owner.0.shutdown.request();
+            pause.resume.notify_one();
+            attempt.await;
+            assert!(!config.publication_root.join("activation.json").exists());
+            assert!(!config.publication_root.join("active.json").exists());
+            assert_eq!(
+                stopped_owner
+                    .0
+                    .active
+                    .read()
+                    .unwrap()
+                    .publication
+                    .map_sha256,
+                set.map_digest
+            );
+            assert_eq!(
+                live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
+                set.map_digest
+            );
+        }
+        return;
+    }
     let Input::Work(work) = acquire_history(&config, &rpc, &reader, &owner)
         .await
         .unwrap()
     else {
         panic!("committed work expected");
     };
-    let Input::Work(ready) = prepare_history(&config, &rpc, &owner, work).await.unwrap() else {
+    let Input::Work(ready) = prepare_candidate(
+        &config,
+        &rpc,
+        &owner,
+        work,
+        DecoupledPolicy::for_geometry,
+        Some(config.archive_geometry.clone()),
+        Some(config.recent_from),
+    )
+    .await
+    .unwrap() else {
         panic!("prepared work expected");
     };
     pause.enabled.store(true, Ordering::Release);

@@ -48,9 +48,13 @@ mod http_metrics;
 
 mod query_timing;
 
+pub mod ingress_sync;
 pub mod prepared_packing;
 pub mod publication;
+pub mod router_sync;
 pub mod service;
+pub mod synchronization;
+pub mod worker_sync;
 
 #[cfg(test)]
 mod test_support;

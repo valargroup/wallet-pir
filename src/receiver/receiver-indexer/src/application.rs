@@ -345,21 +345,21 @@ async fn collect_inner<'a>(
         );
     }
     log_stage("ingestion", started);
-    // Hints activate before witness/PIR preparation and are not held by retention.
-    // The guard also checks this anchor while expensive preparation runs.
-    let filter_started = std::time::Instant::now();
-    let filters = store.block_filters(args.filter_blocks, history_revision)?;
     if let Some(serving) = serving {
-        let window =
-            receiver_pir_server::blocks::BlockWindow::new(genesis, history_revision, filters)?;
-        rpc.check_network(genesis).await?;
-        if !is_canonical(rpc, tip.height, tip.hash).await?
-            || !serving.publish_filters(window, epoch.unwrap())
-        {
-            return Err("filter anchor changed during collection; retrying".into());
-        }
+        let filter_started = std::time::Instant::now();
+        publish_filters(
+            args,
+            rpc,
+            store,
+            serving,
+            genesis,
+            &tip,
+            epoch.unwrap(),
+            history_revision,
+        )
+        .await?;
+        log_stage("block_filters", filter_started);
     }
-    log_stage("block_filters", filter_started);
     if serving.is_some_and(|s| s.ready_at().is_some()) {
         return Ok(None);
     }
@@ -375,6 +375,47 @@ async fn collect_inner<'a>(
         refresh_started,
         history_revision,
     }))
+}
+
+/// Activates the rolling filter window ending at `tip` on `serving`, fenced by `epoch`,
+/// before witness and PIR preparation; the canonical guard also checks its anchor while
+/// that runs, under correction `revision`. Only serving builds one: a one-shot run
+/// writes no filter artifact. A window `serving` already holds over the same blocks
+/// under the same correction revision is kept, so a caught-up service does not rebuild it every poll.
+async fn publish_filters(
+    args: &Config,
+    rpc: &NodeClient,
+    store: &mut Store,
+    serving: &Publications,
+    genesis: [u8; 32],
+    tip: &Checkpoint,
+    epoch: u64,
+    revision: u64,
+) -> Result<()> {
+    let first = (tip
+        .height
+        .saturating_sub(args.filter_blocks.saturating_sub(1)))
+    .max(args.start_height);
+    let current = serving.filter_window();
+    if current.is_some_and(|window| {
+        let head = window.head();
+        (
+            head.genesis,
+            head.revision,
+            head.first,
+            head.tip.height,
+            head.tip.hash,
+        ) == (genesis, revision, first, tip.height, tip.hash)
+    }) {
+        return Ok(());
+    }
+    let filters = store.block_filters(args.filter_blocks, revision)?;
+    let window = receiver_pir_server::blocks::BlockWindow::new(genesis, revision, filters)?;
+    rpc.check_network(genesis).await?;
+    if !is_canonical(rpc, tip.height, tip.hash).await? || !serving.publish_filters(window, epoch) {
+        return Err("filter anchor changed during collection; retrying".into());
+    }
+    Ok(())
 }
 
 impl<'a> Collected<'a> {
@@ -415,9 +456,19 @@ impl<'a> Collected<'a> {
             kept,
             durable,
         } = state;
-        // The optional audit cannot prevent chain publication when its store is unavailable.
-        let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
-        let report = crate::near::capture(provider_store, anchor_time)
+        // The optional audit never prevents chain publication. Off, its empty store needs
+        // no terminal block time; on, a time or store that is unavailable degrades its
+        // report instead.
+        let anchor_time = match args.audit_enabled {
+            true => rpc
+                .block_time(tip.hash)
+                .await
+                .map(|time| time.min(unix_now()))
+                .map_err(Into::into),
+            false => Ok(unix_now()),
+        };
+        let report = anchor_time
+            .and_then(|time| crate::near::capture(provider_store, time))
             .and_then(|capture| capture.report(store))
             .unwrap_or_else(|error| {
                 warn!(%error, "payout audit unavailable");
@@ -1098,7 +1149,14 @@ mod tests {
                     };
                     json!(zakura_server_chain::hash::display(&hash))
                 }
-                "getblockheader" => json!({"time": *node.time.lock().unwrap()}),
+                "getblockheader" => match *node.time.lock().unwrap() {
+                    // A node that cannot give the header.
+                    i64::MIN => {
+                        return Json(json!({"result": null,
+                        "error": {"code": -8, "message": "header unavailable"}}))
+                    }
+                    time => json!({"time": time}),
+                },
                 "getblock" => {
                     return Json(json!({"result": null,
                     "error": {"code": -8, "message": "temporarily unavailable"}}))
@@ -2291,6 +2349,85 @@ mod tests {
         assert!(paused.refresh().await.is_err());
         assert_eq!(paused.store().history_revision().unwrap(), 1);
         assert_eq!(paused.publications.epoch(), epoch, "nothing moved back");
+    }
+
+    /// A one-shot run writes no rolling filters, so it neither builds them nor fails on
+    /// them: a filter window that cannot be built leaves its publication unaffected,
+    /// while a serving run, which does build it, refuses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_one_shot_run_does_not_build_rolling_filters() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.filter_blocks = receiver_store::blocks::MAX_FILTER_BLOCKS + 1;
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        refresh(&paused.args, rpc, genesis, None, &mut State::default())
+            .await
+            .unwrap();
+        let written = std::fs::read_dir(paused.dir.path().join("publications")).unwrap();
+        assert!(written.count() > 0);
+        assert!(paused.refresh().await.is_err());
+    }
+
+    /// A caught-up service keeps the rolling window it serves while the tip and
+    /// correction revision stay put, rather than rebuilding it every poll, and builds a
+    /// new one once the tip moves.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unchanged_tip_keeps_the_rolling_window() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let window = paused.publications.filter_window().unwrap();
+        paused.refresh().await.unwrap();
+        assert!(Arc::ptr_eq(
+            &window,
+            &paused.publications.filter_window().unwrap()
+        ));
+        // An empty block after the tip, indexed and on the node's chain.
+        let next = crate::blocks::ironwood_activation() + 1;
+        paused
+            .store()
+            .append(&receiver_store::IndexedBlock {
+                height: next,
+                hash: [4; 32],
+                parent: [3; 32],
+                start_position: 0,
+                end_position: 0,
+                coinbase_actions: 0,
+                payments: Vec::new(),
+                commitments: Vec::new(),
+            })
+            .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(next);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(next), [4; 32]);
+        paused.refresh().await.unwrap();
+        assert!(!Arc::ptr_eq(
+            &window,
+            &paused.publications.filter_window().unwrap()
+        ));
+    }
+
+    /// The terminal block's time only dates the optional payout audit: a node that
+    /// cannot give it degrades the audit report, and with the audit off it is never
+    /// asked for, so publication goes ahead either way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unavailable_block_time_never_blocks_publication() {
+        let mut paused = Paused::new(|_| {}).await;
+        *paused.node.time.lock().unwrap() = i64::MIN;
+        paused.refresh().await.unwrap();
+        let health = paused.get("health").await;
+        assert!(health["serving"].is_string());
+        assert!(health["indexer"].is_null(), "{health}");
+        paused.args.audit_enabled = false;
+        paused.publications.revoke();
+        paused.state = State::default();
+        paused.refresh().await.unwrap();
+        let health = paused.get("health").await;
+        assert!(health["serving"].is_string());
+        assert!(health["indexer"].is_object(), "{health}");
     }
 
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.

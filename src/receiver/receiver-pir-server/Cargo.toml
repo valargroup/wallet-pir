@@ -8,8 +8,8 @@ description = "Receiver PIR serving with immutable publications and atomic sessi
 # A serving library only: pir-query-server is the entrypoint.
 autobins = false
 [dependencies]
-receiver-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc1", features = ["server"] }
-receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc1" }
+receiver-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc2", features = ["server"] }
+receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc2" }
 axum = "0.7"
 hex = "0.4"
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }

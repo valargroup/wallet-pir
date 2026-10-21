@@ -22,6 +22,7 @@ pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
+pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 pir-serving = { path = "../../shared/pir-serving" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 rand_chacha = { version = "0.3", optional = true }
@@ -46,14 +47,14 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 
-zakura-pir-query-server = { version = "=0.0.1-rc1", default-features = false, features = ["enhance"], optional = true }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native"], optional = true }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["enhance"], optional = true }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native"], optional = true }
 
 [dev-dependencies]
 simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native"] }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native"] }
 
 
 [dev-dependencies.enhance-query-server]

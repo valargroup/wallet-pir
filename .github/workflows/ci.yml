@@ -45,7 +45,9 @@ jobs:
     # so their cold builds cannot delay a main push.
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     # Let validation finish; enforce the feedback target afterwards on main only.
-    # GitHub's default job timeout remains the runaway safety limit.
+    # A warm run stays within three minutes. A workspace relink may add its
+    # compile time; a compile over five minutes still fails. GitHub's default
+    # job timeout remains the runaway safety limit.
     steps:
       - uses: actions/checkout@v4
         with:

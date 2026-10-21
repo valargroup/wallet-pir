@@ -295,6 +295,7 @@ impl Collected<'_> {
             .await
             .is_some_and(|m| m.anchor_height == height && m.anchor_block_hash == *hash)
         {
+            coordinator.publish_distribution(journal.records()).await?;
             return Ok(Input::Unchanged);
         }
         Ok(Input::Work(self))
@@ -326,6 +327,7 @@ impl Collected<'_> {
                 Ok(())
             })
             .await?;
+        coordinator.publish_distribution(journal.records()).await?;
         Ok(())
     }
 }
