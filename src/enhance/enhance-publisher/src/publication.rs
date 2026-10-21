@@ -1,6 +1,10 @@
 //! Prepare complete, immutable publications without reaching a serving process.
 //! Only the inventory is installed last; an interrupted build leaves reusable
 //! objects but never a complete inventory referring to unfinished bytes.
+//!
+//! Every referenced object is hashed from disk once, when preparation finishes.
+//! That pass records which file each hash was read from, so publication only
+//! rehashes files that were changed, replaced or truncated since.
 use crate::{artifact, prepared_packing, runtime, PackingBudget};
 use enhance_query_server::{
     protocol::{digest, Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
@@ -11,7 +15,9 @@ use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::{self, Read},
+    os::unix::fs::MetadataExt,
     path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 /// Produce material for validated coverage, one domain at a time. The caller
@@ -22,7 +28,7 @@ pub fn prepare(
     coverage: Coverage,
     epochs: &BTreeMap<u64, String>,
     mut read: impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
-) -> Result<Inventory, String> {
+) -> Result<Prepared, String> {
     coverage.validate(Geometry::default())?;
     if coverage.shards.len() > MAX_QUERY_SHARDS as usize || epochs.len() != coverage.shards.len() {
         return Err("incomplete publication recovery identities".into());
@@ -70,11 +76,7 @@ pub fn prepare(
             if domain.plan != plan || domain.rows != rows {
                 return Err("retained publication domain identity differs".into());
             }
-            // Full structural validation happens on the complete inventory below.
-            for object in domain.rows.iter().chain([&domain.hint, &domain.public]) {
-                object.verify(root)?;
-            }
-            domain.packing_object().verify(root)?;
+            // The complete inventory is validated and its objects hashed below.
             domains.push(domain);
             continue;
         }
@@ -109,17 +111,174 @@ pub fn prepare(
         coverage,
         domains,
     };
-    inventory.verify(root)?;
+    let prepared = verify(root, inventory)?;
     File::open(root.join("objects"))
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;
     persist_metadata(
         root,
         "inventories",
-        &format!("{}.json", digest(&inventory)),
-        &inventory,
+        &format!("{}.json", digest(&prepared.inventory)),
+        &prepared.inventory,
     )?;
-    Ok(inventory)
+    Ok(prepared)
+}
+
+/// A file status change this recent may share its timestamp with a later write
+/// (timestamps advance in coarse ticks), so a hash taken now is not reused.
+const SETTLED: Duration = Duration::from_secs(1);
+
+/// The exact file a hash was read from. A write, truncation, rename over the
+/// path or metadata restore changes at least one of these fields; the status
+/// change time cannot be set back by a writer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    dev: u64,
+    ino: u64,
+    len: u64,
+    mtime: (i64, i64),
+    ctime: (i64, i64),
+}
+
+impl FileIdentity {
+    fn of(metadata: &fs::Metadata) -> Self {
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            len: metadata.len(),
+            mtime: (metadata.mtime(), metadata.mtime_nsec()),
+            ctime: (metadata.ctime(), metadata.ctime_nsec()),
+        }
+    }
+
+    /// Whether any later change to the file must move its status change time.
+    fn settled_before(&self, started: SystemTime) -> bool {
+        let (Ok(seconds), Ok(nanos)) = (u64::try_from(self.ctime.0), u32::try_from(self.ctime.1))
+        else {
+            return false;
+        };
+        UNIX_EPOCH
+            .checked_add(Duration::new(seconds, nanos))
+            .and_then(|ctime| ctime.checked_add(SETTLED))
+            .is_some_and(|settled| settled <= started)
+    }
+}
+
+/// Work done by one verification pass: files hashed, bytes read to hash them,
+/// and files accepted from earlier evidence without reading.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hashed {
+    pub files: u64,
+    pub bytes: u64,
+    pub reused: u64,
+}
+
+/// An inventory whose objects this process hashed from disk, with the identity
+/// of each file it hashed. The evidence exists only in memory and is never
+/// accepted from another process or a file.
+#[derive(Debug)]
+pub struct Prepared {
+    inventory: Inventory,
+    evidence: BTreeMap<String, FileIdentity>,
+    hashed: Hashed,
+}
+
+impl Prepared {
+    pub fn inventory(&self) -> &Inventory {
+        &self.inventory
+    }
+
+    /// Work done by the pass that produced this evidence.
+    pub fn hashed(&self) -> Hashed {
+        self.hashed
+    }
+
+    /// Verify the objects again under `root`, rehashing only files whose
+    /// identity differs from the one recorded when they were last hashed.
+    pub fn recheck(self, root: &Path) -> Result<Self, String> {
+        verify_with(root, self.inventory, &self.evidence)
+    }
+}
+
+/// Validate an inventory and hash every object it references.
+pub fn verify(root: &Path, inventory: Inventory) -> Result<Prepared, String> {
+    verify_with(root, inventory, &BTreeMap::new())
+}
+
+fn verify_with(
+    root: &Path,
+    inventory: Inventory,
+    prior: &BTreeMap<String, FileIdentity>,
+) -> Result<Prepared, String> {
+    inventory.validate()?;
+    let mut evidence: BTreeMap<String, FileIdentity> = BTreeMap::new();
+    let mut hashed = Hashed::default();
+    for domain in &inventory.domains {
+        let packing = domain.packing_object();
+        for object in domain
+            .rows
+            .iter()
+            .chain([&domain.hint, &domain.public, &packing])
+        {
+            if let Some(identity) = evidence.get(&object.sha256) {
+                if identity.len != object.bytes {
+                    return Err("publication object checksum or length mismatch".into());
+                }
+                continue;
+            }
+            if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
+                evidence.insert(object.sha256.clone(), identity);
+            }
+        }
+    }
+    Ok(Prepared {
+        inventory,
+        evidence,
+        hashed,
+    })
+}
+
+/// Check one object, reusing `prior` while the path still names the same,
+/// unchanged file. Returns the identity to reuse next time, if it has settled.
+fn check(
+    root: &Path,
+    object: &Object,
+    prior: Option<&FileIdentity>,
+    hashed: &mut Hashed,
+) -> Result<Option<FileIdentity>, String> {
+    let path = object.path(root)?;
+    if let Some(prior) = prior {
+        let current = FileIdentity::of(&fs::metadata(&path).map_err(|e| e.to_string())?);
+        if current == *prior && current.len == object.bytes {
+            hashed.reused += 1;
+            return Ok(Some(current));
+        }
+    }
+    let started = SystemTime::now();
+    let mut file = File::open(&path).map_err(|e| e.to_string())?;
+    let before = FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?);
+    if before.len != object.bytes {
+        return Err("publication object checksum or length mismatch".into());
+    }
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0; 1 << 16];
+    loop {
+        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hashed.bytes += n as u64;
+        hash.update(&buffer[..n]);
+    }
+    hashed.files += 1;
+    artifact::release_file_cache(&file);
+    if hex::encode(hash.finalize()) != object.sha256 {
+        return Err("publication object checksum or length mismatch".into());
+    }
+    if FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?) != before {
+        return Err("publication object changed while it was verified".into());
+    }
+    Ok(before.settled_before(started).then_some(before))
 }
 
 pub fn read_metadata<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
@@ -161,10 +320,8 @@ fn install(root: &Path, bytes: &[u8]) -> Result<Object, String> {
         sha256: hex::encode(Sha256::digest(bytes)),
         bytes: bytes.len() as u64,
     };
-    let path = object.path(root)?;
-    if path.exists() {
-        object.verify(root)?;
-    } else {
+    // An existing object is hashed with the complete inventory.
+    if !object.path(root)?.exists() {
         artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
             f.write_all(bytes)
         })
@@ -182,22 +339,201 @@ fn install_file(
         sha256: prepared.sha256.clone(),
         bytes: prepared.bytes,
     };
-    let path = object.path(root)?;
-    if path.exists() {
-        return object.verify(root);
+    // The copy is hashed with the complete inventory.
+    if object.path(root)?.exists() {
+        return Ok(());
     }
     artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
         io::copy(&mut File::open(source)?, f)?;
         Ok(())
     })
-    .map_err(|e| e.to_string())?;
-    object.verify(root)
+    .map(drop)
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use enhance_query_server::protocol::Lifecycle;
+
+    fn object(root: &Path, bytes: &[u8]) -> Object {
+        let object = Object {
+            sha256: hex::encode(Sha256::digest(bytes)),
+            bytes: bytes.len() as u64,
+        };
+        fs::create_dir_all(root.join("objects")).unwrap();
+        fs::write(object.path(root).unwrap(), bytes).unwrap();
+        object
+    }
+
+    /// Let every file written so far settle, so its hash can be reused.
+    fn settle() {
+        std::thread::sleep(SETTLED + Duration::from_millis(100));
+    }
+
+    fn verified(root: &Path, object: &Object) -> FileIdentity {
+        let mut hashed = Hashed::default();
+        let identity = check(root, object, None, &mut hashed).unwrap().unwrap();
+        assert_eq!(hashed.files, 1);
+        identity
+    }
+
+    #[test]
+    fn changed_replaced_and_truncated_objects_are_rehashed() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let unchanged = object(root, b"unchanged object");
+        let rewritten = object(root, b"rewritten object");
+        let restored = object(root, b"restored mtime!!");
+        let replaced = object(root, b"replaced object!");
+        let truncated = object(root, b"truncated object");
+        settle();
+        let all = [&unchanged, &rewritten, &restored, &replaced, &truncated];
+        let evidence: Vec<_> = all.iter().map(|o| verified(root, o)).collect();
+        let mut hashed = Hashed::default();
+        for (object, identity) in all.iter().zip(&evidence) {
+            check(root, object, Some(identity), &mut hashed).unwrap();
+        }
+        assert_eq!(
+            hashed,
+            Hashed {
+                files: 0,
+                bytes: 0,
+                reused: 5,
+            }
+        );
+
+        fs::write(rewritten.path(root).unwrap(), b"Rewritten object").unwrap();
+        let path = restored.path(root).unwrap();
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::write(&path, b"Restored mtime!!").unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        let path = replaced.path(root).unwrap();
+        let replacement = root.join("replacement");
+        fs::write(&replacement, b"Replaced object!").unwrap();
+        File::options()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_modified(fs::metadata(&path).unwrap().modified().unwrap())
+            .unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        File::options()
+            .write(true)
+            .open(truncated.path(root).unwrap())
+            .unwrap()
+            .set_len(1)
+            .unwrap();
+
+        let mut hashed = Hashed::default();
+        check(root, &unchanged, Some(&evidence[0]), &mut hashed).unwrap();
+        assert_eq!(hashed.reused, 1);
+        for (object, identity) in all.iter().zip(&evidence).skip(1) {
+            let mut hashed = Hashed::default();
+            assert!(
+                check(root, object, Some(identity), &mut hashed).is_err(),
+                "{object:?} must not be accepted from stale evidence"
+            );
+            assert_eq!(hashed.reused, 0);
+        }
+    }
+
+    #[test]
+    fn a_replaced_object_with_the_same_bytes_is_hashed_again() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        let object = object(root, b"same bytes");
+        settle();
+        let identity = verified(root, &object);
+        let replacement = root.join("replacement");
+        fs::write(&replacement, b"same bytes").unwrap();
+        fs::rename(&replacement, object.path(root).unwrap()).unwrap();
+        let mut hashed = Hashed::default();
+        check(root, &object, Some(&identity), &mut hashed).unwrap();
+        assert_eq!((hashed.files, hashed.reused), (1, 0));
+    }
+
+    #[test]
+    fn a_recently_changed_file_is_not_reused() {
+        let root = tempfile::tempdir().unwrap();
+        let object = object(root.path(), b"fresh object");
+        let identity = FileIdentity::of(&fs::metadata(object.path(root.path()).unwrap()).unwrap());
+        let ctime = UNIX_EPOCH + Duration::new(identity.ctime.0 as u64, identity.ctime.1 as u32);
+        assert!(!identity.settled_before(ctime));
+        assert!(!identity.settled_before(ctime + SETTLED - Duration::from_nanos(1)));
+        assert!(identity.settled_before(ctime + SETTLED));
+    }
+
+    #[test]
+    fn repeated_digest_with_a_different_length_is_rejected() {
+        use enhance_query_server::{protocol, RECORD_BYTES};
+
+        let root = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(1, Geometry::default())
+            .unwrap();
+        let mut read = |_, count| Ok(vec![0; count * RECORD_BYTES]);
+        let plan = runtime::plan(coverage.shards[0].clone(), &mut read).unwrap();
+        let bytes = runtime::unit_rows(&plan.shard, &plan.shard.units[0], &mut read).unwrap();
+        let rows = object(root.path(), &bytes);
+        let parameters = protocol::parameters(plan.shard.logical_rows).unwrap();
+        #[cfg(feature = "native-reinspiring")]
+        let public_bytes =
+            enhance_query_server::native::public_len(enhance_query_server::native::COLS);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let public_bytes = (parameters.db_cols
+            * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q))
+        .div_ceil(8);
+        let public = Object {
+            sha256: "11".repeat(32),
+            bytes: public_bytes as u64,
+        };
+        let hint = Object {
+            sha256: rows.sha256.clone(),
+            bytes: crate::wire::crs_encoded_len(
+                parameters.db_cols / runtime::rlwe().d,
+                runtime::rlwe().d,
+            )
+            .unwrap(),
+        };
+        assert_ne!(rows.bytes, hint.bytes);
+        let packing = prepared_packing::Artifact {
+            name: prepared_packing::artifact_name(plan.shard.logical_rows, &public.sha256).unwrap(),
+            sha256: "22".repeat(32),
+            #[cfg(feature = "native-reinspiring")]
+            bytes: 192 * 1024 * 1024,
+            #[cfg(not(feature = "native-reinspiring"))]
+            bytes: prepared_packing::expected_len(plan.shard.logical_rows).unwrap(),
+            format: prepared_packing::FORMAT,
+        };
+        let inventory = Inventory {
+            version: VERSION,
+            network: "main".into(),
+            profile: PROTOCOL_REVISION.into(),
+            coverage,
+            domains: vec![Domain {
+                plan,
+                rows: vec![rows],
+                hint,
+                public,
+                packing,
+            }],
+        };
+        inventory.validate().unwrap();
+        settle();
+        // Only the row file exists: verification must reject the contradictory
+        // hint length before attempting to open the later public or packing files.
+        assert_eq!(
+            verify(root.path(), inventory).unwrap_err(),
+            "publication object checksum or length mismatch"
+        );
+    }
 
     #[test]
     fn invalid_geometry_and_recovery_are_rejected_before_reading_records() {
