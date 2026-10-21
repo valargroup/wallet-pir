@@ -1415,7 +1415,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let trees: Vec<_> = std::fs::read_dir(&state)
         .unwrap()
         .filter_map(Result::ok)
-        .map(|e| e.path())
+        .map(|e| e.path().canonicalize().unwrap())
         .filter(|p| {
             p.file_name()
                 .unwrap()
