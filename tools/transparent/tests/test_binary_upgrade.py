@@ -882,6 +882,49 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     running = HistoryUpgrade.running
     FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
 
+    def lagging_archive(self, stays_old=False):
+        self.map[0] = NEXT_MAP
+        unit = 'transparent-v12-archive.service'
+        def health(ready_, exe):
+            digest = MAP if exe == sha256(OLD) or stays_old else NEXT_MAP
+            self.install_active(unit, digest)
+            return {**self.provider_ready(unit, digest), 'ready': ready_}
+        self.fake.health_shapes[('v12', unit)] = health
+        self.install_active('transparent-v12-recent.service', NEXT_MAP)
+
+    def pin_previous_archive(self, digest=MAP):
+        self.write_request(lambda r: r.update(previous_maps={
+            'worker@v12:transparent-v12-archive.service': digest}))
+
+    def test_reviewed_older_provider_can_upgrade_but_replacement_must_be_current(self):
+        self.lagging_archive()
+        self.run_cli('baseline')
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.pin_previous_archive()
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+        self.publisher_untouched()
+
+    def test_previous_publication_permission_does_not_apply_to_replacement(self):
+        self.lagging_archive(stays_old=True)
+        self.run_cli('baseline')
+        self.pin_previous_archive()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+
+    def test_unreviewed_older_publication_still_refuses_before_change(self):
+        self.lagging_archive()
+        self.run_cli('baseline')
+        self.pin_previous_archive('f' * 64)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
     def setUp(self):
         HistoryUpgrade.setUp(self)
         self.adopt(CONTROLLER, 'http://%s/v1/status' % HISTORY_LISTEN)

@@ -121,7 +121,9 @@ def validate(request):
     def require(condition, message):
         if not condition:
             raise DeployError('invalid upgrade request: ' + message)
-    require(isinstance(request, dict) and set(request) in (REQUEST_KEYS, REQUEST_KEYS | {'staging_adapter'}), 'keys must be %s' % sorted(REQUEST_KEYS))
+    require(isinstance(request, dict) and REQUEST_KEYS <= set(request)
+            and set(request) <= REQUEST_KEYS | {'staging_adapter', 'previous_maps'},
+            'keys must be %s with optional staging_adapter and previous_maps' % sorted(REQUEST_KEYS))
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
@@ -140,6 +142,11 @@ def validate(request):
         require(isinstance(load, dict) and set(load) == {'host', 'pins_sha256', 'resume_after_upgrade'} and isinstance(load['host'], str)
                 and bool(SHA256.match(load['pins_sha256'] or '')) and type(load['resume_after_upgrade']) is bool,
                 'load is {host, pins_sha256, resume_after_upgrade}')
+    if 'previous_maps' in request:
+        previous = request['previous_maps']
+        require(providers and isinstance(previous, dict) and previous and set(previous) <= set(workers)
+                and all(isinstance(value, str) and SHA256.fullmatch(value) for value in previous.values()),
+                'previous_maps pins older publication hashes for existing HTTPS provider workers only')
     release = request['release']
     require(isinstance(release, dict) and set(release) == {'git_sha', 'binary_sha256'}, 'release is {git_sha, binary_sha256}')
     require(bool(GIT.match(release['git_sha'])), 'release.git_sha is a full 40-digit revision')
@@ -442,7 +449,12 @@ class Upgrade:
             pair = pinned['args'][index:index + 2]
             present = any(words[i:i + len(pair)] == pair for i in range(len(words)))
             problem_if(not present, '%s does not run %s' % (target.key, ' '.join(pair)), problems)
-        problems.extend(self.ready_problems(ex, target.key, target.host, target.url(target.role.ready_url or target.role.health)))
+        # A repair may start from an explicitly reviewed older publication.
+        # This applies only to the predecessor; the replacement must be current.
+        previous = (self.request.get('previous_maps', {}).get(target.key)
+                    if state['exe_sha256'] != self.request['release']['binary_sha256'] else None)
+        problems.extend(self.ready_problems(ex, target.key, target.host,
+                                           target.url(target.role.ready_url or target.role.health), previous=previous))
         return problems
 
     def authority_problems(self, ex):
@@ -473,7 +485,7 @@ class Upgrade:
             return None, problems + ['controller reports no current map_sha256']
         return current, problems
 
-    def ready_problems(self, ex, key, host, url):
+    def ready_problems(self, ex, key, host, url, *, previous=None):
         """Pinned ownership fields, readiness, and the controller's current map before or after the read."""
         pinned = self.request['workers'][key]['ready_identity']
         before, problems = self.authority_problems(ex)
@@ -488,7 +500,7 @@ class Upgrade:
             return problems + ['%s ready answered %s' % (key, status)]
         problems += ['%s ready %s is %r, pinned %r' % (key, field, document.get(field), value)
                      for field, value in sorted(pinned.items()) if document.get(field) != value]
-        problem_if(document.get('map_sha256') not in {before, after} - {None},
+        problem_if(document.get('map_sha256') not in {before, after, previous} - {None},
                    '%s serves map %r, controller current is %r' % (key, document.get('map_sha256'), after or before),
                    problems)
         if self.request['service'] == 'transparent-display':
