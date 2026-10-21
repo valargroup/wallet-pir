@@ -9,14 +9,18 @@ Within an ordinary publisher-cutover/3 transaction, under its production lock:
    prepare-history-restore`` on that pin, writing
    ``/opt/pir-publisher/transactions/<id>/history-restore.json``, require the
    record to name the active publication's map and the active pointer to be
-   unchanged, then remove the pin. Predecessor collection cannot alter the
-   pinned inputs; any refusal leaves the predecessor serving.
+   unchanged. The pin is kept across the stop. Predecessor collection cannot
+   alter the pinned inputs; any refusal leaves the predecessor serving.
 2. Installing, predecessor stopped and its ownership locks released. Require
    the same active pointer and live map; only these small files are hashed.
-   Journal the target's prior state (absence, or its bytes saved beside the
+   Every pinned file must still be the same inode with the same size in the
+   live publication (the helper's ``same``); the retained pin keeps those
+   inodes allocated, so a replaced file cannot reuse its number. Then remove
+   the pin. Journal the target's prior state (absence, or its bytes saved beside the
    journal as ``history-restore.prior.json``) before atomically installing
-   the record beside the publication. Drift restores the predecessor through
-   the ordinary transaction rollback and refuses with a retryable error.
+   the record beside the publication. Drift of the pointer, map or any pinned
+   artifact restores the predecessor through the ordinary transaction rollback
+   and refuses with a retryable error.
 3. Rollback. Refuse before any effect if the target holds neither the
    installed record nor its journaled prior state; otherwise restore the
    prior bytes or absence exactly and remove a retained pin.
@@ -37,7 +41,7 @@ SECTION = 'transparent_history'
 PIN = 'pin history restore snapshot'
 PREPARE = 'prepare history restore'
 RELEASE = 'remove history restore snapshot'
-STAGED = [PIN, PREPARE, RELEASE]
+STAGED = [PIN, PREPARE]
 INSTALL = 'install history restore record'
 RESTORE = 'restore history restore record'
 ROLLBACK_RELEASE = 'restore remove history restore snapshot'
@@ -120,7 +124,6 @@ class HistoryRestore:
                 'the predecessor still serves, retry the deploy')
         evidence['record_sha256'] = digest
         owner.save(journal)
-        self.release(journal, RELEASE)
 
     def unchanged(self, evidence):
         """The exact prepared publication is still active, comparing only small files."""
@@ -146,7 +149,11 @@ class HistoryRestore:
         require(all(name in journal['completed'] for name in STAGED) and 'record_sha256' in evidence,
                 'History restore preparation did not finish before the stop')
         if not self.unchanged(evidence):
-            self.retry(journal)
+            self.retry(journal, 'History publication advanced after the predecessor stopped')
+        require(RELEASE not in journal['completed'], 'History restore snapshot was removed before its comparison')
+        if not self.pinned(journal, evidence):
+            self.retry(journal, 'History publication artifacts differ from their pin after the predecessor stopped')
+        self.release(journal, RELEASE)
         require(self.digest(evidence['record']) == evidence['record_sha256'],
                 'prepared History restore record changed outside its transaction')
         text = owner.read(evidence['record'])
@@ -159,6 +166,20 @@ class HistoryRestore:
             require(self.digest(evidence['target']) == evidence['record_sha256'],
                     'installed History restore record differs')
         owner.effect(journal, INSTALL, install)
+
+    def pinned(self, journal, evidence):
+        """Every pinned file is still the live publication's same inode and size; no body is read."""
+        owner = self.owner
+        script = SnapshotPreparation(owner.serving).prepare_script(journal)
+        code, output = owner.ex.run(owner.host, ['python3', script, 'same', evidence['directory'], evidence['pin']],
+                                    600)
+        require(code == 0, 'could not compare the History publication with its pin: ' + output[-1000:])
+        result = json.loads(output)
+        require(type(result.get('same')) is bool and type(result.get('compared')) is int,
+                'History pin comparison reported no result')
+        evidence['pin_comparison'] = result
+        owner.save(journal)
+        return result['same'] and result['compared'] > 0
 
     def preserve(self, journal, target):
         """Save the target's prior bytes beside the journal, or record its absence."""
@@ -173,14 +194,13 @@ class HistoryRestore:
         require(self.digest(backup) == digest, 'preserved History restore record differs')
         return {'sha256': digest, 'backup': backup}
 
-    def retry(self, journal):
+    def retry(self, journal, reason):
         """Restore the predecessor through the ordinary rollback, then refuse retryably."""
         owner = self.owner
-        journal['retry'] = 'History publication advanced after the predecessor stopped'
+        journal['retry'] = reason
         owner.save(journal)
         owner.restore_transaction()
-        raise DeployError('History publication advanced after the predecessor stopped; '
-                          'the predecessor was restored, retry the deploy')
+        raise DeployError(reason + '; the predecessor was restored, retry the deploy')
 
     def guard(self, journal):
         """Before any rollback effect: the target is ours or its prior state."""

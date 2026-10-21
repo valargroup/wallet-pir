@@ -6,6 +6,8 @@ the running executable's digest is that binary file's digest at start time,
 and `exec_start` the command line it was started with. As in systemd, a
 missing `EnvironmentFile` without the `-` prefix fails the start.
 Every mutating call is logged, and an optional observer sees it first.
+Each file has an inode number: writing allocates a new one, renaming keeps
+it and `link` shares it, as hard links do.
 """
 import contextlib
 import hashlib
@@ -25,6 +27,7 @@ def sha256(data):
 class FakeHost:
     def __init__(self):
         self.files = {}
+        self.inodes = {}
         self.dirs = {'/'}
         self.units = {}
         self.free = 1 << 40
@@ -56,6 +59,7 @@ class FakeFleet(Executor):
         self.endpoints = {}
         self.held = set()
         self.product_check = None     # f(host, argv) -> (code, output) for a release's own check
+        self.next_inode = 0
 
     # ------------------------------------------------------------- set-up
 
@@ -68,7 +72,23 @@ class FakeFleet(Executor):
         while parent not in h.dirs:
             h.dirs.add(parent)
             parent = os.path.dirname(parent)
-        h.files[path] = data.encode() if isinstance(data, str) else data
+        self._store(host, path, data.encode() if isinstance(data, str) else data)
+
+    def _store(self, host, path, data):
+        self.next_inode += 1
+        self.host(host).files[path] = bytes(data)
+        self.host(host).inodes[path] = self.next_inode
+
+    def link(self, host, source, destination):
+        """A hard link: the destination shares the source's bytes and inode."""
+        h = self.host(host)
+        self.put(host, destination, h.files[source])
+        h.inodes[destination] = h.inodes[source]
+
+    def stat(self, host, path):
+        """`(inode, size)` of a file, or None."""
+        h = self.host(host)
+        return None if path not in h.files else (h.inodes.get(path), len(h.files[path]))
 
     def install(self, host, unit, fragment, drop_ins=(), files=None):
         """Install and start a unit. `drop_ins` are `(path, text)`; `files` map paths to bytes."""
@@ -162,14 +182,14 @@ class FakeFleet(Executor):
         self._mutate(host, 'write', path)
         if os.path.dirname(path) not in self.host(host).dirs:
             raise FileNotFoundError(os.path.dirname(path))
-        self.host(host).files[path] = bytes(data)
+        self._store(host, path, data)
 
     def upload(self, host, local_path, path, mode):
         self._mutate(host, 'upload', path)
         if os.path.dirname(path) not in self.host(host).dirs:
             raise FileNotFoundError(os.path.dirname(path))
         with open(local_path, 'rb') as handle:
-            self.host(host).files[path] = handle.read()
+            self._store(host, path, handle.read())
 
     def mkdir(self, host, path, mode):
         self._mutate(host, 'mkdir', path)
@@ -185,16 +205,19 @@ class FakeFleet(Executor):
             raise FileExistsError(destination)
         if source in h.files:
             h.files[destination] = h.files.pop(source)
+            h.inodes[destination] = h.inodes.pop(source)
             return
         if source not in h.dirs:
             raise FileNotFoundError(source)
         for old in [p for p in h.files if p.startswith(source + '/')]:
             h.files[destination + old[len(source):]] = h.files.pop(old)
+            h.inodes[destination + old[len(source):]] = h.inodes.pop(old)
         h.dirs = {destination + d[len(source):] if d == source or d.startswith(source + '/') else d for d in h.dirs}
 
     def remove(self, host, path):
         self._mutate(host, 'remove', path)
         self.host(host).files.pop(path, None)
+        self.host(host).inodes.pop(path, None)
 
     def remove_tree(self, host, path, owner):
         self._mutate(host, 'remove_tree', path)
@@ -202,6 +225,7 @@ class FakeFleet(Executor):
             raise ValueError('%s is not directly below %s' % (path, owner))
         h = self.host(host)
         h.files = {p: data for p, data in h.files.items() if not p.startswith(path + '/')}
+        h.inodes = {p: inode for p, inode in h.inodes.items() if p in h.files}
         h.dirs = {d for d in h.dirs if d != path and not d.startswith(path + '/')}
 
     def free_bytes(self, host, path):

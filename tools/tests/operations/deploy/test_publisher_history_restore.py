@@ -39,12 +39,15 @@ class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
             if len(argv) > 2 and argv[1].endswith('/snapshot-warmer.py') and argv[2] == 'pin':
                 self.ex.runs.append((host, argv))
                 source, destination = argv[3:]
-                for path, content in list(self.ex.host(host).files.items()):
+                for path in list(self.ex.host(host).files):
                     if path.startswith(source + '/') and not path.endswith('.partial'):
-                        self.ex.put(host, destination + path[len(source):], content)
+                        self.ex.link(host, path, destination + path[len(source):])
                 if self.crash_pin:
                     raise RemoteError('reply lost after a partial pin')
                 return 0, '{"pinned_files":2}'
+            if len(argv) > 2 and argv[1].endswith('/snapshot-warmer.py') and argv[2] == 'same':
+                self.ex.runs.append((host, argv))
+                return 0, json.dumps(self.compare_pin(host, *argv[3:]))
             if 'prepare-history-restore' in argv:
                 # The predecessor is still serving while its pinned publication is verified.
                 self.assertEqual(self.ex.probe_unit(host, publisher.UNIT)['exe_sha256'], self.old_publisher)
@@ -61,6 +64,13 @@ class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
             return original(host, argv, timeout)
         self.ex.run = run
         self.ex.effects.clear()
+
+    def compare_pin(self, host, source, pin):
+        """The snapshot helper's `same`, over the fake fleet's inode numbers."""
+        pinned = [path for path in self.ex.host(host).files if path.startswith(pin + '/')]
+        differs = [path[len(pin) + 1:] for path in pinned
+                   if self.ex.stat(host, source + path[len(pin):]) != self.ex.stat(host, path)]
+        return {'compared': len(pinned), 'same': not differs, 'differs': sorted(differs)}
 
     def stops(self):
         return [a for a in self.ex.effects if a[:2] == ('stop', publisher.UNIT)]
@@ -88,13 +98,15 @@ class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(len(self.prepared), 1)
         completed = journal['completed']
         for earlier, later in [('pin history restore snapshot', 'prepare history restore'),
-                               ('prepare history restore', 'remove history restore snapshot'),
-                               ('remove history restore snapshot', 'stop ' + publisher.UNIT),
-                               ('stop ' + publisher.UNIT, 'install history restore record'),
+                               ('prepare history restore', 'stop ' + publisher.UNIT),
+                               ('stop ' + publisher.UNIT, 'remove history restore snapshot'),
+                               ('remove history restore snapshot', 'install history restore record'),
                                ('install history restore record', 'start publisher')]:
             self.assertLess(completed.index(earlier), completed.index(later))
         self.assertEqual(self.ex.read('coordinator', TARGET), RECORD)
         self.assertEqual(journal['history_restore']['prior'], {'sha256': None, 'backup': None})
+        self.assertEqual(journal['history_restore']['pin_comparison'],
+                         {'compared': 2, 'same': True, 'differs': []})
         self.assertEqual(self.pins(), [])
         # The large bodies are hashed only by the preparation command, never by the deploy.
         self.assertFalse(any(path.endswith('/table.bin') for path in hashed))
@@ -175,30 +187,62 @@ class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(self.stops(), [])
 
     def test_publication_change_after_the_stop_rolls_back_and_is_retryable(self):
+        self.change_after_the_stop(lambda host: self.ex.put(host, ACTIVE, ADVANCED))
+        with self.assertRaisesRegex(DeployError, 'advanced after the predecessor stopped.*retry the deploy'):
+            self.deploy()
+        journal = self.target.latest()
+        self.assertIn('retry', journal)
+        # The ordinary transaction rollback restored the predecessor.
+        self.assert_restored_predecessor(journal)
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['active_state'], 'active')
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
+        self.assertEqual(len(self.prepared), 1)
+        self.target.plan()
+
+    def change_after_the_stop(self, change):
         original = self.ex.systemctl
 
         def systemctl(host, *args):
             result = original(host, *args)
             if args == ('stop', publisher.UNIT) and not self.stops()[1:]:
-                self.ex.put(host, ACTIVE, ADVANCED)
+                change(host)
             return result
         self.ex.systemctl = systemctl
-        with self.assertRaisesRegex(DeployError, 'retry the deploy'):
-            self.deploy()
-        journal = self.target.latest()
+
+    def assert_restored_predecessor(self, journal):
         self.assertEqual(journal['phase'], 'rolled-back')
-        self.assertIn('retry', journal)
         self.assertNotIn('install history restore record', journal['completed'])
-        # The ordinary transaction rollback restored the predecessor.
         self.assertIn('restore start ' + publisher.UNIT, journal['completed'])
         self.assertIsNone(self.ex.read('coordinator', TARGET))
-        state = self.ex.probe_unit('coordinator', publisher.UNIT)
-        self.assertEqual(state['active_state'], 'active')
-        self.assertEqual(state['exe_sha256'], self.old_publisher)
-        self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
-        self.assertEqual(len(self.prepared), 1)
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
         self.assertEqual(self.pins(), [])
+
+    def test_replaced_artifact_after_the_stop_rolls_back_and_is_retryable(self):
+        # Same bytes and size under the same name, but another inode than the pinned one.
+        self.change_after_the_stop(lambda host: self.ex.put(host, LIVE + '/table.bin', b'large immutable table'))
+        with self.assertRaisesRegex(DeployError, 'artifacts differ from their pin.*retry the deploy'):
+            self.deploy()
+        journal = self.target.latest()
+        self.assertEqual(journal['history_restore']['pin_comparison']['differs'], ['table.bin'])
+        self.assert_restored_predecessor(journal)
+        self.assertEqual(len(self.prepared), 1)
         self.target.plan()
+
+    def test_missing_artifact_after_the_stop_rolls_back_and_is_retryable(self):
+        self.change_after_the_stop(lambda host: self.ex.remove(host, LIVE + '/table.bin'))
+        with self.assertRaisesRegex(DeployError, 'artifacts differ from their pin'):
+            self.deploy()
+        self.assert_restored_predecessor(self.target.latest())
+
+    def test_unusable_pin_comparison_refuses_before_installing(self):
+        original = self.ex.run
+        self.ex.run = lambda host, argv, timeout: ((1, 'snapshot comparison needs regular directories')
+                                                   if argv[2:3] == ['same'] else original(host, argv, timeout))
+        with self.assertRaisesRegex(DeployError, 'could not compare the History publication with its pin'):
+            self.deploy()
+        self.assertIsNone(self.ex.read('coordinator', TARGET))
+        self.ex.run = original
+        self.assert_restored_predecessor(self.target.rollback())
 
     def test_interrupted_stop_continues_with_the_prepared_record(self):
         self.interrupt_stop()
@@ -207,11 +251,12 @@ class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(len(self.prepared), 1)
         self.assertEqual(self.ex.read('coordinator', TARGET), RECORD)
         self.assertEqual(self.stops(), [])
+        self.assertEqual(self.pins(), [])
 
     def test_continuation_requires_the_exact_staging_effects(self):
         self.interrupt_stop()
         journal = self.target.latest()
-        journal['completed'].remove(publisher_restore.RELEASE)
+        journal['completed'].remove(publisher_restore.PREPARE)
         self.ex.put('coordinator', publisher.ROOT_DIR + '/transactions/' + journal['id'] + '/journal.json',
                     json.dumps(journal))
         with self.assertRaisesRegex(DeployError, 'requires the interrupted predecessor stop'):

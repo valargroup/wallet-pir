@@ -39,9 +39,11 @@ deleting the record clears neither recorded integrity failures nor intent, so
 the remedy is a deploy of verified replacement bytes. An ordinary
 `publisher-cutover/3` deploy pins the active publication with the snapshot
 helper while the predecessor still serves, runs this command on the pin,
-refuses before stopping if the active publication moved, installs the record
-only if the active publication is unchanged after the stop, and otherwise
-restarts the predecessor and refuses so the deploy can be retried. Rollback
+refuses before stopping if the active publication moved, and keeps the pin
+across the stop. It installs the record only if the active pointer and map are
+unchanged after the stop and every pinned file is still the same inode with the
+same size in the live publication; otherwise it restarts the predecessor and
+refuses so the deploy can be retried. Rollback
 restores a replaced record's exact bytes, or its absence. Deploy readiness does
 not wait for background validation.
 After serving starts, one low-priority background thread, yielding to

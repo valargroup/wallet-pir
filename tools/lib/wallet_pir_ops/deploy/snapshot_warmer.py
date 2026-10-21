@@ -43,6 +43,29 @@ def pin(source, destination):
     return {'pinned_files': count}
 
 
+def same(source, pinned):
+    """Whether every pinned file is still the same inode, with the same size, in its source."""
+    source, pinned = Path(source), Path(pinned)
+    if any(path.is_symlink() or not path.is_dir() for path in (source, pinned)):
+        raise ValueError('snapshot comparison needs regular directories')
+    compared, differs = 0, []
+    for directory, _, files in os.walk(pinned, followlinks=False):
+        relative = Path(directory).relative_to(pinned)
+        live = source / relative
+        for name in files:
+            compared += 1
+            expected = (Path(directory) / name).lstat()
+            try:
+                observed = None if relative.parts and live.is_symlink() else (live / name).lstat()
+            except FileNotFoundError:
+                observed = None
+            if observed is None or not stat.S_ISREG(observed.st_mode) or (
+                    (observed.st_dev, observed.st_ino, observed.st_size)
+                    != (expected.st_dev, expected.st_ino, expected.st_size)):
+                differs.append(str(relative / name))
+    return {'compared': compared, 'same': not differs, 'differs': sorted(differs)[:16]}
+
+
 def completed_runtimes(source):
     source = Path(source)
     if source.is_symlink() or not source.is_dir():
@@ -96,14 +119,16 @@ def seed(source, record, root):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument('operation', choices=('pin', 'reuse', 'seed'))
+    parser.add_argument('operation', choices=('pin', 'same', 'reuse', 'seed'))
     parser.add_argument('arguments', nargs='+')
     arguments = parser.parse_args(argv)
-    expected = {'pin': 2, 'reuse': 2, 'seed': 3}[arguments.operation]
+    expected = {'pin': 2, 'same': 2, 'reuse': 2, 'seed': 3}[arguments.operation]
     if len(arguments.arguments) != expected:
         parser.error('%s needs exactly %d arguments' % (arguments.operation, expected))
     if arguments.operation == 'pin':
         result = pin(*arguments.arguments)
+    elif arguments.operation == 'same':
+        result = same(*arguments.arguments)
     elif arguments.operation == 'reuse':
         result = reuse(*arguments.arguments)
     else:
