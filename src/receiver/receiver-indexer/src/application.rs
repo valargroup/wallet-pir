@@ -154,22 +154,16 @@ pub async fn refresh(
     }
     let boundary = crate::blocks::boundary(rpc, args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
-    let path = args.data_dir.join(receiver_store::STORE_FILE);
-    if receiver_store::upgrade(
-        &args.data_dir.join(receiver_store::LEGACY_STORE_FILE),
-        &path,
-    )? {
+    let config = StoreConfig {
+        genesis,
+        start_height: args.start_height,
+        start_parent: boundary.hash,
+        start_position: boundary.position,
+    };
+    let (mut store, converted) = receiver_store::open_in(&args.data_dir, config, true)?;
+    if converted {
         info!("converted the version 2 receiver store; the original is kept for rollback");
     }
-    let mut store = Store::open(
-        path,
-        StoreConfig {
-            genesis,
-            start_height: args.start_height,
-            start_parent: boundary.hash,
-            start_position: boundary.position,
-        },
-    )?;
     // An empty in-memory store without a key; see `Config::audit_enabled`.
     let provider_store = match args.audit_enabled {
         true => PayoutStore::open(args.data_dir.join(PROVIDERS)).or_else(|error| {
@@ -633,7 +627,13 @@ pub fn correct(
             verify::check_payment(receiver, payment)?;
         }
     }
-    let mut store = Store::open(data_dir.join(receiver_store::STORE_FILE), config)?;
+    // A correction edits an existing index, converting a version 2 one first; it never
+    // starts an empty one.
+    let (mut store, converted) = receiver_store::open_in(data_dir, config, false)
+        .map_err(|e| format!("receiver index in {}: {e}", data_dir.display()))?;
+    if converted {
+        info!("converted the version 2 receiver store; the original is kept for rollback");
+    }
     store.correct(history_revision, blocks)?;
     Ok(())
 }
@@ -943,6 +943,21 @@ mod tests {
         fn provider(&self) -> PayoutStore {
             PayoutStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
+    }
+
+    /// An offline correction edits an existing index and never starts an empty one,
+    /// which would hide a version 2 index from its conversion.
+    #[test]
+    fn a_correction_never_starts_an_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = StoreConfig {
+            genesis: Network::Mainnet.genesis_hash(),
+            start_height: crate::blocks::ironwood_activation(),
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        assert!(correct(dir.path(), config, 1, &[]).is_err());
+        assert!(!dir.path().join(receiver_store::STORE_FILE).exists());
     }
 
     /// A correction is refused while the service holds the data directory, and once

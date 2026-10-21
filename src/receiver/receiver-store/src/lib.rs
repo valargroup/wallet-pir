@@ -565,6 +565,20 @@ pub const LEGACY_STORE_FILE: &str = "directory.sqlite";
 /// Bytes of a version 2 record: today's record without its witness ordinal.
 const LEGACY_RECORD_BYTES: usize = 285;
 
+/// Opens the store in `data_dir`, first converting a version 2 store there once (see
+/// [`upgrade`]), and returns it with whether it converted. Every entry point opens the
+/// store this way, so none can start an empty version 3 store beside a version 2 one,
+/// which would hide that history from the conversion. With `create` false, a directory
+/// holding neither store is refused with [`Error::Coverage`] and nothing is created.
+pub fn open_in(data_dir: &Path, config: Config, create: bool) -> Result<(Store, bool), Error> {
+    let path = data_dir.join(STORE_FILE);
+    let converted = upgrade(&data_dir.join(LEGACY_STORE_FILE), &path)?;
+    if !create && !path.exists() {
+        return Err(Error::Coverage);
+    }
+    Ok((Store::open(path, config)?, converted))
+}
+
 /// Builds the store at `path` from the version 2 store at `legacy` once, if `path` does
 /// not exist yet and `legacy` does. The copy's records gain a zero witness ordinal,
 /// which every snapshot reassigns, and it becomes version 3; completed Ironwood shards

@@ -706,17 +706,12 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
     assert_eq!(store.snapshot(4, 0).unwrap().manifest.records, u64::from(n));
 }
 
-/// An earlier release's version 2 store, with 285-byte records, is refused in place,
-/// copied once into a version 3 store whose records gain a zero ordinal, and left
-/// unchanged for a rollback; a leftover from an interrupted copy is redone, and a later
-/// start keeps the converted store.
-#[test]
-fn a_version_2_store_converts_once_and_stays_for_rollback() {
-    use receiver_store::{upgrade, Config, Store};
-    let dir = tempfile::tempdir().unwrap();
-    let legacy = dir.path().join(receiver_store::LEGACY_STORE_FILE);
-    let path = dir.path().join(receiver_store::STORE_FILE);
-    let config = Config {
+/// Writes an earlier release's version 2 store at `legacy` holding one payment in block
+/// 100, and returns its configuration and that payment's record.
+fn legacy_store(
+    legacy: &std::path::Path,
+) -> (receiver_store::Config, receiver_directory::RawRecord) {
+    let config = receiver_store::Config {
         genesis: [1; 32],
         start_height: 100,
         start_parent: [2; 32],
@@ -729,7 +724,7 @@ fn a_version_2_store_converts_once_and_stays_for_rollback() {
         paid.payment.position,
     ) = (100, [3; 32], 0);
     let encoded = paid.encode().unwrap();
-    let old = rusqlite::Connection::open(&legacy).unwrap();
+    let old = rusqlite::Connection::open(legacy).unwrap();
     old.execute_batch(
         "CREATE TABLE filter_revision (revision INTEGER NOT NULL);
         INSERT INTO filter_revision VALUES (0);
@@ -767,6 +762,42 @@ fn a_version_2_store_converts_once_and_stays_for_rollback() {
     )
     .unwrap();
     drop(old);
+    (config, paid)
+}
+
+/// A correction or any other entry point opening a data directory that holds only a
+/// version 2 store converts it first, rather than starting an empty version 3 store
+/// beside it, and one that may not create a store refuses an empty directory.
+#[test]
+fn opening_a_data_directory_converts_its_version_2_store_first() {
+    use receiver_store::open_in;
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = legacy_store(&dir.path().join(receiver_store::LEGACY_STORE_FILE));
+    let (store, converted) = open_in(dir.path(), config.clone(), false).unwrap();
+    assert!(converted);
+    assert_eq!(store.tip().unwrap().height, 100);
+    drop(store);
+    let (_, converted) = open_in(dir.path(), config.clone(), false).unwrap();
+    assert!(!converted);
+    let empty = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        open_in(empty.path(), config, false),
+        Err(Error::Coverage)
+    ));
+    assert!(!empty.path().join(receiver_store::STORE_FILE).exists());
+}
+
+/// An earlier release's version 2 store, with 285-byte records, is refused in place,
+/// copied once into a version 3 store whose records gain a zero ordinal, and left
+/// unchanged for a rollback; a leftover from an interrupted copy is redone, and a later
+/// start keeps the converted store.
+#[test]
+fn a_version_2_store_converts_once_and_stays_for_rollback() {
+    use receiver_store::{upgrade, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join(receiver_store::LEGACY_STORE_FILE);
+    let path = dir.path().join(receiver_store::STORE_FILE);
+    let (config, paid) = legacy_store(&legacy);
     let legacy_bytes = |path: &std::path::Path| {
         let db = rusqlite::Connection::open(path).unwrap();
         let version: u32 = db
