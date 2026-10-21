@@ -386,7 +386,13 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, false)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            false,
+            &mut CheckedRuntimes::default(),
+        )
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -394,14 +400,38 @@ impl Finalized {
         set: &ShardSet,
         recent_from_height: u64,
     ) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, true)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            true,
+            &mut CheckedRuntimes::default(),
+        )
+    }
+    /// [`Self::prepare`] or [`Self::prepare_full`], skipping the load and
+    /// self-check of runtimes whose exact bytes `checked` already proved.
+    /// A failed preparation preserves the preceding successful inventory's
+    /// evidence; a retry still hashes every file before reusing any check.
+    pub fn prepare_reusing(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked)
     }
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
+        checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
+        let previous = &checked.passed;
+        let mut passed = BTreeMap::new();
+        checked.loaded = 0;
+        checked.reused = 0;
         let recent = set
             .map
             .shards
@@ -421,48 +451,52 @@ impl Finalized {
             artifacts: Vec::new(),
         };
         let mut files = BTreeMap::new();
-        let mut paths = BTreeSet::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<(), Error> {
-            let relative = path
-                .strip_prefix(root)?
-                .to_str()
-                .ok_or("non-UTF8 artifact")?
-                .to_string();
-            if !safe_path(&relative) {
-                return Err("unsafe publisher artifact path".into());
-            }
-            let mut checked = root.to_path_buf();
-            for component in relative.split('/') {
-                checked.push(component);
-                if std::fs::symlink_metadata(&checked)?
-                    .file_type()
-                    .is_symlink()
-                {
-                    return Err("symlink in publisher artifact".into());
+        let mut paths = BTreeMap::new();
+        // Returns the digest and, the first time a path is added, the open
+        // handle it was computed from.
+        let mut add =
+            |path: PathBuf, kind: Kind| -> Result<(String, Option<std::fs::File>), Error> {
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_str()
+                    .ok_or("non-UTF8 artifact")?
+                    .to_string();
+                if !safe_path(&relative) {
+                    return Err("unsafe publisher artifact path".into());
                 }
-            }
-            if !paths.insert(relative.clone()) {
-                return Ok(());
-            }
-            let mut file = std::fs::File::open(&path)?;
-            if !file.metadata()?.is_file() {
-                return Err("artifact is not a regular file".into());
-            }
-            let bytes = file.metadata()?.len();
-            let mut hash = Sha256::new();
-            io::copy(&mut file, &mut HashWriter(&mut hash))?;
-            let sha256 = hex::encode(hash.finalize());
-            if full || kind.local() {
-                files.insert(sha256.clone(), path);
-            }
-            inventory.artifacts.push(Artifact {
-                path: relative,
-                sha256,
-                bytes,
-                kind,
-            });
-            Ok(())
-        };
+                let mut checked = root.to_path_buf();
+                for component in relative.split('/') {
+                    checked.push(component);
+                    if std::fs::symlink_metadata(&checked)?
+                        .file_type()
+                        .is_symlink()
+                    {
+                        return Err("symlink in publisher artifact".into());
+                    }
+                }
+                if let Some(sha256) = paths.get(&relative) {
+                    return Ok((String::clone(sha256), None));
+                }
+                let mut file = std::fs::File::open(&path)?;
+                if !file.metadata()?.is_file() {
+                    return Err("artifact is not a regular file".into());
+                }
+                let bytes = file.metadata()?.len();
+                let mut hash = Sha256::new();
+                io::copy(&mut file, &mut HashWriter(&mut hash))?;
+                let sha256 = hex::encode(hash.finalize());
+                if full || kind.local() {
+                    files.insert(sha256.clone(), path);
+                }
+                paths.insert(relative.clone(), sha256.clone());
+                inventory.artifacts.push(Artifact {
+                    path: relative,
+                    sha256: sha256.clone(),
+                    bytes,
+                    kind,
+                });
+                Ok((sha256, Some(file)))
+            };
         add(root.join("shards.json"), Kind::Metadata)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         for entry in &set.map.shards {
@@ -483,7 +517,7 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
-                    add(
+                    let (source_sha256, _) = add(
                         source.path().to_path_buf(),
                         if local {
                             Kind::RecentTable
@@ -491,23 +525,46 @@ impl Finalized {
                             Kind::ArchiveTable
                         },
                     )?;
+                    // The inventory publishes the bytes just hashed; they must
+                    // be the committed segment whether or not a runtime is loaded.
+                    if source_sha256 != source.sha256() {
+                        return Err("source segment differs from its manifest".into());
+                    }
                     if let Some(shared) = &params {
                         let key = (
                             shard.runtime_identity(table).to_string(),
                             table.kind(),
                             segment,
                         );
-                        // Header/length checks alone cannot finalize malformed native bytes.
-                        let runtime = shipped.load(&key, shared, source.sha256())?;
-                        runtime.self_check(shared, &source.load()?)?;
-                        add(
-                            shipped.path(&key, shared, source.sha256()),
-                            if local {
-                                Kind::RecentRuntime
-                            } else {
-                                Kind::ArchiveRuntime
-                            },
-                        )?;
+                        let path = shipped.path(&key, shared, source.sha256());
+                        let kind = if local {
+                            Kind::RecentRuntime
+                        } else {
+                            Kind::ArchiveRuntime
+                        };
+                        // The file name binds the runtime key, parameters and
+                        // source digest; the digest computed by `add` binds
+                        // every byte. A pair this process already loaded and
+                        // self-checked therefore names the same proven input.
+                        let name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or("non-UTF8 runtime name")?
+                            .to_string();
+                        let (sha256, file) = add(path, kind)?;
+                        if previous.get(&name) == Some(&sha256) {
+                            checked.reused += 1;
+                        } else {
+                            // Load from the handle just hashed, so the bytes
+                            // checked are the inode the inventory publishes
+                            // and caches, not a later replacement of the path.
+                            let file = file.ok_or("runtime listed twice")?;
+                            // Header/length checks alone cannot finalize malformed native bytes.
+                            ShippedRuntimes::load_file(file, &key, shared, source.sha256())?
+                                .self_check(shared, &source.load()?)?;
+                            checked.loaded += 1;
+                        }
+                        passed.insert(name, sha256);
                     }
                 }
             }
@@ -517,6 +574,7 @@ impl Finalized {
         inventory.validate_map(&set.map)?;
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
+        checked.passed = passed;
         Ok(Self {
             inventory,
             bytes,
@@ -524,6 +582,19 @@ impl Finalized {
             files,
         })
     }
+}
+/// Runtimes one process loaded and self-checked while finalizing, by file
+/// name and whole-file SHA-256. A successful preparation replaces the evidence
+/// with its own publication's runtimes; a failed one leaves it intact. Retained
+/// evidence therefore never grows past one successful inventory. Neither
+/// value is trusted from disk: the name is derived and the digest recomputed.
+#[derive(Debug, Default)]
+pub struct CheckedRuntimes {
+    passed: BTreeMap<String, String>,
+    /// Runtimes the last preparation attempt loaded and self-checked.
+    pub loaded: usize,
+    /// Runtimes the last preparation attempt accepted from an earlier check.
+    pub reused: usize,
 }
 struct HashWriter<'a>(&'a mut Sha256);
 impl io::Write for HashWriter<'_> {

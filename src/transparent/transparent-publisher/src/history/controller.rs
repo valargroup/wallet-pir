@@ -155,6 +155,9 @@ struct Inner {
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
     prepared_set: std::sync::Mutex<Option<transparent_shared::history::shardset::ShardSet>>,
+    /// Distributed runtimes this process already loaded and self-checked; the
+    /// next inventory rehashes them but checks only changed bytes again.
+    checked_runtimes: std::sync::Mutex<transparent_shared::publication::CheckedRuntimes>,
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
@@ -338,6 +341,7 @@ pub async fn run_managed(
             .build()?,
         membership: membership_path(&config.fleet_config),
         prepared_set: std::sync::Mutex::new(None),
+        checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
     }));
@@ -951,15 +955,26 @@ async fn prepare_candidate(
         let root = directory.clone();
         let cutoff = config.recent_from;
         let full = config.http_only;
-        let (set, distribution) = tokio::task::spawn_blocking(move || {
-            let result = if full {
-                transparent_shared::publication::Finalized::prepare_full(&root, &set, cutoff)
-            } else {
-                transparent_shared::publication::Finalized::prepare(&root, &set, cutoff)
-            };
-            (set, result)
+        let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
+        let started = std::time::Instant::now();
+        let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
+            let result = transparent_shared::publication::Finalized::prepare_reusing(
+                &root,
+                &set,
+                cutoff,
+                full,
+                &mut checked,
+            );
+            (set, checked, result)
         })
         .await?;
+        tracing::info!(
+            loaded = checked.loaded,
+            reused = checked.reused,
+            seconds = started.elapsed().as_secs_f64(),
+            "prepared distribution inventory"
+        );
+        *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
         candidate.distribution = Some(distribution?);
     }
@@ -2145,6 +2160,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
         }));
@@ -2480,6 +2496,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
         }));
