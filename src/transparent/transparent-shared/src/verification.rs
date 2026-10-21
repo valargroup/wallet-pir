@@ -115,8 +115,16 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
         bytes,
         object: std::fs::canonicalize(object)?,
     };
-    if read_received(path, &file).as_ref() == Some(&next) {
-        return Ok(());
+    if let Some(previous) = read_received(path, &file) {
+        if previous.sha256 != next.sha256 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "completed artifact already has a different download identity",
+            ));
+        }
+        if previous == next {
+            return Ok(());
+        }
     }
     let raw = serde_json::to_vec(&next)?;
     persist(&marker(path), &raw)
