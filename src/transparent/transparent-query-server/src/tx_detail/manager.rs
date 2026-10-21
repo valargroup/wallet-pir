@@ -79,6 +79,7 @@ impl DisplaySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another display consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let source = Source::for_product(&config, PREFIX, SCHEMA)?;
         let mut floor: Floor = match std::fs::read(config.directory.join("revocation-floor.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,

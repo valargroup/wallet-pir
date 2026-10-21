@@ -426,6 +426,9 @@ impl DisplayState {
     fn validation(&self) -> &crate::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::validation::Scope::default();
+            for revision in self.inner.set.current().iter().filter(|r| r.held()) {
+                scope.current(revision.manifest.shard_id, &revision.digest);
+            }
             // A wallet can still request a retained predecessor by its digest.
             for revision in self.inner.set.revisions().iter().filter(|r| r.held()) {
                 for (table, segment) in revision.targets() {

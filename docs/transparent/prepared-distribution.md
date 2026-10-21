@@ -748,7 +748,12 @@ Unrelated shards remain available and immutable public maps are not rewritten.
 Failures persist across restart. After a fresh successful publisher reconciliation,
 the synchronization manager refetches failed artifacts under its existing TLS and
 transfer budgets. Replacements are hashed by the same query-prioritized thread;
-affected idle runtime entries are evicted before the repaired shard is re-enabled.
+affected idle runtime entries and their persisted derivatives are evicted before
+the repaired shard is re-enabled. Validation covers retained revisions as well as
+the current map. A withdrawn shared file can be linked into a newer publication,
+but its dependent revisions remain unavailable; other shards can advance.
+Startup removes interrupted repair files while holding the consumer's exclusive
+directory lock.
 A shared artifact can withdraw more than one shard. `/v1/ready`, `/metrics` and
 health output report pending, validated and failed artifacts and withdrawals.
 Validation covers every held revision that can answer a request, including

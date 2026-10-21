@@ -5,6 +5,8 @@ use transparent_shared::runtime::metrics::Metrics;
 fn scope() -> Scope {
     Scope {
         core: new_core(),
+        activated: OnceLock::new(),
+        current: BTreeMap::new(),
         revisions: BTreeMap::new(),
         errors: BTreeMap::new(),
     }
@@ -28,6 +30,25 @@ fn artifact(root: &Path, good: &[u8], actual: &[u8]) -> (PathBuf, publication::A
     std::fs::write(&path, actual).unwrap();
     publication::record_received_file(&path, &artifact, &path).unwrap();
     (path, artifact)
+}
+
+#[test]
+fn startup_removes_interrupted_repairs_without_following_links() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let objects = root.path().join("objects");
+    std::fs::create_dir(&objects).unwrap();
+    let interrupted = objects.join("digest.validation.repair-1");
+    let alias = root.path().join(".validation-link-1");
+    let retained = objects.join("digest.validation.json");
+    let outside_file = outside.path().join(".validation-link-2");
+    for path in [&interrupted, &alias, &retained, &outside_file] {
+        std::fs::write(path, b"saved").unwrap();
+    }
+    std::os::unix::fs::symlink(outside.path(), root.path().join("outside")).unwrap();
+    cleanup_repairs(root.path()).unwrap();
+    assert!(!interrupted.exists() && !alias.exists());
+    assert!(retained.exists() && outside_file.exists());
 }
 async fn phase(job: &Job, phase: u8) {
     tokio::time::timeout(Duration::from_secs(3), async {
@@ -115,11 +136,12 @@ async fn checked_hard_links_reuse_validation_after_restart_but_copies_do_not() {
     let copy = root.path().join("copy");
     std::fs::write(&copy, b"wrong!!!").unwrap();
     publication::record_received_file(&copy, &artifact, &path).unwrap();
-    reopened.add("copy", 3, &copy, &cache, &key("copy"));
-    let copied = reopened.revisions["copy"].1[0].clone();
-    reopened.activate();
+    let mut copied_scope = scope();
+    copied_scope.add("copy", 3, &copy, &cache, &key("copy"));
+    let copied = copied_scope.revisions["copy"].1[0].clone();
+    copied_scope.activate();
     phase(&copied, FAILED).await;
-    assert!(reopened.unavailable("copy"));
+    assert!(copied_scope.unavailable("copy"));
     assert!(!reopened.unavailable("next"));
 }
 
@@ -150,6 +172,46 @@ async fn shared_failures_withdraw_only_dependent_shards_and_survive_restart() {
 }
 
 #[tokio::test]
+async fn a_failed_shared_file_does_not_block_other_publication_progress() {
+    let root = tempfile::tempdir().unwrap();
+    let (object, mut file) = artifact(root.path(), b"correct!", b"wrong!!!");
+    let revision = publication::digest(b"revision");
+    file.path = format!("{revision}/rows.bin");
+    let cache = cache();
+    let mut previous = Scope::default();
+    previous.add("previous", 1, &object, &cache, &key("previous"));
+    previous.activate();
+    phase(&previous.revisions["previous"].1[0], FAILED).await;
+    let stage = root.path().join("next");
+    std::fs::create_dir(&stage).unwrap();
+    crate::objects::stage_object(root.path(), &stage, &object, &file).unwrap();
+    let linked = stage.join(&file.path);
+    let mut next = Scope::default();
+    next.add("retained", 1, &linked, &cache, &key("retained"));
+    let (healthy, _) = artifact(root.path(), b"healthy!", b"healthy!");
+    next.add("new", 2, &healthy, &cache, &key("new"));
+    next.activate();
+    assert!(next.unavailable("retained"));
+    phase(&next.revisions["new"].1[0], PASSED).await;
+    assert!(!next.unavailable("new"));
+    drop(previous);
+    assert!(
+        next.unavailable("retained"),
+        "the replacement snapshot owns the retained failure"
+    );
+
+    let copy = root.path().join("copied");
+    std::fs::copy(&object, &copy).unwrap();
+    publication::record_received_file(&copy, &file, &object).unwrap();
+    let mut restarted = scope();
+    restarted.add("copied", 1, &copy, &cache, &key("copied"));
+    assert!(
+        restarted.unavailable("copied"),
+        "copying a failed object cannot escape withdrawal"
+    );
+}
+
+#[tokio::test]
 async fn a_replaced_object_cannot_receive_an_old_check_result() {
     let root = tempfile::tempdir().unwrap();
     let (path, _) = artifact(root.path(), b"correct!", b"correct!");
@@ -161,6 +223,50 @@ async fn a_replaced_object_cannot_receive_an_old_check_result() {
     std::fs::rename(replacement, &path).unwrap();
     scope.activate();
     phase(&scope.revisions["one"].1[0], FAILED).await;
+}
+
+#[tokio::test]
+async fn a_failed_retained_revision_does_not_withdraw_the_current_revision() {
+    use axum::{body::Body, routing::get, Router};
+    use tower::ServiceExt;
+    let root = tempfile::tempdir().unwrap();
+    let (bad, _) = artifact(root.path(), b"correct!", b"wrong!!!");
+    let (good, _) = artifact(root.path(), b"healthy!", b"healthy!");
+    let mut scope = scope();
+    scope.current(1, "new");
+    scope.add("old", 1, &bad, &cache(), &key("old"));
+    scope.add("new", 1, &good, &cache(), &key("new"));
+    scope.activate();
+    phase(&scope.revisions["old"].1[0], FAILED).await;
+    let scope = Arc::new(scope);
+    let app = Router::new()
+        .route("/v2/shards/1/filter", get(|| async { "current answer" }))
+        .route(
+            "/v2/shards/1/revisions/old/query",
+            get(|| async { "old answer" }),
+        )
+        .route("/v1/ready", get(|| async { "ready" }))
+        .layer(axum::middleware::from_fn(move |request, next| {
+            let scope = scope.clone();
+            async move { scope.serve(request, next).await }
+        }));
+    for (uri, status) in [
+        ("/v2/shards/1/filter", 200),
+        ("/v2/shards/1/revisions/old/query", 503),
+        ("/v1/ready", 200),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status, "{uri}");
+    }
 }
 
 #[tokio::test]

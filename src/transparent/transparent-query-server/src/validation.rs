@@ -64,6 +64,28 @@ fn record_path(path: &Path) -> PathBuf {
     name.push(".validation.json");
     path.with_file_name(name)
 }
+
+/// Called once after the consumer's exclusive directory lock is acquired,
+/// before recovery creates any validation jobs. Never follow directory links.
+pub(crate) fn cleanup_repairs(root: &Path) -> io::Result<()> {
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if kind.is_dir() {
+                directories.push(entry.path());
+            } else if kind.is_file()
+                && (name.contains(".validation.repair-") || name.starts_with(".validation-link-"))
+            {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
+    Ok(())
+}
 fn open(path: &Path) -> io::Result<File> {
     if !std::fs::symlink_metadata(path)?.is_file() {
         return Err(io::Error::other("artifact is not a regular file"));
@@ -191,23 +213,6 @@ pub(crate) fn track_link(object: &Path, alias: &Path) -> io::Result<()> {
     }
     Ok(())
 }
-pub(crate) fn refuse_withdrawn(object: &Path) -> io::Result<()> {
-    let Some(core) = registry().lock().unwrap().upgrade() else {
-        return Ok(());
-    };
-    let state = core.shared.state.lock().unwrap();
-    if state
-        .jobs
-        .values()
-        .filter_map(Weak::upgrade)
-        .any(|j| j.primary == object && j.withdrawn())
-    {
-        return Err(io::Error::other(
-            "artifact is withdrawn pending verified repair",
-        ));
-    }
-    Ok(())
-}
 
 /// Kept through request admission, waiting and evaluation, including cancellation
 /// of an HTTP waiter while its admitted blocking operation is still running.
@@ -221,8 +226,11 @@ fn activity(core: Arc<Core>) -> QueryActivity {
 }
 impl Drop for QueryActivity {
     fn drop(&mut self) {
-        self.0.shared.state.lock().unwrap().queries -= 1;
-        self.0.shared.wake.notify_all();
+        let mut state = self.0.shared.state.lock().unwrap();
+        state.queries -= 1;
+        if state.queries == 0 {
+            self.0.shared.wake.notify_all();
+        }
     }
 }
 fn idle(shared: &Shared) -> io::Result<()> {
@@ -239,6 +247,8 @@ fn idle(shared: &Shared) -> io::Result<()> {
 /// Owned by a serving snapshot: dropping it removes unneeded queued checks.
 pub(crate) struct Scope {
     core: Arc<Core>,
+    activated: OnceLock<()>,
+    current: BTreeMap<u64, String>,
     revisions: BTreeMap<String, (u64, Vec<Arc<Job>>)>,
     errors: BTreeMap<String, String>,
 }
@@ -246,12 +256,17 @@ impl Default for Scope {
     fn default() -> Self {
         Self {
             core: core(),
+            activated: OnceLock::new(),
+            current: BTreeMap::new(),
             revisions: BTreeMap::new(),
             errors: BTreeMap::new(),
         }
     }
 }
 impl Scope {
+    pub(crate) fn current(&mut self, shard: u64, revision: &str) {
+        self.current.insert(shard, revision.to_string());
+    }
     pub(crate) fn add(
         &mut self,
         revision: &str,
@@ -302,26 +317,44 @@ impl Scope {
         let job = match state.jobs.get(&identity).and_then(Weak::upgrade) {
             Some(job) if *job.stamp.lock().unwrap() == stamp => job,
             _ => {
-                let phase = match File::open(record_path(&primary)) {
-                    Ok(input) => {
-                        let record: Record = serde_json::from_reader(input.take(8193))?;
-                        if record.version == 1
-                            && record.sha256 == expected.sha256
-                            && record.bytes == expected.bytes
-                        {
-                            if !record.passed {
-                                FAILED
-                            } else if record.stamp == stamp {
-                                PASSED
+                // A copy cannot escape the original object's persisted
+                // withdrawal, even though successful checks remain inode-local.
+                let original_failed = primary != expected.object
+                    && File::open(record_path(&expected.object))
+                        .ok()
+                        .and_then(|input| {
+                            serde_json::from_reader::<_, Record>(input.take(8193)).ok()
+                        })
+                        .is_some_and(|r| {
+                            r.version == 1
+                                && r.sha256 == expected.sha256
+                                && r.bytes == expected.bytes
+                                && !r.passed
+                        });
+                let phase = if original_failed {
+                    FAILED
+                } else {
+                    match File::open(record_path(&primary)) {
+                        Ok(input) => {
+                            let record: Record = serde_json::from_reader(input.take(8193))?;
+                            if record.version == 1
+                                && record.sha256 == expected.sha256
+                                && record.bytes == expected.bytes
+                            {
+                                if !record.passed {
+                                    FAILED
+                                } else if record.stamp == stamp {
+                                    PASSED
+                                } else {
+                                    PENDING
+                                }
                             } else {
                                 PENDING
                             }
-                        } else {
-                            PENDING
                         }
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => PENDING,
+                        Err(error) => return Err(error),
                     }
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => PENDING,
-                    Err(error) => return Err(error),
                 };
                 let job = Arc::new(Job {
                     expected,
@@ -348,20 +381,22 @@ impl Scope {
         Ok(Some(job))
     }
     fn activate(&self) {
-        let mut state = self.core.shared.state.lock().unwrap();
-        for (_, jobs) in self.revisions.values() {
-            for job in jobs {
-                if !job.enabled.swap(true, Ordering::AcqRel)
-                    && job.phase.load(Ordering::Acquire) == PENDING
-                {
-                    state.queue.push_back(Work {
-                        job: Arc::downgrade(job),
-                        replacement: None,
-                    });
+        self.activated.get_or_init(|| {
+            let mut state = self.core.shared.state.lock().unwrap();
+            for (_, jobs) in self.revisions.values() {
+                for job in jobs {
+                    if !job.enabled.swap(true, Ordering::AcqRel)
+                        && job.phase.load(Ordering::Acquire) == PENDING
+                    {
+                        state.queue.push_back(Work {
+                            job: Arc::downgrade(job),
+                            replacement: None,
+                        });
+                    }
                 }
             }
-        }
-        self.core.shared.wake.notify_all();
+            self.core.shared.wake.notify_all();
+        });
     }
     pub(crate) fn unavailable(&self, revision: &str) -> bool {
         self.errors.contains_key(revision)
@@ -415,9 +450,7 @@ impl Scope {
             target.as_ref().map_or_else(
                 || {
                     shard.is_some_and(|id| {
-                        self.revisions
-                            .iter()
-                            .any(|(r, (s, _))| *s == id && self.unavailable(r))
+                        self.current.get(&id).is_some_and(|r| self.unavailable(r))
                     })
                 },
                 |r| self.unavailable(r),
@@ -430,8 +463,8 @@ impl Scope {
         self.activate();
         if affected()
             || (ready
-                && !self.revisions.is_empty()
-                && self.revisions.keys().all(|r| self.unavailable(r)))
+                && !self.current.is_empty()
+                && self.current.values().all(|r| self.unavailable(r)))
         {
             return unavailable();
         }
@@ -518,22 +551,37 @@ fn check(shared: &Shared, job: &Arc<Job>, replacement: Option<&Path>) -> io::Res
         return Err(io::Error::other("artifact changed during validation"));
     }
     if replacement.is_some() {
-        let _catalog = CATALOG.lock().unwrap();
-        loop {
+        let _catalog = loop {
             idle(shared)?;
-            if job.caches.lock().unwrap().iter().all(|(cache, key)| {
-                cache
-                    .upgrade()
-                    .is_none_or(|c| c.evict_keys(std::slice::from_ref(key)))
-            }) {
-                break;
+            // Do not hold the catalog while waiting for query priority or a
+            // pinned cache entry. Unrelated publications must keep progressing.
+            let catalog = match CATALOG.try_lock() {
+                Ok(catalog) => Some(catalog),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(io::Error::other("artifact catalog lock poisoned"));
+                }
+            };
+            let mut cleared = true;
+            if catalog.is_some() {
+                for (cache, key) in job.caches.lock().unwrap().iter() {
+                    if let Some(cache) = cache.upgrade() {
+                        cleared &= cache.evict_keys(std::slice::from_ref(key))?;
+                    }
+                }
             }
+            if cleared {
+                if let Some(catalog) = catalog {
+                    break catalog;
+                }
+            }
+            drop(catalog);
             let state = shared.state.lock().unwrap();
             let _ = shared
                 .wake
                 .wait_timeout(state, Duration::from_millis(50))
                 .unwrap();
-        }
+        };
         let mut aliases = job.aliases.lock().unwrap().clone();
         aliases.insert(job.primary.clone());
         for alias in aliases {

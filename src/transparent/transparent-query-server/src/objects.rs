@@ -162,7 +162,6 @@ fn link_object_locked(
     artifact: &publication::Artifact,
     link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
 ) -> Result<(), Error> {
-    crate::validation::refuse_withdrawn(object)?;
     match link(object, target) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
@@ -190,7 +189,6 @@ pub(crate) fn stage_object(
     use std::os::unix::fs::MetadataExt;
     use std::path::Component;
     let _catalog = crate::validation::CATALOG.lock().unwrap();
-    crate::validation::refuse_withdrawn(object)?;
     let path = std::path::Path::new(&artifact.path);
     let components: Vec<_> = path.components().collect();
     if components.is_empty()

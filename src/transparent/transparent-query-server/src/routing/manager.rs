@@ -122,6 +122,7 @@ impl HistorySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another publication consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let invalid: BTreeSet<String> =
             match std::fs::read(config.directory.join("active.invalid.json")) {
                 Ok(bytes) => serde_json::from_slice(&bytes)?,

@@ -536,6 +536,9 @@ impl ServiceState {
     fn validation(&self) -> &crate::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::validation::Scope::default();
+            for shard in self.inner.set.current() {
+                scope.current(shard.manifest.shard_id, &shard.digest);
+            }
             // A wallet can still request a retained predecessor by its digest.
             for shard in self.inner.set.revisions() {
                 for table in shard.tables() {
