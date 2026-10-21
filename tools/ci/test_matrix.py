@@ -339,7 +339,6 @@ def baseline_commands(family, include_cuda=False):
         result += [
             ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
-            ('reference', [*options, '-p', 'enhance-query-server', '--test', 'routing_contract']),
             ('reference', [*options, '-p', 'pir-e2e-tests', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),

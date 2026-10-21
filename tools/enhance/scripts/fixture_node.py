@@ -31,9 +31,15 @@ PROFILES = {
 # A public synthetic Sapling coinbase with no shielded actions. Confirmations
 # must still contain a decodable transaction; an empty block is rejected by RPC
 # acquisition. This does not claim that the synthetic chain satisfies consensus.
-CONFIRMATION_TX = bytes.fromhex(
-    '0400008085202f89' + '01' + '00' * 32 + 'ffffffff' + '0100' + 'ffffffff'
-    + '01' + '00' * 8 + '00' + '00' * 4 + '00' * 4 + '00' * 8 + '000000')
+def confirmation_transaction(height):
+    number = height.to_bytes((height.bit_length() + 7) // 8, 'little')
+    if number[-1] & 0x80:
+        number += b'\x00'
+    script = bytes([len(number)]) + number
+    return (bytes.fromhex('0400008085202f8901' + '00' * 32 + 'ffffffff')
+            + compact_size(len(script)) + script
+            + bytes.fromhex('ffffffff01' + '00' * 8 + '00' + '00' * 4
+                            + '00' * 4 + '00' * 8 + '000000'))
 
 
 def compact_size(count):
@@ -88,7 +94,8 @@ class Chain:
             return self.blocks[index][0]
         if method == 'getblock' and parameters[1] == 0:
             payload = self.bulk if index < self.initial_blocks else (
-                (b'\x01' + CONFIRMATION_TX).hex() if index <= self.initial_tip else self.single)
+                (b'\x01' + confirmation_transaction(ACTIVATION_HEIGHT + index)).hex()
+                if index <= self.initial_tip else self.single)
             return self.blocks[index][1] + payload
         if method == 'getblock' and parameters[1] == 2:
             records = 2 * (min(index + 1, self.initial_blocks) * self.transactions
