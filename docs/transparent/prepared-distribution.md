@@ -54,7 +54,10 @@ it hashed unchanged; a newer publication or a withdrawal stops it. A correctness
 failure is reported and the publication keeps serving. A confirmed integrity
 mismatch is recorded in `integrity-failures.json` and withdraws every
 publication listing those bytes, in this and later processes, until freshly
-verified replacement bytes are published. Withdrawing the publisher's own
+verified replacement bytes are published; `recorded` is false in its status
+when the record could not be made durable, so only this process withdraws it.
+Completion and failure records are synced with their directory before they are
+acted on. Withdrawing the publisher's own
 routes would leave the router proxying setup and query requests to workers
 that still serve the publication, so unless the controller is HTTP-only or a
 shadow, it also sends the fleet `withdraw` operation, retried each publication

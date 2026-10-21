@@ -1277,7 +1277,7 @@ async fn activate_history(
         // required preparation passed and before the active pointer moves.
         let record =
             distribution.restore_record(config.http_only, config.recent_from, height, &hash)?;
-        publication::write_atomic(
+        publication::write_durable(
             &directory.join(transparent_shared::publication::RESTORE_FILE),
             &serde_json::to_vec(&record)?,
         )?;
@@ -1350,7 +1350,7 @@ async fn activate_history(
                 .cloned()
                 .collect();
             if remaining.len() != failures.len() {
-                publication::write_atomic(
+                publication::write_durable(
                     &config.publication_root.join(INTEGRITY_FAILURES),
                     &serde_json::to_vec(&remaining)?,
                 )?;
@@ -1717,25 +1717,31 @@ fn validation_event(
             let _gate = authority.0.publication_gate.lock().unwrap();
             // An unreadable record is never replaced by one holding only this
             // failure; the publication is withdrawn below either way.
-            match integrity_failures(root) {
+            let recorded = match integrity_failures(root) {
                 Ok(mut failures) => {
                     if !failures.contains(&failure) {
                         failures.push(failure.clone());
                     }
-                    if let Err(error) = serde_json::to_vec(&failures)
+                    match serde_json::to_vec(&failures)
                         .map_err(BoxError::from)
                         .and_then(|bytes| {
-                            publication::write_atomic(&root.join(INTEGRITY_FAILURES), &bytes)
-                        })
-                    {
-                        tracing::error!(%error, "could not record the integrity failure");
+                            publication::write_durable(&root.join(INTEGRITY_FAILURES), &bytes)
+                        }) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            tracing::error!(%error, "could not record the integrity failure");
+                            false
+                        }
                     }
                 }
-                Err(error) => tracing::error!(
-                    %error,
-                    "integrity failure record is unreadable; kept as is and the publication withdrawn"
-                ),
-            }
+                Err(error) => {
+                    tracing::error!(
+                        %error,
+                        "integrity failure record is unreadable; kept as is and the publication withdrawn"
+                    );
+                    false
+                }
+            };
             let active = authority.0.active.read().unwrap().clone();
             if let Some(distribution) = &active.distribution {
                 if lists_failed(std::slice::from_ref(&failure), distribution.inventory()) {
@@ -1747,6 +1753,9 @@ fn validation_event(
                     let mut value = validation_status(identity, "failed");
                     value["reason"] = format!("{}: {reason}", failure.path).into();
                     value["artifact"] = serde_json::to_value(&failure).unwrap_or_default();
+                    // False when the failure is not durably recorded, so a
+                    // restart would not by itself keep these bytes withdrawn.
+                    value["recorded"] = recorded.into();
                     status["integrity_validation"] = value;
                 }
             }

@@ -2370,6 +2370,7 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
     })
     .await;
     assert_eq!(status["phase"], "integrity_failed");
+    assert_eq!(status["integrity_validation"]["recorded"], true);
     assert!(
         bootstrap::verify(config(&tls, startup.root.path().join("provider-2")))
             .await
