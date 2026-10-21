@@ -256,6 +256,9 @@ pub fn safe_path(path: &str) -> bool {
             !c.is_empty()
                 && c != "."
                 && c != ".."
+                // Publisher artifacts cannot overwrite private local receipts.
+                && !c.ends_with(".received.json")
+                && !c.contains(".checked-")
                 && c.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         })
@@ -654,14 +657,31 @@ impl io::Write for HashWriter<'_> {
     }
 }
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
-    let mut file = std::fs::File::open(path)?;
-    if file.metadata()?.len() != expected.bytes {
+    let file = crate::verification::open(path)?;
+    if crate::verification::matches_received(path, &file, &expected.sha256, expected.bytes) {
+        return Ok(());
+    }
+    verify_open(&file, expected)
+}
+
+/// The caller has verified the network stream, or linked/copied its completed
+/// cache object. Persist its download identity after checking the local size.
+pub fn record_received_file(path: &Path, expected: &Artifact, object: &Path) -> Result<(), Error> {
+    crate::verification::received(path, &expected.sha256, expected.bytes, object)?;
+    Ok(())
+}
+
+fn verify_open(file: &std::fs::File, expected: &Artifact) -> Result<(), Error> {
+    let before = file.metadata()?;
+    if before.len() != expected.bytes {
         return Err("artifact length mismatch".into());
     }
     let mut hash = Sha256::new();
     let mut buffer = vec![0; 1 << 20];
+    let mut input = file;
+    std::io::Seek::rewind(&mut input)?;
     loop {
-        let n = file.read(&mut buffer)?;
+        let n = input.read(&mut buffer)?;
         if n == 0 {
             break;
         }
@@ -670,6 +690,7 @@ pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
     if hex::encode(hash.finalize()) != expected.sha256 {
         return Err("artifact digest mismatch".into());
     }
+    tracing::debug!(bytes = expected.bytes, "artifact fully hashed");
     Ok(())
 }
 #[cfg(test)]
@@ -699,6 +720,27 @@ mod tests {
             assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
             assert_eq!(artifact.kind, Kind::RecentTable);
         }
+    }
+
+    #[test]
+    fn publisher_inventory_hashes_received_artifacts_in_full() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let path = root.join("source.bin");
+        let original = b"network bytes";
+        std::fs::write(&path, original).unwrap();
+        let expected = Artifact {
+            path: "source.bin".into(),
+            sha256: digest(original),
+            bytes: original.len() as u64,
+            kind: Kind::RecentTable,
+        };
+        record_received_file(&path, &expected, &path).unwrap();
+        let changed = b"same size!!!!";
+        std::fs::write(&path, changed).unwrap();
+        let hashed = hash_artifacts(root, vec![(path, Kind::RecentTable)]).unwrap();
+        assert_eq!(hashed[0].0.sha256, digest(changed));
+        assert_ne!(hashed[0].0.sha256, expected.sha256);
     }
 
     #[test]
@@ -749,9 +791,53 @@ mod tests {
         assert!(hash_artifacts(root, vec![(root.join("link.bin"), Kind::RecentTable)]).is_err());
     }
     #[test]
+    fn received_files_without_durable_evidence_are_checked_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("object");
+        let bytes = b"correct bytes";
+        std::fs::write(&path, bytes).unwrap();
+        let expected = Artifact {
+            path: "object".into(),
+            sha256: digest(bytes),
+            bytes: bytes.len() as u64,
+            kind: Kind::Metadata,
+        };
+        verify_file(&path, &expected).unwrap();
+        std::fs::write(&path, b"corrupt bytes").unwrap();
+        assert!(verify_file(&path, &expected).is_err());
+        std::fs::write(&path, bytes).unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        verify_open(&file, &expected).unwrap();
+        // A caller's consumed descriptor must not make a retry hash EOF.
+        verify_open(&file, &expected).unwrap();
+    }
+
+    #[test]
+    fn downloaded_artifacts_use_size_checks_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("object");
+        let bytes = b"network bytes";
+        std::fs::write(&path, bytes).unwrap();
+        let expected = Artifact {
+            path: "object".into(),
+            sha256: digest(bytes),
+            bytes: bytes.len() as u64,
+            kind: Kind::Metadata,
+        };
+        record_received_file(&path, &expected, &path).unwrap();
+        verify_file(&path, &expected).unwrap();
+        std::fs::write(&path, b"same size!!!!").unwrap();
+        verify_file(&path, &expected).unwrap();
+        std::fs::write(&path, b"short").unwrap();
+        assert!(verify_file(&path, &expected).is_err());
+    }
+
+    #[test]
     fn rejects_unsafe_paths_and_noncanonical_digests() {
         for p in [
             "../x",
+            "data.bin.received.json",
+            "data.bin.checked-receipt",
             "/x",
             "a//b",
             "a/./b",

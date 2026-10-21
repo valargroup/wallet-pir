@@ -148,12 +148,15 @@ impl DiskCache {
         shared: &SharedParams,
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
-        Self::load_file(
-            File::open(self.path(key, shared, source_sha))?,
+        let path = self.path(key, shared, source_sha);
+        Self::load_file_checked_at(
+            crate::verification::open(&path)?,
             key,
             shared,
             source_sha,
+            Some(&path),
         )
+        .map(|(runtime, _)| runtime)
     }
 
     /// [`Self::load`] from an already open entry, read from its start.
@@ -168,10 +171,20 @@ impl DiskCache {
 
     /// [`Self::load_file`], with the body checksum the loaded bytes matched.
     fn load_file_checked(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<(TableRuntime, [u8; 32])> {
+        Self::load_file_checked_at(file, key, shared, source_sha, None)
+    }
+
+    fn load_file_checked_at(
         mut file: File,
         key: &RuntimeKey,
         shared: &SharedParams,
         source_sha: &str,
+        path: Option<&Path>,
     ) -> io::Result<(TableRuntime, [u8; 32])> {
         file.seek(SeekFrom::Start(0))?;
         let length = file.metadata()?.len();
@@ -183,12 +196,14 @@ impl DiskCache {
         if header[..32] != Self::identity(key, shared, source_sha) {
             return Err(invalid("runtime cache identity mismatch"));
         }
+        let received = path.and_then(|path| crate::verification::fingerprint(path, &file));
+        let reused = received.is_some();
         let fixed = Self::fixed_bytes(shared);
         let mut reader = BufReader::with_capacity(
             1 << 20,
             HashReader {
                 input: (&file).take(fixed - HEADER_BYTES),
-                hash: Sha256::new(),
+                hash: (!reused).then(Sha256::new),
             },
         );
         let profile = &shared.profile;
@@ -212,9 +227,11 @@ impl DiskCache {
         if map.len() as u64 != length {
             return Err(invalid("runtime cache changed while restoring"));
         }
-        hash.update(&map[fixed as usize..]);
-        if hash.finalize().as_slice() != &header[32..] {
-            return Err(invalid("runtime cache checksum mismatch"));
+        if let Some(ref mut hash) = hash {
+            hash.update(&map[fixed as usize..]);
+            if hash.clone().finalize().as_slice() != &header[32..] {
+                return Err(invalid("runtime cache checksum mismatch"));
+            }
         }
         let preprocessed = reinspiring::prepared_native::read(
             map,
@@ -231,17 +248,30 @@ impl DiskCache {
         // Mapped preprocessing pages are not dropped by the advice; the
         // database and mask pages already copied into owned memory are.
         crate::runtime::filecache::consumed(&file);
-        Ok((runtime, header[32..].try_into().expect("checksum bytes")))
+        Ok((
+            runtime,
+            received.unwrap_or_else(|| header[32..].try_into().expect("checksum bytes")),
+        ))
     }
 
     /// The body checksum of an open entry for this identity, after hashing
     /// every byte past its header from `file` and finding they match it.
     /// Nothing is parsed or allocated beyond a read buffer.
     fn checksum_file(
+        file: &File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<[u8; 32]> {
+        Self::checksum_file_at(file, key, shared, source_sha, None)
+    }
+
+    fn checksum_file_at(
         mut file: &File,
         key: &RuntimeKey,
         shared: &SharedParams,
         source_sha: &str,
+        path: Option<&Path>,
     ) -> io::Result<[u8; 32]> {
         file.seek(SeekFrom::Start(0))?;
         let length = file.metadata()?.len();
@@ -252,6 +282,11 @@ impl DiskCache {
         file.read_exact(&mut header)?;
         if header[..32] != Self::identity(key, shared, source_sha) {
             return Err(invalid("runtime cache identity mismatch"));
+        }
+        if let Some(fingerprint) =
+            path.and_then(|path| crate::verification::fingerprint(path, file))
+        {
+            return Ok(fingerprint);
         }
         let mut hash = Sha256::new();
         let mut buffer = vec![0u8; 1 << 20];
@@ -268,6 +303,15 @@ impl DiskCache {
             return Err(invalid("runtime cache checksum mismatch"));
         }
         Ok(header[32..].try_into().expect("checksum bytes"))
+    }
+
+    fn verification_context(
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+        check: &[u8],
+    ) -> Vec<u8> {
+        [check, &Self::identity(key, shared, source_sha)].concat()
     }
 
     /// A 16-bit table's column-major u16 database, fed straight into the
@@ -571,6 +615,74 @@ impl DiskCache {
 pub struct ShippedRuntimes(DiskCache, bool);
 
 impl ShippedRuntimes {
+    /// Check required persistent material even when its runtime is resident.
+    /// Durable evidence binds the received file to the source and parameters.
+    /// The previous content identity is process-local evidence from a successful check;
+    /// on ordinary files it still requires a complete checksum scan.
+    pub fn verify_material(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source: &crate::history::shardset::SegmentSource,
+        previous: Option<[u8; 32]>,
+    ) -> io::Result<([u8; 32], bool)> {
+        let path = self.path(key, shared, source.sha256());
+        let file = crate::verification::open(&path)?;
+        let context = DiskCache::verification_context(key, shared, source.sha256(), b"material-v1");
+        let receipt = crate::verification::Receipt::new(&path, &file, &context);
+        if receipt.as_ref().is_some_and(|r| r.matches()) {
+            // This check still reads the header from the opened descriptor.
+            // The receipt binds its network identity to the completed semantic check.
+            return DiskCache::checksum_file_at(&file, key, shared, source.sha256(), Some(&path))
+                .map(|checksum| (checksum, true));
+        }
+        if let Some(previous) = previous {
+            if DiskCache::checksum_file_at(&file, key, shared, source.sha256(), Some(&path))?
+                == previous
+            {
+                if let Some(receipt) = receipt {
+                    receipt.record();
+                }
+                return Ok((previous, true));
+            }
+        }
+        let (runtime, checksum) = DiskCache::load_file_checked_at(
+            file.try_clone()?,
+            key,
+            shared,
+            source.sha256(),
+            Some(&path),
+        )?;
+        Self::check_loaded_material(&path, &file, key, shared, source, &runtime)?;
+        Ok((checksum, false))
+    }
+
+    /// The caller loaded `runtime` from this same open file. Keep the descriptor
+    /// alive throughout the check, so replacement of its path cannot mint proof.
+    pub(crate) fn check_loaded_material(
+        path: &Path,
+        file: &File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source: &crate::history::shardset::SegmentSource,
+        runtime: &TableRuntime,
+    ) -> io::Result<u64> {
+        let context = DiskCache::verification_context(key, shared, source.sha256(), b"material-v1");
+        let receipt = crate::verification::Receipt::new(path, file, &context);
+        if receipt.as_ref().is_some_and(|r| r.matches()) {
+            return Ok(0);
+        }
+        let rows = source.load().map_err(|error| invalid(&error.to_string()))?;
+        let started = std::time::Instant::now();
+        super::build_pool()
+            .install(|| runtime.self_check(shared, &rows))
+            .map_err(|error| invalid(&error))?;
+        if let Some(receipt) = receipt {
+            receipt.record();
+        }
+        Ok(started.elapsed().as_micros() as u64)
+    }
+
     pub fn new(directory: PathBuf) -> Self {
         Self(
             DiskCache {
@@ -639,6 +751,16 @@ impl ShippedRuntimes {
         DiskCache::load_file_checked(file, key, shared, source_sha)
     }
 
+    pub(crate) fn load_received_file(
+        path: &Path,
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<(TableRuntime, [u8; 32])> {
+        DiskCache::load_file_checked_at(file, key, shared, source_sha, Some(path))
+    }
+
     /// The body checksum of the open file for `key`, read without loading
     /// it: its length and header identity are checked and every byte past
     /// the header is hashed from `file` and must match the checksum. Equal
@@ -691,12 +813,14 @@ impl ShippedRuntimes {
 
 struct HashReader<R> {
     input: R,
-    hash: Sha256,
+    hash: Option<Sha256>,
 }
 impl<R: Read> Read for HashReader<R> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let n = self.input.read(bytes)?;
-        self.hash.update(&bytes[..n]);
+        if let Some(hash) = &mut self.hash {
+            hash.update(&bytes[..n]);
+        }
         Ok(n)
     }
 }
@@ -1384,6 +1508,116 @@ mod shipped_tests {
         let path = dir.join(name);
         fs::create_dir_all(&path).unwrap();
         ShippedRuntimes::new(path)
+    }
+
+    #[test]
+    fn material_reuse_still_checks_replaced_and_wrongly_bound_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 3, 1);
+        let shipped = candidate(dir.path(), "candidate");
+        let runtime = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &runtime)
+            .unwrap();
+        let (checksum, reused) = shipped
+            .verify_material(&s.key, &s.shared, &s.source, None)
+            .unwrap();
+        assert!(!reused, "first load performs the consistency check");
+        assert!(
+            shipped
+                .verify_material(&s.key, &s.shared, &s.source, Some(checksum))
+                .unwrap()
+                .1
+        );
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        let original = fs::read(&path).unwrap();
+        let mut corrupt = original.clone();
+        *corrupt.last_mut().unwrap() ^= 1;
+        fs::write(&path, &corrupt).unwrap();
+        assert!(shipped
+            .verify_material(&s.key, &s.shared, &s.source, Some(checksum))
+            .is_err());
+        fs::write(&path, &original).unwrap();
+        let other = segment(dir.path(), Table::TxDirectory, 3, 2);
+        let wrong = crate::runtime::tests::prepared_fixture(&other.shared, &other.rows).unwrap();
+        fs::remove_file(&path).unwrap();
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &wrong)
+            .unwrap();
+        assert!(
+            shipped
+                .verify_material(&s.key, &s.shared, &s.source, Some(checksum))
+                .is_err(),
+            "a valid checksum over another database is not semantic evidence"
+        );
+    }
+
+    #[test]
+    fn received_runtime_reuses_checks_after_reopening_without_process_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 3, 1);
+        let shipped = candidate(dir.path(), "candidate");
+        let runtime = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &runtime)
+            .unwrap();
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        let sha = crate::publication::digest(&fs::read(&path).unwrap());
+        crate::verification::received(&path, &sha, fs::metadata(&path).unwrap().len(), &path)
+            .unwrap();
+        let (checksum, reused) = shipped
+            .verify_material(&s.key, &s.shared, &s.source, None)
+            .unwrap();
+        assert!(!reused);
+        // A new view, with no earlier snapshot or cache, models restart.
+        let restarted = ShippedRuntimes::required(shipped.directory().to_path_buf());
+        assert_eq!(
+            restarted
+                .verify_material(&s.key, &s.shared, &s.source, None)
+                .unwrap(),
+            (checksum, true)
+        );
+        let mut file = File::open(&path).unwrap();
+        assert_eq!(
+            DiskCache::checksum_file_at(&file, &s.key, &s.shared, s.source.sha256(), Some(&path))
+                .unwrap(),
+            checksum
+        );
+        assert_eq!(
+            file.stream_position().unwrap(),
+            HEADER_BYTES,
+            "received native verification reads only the header, not the body"
+        );
+        let other = segment(dir.path(), Table::TxDirectory, 3, 2);
+        assert!(restarted
+            .verify_material(&s.key, &s.shared, &other.source, None)
+            .is_err());
+        // Another network download under the same runtime key must not inherit
+        // the prior semantic check, even if its internal checksum is unchanged.
+        let original = fs::read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        let wrong = crate::runtime::tests::prepared_fixture(&other.shared, &other.rows).unwrap();
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &wrong)
+            .unwrap();
+        let mut changed = fs::read(&path).unwrap();
+        changed[32..64].copy_from_slice(&original[32..64]);
+        fs::write(&path, &changed).unwrap();
+        crate::verification::received(
+            &path,
+            &crate::publication::digest(&changed),
+            changed.len() as u64,
+            &path,
+        )
+        .unwrap();
+        assert!(restarted
+            .verify_material(&s.key, &s.shared, &s.source, Some(checksum))
+            .is_err());
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"replacement").unwrap();
+        assert!(restarted
+            .verify_material(&s.key, &s.shared, &s.source, None)
+            .is_err());
     }
 
     /// A runtime loaded from a shipped file is the runtime this worker would

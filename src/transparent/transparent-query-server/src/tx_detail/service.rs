@@ -268,8 +268,8 @@ impl DisplayState {
     /// history worker's assignment.
     pub fn build(mut set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
         if runtime.required {
-            // Read every required native body through the production verifier even
-            // when a previous snapshot has the same runtime resident in memory.
+            // Check persistent native material even when the runtime is resident.
+            // Reuse only byte-bound process evidence or a local download receipt.
             let root = set
                 .current()
                 .first()
@@ -280,6 +280,7 @@ impl DisplayState {
             // The set above already checked the map and source tables. Verify
             // native files here without rebuilding a publisher distribution:
             // provider-owned stable revision links are not publisher inputs.
+            let (mut checked, mut reused) = (0usize, 0usize);
             for revision in set.current() {
                 for (table, segment) in revision.targets() {
                     let source = revision
@@ -287,14 +288,24 @@ impl DisplayState {
                         .ok_or("missing display source")?;
                     let params = runtime.params(revision.geometry, kind(table))?;
                     let key = runtime_key(&revision.digest, table, segment);
-                    let native = shipped
-                        .load(&key, &params, source.sha256())
+                    let path = shipped.path(&key, &params, source.sha256());
+                    let name = path.file_name().ok_or("unnamed display runtime")?;
+                    let proof = runtime.cache.verified_shipped(&key, name);
+                    let (_, inherited) = shipped
+                        .verify_material(&key, &params, source, proof)
                         .map_err(|e| e.to_string())?;
-                    native
-                        .self_check(&params, &source.load().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?;
+                    if inherited {
+                        reused += 1;
+                    } else {
+                        checked += 1;
+                    }
                 }
             }
+            tracing::info!(
+                checked,
+                reused,
+                "display required runtime material verified"
+            );
             set.shipped = Some(shipped);
         }
         let config = runtime.config;

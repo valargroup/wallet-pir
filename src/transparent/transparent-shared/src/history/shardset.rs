@@ -489,19 +489,32 @@ impl SegmentSource {
             source,
         };
         let started = std::time::SystemTime::now();
-        let mut file = std::fs::File::open(&self.path).map_err(io)?;
+        let file = std::fs::File::open(&self.path).map_err(io)?;
         let before = file.metadata().map_err(io)?;
+        let context = self.verification_context();
+        let receipt = crate::verification::Receipt::new(&self.path, &file, &context);
+        if receipt.as_ref().is_some_and(|r| r.matches()) {
+            return Ok(FileStamp::of(&before));
+        }
+        let received = crate::verification::matches_received(
+            &self.path,
+            &file,
+            &self.sha256,
+            self.bytes() as u64,
+        );
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0usize;
         let zero_from = self.zero_from();
         let mut tail_data = false;
         loop {
-            let read = file.read(&mut buffer).map_err(io)?;
+            let read = (&file).read(&mut buffer).map_err(io)?;
             if read == 0 {
                 break;
             }
-            hasher.update(&buffer[..read]);
+            if !received {
+                hasher.update(&buffer[..read]);
+            }
             if total + read > zero_from {
                 let skip = zero_from.saturating_sub(total);
                 tail_data |= buffer[skip..read].iter().any(|&byte| byte != 0);
@@ -509,7 +522,15 @@ impl SegmentSource {
             total += read;
         }
         crate::runtime::filecache::consumed(&file);
-        self.check(total, hasher.finalize().as_slice())?;
+        if received {
+            if total != self.bytes() {
+                return Err(LoadError::Invalid(
+                    "received segment length mismatch".into(),
+                ));
+            }
+        } else {
+            self.check(total, hasher.finalize().as_slice())?;
+        }
         self.check_zero_tail(tail_data)?;
         after_read();
         let after = file.metadata().map_err(io)?;
@@ -520,6 +541,9 @@ impl SegmentSource {
                 path: self.path.clone(),
             });
         }
+        if let Some(receipt) = receipt {
+            receipt.record();
+        }
         Ok(stamp.filter(|stamp| stamp.settled_before(started)))
     }
 
@@ -529,8 +553,22 @@ impl SegmentSource {
         report: &mut VerificationReport,
         page: bool,
     ) -> Result<Self, LoadError> {
+        let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        let received = crate::verification::matches_received(
+            &self.path,
+            &file,
+            &self.sha256,
+            self.bytes() as u64,
+        );
         self.evidence = self.verify_stamped()?;
-        report.hashed(&self, page);
+        if received {
+            report.reused(&self);
+        } else {
+            report.hashed(&self, page);
+        }
         Ok(self)
     }
 
@@ -563,6 +601,19 @@ impl SegmentSource {
         report: &mut VerificationReport,
         page: bool,
     ) -> Result<Self, LoadError> {
+        // Local receipts preserve a successful source check across publication
+        // changes and restart. Received files are trusted after their network
+        // hash; each use still checks the current file's byte size.
+        let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        if crate::verification::Receipt::new(&self.path, &file, &self.verification_context())
+            .is_some_and(|r| r.matches())
+        {
+            report.reused(&self);
+            return Ok(self);
+        }
         match earlier
             .into_iter()
             .find_map(|earlier| earlier.rebind(&self))
@@ -582,14 +633,18 @@ impl SegmentSource {
     /// plaintext beside it would be the accounting error this whole change
     /// exists to remove.
     pub fn load(&self) -> Result<Vec<u8>, LoadError> {
-        let mut file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+        let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
             path: self.path.clone(),
             source,
         })?;
         let mut bytes = Vec::with_capacity(self.bytes());
         // One extra byte detects an oversized/replaced source without allowing
         // an untrusted file length to drive an unbounded allocation.
-        file.by_ref()
+        let context = self.verification_context();
+        let receipt = crate::verification::Receipt::new(&self.path, &file, &context);
+        let inherited = receipt.as_ref().is_some_and(|r| r.matches());
+        (&file)
+            .by_ref()
             .take(self.bytes() as u64 + 1)
             .read_to_end(&mut bytes)
             .map_err(|source| LoadError::Io {
@@ -597,9 +652,40 @@ impl SegmentSource {
                 source,
             })?;
         crate::runtime::filecache::consumed(&file);
-        self.check(bytes.len(), Sha256::digest(&bytes).as_slice())?;
-        self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))?;
+        if !inherited {
+            if !crate::verification::matches_received(
+                &self.path,
+                &file,
+                &self.sha256,
+                self.bytes() as u64,
+            ) {
+                self.check(bytes.len(), Sha256::digest(&bytes).as_slice())?;
+            } else if bytes.len() != self.bytes() {
+                return Err(LoadError::Invalid(
+                    "received segment length mismatch".into(),
+                ));
+            }
+            self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))?;
+            if let Some(receipt) = receipt {
+                receipt.record();
+            }
+        } else if bytes.len() != self.bytes() {
+            return Err(LoadError::Invalid(
+                "received segment length mismatch".into(),
+            ));
+        }
         Ok(bytes)
+    }
+
+    fn verification_context(&self) -> Vec<u8> {
+        serde_json::to_vec(&(
+            "segment-v1",
+            &self.sha256,
+            self.rows,
+            self.row_bytes,
+            self.zero_from_row,
+        ))
+        .expect("segment identity serializes")
     }
 
     /// Byte offset of [`Self::zero_from_row`].

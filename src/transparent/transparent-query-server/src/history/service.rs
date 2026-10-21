@@ -522,7 +522,9 @@ impl ServiceState {
     /// self-checking it only under the same name, which commits to the
     /// runtime key, parameters and source digest, and only once every byte of
     /// it has been hashed from one open handle and found equal to the bytes
-    /// that check loaded. Anything else is loaded from that handle and
+    /// that check loaded, or a local receipt binds the complete
+    /// check to its network download identity. Receipts also survive restart. Anything
+    /// else is loaded from that handle and
     /// self-checked in full, and the evidence kept is the checksum those
     /// loaded bytes matched. Only a fully verified snapshot keeps evidence, and
     /// only for its own current files.
@@ -552,35 +554,18 @@ impl ServiceState {
                     );
                     let path = shipped.path(&key, shared, source.sha256());
                     let name = path.file_name().ok_or("unnamed runtime")?.to_owned();
-                    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
                     let proof = proven
                         .get(&name)
                         .copied()
                         .or_else(|| self.inner.cache.verified_shipped(&key, &name));
-                    let unchanged = proof.filter(|proven| {
-                        ShippedRuntimes::checksum_file(&file, &key, shared, source.sha256())
-                            .is_ok_and(|checksum| checksum == *proven)
-                    });
-                    let checksum = match unchanged {
-                        Some(checksum) => {
-                            done.reused += 1;
-                            checksum
-                        }
-                        None => {
-                            let (runtime, checksum) = ShippedRuntimes::load_file_checked(
-                                file,
-                                &key,
-                                shared,
-                                source.sha256(),
-                            )
-                            .map_err(|e| e.to_string())?;
-                            runtime
-                                .self_check(shared, &source.load().map_err(|e| e.to_string())?)
-                                .map_err(|e| e.to_string())?;
-                            done.checked += 1;
-                            checksum
-                        }
-                    };
+                    let (checksum, reused) = shipped
+                        .verify_material(&key, shared, source, proof)
+                        .map_err(|e| e.to_string())?;
+                    if reused {
+                        done.reused += 1;
+                    } else {
+                        done.checked += 1;
+                    }
                     verified.insert(name, checksum);
                 }
             }
