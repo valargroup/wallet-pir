@@ -34,6 +34,66 @@ pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Unlink completed objects that no staging tree or source catalog links any
+/// more, after publication collection has removed the unused trees. Staging
+/// hard-links every object it uses, so one remaining link means only
+/// `objects/` names the inode and unlinking it frees the bytes. When `linked`
+/// (a file of the active stage) is not itself a link, staging used the copy
+/// fallback: every object then has one link and is the only reusable
+/// download, so nothing is collected. The caller owns the provider directory
+/// and runs this between stages; the catalog lock still defers it while a
+/// stage links sources. Returns the files and bytes freed, or `None` when
+/// deferred or skipped.
+pub(crate) fn collect_objects(
+    root: &std::path::Path,
+    linked: &std::path::Path,
+) -> Result<Option<(usize, u64)>, Error> {
+    use std::os::unix::fs::MetadataExt;
+    let objects = root.join("objects");
+    match std::fs::symlink_metadata(&objects) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err("object cache must be a real directory".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    if std::fs::symlink_metadata(linked)?.nlink() < 2 {
+        return Ok(None);
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
+    let (mut files, mut bytes) = (0, 0);
+    for entry in std::fs::read_dir(&objects)? {
+        let entry = entry?;
+        // Only completed objects; partials and foreign names are left alone.
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(publication::is_digest)
+        {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        if metadata.is_file() && metadata.nlink() == 1 {
+            std::fs::remove_file(entry.path())?;
+            files += 1;
+            bytes += metadata.len();
+        }
+    }
+    if files > 0 {
+        std::fs::File::open(&objects)?.sync_all()?;
+    }
+    Ok(Some((files, bytes)))
+}
+
 /// Cache objects are promoted after the complete HTTPS stream has its expected
 /// length. Bulk hashes are checked after activation; metadata hashes are immediate.
 /// Local files are trusted;
@@ -327,6 +387,70 @@ mod tests {
         drop(lock);
         stage_object(root.path(), &stage, &object, &artifact).unwrap();
         publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
+    }
+
+    #[test]
+    fn object_collection_unlinks_only_objects_no_tree_links() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = prepare_objects(root.path()).unwrap();
+        let object = |body: &[u8]| {
+            let path = objects.join(publication::digest(body));
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+        let (map, rows, old) = (object(b"map"), object(b"rows"), object(b"old rows"));
+        let stage = root.path().join("staging-2-200");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::hard_link(&map, stage.join("shards.json")).unwrap();
+        let revision = root.path().join(".sources").join("a".repeat(64));
+        std::fs::create_dir_all(&revision).unwrap();
+        std::fs::hard_link(&rows, revision.join("rows.bin")).unwrap();
+        let partial = objects.join(format!("{}{PARTIAL}1-2", publication::digest(b"next")));
+        std::fs::write(&partial, b"ne").unwrap();
+        let foreign = objects.join("notes");
+        std::fs::write(&foreign, b"operator").unwrap();
+        let linked = stage.join("shards.json");
+
+        // A stage linking catalog sources defers collection.
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert_eq!(collect_objects(root.path(), &linked).unwrap(), None);
+        assert!(old.exists());
+        drop(lock);
+
+        // Copy-fallback stages leave every object at one link: keep them all.
+        let copied = root.path().join("staging-3-300");
+        std::fs::create_dir(&copied).unwrap();
+        std::fs::copy(&map, copied.join("shards.json")).unwrap();
+        assert_eq!(
+            collect_objects(root.path(), &copied.join("shards.json")).unwrap(),
+            None
+        );
+        assert!(old.exists());
+
+        assert_eq!(
+            collect_objects(root.path(), &linked).unwrap(),
+            Some((1, b"old rows".len() as u64))
+        );
+        assert!(!old.exists());
+        for kept in [&map, &rows, &partial, &foreign] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+        assert_eq!(std::fs::read(stage.join("shards.json")).unwrap(), b"map");
+        assert_eq!(std::fs::read(revision.join("rows.bin")).unwrap(), b"rows");
+        // Once its last tree is collected, a revision object is collected too.
+        std::fs::remove_dir_all(&revision).unwrap();
+        assert_eq!(
+            collect_objects(root.path(), &linked).unwrap(),
+            Some((1, b"rows".len() as u64))
+        );
+        assert!(map.exists() && !rows.exists());
     }
 
     #[test]
