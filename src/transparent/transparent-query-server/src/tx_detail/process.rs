@@ -151,11 +151,19 @@ pub async fn run_with(
             readiness: ReadinessMode::Warm,
         };
         let mut manager = crate::tx_detail::manager::Manager::new(bootstrap, service)?;
-        if let Err(error) = manager.poll_once().await {
-            if !manager.ready().await {
-                return Err(error);
+        loop {
+            match manager.poll_once().await {
+                Ok(_) => break,
+                Err(error) if manager.ready().await => {
+                    tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
+                    break;
+                }
+                Err(error) if config.verify_only => return Err(error),
+                Err(error) => {
+                    tracing::warn!(%error, "initial display synchronization refused; retrying with checked inputs");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
             }
-            tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
         }
         if config.verify_only {
             return Ok(());

@@ -171,10 +171,18 @@ pub async fn run_with(
                     certificates(config.archive_ca.clone())?,
                 )?);
             }
-            if let Err(error) = manager.poll_once().await {
-                tracing::warn!(%error, "initial synchronization failed; checking recovered active view");
-                if manager.live().is_none() {
-                    return Err(error);
+            loop {
+                match manager.poll_once().await {
+                    Ok(_) => break,
+                    Err(error) if manager.live().is_some() => {
+                        tracing::warn!(%error, "initial synchronization refused; recovered checked predecessor");
+                        break;
+                    }
+                    Err(error) if config.verify_only => return Err(error),
+                    Err(error) => {
+                        tracing::warn!(%error, "initial synchronization refused; retrying with checked inputs");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
                 }
             }
             if config.verify_only {
