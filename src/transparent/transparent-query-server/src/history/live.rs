@@ -362,7 +362,7 @@ impl LiveService {
         let config = self.0.config;
         let loading_started = std::time::Instant::now();
         let retiring = old.clone();
-        let (next, verification) = tokio::task::spawn_blocking(move || {
+        let (next, verification, material) = tokio::task::spawn_blocking(move || {
             tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
             let eviction_started = std::time::Instant::now();
             old.evict_unpinned();
@@ -397,11 +397,15 @@ impl LiveService {
             let state = ServiceState::build_reusing(set, config, None, Some(&old), shipped);
             tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
             let state = state.and_then(|state| {
-                if state.required_material() { state.verify_required_material()?; }
-                Ok(state)
+                let material = if state.required_material() {
+                    Some(state.verify_required_material(Some(&old))?)
+                } else {
+                    None
+                };
+                Ok((state, material))
             });
             state
-                .map(|state| (state, verification))
+                .map(|(state, material)| (state, verification, material))
                 .map_err(Refusal::Runtime)
         })
         .await
@@ -440,7 +444,7 @@ impl LiveService {
             epoch,
         });
         Ok(
-            serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification}),
+            serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification,"required_material":material}),
         )
     }
 
