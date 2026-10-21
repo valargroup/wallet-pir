@@ -692,6 +692,15 @@ class UpgradeDeployer(Deployer):
             _, problems = self.upgrade.authority_problems(self.ex)
             if problems:
                 return False, '; '.join(problems)
+        if (ok and record['role'] == 'worker' and self.upgrade.request.get('previous_maps')
+                and expected == self.upgrade.request['release']['binary_sha256']):
+            # A recovered provider can briefly restore its old active record.
+            # Wait for current publication readiness within the existing budget.
+            problems = self.upgrade.ready_problems(
+                self.ex, record['key'], record['host'],
+                record['verify'].get('ready_url') or record['verify']['health'])
+            if problems:
+                return False, '; '.join(problems)
         return ok, reason
 
     def wait_verified(self, record, expected):

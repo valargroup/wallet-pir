@@ -916,6 +916,23 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
         self.assertTrue(any('controller current is' in line for line in lines), lines)
         self.assertEqual(set(self.running().values()), {sha256(OLD)})
 
+    def test_replacement_can_catch_up_within_the_existing_readiness_deadline(self):
+        self.lagging_archive()
+        unit = 'transparent-v12-archive.service'
+        attempts = [0]
+        def health(ready_, exe):
+            attempts[0] += exe == sha256(NEW)
+            digest = NEXT_MAP if attempts[0] >= 6 else MAP
+            self.install_active(unit, digest)
+            return {**self.provider_ready(unit, digest), 'ready': ready_}
+        self.fake.health_shapes[('v12', unit)] = health
+        self.run_cli('baseline')
+        self.pin_previous_archive()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertGreaterEqual(attempts[0], 6)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+
     def test_unreviewed_older_publication_still_refuses_before_change(self):
         self.lagging_archive()
         self.run_cli('baseline')
