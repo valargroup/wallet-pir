@@ -92,6 +92,86 @@ pub(super) fn copy_prepared_publication(through: u64, directory: &Path) {
     copy_fixture_tree(&prepared_fixture(through).join("publication"), directory);
 }
 
+/// Archive runtimes prepared once per process. The input is a copy of the
+/// recent-only fixture, so recent files are linked and archive files are built.
+struct ArchiveRuntimeBuild {
+    root: PathBuf,
+    built: usize,
+    linked: usize,
+    recent_files: usize,
+}
+
+fn archive_runtimes(through: u64) -> &'static ArchiveRuntimeBuild {
+    fn build(through: u64) -> ArchiveRuntimeBuild {
+        let mut outcome = None;
+        let root = owned_fixture(|dir| {
+            let directory = dir.join("publication");
+            copy_fixture_tree(&prepared_fixture(through).join("publication"), &directory);
+            let set = ShardSet::open(&directory, 0).unwrap();
+            let recent_files: std::collections::BTreeSet<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(Result::unwrap)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
+                .map(|entry| entry.file_name().into_string().unwrap())
+                .collect();
+            let prepared = transparent_shared::runtime::prebuild::prepare_publication(
+                &set,
+                &directory,
+                &[],
+                &|| false,
+            )
+            .unwrap();
+            assert!(prepared.failures.is_empty());
+            assert!(!recent_files.is_empty());
+            assert_eq!(prepared.linked(), recent_files.len());
+            assert!(
+                prepared.built() > 0,
+                "archive runtimes must still be prepared"
+            );
+            for file in &prepared.files {
+                assert_eq!(file.linked, recent_files.contains(&file.name));
+            }
+            outcome = Some((prepared.built(), prepared.linked(), recent_files.len()));
+        });
+        let (built, linked, recent_files) = outcome.unwrap();
+        ArchiveRuntimeBuild {
+            root,
+            built,
+            linked,
+            recent_files,
+        }
+    }
+    static FIRST: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(2));
+    static NEXT: std::sync::LazyLock<ArchiveRuntimeBuild> = std::sync::LazyLock::new(|| build(3));
+    match through {
+        2 => &FIRST,
+        3 => &NEXT,
+        _ => panic!("no archive runtime fixture through height {through}"),
+    }
+}
+
+pub(super) struct ArchiveRuntimeCounts {
+    pub(super) built: usize,
+    pub(super) linked: usize,
+    pub(super) recent_files: usize,
+}
+
+pub(super) fn archive_runtime_build(through: u64) -> ArchiveRuntimeCounts {
+    let build = archive_runtimes(through);
+    ArchiveRuntimeCounts {
+        built: build.built,
+        linked: build.linked,
+        recent_files: build.recent_files,
+    }
+}
+
+pub(super) fn copy_archive_publication(through: u64, directory: &Path) {
+    copy_fixture_tree(
+        &archive_runtimes(through).root.join("publication"),
+        directory,
+    );
+}
+
 // Reuse only the immutable publisher side. Every manager still owns a fresh
 // consumer directory and verifies all bytes over its own real HTTP boundary.
 // Corruption and changing-holdings cases use independently copied files below.
@@ -171,6 +251,17 @@ fn fixture_exit_control(both: bool, fail: bool) {
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
 }
 
+/// A single `--exact` filter naming `name`, and no other test filter.
+fn exact_child_entry(args: &[String], name: &str) -> bool {
+    let filters = args
+        .iter()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    args.iter().any(|arg| arg == "--exact") && filters == [name]
+}
+
 // Only an explicitly selected private entry consumes the child mode. Public
 // controls always spawn a fresh process and check its scratch after exit, even
 // when their caller inherited the internal environment variable.
@@ -181,14 +272,9 @@ fn prepared_fixtures_exit_child() {
         module_path!().split_once("::").unwrap().1
     );
     let args: Vec<_> = std::env::args().collect();
-    // The private caller uses --option=value switches. A runner partition can
-    // also use --exact, but its multiple case filters are not child entry mode.
-    let filters = args
-        .iter()
-        .skip(1)
-        .filter(|arg| !arg.starts_with('-'))
-        .collect::<Vec<_>>();
-    if !args.iter().any(|arg| arg == "--exact") || filters != [&name] {
+    // A runner partition can pass --exact with several filters. That is not
+    // child entry mode, so an inherited failure mode must not run.
+    if !exact_child_entry(&args, &name) {
         return;
     }
     let (both, fail) = match std::env::var("WALLET_PIR_FIXTURE_EXIT_CHILD").as_deref() {
@@ -247,49 +333,32 @@ fn prepared_fixtures_exit_child() {
 }
 
 #[test]
-fn prepared_fixture_child_mode_requires_a_single_explicit_entry() {
+fn prepared_fixtures_exit_on_success() {
     let prefix = module_path!().split_once("::").unwrap().1;
     let child = format!("{prefix}::prepared_fixtures_exit_child");
-    let control = format!("{prefix}::prepared_fixtures_exit_first_only");
-    for exact_first in [true, false] {
-        let scratch = tempfile::tempdir().unwrap();
-        let filters = if exact_first {
-            vec!["--exact", child.as_str(), control.as_str()]
-        } else {
-            vec![child.as_str(), control.as_str(), "--exact"]
-        };
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(filters)
-            .args(["--test-threads=1", "--nocapture"])
-            .env("WALLET_PIR_FIXTURE_EXIT_CHILD", "fail")
-            .env("TMPDIR", scratch.path())
-            .env("TMP", scratch.path())
-            .env("TEMP", scratch.path())
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(String::from_utf8_lossy(&output.stdout).contains("2 passed"));
-        assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
-    }
-}
-
-#[test]
-fn prepared_fixtures_exit_first_only() {
-    fixture_exit_control(false, false);
-}
-
-#[test]
-fn prepared_fixtures_exit_both() {
+    let other = format!("{prefix}::prepared_fixtures_exit_on_success");
+    assert!(exact_child_entry(
+        &["test-bin".into(), child.clone(), "--exact".into()],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &[
+            "test-bin".into(),
+            "--exact".into(),
+            child.clone(),
+            other.clone()
+        ],
+        &child
+    ));
+    assert!(!exact_child_entry(
+        &["test-bin".into(), child.clone(), other, "--exact".into()],
+        &child
+    ));
     fixture_exit_control(true, false);
 }
 
 #[test]
-fn prepared_fixtures_exit_failed_test() {
+fn prepared_fixtures_exit_on_failure() {
     fixture_exit_control(true, true);
 }
 
@@ -1800,7 +1869,17 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     else {
         panic!("committed work expected");
     };
-    let Input::Work(ready) = prepare_history(&config, &rpc, &owner, work).await.unwrap() else {
+    let Input::Work(ready) = prepare_candidate(
+        &config,
+        &rpc,
+        &owner,
+        work,
+        DecoupledPolicy::for_geometry,
+        Some(config.archive_geometry.clone()),
+        Some(config.recent_from),
+    )
+    .await
+    .unwrap() else {
         panic!("prepared work expected");
     };
     pause.enabled.store(true, Ordering::Release);
