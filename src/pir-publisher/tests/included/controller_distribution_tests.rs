@@ -39,6 +39,8 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
+        validation: Default::default(),
+        integrity_failed: AtomicBool::new(false),
     }))
 }
 
@@ -1394,4 +1396,344 @@ async fn cold_history_bootstrap_retry(
         consumer_root.join("active.json").exists(),
         "retry must durably activate the initial view"
     );
+}
+
+/// A completed publication's record and the expectation its restorer derives
+/// from the saved publication.
+fn restore_fixture(
+    directory: &Path,
+) -> (
+    ShardSet,
+    Finalized,
+    transparent_shared::publication::RestoreRecord,
+    transparent_shared::publication::RestoreExpectation,
+) {
+    manager_tests::copy_prepared_publication(2, directory);
+    let set = ShardSet::open(directory, 0).unwrap();
+    let finalized = Finalized::prepare(directory, &set, 2).unwrap();
+    let end = set.map.shards.last().unwrap();
+    let record = finalized
+        .restore_record(false, 2, end.end_height, &end.terminal_block_hash)
+        .unwrap();
+    let expected = transparent_shared::publication::RestoreExpectation {
+        network: set.map.network.clone(),
+        genesis_hash: set.map.genesis_hash.clone(),
+        map_sha256: set.map_digest.clone(),
+        full: false,
+        recent_from_height: 2,
+        anchor_height: end.end_height,
+        anchor_hash: end.terminal_block_hash.clone(),
+    };
+    (set, finalized, record, expected)
+}
+
+fn with_inventory(
+    record: &transparent_shared::publication::RestoreRecord,
+    inventory: &transparent_shared::publication::Inventory,
+) -> Vec<u8> {
+    let mut record = record.clone();
+    record.inventory = serde_json::to_string(inventory).unwrap();
+    record.inventory_sha256 = transparent_shared::publication::digest(record.inventory.as_bytes());
+    serde_json::to_vec(&record).unwrap()
+}
+
+#[test]
+fn completed_publication_restores_its_exact_inventory_and_refuses_unsafe_evidence() {
+    use std::os::unix::fs::FileExt;
+    use transparent_shared::publication::{CorrectnessError, IntegrityError};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    let (_set, finalized, record, expected) = restore_fixture(&directory);
+    let bytes = serde_json::to_vec(&record).unwrap();
+    let restored = Finalized::restore_completed(&directory, &bytes, &expected).unwrap();
+    // The exact bytes and digest offered over HTTPS, and only listed local files.
+    assert_eq!(restored.finalized.bytes(), finalized.bytes());
+    assert_eq!(restored.finalized.sha256(), finalized.sha256());
+    for artifact in &finalized.inventory().artifacts {
+        assert_eq!(
+            restored.finalized.file(&artifact.sha256),
+            finalized.file(&artifact.sha256),
+            "{}",
+            artifact.path
+        );
+    }
+    let memory = Arc::new(transparent_shared::runtime::memory::WorkMemory::default());
+    let inventory = restored.finalized.inventory().clone();
+    assert!(
+        restored
+            .validation
+            .integrity(&inventory, &|_| false, &|| false)
+            .unwrap()
+            > 0
+    );
+    let checked = restored
+        .validation
+        .correctness(&inventory, &memory, &|| false)
+        .unwrap();
+    assert!(checked.loaded > 0);
+    assert!(matches!(
+        restored
+            .validation
+            .integrity(&inventory, &|_| false, &|| true),
+        Err(IntegrityError::Stopped)
+    ));
+
+    // Refused evidence: each case names what a restorer must not trust.
+    let refuse = |bytes: &[u8],
+                  expected: &transparent_shared::publication::RestoreExpectation,
+                  why: &str| {
+        assert!(
+            Finalized::restore_completed(&directory, bytes, expected).is_err(),
+            "{why}"
+        );
+    };
+    let mut changed = record.clone();
+    changed.schema = "transparent-history-restore-v0".into();
+    refuse(
+        &serde_json::to_vec(&changed).unwrap(),
+        &expected,
+        "unknown schema",
+    );
+    let mut changed = record.clone();
+    changed.completed.pop();
+    refuse(
+        &serde_json::to_vec(&changed).unwrap(),
+        &expected,
+        "incomplete preparation",
+    );
+    let mut changed = record.clone();
+    changed.inventory.push(' ');
+    refuse(
+        &serde_json::to_vec(&changed).unwrap(),
+        &expected,
+        "inventory digest",
+    );
+    for (field, value) in [("anchor", 0), ("cutoff", 1), ("full", 2), ("network", 3)] {
+        let mut other = expected.clone();
+        match value {
+            0 => other.anchor_hash = "00".repeat(32),
+            1 => other.recent_from_height = 0,
+            2 => other.full = true,
+            _ => other.network = "testnet".into(),
+        }
+        refuse(&bytes, &other, field);
+    }
+    let mut omitted = inventory.clone();
+    omitted.artifacts.retain(|a| a.kind != Kind::RecentRuntime);
+    refuse(
+        &with_inventory(&record, &omitted),
+        &expected,
+        "omitted runtime",
+    );
+    let mut longer = inventory.clone();
+    let table = longer
+        .artifacts
+        .iter_mut()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap();
+    table.bytes += 1;
+    refuse(&with_inventory(&record, &longer), &expected, "wrong length");
+    let mut wrong = inventory.clone();
+    let table = wrong
+        .artifacts
+        .iter_mut()
+        .find(|a| a.kind == Kind::RecentTable)
+        .unwrap();
+    table.sha256 = "11".repeat(32);
+    refuse(
+        &with_inventory(&record, &wrong),
+        &expected,
+        "source differs from manifest",
+    );
+    let runtime = inventory
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap()
+        .clone();
+    let path = directory.join(&runtime.path);
+    let good = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    refuse(&bytes, &expected, "missing runtime");
+    std::fs::write(&path, &good[..good.len() - 1]).unwrap();
+    refuse(&bytes, &expected, "truncated runtime");
+    let mut header = good.clone();
+    header[0] ^= 1;
+    std::fs::write(&path, &header).unwrap();
+    refuse(&bytes, &expected, "wrong runtime identity header");
+    std::fs::remove_file(&path).unwrap();
+    let elsewhere = root.path().join("elsewhere.runtime");
+    std::fs::write(&elsewhere, &good).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+    refuse(&bytes, &expected, "symbolic link");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, &good).unwrap();
+
+    // Same-size body corruption is invisible to the cheap restore, and found
+    // by integrity validation as a confirmed mismatch.
+    let table = inventory
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap();
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(directory.join(&table.path))
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    let restored = Finalized::restore_completed(&directory, &bytes, &expected).unwrap();
+    match restored
+        .validation
+        .integrity(&inventory, &|_| false, &|| false)
+    {
+        Err(IntegrityError::Mismatch {
+            path, found_sha256, ..
+        }) => {
+            assert_eq!(path, table.path);
+            assert!(found_sha256.is_some());
+        }
+        other => panic!("expected a mismatch, got {other:?}"),
+    }
+    file.write_all_at(&first, 0).unwrap();
+
+    // A runtime whose listed digest names its corrupt body passes integrity
+    // and fails correctness, which loads and checks it against its rows.
+    let mut bad = good.clone();
+    bad[64] ^= 1;
+    publication::write_atomic(&path, &bad).unwrap();
+    let mut corrupt = inventory.clone();
+    corrupt
+        .artifacts
+        .iter_mut()
+        .find(|a| a.path == runtime.path)
+        .unwrap()
+        .sha256 = transparent_shared::publication::digest(&bad);
+    let restored =
+        Finalized::restore_completed(&directory, &with_inventory(&record, &corrupt), &expected)
+            .unwrap();
+    restored
+        .validation
+        .integrity(&corrupt, &|_| false, &|| false)
+        .unwrap();
+    assert!(matches!(
+        restored
+            .validation
+            .correctness(&corrupt, &memory, &|| false),
+        Err(CorrectnessError::Failed(_))
+    ));
+    publication::write_atomic(&path, &good).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restored_history_serves_before_validation_and_withdraws_on_a_body_mismatch() {
+    use crate::history::validator::{Identity, Job, Queue, Validator};
+    use std::os::unix::fs::FileExt;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    let (set, _finalized, record, expected) = restore_fixture(&directory);
+    let restored =
+        Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
+            .unwrap();
+    let inventory = restored.finalized.inventory().clone();
+    let sha256 = restored.finalized.sha256().to_string();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
+    let failures = root.path().join("state");
+    std::fs::create_dir(&failures).unwrap();
+    // The validator stays blocked, as behind foreground work, until released.
+    let blocked = Arc::new(AtomicBool::new(true));
+    let queue = Queue::default();
+    let validator = Validator::spawn(
+        queue.clone(),
+        Arc::new(transparent_shared::runtime::memory::WorkMemory::default()),
+        {
+            let blocked = blocked.clone();
+            Box::new(move || blocked.load(Ordering::Acquire))
+        },
+        {
+            let owner = owner.clone();
+            let failures = failures.clone();
+            Box::new(move |identity, event| validation_event(&failures, &owner, identity, event))
+        },
+    )
+    .unwrap();
+    queue.submit(Job {
+        identity: Identity {
+            directory: directory.clone(),
+            map_sha256: set.map_digest.clone(),
+            inventory_sha256: sha256.clone(),
+            height: expected.anchor_height,
+            hash: expected.anchor_hash.clone(),
+        },
+        inventory: inventory.clone(),
+        validation: restored.validation,
+    });
+    let status = |key: &str| owner.0.status.read().unwrap()[key].clone();
+    let wait = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    wait("validation started", &|| {
+        status("integrity_validation")["state"] == "pending"
+    });
+    assert_eq!(
+        queue.held(),
+        vec![directory.clone()],
+        "collection keeps the source"
+    );
+    // Real HTTPS: the restored inventory is retrievable while validation waits.
+    let tls = tls(root.path(), owner.clone()).await;
+    let report = bootstrap::verify(config(&tls, root.path().join("provider")))
+        .await
+        .unwrap();
+    assert_eq!(report.map_sha256, set.map_digest);
+    assert_eq!(status("integrity_validation")["state"], "pending");
+    assert_eq!(status("integrity_validation")["inventory_sha256"], sha256);
+
+    // Same-size corruption found after start withdraws the publication and
+    // is recorded for the next process.
+    let table = inventory
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap();
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(directory.join(&table.path))
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    blocked.store(false, Ordering::Release);
+    wait("integrity failure", &|| {
+        status("integrity_validation")["state"] == "failed"
+    });
+    assert!(owner.0.withdrawn.load(Ordering::Acquire));
+    assert!(owner.0.integrity_failed.load(Ordering::Acquire));
+    assert_eq!(status("phase"), "integrity_failed");
+    assert_eq!(
+        status("correctness_validation")["state"],
+        serde_json::Value::Null
+    );
+    let recorded = integrity_failures(&failures).unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].path, table.path);
+    // The record survives a restart: the same inventory is not restored.
+    assert!(lists_failed(&recorded, &inventory));
+    let error = bootstrap::verify(config(&tls, root.path().join("provider-2")))
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("withdrawn"), "{error}");
+    // Shutdown joins the validator.
+    drop(validator);
+    assert!(queue.held().is_empty());
+    file.write_all_at(&first, 0).unwrap();
 }
