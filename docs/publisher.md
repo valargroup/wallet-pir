@@ -37,6 +37,13 @@ journal, database or runtime-cache format. Maintenance is available through
 root subcommands; the product crates have no standalone executables. Crate relocation does not relocate deployed data or change upstream
 wallet-libraries revisions.
 
+The host library exposes `config::Config`, `config::Product`, `run` and its
+`Result` alias. `Config::validate()` checks static configuration and returns no
+runtime layout. Layouts, readiness rules and task bookkeeping are private host
+implementation details. The host facade shows startup and shutdown order;
+private modules handle listener reservations, product adapters, management
+observations and supervision. Product libraries keep publication authority.
+
 ## Configuration and local use
 
 Build the native CPU application used by the deployed protocols:

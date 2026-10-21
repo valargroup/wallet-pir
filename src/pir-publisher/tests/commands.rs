@@ -73,6 +73,10 @@ fn maintenance_commands_require_the_compiled_product() {
         ("enhance", cfg!(feature = "enhance")),
         ("status", cfg!(feature = "status")),
         ("publish-history", cfg!(feature = "transparent-history")),
+        (
+            "prepare-history-restore",
+            cfg!(feature = "transparent-history"),
+        ),
         ("verify-filters", cfg!(feature = "transparent-history")),
         ("detail", cfg!(feature = "transparent-detail")),
         ("ingest-events", cfg!(feature = "rocksdb-reader")),

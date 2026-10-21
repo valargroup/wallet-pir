@@ -99,8 +99,8 @@ async fn main() -> pir_publisher::Result<()> {
     let config_path = args.config.ok_or("publisher requires --config FILE")?;
     let config: pir_publisher::config::Config =
         serde_json::from_slice(&std::fs::read(config_path)?)?;
-    config.validate()?;
     if args.check {
+        config.validate()?;
         println!("Publisher configuration is valid; runtime readiness was not checked");
         return Ok(());
     }
