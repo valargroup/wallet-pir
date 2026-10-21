@@ -410,6 +410,8 @@ impl Finalized {
     }
     /// [`Self::prepare`] or [`Self::prepare_full`], skipping the load and
     /// self-check of runtimes whose exact bytes `checked` already proved.
+    /// A failed preparation preserves the preceding successful inventory's
+    /// evidence; a retry still hashes every file before reusing any check.
     pub fn prepare_reusing(
         root: &Path,
         set: &ShardSet,
@@ -426,7 +428,8 @@ impl Finalized {
         full: bool,
         checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
-        let previous = std::mem::take(&mut checked.passed);
+        let previous = &checked.passed;
+        let mut passed = BTreeMap::new();
         checked.loaded = 0;
         checked.reused = 0;
         let recent = set
@@ -561,7 +564,7 @@ impl Finalized {
                                 .self_check(shared, &source.load()?)?;
                             checked.loaded += 1;
                         }
-                        checked.passed.insert(name, sha256);
+                        passed.insert(name, sha256);
                     }
                 }
             }
@@ -571,6 +574,7 @@ impl Finalized {
         inventory.validate_map(&set.map)?;
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
+        checked.passed = passed;
         Ok(Self {
             inventory,
             bytes,
@@ -580,15 +584,16 @@ impl Finalized {
     }
 }
 /// Runtimes one process loaded and self-checked while finalizing, by file
-/// name and whole-file SHA-256. Each preparation keeps only the runtimes of
-/// its own publication, so this never grows past one inventory. Neither
+/// name and whole-file SHA-256. A successful preparation replaces the evidence
+/// with its own publication's runtimes; a failed one leaves it intact. Retained
+/// evidence therefore never grows past one successful inventory. Neither
 /// value is trusted from disk: the name is derived and the digest recomputed.
 #[derive(Debug, Default)]
 pub struct CheckedRuntimes {
     passed: BTreeMap<String, String>,
-    /// Runtimes the last preparation loaded and self-checked.
+    /// Runtimes the last preparation attempt loaded and self-checked.
     pub loaded: usize,
-    /// Runtimes the last preparation accepted from an earlier check.
+    /// Runtimes the last preparation attempt accepted from an earlier check.
     pub reused: usize,
 }
 struct HashWriter<'a>(&'a mut Sha256);
