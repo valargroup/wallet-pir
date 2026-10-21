@@ -1875,9 +1875,12 @@ async fn repeated_publications_self_check_only_changed_runtime_material() {
     prepare(&first, &[]);
 
     let initial = state(&first, &first);
+    // HTTPS bootstrap warms before any snapshot-level material check. Its
+    // first retry must reuse those successful native checks as well.
+    initial.spawn_prewarm().await.unwrap();
     assert_eq!(
         initial.verify_required_material(None).unwrap(),
-        counts(2, 0)
+        counts(0, 2)
     );
     let restaged = state(&first, &stage("restaged", &first));
     assert_eq!(

@@ -75,6 +75,8 @@ struct HistorySync {
     source: Source,
     _lock: std::sync::Arc<std::fs::File>,
     live: Option<LiveService>,
+    /// Checked bootstrap data kept privately until fresh source checks pass.
+    pending: Option<LiveService>,
     /// Only a successfully activated snapshot may supply a conditional token.
     current: Option<Current>,
     /// Exact-anchor negatives need their own revision floor: eligible Current
@@ -147,6 +149,7 @@ impl HistorySync {
             source,
             _lock: std::sync::Arc::new(lock),
             live: None,
+            pending: None,
             current: None,
             revocations: intent,
             synchronization: std::sync::Arc::new(std::sync::RwLock::new(
@@ -508,8 +511,8 @@ impl<'a> Acquired<'a> {
             map_sha256: staged.inventory.map_sha256.clone(),
             runtimes: Some(staged.directory.clone()),
         };
-        let initial = owner.live.is_none();
-        let live = if let Some(live) = &owner.live {
+        let cold = owner.live.is_none();
+        let live = if let Some(live) = owner.live.as_ref().or(owner.pending.as_ref()) {
             live.clone()
         } else {
             let loading = std::time::Instant::now();
@@ -543,7 +546,8 @@ impl<'a> Acquired<'a> {
                 owner._lock.clone(),
             )?
         };
-        if initial {
+        if cold {
+            owner.pending = Some(live.clone());
             live.fence_recovered(
                 &combined_floor(&owner.config.directory, &mut owner.revocations)?.digests,
             )?;
@@ -553,13 +557,25 @@ impl<'a> Acquired<'a> {
             .as_str()
             .ok_or("owner has no predecessor")?
             .to_string();
+        // An unchanged private bootstrap view still needs its first durable
+        // activation. A changed map uses the normal prepared-candidate path.
+        let initial = cold && expected == publication.map_sha256;
         if !initial {
             let reply = live
                 .command(Command::Prepare {
                     expected: expected.clone(),
                     publication: publication.clone(),
                 })
-                .await?;
+                .await;
+            let reply = match reply {
+                Ok(reply) => reply,
+                Err(error) => {
+                    if cold {
+                        owner.pending = None;
+                    }
+                    return Err(error.into());
+                }
+            };
             stages.loading_seconds = reply["loading_seconds"].as_f64().unwrap_or_default();
             stages.prewarm_seconds = reply["warming_seconds"].as_f64().unwrap_or_default();
         }
@@ -665,6 +681,7 @@ impl Prepared<'_> {
             &staged.inventory,
         )?;
         live.collect_memory().await?;
+        owner.pending = None;
         owner.live = Some(live);
         owner.current = Some(current.clone());
         stages.activation_seconds = activating.elapsed().as_secs_f64();

@@ -12,12 +12,11 @@ use std::{
     path::Path,
     sync::{Arc, RwLock},
 };
-use tokio::io::AsyncWriteExt;
 use transparent_shared::{
     publication::{self, Current, Error},
     tx_detail::{
         distribution::{Inventory, PREFIX, SCHEMA},
-        set::{DisplaySet, MAP_FILE},
+        set::MAP_FILE,
         DisplayRole,
     },
 };
@@ -225,46 +224,17 @@ impl DisplaySync {
         ));
         std::fs::create_dir(&stage)?;
         let result = async {
+            let objects = crate::objects::prepare_objects(&self.config.directory)?;
+            let mut transfer = std::time::Duration::ZERO;
             for artifact in &inventory.artifacts {
-                let target = stage.join(&artifact.path);
-                std::fs::create_dir_all(target.parent().ok_or("display artifact has no parent")?)?;
-                let cached = self.config.directory.join("objects").join(&artifact.sha256);
-                let reused = std::fs::symlink_metadata(&cached).is_ok_and(|m| m.is_file())
-                    && publication::verify_file(&cached, artifact).is_ok();
-                if reused {
-                    tokio::fs::copy(&cached, &target).await?;
-                } else {
-                    let mut output = tokio::fs::OpenOptions::new()
-                        .create_new(true)
-                        .write(true)
-                        .open(&target)
-                        .await?;
-                    let mut response = self
-                        .source
-                        .get(&format!("artifacts/{}", artifact.sha256))
-                        .await?;
-                    let mut remaining = artifact.bytes;
-                    while let Some(chunk) = response.chunk().await? {
-                        if chunk.len() as u64 > remaining {
-                            return Err("display artifact exceeds declared length".into());
-                        }
-                        output.write_all(&chunk).await?;
-                        remaining -= chunk.len() as u64;
-                    }
-                    if remaining != 0 {
-                        return Err("incomplete display artifact".into());
-                    }
-                    output.sync_all().await?;
-                }
-                publication::verify_file(&target, artifact)?;
-                if !reused {
-                    std::fs::create_dir_all(cached.parent().unwrap())?;
-                    let partial = cached.with_extension("partial");
-                    tokio::fs::copy(&target, &partial).await?;
-                    std::fs::File::open(&partial)?.sync_all()?;
-                    std::fs::rename(&partial, &cached)?;
-                    std::fs::File::open(cached.parent().unwrap())?.sync_all()?;
-                }
+                crate::objects::ensure_object(&mut self.source, &objects, artifact, &mut transfer)
+                    .await?;
+                crate::objects::stage_object(
+                    &self.config.directory,
+                    &stage,
+                    &objects.join(&artifact.sha256),
+                    artifact,
+                )?;
             }
             let map: zakura_pir_protocol::transparent::shard::display::DisplayMap =
                 serde_json::from_slice(&std::fs::read(stage.join(MAP_FILE))?)?;
@@ -302,21 +272,25 @@ impl DisplaySync {
         if !directory.starts_with(&self.config.directory) {
             return Err("saved display publication escapes provider root".into());
         }
-        let set = DisplaySet::open(&directory, 0, DisplayRole::Combined)?;
-        if set.map_digest != publication.map_sha256
-            || set.map.network != self.config.network
-            || set.map.genesis_hash != self.config.genesis_hash
+        // Preparation below strictly verifies every referenced revision. Read
+        // the identity-bound map here for the final chain-anchor checks rather
+        // than loading and checking all tables twice on every retry.
+        let map: zakura_pir_protocol::transparent::shard::display::DisplayMap =
+            serde_json::from_slice(&std::fs::read(directory.join(MAP_FILE))?)?;
+        if map.sha256() != publication.map_sha256
+            || map.network != self.config.network
+            || map.genesis_hash != self.config.genesis_hash
         {
             return Err("saved display publication identity mismatch".into());
         }
-        let anchors: Vec<_> = set
-            .current()
+        let anchors: Vec<_> = map
+            .shards
             .iter()
-            .map(|r| {
+            .map(|shard| {
                 (
-                    r.digest.clone(),
-                    r.manifest.end_height,
-                    r.manifest.terminal_block_hash.clone(),
+                    shard.manifest_digest.clone(),
+                    shard.end_height,
+                    shard.terminal_block_hash.clone(),
                 )
             })
             .collect();

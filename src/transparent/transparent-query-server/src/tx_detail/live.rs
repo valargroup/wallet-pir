@@ -576,7 +576,19 @@ impl DisplayLive {
                 phase: "loading",
             },
         );
-        // Release an obsolete candidate's pins before reserving anew.
+        // A cold owner has no serving predecessor yet. Reuse its checked
+        // candidate as data only; activation still checks the fresh source.
+        let previous = match previous {
+            Some(state) => Some(state),
+            None => self
+                .0
+                .candidate
+                .lock()
+                .await
+                .as_ref()
+                .filter(|candidate| candidate.epoch == epoch && candidate.state.is_warm())
+                .map(|candidate| candidate.state.clone()),
+        };
         *self.0.candidate.lock().await = None;
         let staged: Vec<DisplayRevision> = self
             .0
