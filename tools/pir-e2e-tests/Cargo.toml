@@ -75,19 +75,19 @@ transparent-tests = [
 ]
 
 [dependencies]
-pir-publisher = { path = "../pir-publisher", optional = true }
-status-publisher = { path = "../status/status-publisher", optional = true }
-enhance-publisher = { path = "../enhance/enhance-publisher", optional = true }
-transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
-enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
-pir-query-server = { path = "../pir-query-server", optional = true }
-transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
-transparent-shared = { path = "../transparent/transparent-shared", optional = true }
-zakura-server-chain = { path = "../shared/pir-chain", default-features = false, optional = true }
+pir-publisher = { path = "../../src/pir-publisher", optional = true }
+status-publisher = { path = "../../src/status/status-publisher", optional = true }
+enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
+transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
+enhance-query-server = { path = "../../src/enhance/enhance-query-server", optional = true }
+pir-query-server = { path = "../../src/pir-query-server", optional = true }
+transparent-query-server = { path = "../../src/transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
+transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
+zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
-pir-pipeline = { path = "../shared/pir-pipeline" }
+pir-pipeline = { path = "../../src/shared/pir-pipeline" }
 hex = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
 axum = "0.7"
@@ -102,13 +102,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The tests start these processes beside the in-process publishers.
 [[bin]]
 name = "pir-publisher-test"
-path = "../pir-publisher/src/main.rs"
+path = "../../src/pir-publisher/src/main.rs"
 required-features = ["publisher-host"]
 test = false
 
 [[bin]]
 name = "pir-query-server-test"
-path = "../pir-query-server/src/main.rs"
+path = "../../src/pir-query-server/src/main.rs"
 required-features = ["query-host"]
 test = false
 
@@ -116,19 +116,19 @@ test = false
 # Transparent administration tools, built from their transparent-tools sources.
 [[bin]]
 name = "shard-assign-test"
-path = "../../tools/transparent/src/bin/shard-assign.rs"
+path = "../transparent/src/bin/shard-assign.rs"
 required-features = ["transparent-tests"]
 test = false
 
 [[bin]]
 name = "shard-prune-test"
-path = "../../tools/transparent/src/bin/shard-prune.rs"
+path = "../transparent/src/bin/shard-prune.rs"
 required-features = ["transparent-tests"]
 test = false
 
 [[bin]]
 name = "txid-control-test"
-path = "../../tools/transparent/src/bin/txid-control.rs"
+path = "../transparent/src/bin/txid-control.rs"
 required-features = ["transparent-tests"]
 test = false
 

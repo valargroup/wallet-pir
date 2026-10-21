@@ -441,7 +441,7 @@ gate.
 
 `tools/transparent/scripts/https-update-campaign.py` runs the ignored
 `controller_update_campaign` test in
-`src/pir-e2e-tests/tests/`. Run it through the repository's
+`tools/pir-e2e-tests/tests/`. Run it through the repository's
 build wrapper with `--consumers 10,100`. It builds the packaged
 `pir-query-server` with Transparent history serving, the controller built with that test, the
 isolated released391 client (with `verify-sources.py` receipts) and the
