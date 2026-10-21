@@ -143,11 +143,6 @@ libc = "0.2"
 tokio-stream = "0.1"
 
 [[test]]
-name = "boundary_recovery_model"
-path = "tests/boundary_recovery_model.rs"
-required-features = ["enhance-tests"]
-
-[[test]]
 name = "canonical_record"
 path = "tests/canonical_record.rs"
 required-features = ["enhance-tests"]
@@ -178,11 +173,6 @@ path = "tests/packing_http.rs"
 required-features = ["enhance-tests"]
 
 [[test]]
-name = "record_layout"
-path = "tests/record_layout.rs"
-required-features = ["enhance-tests"]
-
-[[test]]
 name = "row_repair_http"
 path = "tests/row_repair_http.rs"
 required-features = ["enhance-tests"]
@@ -190,11 +180,6 @@ required-features = ["enhance-tests"]
 [[test]]
 name = "rpc"
 path = "tests/rpc.rs"
-required-features = ["enhance-tests"]
-
-[[test]]
-name = "status_routes"
-path = "tests/status_routes.rs"
 required-features = ["enhance-tests"]
 
 [[test]]

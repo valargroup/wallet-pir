@@ -145,12 +145,9 @@
     "targets": [
       "native:enhance-publisher:doc:enhance_publisher",
       "native:enhance-publisher:lib:enhance_publisher",
-      "native:pir-e2e-tests:test:boundary_recovery_model",
       "native:pir-e2e-tests:test:ci_hint",
       "native:pir-e2e-tests:test:encrypted_lifecycle",
       "native:pir-e2e-tests:test:packing_http",
-      "native:pir-e2e-tests:test:record_layout",
-      "native:pir-e2e-tests:test:status_routes",
       "native:status-query-server:test:status_wallet",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",

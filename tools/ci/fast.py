@@ -100,7 +100,11 @@ def route(path):
         return {'check-docs', 'check-ops-shared'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'evidence/enhance/', 'evidence/transparent/', 'evidence/receiver/')):
         return {'check-docs'}, {'ops'}
-    if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
+    # CI workflows stay on the feedback-tooling path. Publish, deploy, configure
+    # and the other operational workflows do not change the Rust graph; selecting
+    # them as unknown inputs enables extra reader features and rebuilds the warm
+    # fast closure.
+    if path.startswith('.github/workflows/') and not path.startswith('.github/workflows/ci'):
         return {'check-tools', 'check-ops-contracts'}, {'ops'}
     if path.startswith(('tools/infra/digitalocean/enhance/worker-pool/', 'tools/infra/digitalocean/enhance-v4/')):
         # Pool plans qualify as Enhance infrastructure. The in-memory deploy suite is local only.

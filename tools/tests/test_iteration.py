@@ -67,6 +67,8 @@ class PlannerTests(unittest.TestCase):
 
     def test_ops_and_deploy_workflow_do_not_select_workspace_rust(self):
         for path in ['tools/tests/operations/control_sessions/fake_ssh.py', '.github/workflows/deploy-enhance-cuda.yml',
+                     '.github/workflows/publish-pir-service-discovery.yml',
+                     '.github/workflows/configure-pir-apm-slack.yml',
                      'tools/scripts/example.py', 'tools/receiver/digitalocean/Caddyfile']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(result['packages'], [])
