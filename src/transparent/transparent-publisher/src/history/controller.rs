@@ -330,14 +330,29 @@ pub async fn run_managed(
     let mut restored = None;
     if config.distribute_prepared && active_path.exists() {
         match restore_public(&config, &public) {
-            Ok((finalized, validation)) => {
+            Ok(Some((finalized, validation))) => {
                 public.distribution = Some(finalized);
                 restored = Some(validation);
             }
-            Err(error) => tracing::warn!(
-                %error,
-                "completed publication not restored; it is prepared again in full before serving"
+            // Only an installation without completion evidence (a fresh one,
+            // or one written before this record existed) is prepared in full.
+            Ok(None) => tracing::warn!(
+                "completed publication has no restore record; it is prepared again in full before serving"
             ),
+            // Present but unusable evidence, unsafe or incomplete files, an
+            // unreadable integrity record or unresolved intent refuse to
+            // start rather than hiding a full scan after a deploy stop.
+            Err(error) => {
+                return Err(format!(
+                    "completed publication cannot be restored: {error}; remove {} to prepare it again in full",
+                    public
+                        .publication
+                        .directory
+                        .join(transparent_shared::publication::RESTORE_FILE)
+                        .display()
+                )
+                .into())
+            }
         }
     }
     let restore_seconds = started.elapsed().as_secs_f64();
@@ -1387,10 +1402,10 @@ fn restore_public(
     config: &Config,
     public: &Public,
 ) -> Result<
-    (
+    Option<(
         transparent_shared::publication::Finalized,
         transparent_shared::publication::Validation,
-    ),
+    )>,
     BoxError,
 > {
     use transparent_shared::publication::{Finalized, RestoreExpectation, RESTORE_FILE};
@@ -1402,8 +1417,11 @@ fn restore_public(
         }
     }
     let directory = &public.publication.directory;
-    let record = std::fs::read(directory.join(RESTORE_FILE))
-        .map_err(|e| format!("no completed-publication record: {e}"))?;
+    let record = match std::fs::read(directory.join(RESTORE_FILE)) {
+        Ok(record) => record,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("unreadable completed-publication record: {e}").into()),
+    };
     let map = public.filters.map();
     let restored = Finalized::restore_completed(
         directory,
@@ -1424,7 +1442,7 @@ fn restore_public(
     ) {
         return Err("the publication lists bytes that failed integrity validation".into());
     }
-    Ok((restored.finalized, restored.validation))
+    Ok(Some((restored.finalized, restored.validation)))
 }
 
 /// Make a restored publication public after fresh authority checks: its exact
@@ -1524,6 +1542,7 @@ async fn serve_restored(
             inventory_sha256: distribution.sha256().to_string(),
             height: publication.height,
             hash: publication.hash.clone(),
+            epoch,
         },
         inventory: distribution.inventory().clone(),
         validation,
@@ -1552,15 +1571,21 @@ fn validation_event(
 ) {
     use super::validator::Event;
     use transparent_shared::publication::{CorrectnessError, IntegrityError};
+    // Callers hold the publication gate: an activation, reorg or withdrawal
+    // advances the epoch or replaces the active publication, after which a
+    // result about the old one changes nothing.
     let current = || {
-        authority
-            .0
-            .active
-            .read()
-            .unwrap()
-            .distribution
-            .as_ref()
-            .is_some_and(|d| d.sha256() == identity.inventory_sha256)
+        let active = authority.0.active.read().unwrap();
+        authority.0.epoch.load(Ordering::Acquire) == identity.epoch
+            && !authority.0.withdrawn.load(Ordering::Acquire)
+            && active.publication.directory == identity.directory
+            && active.publication.map_sha256 == identity.map_sha256
+            && active.publication.height == identity.height
+            && active.publication.hash == identity.hash
+            && active
+                .distribution
+                .as_ref()
+                .is_some_and(|d| d.sha256() == identity.inventory_sha256)
     };
     let set = |key: &str, value: serde_json::Value| {
         if current() {
@@ -1568,6 +1593,12 @@ fn validation_event(
         }
     };
     let key = |phase: &str| format!("{phase}_validation");
+    let mismatch = matches!(
+        event,
+        Event::Integrity(Err(IntegrityError::Mismatch { .. }))
+    );
+    // The mismatch arm takes the gate itself.
+    let _gate = (!mismatch).then(|| authority.0.publication_gate.lock().unwrap());
     let update = |phase: &str, f: &dyn Fn(&mut serde_json::Value)| {
         if current() {
             let mut status = authority.0.status.write().unwrap();
@@ -1605,15 +1636,26 @@ fn validation_event(
                 reason: reason.clone(),
             };
             let _gate = authority.0.publication_gate.lock().unwrap();
-            let mut failures = integrity_failures(root).unwrap_or_default();
-            if !failures.contains(&failure) {
-                failures.push(failure.clone());
-            }
-            if let Err(error) = serde_json::to_vec(&failures)
-                .map_err(BoxError::from)
-                .and_then(|bytes| publication::write_atomic(&root.join(INTEGRITY_FAILURES), &bytes))
-            {
-                tracing::error!(%error, "could not record the integrity failure");
+            // An unreadable record is never replaced by one holding only this
+            // failure; the publication is withdrawn below either way.
+            match integrity_failures(root) {
+                Ok(mut failures) => {
+                    if !failures.contains(&failure) {
+                        failures.push(failure.clone());
+                    }
+                    if let Err(error) = serde_json::to_vec(&failures)
+                        .map_err(BoxError::from)
+                        .and_then(|bytes| {
+                            publication::write_atomic(&root.join(INTEGRITY_FAILURES), &bytes)
+                        })
+                    {
+                        tracing::error!(%error, "could not record the integrity failure");
+                    }
+                }
+                Err(error) => tracing::error!(
+                    %error,
+                    "integrity failure record is unreadable; kept as is and the publication withdrawn"
+                ),
             }
             let active = authority.0.active.read().unwrap().clone();
             if let Some(distribution) = &active.distribution {

@@ -17,6 +17,8 @@ pub(crate) struct Identity {
     pub inventory_sha256: String,
     pub height: u64,
     pub hash: String,
+    /// The authority epoch the job was submitted under.
+    pub epoch: u64,
 }
 
 pub(crate) struct Job {
