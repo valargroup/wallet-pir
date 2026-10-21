@@ -34,8 +34,10 @@ cleanup. `--record-only --case-seconds 5` retains every case and lists all
 five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
-Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most three programs active and one case per program. The fast
+Native tests compile shared crates and product libraries once, on a feature set
+that does not change with the diff. The publisher, query server, and end-to-end
+hosts compile separately, with only the products that diff touches. Executables
+then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
 builds every binary. Mutable service state is fresh; only immutable public
 runtime material is shared within

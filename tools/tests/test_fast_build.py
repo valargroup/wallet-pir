@@ -306,7 +306,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertIn('a', planned)
         self.assertNotIn('transparent-shared', planned)
 
-    def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
+    def _cargo_tests(self, selected, **options):
         recorded = []
 
         def run(command, **kwargs):
@@ -314,30 +314,95 @@ class FastBuildTests(unittest.TestCase):
             return []
 
         with patch.object(fast_build, 'run', side_effect=run):
-            fast_build.execute(['enhance-query-server'], compile_only=True)
-        build = next(command for command in recorded if command[:2] == ['cargo', 'test'])
-        packages = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '-p']
-        bins = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--bin']
-        tests = [build[index + 1] for index, word in enumerate(build[:-1]) if word == '--test']
-        self.assertEqual(packages, sorted(fast_build.FAST_FEATURE_ROOTS))
-        self.assertIn('--lib', build)
-        # The host operator test has no required product feature; the host's
-        # products compile through the e2e fixture features.
-        self.assertEqual(build[build.index('--features') + 1],
-                         'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests')
-        self.assertNotIn('--bins', build)
+            fast_build.execute(selected, compile_only=True, **options)
+        return [command for command in recorded if command[:2] == ['cargo', 'test']]
+
+    def _command_parts(self, build):
+        def values(flag):
+            return [build[index + 1] for index, word in enumerate(build[:-1]) if word == flag]
+        features = build[build.index('--features') + 1].split(',') if '--features' in build else []
+        return values('-p'), values('--bin'), values('--test'), features
+
+    def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
+        builds = self._cargo_tests(['enhance-query-server'])
+        self.assertEqual(len(builds), 2)
+        stable, hosts = builds
+        stable_packages, bins, stable_tests, stable_features = self._command_parts(stable)
+        host_packages, host_bins, host_tests, host_features = self._command_parts(hosts)
+        self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS - fast_build.HOST_PACKAGES))
+        self.assertEqual(host_packages, sorted(fast_build.HOST_PACKAGES))
+        self.assertIn('--lib', stable)
+        self.assertNotIn('--bins', stable)
         self.assertEqual(bins, [
             'enhance-pir-load-test',
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'rate-query',
             'txid-quality-canary', 'txid-rate'])
-        self.assertEqual(tests, [
-            'ci_hint', 'ci_smoke', 'commands', 'lifecycle', 'operator'])
+        self.assertEqual(host_bins, [])
+        # Shared crates keep a feature set that does not name a product host.
+        self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
+        self.assertEqual(host_features, ['pir-e2e-tests/enhance-tests'])
+        self.assertEqual(stable_tests, ['ci_smoke'])
+        self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
+
+    def test_each_product_compiles_only_its_own_host_features(self):
+        _packages, _bins, _tests, features = self._command_parts(self._cargo_tests(['transparent-publisher'])[1])
+        self.assertEqual(features, ['pir-e2e-tests/transparent-tests'])
+        _packages, _bins, tests, features = self._command_parts(self._cargo_tests(['status-publisher'])[1])
+        self.assertEqual(features, ['pir-publisher/status-tests'])
+        self.assertNotIn('ci_hint', tests)
+        builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
+        _packages, _bins, _tests, features = self._command_parts(builds[1])
+        self.assertEqual(features, [
+            'pir-e2e-tests/enhance-tests', 'pir-e2e-tests/transparent-tests'])
+
+    def test_a_shared_diff_leaves_host_product_features_off(self):
+        # Dependents of a shared crate are selected, but the diff itself is not a product.
+        builds = self._cargo_tests(
+            ['enhance-query-server', 'pir-publisher', 'pir-e2e-tests', 'transparent-publisher'],
+            products=frozenset())
+        features, tests = [], []
+        for build in builds:
+            _packages, _bins, build_tests, build_features = self._command_parts(build)
+            features.extend(build_features)
+            tests.extend(build_tests)
+        self.assertFalse(set(features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
+        self.assertNotIn('ci_hint', tests)
 
     def test_hardware_features_cannot_silently_replace_reference_arithmetic(self):
         self.packages[0]['targets'][1]['required-features'] = ['native-reinspiring']
         with self.assertRaisesRegex(ValueError, 'reference arithmetic separate'):
             self.execute()
         self.assertEqual(self.calls, [])
+
+
+class DiffProductTests(unittest.TestCase):
+    def test_a_diff_enables_only_the_products_it_touches(self):
+        from fast import diff_products, workspace_packages
+        packages = workspace_packages()
+        self.assertEqual(diff_products(packages, ['src/enhance/enhance-publisher/src/lib.rs']),
+                         frozenset({'enhance'}))
+        self.assertEqual(diff_products(packages, ['src/status/status-publisher/src/lib.rs']),
+                         frozenset({'status'}))
+        self.assertEqual(diff_products(packages, ['src/transparent/transparent-publisher/src/lib.rs']),
+                         frozenset({'transparent'}))
+        self.assertEqual(diff_products(packages, [
+            'src/enhance/enhance-publisher/src/lib.rs',
+            'src/transparent/transparent-publisher/src/lib.rs']),
+            frozenset({'enhance', 'transparent'}))
+        self.assertEqual(diff_products(packages, ['src/shared/pir-pipeline/src/lib.rs']), frozenset())
+        self.assertEqual(diff_products(packages, ['src/pir-publisher/src/lib.rs']), frozenset())
+        self.assertEqual(diff_products(packages, ['src/pir-publisher/tests/lifecycle.rs']), frozenset())
+        self.assertEqual(diff_products(packages, ['src/pir-query-server/src/lib.rs']), frozenset())
+        self.assertEqual(diff_products(packages, ['tools/pir-e2e-tests/tests/ci_hint.rs']),
+                         frozenset({'enhance'}))
+        self.assertEqual(diff_products(packages, ['tools/pir-e2e-tests/tests/shard_filters.rs']),
+                         frozenset({'transparent'}))
+        self.assertEqual(diff_products(packages, ['tools/pir-e2e-tests/tests/support/mod.rs']),
+                         frozenset({'enhance', 'transparent'}))
+        self.assertEqual(diff_products(packages, ['tools/ci/fast_build.py']), frozenset())
+        self.assertEqual(diff_products(packages, ['Cargo.toml']),
+                         frozenset({'enhance', 'status', 'transparent'}))
+        self.assertEqual(diff_products(packages, ['src/receiver/receiver-store/src/lib.rs']), frozenset())
 
 
 if __name__ == '__main__':
