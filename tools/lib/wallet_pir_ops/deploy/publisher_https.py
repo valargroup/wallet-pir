@@ -276,8 +276,8 @@ class HttpsServing(Serving):
         super().stage(parent, binary)
         owner = self.cutover
         self.verify_production_snapshots(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).stage(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).stage(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, target = consumer['host'], consumer['binary']
             owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
@@ -308,8 +308,8 @@ class HttpsServing(Serving):
             map_path = source + '/' + map_name
             raw_digest = owner.ex.sha256(owner.host, map_path)
             require(raw_digest is not None, 'production snapshot map is missing')
-            from .publisher_warmup import SnapshotWarmup
-            pin = SnapshotWarmup(self).pin_snapshot(parent, section, source)
+            from .publisher_warmup import SnapshotPreparation
+            pin = SnapshotPreparation(self).pin_snapshot(parent, section, source)
             map_path = pin + '/' + map_name
             require(owner.ex.sha256(owner.host, map_path) == raw_digest, 'pinned production snapshot differs')
             if section == 'transparent_history':
@@ -375,8 +375,8 @@ class HttpsServing(Serving):
 
     def activate(self, parent):
         super().activate(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).seed(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).seed(parent)
         owner = self.cutover
         # The distribution prefixes can become reachable while consumers are stopped;
         # the publisher starts only after its old writer has released every lock.
@@ -492,8 +492,8 @@ class HttpsServing(Serving):
 
     def restore_guard(self, parent):
         super().restore_guard(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).guard(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).guard(parent)
         edge = parent['plan']['serving']['history_edge']
         require(self.cutover.ex.read(edge['host'], '/etc/caddy/Caddyfile') in (edge['before'], edge['after']),
                 'history edge changed outside the HTTPS transaction')
@@ -557,8 +557,8 @@ class HttpsServing(Serving):
         return unit in parent.get('https_started', [])
 
     def cleanup_staging(self, parent):
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).cleanup(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).cleanup(parent)
 
     def unchanged_during_staging(self, plan):
         super().unchanged_during_staging(plan)

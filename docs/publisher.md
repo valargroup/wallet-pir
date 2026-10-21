@@ -345,29 +345,19 @@ memory reserve, and records each source directory, map digest and executable
 digest. This reads immutable publications; it neither copies nor opens a second
 writer on the live journals.
 
-The same staging phase warms every current runtime through the qualified
-query-server executable. A temporary
-service has a memory ceiling that preserves the coordinator's twenty percent
-reserve. History is checked one shard at a time; transaction details use combined
-holdings. Loopback readiness must report the expected map, executable, assignment
-and complete runtime coverage. Pending cache writes must finish without errors.
-The verifier keeps the query server's normal revision retention, so superseded
-revisions in an immutable snapshot are checked without pruning its files.
-Each snapshot has a one-hour staging allowance, with at most fifteen minutes
-for any one history shard or the combined transaction-detail group. These
-preparation limits leave the publisher startup and consumer readiness gates unchanged.
-The service and its children stop before staging can finish. A failed warmup
-leaves the existing publisher, workers and edges running; reconciliation cleans
-up the transaction-owned validator. Completed cache files remain reusable by a
-later attempt, with native validation against its fresh snapshot.
-The staging allowance covers additional disk writes. The cache limit includes
-completed files already present through hard links. Before warming history,
-the native verifier checks the complete archive against its actual memory
-budget and the remaining cache space; its sizing report is retained with the
-warmup results.
+Staging reuses completed runtime files from the preceding transaction by hard
+link. The additional staging allowance covers new writes rather than files
+already present. A read-only native capacity check covers the full archive
+against its actual memory budget and remaining disk space. Staging does not
+start temporary query servers or rehearse each shard.
+
+The actual publisher and consumers load their state once during startup. The
+cutover waits for their readiness and checks encrypted answers before committing
+the cutover. A failed startup or answer check restores the saved fleet. Recovery
+also cleans up transaction-owned temporary validators retained by older attempts.
 
 After the old publisher stops and releases its writer locks, the cutover links
-those prepared cache files into its current publication. It then starts the new
+the reusable cache files into its current publication. It then starts the new
 publisher and waits for canonical HTTPS metadata before starting consumers.
 Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
 the unchanged wallet at its existing TLS origin.

@@ -1,15 +1,13 @@
-"""Warm pinned public snapshots before stopping a production publisher."""
+"""Pin and reuse public snapshots; load runtimes in the real serving processes."""
 import json
 from pathlib import Path
-import shlex
 
 from .publisher import require, sha
-from .snapshot_warmer import WARMUP_SECONDS
 
 SCRIPT = Path(__file__).with_name('snapshot_warmer.py').read_text()
 
 
-class SnapshotWarmup:
+class SnapshotPreparation:
     def __init__(self, serving):
         self.serving = serving
         self.owner = serving.cutover
@@ -52,6 +50,12 @@ class SnapshotWarmup:
                 require((content is None and state['load_state'] == 'not-found') or sha(content) == digest,
                         'snapshot validation input changed outside its transaction')
 
+        for section, record in journal.get('prepared_snapshots', {}).items():
+            snapshot = journal['production_snapshots'][section]
+            require(record['pin'] == snapshot['pin'], 'prepared snapshot changed outside its transaction')
+            for path, digest in record['inputs'].items():
+                require(sha(owner.read(path)) == digest, 'snapshot cache helper changed outside its transaction')
+
     def stop(self, record):
         owner = self.owner
         state = owner.ex.probe_unit(owner.host, record['unit'])
@@ -92,7 +96,8 @@ class SnapshotWarmup:
             require(raw is not None, 'previous publisher transaction is missing')
             prior = json.loads(raw)
             require(prior['id'] == previous, 'previous publisher transaction identity changed')
-            record = prior.get('warm_snapshots', {}).get(section)
+            record = (prior.get('prepared_snapshots', {}).get(section)
+                      or prior.get('warm_snapshots', {}).get(section))
             if record and record['binary_sha256'] == self.serving.release['binary_sha256']:
                 expected = root + '/.cutover-preparation/' + previous + '/' + section + '/publication'
                 require(record['pin'] == expected, 'previous preparation cache is outside its transaction')
@@ -105,107 +110,54 @@ class SnapshotWarmup:
         return reused['runtime_bytes']
 
     def stage(self, journal):
+        """Reuse files and check capacity without starting temporary query servers."""
         owner = self.owner
         script = self.prepare_script(journal)
-        try:
-            for section, snapshot in journal['production_snapshots'].items():
-                settings = owner.request['configuration'][section]['settings']
-                root = settings['publication_root' if section == 'transparent_history' else 'root']
-                work = root + '/.cutover-preparation/' + journal['id'] + '/' + section
-                pin = work + '/publication'
-                require(snapshot['pin'] == pin, 'snapshot pin is outside its transaction')
-                map_name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
-                require(owner.ex.sha256(owner.host, pin + '/' + map_name) == snapshot['raw_map_sha256'],
-                        'pinned production snapshot map changed')
-                retained_bytes = self.reuse_previous(journal, section, root, pin, script)
-                resources = owner.resources()
-                reserve = (resources['memory_total'] + 4) // 5
-                memory = resources['memory_available'] - reserve
-                require(memory > 0, 'snapshot validation has insufficient spare memory')
-                unit = 'pir-snapshot-' + section.replace('_', '-') + '-' + journal['id'] + '.service'
-                require(owner.ex.probe_unit(owner.host, unit)['load_state'] == 'not-found'
-                        and owner.read('/etc/systemd/system/' + unit) is None,
-                        'snapshot validation unit is already owned')
-                binary = owner.serving.deployer.service.release_binary(
-                    self.serving.release['binary_sha256'], 'pir-query-server')
-                specification = {
-                    'section': section, 'work': work, 'pin': pin, 'memory_bytes': memory,
-                    # Reused hard links already consume disk at capture. The
-                    # reviewed staging allowance bounds additional writes.
-                    'disk_bytes': retained_bytes + owner.request['https']['publisher_budget_bytes'],
-                    'retained_runtime_bytes': retained_bytes,
-                    'map_sha256': snapshot['map_sha256'], 'binary': binary,
-                    'binary_sha256': self.serving.release['binary_sha256'],
-                }
-                if section == 'transparent_history':
-                    archive = owner.request['https']['consumers'][0]
-                    specification['verification_cache_bytes'] = archive['configuration'][section]['settings']['cache_bytes']
-                    identity = snapshot['identity']
-                    specification['identity'] = {
-                        'shard_schema': identity['schema'], 'map_sha256': snapshot['map_sha256'],
-                        **{key: identity[key] for key in ('network', 'genesis_hash', 'shards',
-                                                       'start_height', 'covered_through')},
-                        'recent_from_shard': identity['shards'],
-                    }
-                spec_path = work + '/specification.json'
-                spec_text = json.dumps(specification, sort_keys=True) + '\n'
-                text = ('[Unit]\nDescription=Warm immutable Transparent snapshot before cutover\n'
-                        '[Service]\nType=simple\nUser=root\n'
-                        'ExecStart=' + shlex.join(['/usr/bin/python3', script, 'warm', spec_path]) + '\n'
-                        'MemoryMax=' + str(memory) + '\nMemorySwapMax=0\n'
-                        'TimeoutStopSec=30\nKillMode=control-group\nRestart=no\n'
-                        'NoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\n'
-                        'ReadWritePaths=' + json.dumps(work) + '\n')
-                record = {**specification, 'unit': unit, 'unit_text': text, 'script': script,
-                          'inputs': {script: sha(SCRIPT), spec_path: sha(spec_text)}}
-                journal.setdefault('warm_snapshots', {})[section] = record
-                owner.save(journal)
-                self.serving.write(owner.host, spec_path, spec_text, 0o600)
-                self.serving.write(owner.host, '/etc/systemd/system/' + unit, text, 0o644)
-                owner.ex.systemctl(owner.host, 'daemon-reload')
-                owner.ex.systemctl(owner.host, 'start', unit)
-                deadline = owner.clock() + WARMUP_SECONDS + 60
-                while True:
-                    owner.lock.verify()
-                    raw = owner.read(work + '/report.json')
-                    report = json.loads(raw) if raw else {}
-                    state = owner.ex.probe_unit(owner.host, unit)
-                    progress = len(report.get('checks', []))
-                    if progress != record.get('completed_groups', 0):
-                        require(report.get('map_sha256') == snapshot['map_sha256']
-                                and report.get('binary_sha256') == specification['binary_sha256'],
-                                'snapshot warmup progress has another identity')
-                        record['completed_groups'] = progress
-                        owner.save(journal)
-                    if report.get('complete') is True:
-                        require(report.get('map_sha256') == snapshot['map_sha256']
-                                and report.get('binary_sha256') == specification['binary_sha256'],
-                                'snapshot warmup report has another identity')
-                        expected = list(range(snapshot['identity']['shards'])) if section == 'transparent_history' else [None]
-                        require([check['shard'] for check in report['checks']] == expected,
-                                'snapshot warmup did not cover every current shard')
-                        record['report'] = report
-                        owner.save(journal)
-                        break
-                    if state['active_state'] == 'failed':
-                        _, logs = owner.ex.run(owner.host, ['journalctl', '-u', unit, '-n', '20', '--no-pager'], 10)
-                        raise RuntimeError('production snapshot warmer failed: ' + logs[-2000:])
-                    require(owner.clock() < deadline, 'production snapshot warmup deadline exceeded')
-                    owner.sleep(3)
-                self.stop(record)
-                owner.resources()
-        finally:
-            self.cleanup(journal)
+        for section, snapshot in journal['production_snapshots'].items():
+            settings = owner.request['configuration'][section]['settings']
+            root = settings['publication_root' if section == 'transparent_history' else 'root']
+            work = root + '/.cutover-preparation/' + journal['id'] + '/' + section
+            pin = work + '/publication'
+            require(snapshot['pin'] == pin, 'snapshot pin is outside its transaction')
+            map_name = 'shards.json' if section == 'transparent_history' else 'txid-shards.json'
+            require(owner.ex.sha256(owner.host, pin + '/' + map_name) == snapshot['raw_map_sha256'],
+                    'pinned production snapshot map changed')
+            retained_bytes = self.reuse_previous(journal, section, root, pin, script)
+            record = {'pin': pin, 'script': script, 'retained_runtime_bytes': retained_bytes,
+                      'disk_bytes': retained_bytes + owner.request['https']['publisher_budget_bytes'],
+                      'binary_sha256': self.serving.release['binary_sha256'],
+                      'inputs': {script: sha(SCRIPT)}}
+            if section == 'transparent_history':
+                archive = owner.request['https']['consumers'][0]
+                identity = snapshot['identity']
+                specification = {**record, 'work': work,
+                    'binary': self.serving.deployer.service.release_binary(
+                        self.serving.release['binary_sha256'], 'pir-query-server'),
+                    'verification_cache_bytes': archive['configuration'][section]['settings']['cache_bytes'],
+                    'identity': {'shard_schema': identity['schema'],
+                        **{key: identity[key] for key in ('map_sha256', 'network', 'genesis_hash',
+                                                        'shards', 'start_height', 'covered_through')},
+                        'recent_from_shard': identity['shards']}}
+                path = work + '/capacity-specification.json'
+                self.serving.write(owner.host, path, json.dumps(specification, sort_keys=True) + '\n', 0o600)
+                code, output = owner.ex.run(owner.host, ['python3', script, 'capacity', path], 300)
+                require(code == 0, 'complete history cache does not fit: ' + output[-1000:])
+                record['capacity'] = json.loads(output)
+                record['verification_cache_bytes'] = specification['verification_cache_bytes']
+            journal.setdefault('prepared_snapshots', {})[section] = record
+            owner.save(journal)
+            owner.resources()
+        self.guard(journal)
 
     def seed(self, journal):
+        self.guard(journal)
         owner = self.owner
-        for section, record in journal.get('warm_snapshots', {}).items():
+        for section, record in {**journal.get('warm_snapshots', {}),
+                                **journal.get('prepared_snapshots', {})}.items():
             settings = owner.request['configuration'][section]['settings']
             root = settings['publication_root' if section == 'transparent_history' else 'root']
             code, output = owner.ex.run(owner.host, ['python3', record['script'], 'seed',
                                        record['pin'], root + '/active.json', root], 120)
             require(code == 0, 'could not reuse verified publisher runtimes: ' + output[-1000:])
             record['seeded'] = json.loads(output)
-            require(record['seeded'].get('linked_runtimes', 0) > 0,
-                    'snapshot warmup left no reusable publisher runtimes')
             owner.save(journal)
