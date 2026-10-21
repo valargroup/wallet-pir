@@ -697,10 +697,10 @@ impl Prepared<'_> {
             &staged.directory.join("verified-inventory.json"),
             &staged.inventory,
         )?;
-        live.collect_memory().await?;
         owner.pending = None;
-        owner.live = Some(live);
+        owner.live = Some(live.clone());
         owner.current = Some(current.clone());
+        collect_disk(&live, &owner.config.directory, &staged.directory).await;
         stages.activation_seconds = activating.elapsed().as_secs_f64();
         Ok(Progress {
             unchanged: false,
@@ -709,6 +709,32 @@ impl Prepared<'_> {
             downloaded_files: staged.downloaded_files,
             stages: Some(stages),
         })
+    }
+}
+/// Disk retention after an activation follows the owner's snapshot policy:
+/// `Collect` keeps the active, retained and candidate trees, three more unused
+/// ones and the catalog revisions they reference; objects that no remaining
+/// tree links are then unlinked. Activation already succeeded, so a failed or
+/// deferred collection is logged and retried after the next activation.
+async fn collect_disk(live: &LiveService, root: &Path, active: &Path) {
+    match live.command(Command::Collect).await {
+        Ok(reply) if reply["source_collection_deferred"] == false => {
+            let (root, linked) = (root.to_path_buf(), active.join("shards.json"));
+            match tokio::task::spawn_blocking(move || {
+                crate::objects::collect_objects(&root, &linked).map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(Ok(Some((files, bytes)))) => {
+                    tracing::info!(files, bytes, "collected unreferenced objects")
+                }
+                Ok(Ok(None)) => tracing::info!("object collection deferred"),
+                Ok(Err(error)) => tracing::warn!(%error, "object collection failed"),
+                Err(error) => tracing::warn!(%error, "object collection task failed"),
+            }
+        }
+        Ok(_) => tracing::info!("publication source collection deferred"),
+        Err(error) => tracing::warn!(%error, "publication disk collection failed"),
     }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]

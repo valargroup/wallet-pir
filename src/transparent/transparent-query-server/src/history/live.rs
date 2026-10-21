@@ -916,6 +916,15 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         })
     };
+    // A recovered record may name its tree through another spelling of the
+    // same directory; compare resolved paths so it is never mistaken as unused.
+    let keep: BTreeSet<PathBuf> = keep
+        .iter()
+        .flat_map(|path| std::iter::once(path.clone()).chain(fs::canonicalize(path).ok()))
+        .collect();
+    let kept = |path: &Path| {
+        keep.contains(path) || fs::canonicalize(path).is_ok_and(|path| keep.contains(&path))
+    };
     let mut publications = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
@@ -935,7 +944,7 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
     let mut unused = 0;
     let mut referenced = BTreeSet::new();
     for publication in publications {
-        if !keep.contains(&publication.path()) {
+        if !kept(&publication.path()) {
             unused += 1;
             if unused > 3 {
                 fs::remove_dir_all(publication.path())?;
@@ -1009,6 +1018,31 @@ mod collection_tests {
                 .count(),
             keep.len() + 3
         );
+    }
+
+    #[test]
+    fn collection_keeps_a_tree_named_through_another_path() {
+        let real = tempfile::tempdir().unwrap();
+        let alias = tempfile::tempdir().unwrap();
+        let spelled = alias.path().join("provider");
+        std::os::unix::fs::symlink(real.path(), &spelled).unwrap();
+        let epoch = std::time::SystemTime::UNIX_EPOCH;
+        for n in 0..5u64 {
+            let publication = real.path().join(format!("staging-{n}-100"));
+            std::fs::create_dir(&publication).unwrap();
+            std::fs::File::open(&publication)
+                .unwrap()
+                .set_modified(epoch + std::time::Duration::from_secs(1_000 + n))
+                .unwrap();
+        }
+        // The oldest tree would be the first unused one removed.
+        let keep = BTreeSet::from([spelled.join("staging-0-100")]);
+        assert!(collect_publications(real.path(), &keep).unwrap());
+        assert!(real.path().join("staging-0-100").is_dir());
+        assert!(!real.path().join("staging-1-100").exists());
+        for n in 2..5 {
+            assert!(real.path().join(format!("staging-{n}-100")).is_dir());
+        }
     }
 
     #[test]

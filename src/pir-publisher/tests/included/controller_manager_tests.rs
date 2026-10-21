@@ -1332,6 +1332,11 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
+    let held = PathBuf::from(
+        live.command(Command::Status).await.unwrap()["active"]["directory"]
+            .as_str()
+            .unwrap(),
+    );
     let (origin, task) = worker(live.clone()).await;
     let shard = set.get(1).unwrap();
     let width = shard.geometry.directory_row_bytes;
@@ -1372,7 +1377,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     // Same immutable map, new complete owner snapshots: no expensive fixture
     // growth, and no helper-only fake activation or explicit Collect command.
-    for _ in 0..7 {
+    // More activations than disk retention keeps, so trees are collected.
+    for _ in 0..10 {
         owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
         follow.poll_once().await.unwrap();
         let status = live.command(Command::Status).await.unwrap();
@@ -1404,15 +1410,29 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     query(&origin, &set).await;
     assert!(state.join("objects").is_dir());
+    // Eleven activations leave the active tree, three retained predecessors,
+    // the tree the admitted request held and three unused trees on disk.
+    let trees: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("staging-")
+        })
+        .collect();
+    assert_eq!(trees.len(), 8, "{trees:?}");
     assert!(
-        std::fs::read_dir(&state)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
-            .count()
-            >= 8,
-        "memory collection does not delete disk trees"
+        trees.contains(&held),
+        "the admitted request's tree survived"
     );
+    let active = live.command(Command::Status).await.unwrap()["active"]["directory"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap();
+    assert!(trees.contains(&active));
     task.stop().await;
 }
 
