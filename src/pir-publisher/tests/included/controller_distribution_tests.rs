@@ -201,6 +201,7 @@ fn prepare_recent(directory: &Path, set: &ShardSet) {
 
 struct CanonicalRpc {
     client: NodeClient,
+    url: String,
     // Qualification campaigns mutate the served tip. Fast cases leave it at
     // the publication hash, so this field has no reader in that build.
     #[cfg_attr(not(feature = "qualification-tests"), allow(dead_code))]
@@ -267,6 +268,7 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     CanonicalRpc {
         client: crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap(),
+        url: format!("http://{address}"),
         hash,
         genesis,
         available,
@@ -1485,7 +1487,12 @@ impl RestoreCase {
             .clone()
     }
     #[track_caller]
-    fn refuse(&self, bytes: &[u8], expected: &transparent_shared::publication::RestoreExpectation, why: &str) {
+    fn refuse(
+        &self,
+        bytes: &[u8],
+        expected: &transparent_shared::publication::RestoreExpectation,
+        why: &str,
+    ) {
         assert!(
             Finalized::restore_completed(&self.directory, bytes, expected).is_err(),
             "{why}"
@@ -1546,7 +1553,8 @@ fn restore_offers_the_exact_prepared_inventory_and_its_bodies_validate() {
 #[test]
 fn restore_refuses_unsupported_or_foreign_evidence() {
     let case = RestoreCase::new();
-    let encode = |r: &transparent_shared::publication::RestoreRecord| serde_json::to_vec(r).unwrap();
+    let encode =
+        |r: &transparent_shared::publication::RestoreRecord| serde_json::to_vec(r).unwrap();
     let mut changed = case.record.clone();
     changed.schema = "transparent-history-restore-v0".into();
     case.refuse(&encode(&changed), &case.expected, "unknown schema");
@@ -1560,7 +1568,9 @@ fn restore_refuses_unsupported_or_foreign_evidence() {
     changed.inventory.push(' ');
     case.refuse(&encode(&changed), &case.expected, "inventory digest");
     case.refuse(b"{", &case.expected, "malformed record");
-    for field in ["anchor", "height", "cutoff", "full", "network", "genesis", "map"] {
+    for field in [
+        "anchor", "height", "cutoff", "full", "network", "genesis", "map",
+    ] {
         let mut other = case.expected.clone();
         match field {
             "anchor" => other.anchor_hash = "00".repeat(32),
@@ -1580,7 +1590,11 @@ fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
     let case = RestoreCase::new();
     let mut omitted = case.inventory();
     omitted.artifacts.retain(|a| a.kind != Kind::RecentRuntime);
-    case.refuse(&with_inventory(&case.record, &omitted), &case.expected, "omitted runtime");
+    case.refuse(
+        &with_inventory(&case.record, &omitted),
+        &case.expected,
+        "omitted runtime",
+    );
     let mut longer = case.inventory();
     longer
         .artifacts
@@ -1588,7 +1602,11 @@ fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
         .find(|a| a.kind == Kind::ArchiveTable)
         .unwrap()
         .bytes += 1;
-    case.refuse(&with_inventory(&case.record, &longer), &case.expected, "wrong length");
+    case.refuse(
+        &with_inventory(&case.record, &longer),
+        &case.expected,
+        "wrong length",
+    );
     let mut wrong = case.inventory();
     wrong
         .artifacts
@@ -1596,7 +1614,11 @@ fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
         .find(|a| a.kind == Kind::RecentTable)
         .unwrap()
         .sha256 = "11".repeat(32);
-    case.refuse(&with_inventory(&case.record, &wrong), &case.expected, "source differs from manifest");
+    case.refuse(
+        &with_inventory(&case.record, &wrong),
+        &case.expected,
+        "source differs from manifest",
+    );
     let mut renamed = case.inventory();
     renamed
         .artifacts
@@ -1604,7 +1626,11 @@ fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
         .find(|a| a.kind == Kind::RecentRuntime)
         .unwrap()
         .path = "../escape.runtime".into();
-    case.refuse(&with_inventory(&case.record, &renamed), &case.expected, "unsafe path");
+    case.refuse(
+        &with_inventory(&case.record, &renamed),
+        &case.expected,
+        "unsafe path",
+    );
 }
 
 #[test]
@@ -1647,9 +1673,14 @@ fn integrity_confirms_same_size_body_corruption_the_restore_cannot_see() {
     file.read_exact_at(&mut first, 0).unwrap();
     file.write_all_at(&[first[0] ^ 1], 0).unwrap();
     let restored = case.restore();
-    match restored.validation.integrity(&case.inventory(), None, &|| false) {
+    match restored
+        .validation
+        .integrity(&case.inventory(), None, &|| false)
+    {
         Err(transparent_shared::publication::IntegrityError::Mismatch {
-            path, found_sha256, ..
+            path,
+            found_sha256,
+            ..
         }) => {
             assert_eq!(path, table.path);
             assert!(found_sha256.is_some());
@@ -1685,7 +1716,10 @@ fn integrity_never_passes_a_file_replaced_while_it_is_read() {
         Err(transparent_shared::publication::IntegrityError::Unavailable(_))
     ));
     // Read again, the replacement's own unchanged bytes pass.
-    restored.validation.integrity(&inventory, None, &|| false).unwrap();
+    restored
+        .validation
+        .integrity(&inventory, None, &|| false)
+        .unwrap();
 }
 
 #[test]
@@ -1696,11 +1730,16 @@ fn correctness_checks_only_the_inodes_integrity_verified() {
     let inventory = case.inventory();
     let memory = RestoreCase::memory();
     for kind in [Kind::RecentRuntime, Kind::RecentTable] {
-        let verified = restored.validation.integrity(&inventory, None, &|| false).unwrap();
+        let verified = restored
+            .validation
+            .integrity(&inventory, None, &|| false)
+            .unwrap();
         replace_with_same_bytes(&case.directory.join(case.artifact(kind).path));
         assert!(
             matches!(
-                restored.validation.correctness(&inventory, &verified, &memory, &|| false),
+                restored
+                    .validation
+                    .correctness(&inventory, &verified, &memory, &|| false),
                 Err(CorrectnessError::Unavailable(_))
             ),
             "{kind:?} replaced after integrity"
@@ -1718,12 +1757,9 @@ fn correctness_checks_only_the_inodes_integrity_verified() {
     }
     // Nothing integrity did not verify is checked.
     assert!(matches!(
-        restored.validation.correctness(
-            &inventory,
-            &Default::default(),
-            &memory,
-            &|| false
-        ),
+        restored
+            .validation
+            .correctness(&inventory, &Default::default(), &memory, &|| false),
         Err(CorrectnessError::Unavailable(_))
     ));
 }
@@ -1749,7 +1785,10 @@ fn correctness_fails_a_runtime_whose_listed_digest_names_corrupt_bytes() {
         &case.expected,
     )
     .unwrap();
-    let verified = restored.validation.integrity(&corrupt, None, &|| false).unwrap();
+    let verified = restored
+        .validation
+        .integrity(&corrupt, None, &|| false)
+        .unwrap();
     assert!(matches!(
         restored
             .validation
@@ -1797,7 +1836,10 @@ fn a_newer_job_or_cancellation_stops_obsolete_validation_and_releases_its_input(
                     Event::Correctness(Ok(_)) => "correctness passed".into(),
                     Event::Correctness(Err(e)) => format!("correctness {e}"),
                 };
-                events.lock().unwrap().push((identity.directory.clone(), name));
+                events
+                    .lock()
+                    .unwrap()
+                    .push((identity.directory.clone(), name));
             })
         },
     )
@@ -1817,17 +1859,25 @@ fn a_newer_job_or_cancellation_stops_obsolete_validation_and_releases_its_input(
             .any(|(d, n)| d == directory && n == name)
     };
     queue.submit(job(&first));
-    wait("first started", &|| saw(&first.directory, "started integrity"));
+    wait("first started", &|| {
+        saw(&first.directory, "started integrity")
+    });
     assert_eq!(queue.held(), vec![first.directory.clone()]);
     // A newer publication stops the running job while it is still blocked;
     // only the newest one remains held.
     queue.submit(job(&second));
-    wait("first stopped", &|| saw(&first.directory, "integrity validation stopped"));
-    wait("second started", &|| saw(&second.directory, "started integrity"));
+    wait("first stopped", &|| {
+        saw(&first.directory, "integrity validation stopped")
+    });
+    wait("second started", &|| {
+        saw(&second.directory, "started integrity")
+    });
     assert_eq!(queue.held(), vec![second.directory.clone()]);
     // Withdrawal cancels it too and releases its directory.
     queue.cancel();
-    wait("second stopped", &|| saw(&second.directory, "integrity validation stopped"));
+    wait("second stopped", &|| {
+        saw(&second.directory, "integrity validation stopped")
+    });
     wait("released", &|| queue.held().is_empty());
     assert!(!saw(&first.directory, "integrity passed"));
     // A later job runs to completion once foreground work ends.
@@ -2028,5 +2078,401 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
     assert_eq!(
         std::fs::read(state.join(INTEGRITY_FAILURES)).unwrap(),
         b"not json"
+    );
+}
+
+/// A controller root whose saved active publication carries completion
+/// evidence, as a previous process left it, and the fixture node and fleet.
+struct Startup {
+    root: tempfile::TempDir,
+    config: Config,
+    directory: PathBuf,
+    record: transparent_shared::publication::RestoreRecord,
+    finalized: Finalized,
+    _rpc: CanonicalRpc,
+}
+impl Startup {
+    async fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        manager_tests::copy_fixture_tree(
+            &manager_tests::prepared_fixture(2).join("journal"),
+            &journal,
+        );
+        let publications = root.path().join("publications");
+        std::fs::create_dir(&publications).unwrap();
+        let directory = publications.join("candidate-restored");
+        let (set, finalized, record, _) = restore_fixture(&directory);
+        let rpc = canonical_rpc(root.path(), &set).await;
+        let hook = root.path().join("fleet.py");
+        std::fs::write(&hook, r#"#!/usr/bin/env python3
+import json,sys
+from pathlib import Path
+r=json.load(sys.stdin)
+with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
+print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
+"#).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = Config {
+            data_dir: journal,
+            publication_root: publications.clone(),
+            initial_publication: directory.clone(),
+            recent_from: 2,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
+            rpc_url: rpc.url.clone(),
+            rpc_cookie: root.path().join("node-cookie"),
+            fleet_command: hook,
+            fleet_config: root.path().join("unused"),
+            listen: "127.0.0.1:0".parse().unwrap(),
+            source_sha: "fixture".into(),
+            shadow: false,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            // The fixture node answers block hashes only; the saved journal
+            // already covers the publication.
+            follow_journal: true,
+            snapshot_dir: None,
+            ship_runtimes: true,
+            distribute_prepared: true,
+            http_only: false,
+        };
+        let saved = read_public(directory.clone(), Vec::new())
+            .unwrap()
+            .publication;
+        publication::write_atomic(
+            &publications.join("active.json"),
+            &serde_json::to_vec(&saved).unwrap(),
+        )
+        .unwrap();
+        let startup = Self {
+            root,
+            config,
+            directory,
+            record,
+            finalized,
+            _rpc: rpc,
+        };
+        startup.write_record(&serde_json::to_vec(&startup.record).unwrap());
+        startup
+    }
+    fn write_record(&self, bytes: &[u8]) {
+        publication::write_atomic(
+            &self
+                .directory
+                .join(transparent_shared::publication::RESTORE_FILE),
+            bytes,
+        )
+        .unwrap();
+    }
+    /// Start the controller with its validator held; returns its HTTPS front,
+    /// task and stop handle once its router exists.
+    async fn start(
+        &self,
+        name: &str,
+    ) -> (
+        Tls,
+        tokio::task::JoinHandle<Result<(), BoxError>>,
+        pir_pipeline::service::Shutdown,
+    ) {
+        crate::history::validator::HOLD
+            .lock()
+            .unwrap()
+            .insert(self.config.publication_root.clone());
+        let (send, routed) = tokio::sync::oneshot::channel();
+        let send = Arc::new(std::sync::Mutex::new(Some(send)));
+        let http = pir_pipeline::service::Http::new(move |_, router: Router| {
+            let send = send.clone();
+            async move {
+                if let Some(send) = send.lock().unwrap().take() {
+                    let _ = send.send(router);
+                }
+                std::future::pending::<std::io::Result<()>>().await
+            }
+        });
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let task = tokio::spawn(run_managed(self.config.clone(), http, shutdown.clone()));
+        let router = tokio::time::timeout(std::time::Duration::from_secs(20), routed)
+            .await
+            .expect("router")
+            .expect("controller started");
+        let front = self.root.path().join(name);
+        std::fs::create_dir_all(&front).unwrap();
+        (tls_router(&front, router).await, task, shutdown)
+    }
+    fn release(&self) {
+        crate::history::validator::HOLD
+            .lock()
+            .unwrap()
+            .remove(&self.config.publication_root);
+    }
+}
+
+async fn status_of(tls: &Tls) -> serde_json::Value {
+    reqwest::Client::builder()
+        .add_root_certificate(tls.cert.clone())
+        .build()
+        .unwrap()
+        .get(format!("{}/v1/status", tls.origin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+async fn wait_status(
+    tls: &Tls,
+    what: &str,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = status_of(tls).await;
+        if done(&status) {
+            return status;
+        }
+        assert!(std::time::Instant::now() < deadline, "{what}: {status}");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Flip one byte of `path` in place, keeping its length.
+fn flip_first_byte(path: &Path) {
+    use std::os::unix::fs::FileExt;
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_serves_before_validation_and_keeps_serving_a_correctness_failure() {
+    let startup = Startup::new().await;
+    // The previous process listed a runtime whose body is corrupt under its
+    // own digest: integrity passes and only the runtime check can fail it.
+    let runtime = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap()
+        .clone();
+    let path = startup.directory.join(&runtime.path);
+    let mut bad = std::fs::read(&path).unwrap();
+    bad[64] ^= 1;
+    publication::write_atomic(&path, &bad).unwrap();
+    let mut inventory = startup.finalized.inventory().clone();
+    inventory
+        .artifacts
+        .iter_mut()
+        .find(|a| a.path == runtime.path)
+        .unwrap()
+        .sha256 = transparent_shared::publication::digest(&bad);
+    startup.write_record(&with_inventory(&startup.record, &inventory));
+    let (tls, task, shutdown) = startup.start("front").await;
+    // Serving, eligible and retrievable while validation is held: nothing
+    // loaded that runtime, or the restore would have failed.
+    let status = wait_status(&tls, "restored serving", |s| s["phase"] == "serving").await;
+    assert_eq!(status["restored"], true);
+    assert_eq!(status["integrity_validation"]["state"], "pending");
+    assert_eq!(status["correctness_validation"]["state"], "pending");
+    let report = bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+        .await
+        .unwrap();
+    assert_eq!(report.map_sha256, startup.record.map_sha256);
+    let requests =
+        std::fs::read_to_string(startup.config.fleet_command.with_extension("requests")).unwrap();
+    assert!(
+        requests.contains("\"prepare\"") && requests.contains("\"activate\""),
+        "{requests}"
+    );
+    startup.release();
+    let status = wait_status(&tls, "correctness failed", |s| {
+        s["correctness_validation"]["state"] == "failed"
+    })
+    .await;
+    assert_eq!(status["integrity_validation"]["state"], "passed");
+    assert_eq!(status["phase"], "serving");
+    assert_eq!(
+        status["correctness_validation"]["inventory_sha256"],
+        transparent_shared::publication::digest(&serde_json::to_vec(&inventory).unwrap())
+    );
+    // Still the same process, still serving the same inventory.
+    bootstrap::verify(config(&tls, startup.root.path().join("provider-2")))
+        .await
+        .unwrap();
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_after_restart() {
+    let startup = Startup::new().await;
+    let table = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap()
+        .clone();
+    // Same-size corruption the restore cannot see without hashing bodies.
+    flip_first_byte(&startup.directory.join(&table.path));
+    let (tls, task, shutdown) = startup.start("front").await;
+    wait_status(&tls, "restored serving", |s| s["phase"] == "serving").await;
+    bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+        .await
+        .unwrap();
+    startup.release();
+    let status = wait_status(&tls, "integrity failed", |s| {
+        s["integrity_validation"]["state"] == "failed"
+    })
+    .await;
+    assert_eq!(status["phase"], "integrity_failed");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider-2")))
+            .await
+            .is_err()
+    );
+    // Shutdown joins the validator and releases the controller lock.
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    // A new process with the same evidence stays withdrawn and alive;
+    // deleting the completion record would not clear the failure either.
+    let (tls, task, shutdown) = startup.start("front-2").await;
+    let status = wait_status(&tls, "restart withdrawn", |s| {
+        s["phase"] == "integrity_failed"
+    })
+    .await;
+    assert_eq!(
+        status["integrity_validation"]["artifact"]["path"],
+        table.path
+    );
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider-3")))
+            .await
+            .is_err()
+    );
+    assert!(!task.is_finished());
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+    assert!(integrity_failures(&startup.config.publication_root)
+        .unwrap()
+        .iter()
+        .any(|f| f.path == table.path));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_refuses_unusable_evidence_without_suggesting_its_deletion() {
+    let startup = Startup::new().await;
+    startup.write_record(b"{");
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        run_managed(
+            startup.config.clone(),
+            pir_pipeline::service::Http::new(|_, _: Router| std::future::pending()),
+            Default::default(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("cannot be restored"), "{error}");
+    assert!(error.contains("does not clear"), "{error}");
+    assert!(!error.contains("remove "), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_does_not_serve_a_restored_anchor_the_node_replaced() {
+    let startup = Startup::new().await;
+    *startup._rpc.hash.write().unwrap() = Some("00".repeat(32));
+    let (tls, task, shutdown) = startup.start("front").await;
+    let status = wait_status(&tls, "publication refused", |s| {
+        !s["publication_error"].is_null() || s["phase"] != "starting"
+    })
+    .await;
+    assert_ne!(status["phase"], "serving", "{status}");
+    assert!(status["restored"].is_null(), "{status}");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+            .await
+            .is_err()
+    );
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_completion_evidence_corrupt_bytes_are_prepared_in_full_and_never_served() {
+    let startup = Startup::new().await;
+    let table = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap()
+        .clone();
+    flip_first_byte(&startup.directory.join(&table.path));
+    std::fs::remove_file(
+        startup
+            .directory
+            .join(transparent_shared::publication::RESTORE_FILE),
+    )
+    .unwrap();
+    let failures = startup.config.publication_root.join(INTEGRITY_FAILURES);
+    let recorded = serde_json::json!([{"path":table.path,"expected_sha256":table.sha256,
+        "found_sha256":null,"inventory_sha256":"00".repeat(32),
+        "map_sha256":startup.record.map_sha256,"reason":"recorded by an earlier process"}]);
+    std::fs::write(&failures, serde_json::to_vec(&recorded).unwrap()).unwrap();
+    let (tls, task, shutdown) = startup.start("front").await;
+    let status = wait_status(&tls, "full preparation refused", |s| {
+        !s["publication_error"].is_null()
+    })
+    .await;
+    assert_ne!(status["phase"], "serving", "{status}");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+            .await
+            .is_err()
+    );
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+    // The cold path neither served nor discarded the durable failure.
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&failures).unwrap()).unwrap(),
+        recorded
     );
 }

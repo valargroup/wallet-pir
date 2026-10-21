@@ -38,6 +38,18 @@ pub(crate) enum Event {
 }
 
 type Report = dyn Fn(&Identity, Event) + Send + Sync;
+
+/// Publication roots whose validators tests hold as if foreground work ran.
+#[cfg(test)]
+pub(crate) static HOLD: std::sync::LazyLock<Mutex<std::collections::BTreeSet<PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+/// Whether a test holds the validator of `root`.
+pub(crate) fn held_by_test(_root: &std::path::Path) -> bool {
+    #[cfg(test)]
+    return HOLD.lock().unwrap().contains(_root);
+    #[cfg(not(test))]
+    false
+}
 /// Answers true while foreground distribution or publication work runs.
 type Busy = dyn Fn() -> bool + Send + Sync;
 
@@ -215,7 +227,10 @@ fn validate(
     };
     loop {
         send(Event::Started("integrity"));
-        let verified = match job.validation.integrity(&job.inventory, known.as_ref(), &pause) {
+        let verified = match job
+            .validation
+            .integrity(&job.inventory, known.as_ref(), &pause)
+        {
             Ok(verified) => verified,
             Err(IntegrityError::Unavailable(reason)) if !queue.obsolete(generation) => {
                 send(Event::Integrity(Err(IntegrityError::Unavailable(reason))));

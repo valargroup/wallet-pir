@@ -331,17 +331,25 @@ pub async fn run_managed(
     let started = std::time::Instant::now();
     let mut public = public;
     let mut restored = None;
+    let mut failed = None;
     if config.distribute_prepared && active_path.exists() {
         match restore_public(&config, &public) {
-            Ok(Some((finalized, validation))) => {
+            Ok(Restore::Restored(finalized, validation)) => {
                 public.distribution = Some(finalized);
                 restored = Some(validation);
             }
             // Only an installation without completion evidence (a fresh one,
             // or one written before this record existed) is prepared in full.
-            Ok(None) => tracing::warn!(
+            Ok(Restore::Absent) => tracing::warn!(
                 "completed publication has no restore record; it is prepared again in full before serving"
             ),
+            // Recorded corrupt bytes stay withdrawn in this process too; only
+            // a candidate with verified replacement bytes serves again.
+            Ok(Restore::Failed(failure)) => {
+                tracing::error!(path = %failure.path, reason = %failure.reason,
+                    "the saved publication lists bytes that failed integrity validation; it stays withdrawn");
+                failed = Some(failure);
+            }
             // Present but unusable evidence, unsafe or incomplete files, an
             // unreadable integrity record or unresolved intent refuse to
             // start rather than hiding a full scan after a deploy stop.
@@ -385,9 +393,19 @@ pub async fn run_managed(
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
-        integrity_failed: AtomicBool::new(false),
+        integrity_failed: AtomicBool::new(failed.is_some()),
         foreground: AtomicU64::new(0),
     }));
+    if let Some(failure) = failed {
+        let mut status = authority.0.status.write().unwrap();
+        status["phase"] = "integrity_failed".into();
+        status["integrity_validation"] = serde_json::json!({"state":"failed",
+            "publication":{"height":authority.0.active.read().unwrap().publication.height,
+                "hash":authority.0.active.read().unwrap().publication.hash},
+            "map_sha256":failure.map_sha256,"inventory_sha256":failure.inventory_sha256,
+            "reason":format!("{}: {}", failure.path, failure.reason),
+            "artifact":serde_json::to_value(&failure).unwrap_or_default()});
+    }
     struct Fence(Authority);
     impl Drop for Fence {
         fn drop(&mut self) {
@@ -401,9 +419,11 @@ pub async fn run_managed(
         Arc::new(transparent_shared::runtime::memory::WorkMemory::default()),
         {
             let authority = authority.clone();
+            let root = config.publication_root.clone();
             Box::new(move || {
                 authority.0.distribution_slots.available_permits() < DISTRIBUTION_SLOTS
                     || authority.0.foreground.load(Ordering::Acquire) > 0
+                    || super::validator::held_by_test(&root)
             })
         },
         {
@@ -1417,30 +1437,35 @@ fn lists_failed(
     })
 }
 
-/// The saved publication's completed distribution, without reading its bodies.
-fn restore_public(
-    config: &Config,
-    public: &Public,
-) -> Result<
-    Option<(
+enum Restore {
+    /// No completion evidence: the ordinary path prepares it in full.
+    Absent,
+    /// The saved inventory lists bytes recorded as failing integrity.
+    Failed(IntegrityFailure),
+    Restored(
         transparent_shared::publication::Finalized,
         transparent_shared::publication::Validation,
-    )>,
-    BoxError,
-> {
+    ),
+}
+
+/// The saved publication's completed distribution, without reading its bodies.
+fn restore_public(config: &Config, public: &Public) -> Result<Restore, BoxError> {
     use transparent_shared::publication::{Finalized, RestoreExpectation, RESTORE_FILE};
     // Recorded withdrawal or unfinished activation intent is resolved by the
     // ordinary path, which starts withdrawn; it is never bypassed.
     for intent in ["withdrawn.json", "activation.json"] {
         if config.publication_root.join(intent).exists() {
-            tracing::warn!(intent, "unresolved publication intent; not restoring cheaply");
-            return Ok(None);
+            tracing::warn!(
+                intent,
+                "unresolved publication intent; not restoring cheaply"
+            );
+            return Ok(Restore::Absent);
         }
     }
     let directory = &public.publication.directory;
     let record = match std::fs::read(directory.join(RESTORE_FILE)) {
         Ok(record) => record,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Restore::Absent),
         Err(e) => return Err(format!("unreadable completed-publication record: {e}").into()),
     };
     let map = public.filters.map();
@@ -1457,13 +1482,14 @@ fn restore_public(
             anchor_hash: public.publication.hash.clone(),
         },
     )?;
-    if lists_failed(
-        &integrity_failures(&config.publication_root)?,
-        restored.finalized.inventory(),
-    ) {
-        return Err("the publication lists bytes that failed integrity validation".into());
+    let failures = integrity_failures(&config.publication_root)?;
+    if let Some(failure) = failures
+        .iter()
+        .find(|f| lists_failed(std::slice::from_ref(*f), restored.finalized.inventory()))
+    {
+        return Ok(Restore::Failed(failure.clone()));
     }
-    Ok(Some((restored.finalized, restored.validation)))
+    Ok(Restore::Restored(restored.finalized, restored.validation))
 }
 
 /// Make a restored publication public after fresh authority checks: its exact

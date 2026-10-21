@@ -1117,7 +1117,10 @@ impl Validation {
         // Open `path` only while it still names the inode integrity hashed.
         let open = |path: &Path, artifact: &Artifact| {
             let stamp = verified.stamp(artifact).ok_or_else(|| {
-                CorrectnessError::Unavailable(format!("{} was not integrity-verified", artifact.path))
+                CorrectnessError::Unavailable(format!(
+                    "{} was not integrity-verified",
+                    artifact.path
+                ))
             })?;
             let file = crate::verification::open(path)
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
@@ -1130,14 +1133,15 @@ impl Validation {
                 Err(e) => Err(CorrectnessError::Unavailable(e.to_string())),
             }
         };
-        let unchanged = |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| {
-            match same_file(path, file) {
+        let unchanged =
+            |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| match same_file(
+                path, file,
+            ) {
                 Ok(Some(found)) if found == stamp => Ok(()),
                 _ => Err(CorrectnessError::Unavailable(format!(
                     "{name} changed during correctness validation"
                 ))),
-            }
-        };
+            };
         let mut checked = CheckedRuntimes::default();
         for (path, key, shared, source) in plan.native {
             if pause() {
