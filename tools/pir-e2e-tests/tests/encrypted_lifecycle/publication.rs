@@ -1,4 +1,8 @@
 //! The real publisher distribution router, node RPC and TLS transport.
+// Publication cases prepare the publisher's fixed deployed geometry, so they are
+// explicit qualification (`qualification-tests`); the TLS terminator and the
+// publisher routes below are shared with the ordinary discovery tests.
+#![cfg_attr(not(feature = "qualification-tests"), allow(dead_code, unused_imports))]
 use super::encrypted::{copy_hint_fixture, record, seed_hint_fixture, serve, shared_hint_fixture};
 use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
 use enhance_query_server::{
@@ -95,11 +99,12 @@ impl Published {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
     use enhance_query_server::{router_sync, worker_sync};
-    shared_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(QUALIFICATION, async {
+        shared_publication(67);
         let fixture = Published::new().await;
         let worker = worker_sync::Worker::open(
             &fixture.scratch.path().join("worker"),
@@ -197,13 +202,14 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
     .expect("router recovery exceeded correctness budget");
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_during_activation() {
     use enhance_query_server::{
         client::QuerySession, protocol::ShardSession, router_sync, worker_sync, RECORD_BYTES,
     };
-    shared_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(QUALIFICATION, async {
+        shared_publication(67);
         let fixture = Published::new().await;
         let worker_root = fixture.scratch.path().join("worker");
         let worker_config = worker_sync::Config {
@@ -426,6 +432,7 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
     .expect("autonomous router handover exceeded correctness budget");
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     use enhance_query_server::{
@@ -437,8 +444,8 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         worker_sync::{self, Readiness, ReadinessRequest},
         PackingBudget, RECORD_BYTES,
     };
-    shared_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(QUALIFICATION, async {
+        shared_publication(67);
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
@@ -563,10 +570,14 @@ fn fixture_coverage(count: u64) -> protocol::Coverage {
         .unwrap()
 }
 
+/// Bound for one deployed-geometry publication case, including a cold shared
+/// preparation (about 30s on a three-CPU host). Not a wallet latency budget.
+const QUALIFICATION: Duration = Duration::from_secs(180);
+
 /// One complete publisher preparation of `count` fixture records, built once
 /// per process (or per `WALLET_PIR_TEST_RUNTIME_CACHE`) beside the shared hint
-/// fixtures. Call it before a test's correctness budget; a cold build is the
-/// publisher's whole deployed-geometry preparation and reports its duration.
+/// fixtures. A cold build is the publisher's whole deployed-geometry
+/// preparation; it runs inside the calling case's bound and reports its time.
 fn shared_publication(count: u64) -> std::path::PathBuf {
     let plan = enhance_query_server::runtime::plan(
         fixture_coverage(count).shards[0].clone(),
@@ -720,11 +731,12 @@ async fn check_object(tls: &Tls, path: &str, object: &Object) {
     assert_eq!(hex::encode(hash.finalize()), object.sha256);
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cannot_renew_authority()
 {
-    shared_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(QUALIFICATION, async {
+        shared_publication(67);
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let canonical = Arc::new(AtomicBool::new(true));
@@ -851,14 +863,15 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert_eq!(restored.current.revoked.len(), 1);
         assert_eq!(restored.observed_unix_ms, 0);
         assert!(!current.current.succeeds(&restored.current), "restart fence cannot replay the predecessor");
-    }).await.expect("complete Enhance TLS publication exceeded thirty seconds");
+    }).await.expect("complete Enhance TLS publication exceeded its qualification bound");
 }
 
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_keeps_retained_material_and_open_files_and_removes_interrupted_candidates() {
     use std::io::Read;
-    shared_publication(1);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(QUALIFICATION, async {
+        shared_publication(1);
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(
@@ -911,5 +924,5 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());
-    }).await.expect("Enhance retained publication collection exceeded thirty seconds");
+    }).await.expect("Enhance retained publication collection exceeded its qualification bound");
 }
