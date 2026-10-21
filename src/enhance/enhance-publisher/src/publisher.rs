@@ -338,12 +338,14 @@ impl Publisher {
             })
             .await
             .map_err(|e| e.to_string())??;
-            work.manifest.sessions = prepared.inventory()
+            work.manifest.sessions = prepared
+                .inventory()
                 .domains
                 .iter()
                 .map(|d| d.reference())
                 .collect::<Result<_, _>>()?;
-            work.manifest.unit_identities = prepared.inventory()
+            work.manifest.unit_identities = prepared
+                .inventory()
                 .domains
                 .iter()
                 .map(|d| (d.plan.shard.id, d.plan.units.clone()))

@@ -94,6 +94,7 @@ wallet-recovery-tests = [
 ]
 
 [dependencies]
+pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 tempfile = { version = "3", optional = true }
 pir-publisher = { path = "../../src/pir-publisher", optional = true }
 status-publisher = { path = "../../src/status/status-publisher", optional = true }
@@ -155,7 +156,6 @@ test = false
 [dev-dependencies]
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
 transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false }
-pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
 zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 tempfile = "3"

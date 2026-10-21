@@ -4,10 +4,10 @@
 //! no publication is prepared. The TLS terminator logs discovery and product
 //! requests separately and applies `discovery-*` faults.
 use super::encrypted::serve;
-use pir_e2e_tests::enhance_fixture::tls;
 use enhance_query_server::{
     ingress_sync, router_sync, service::ServingRole, synchronization, worker_sync,
 };
+use pir_e2e_tests::enhance_fixture::tls;
 use pir_sync_manager::{DiscoveryError, SyncTask};
 use std::{
     path::Path,

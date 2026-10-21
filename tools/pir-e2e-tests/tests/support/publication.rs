@@ -31,7 +31,10 @@ impl Published {
             ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
         )
         .unwrap();
-        let publisher = serve(distribution.router()).await;
+        let publisher = serve(pir_e2e_tests::enhance_fixture::distribution_router(
+            &distribution,
+        ))
+        .await;
         let transport = tls(scratch.path(), &publisher.url).await;
         let inventory = tokio::task::spawn_blocking(move || {
             enhance_publisher::publication::prepare(
@@ -45,7 +48,9 @@ impl Published {
         })
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .inventory()
+        .clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,

@@ -20,7 +20,10 @@ async fn first_publication_preparation_defers_without_transport_backoff_or_servi
         ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap(),
     )
     .unwrap();
-    let publisher = serve(distribution.router()).await;
+    let publisher = serve(pir_e2e_tests::enhance_fixture::distribution_router(
+        &distribution,
+    ))
+    .await;
     let transport = tls(root.path(), &publisher.url).await;
     let source = synchronization::Config {
         publisher_origin: transport.origin.clone(),

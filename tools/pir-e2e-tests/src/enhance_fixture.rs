@@ -37,6 +37,15 @@ impl Drop for Listening {
         self.task.abort();
     }
 }
+pub fn distribution_router(
+    distribution: &enhance_publisher::distribution::Distribution,
+) -> axum::Router {
+    distribution.router().route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
 pub async fn serve(router: axum::Router) -> Listening {
     serve_at(router, "127.0.0.1:0".parse().unwrap()).await
 }
@@ -231,7 +240,7 @@ impl System {
             .publish(publisher.work(&journal).unwrap().unwrap())
             .await
             .unwrap();
-        let publisher_http = serve(publisher.distribution().router()).await;
+        let publisher_http = serve(distribution_router(publisher.distribution())).await;
         let transport = tls(root.path(), &publisher_http.url).await;
         let source = SourceConfig {
             publisher_origin: transport.origin.clone(),

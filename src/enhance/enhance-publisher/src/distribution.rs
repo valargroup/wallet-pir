@@ -153,8 +153,12 @@ impl Distribution {
         if !inventory.supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(manifest, self.durable_current().withdrawal_revision, move |root| publication::verify(root, inventory))
-            .await
+        self.install(
+            manifest,
+            self.durable_current().withdrawal_revision,
+            move |root| publication::verify(root, inventory),
+        )
+        .await
     }
 
     /// Install material this process prepared, rehashing only objects whose
@@ -164,7 +168,12 @@ impl Distribution {
         manifest: Manifest,
         prepared: Prepared,
     ) -> Result<(), String> {
-        self.publish_if_unwithdrawn(manifest, prepared, self.durable_current().withdrawal_revision).await
+        self.publish_if_unwithdrawn(
+            manifest,
+            prepared,
+            self.durable_current().withdrawal_revision,
+        )
+        .await
     }
 
     pub(crate) async fn publish_if_unwithdrawn(
@@ -176,7 +185,10 @@ impl Distribution {
         if !prepared.inventory().supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(manifest, withdrawal_revision, move |root| prepared.recheck(root)).await
+        self.install(manifest, withdrawal_revision, move |root| {
+            prepared.recheck(root)
+        })
+        .await
     }
 
     async fn install(

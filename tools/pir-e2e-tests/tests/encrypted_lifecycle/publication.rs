@@ -750,12 +750,12 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
             Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -910,7 +910,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(distribution.router()).await;
+        let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
@@ -921,7 +921,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
             enhance_publisher::publication::prepare(&prepare_root,
                 Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
                 |start, count| Ok((start..start + count as u64).flat_map(record).collect()))
-        }).await.unwrap().unwrap();
+        }).await.unwrap().unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -1030,7 +1030,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         let initial = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(
             &prepare_root, Lifecycle::default().coverage(1, Geometry::default()).unwrap(),
             &[(0, "0".into())].into(), |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-        )).await.unwrap().unwrap();
+        )).await.unwrap().unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
