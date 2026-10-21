@@ -9,6 +9,10 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- History publishers rehash every distributed artifact in parallel, then reload
+  and self-check only native runtime bytes they have not already checked in
+  this process. Missing or changed material is still verified before publishing.
+
 - HTTPS history startup rebuilds a revoked private snapshot before accepting
   higher-revision recovery of the same map. Publication collection preserves
   active, preparing and retained HTTPS source links, and catalog staging defers
