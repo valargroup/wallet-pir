@@ -310,7 +310,7 @@ pub struct FileStamp {
 }
 
 impl FileStamp {
-    fn of(meta: &std::fs::Metadata) -> Option<Self> {
+    pub(crate) fn of(meta: &std::fs::Metadata) -> Option<Self> {
         use std::os::unix::fs::MetadataExt;
         meta.is_file().then(|| Self {
             dev: meta.dev(),
@@ -333,6 +333,12 @@ impl FileStamp {
         let changed = i128::from(self.ctime_sec) * 1_000_000_000 + i128::from(self.ctime_nsec);
         modified.max(changed) + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Source loads on this thread that streamed the bytes through SHA-256.
+    pub(crate) static LOADS_HASHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// How long before a read a file must last have been modified for its stamp
@@ -633,10 +639,12 @@ impl SegmentSource {
     /// plaintext beside it would be the accounting error this whole change
     /// exists to remove.
     pub fn load(&self) -> Result<Vec<u8>, LoadError> {
-        let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+        let io = |source| LoadError::Io {
             path: self.path.clone(),
             source,
-        })?;
+        };
+        let file = std::fs::File::open(&self.path).map_err(io)?;
+        let before = file.metadata().map_err(io)?;
         let mut bytes = Vec::with_capacity(self.bytes());
         // One extra byte detects an oversized/replaced source without allowing
         // an untrusted file length to drive an unbounded allocation.
@@ -647,12 +655,19 @@ impl SegmentSource {
             .by_ref()
             .take(self.bytes() as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|source| LoadError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+            .map_err(io)?;
         crate::runtime::filecache::consumed(&file);
-        if !inherited {
+        // This process hashed this very file earlier and it is unchanged
+        // since: the same evidence `rebind` accepts, checked around this read.
+        let vouched = !inherited && self.vouches_for(&file, &before);
+        if vouched {
+            if bytes.len() != self.bytes() {
+                return Err(LoadError::Invalid("verified segment length changed".into()));
+            }
+            self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))?;
+        } else if !inherited {
+            #[cfg(test)]
+            LOADS_HASHED.with(|n| n.set(n.get() + 1));
             if !crate::verification::matches_received(
                 &self.path,
                 &file,
@@ -675,6 +690,28 @@ impl SegmentSource {
             ));
         }
         Ok(bytes)
+    }
+
+    /// What this process observed of the file when it verified it, if that
+    /// is settled enough to vouch for the same unchanged file later.
+    pub(crate) fn evidence(&self) -> Option<FileStamp> {
+        self.evidence
+    }
+
+    /// Whether this process's evidence vouches for `file`, opened at this
+    /// segment's path and observed as `before` when it was opened: the same
+    /// inode, unmodified since it was hashed, both before and now, and still
+    /// what the path names. Without settled evidence the answer is `false`.
+    pub(crate) fn vouches_for(&self, file: &std::fs::File, before: &std::fs::Metadata) -> bool {
+        let Some(evidence) = self.evidence else {
+            return false;
+        };
+        let now = file.metadata().ok();
+        let named = std::fs::metadata(&self.path).ok();
+        FileStamp::of(before) == Some(evidence)
+            && now.as_ref().and_then(FileStamp::of) == Some(evidence)
+            && named.as_ref().and_then(FileStamp::of) == Some(evidence)
+            && evidence.len == self.bytes() as u64
     }
 
     fn verification_context(&self) -> Vec<u8> {
@@ -1815,6 +1852,71 @@ mod tests {
         assert!(candidate.verify_or_reuse(
             Some(&source), &mut VerificationReport::default(), true,
         ).is_err(), "a changed source must be hashed and rejected even if its modification time was restored");
+    }
+
+    fn hashed_loads() -> u64 {
+        LOADS_HASHED.with(std::cell::Cell::get)
+    }
+
+    /// A file verified with settled evidence by this process.
+    fn settled_source(dir: &Path) -> (SegmentSource, std::fs::File, std::time::SystemTime) {
+        let path = dir.join("source.bin");
+        let bytes = vec![0u8; 32];
+        std::fs::write(&path, &bytes).unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        file.set_modified(modified).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let source = SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+            .verify_into(&mut VerificationReport::default(), true)
+            .unwrap();
+        assert!(source.evidence.is_some());
+        (source, file, modified)
+    }
+
+    #[test]
+    fn an_unchanged_verified_source_loads_without_another_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let (source, _file, _) = settled_source(dir.path());
+        let before = hashed_loads();
+        assert_eq!(source.load().unwrap(), vec![0u8; 32]);
+        assert_eq!(hashed_loads(), before, "the evidence vouches for the file");
+        let unverified = SegmentSource::published(
+            source.path().to_path_buf(),
+            2,
+            16,
+            source.sha256().to_string(),
+            2,
+        );
+        unverified.load().unwrap();
+        assert_eq!(hashed_loads(), before + 1, "a first load is hashed");
+    }
+
+    #[test]
+    fn a_same_size_change_with_restored_mtime_fails_an_evidence_backed_load() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (source, file, modified) = settled_source(dir.path());
+        next_timestamp_tick(source.path());
+        file.write_all_at(&[1], 0).unwrap();
+        file.set_modified(modified).unwrap();
+        let before = hashed_loads();
+        assert!(source.load().is_err());
+        assert_eq!(hashed_loads(), before + 1, "changed ctime forces a hash");
+    }
+
+    #[test]
+    fn a_replaced_path_is_hashed_again_even_with_identical_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (source, _file, _) = settled_source(dir.path());
+        let replacement = dir.path().join("replacement.bin");
+        std::fs::write(&replacement, vec![0u8; 32]).unwrap();
+        std::fs::rename(&replacement, source.path()).unwrap();
+        let before = hashed_loads();
+        source.load().unwrap();
+        assert_eq!(hashed_loads(), before + 1, "another inode has no evidence");
+        std::fs::write(source.path(), vec![1u8; 32]).unwrap();
+        assert!(source.load().is_err());
     }
 
     /// A segment whose rows past the ones its queries select hold data is refused

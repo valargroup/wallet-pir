@@ -4,7 +4,7 @@ use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use crate::{
-    history::shardset::ShardSet,
+    history::shardset::{FileStamp, ShardSet},
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
 use serde::{Deserialize, Serialize};
@@ -386,7 +386,7 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, false)
+        Self::prepare_until(root, set, recent_from_height, false, &|| false)
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -394,13 +394,23 @@ impl Finalized {
         set: &ShardSet,
         recent_from_height: u64,
     ) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, true)
+        Self::prepare_until(root, set, recent_from_height, true, &|| false)
     }
-    fn prepare_holdings(
+    /// [`Self::prepare`], or [`Self::prepare_full`] when `full`, asking
+    /// `stop` before each file it reads; once it answers true the preparation
+    /// ends with [`Stopped`] and nothing is finalized.
+    ///
+    /// A table whose bytes `set` verified in this process, and whose file is
+    /// unchanged since, is listed with that verified digest instead of being
+    /// hashed again; any other file is hashed. Each runtime is loaded with its
+    /// checksum and self-checked against its source, and is listed with the
+    /// digest of those checked bytes.
+    pub fn prepare_until(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
+        stop: &dyn Fn() -> bool,
     ) -> Result<Self, Error> {
         let recent = set
             .map
@@ -422,7 +432,15 @@ impl Finalized {
         };
         let mut files = BTreeMap::new();
         let mut paths = BTreeSet::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<(), Error> {
+        // `known`: a digest and length this process verified for the file
+        // with this stamp. Used only while the opened file still has it.
+        let mut add = |path: PathBuf,
+                       kind: Kind,
+                       known: Option<(&str, u64, FileStamp)>|
+         -> Result<(), Error> {
+            if stop() {
+                return Err(Box::new(Stopped));
+            }
             let relative = path
                 .strip_prefix(root)?
                 .to_str()
@@ -444,14 +462,8 @@ impl Finalized {
             if !paths.insert(relative.clone()) {
                 return Ok(());
             }
-            let mut file = std::fs::File::open(&path)?;
-            if !file.metadata()?.is_file() {
-                return Err("artifact is not a regular file".into());
-            }
-            let bytes = file.metadata()?.len();
-            let mut hash = Sha256::new();
-            io::copy(&mut file, &mut HashWriter(&mut hash))?;
-            let sha256 = hex::encode(hash.finalize());
+            let file = std::fs::File::open(&path)?;
+            let (sha256, bytes) = listed_digest(&path, file, known)?;
             if full || kind.local() {
                 files.insert(sha256.clone(), path);
             }
@@ -463,19 +475,25 @@ impl Finalized {
             });
             Ok(())
         };
-        add(root.join("shards.json"), Kind::Metadata)?;
+        add(root.join("shards.json"), Kind::Metadata, None)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
+        // Parameters depend only on geometry and table kind; build each once.
+        let mut built: BTreeMap<(&'static str, &'static str), SharedParams> = BTreeMap::new();
         for entry in &set.map.shards {
             let dir = root.join(&entry.manifest_digest);
-            add(dir.join("manifest.json"), Kind::Metadata)?;
-            add(dir.join("filter.bin"), Kind::Metadata)?;
+            add(dir.join("manifest.json"), Kind::Metadata, None)?;
+            add(dir.join("filter.bin"), Kind::Metadata, None)?;
             let shard = set
                 .revision(&entry.manifest_digest)
                 .ok_or("producer needs verified complete set")?;
             let local = entry.shard_id >= recent;
             for table in shard.tables() {
                 let params = if full || local {
-                    Some(SharedParams::build(shard.geometry, table.kind())?)
+                    let id = (shard.geometry.name, table.kind().as_str());
+                    if !built.contains_key(&id) {
+                        built.insert(id, SharedParams::build(shard.geometry, table.kind())?);
+                    }
+                    built.get(&id)
                 } else {
                     None
                 };
@@ -490,16 +508,21 @@ impl Finalized {
                         } else {
                             Kind::ArchiveTable
                         },
+                        source
+                            .evidence()
+                            .map(|stamp| (source.sha256(), source.bytes() as u64, stamp)),
                     )?;
-                    if let Some(shared) = &params {
+                    if let Some(shared) = params {
                         let key = (
                             shard.runtime_identity(table).to_string(),
                             table.kind(),
                             segment,
                         );
-                        // Header/length checks alone cannot finalize malformed native bytes.
-                        let runtime = shipped.load(&key, shared, source.sha256())?;
-                        runtime.self_check(shared, &source.load()?)?;
+                        if stop() {
+                            return Err(Box::new(Stopped));
+                        }
+                        let (sha256, bytes, stamp) =
+                            shipped.check_for_inventory(&key, shared, source)?;
                         add(
                             shipped.path(&key, shared, source.sha256()),
                             if local {
@@ -507,6 +530,7 @@ impl Finalized {
                             } else {
                                 Kind::ArchiveRuntime
                             },
+                            stamp.map(|stamp| (sha256.as_str(), bytes, stamp)),
                         )?;
                     }
                 }
@@ -525,6 +549,52 @@ impl Finalized {
         })
     }
 }
+/// A finalization ended because its caller asked it to stop: a normal end
+/// of the lifecycle, not a faulty publication.
+#[derive(Debug)]
+pub struct Stopped;
+impl std::fmt::Display for Stopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("publication finalization stopped")
+    }
+}
+impl std::error::Error for Stopped {}
+
+#[cfg(test)]
+thread_local! {
+    /// Inventory files this thread streamed through SHA-256.
+    static LISTED_HASHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The digest and length to list for `file`, opened at `path`: `known` when
+/// it was verified for this very file and the file is unchanged since, both
+/// as opened and as the path names it now; otherwise those of a full read.
+fn listed_digest(
+    path: &Path,
+    mut file: std::fs::File,
+    known: Option<(&str, u64, FileStamp)>,
+) -> Result<(String, u64), Error> {
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Err("artifact is not a regular file".into());
+    }
+    if let Some((sha256, bytes, stamp)) = known {
+        let named = std::fs::symlink_metadata(path).ok();
+        if FileStamp::of(&opened) == Some(stamp)
+            && named.as_ref().and_then(FileStamp::of) == Some(stamp)
+            && opened.len() == bytes
+        {
+            return Ok((sha256.to_string(), bytes));
+        }
+    }
+    #[cfg(test)]
+    LISTED_HASHED.with(|n| n.set(n.get() + 1));
+    let bytes = opened.len();
+    let mut hash = Sha256::new();
+    io::copy(&mut file, &mut HashWriter(&mut hash))?;
+    Ok((hex::encode(hash.finalize()), bytes))
+}
+
 struct HashWriter<'a>(&'a mut Sha256);
 impl io::Write for HashWriter<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -575,6 +645,42 @@ fn verify_open(file: &std::fs::File, expected: &Artifact) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn listed_hashes() -> u64 {
+        LISTED_HASHED.with(std::cell::Cell::get)
+    }
+
+    #[test]
+    fn verified_evidence_lists_an_unchanged_file_without_hashing_it() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.bin");
+        std::fs::write(&path, b"verified table").unwrap();
+        let stamp = FileStamp::of(&std::fs::metadata(&path).unwrap()).unwrap();
+        let sha = digest(b"verified table");
+        let open = || std::fs::File::open(&path).unwrap();
+        let before = listed_hashes();
+        let listed = listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        assert_eq!(listed, (sha.clone(), 14));
+        assert_eq!(listed_hashes(), before);
+        // Same size, different bytes: the stamp no longer matches, so the
+        // listed digest is that of the bytes now present.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .write_all_at(b"V", 0)
+            .unwrap();
+        let listed = listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        assert_eq!(listed, (digest(b"Verified table"), 14));
+        assert_eq!(listed_hashes(), before + 1);
+        // A replaced path is another inode.
+        std::fs::write(dir.path().join("next"), b"verified table").unwrap();
+        std::fs::rename(dir.path().join("next"), &path).unwrap();
+        listed_digest(&path, open(), Some((&sha, 14, stamp))).unwrap();
+        assert_eq!(listed_hashes(), before + 2);
+    }
 
     #[test]
     fn received_files_without_durable_evidence_are_checked_again() {
