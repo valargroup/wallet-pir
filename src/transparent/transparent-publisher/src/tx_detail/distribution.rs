@@ -95,19 +95,18 @@ impl Distribution {
     ) -> Result<bool, BoxError> {
         let work = directory.clone();
         let finalized = tokio::task::spawn_blocking(move || -> Result<Finalized, BoxError> {
+            // Verify the tables once; building and finalizing reuse that set.
             let set = transparent_shared::tx_detail::set::DisplaySet::open(
                 &work,
                 0,
                 transparent_shared::tx_detail::DisplayRole::Combined,
             )?;
             for revision in set.current() {
-                transparent_shared::tx_detail::prebuild::build_shipped_reusing(
-                    &revision.dir,
-                    &work,
-                    &retained,
+                transparent_shared::tx_detail::prebuild::build_shipped_verified(
+                    revision, &work, &retained,
                 )?;
             }
-            Finalized::prepare(&work)
+            Finalized::prepare_set(&work, &set)
         })
         .await??;
         if self.0.rpc.block_hash_display(0).await? != finalized.inventory.genesis_hash {
