@@ -27,11 +27,13 @@ fn mainnet() -> Hash {
     zakura_server_chain::Network::Mainnet.genesis_hash()
 }
 
-/// The node: its tip and the hash it reports at each height.
+/// The node: its tip and the hash it reports at each height, and the Ironwood tree size
+/// after a block where it differs from the fixtures' 8.
 #[derive(Clone, Default)]
 struct Node(
     Arc<Mutex<(u64, HashMap<u64, Hash>)>>,
     Arc<Mutex<Option<RecordReplacement>>>,
+    Arc<Mutex<HashMap<u64, u64>>>,
 );
 
 struct RecordReplacement {
@@ -65,6 +67,14 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
                 let hash = hashes.get(&height).copied().unwrap_or([0xee; 32]);
                 json!(zakura_server_chain::hash::display(&hash))
             }
+        }
+        "getblock" => {
+            let named =
+                zakura_server_chain::hash::parse_display(request["params"][0].as_str().unwrap())
+                    .unwrap();
+            let height = hashes.iter().find(|(_, h)| **h == named).map(|(h, _)| *h);
+            let size = height.and_then(|h| node.2.lock().unwrap().get(&h).copied());
+            json!({"trees": {"ironwood": {"size": size.unwrap_or(8)}}})
         }
         method => panic!("serve-publication must not call {method}"),
     };
@@ -374,6 +384,7 @@ enum StagedCase {
     Noncanonical,
     Witness,
     WitnessContext,
+    WitnessSize,
     Rows,
     Relative,
     Rotation,
@@ -416,6 +427,13 @@ async fn a_corrupt_witness_keeps_the_valid_publication_serving() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_noncanonical_witness_context_keeps_the_valid_publication_serving() {
     check_staged_publication(StagedCase::WitnessContext).await;
+}
+
+/// A companion whose construction block is canonical but whose claimed Ironwood tree
+/// size after it is not the node's is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_witness_tree_size_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WitnessSize).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -573,6 +591,18 @@ async fn check_staged_publication(case: StagedCase) {
             .collect::<Vec<[u8; 512]>>();
         let late = witness::Table::build(later, &payloads).unwrap();
         let (late_dir, late_rev) = stage(&root, "late", &b, Some(&late));
+        // A companion at a canonical later block, claiming a tree size the node does not
+        // have after it.
+        let mut sized = b_witness.manifest.clone();
+        (sized.tree_height, sized.tree_hash) = (activation() + 3, [0xc3; 32]);
+        world
+            .node
+            .2
+            .lock()
+            .unwrap()
+            .insert(u64::from(activation() + 3), 9);
+        let sized = witness::Table::build(sized, &payloads).unwrap();
+        let (sized_dir, sized_rev) = stage(&root, "sized", &b, Some(&sized));
         // A same-length corrupt rows file.
         let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
         let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
@@ -614,6 +644,11 @@ async fn check_staged_publication(case: StagedCase) {
                     "noncanonical",
                     "canonical chain",
                 ),
+            ),
+            (
+                StagedCase::WitnessSize,
+                (sized_dir, sized_rev),
+                refuse("wrong witness tree size", "invalid_source", "tree size"),
             ),
             (
                 StagedCase::Rows,

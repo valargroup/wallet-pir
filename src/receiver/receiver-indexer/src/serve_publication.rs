@@ -29,7 +29,7 @@
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
-use crate::canonical::{freshest, is_canonical};
+use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::revision::Refused;
 use receiver_directory::Hash;
 use receiver_directory::{
@@ -256,10 +256,16 @@ impl VerifiedPublication {
         self.anchor
     }
 
-    /// Every block it depends on, which must all be canonical before it activates: its
-    /// terminal block and its companion's construction block when later.
-    pub fn anchors(&self) -> Vec<(u32, [u8; 32])> {
-        self.publication.anchors()
+    /// Every block it depends on, with the Ironwood tree size it claims after it, which
+    /// must all match the node before it activates: its terminal block and its
+    /// companion's construction block.
+    pub fn anchors(&self) -> Vec<TreeAnchor> {
+        let end = TreeAnchor::payments(self.publication.manifest());
+        let context = TreeAnchor::witnesses(self.publication.witness_manifest());
+        match context == end {
+            true => vec![end],
+            false => vec![end, context],
+        }
     }
 
     pub fn manifest(&self) -> &Manifest {
@@ -579,12 +585,14 @@ impl Updater {
         let confirmed = async {
             let (tip, rpc) = freshest(&self.nodes, self.genesis).await?;
             let mut off_chain = None;
-            for (height, hash) in &anchors {
-                if u64::from(*height) > tip {
-                    return Ok(Err(*height));
+            for anchor in &anchors {
+                if u64::from(anchor.height) > tip {
+                    return Ok(Err(anchor.height));
                 }
-                if off_chain.is_none() && !is_canonical(&rpc, *height, *hash).await? {
-                    off_chain = Some(*height);
+                if off_chain.is_none() {
+                    off_chain = tree_mismatch(&rpc, *anchor)
+                        .await?
+                        .map(|mismatch| (anchor, mismatch));
                 }
             }
             // Ranking read the genesis earlier, and an endpoint can be repointed.
@@ -594,13 +602,23 @@ impl Updater {
         .await;
         match confirmed {
             Ok(Ok(None)) => {}
-            Ok(Ok(Some(height))) => {
+            Ok(Ok(Some((anchor, TreeMismatch::OffChain)))) => {
+                let height = anchor.height;
                 return self.refuse(
                     record,
                     Refusal::Noncanonical(format!(
                         "the anchor at height {height} is not on the node's canonical chain"
                     )),
-                )
+                );
+            }
+            Ok(Ok(Some((anchor, TreeMismatch::Size(size))))) => {
+                return self.refuse(
+                    record,
+                    Refusal::InvalidSource(format!(
+                        "the publication claims Ironwood tree size {} after block {}, the node has {size}",
+                        anchor.size, anchor.height
+                    )),
+                );
             }
             Ok(Err(height)) => {
                 self.pending = Some(pending);

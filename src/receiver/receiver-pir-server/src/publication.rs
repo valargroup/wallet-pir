@@ -94,6 +94,11 @@ impl Publication {
         &self.server.manifest().directory
     }
 
+    /// The companion witness table's manifest.
+    pub fn witness_manifest(&self) -> &receiver_directory::witness::Manifest {
+        &self.witnesses.manifest().table
+    }
+
     /// Every block it depends on: the payment table's end and, when later, the block
     /// its companion witness table was constructed at. A reorg replacing either
     /// invalidates the publication.

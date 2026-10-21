@@ -1,5 +1,6 @@
 //! Bounded real PIR, companion witness and rolling-filter checks against an independent
 //! node.
+use crate::canonical::{tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::read_limited;
 use clap::Parser;
 use receiver_directory::{
@@ -198,7 +199,15 @@ async fn probe(
     let pinned = (fixture.height, block_hash);
     // A session displaced during a slow ranking fails this run; the next starts from /init.
     let shard = u16::try_from(fixture.position >> 16)?;
-    let (rpc, root, tip) = match oracle(&nodes, directory, pinned, shard).await {
+    let (rpc, root, tip) = match oracle(
+        &nodes,
+        directory,
+        &publication.witnesses.table,
+        pinned,
+        shard,
+    )
+    .await
+    {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
@@ -309,29 +318,43 @@ async fn probe(
     indexer_report(&http, &args.health_url, &id).await
 }
 
-/// Checks the publication's anchor against `rpc`: its hash and the tree size after it
-/// (read by that hash, see [`NodeClient::receiver_boundary`]), which is the coverage
-/// the manifest claims. A read that fails, a chain that changes during it, or a node
-/// not on mainnet ([`NodeError::OtherNetwork`]) is an error, which proves nothing
-/// against the publication.
+/// Checks the publication's anchors against `rpc`: the payment table's end and the
+/// companion witness table `table`'s construction block, each by hash and the tree size
+/// after it (see [`tree_mismatch`]), which is the coverage each manifest claims. A read
+/// that fails, a chain that changes during it, or a node not on mainnet
+/// ([`NodeError::OtherNetwork`]) is an error, which proves nothing against the
+/// publication.
 async fn check_anchor(
     rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
 ) -> std::result::Result<Option<Failure>, NodeError> {
     rpc.check_network(Network::Mainnet.genesis_hash()).await?;
-    let height = directory.end_height;
-    let boundary = crate::blocks::boundary(rpc, height).await?;
-    if boundary.hash != directory.end_hash {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"anchor_off_chain": height}),
-        )));
-    }
-    if boundary.position != directory.end_position {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"end_position": directory.end_position, "node_tree_size": boundary.position}),
-        )));
+    let anchors = [
+        (
+            TreeAnchor::payments(directory),
+            "anchor_off_chain",
+            "end_position",
+        ),
+        (
+            TreeAnchor::witnesses(table),
+            "witness_anchor_off_chain",
+            "witness_tree_size",
+        ),
+    ];
+    for (anchor, off_chain, claimed) in anchors {
+        match tree_mismatch(rpc, anchor).await? {
+            None => {}
+            Some(TreeMismatch::OffChain) => {
+                return Ok(Some(("answer_mismatch", json!({off_chain: anchor.height}))))
+            }
+            Some(TreeMismatch::Size(node)) => {
+                return Ok(Some((
+                    "answer_mismatch",
+                    json!({claimed: anchor.size, "node_tree_size": node}),
+                )))
+            }
+        }
     }
     Ok(None)
 }
@@ -372,11 +395,12 @@ enum Verdict {
 async fn verify(
     rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
     pinned: (u32, Hash),
     shard: u16,
 ) -> Verdict {
     let checks = async {
-        if let Some(failure) = check_anchor(rpc, directory).await? {
+        if let Some(failure) = check_anchor(rpc, directory, table).await? {
             return Ok(Err(failure));
         }
         if rpc.block_hash(u64::from(pinned.0)).await? != pinned.1 {
@@ -555,10 +579,12 @@ async fn indexer_report(
 async fn oracle(
     nodes: &[NodeClient],
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
     pinned: (u32, Hash),
     shard: u16,
 ) -> std::result::Result<(NodeClient, Option<Hash>, u64), Failure> {
-    let height = u64::from(directory.end_height);
+    // A node must have both anchors; see [`check_anchor`].
+    let height = u64::from(directory.end_height.max(table.tree_height));
     let unavailable = |detail: Value| ("oracle_unavailable", detail);
     let ranked = NodeClient::ranked(nodes, Network::Mainnet.genesis_hash())
         .await
@@ -566,7 +592,7 @@ async fn oracle(
     let top = ranked[0].0;
     let mut attempts = Vec::new();
     for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
-        match verify(rpc, directory, pinned, shard).await {
+        match verify(rpc, directory, table, pinned, shard).await {
             Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
             Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
@@ -658,6 +684,15 @@ mod tests {
         directory
     }
 
+    /// The companion witness manifest of `directory`, built at its end.
+    fn companion(
+        directory: &receiver_directory::snapshot::Manifest,
+    ) -> receiver_directory::witness::Manifest {
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+        crate::witness::table(&snapshot, &[]).unwrap().manifest
+    }
+
     /// The anchor must have the node's hash and the tree size after that block. A node
     /// that cannot give the size, or whose chain changes during the read, proves
     /// nothing against the publication.
@@ -665,16 +700,20 @@ mod tests {
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
         let directory = anchored();
         let tip = u64::from(directory.end_height);
-        let check = |rpc: NodeClient| {
+        let check = |rpc: NodeClient, table: receiver_directory::witness::Manifest| {
             let directory = directory.clone();
             async move {
-                match check_anchor(&rpc, &directory).await {
+                match check_anchor(&rpc, &directory, &table).await {
                     Ok(failure) => failure.map(|failure| failure.0),
                     Err(_) => Some("unverified"),
                 }
             }
         };
-        assert_eq!(check(chain(tip, 3, Some(300), false).await).await, None);
+        let table = companion(&directory);
+        assert_eq!(
+            check(chain(tip, 3, Some(300), false).await, table.clone()).await,
+            None
+        );
         for (hash, size, reorg, expected) in [
             (3, Some(301), false, "answer_mismatch"),
             (4, Some(300), false, "answer_mismatch"),
@@ -682,8 +721,32 @@ mod tests {
             (3, Some(300), true, "unverified"),
         ] {
             let rpc = chain(tip, hash, size, reorg).await;
-            assert_eq!(check(rpc).await, Some(expected), "{hash} {size:?} {reorg}");
+            assert_eq!(
+                check(rpc, table.clone()).await,
+                Some(expected),
+                "{hash} {size:?} {reorg}"
+            );
         }
+        // The companion's construction block is checked the same way, even with the
+        // payment table's end on the chain.
+        let rpc = chain(tip, 3, Some(300), false).await;
+        let mut wrong = table.clone();
+        wrong.tree_size = 299;
+        let failure = check_anchor(&rpc, &directory, &wrong)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            failure.1,
+            json!({"witness_tree_size": 299, "node_tree_size": 300})
+        );
+        wrong = table.clone();
+        wrong.tree_hash = [4; 32];
+        let failure = check_anchor(&rpc, &directory, &wrong)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failure.1, json!({"witness_anchor_off_chain": tip}));
     }
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
@@ -791,7 +854,8 @@ mod tests {
         }
         let directory = anchored();
         let pinned = (directory.end_height - 1, [5; 32]);
-        let (_, root, top) = oracle(&clients, &directory, pinned, 0).await?;
+        let table = companion(&directory);
+        let (_, root, top) = oracle(&clients, &directory, &table, pinned, 0).await?;
         Ok((top, root))
     }
 
