@@ -449,6 +449,23 @@ impl Store {
         checkpoint_at(&self.db, &self.config, height)
     }
 
+    /// Durably records `revision` as the accepted history correction revision, refusing
+    /// one below the recorded revision with [`Error::Coverage`].
+    pub fn raise_history_revision(&mut self, revision: u64) -> Result<(), Error> {
+        if revision > i64::MAX as u64 {
+            return Err(Error::Malformed);
+        }
+        let tx = self.db.transaction()?;
+        let recorded: u64 =
+            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
+        if revision < recorded {
+            return Err(Error::Coverage);
+        }
+        tx.execute("UPDATE filter_revision SET revision = ?1", [revision])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt

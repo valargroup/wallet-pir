@@ -30,6 +30,7 @@
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
 use crate::canonical::{freshest, is_canonical};
+use crate::revision::Refused;
 use receiver_directory::Hash;
 use receiver_directory::{
     snapshot::{Manifest, Snapshot, ROW_BYTES},
@@ -310,16 +311,29 @@ pub fn load(
             manifest.rows, config.min_rows
         )));
     }
-    if manifest.history_revision < accepted_revision(&config.state_dir)? {
-        return Err(invalid("history revision moved backwards".into()));
-    }
     // A trusted operator correction invalidates old answers immediately, even if
-    // replacement rows are missing or preparation later fails.
-    if let Some(publications) = serving {
-        accept_revision(&config.state_dir, manifest.history_revision)?;
-        if !publications.advance_history_revision(manifest.history_revision) {
-            return Err(invalid("history revision moved backwards".into()));
+    // replacement rows are missing or preparation later fails. A check only compares
+    // with the floor; it records nothing.
+    let mut floor = history_floor(&config.state_dir);
+    let accepted = match serving {
+        Some(publications) => {
+            crate::revision::advance(&mut floor, Some(publications), manifest.history_revision)
         }
+        None => match crate::revision::Floor::floor(&mut floor) {
+            Ok(recorded) if manifest.history_revision < recorded => Err(Refused::Lower {
+                revision: manifest.history_revision,
+                floor: recorded,
+            }),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Refused::Floor(e)),
+        },
+    };
+    match accepted {
+        Ok(()) => {}
+        Err(Refused::Lower { .. }) => {
+            return Err(invalid("history revision moved backwards".into()))
+        }
+        Err(Refused::Floor(e)) => return Err(Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"))),
     }
     let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
     let data =
@@ -420,24 +434,9 @@ impl Reporter {
     }
 }
 
-/// The highest history revision `state_dir` records as accepted, zero if none.
-fn accepted_revision(state_dir: &Path) -> std::result::Result<u64, Refusal> {
-    let unavailable = |e: String| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"));
-    match read_bounded(&state_dir.join(HISTORY_FILE), 64) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| unavailable(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(unavailable(e.to_string())),
-    }
-}
-
-/// Durably records `revision` in `state_dir` as accepted, if it is higher than the
-/// recorded one, before anything is served under it.
-fn accept_revision(state_dir: &Path, revision: u64) -> std::result::Result<(), Refusal> {
-    if revision > accepted_revision(state_dir)? {
-        write_atomic(&state_dir.join(HISTORY_FILE), &revision)
-            .map_err(|e| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}")))?;
-    }
-    Ok(())
+/// The correction floor in `state_dir`; see [`HISTORY_FILE`].
+fn history_floor(state_dir: &Path) -> crate::revision::StateFile {
+    crate::revision::StateFile::new(state_dir, HISTORY_FILE)
 }
 
 fn write_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -719,7 +718,7 @@ pub async fn run(config: Config) -> Result<()> {
     let genesis = Network::Mainnet.genesis_hash();
     let publications = Publications::default();
     // Older sessions stay fenced across a restart; see `HISTORY_FILE`.
-    publications.advance_history_revision(accepted_revision(&config.state_dir)?);
+    crate::revision::restore(&mut history_floor(&config.state_dir), &publications)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let app = receiver_pir_server::router_with_health(publications.clone(), {
         let reporter = reporter.clone();
@@ -883,20 +882,20 @@ mod tests {
         // Accepted, then refused for its missing rows.
         let failure = load(&corrected, &config, Some(&Publications::default()));
         assert!(failure.err().unwrap().to_string().contains("rows:"));
-        assert_eq!(accepted_revision(state.path()).unwrap(), 1);
+        let floor = || history_floor(state.path());
+        assert_eq!(crate::revision::Floor::floor(&mut floor()).unwrap(), 1);
         let restarted = Publications::default();
-        restarted.advance_history_revision(accepted_revision(state.path()).unwrap());
+        crate::revision::restore(&mut floor(), &restarted).unwrap();
         for serving in [Some(&restarted), None] {
             let failure = load(&old, &config, serving).err().unwrap();
             assert!(failure.to_string().contains("moved backwards"), "{failure}");
         }
-        // A missing record is no floor; an unreadable one refuses rather than guess.
+        // An unreadable record refuses rather than guess.
         std::fs::write(state.path().join(HISTORY_FILE), "x").unwrap();
         assert!(matches!(
-            accepted_revision(state.path()),
+            load(&old, &config, None),
             Err(Refusal::Unavailable(_))
         ));
-        assert_eq!(accepted_revision(dir.path()).unwrap(), 0);
     }
 
     #[test]
