@@ -13,7 +13,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 
 from .. import bundle, durable
@@ -45,22 +44,7 @@ def private_file(path):
 
 
 def write_text(path, text, mode):
-    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix='.cutover-')
-    try:
-        with os.fdopen(descriptor, 'w') as handle:
-            handle.write(text)
-            os.fchmod(handle.fileno(), mode)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    durable.atomic_text(path, text, prefix='.cutover-', mode=mode)
 
 
 def require_coordinator(request):

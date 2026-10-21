@@ -1,6 +1,7 @@
 """The independent watchdog stops only its captured forward process."""
 import json
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,51 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 from wallet_pir_ops.deploy import cutover_runner
 from wallet_pir_ops.deploy.cutover_guard import Decision
 from wallet_pir_ops.deploy.engine import DeployError
+from wallet_pir_ops import durable
+
+
+class DurableInputTests(unittest.TestCase):
+    def test_unit_replacement_preserves_text_and_explicit_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'owned.service'
+            path.write_text('old')
+            text = '[Service]\nExecStart="/path with spaces/run"\n'
+            cutover_runner.write_text(path, text, 0o644)
+            self.assertEqual(path.read_text(), text)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+
+    def test_json_encoding_stays_identical_and_nonfinite_values_refuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'request.json'
+            durable.atomic_json(path, {'z': '\u00e9', 'a': [True, None]}, mode=0o600)
+            expected = b'{\n  "a": [\n    true,\n    null\n  ],\n  "z": "\\u00e9"\n}\n'
+            self.assertEqual(path.read_bytes(), expected)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            with self.assertRaises(ValueError):
+                durable.atomic_json(path, {'invalid': float('nan')})
+            self.assertEqual(path.read_bytes(), expected)
+
+    def test_failed_sync_propagates_and_cleans_the_staging_file(self):
+        for directory_failure in (False, True):
+            with self.subTest(directory_failure=directory_failure), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'request.json'
+                path.write_text('old')
+                real_sync = durable.os.fsync
+                calls = 0
+
+                def sync(descriptor):
+                    nonlocal calls
+                    calls += 1
+                    if calls == (2 if directory_failure else 1):
+                        raise OSError('sync failed')
+                    real_sync(descriptor)
+
+                with patch.object(durable.os, 'fsync', side_effect=sync):
+                    with self.assertRaisesRegex(OSError, 'sync failed'):
+                        cutover_runner.write_text(path, 'new', 0o600)
+                self.assertEqual(path.read_text(), 'new' if directory_failure else 'old')
+                self.assertEqual(list(Path(directory).iterdir()), [path])
 
 
 class Target:
