@@ -293,6 +293,10 @@ async fn installation_case(case: Case) {
     }
     let mut replies = BTreeMap::<String, Vec<u8>>::new();
     replies.insert(
+        pir_service_discovery::PATH.into(),
+        pir_service_discovery::Document::publisher().to_json(),
+    );
+    replies.insert(
         "/provider/v1/current".into(),
         serde_json::to_vec(&current).unwrap(),
     );

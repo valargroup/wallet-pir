@@ -2181,6 +2181,7 @@ dependencies = [
  "pir-pipeline",
  "pir-publisher",
  "pir-query-server",
+ "pir-service-discovery",
  "reqwest",
  "serde",
  "serde_json",
