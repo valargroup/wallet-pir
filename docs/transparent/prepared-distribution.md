@@ -32,20 +32,27 @@ the same record for a pinned publication after the full checks, without a
 journal writer or service. A restarted publisher with such a record restores the
 same inventory from metadata digests, safe regular paths, exact lengths and
 runtime identity headers, and serves it only after fresh canonicality, intent
-and fleet checks. Only a missing record uses the full preparation path; a
-malformed or incompatible record, unsafe or incomplete files, or an unreadable
-failure record refuse to start until the record is removed. An ordinary
-`publisher-cutover/3` deploy runs this command against the active publication
-while the predecessor still serves, installs the record only if the active
-publication is unchanged after the stop, and otherwise restarts the predecessor
-and refuses so the deploy can be retried. Deploy readiness does not wait for
-background validation.
-After serving starts, one background thread hashes every listed artifact
+and fleet checks. Only a missing record, or unresolved withdrawal or activation
+intent, uses the full preparation path. A malformed or incompatible record,
+unsafe or incomplete files, or an unreadable failure record refuse to start;
+deleting the record clears neither recorded integrity failures nor intent, so
+the remedy is a deploy of verified replacement bytes. An ordinary
+`publisher-cutover/3` deploy pins the active publication with the snapshot
+helper while the predecessor still serves, runs this command on the pin,
+refuses before stopping if the active publication moved, installs the record
+only if the active publication is unchanged after the stop, and otherwise
+restarts the predecessor and refuses so the deploy can be retried. Rollback
+restores a replaced record's exact bytes, or its absence. Deploy readiness does
+not wait for background validation.
+After serving starts, one low-priority background thread, yielding to
+distribution and candidate preparation, hashes every listed artifact
 (`integrity_validation` in `/v1/status`) and then loads and self-checks each
-runtime under memory admission (`correctness_validation`). A correctness failure
-is reported and the publication keeps serving. A confirmed integrity mismatch is
-recorded in `integrity-failures.json` and withdraws every publication listing
-those bytes until freshly verified replacement bytes are published.
+runtime under memory admission (`correctness_validation`), using only the files
+it hashed unchanged; a newer publication or a withdrawal stops it. A correctness
+failure is reported and the publication keeps serving. A confirmed integrity
+mismatch is recorded in `integrity-failures.json` and withdraws every
+publication listing those bytes, in this and later processes, until freshly
+verified replacement bytes are published.
 
 All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
