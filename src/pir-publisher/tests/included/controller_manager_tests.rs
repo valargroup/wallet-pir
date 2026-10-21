@@ -4,14 +4,11 @@
 use zakura_pir_client::transparent::native as transparent_native;
 #[cfg(test)]
 use zakura_pir_client::transparent::native::TableClientExt as _;
-#[cfg(feature = "qualification-tests")]
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
-#[cfg(feature = "qualification-tests")]
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::*;
-#[cfg(feature = "qualification-tests")]
 use transparent_events::TransparentEvent;
 use transparent_query_server::history::live::Command;
 use transparent_query_server::history::service::ServiceConfig;
@@ -1684,12 +1681,21 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn standard_history_lifecycle_queries_advance_and_reconciles_lost_activation() {
+    history_lifecycle(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_during_node_checks_never_starts_history_activation() {
+    history_lifecycle(true).await;
+}
+
+async fn history_lifecycle(bounded: bool) {
     use std::os::unix::fs::PermissionsExt;
     use transparent_query_server::history::live::{LiveService, Publication};
     use transparent_query_server::history::service::ServiceState;
     use transparent_shared::history::shardset::LoadScope;
     let root = tempfile::tempdir().unwrap();
-    let (directory, set) = publication_through(root.path(), 2);
+    let (directory, set) = publication_fixture(root.path(), 2, bounded);
     let service_config = ServiceConfig {
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()
@@ -1914,6 +1920,79 @@ with urllib.request.urlopen(r,timeout=20) as response: sys.stdout.buffer.write(r
     };
     pir_pipeline::Task::run(&mut input).await.unwrap();
     assert_eq!(reader.lock().await.covered_through(), Some(3));
+    // A stop during either node check must abandon the candidate before any
+    // activation intent is written, even when the node's answer is canonical.
+    if bounded {
+        for stop_during_preparation in [true, false] {
+            let stopped_owner = authority(&directory, None, rpc.clone());
+            let Input::Work(work) = acquire_history(&config, &rpc, &reader, &stopped_owner)
+                .await
+                .unwrap()
+            else {
+                panic!("committed work expected");
+            };
+            pause
+                .enabled
+                .store(stop_during_preparation, Ordering::Release);
+            let attempt = async {
+                let candidate = prepare_candidate(
+                    &config,
+                    &rpc,
+                    &stopped_owner,
+                    work,
+                    |geometry| {
+                        let mut policy = DecoupledPolicy::for_geometry(geometry);
+                        policy.scripts.target = 2;
+                        policy
+                    },
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+                if stop_during_preparation {
+                    assert!(matches!(candidate, Input::Unchanged));
+                } else {
+                    let Input::Work(ready) = candidate else {
+                        panic!("prepared work expected");
+                    };
+                    pause.enabled.store(true, Ordering::Release);
+                    activate_history(&config, &rpc, &stopped_owner, ready)
+                        .await
+                        .unwrap();
+                }
+            };
+            tokio::pin!(attempt);
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                tokio::select! {
+                    _ = &mut attempt => panic!("node check did not pause"),
+                    _ = pause.entered.notified() => {},
+                }
+            })
+            .await
+            .unwrap();
+            stopped_owner.0.shutdown.request();
+            pause.resume.notify_one();
+            attempt.await;
+            assert!(!config.publication_root.join("activation.json").exists());
+            assert!(!config.publication_root.join("active.json").exists());
+            assert_eq!(
+                stopped_owner
+                    .0
+                    .active
+                    .read()
+                    .unwrap()
+                    .publication
+                    .map_sha256,
+                set.map_digest
+            );
+            assert_eq!(
+                live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
+                set.map_digest
+            );
+        }
+        return;
+    }
     let Input::Work(work) = acquire_history(&config, &rpc, &reader, &owner)
         .await
         .unwrap()

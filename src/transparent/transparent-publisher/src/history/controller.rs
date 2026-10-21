@@ -155,6 +155,9 @@ struct Inner {
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
     prepared_set: std::sync::Mutex<Option<transparent_shared::history::shardset::ShardSet>>,
+    /// The service's stop request. Candidate preparation observes it between
+    /// files and segments and ends without activating; activation completes.
+    shutdown: pir_pipeline::service::Shutdown,
     /// Distributed runtimes this process already loaded and self-checked; the
     /// next inventory rehashes them but checks only changed bytes again.
     checked_runtimes: std::sync::Mutex<transparent_shared::publication::CheckedRuntimes>,
@@ -341,6 +344,7 @@ pub async fn run_managed(
             .build()?,
         membership: membership_path(&config.fleet_config),
         prepared_set: std::sync::Mutex::new(None),
+        shutdown: shutdown.clone(),
         checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
@@ -400,6 +404,10 @@ pub async fn run_managed(
             return Err("history publisher background service stopped".into());
         }
         if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
+            if shutdown.requested() {
+                tracing::info!(%error, "publication cycle ended by shutdown");
+                continue;
+            }
             authority
                 .0
                 .publication_failures
@@ -934,11 +942,23 @@ async fn prepare_candidate(
         })
         .await??;
     }
+    // A stop ends preparation as a normal outcome: the active publication is
+    // untouched and activation never begins. Blocking work is always awaited.
+    let stopped = || {
+        tracing::info!(height, "candidate preparation stopped by shutdown");
+        Ok(Input::Unchanged)
+    };
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let published_unix = unix_now();
     let runtimes = if config.ship_runtimes {
-        Some(prepare_runtimes(config, authority, &directory, epoch).await?)
+        match prepare_runtimes(config, authority, &directory, epoch).await {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            result => Some(result?),
+        }
     } else {
         None
     };
@@ -957,13 +977,21 @@ async fn prepare_candidate(
         let full = config.http_only;
         let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
+        let stop = {
+            let authority = authority.clone();
+            move || {
+                authority.0.shutdown.requested()
+                    || authority.0.epoch.load(Ordering::Acquire) != epoch
+            }
+        };
         let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
-            let result = transparent_shared::publication::Finalized::prepare_reusing(
+            let result = transparent_shared::publication::Finalized::prepare_reusing_until(
                 &root,
                 &set,
                 cutoff,
                 full,
                 &mut checked,
+                &stop,
             );
             (set, checked, result)
         })
@@ -976,7 +1004,13 @@ async fn prepare_candidate(
         );
         *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
-        candidate.distribution = Some(distribution?);
+        candidate.distribution = Some(match distribution {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
+                return Err("candidate invalidated while preparing".into())
+            }
+            result => result?,
+        });
     }
     let mut request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
     if runtimes.is_some() {
@@ -999,14 +1033,22 @@ async fn prepare_candidate(
     } else {
         tokio::select! {
             biased;
+            _ = authority.0.shutdown.cancelled() => return stopped(),
             _ = invalidated => return Err("candidate invalidated while preparing".into()),
             result = fleet(config, request) => result?,
         }
     };
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
         return Err("candidate invalidated while preparing".into());
+    }
+    // Shutdown can arrive while the canonicality request is awaiting its reply.
+    if authority.0.shutdown.requested() {
+        return stopped();
     }
     let prepared_unix = unix_now();
     if config.shadow {
@@ -1054,6 +1096,12 @@ async fn activate_history(
         || authority.0.epoch.load(Ordering::Acquire) != epoch
     {
         return Err("candidate invalidated before activation".into());
+    }
+    // The node request can outlive a stop request. Until activation intent is
+    // written, abandoning the candidate still leaves the active publication alone.
+    if authority.0.shutdown.requested() {
+        tracing::info!(height, "candidate activation stopped by shutdown");
+        return Ok(());
     }
     let directory = &candidate.publication.directory;
     publication::write_atomic(
@@ -1219,7 +1267,9 @@ async fn prepare_runtimes(
     let previous = authority.0.prepared_set.lock().unwrap().take();
     let stop = {
         let authority = authority.clone();
-        move || authority.0.epoch.load(Ordering::Acquire) != epoch
+        move || {
+            authority.0.shutdown.requested() || authority.0.epoch.load(Ordering::Acquire) != epoch
+        }
     };
     let directory = directory.to_path_buf();
     let (previous, prepared) = tokio::task::spawn_blocking(move || {
@@ -2160,6 +2210,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            shutdown: Default::default(),
             checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
@@ -2496,6 +2547,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            shutdown: Default::default(),
             checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
