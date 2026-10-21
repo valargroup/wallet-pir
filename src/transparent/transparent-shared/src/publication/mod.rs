@@ -384,7 +384,13 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, false)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            false,
+            &mut CheckedRuntimes::default(),
+        )
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -392,14 +398,36 @@ impl Finalized {
         set: &ShardSet,
         recent_from_height: u64,
     ) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, true)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            true,
+            &mut CheckedRuntimes::default(),
+        )
+    }
+    /// Finalize an inventory, reusing only native runtimes whose exact bytes
+    /// this process already loaded and self-checked. Every artifact is rehashed.
+    pub fn prepare_reusing(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked)
     }
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
+        checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
+        let previous = &checked.passed;
+        checked.loaded = 0;
+        checked.reused = 0;
+        let mut passed = BTreeMap::new();
         let recent = set
             .map
             .shards
@@ -421,7 +449,9 @@ impl Finalized {
         let mut files = BTreeMap::new();
         let mut paths = BTreeSet::new();
         let mut pending = Vec::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<(), Error> {
+        let mut sources = BTreeMap::new();
+        let mut native = Vec::new();
+        let mut add = |path: PathBuf, kind: Kind| -> Result<bool, Error> {
             let relative = path
                 .strip_prefix(root)?
                 .to_str()
@@ -441,13 +471,13 @@ impl Finalized {
                 }
             }
             if !paths.insert(relative.clone()) {
-                return Ok(());
+                return Ok(false);
             }
             if !std::fs::metadata(&path)?.is_file() {
                 return Err("artifact is not a regular file".into());
             }
             pending.push((path, kind));
-            Ok(())
+            Ok(true)
         };
         add(root.join("shards.json"), Kind::Metadata)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -461,7 +491,10 @@ impl Finalized {
             let local = entry.shard_id >= recent;
             for table in shard.tables() {
                 let params = if full || local {
-                    Some(SharedParams::build(shard.geometry, table.kind())?)
+                    Some(std::sync::Arc::new(SharedParams::build(
+                        shard.geometry,
+                        table.kind(),
+                    )?))
                 } else {
                     None
                 };
@@ -469,6 +502,7 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
+                    sources.insert(source.path().to_path_buf(), source.sha256());
                     add(
                         source.path().to_path_buf(),
                         if local {
@@ -483,34 +517,63 @@ impl Finalized {
                             table.kind(),
                             segment,
                         );
-                        // Header/length checks alone cannot finalize malformed native bytes.
-                        let runtime = shipped.load(&key, shared, source.sha256())?;
-                        runtime.self_check(shared, &source.load()?)?;
-                        add(
-                            shipped.path(&key, shared, source.sha256()),
+                        let path = shipped.path(&key, shared, source.sha256());
+                        if add(
+                            path.clone(),
                             if local {
                                 Kind::RecentRuntime
                             } else {
                                 Kind::ArchiveRuntime
                             },
-                        )?;
+                        )? {
+                            native.push((path, key, shared.clone(), source));
+                        }
                     }
                 }
             }
         }
-        // Native checks above remain sequential to bound resident runtime memory.
-        // Hash independent immutable files on the existing bounded CPU pool.
-        for (artifact, path) in hash_artifacts(root, pending)? {
+        // Hash immutable artifacts on the existing bounded CPU pool. Native
+        // handles stay open so the later self-check reads the inode just hashed.
+        let mut runtimes = BTreeMap::new();
+        for (artifact, path, file) in hash_artifacts(root, pending)? {
+            if let Some(expected) = sources.get(&path) {
+                if artifact.sha256 != *expected {
+                    return Err("source segment differs from its manifest".into());
+                }
+            }
+            if let Some(file) = file {
+                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+            }
             if full || artifact.kind.local() {
                 files.insert(artifact.sha256.clone(), path);
             }
             inventory.artifacts.push(artifact);
+        }
+        // Keep native loads sequential to bound resident runtime memory.
+        for (path, key, shared, source) in native {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("non-UTF8 runtime name")?
+                .to_owned();
+            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            // The derived name binds parameters and source; the whole-file
+            // digest binds the exact bytes checked by a previous inventory.
+            if previous.get(&name) == Some(&sha256) {
+                checked.reused += 1;
+            } else {
+                ShippedRuntimes::load_file(file, &key, &shared, source.sha256())?
+                    .self_check(&shared, &source.load()?)?;
+                checked.loaded += 1;
+            }
+            passed.insert(name, sha256);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
         inventory.validate_map(&set.map)?;
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
+        checked.passed = passed;
         Ok(Self {
             inventory,
             bytes,
@@ -519,10 +582,21 @@ impl Finalized {
         })
     }
 }
+/// Native material verified by this process, bounded to the last successful
+/// inventory. Names and whole-file digests are derived again on every prepare.
+#[derive(Debug, Default)]
+pub struct CheckedRuntimes {
+    passed: BTreeMap<String, String>,
+    /// Native runtimes loaded and self-checked by the last attempt.
+    pub loaded: usize,
+    /// Native runtimes matching earlier checked bytes in the last attempt.
+    pub reused: usize,
+}
+
 fn hash_artifacts(
     root: &Path,
     pending: Vec<(PathBuf, Kind)>,
-) -> Result<Vec<(Artifact, PathBuf)>, Error> {
+) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
     crate::runtime::build_pool().install(|| {
         pending
             .into_par_iter()
@@ -552,6 +626,8 @@ fn hash_artifacts(
                 }
                 let mut hash = Sha256::new();
                 io::copy(&mut file, &mut HashWriter(&mut hash))?;
+                let opened =
+                    matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok((
                     Artifact {
                         path: relative,
@@ -560,6 +636,7 @@ fn hash_artifacts(
                         kind,
                     },
                     path,
+                    opened,
                 ))
             })
             .collect()
@@ -614,13 +691,36 @@ mod tests {
             pending.push((path, Kind::RecentTable));
         }
         let actual = hash_artifacts(root, pending).unwrap();
-        for ((artifact, path), (name, bytes)) in actual.iter().zip(&inputs) {
+        for ((artifact, path, file), (name, bytes)) in actual.iter().zip(&inputs) {
+            assert!(file.is_none());
             assert_eq!(artifact.path, *name);
             assert_eq!(*path, root.join(name));
             assert_eq!(artifact.bytes, bytes.len() as u64);
             assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
             assert_eq!(artifact.kind, Kind::RecentTable);
         }
+    }
+
+    #[test]
+    fn native_hash_keeps_the_opened_inode_for_verification() {
+        use std::io::{Seek, SeekFrom};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let path = root.join("native.runtime");
+        let original = b"the bytes the inventory hashed";
+        std::fs::write(&path, original).unwrap();
+        let mut hashed = hash_artifacts(root, vec![(path.clone(), Kind::RecentRuntime)]).unwrap();
+        let (artifact, _, opened) = hashed.pop().unwrap();
+        let replacement = root.join("replacement");
+        std::fs::write(&replacement, b"a later path replacement").unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        let mut file = opened.expect("native verification needs the hashed handle");
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, original);
+        assert_eq!(artifact.sha256, digest(&bytes));
+        assert_ne!(artifact.sha256, digest(&std::fs::read(path).unwrap()));
     }
 
     #[test]
