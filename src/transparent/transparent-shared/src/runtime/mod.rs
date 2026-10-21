@@ -812,6 +812,8 @@ impl Drop for PendingSave {
 /// One cache entry's shared state.
 struct Slot {
     runtime: tokio::sync::OnceCell<Arc<TableRuntime>>,
+    // Kept with the bounded cache entry, after the shipped file self-check succeeds.
+    verified_shipped: std::sync::OnceLock<(std::ffi::OsString, [u8; 32])>,
 }
 
 struct Entry {
@@ -893,6 +895,17 @@ impl RuntimeCache {
                 "write_failures":Metrics::get(&self.metrics.disk_write_failures),
                 "pending_saves":Metrics::get(&self.metrics.disk_save_pending),
                 "restore_slots":disk.restore_slots.max(1)}))
+    }
+
+    /// Checked bytes of a resident shipped runtime, bound to its key and
+    /// filename (which includes parameters and source digest). A pending or
+    /// locally built runtime supplies no evidence. Eviction drops the proof.
+    pub fn verified_shipped(&self, key: &RuntimeKey, name: &std::ffi::OsStr) -> Option<[u8; 32]> {
+        let inner = self.inner.lock().expect("cache");
+        let slot = &inner.entries.get(key)?.slot;
+        slot.runtime.get()?;
+        let (checked_name, checksum) = slot.verified_shipped.get()?;
+        (checked_name == name).then_some(*checksum)
     }
 
     pub fn budget(&self) -> u64 {
@@ -1221,7 +1234,14 @@ impl RuntimeCache {
             let _memory = memory;
             let _pin = pin;
             let started = std::time::Instant::now();
-            let runtime = match shipped.load(&key, &shared, source.sha256()) {
+            let path = shipped.path(&key, &shared, source.sha256());
+            let name = path
+                .file_name()
+                .ok_or_else(|| CacheError::Failed("unnamed shipped runtime".into()))?
+                .to_owned();
+            let (runtime, checksum) = match std::fs::File::open(&path).and_then(|file| {
+                disk::ShippedRuntimes::load_file_checked(file, &key, &shared, source.sha256())
+            }) {
                 Ok(runtime) => runtime,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(Err(format!(
@@ -1249,6 +1269,7 @@ impl RuntimeCache {
                 Ok(row) => row,
                 Err(error) => return Ok(Err(format!("self-check failed: {error}"))),
             };
+            let _ = _pin.verified_shipped.set((name, checksum));
             Metrics::incr(&metrics.shipped_loads);
             tracing::info!(
                 key = ?key,
@@ -1300,6 +1321,7 @@ impl RuntimeCache {
 
         let slot = Arc::new(Slot {
             runtime: tokio::sync::OnceCell::new(),
+            verified_shipped: Default::default(),
         });
         inner.entries.insert(
             key,
@@ -1725,6 +1747,7 @@ pub(crate) mod tests {
         // A stale slot cannot rewrite a replacement's charge.
         let stale = Arc::new(Slot {
             runtime: tokio::sync::OnceCell::new(),
+            verified_shipped: Default::default(),
         });
         cache.settle(&key(1), &stale, 0);
         assert_eq!(cache.resident_bytes(), held + bound);
