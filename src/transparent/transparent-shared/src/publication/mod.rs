@@ -446,48 +446,51 @@ impl Finalized {
         };
         let mut files = BTreeMap::new();
         let mut paths = BTreeMap::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<String, Error> {
-            let relative = path
-                .strip_prefix(root)?
-                .to_str()
-                .ok_or("non-UTF8 artifact")?
-                .to_string();
-            if !safe_path(&relative) {
-                return Err("unsafe publisher artifact path".into());
-            }
-            let mut checked = root.to_path_buf();
-            for component in relative.split('/') {
-                checked.push(component);
-                if std::fs::symlink_metadata(&checked)?
-                    .file_type()
-                    .is_symlink()
-                {
-                    return Err("symlink in publisher artifact".into());
+        // Returns the digest and, the first time a path is added, the open
+        // handle it was computed from.
+        let mut add =
+            |path: PathBuf, kind: Kind| -> Result<(String, Option<std::fs::File>), Error> {
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_str()
+                    .ok_or("non-UTF8 artifact")?
+                    .to_string();
+                if !safe_path(&relative) {
+                    return Err("unsafe publisher artifact path".into());
                 }
-            }
-            if let Some(sha256) = paths.get(&relative) {
-                return Ok(String::clone(sha256));
-            }
-            let mut file = std::fs::File::open(&path)?;
-            if !file.metadata()?.is_file() {
-                return Err("artifact is not a regular file".into());
-            }
-            let bytes = file.metadata()?.len();
-            let mut hash = Sha256::new();
-            io::copy(&mut file, &mut HashWriter(&mut hash))?;
-            let sha256 = hex::encode(hash.finalize());
-            if full || kind.local() {
-                files.insert(sha256.clone(), path);
-            }
-            paths.insert(relative.clone(), sha256.clone());
-            inventory.artifacts.push(Artifact {
-                path: relative,
-                sha256: sha256.clone(),
-                bytes,
-                kind,
-            });
-            Ok(sha256)
-        };
+                let mut checked = root.to_path_buf();
+                for component in relative.split('/') {
+                    checked.push(component);
+                    if std::fs::symlink_metadata(&checked)?
+                        .file_type()
+                        .is_symlink()
+                    {
+                        return Err("symlink in publisher artifact".into());
+                    }
+                }
+                if let Some(sha256) = paths.get(&relative) {
+                    return Ok((String::clone(sha256), None));
+                }
+                let mut file = std::fs::File::open(&path)?;
+                if !file.metadata()?.is_file() {
+                    return Err("artifact is not a regular file".into());
+                }
+                let bytes = file.metadata()?.len();
+                let mut hash = Sha256::new();
+                io::copy(&mut file, &mut HashWriter(&mut hash))?;
+                let sha256 = hex::encode(hash.finalize());
+                if full || kind.local() {
+                    files.insert(sha256.clone(), path);
+                }
+                paths.insert(relative.clone(), sha256.clone());
+                inventory.artifacts.push(Artifact {
+                    path: relative,
+                    sha256: sha256.clone(),
+                    bytes,
+                    kind,
+                });
+                Ok((sha256, Some(file)))
+            };
         add(root.join("shards.json"), Kind::Metadata)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         for entry in &set.map.shards {
@@ -508,7 +511,7 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
-                    let source_sha256 = add(
+                    let (source_sha256, _) = add(
                         source.path().to_path_buf(),
                         if local {
                             Kind::RecentTable
@@ -542,29 +545,20 @@ impl Finalized {
                             .and_then(|name| name.to_str())
                             .ok_or("non-UTF8 runtime name")?
                             .to_string();
-                        let runtime_sha256 = match previous.get(&name) {
-                            Some(proven) => {
-                                let sha256 = add(path.clone(), kind)?;
-                                if &sha256 == proven {
-                                    checked.reused += 1;
-                                } else {
-                                    check(&shipped, &key, shared, source)?;
-                                    // The loader read the file again; refuse a
-                                    // replacement since the inventory hash.
-                                    if digest_file(&path)? != sha256 {
-                                        return Err("runtime changed while it was checked".into());
-                                    }
-                                    checked.loaded += 1;
-                                }
-                                sha256
-                            }
-                            None => {
-                                check(&shipped, &key, shared, source)?;
-                                checked.loaded += 1;
-                                add(path.clone(), kind)?
-                            }
-                        };
-                        checked.passed.insert(name, runtime_sha256);
+                        let (sha256, file) = add(path, kind)?;
+                        if previous.get(&name) == Some(&sha256) {
+                            checked.reused += 1;
+                        } else {
+                            // Load from the handle just hashed, so the bytes
+                            // checked are the inode the inventory publishes
+                            // and caches, not a later replacement of the path.
+                            let file = file.ok_or("runtime listed twice")?;
+                            // Header/length checks alone cannot finalize malformed native bytes.
+                            ShippedRuntimes::load_file(file, &key, shared, source.sha256())?
+                                .self_check(shared, &source.load()?)?;
+                            checked.loaded += 1;
+                        }
+                        checked.passed.insert(name, sha256);
                     }
                 }
             }
@@ -593,22 +587,6 @@ pub struct CheckedRuntimes {
     pub loaded: usize,
     /// Runtimes the last preparation accepted from an earlier check.
     pub reused: usize,
-}
-/// Header/length checks alone cannot finalize malformed native bytes.
-fn check(
-    shipped: &ShippedRuntimes,
-    key: &crate::runtime::RuntimeKey,
-    shared: &SharedParams,
-    source: &crate::history::shardset::SegmentSource,
-) -> Result<(), Error> {
-    let runtime = shipped.load(key, shared, source.sha256())?;
-    runtime.self_check(shared, &source.load()?)?;
-    Ok(())
-}
-fn digest_file(path: &Path) -> Result<String, Error> {
-    let mut hash = Sha256::new();
-    io::copy(&mut std::fs::File::open(path)?, &mut HashWriter(&mut hash))?;
-    Ok(hex::encode(hash.finalize()))
 }
 struct HashWriter<'a>(&'a mut Sha256);
 impl io::Write for HashWriter<'_> {

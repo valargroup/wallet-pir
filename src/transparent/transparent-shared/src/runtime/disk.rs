@@ -148,7 +148,22 @@ impl DiskCache {
         shared: &SharedParams,
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
-        let mut file = File::open(self.path(key, shared, source_sha))?;
+        Self::load_file(
+            File::open(self.path(key, shared, source_sha))?,
+            key,
+            shared,
+            source_sha,
+        )
+    }
+
+    /// [`Self::load`] from an already open entry, read from its start.
+    fn load_file(
+        mut file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        file.seek(SeekFrom::Start(0))?;
         let length = file.metadata()?.len();
         if !Self::entry_bytes_range(shared).contains(&length) {
             return Err(invalid("runtime cache length mismatch"));
@@ -554,6 +569,17 @@ impl ShippedRuntimes {
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
         self.0.load(key, shared, source_sha)
+    }
+
+    /// [`Self::load`] from a handle the caller opened at [`Self::path`], so
+    /// the loaded bytes are those of the inode the caller already read.
+    pub fn load_file(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        DiskCache::load_file(file, key, shared, source_sha)
     }
 
     /// The length of the completed file this directory holds for `key`, if
@@ -1359,6 +1385,42 @@ mod shipped_tests {
                 );
             }
         }
+    }
+
+    /// A load from an open handle checks that inode, not whatever the path
+    /// names by then: a publisher that hashed a corrupt file is refused even
+    /// if a valid one replaces it before the check, and the reverse holds.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_handle_load_checks_the_opened_inode_not_its_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        let shipped = candidate(dir.path(), "replaced");
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &local)
+            .unwrap();
+        let valid = fs::read(&path).unwrap();
+        let mut corrupt = valid.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x40;
+        let replace = |bytes: &[u8]| {
+            let staged = path.with_extension("staged");
+            fs::write(&staged, bytes).unwrap();
+            fs::rename(&staged, &path).unwrap();
+        };
+        let load = |file| ShippedRuntimes::load_file(file, &s.key, &s.shared, s.source.sha256());
+
+        replace(&corrupt);
+        let opened = File::open(&path).unwrap();
+        replace(&valid);
+        assert!(load(opened).is_err());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_ok());
+
+        let opened = File::open(&path).unwrap();
+        replace(&corrupt);
+        assert!(load(opened).is_ok());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_err());
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
