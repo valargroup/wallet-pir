@@ -2215,3 +2215,58 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
     );
     wallet.found(&chain_records(0, 112)[0], 112);
 }
+
+/// A stop requested before activation abandons the candidate as a normal
+/// outcome: nothing activates and the active record is unchanged. A later
+/// run without a stop prepares and activates from the same state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![],
+        settings(),
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let candidates = || {
+        listing(&root)
+            .into_iter()
+            .filter(|name| name.starts_with("candidate"))
+            .count()
+    };
+    let existing = candidates();
+    controller.shutdown.request();
+    // The journal holds blocks past the active tip, so a cycle is due.
+    while controller.cache.tip().map(|t| t.0) <= Some(before.tip) {
+        controller.poll_source().await.unwrap();
+    }
+    let prepared = controller.prepare_cycle().await;
+    assert!(
+        matches!(prepared, Ok(Input::Unchanged)),
+        "stopped as a normal outcome"
+    );
+    assert_eq!(controller.active().tip, before.tip, "nothing activated");
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    assert_eq!(candidates(), existing, "no candidate was written");
+    // A requested stop also ends the loop before another cycle starts.
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    shutdown.request();
+    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    assert_eq!(resumed.outcome, Outcome::Idle);
+    assert!(
+        resumed.active.tip > before.tip,
+        "preparation resumed and activated"
+    );
+}
