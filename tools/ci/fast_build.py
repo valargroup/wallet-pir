@@ -2,11 +2,12 @@
 
 Cargo unifies features for every package named in one command. Shared crates
 and product libraries stay on one command with a fixed feature set, so a warm
-cache still hits. Transparent host tests join that command and only enable the
-history and detail edges the graph already builds. Enhance and Status fixture
-features stay on a second command: they pull chain test nodes and wallet
-clients that would rebuild the shared graph. Campaign targets are never
-selected. Test programs retain their package directory and Cargo environment.
+cache still hits. Transparent publication tests live in those libraries.
+Enabling history and detail on the host binary links the publisher again and
+is not part of this command. Enhance and Status fixture features stay on a
+second command: they pull chain test nodes and wallet clients that would
+rebuild the shared graph. Campaign targets are never selected. Test programs
+retain their package directory and Cargo environment.
 The Enhance HTTP smokes run alone, as does the filter library on fewer than
 eight cores. The remaining programs share a pool of at most three processes.
 """
@@ -80,13 +81,6 @@ PRODUCT_HOST_FEATURES = {
     'status': 'pir-publisher/status-tests',
 }
 
-# History and detail are already unified by the publisher dev-dependency.
-# Enabling them on the host reuses those rlibs instead of compiling a second copy.
-TRANSPARENT_LINK_FEATURES = frozenset({
-    'pir-publisher/transparent-history',
-    'pir-publisher/transparent-detail',
-})
-
 # A fast target that requires one of these is compiled only for a diff that
 # touches that product. Shared crates never receive them.
 PRODUCT_FEATURE_GATES = {
@@ -140,7 +134,8 @@ def host_features_for(products, package_names):
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
-    are linked separately, on the command that already builds those libraries.
+    stay on the publisher library's dev-dependency edge. Turning them on for the
+    host binary links that library a second time.
     """
     features = set()
     if 'pir-e2e-tests' in package_names and 'enhance' in products:
@@ -371,9 +366,6 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         group['bins'].append((skipped_bin, included_bins))
         group['integrations'].update(target for pkg, target in compile_integrations if pkg == name)
     groups['hosts']['features'].update(host_features_for(products, groups['hosts']['names']))
-    if 'transparent' in products:
-        home = 'hosts' if 'pir-publisher' in groups['hosts']['names'] else 'stable'
-        groups[home]['features'].update(TRANSPARENT_LINK_FEATURES)
     for feature in additional_features:
         if feature_serves(feature, products):
             groups['hosts']['features'].add(feature)
