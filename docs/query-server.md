@@ -138,7 +138,7 @@ confirmed major version mismatch stops wallet serving and exits the whole
 process with that error; a saved predecessor publication cannot mask it.
 Sections without `publisher` are not checked.
 
-An autonomous Enhance worker or packing router (an Enhance role with
+An autonomous Enhance worker, packing router or ingress (an Enhance role with
 `synchronization`) follows the same rules for its `publisher_origin`, trusting
 its `trusted_ca`. On-demand authority refreshes for readiness and admission also
 check discovery first. Legacy push-controlled Enhance roles have no publisher

@@ -1,10 +1,12 @@
-//! Publisher service discovery gates autonomous Enhance workers and routers.
+//! Publisher service discovery gates autonomous Enhance roles.
 //!
 //! The publisher stub serves only discovery; every product route is refused, so
 //! no publication is prepared. The TLS terminator logs discovery and product
 //! requests separately and applies `discovery-*` faults.
 use super::{encrypted::serve, publication::tls};
-use enhance_query_server::{router_sync, service::ServingRole, synchronization, worker_sync};
+use enhance_query_server::{
+    ingress_sync, router_sync, service::ServingRole, synchronization, worker_sync,
+};
 use pir_sync_manager::{DiscoveryError, SyncTask};
 use std::{
     path::Path,
@@ -55,27 +57,57 @@ fn lines(path: &Path) -> usize {
     std::fs::read_to_string(path).map_or(0, |log| log.lines().count())
 }
 
-/// Host configuration for one autonomous worker or packing router.
-fn host(root: &Path, origin: &str, router: bool) -> pir_query_server::config::Config {
+/// Host JSON exercises the same tagged configuration boundary as the binary.
+fn host_json(root: &Path, origin: &str, role: &str) -> serde_json::Value {
     let source = serde_json::to_value(source(root, origin)).unwrap();
     let mut synchronization = source.as_object().unwrap().clone();
-    let role = if router {
-        synchronization.insert(
-            "workers".into(),
-            serde_json::json!({"0": ["http://127.0.0.1:1"]}),
-        );
-        serde_json::json!({"role": "packing-router", "data_dir": root.join("state"), "listen": free(),
-            "control_listen": free(), "max_objects": 1, "requests": 1, "synchronization": synchronization})
-    } else {
-        synchronization.insert("shards".into(), serde_json::json!([0]));
-        serde_json::json!({"role": "worker", "data_dir": root.join("state"), "listen": free(),
-            "synchronization": synchronization})
+    let assignment = match role {
+        "worker" => ("shards", serde_json::json!([0])),
+        "packing-router" => ("workers", serde_json::json!({"0": ["http://127.0.0.1:1"]})),
+        "query-ingress" => ("routers", serde_json::json!({"0": ["http://127.0.0.1:1"]})),
+        _ => panic!("unsupported role"),
     };
-    serde_json::from_value(serde_json::json!({
+    synchronization.insert(assignment.0.into(), assignment.1);
+    let mut settings = serde_json::json!({"role": role, "data_dir": root.join("state"),
+        "listen": free(), "synchronization": synchronization});
+    if role != "worker" {
+        settings["control_listen"] = serde_json::to_value(free()).unwrap();
+    }
+    serde_json::json!({
         "management_listen": free(),
-        "enhance": {"enabled": true, "settings": role},
-    }))
-    .unwrap()
+        "enhance": {"enabled": true, "settings": settings},
+    })
+}
+
+fn host(root: &Path, origin: &str, role: &str) -> pir_query_server::config::Config {
+    serde_json::from_str(&host_json(root, origin, role).to_string()).unwrap()
+}
+
+#[test]
+fn ingress_host_configuration_parses_domain_keys_and_rejects_invalid_assignments() {
+    let root = Path::new("/unused");
+    let mut json = host_json(root, "https://publisher.example", "query-ingress");
+    let config = host(root, "https://publisher.example", "query-ingress");
+    let role = config.enhance.unwrap().settings.unwrap();
+    role.validate().unwrap();
+    let ServingRole::QueryIngress {
+        synchronization: Some(sync),
+        ..
+    } = role
+    else {
+        panic!("expected autonomous ingress");
+    };
+    assert_eq!(sync.routers[&0], ["http://127.0.0.1:1"]);
+    for key in ["invalid", "18446744073709551616"] {
+        json["enhance"]["settings"]["synchronization"]["routers"] =
+            serde_json::json!({key: ["http://127.0.0.1:1"]});
+        assert!(
+            serde_json::from_str::<pir_query_server::config::Config>(&json.to_string()).is_err()
+        );
+    }
+    json["enhance"]["settings"]["synchronization"]["routers"] = serde_json::json!({});
+    let empty: pir_query_server::config::Config = serde_json::from_str(&json.to_string()).unwrap();
+    assert!(empty.enhance.unwrap().settings.unwrap().validate().is_err());
 }
 
 async fn run_host(config: pir_query_server::config::Config) -> pir_query_server::Result<()> {
@@ -89,7 +121,7 @@ async fn run_host(config: pir_query_server::config::Config) -> pir_query_server:
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autonomous_roles_refuse_an_incompatible_or_missing_publisher_before_listening() {
-    for router in [false, true] {
+    for role in ["worker", "packing-router", "query-ingress"] {
         for (fault, mismatch) in [
             (format!("discovery-body:{INCOMPATIBLE}"), true),
             ("discovery-missing".to_string(), false),
@@ -99,7 +131,7 @@ async fn autonomous_roles_refuse_an_incompatible_or_missing_publisher_before_lis
             let transport = tls(scratch.path(), &upstream.url).await;
             let control = scratch.path().join("fault");
             std::fs::write(&control, &fault).unwrap();
-            let config = host(scratch.path(), &transport.origin, router);
+            let config = host(scratch.path(), &transport.origin, role);
             let error = run_host(config).await.unwrap_err();
             let discovery = error
                 .downcast_ref::<DiscoveryError>()
@@ -118,13 +150,13 @@ async fn autonomous_roles_refuse_an_incompatible_or_missing_publisher_before_lis
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_later_major_mismatch_stops_the_whole_host_with_its_typed_error() {
-    for router in [false, true] {
+    for role in ["worker", "packing-router", "query-ingress"] {
         let scratch = tempfile::tempdir().unwrap();
         // Startup accepts the publisher; the first pass sees major version 2.
         let upstream = serve(stub(1)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let control = scratch.path().join("fault");
-        let config = host(scratch.path(), &transport.origin, router);
+        let config = host(scratch.path(), &transport.origin, role);
         let error = run_host(config).await.unwrap_err();
         assert!(pir_sync_manager::is_incompatible(error.as_ref()), "{error}");
         assert!(
@@ -185,8 +217,19 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
         1,
     )
     .unwrap();
+    let ingress = ingress_sync::QueryIngress::open(
+        &scratch.path().join("ingress"),
+        ingress_sync::Config {
+            source: source(scratch.path(), &transport.origin),
+            routers: [(0, vec!["http://127.0.0.1:1".into()])].into(),
+        },
+        1,
+        4,
+    )
+    .unwrap();
     let mut worker = worker.synchronizer().unwrap();
     let mut router = router.synchronizer().unwrap();
+    let mut ingress = ingress.synchronizer().unwrap();
     for (fault, product, terminal) in [
         ("", true, false),
         // An unchanged publisher is checked again on the next pass.
@@ -207,7 +250,12 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
             (product, terminal),
             "router {fault:?}"
         );
-        assert_eq!(lines(&control.with_extension("discovery")), discovered + 2);
+        assert_eq!(
+            pass(&mut ingress, &control).await,
+            (product, terminal),
+            "ingress {fault:?}"
+        );
+        assert_eq!(lines(&control.with_extension("discovery")), discovered + 3);
     }
 }
 

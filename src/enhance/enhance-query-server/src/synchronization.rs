@@ -9,6 +9,7 @@ use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -17,6 +18,19 @@ use std::{
 use tokio::io::AsyncWriteExt;
 
 pub type Error = pir_sync_manager::Error;
+
+/// JSON object keys are strings. Inside the host's tagged role and this
+/// flattened source they are not converted to integers, so parse them here.
+pub(crate) fn domains<'de, D, V>(deserializer: D) -> Result<BTreeMap<u64, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    V: Deserialize<'de>,
+{
+    BTreeMap::<String, V>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(domain, value)| Ok((domain.parse().map_err(serde::de::Error::custom)?, value)))
+        .collect()
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
