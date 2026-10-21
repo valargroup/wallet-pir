@@ -21,6 +21,8 @@ pub const MAX_OBJECT_BYTES: u64 = 32768 * ROW_BYTES as u64;
 pub struct Current {
     pub version: u16,
     pub revision: u64,
+    /// Most recent explicit withdrawal, preserved across ordinary publication.
+    pub withdrawal_revision: u64,
     pub recovery_epoch: u64,
     pub revoked: std::collections::BTreeSet<String>,
     pub eligible: bool,
@@ -32,6 +34,7 @@ impl Current {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != VERSION
             || self.revision == 0
+            || self.withdrawal_revision > self.revision
             || self.revoked.iter().any(|id| !protocol::canonical_hash(id))
             || self.manifest.is_some() != self.inventory.is_some()
             || (self.eligible && self.manifest.is_none())
@@ -52,6 +55,7 @@ impl Current {
         self.validate().is_ok()
             && previous.validate().is_ok()
             && self.revision >= previous.revision
+            && self.withdrawal_revision >= previous.withdrawal_revision
             && self.recovery_epoch >= previous.recovery_epoch
             && previous.revoked.is_subset(&self.revoked)
             && (self.revision > previous.revision || self == previous)

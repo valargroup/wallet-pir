@@ -51,6 +51,8 @@ mod query_timing;
 pub mod prepared_packing;
 pub mod publication;
 pub mod service;
+pub mod synchronization;
+pub mod worker_sync;
 
 #[cfg(test)]
 mod test_support;

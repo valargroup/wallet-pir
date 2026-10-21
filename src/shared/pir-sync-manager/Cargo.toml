@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 bytes = "1"
-pir-pipeline = { path = "../pir-pipeline" }
 pir-service-discovery = { version = "1.0.0", path = "../pir-service-discovery" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tokio = { version = "1", features = ["time"] }

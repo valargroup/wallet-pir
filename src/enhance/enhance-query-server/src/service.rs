@@ -32,6 +32,8 @@ pub struct WorkerConfig {
     pub sealed_shards: usize,
     #[serde(default)]
     pub matvec: MatvecConfig,
+    #[serde(default)]
+    pub synchronization: Option<crate::worker_sync::Config>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -70,6 +72,23 @@ pub async fn run_worker_on(
     listener: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
+    if let Some(sync) = config.synchronization {
+        let worker = crate::worker_sync::Worker::open(
+            &config.data_dir,
+            sync,
+            PlacementPolicy {
+                sealed_shards: config.sealed_shards,
+            },
+            config.matvec,
+        )?;
+        let synchronizer = worker.synchronizer()?;
+        let manager = pir_sync_manager::SyncManager::new(synchronizer);
+        tokio::select! {
+            result = crate::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
+            _ = manager.run() => return Err("Enhance worker synchronization stopped".into()),
+        }
+        return Ok(());
+    }
     let worker = crate::worker::Worker::open_with_backend(
         &config.data_dir,
         PlacementPolicy {
@@ -181,6 +200,8 @@ pub enum ServingRole {
         sealed_shards: usize,
         #[serde(default)]
         matvec: MatvecConfig,
+        #[serde(default)]
+        synchronization: Option<crate::worker_sync::Config>,
     },
     QueryIngress {
         data_dir: PathBuf,
@@ -204,6 +225,20 @@ pub enum ServingRole {
 }
 
 impl ServingRole {
+    /// Configuration-only checks: do not read a CA file or open serving state.
+    pub fn validate(&self) -> Result<(), Error> {
+        if let Self::Worker {
+            synchronization: Some(sync),
+            sealed_shards,
+            ..
+        } = self
+        {
+            sync.validate(PlacementPolicy {
+                sealed_shards: *sealed_shards,
+            })?;
+        }
+        Ok(())
+    }
     pub fn listens(&self) -> Vec<SocketAddr> {
         match self {
             Self::Worker { listen, .. } => vec![*listen],
@@ -252,6 +287,7 @@ pub async fn run_serving(
             data_dir,
             sealed_shards,
             matvec,
+            synchronization,
         } => {
             // Bound in listen order, so the only listener is at the front.
             listeners.reverse();
@@ -261,6 +297,7 @@ pub async fn run_serving(
                     data_dir,
                     sealed_shards,
                     matvec,
+                    synchronization,
                 },
                 take(&mut listeners)?,
                 shutdown,

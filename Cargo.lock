@@ -911,6 +911,7 @@ dependencies = [
  "pir-observability",
  "pir-runtime",
  "pir-serving",
+ "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -2338,7 +2339,6 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "pir-pipeline",
  "pir-service-discovery",
  "reqwest",
  "rustls",
