@@ -475,6 +475,23 @@ impl Store {
         checkpoint_at(&self.db, &self.config, height)
     }
 
+    /// Durably records `revision` as the accepted history correction revision, refusing
+    /// one below the recorded revision with [`Error::Coverage`].
+    pub fn raise_history_revision(&mut self, revision: u64) -> Result<(), Error> {
+        if revision > i64::MAX as u64 {
+            return Err(Error::Malformed);
+        }
+        let tx = self.db.transaction()?;
+        let recorded: u64 =
+            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
+        if revision < recorded {
+            return Err(Error::Coverage);
+        }
+        tx.execute("UPDATE filter_revision SET revision = ?1", [revision])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
@@ -618,6 +635,20 @@ pub const STORE_FILE: &str = "directory-v3.sqlite";
 pub const LEGACY_STORE_FILE: &str = "directory.sqlite";
 /// Bytes of a version 2 record: today's record without its witness ordinal.
 const LEGACY_RECORD_BYTES: usize = 285;
+
+/// Opens the store in `data_dir`, first converting a version 2 store there once (see
+/// [`upgrade`]), and returns it with whether it converted. Every entry point opens the
+/// store this way, so none can start an empty version 3 store beside a version 2 one,
+/// which would hide that history from the conversion. With `create` false, a directory
+/// holding neither store is refused with [`Error::Coverage`] and nothing is created.
+pub fn open_in(data_dir: &Path, config: Config, create: bool) -> Result<(Store, bool), Error> {
+    let path = data_dir.join(STORE_FILE);
+    let converted = upgrade(&data_dir.join(LEGACY_STORE_FILE), &path)?;
+    if !create && !path.exists() {
+        return Err(Error::Coverage);
+    }
+    Ok((Store::open(path, config)?, converted))
+}
 
 /// Builds the store at `path` from the version 2 store at `legacy` once, if `path` does
 /// not exist yet and `legacy` does. The copy's records gain a zero witness ordinal,

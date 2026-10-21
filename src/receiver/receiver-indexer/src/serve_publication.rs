@@ -33,7 +33,8 @@
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
 use crate::application::Layout;
-use crate::canonical::{freshest, is_canonical};
+use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
+use crate::revision::Refused;
 use receiver_directory::Hash;
 use receiver_directory::{
     shards::{ShardFilter, MAX_FILTER_BYTES},
@@ -274,13 +275,27 @@ impl VerifiedPublication {
         self.publication.head()
     }
 
-    /// Every block it depends on, which must all be canonical before it activates: its
-    /// terminal block and every companion's construction block.
-    pub fn anchors(&self) -> Vec<(u32, [u8; 32])> {
-        let mut anchors = self.publication.anchors();
-        for context in self.publication.contexts() {
-            if !anchors.contains(&context) {
-                anchors.push(context);
+    /// Every block it depends on, with the Ironwood tree size it claims after it, which
+    /// must all match the node before it activates: every segment's end and every
+    /// companion's construction block.
+    pub fn anchors(&self) -> Vec<TreeAnchor> {
+        let mut anchors = Vec::new();
+        for segment in self.publication.segments() {
+            let payments = &segment
+                .payments
+                .payment_manifest()
+                .expect("a payment source");
+            let witnesses = &segment
+                .witnesses
+                .witness_manifest()
+                .expect("a witness source");
+            for anchor in [
+                TreeAnchor::payments(&payments.directory),
+                TreeAnchor::witnesses(&witnesses.table),
+            ] {
+                if !anchors.contains(&anchor) {
+                    anchors.push(anchor);
+                }
             }
         }
         anchors
@@ -318,16 +333,29 @@ pub fn load(
     if layout.genesis != Network::Mainnet.genesis_hash() {
         return Err(invalid("the publication is not for mainnet".into()));
     }
-    if layout.history_revision < accepted_revision(&config.state_dir)? {
-        return Err(invalid("history revision moved backwards".into()));
-    }
     // A trusted operator correction invalidates old answers immediately, even if
-    // replacement rows are missing or preparation later fails.
-    if let Some(publications) = serving {
-        accept_revision(&config.state_dir, layout.history_revision)?;
-        if !publications.advance_history_revision(layout.history_revision) {
-            return Err(invalid("history revision moved backwards".into()));
+    // replacement rows are missing or preparation later fails. A check only compares
+    // with the floor; it records nothing.
+    let mut floor = history_floor(&config.state_dir);
+    let accepted = match serving {
+        Some(publications) => {
+            crate::revision::advance(&mut floor, Some(publications), layout.history_revision)
         }
+        None => match crate::revision::Floor::floor(&mut floor) {
+            Ok(recorded) if layout.history_revision < recorded => Err(Refused::Lower {
+                revision: layout.history_revision,
+                floor: recorded,
+            }),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Refused::Floor(e)),
+        },
+    };
+    match accepted {
+        Ok(()) => {}
+        Err(Refused::Lower { .. }) => {
+            return Err(invalid("history revision moved backwards".into()))
+        }
+        Err(Refused::Floor(e)) => return Err(Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"))),
     }
     let mut shards = Vec::new();
     for shard in &layout.shards {
@@ -581,24 +609,9 @@ impl Reporter {
     }
 }
 
-/// The highest history revision `state_dir` records as accepted, zero if none.
-fn accepted_revision(state_dir: &Path) -> std::result::Result<u64, Refusal> {
-    let unavailable = |e: String| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"));
-    match read_bounded(&state_dir.join(HISTORY_FILE), 64) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| unavailable(e.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
-        Err(e) => Err(unavailable(e.to_string())),
-    }
-}
-
-/// Durably records `revision` in `state_dir` as accepted, if it is higher than the
-/// recorded one, before anything is served under it.
-fn accept_revision(state_dir: &Path, revision: u64) -> std::result::Result<(), Refusal> {
-    if revision > accepted_revision(state_dir)? {
-        write_atomic(&state_dir.join(HISTORY_FILE), &revision)
-            .map_err(|e| Refusal::Unavailable(format!("{HISTORY_FILE}: {e}")))?;
-    }
-    Ok(())
+/// The correction floor in `state_dir`; see [`HISTORY_FILE`].
+fn history_floor(state_dir: &Path) -> crate::revision::StateFile {
+    crate::revision::StateFile::new(state_dir, HISTORY_FILE)
 }
 
 fn write_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -741,12 +754,14 @@ impl Updater {
         let confirmed = async {
             let (tip, rpc) = freshest(&self.nodes, self.genesis).await?;
             let mut off_chain = None;
-            for (height, hash) in &anchors {
-                if u64::from(*height) > tip {
-                    return Ok(Err(*height));
+            for anchor in &anchors {
+                if u64::from(anchor.height) > tip {
+                    return Ok(Err(anchor.height));
                 }
-                if off_chain.is_none() && !is_canonical(&rpc, *height, *hash).await? {
-                    off_chain = Some(*height);
+                if off_chain.is_none() {
+                    off_chain = tree_mismatch(&rpc, *anchor)
+                        .await?
+                        .map(|mismatch| (anchor, mismatch));
                 }
             }
             // Ranking read the genesis earlier, and an endpoint can be repointed.
@@ -756,13 +771,23 @@ impl Updater {
         .await;
         match confirmed {
             Ok(Ok(None)) => {}
-            Ok(Ok(Some(height))) => {
+            Ok(Ok(Some((anchor, TreeMismatch::OffChain)))) => {
+                let height = anchor.height;
                 return self.refuse(
                     record,
                     Refusal::Noncanonical(format!(
                         "the anchor at height {height} is not on the node's canonical chain"
                     )),
-                )
+                );
+            }
+            Ok(Ok(Some((anchor, TreeMismatch::Size(size))))) => {
+                return self.refuse(
+                    record,
+                    Refusal::InvalidSource(format!(
+                        "the publication claims Ironwood tree size {} after block {}, the node has {size}",
+                        anchor.size, anchor.height
+                    )),
+                );
             }
             Ok(Err(height)) => {
                 self.pending = Some(pending);
@@ -880,7 +905,7 @@ pub async fn run(config: Config) -> Result<()> {
     let genesis = Network::Mainnet.genesis_hash();
     let publications = Publications::default();
     // Older sessions stay fenced across a restart; see `HISTORY_FILE`.
-    publications.advance_history_revision(accepted_revision(&config.state_dir)?);
+    crate::revision::restore(&mut history_floor(&config.state_dir), &publications)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let app = receiver_pir_server::router_with_health(publications.clone(), {
         let reporter = reporter.clone();
@@ -1092,20 +1117,20 @@ mod tests {
         // Accepted, then refused for its missing segment files.
         let failure = load(&corrected, &config, Some(&Publications::default()));
         assert!(failure.err().unwrap().to_string().contains("manifest:"));
-        assert_eq!(accepted_revision(state.path()).unwrap(), 1);
+        let floor = || history_floor(state.path());
+        assert_eq!(crate::revision::Floor::floor(&mut floor()).unwrap(), 1);
         let restarted = Publications::default();
-        restarted.advance_history_revision(accepted_revision(state.path()).unwrap());
+        crate::revision::restore(&mut floor(), &restarted).unwrap();
         for serving in [Some(&restarted), None] {
             let failure = load(&old, &config, serving).err().unwrap();
             assert!(failure.to_string().contains("moved backwards"), "{failure}");
         }
-        // A missing record is no floor; an unreadable one refuses rather than guess.
+        // An unreadable record refuses rather than guess.
         std::fs::write(state.path().join(HISTORY_FILE), "x").unwrap();
         assert!(matches!(
-            accepted_revision(state.path()),
+            load(&old, &config, None),
             Err(Refusal::Unavailable(_))
         ));
-        assert_eq!(accepted_revision(dir.path()).unwrap(), 0);
     }
 
     #[test]

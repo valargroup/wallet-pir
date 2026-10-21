@@ -1,5 +1,6 @@
 //! Bounded real PIR, companion witness and rolling-filter checks against an independent
 //! node.
+use crate::canonical::{tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::read_limited;
 use clap::Parser;
 use receiver_directory::{
@@ -312,6 +313,11 @@ async fn probe(
             )));
         }
     };
+    // The segment's own end and its companion's construction block must be the node's,
+    // with the tree sizes their manifests claim, before its payload is trusted.
+    if let Some(failure) = check_anchor(&rpc, &segment_anchors(segment)).await? {
+        return Ok(Some(failure));
+    }
     let check = check_witness(&http, origin, segment, &record, root);
     if let Some(failure) = check.await? {
         return Ok(Some(failure));
@@ -409,29 +415,56 @@ async fn check_shard_filter(
     Ok(None)
 }
 
-/// Checks the publication's anchor against `rpc`: its hash and the tree size after it
-/// (read by that hash, see [`NodeClient::receiver_boundary`]), which is the coverage
-/// the manifest claims. A read that fails, a chain that changes during it, or a node
-/// not on mainnet ([`NodeError::OtherNetwork`]) is an error, which proves nothing
-/// against the publication.
+/// The inventory's end, with the tree size it claims, and the keys a failure names it by.
+fn head_anchor(head: &Head) -> [(TreeAnchor, &'static str, &'static str); 1] {
+    let anchor = TreeAnchor {
+        height: head.end_height,
+        hash: head.end_hash,
+        size: head.end_position,
+    };
+    [(anchor, "anchor_off_chain", "end_position")]
+}
+
+/// A segment's payment table end and companion construction block, with the tree sizes
+/// their manifests claim, and the keys a failure names each by.
+fn segment_anchors(segment: &Publication) -> [(TreeAnchor, &'static str, &'static str); 2] {
+    [
+        (
+            TreeAnchor::payments(&segment.payments.directory),
+            "segment_anchor_off_chain",
+            "segment_end_position",
+        ),
+        (
+            TreeAnchor::witnesses(&segment.witnesses.table),
+            "witness_anchor_off_chain",
+            "witness_tree_size",
+        ),
+    ]
+}
+
+/// Checks `anchors` against `rpc`, each a block and the tree size a served table claims
+/// after it (see [`tree_mismatch`]), with the keys a failure names it by; the first off
+/// the chain or at another size fails. A read that fails, a chain that changes during
+/// it, or a node not on mainnet ([`NodeError::OtherNetwork`]) is an error, which proves
+/// nothing against the publication.
 async fn check_anchor(
     rpc: &NodeClient,
-    directory: &Head,
+    anchors: &[(TreeAnchor, &str, &str)],
 ) -> std::result::Result<Option<Failure>, NodeError> {
     rpc.check_network(Network::Mainnet.genesis_hash()).await?;
-    let height = directory.end_height;
-    let boundary = crate::blocks::boundary(rpc, height).await?;
-    if boundary.hash != directory.end_hash {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"anchor_off_chain": height}),
-        )));
-    }
-    if boundary.position != directory.end_position {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"end_position": directory.end_position, "node_tree_size": boundary.position}),
-        )));
+    for &(anchor, off_chain, claimed) in anchors {
+        match tree_mismatch(rpc, anchor).await? {
+            None => {}
+            Some(TreeMismatch::OffChain) => {
+                return Ok(Some(("answer_mismatch", json!({off_chain: anchor.height}))))
+            }
+            Some(TreeMismatch::Size(node)) => {
+                return Ok(Some((
+                    "answer_mismatch",
+                    json!({claimed: anchor.size, "node_tree_size": node}),
+                )))
+            }
+        }
     }
     Ok(None)
 }
@@ -467,7 +500,7 @@ enum Verdict {
 /// recheck; the probe rechecks the terminal block once its lookup ends.
 async fn verify(rpc: &NodeClient, directory: &Head, pinned: (u32, Hash), shard: u16) -> Verdict {
     let checks = async {
-        if let Some(failure) = check_anchor(rpc, directory).await? {
+        if let Some(failure) = check_anchor(rpc, &head_anchor(directory)).await? {
             return Ok(Err(failure));
         }
         if rpc.block_hash(u64::from(pinned.0)).await? != pinned.1 {
@@ -767,17 +800,26 @@ mod tests {
         }
     }
 
+    /// The companion witness manifest of `directory`, built at its end.
+    fn companion(
+        directory: &receiver_directory::snapshot::Manifest,
+    ) -> receiver_directory::witness::Manifest {
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+        crate::witness::table(&snapshot, &[]).unwrap().manifest
+    }
+
     /// The anchor must have the node's hash and the tree size after that block. A node
     /// that cannot give the size, or whose chain changes during the read, proves
     /// nothing against the publication.
     #[tokio::test]
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
-        let directory = anchored();
-        let tip = u64::from(directory.end_height);
+        let head = anchored();
+        let tip = u64::from(head.end_height);
         let check = |rpc: NodeClient| {
-            let directory = directory.clone();
+            let head = head.clone();
             async move {
-                match check_anchor(&rpc, &directory).await {
+                match check_anchor(&rpc, &head_anchor(&head)).await {
                     Ok(failure) => failure.map(|failure| failure.0),
                     Err(_) => Some("unverified"),
                 }
@@ -793,6 +835,47 @@ mod tests {
             let rpc = chain(tip, hash, size, reorg).await;
             assert_eq!(check(rpc).await, Some(expected), "{hash} {size:?} {reorg}");
         }
+        // A segment's companion construction block is checked the same way, even with
+        // its payment table's end on the chain.
+        let directory = anchored_directory();
+        let segment = |table: receiver_directory::witness::Manifest| {
+            let snapshot =
+                receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+            let server = crate::prepared::payments(snapshot).unwrap();
+            Publication {
+                payments: server.manifest().clone(),
+                witnesses: receiver_pir::WitnessManifest {
+                    protocol: receiver_pir::PROTOCOL.into(),
+                    table,
+                    public_digest: [0; 32],
+                },
+            }
+        };
+        let rpc = chain(tip, 3, Some(300), false).await;
+        let table = companion(&directory);
+        assert_eq!(
+            check_anchor(&rpc, &segment_anchors(&segment(table.clone())))
+                .await
+                .unwrap(),
+            None
+        );
+        let mut wrong = table.clone();
+        wrong.tree_size = 299;
+        let failure = check_anchor(&rpc, &segment_anchors(&segment(wrong)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            failure.1,
+            json!({"witness_tree_size": 299, "node_tree_size": 300})
+        );
+        wrong = table.clone();
+        wrong.tree_hash = [4; 32];
+        let failure = check_anchor(&rpc, &segment_anchors(&segment(wrong)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failure.1, json!({"witness_anchor_off_chain": tip}));
     }
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the

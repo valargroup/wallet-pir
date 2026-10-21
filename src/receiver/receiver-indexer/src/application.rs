@@ -165,22 +165,16 @@ pub async fn refresh(
     }
     let boundary = crate::blocks::boundary(rpc, args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
-    let path = args.data_dir.join(receiver_store::STORE_FILE);
-    if receiver_store::upgrade(
-        &args.data_dir.join(receiver_store::LEGACY_STORE_FILE),
-        &path,
-    )? {
+    let config = StoreConfig {
+        genesis,
+        start_height: args.start_height,
+        start_parent: boundary.hash,
+        start_position: boundary.position,
+    };
+    let (mut store, converted) = receiver_store::open_in(&args.data_dir, config, true)?;
+    if converted {
         info!("converted the version 2 receiver store; the original is kept for rollback");
     }
-    let mut store = Store::open(
-        path,
-        StoreConfig {
-            genesis,
-            start_height: args.start_height,
-            start_parent: boundary.hash,
-            start_position: boundary.position,
-        },
-    )?;
     // An empty in-memory store without a key; see `Config::audit_enabled`.
     let provider_store = match args.audit_enabled {
         true => PayoutStore::open(args.data_dir.join(PROVIDERS)).or_else(|error| {
@@ -276,6 +270,12 @@ async fn collect_inner<'a>(
     if requested > node_tip {
         return Err("requested range is outside the available chain".into());
     }
+    // An offline correction (see [`correct`]) may have advanced the store past the
+    // configured revision; publish the higher one rather than refuse to collect. It is
+    // durable before it revokes sessions or any fallible work runs, so a failure and a
+    // rollback restart cannot serve older history.
+    let history_revision = args.history_revision.max(store.history_revision()?);
+    crate::revision::advance(store, serving, history_revision)?;
     let mut tip = store.tip()?;
     // A node behind the index proves nothing about the blocks above its tip, so wait for
     // it unless its own tip block differs from the saved one.
@@ -308,12 +308,6 @@ async fn collect_inner<'a>(
     }
     if end < tip.height {
         return Err("end height precedes stored tip".into());
-    }
-    // An offline correction (see [`correct`]) may have advanced the store past the
-    // configured revision; publish the higher one rather than refuse to collect.
-    let history_revision = args.history_revision.max(store.history_revision()?);
-    if serving.is_some_and(|s| !s.advance_history_revision(history_revision)) {
-        return Err("history correction revision cannot decrease".into());
     }
     // Capture the fence after any rewind; a concurrent revocation invalidates preparation below.
     let epoch = serving.map(Publications::epoch);
@@ -866,7 +860,13 @@ pub fn correct(
             verify::check_payment(receiver, payment)?;
         }
     }
-    let mut store = Store::open(data_dir.join(receiver_store::STORE_FILE), config)?;
+    // A correction edits an existing index, converting a version 2 one first; it never
+    // starts an empty one.
+    let (mut store, converted) = receiver_store::open_in(data_dir, config, false)
+        .map_err(|e| format!("receiver index in {}: {e}", data_dir.display()))?;
+    if converted {
+        info!("converted the version 2 receiver store; the original is kept for rollback");
+    }
     store.correct(history_revision, blocks)?;
     Ok(())
 }
@@ -2126,6 +2126,21 @@ mod tests {
         );
     }
 
+    /// An offline correction edits an existing index and never starts an empty one,
+    /// which would hide a version 2 index from its conversion.
+    #[test]
+    fn a_correction_never_starts_an_empty_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = StoreConfig {
+            genesis: Network::Mainnet.genesis_hash(),
+            start_height: crate::blocks::ironwood_activation(),
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        assert!(correct(dir.path(), config, 1, &[]).is_err());
+        assert!(!dir.path().join(receiver_store::STORE_FILE).exists());
+    }
+
     /// A correction is refused while the service holds the data directory, and once
     /// applied offline the restarted service publishes the store's higher revision under
     /// its unchanged configuration, revoking older sessions before serving.
@@ -2194,6 +2209,33 @@ mod tests {
         paused.state = State::default();
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("inventory").await, first);
+    }
+
+    /// A raised correction revision is durable before the backfill it needs: when that
+    /// backfill fails, a restart that rolls the configured revision back still uses it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_raised_revision_is_durable_before_backfill() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let next = u64::from(crate::blocks::ironwood_activation()) + 1;
+        *paused.node.tip.lock().unwrap() = next;
+        paused.node.hashes.lock().unwrap().insert(next, [4; 32]);
+        paused.args.history_revision = 1;
+        // The node serves no block bodies, so the backfill fails.
+        assert!(paused.refresh().await.is_err());
+        assert_eq!(paused.store().history_revision().unwrap(), 1);
+        assert_eq!(
+            paused.publications.epoch(),
+            1,
+            "older sessions were revoked"
+        );
+        // A restart configured with the old revision still collects under the store's.
+        paused.args.history_revision = 0;
+        paused.state = State::default();
+        let epoch = paused.publications.epoch();
+        assert!(paused.refresh().await.is_err());
+        assert_eq!(paused.store().history_revision().unwrap(), 1);
+        assert_eq!(paused.publications.epoch(), epoch, "nothing moved back");
     }
 
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.

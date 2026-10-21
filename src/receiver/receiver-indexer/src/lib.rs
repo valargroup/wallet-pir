@@ -9,6 +9,7 @@ pub mod canonical;
 pub mod durable;
 pub mod near;
 pub mod probe;
+pub mod revision;
 pub mod seal;
 pub mod serve_publication;
 pub mod shards;
