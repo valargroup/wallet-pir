@@ -405,17 +405,14 @@ fn finalization_lists_present_bytes_and_stops_when_asked() {
     .err()
     .unwrap();
     assert!(error.is::<Stopped>(), "{error}");
-    let asked = std::cell::Cell::new(0);
+    let asked = std::sync::atomic::AtomicUsize::new(0);
     let error = Finalized::prepare_reusing_until(
         &directory,
         &set,
         2,
         false,
         &mut CheckedRuntimes::default(),
-        &|| {
-            asked.set(asked.get() + 1);
-            asked.get() > 4
-        },
+        &|| asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 4,
     )
     .err()
     .unwrap();

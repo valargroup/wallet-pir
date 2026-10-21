@@ -7,6 +7,7 @@ use crate::{
     history::shardset::{FileStamp, ShardSet},
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -410,10 +411,8 @@ impl Finalized {
             &|| false,
         )
     }
-    /// [`Self::prepare`] or [`Self::prepare_full`], skipping the load and
-    /// self-check of runtimes whose exact bytes `checked` already proved.
-    /// A failed preparation preserves the preceding successful inventory's
-    /// evidence; a retry still hashes every file before reusing any check.
+    /// Finalize an inventory, reusing only native runtimes whose exact bytes
+    /// this process already loaded and self-checked. Every artifact is rehashed.
     pub fn prepare_reusing(
         root: &Path,
         set: &ShardSet,
@@ -432,7 +431,7 @@ impl Finalized {
         recent_from_height: u64,
         full: bool,
         checked: &mut CheckedRuntimes,
-        stop: &dyn Fn() -> bool,
+        stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self, Error> {
         Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
     }
@@ -445,12 +444,12 @@ impl Finalized {
         recent_from_height: u64,
         full: bool,
         checked: &mut CheckedRuntimes,
-        stop: &dyn Fn() -> bool,
+        stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self, Error> {
         let previous = &checked.passed;
-        let mut passed = BTreeMap::new();
         checked.loaded = 0;
         checked.reused = 0;
+        let mut passed = BTreeMap::new();
         let recent = set
             .map
             .shards
@@ -470,18 +469,13 @@ impl Finalized {
             artifacts: Vec::new(),
         };
         let mut files = BTreeMap::new();
-        let mut paths = BTreeMap::new();
-        // Returns the digest and, the first time a path is added, the open
-        // handle it was computed from. `known`: a digest and length this
-        // process verified for the file with this stamp, used only while the
-        // opened file still has it.
-        let mut add = |path: PathBuf,
-                       kind: Kind,
-                       known: Option<(&str, u64, FileStamp)>|
-         -> Result<(String, Option<std::fs::File>), Error> {
-            if stop() {
-                return Err(Box::new(Stopped));
-            }
+        let mut paths = BTreeSet::new();
+        let mut pending = Vec::new();
+        let mut sources = BTreeMap::new();
+        let mut native = Vec::new();
+        // `known`: a digest and length this process verified for the file
+        // with this stamp, used only while the opened file still has it.
+        let mut add = |path: PathBuf, kind: Kind, known: Option<Known>| -> Result<bool, Error> {
             let relative = path
                 .strip_prefix(root)?
                 .to_str()
@@ -500,27 +494,19 @@ impl Finalized {
                     return Err("symlink in publisher artifact".into());
                 }
             }
-            if let Some(sha256) = paths.get(&relative) {
-                return Ok((String::clone(sha256), None));
+            if !paths.insert(relative.clone()) {
+                return Ok(false);
             }
-            let mut file = std::fs::File::open(&path)?;
-            let (sha256, bytes) = listed_digest(&path, &mut file, known)?;
-            if full || kind.local() {
-                files.insert(sha256.clone(), path);
+            if !std::fs::metadata(&path)?.is_file() {
+                return Err("artifact is not a regular file".into());
             }
-            paths.insert(relative.clone(), sha256.clone());
-            inventory.artifacts.push(Artifact {
-                path: relative,
-                sha256: sha256.clone(),
-                bytes,
-                kind,
-            });
-            Ok((sha256, Some(file)))
+            pending.push((path, kind, known));
+            Ok(true)
         };
         add(root.join("shards.json"), Kind::Metadata, None)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         // Parameters depend only on geometry and table kind; build each once.
-        let mut built: BTreeMap<(&'static str, &'static str), SharedParams> = BTreeMap::new();
+        let mut built = BTreeMap::new();
         for entry in &set.map.shards {
             let dir = root.join(&entry.manifest_digest);
             add(dir.join("manifest.json"), Kind::Metadata, None)?;
@@ -532,10 +518,15 @@ impl Finalized {
             for table in shard.tables() {
                 let params = if full || local {
                     let id = (shard.geometry.name, table.kind().as_str());
-                    if !built.contains_key(&id) {
-                        built.insert(id, SharedParams::build(shard.geometry, table.kind())?);
-                    }
-                    built.get(&id)
+                    Some(match built.entry(id) {
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            std::sync::Arc::clone(entry.get())
+                        }
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            let shared = SharedParams::build(shard.geometry, table.kind())?;
+                            std::sync::Arc::clone(entry.insert(std::sync::Arc::new(shared)))
+                        }
+                    })
                 } else {
                     None
                 };
@@ -543,22 +534,20 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
-                    let (source_sha256, _) = add(
+                    sources.insert(source.path().to_path_buf(), source.sha256());
+                    add(
                         source.path().to_path_buf(),
                         if local {
                             Kind::RecentTable
                         } else {
                             Kind::ArchiveTable
                         },
-                        source
-                            .evidence()
-                            .map(|stamp| (source.sha256(), source.bytes() as u64, stamp)),
+                        source.evidence().map(|stamp| Known {
+                            sha256: source.sha256().to_owned(),
+                            bytes: source.bytes() as u64,
+                            stamp,
+                        }),
                     )?;
-                    // The inventory publishes the bytes just hashed; they must
-                    // be the committed segment whether or not a runtime is loaded.
-                    if source_sha256 != source.sha256() {
-                        return Err("source segment differs from its manifest".into());
-                    }
                     if let Some(shared) = &params {
                         let key = (
                             shard.runtime_identity(table).to_string(),
@@ -566,37 +555,59 @@ impl Finalized {
                             segment,
                         );
                         let path = shipped.path(&key, shared, source.sha256());
-                        let kind = if local {
-                            Kind::RecentRuntime
-                        } else {
-                            Kind::ArchiveRuntime
-                        };
-                        // The file name binds the runtime key, parameters and
-                        // source digest; the digest computed by `add` binds
-                        // every byte. A pair this process already loaded and
-                        // self-checked therefore names the same proven input.
-                        let name = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .ok_or("non-UTF8 runtime name")?
-                            .to_string();
-                        let (sha256, file) = add(path, kind, None)?;
-                        if previous.get(&name) == Some(&sha256) {
-                            checked.reused += 1;
-                        } else {
-                            // Load from the handle just hashed, so the bytes
-                            // checked are the inode the inventory publishes
-                            // and caches, not a later replacement of the path.
-                            let file = file.ok_or("runtime listed twice")?;
-                            // Header/length checks alone cannot finalize malformed native bytes.
-                            ShippedRuntimes::load_file(file, &key, shared, source.sha256())?
-                                .self_check(shared, &source.load()?)?;
-                            checked.loaded += 1;
+                        if add(
+                            path.clone(),
+                            if local {
+                                Kind::RecentRuntime
+                            } else {
+                                Kind::ArchiveRuntime
+                            },
+                            None,
+                        )? {
+                            native.push((path, key, shared.clone(), source));
                         }
-                        passed.insert(name, sha256);
                     }
                 }
             }
+        }
+        // Hash immutable artifacts on the existing bounded CPU pool. Native
+        // handles stay open so the later self-check reads the inode just hashed.
+        let mut runtimes = BTreeMap::new();
+        for (artifact, path, file) in hash_listed(root, pending, stop)? {
+            if let Some(expected) = sources.get(&path) {
+                if artifact.sha256 != *expected {
+                    return Err("source segment differs from its manifest".into());
+                }
+            }
+            if let Some(file) = file {
+                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+            }
+            if full || artifact.kind.local() {
+                files.insert(artifact.sha256.clone(), path);
+            }
+            inventory.artifacts.push(artifact);
+        }
+        // Keep native loads sequential to bound resident runtime memory.
+        for (path, key, shared, source) in native {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("non-UTF8 runtime name")?
+                .to_owned();
+            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            // The derived name binds parameters and source; the whole-file
+            // digest binds the exact bytes checked by a previous inventory.
+            if previous.get(&name) == Some(&sha256) {
+                checked.reused += 1;
+            } else {
+                if stop() {
+                    return Err(Box::new(Stopped));
+                }
+                ShippedRuntimes::load_file(file, &key, &shared, source.sha256())?
+                    .self_check(&shared, &source.load()?)?;
+                checked.loaded += 1;
+            }
+            passed.insert(name, sha256);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
@@ -612,19 +623,90 @@ impl Finalized {
         })
     }
 }
-/// Runtimes one process loaded and self-checked while finalizing, by file
-/// name and whole-file SHA-256. A successful preparation replaces the evidence
-/// with its own publication's runtimes; a failed one leaves it intact. Retained
-/// evidence therefore never grows past one successful inventory. Neither
-/// value is trusted from disk: the name is derived and the digest recomputed.
+/// Native material verified by this process, bounded to the last successful
+/// inventory. Names and whole-file digests are derived again on every prepare.
 #[derive(Debug, Default)]
 pub struct CheckedRuntimes {
-    passed: BTreeMap<String, String>,
-    /// Runtimes the last preparation attempt loaded and self-checked.
+    pub(crate) passed: BTreeMap<String, String>,
+    /// Native runtimes loaded and self-checked by the last attempt.
     pub loaded: usize,
-    /// Runtimes the last preparation attempt accepted from an earlier check.
+    /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
 }
+
+/// A digest and length this process verified for a file with this stamp.
+struct Known {
+    sha256: String,
+    bytes: u64,
+    stamp: FileStamp,
+}
+
+pub(crate) fn hash_artifacts(
+    root: &Path,
+    pending: Vec<(PathBuf, Kind)>,
+) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
+    let pending = pending
+        .into_iter()
+        .map(|(path, kind)| (path, kind, None))
+        .collect();
+    hash_listed(root, pending, &|| false)
+}
+
+/// [`hash_artifacts`], listing a file with its `Known` digest when it is
+/// unchanged since verified, and ending with [`Stopped`] once `stop` answers
+/// true before a file is read.
+fn hash_listed(
+    root: &Path,
+    pending: Vec<(PathBuf, Kind, Option<Known>)>,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
+    crate::runtime::build_pool().install(|| {
+        pending
+            .into_par_iter()
+            .map(|(path, kind, known)| {
+                if stop() {
+                    return Err(Box::new(Stopped) as Error);
+                }
+                let relative = path
+                    .strip_prefix(root)?
+                    .to_str()
+                    .ok_or("non-UTF8 artifact")?
+                    .to_string();
+                if !safe_path(&relative) {
+                    return Err("unsafe publisher artifact path".into());
+                }
+                let mut checked = root.to_path_buf();
+                for component in relative.split('/') {
+                    checked.push(component);
+                    if std::fs::symlink_metadata(&checked)?
+                        .file_type()
+                        .is_symlink()
+                    {
+                        return Err("symlink in publisher artifact".into());
+                    }
+                }
+                let mut file = std::fs::File::open(&path)?;
+                let known = known
+                    .as_ref()
+                    .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
+                let (sha256, bytes) = listed_digest(&path, &mut file, known)?;
+                let opened =
+                    matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
+                Ok((
+                    Artifact {
+                        path: relative,
+                        sha256,
+                        bytes,
+                        kind,
+                    },
+                    path,
+                    opened,
+                ))
+            })
+            .collect()
+    })
+}
+
 /// A finalization ended because its caller asked it to stop: a normal end
 /// of the lifecycle, not a faulty publication.
 #[derive(Debug)]
@@ -722,6 +804,99 @@ fn verify_open(file: &std::fs::File, expected: &Artifact) -> Result<(), Error> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn artifact_hashes_match_the_complete_files_in_input_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let inputs = [
+            ("large.bin", vec![7u8; 128 << 10]),
+            ("small.bin", vec![3u8; 17]),
+        ];
+        let mut pending = Vec::new();
+        for (name, bytes) in &inputs {
+            let path = root.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            pending.push((path, Kind::RecentTable));
+        }
+        let actual = hash_artifacts(root, pending).unwrap();
+        for ((artifact, path, file), (name, bytes)) in actual.iter().zip(&inputs) {
+            assert!(file.is_none());
+            assert_eq!(artifact.path, *name);
+            assert_eq!(*path, root.join(name));
+            assert_eq!(artifact.bytes, bytes.len() as u64);
+            assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
+            assert_eq!(artifact.kind, Kind::RecentTable);
+        }
+    }
+
+    #[test]
+    fn publisher_inventory_hashes_received_artifacts_in_full() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let path = root.join("source.bin");
+        let original = b"network bytes";
+        std::fs::write(&path, original).unwrap();
+        let expected = Artifact {
+            path: "source.bin".into(),
+            sha256: digest(original),
+            bytes: original.len() as u64,
+            kind: Kind::RecentTable,
+        };
+        record_received_file(&path, &expected, &path).unwrap();
+        let changed = b"same size!!!!";
+        std::fs::write(&path, changed).unwrap();
+        let hashed = hash_artifacts(root, vec![(path, Kind::RecentTable)]).unwrap();
+        assert_eq!(hashed[0].0.sha256, digest(changed));
+        assert_ne!(hashed[0].0.sha256, expected.sha256);
+    }
+
+    #[test]
+    fn native_hash_keeps_the_opened_inode_for_verification() {
+        use std::io::{Seek, SeekFrom};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let path = root.join("native.runtime");
+        let original = b"the bytes the inventory hashed";
+        std::fs::write(&path, original).unwrap();
+        let mut hashed = hash_artifacts(root, vec![(path.clone(), Kind::RecentRuntime)]).unwrap();
+        let (artifact, _, opened) = hashed.pop().unwrap();
+        let replacement = root.join("replacement");
+        std::fs::write(&replacement, b"a later path replacement").unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        let mut file = opened.expect("native verification needs the hashed handle");
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, original);
+        assert_eq!(artifact.sha256, digest(&bytes));
+        assert_ne!(artifact.sha256, digest(&std::fs::read(path).unwrap()));
+    }
+
+    #[test]
+    fn an_unreadable_artifact_prevents_finalization() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let valid = root.join("valid.bin");
+        std::fs::write(&valid, b"complete file").unwrap();
+        assert!(hash_artifacts(
+            root,
+            vec![
+                (valid, Kind::RecentTable),
+                (root.join("missing.bin"), Kind::RecentTable),
+            ]
+        )
+        .is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn artifact_hashing_refuses_a_symbolic_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(root.join("real.bin"), b"complete file").unwrap();
+        std::os::unix::fs::symlink(root.join("real.bin"), root.join("link.bin")).unwrap();
+        assert!(hash_artifacts(root, vec![(root.join("link.bin"), Kind::RecentTable)]).is_err());
+    }
     fn listed_hashes() -> u64 {
         LISTED_HASHED.with(std::cell::Cell::get)
     }
