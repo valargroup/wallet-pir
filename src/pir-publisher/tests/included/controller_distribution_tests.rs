@@ -41,6 +41,7 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
         integrity_failed: AtomicBool::new(false),
+        fleet_withdrawal: AtomicBool::new(false),
         foreground: AtomicU64::new(0),
     }))
 }
@@ -1979,6 +1980,7 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
     });
     assert!(owner.0.withdrawn.load(Ordering::Acquire));
     assert!(owner.0.integrity_failed.load(Ordering::Acquire));
+    assert!(owner.0.fleet_withdrawal.load(Ordering::Acquire));
     assert_eq!(status("phase"), "integrity_failed");
     assert_eq!(
         status("correctness_validation")["state"],
@@ -2207,6 +2209,33 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .unwrap()
             .remove(&self.config.publication_root);
     }
+    /// The fleet operations requested so far, in order.
+    fn fleet_operations(&self) -> Vec<String> {
+        std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+    async fn wait_fleet(&self, what: &str, done: impl Fn(&[String]) -> bool) -> Vec<String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let operations = self.fleet_operations();
+            if done(&operations) {
+                return operations;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what}: {operations:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
 }
 
 async fn status_of(tls: &Tls) -> serde_json::Value {
@@ -2346,6 +2375,14 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
             .await
             .is_err()
     );
+    // The router would still proxy queries to the workers this process
+    // activated, so the fleet withdraws them too.
+    let operations = startup
+        .wait_fleet("fleet withdrawal", |ops| {
+            ops.iter().any(|op| op == "withdraw")
+        })
+        .await;
+    assert_eq!(operations, ["prepare", "activate", "withdraw"]);
     // Shutdown joins the validator and releases the controller lock.
     shutdown.request();
     tokio::time::timeout(std::time::Duration::from_secs(20), task)
@@ -2369,6 +2406,12 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
             .await
             .is_err()
     );
+    // Workers may still serve what the previous process activated; the new
+    // process withdraws them and activates nothing.
+    let operations = startup
+        .wait_fleet("restart fleet withdrawal", |ops| ops.len() > 3)
+        .await;
+    assert_eq!(operations[3..], ["withdraw"]);
     assert!(!task.is_finished());
     shutdown.request();
     tokio::time::timeout(std::time::Duration::from_secs(20), task)
@@ -2381,6 +2424,39 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
         .unwrap()
         .iter()
         .any(|f| f.path == table.path));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integrity_withdrawal_reaches_the_fleet_only_when_it_routes_workers_and_retries() {
+    let startup = Startup::new().await;
+    let owner = authority(&startup.directory, None, startup._rpc.client.clone());
+    let pending = || owner.0.fleet_withdrawal.load(Ordering::Acquire);
+    // Shadow and HTTP-only controllers route no workers: the request clears.
+    for (shadow, http_only) in [(true, false), (false, true)] {
+        let config = Config {
+            shadow,
+            http_only,
+            ..startup.config.clone()
+        };
+        owner.0.fleet_withdrawal.store(true, Ordering::Release);
+        withdraw_fleet(&config, &owner).await.unwrap();
+        assert!(!pending());
+    }
+    assert!(startup.fleet_operations().is_empty());
+    // An unavailable fleet leaves the withdrawal pending for the next pass.
+    owner.0.fleet_withdrawal.store(true, Ordering::Release);
+    let unavailable = Config {
+        fleet_command: startup.root.path().join("missing-fleet"),
+        ..startup.config.clone()
+    };
+    assert!(withdraw_fleet(&unavailable, &owner).await.is_err());
+    assert!(pending());
+    withdraw_fleet(&startup.config, &owner).await.unwrap();
+    assert!(!pending());
+    assert_eq!(startup.fleet_operations(), ["withdraw"]);
+    // Nothing pending sends nothing.
+    withdraw_fleet(&startup.config, &owner).await.unwrap();
+    assert_eq!(startup.fleet_operations(), ["withdraw"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -168,6 +168,11 @@ struct Inner {
     validation: super::validator::Queue,
     /// The active publication lists bytes that failed integrity validation.
     integrity_failed: AtomicBool,
+    /// Integrity withdrawal the fleet has not yet confirmed. Withdrawing this
+    /// process's routes leaves the router proxying setup and query requests
+    /// to workers that still serve the publication; the publication loop,
+    /// which also owns activation, sends the fleet `withdraw` until it succeeds.
+    fleet_withdrawal: AtomicBool,
     /// Candidate preparation and activation in progress; background
     /// validation waits while any runs.
     foreground: AtomicU64,
@@ -394,6 +399,8 @@ pub async fn run_managed(
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
         integrity_failed: AtomicBool::new(failed.is_some()),
+        // Workers may still serve what the previous process activated.
+        fleet_withdrawal: AtomicBool::new(failed.is_some()),
         foreground: AtomicU64::new(0),
     }));
     if let Some(failure) = failed {
@@ -500,6 +507,11 @@ pub async fn run_managed(
                 (&mut ingest).await??;
             }
             return Err("history publisher background service stopped".into());
+        }
+        if let Err(error) = withdraw_fleet(&config, &authority).await {
+            tracing::error!(%error, "fleet withdrawal of corrupt bytes failed; retrying");
+            authority.0.status.write().unwrap()["fleet_withdrawal_error"] =
+                error.to_string().into();
         }
         if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
             if shutdown.requested() {
@@ -653,6 +665,26 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         &config.publication_root.join("withdrawn.json"),
         &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":true}))?,
     )?;
+    Ok(())
+}
+
+/// Send a pending integrity withdrawal to the fleet. Shadow and HTTP-only
+/// controllers own no worker routing and only clear the request.
+async fn withdraw_fleet(config: &Config, authority: &Authority) -> Result<(), BoxError> {
+    if !authority.0.fleet_withdrawal.swap(false, Ordering::AcqRel)
+        || config.shadow
+        || config.http_only
+    {
+        return Ok(());
+    }
+    if let Err(error) = fleet(config, serde_json::json!({"operation":"withdraw"})).await {
+        authority.0.fleet_withdrawal.store(true, Ordering::Release);
+        return Err(error);
+    }
+    tracing::warn!("fleet routing withdrawn for a publication listing corrupt bytes");
+    if let Some(status) = authority.0.status.write().unwrap().as_object_mut() {
+        status.remove("fleet_withdrawal_error");
+    }
     Ok(())
 }
 
@@ -1302,6 +1334,9 @@ async fn activate_history(
             .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         authority.0.integrity_failed.store(false, Ordering::Release);
+        // The fleet activated these verified bytes; a withdrawal still
+        // pending for the replaced publication is obsolete.
+        authority.0.fleet_withdrawal.store(false, Ordering::Release);
         // Preparation verified these bytes; a restored predecessor's
         // validation is obsolete and releases its directory.
         authority.0.validation.cancel();
@@ -1706,6 +1741,7 @@ fn validation_event(
                 if lists_failed(std::slice::from_ref(&failure), distribution.inventory()) {
                     authority.0.integrity_failed.store(true, Ordering::Release);
                     authority.0.withdrawn.store(true, Ordering::Release);
+                    authority.0.fleet_withdrawal.store(true, Ordering::Release);
                     let mut status = authority.0.status.write().unwrap();
                     status["phase"] = "integrity_failed".into();
                     let mut value = validation_status(identity, "failed");
@@ -2774,6 +2810,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
+            fleet_withdrawal: AtomicBool::new(false),
             foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
@@ -3114,6 +3151,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
+            fleet_withdrawal: AtomicBool::new(false),
             foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
@@ -3479,6 +3517,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 runtime_preparation_failures: AtomicU64::new(0),
                 validation: Default::default(),
                 integrity_failed: AtomicBool::new(false),
+                fleet_withdrawal: AtomicBool::new(false),
                 foreground: AtomicU64::new(0),
             }))
         }
