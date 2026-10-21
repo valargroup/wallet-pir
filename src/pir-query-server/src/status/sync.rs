@@ -129,9 +129,6 @@ impl StatusSync {
         drop(response);
         self.observe(current.clone()).await?;
         self.conditional = Some(current.clone());
-        if !current.eligible {
-            return Err("Status publication withdrawn".into());
-        }
         Ok(current)
     }
     async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
@@ -305,6 +302,13 @@ impl StatusSync {
         self.source.discover().await?;
         self.source.reset_budget();
         let current = self.current().await?;
+        // A withdrawal is the publisher's announced recovery, not a transport
+        // failure. Service is already fenced, so keep the normal cadence and
+        // load the replacement soon after it is published.
+        if !current.eligible {
+            self.deferred = true;
+            return Ok(Input::Deferred);
+        }
         self.service
             .state
             .lock()
@@ -452,6 +456,9 @@ impl Prepared<'_> {
             candidate,
         } = self;
         let latest = sync.current().await?;
+        if !latest.eligible {
+            return Err("Status publication withdrawn".into());
+        }
         inventory.validate(&latest)?;
         sync.authority(latest, &inventory.manifest).await?;
         sync.pin_worker(&inventory.manifest).await?;

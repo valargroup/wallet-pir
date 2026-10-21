@@ -145,7 +145,13 @@ async fn tls_withdrawal_fences_before_persisting_and_refuses_replay() {
         c.revision += 1;
         c.eligible = false;
     }
-    assert!(task.synchronize().await.is_err());
+    // Withdrawal fences service but keeps the normal poll cadence.
+    task.synchronize().await.unwrap();
+    assert!(task.deferred);
+    assert_eq!(
+        service.state.lock().await.synchronization,
+        "waiting_for_peer"
+    );
     assert!(service.serving().await.is_err());
     let saved: Floor =
         serde_json::from_slice(&fs::read(service.dir.join("publisher-high-water.json")).unwrap())
