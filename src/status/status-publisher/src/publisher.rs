@@ -147,6 +147,7 @@ impl Publisher {
         cache: &mut Option<Generation>,
         rpc: &ZakuraClient,
     ) -> Result<Generation, Failure> {
+        let expected = self.published.read().unwrap().current.clone();
         let (generation, epoch) = authority.next_identity()?;
         let previous = cache.clone();
         let prepared = tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
@@ -187,25 +188,34 @@ impl Publisher {
             self.withdraw();
             return Err("Status candidate anchor disconnected".into());
         }
-        manifest.fresh(now_ms())?;
-        authority.commit(&manifest)?;
-        let current = Current {
-            schema: SCHEMA.into(),
-            revision: self.revision()?,
-            recovery_epoch: epoch,
-            network: manifest.network,
-            salt: manifest.salt,
-            generation: manifest.generation,
-            inventory: Some(object),
-            eligible: true,
-        };
-        // The current pointer is durable only after all referenced objects and
-        // authority. A restart allocates a new revision and recovery epoch.
-        durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
-        *self.published.write().unwrap() = Published {
-            current: Some(current),
-            manifest: Some(manifest.clone()),
-        };
+        // A withdrawal while preparation was running must survive this pass.
+        // Hold the same lock through the durable commit and pointer switch so
+        // a concurrent withdrawal cannot be replaced by an eligible view.
+        {
+            let mut published = self.published.write().unwrap();
+            if published.current != expected {
+                return Err("Status authority changed during preparation".into());
+            }
+            manifest.fresh(now_ms())?;
+            authority.commit(&manifest)?;
+            let current = Current {
+                schema: SCHEMA.into(),
+                revision: self.revision()?,
+                recovery_epoch: epoch,
+                network: manifest.network,
+                salt: manifest.salt,
+                generation: manifest.generation,
+                inventory: Some(object),
+                eligible: true,
+            };
+            // The current pointer is durable only after all referenced objects and
+            // authority. A restart allocates a new revision and recovery epoch.
+            durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
+            *published = Published {
+                current: Some(current),
+                manifest: Some(manifest.clone()),
+            };
+        }
         tracing::info!(
             generation,
             recovery_epoch = epoch,
