@@ -4004,6 +4004,13 @@ bindings are kept. It starts only that unit. The request (`transparent-load-repa
 - an independent encrypted-answer `exact_check` `{host, argv, timeout}`. Copy it from the
   inventory's History exact check.
 
+If a prior upgrade left stale load pins, `load.replacement_pins` may explicitly map
+every worker ID to its reviewed running binary hash. The operation still pins the
+old `pins.json` bytes and refuses worker or input drift. It writes replacement pins
+only after the independent encrypted-answer check, alongside the repaired unit file.
+Rollback restores both previous files and leaves the checker stopped. Without this
+field, the existing worker pins must match and are never changed.
+
 Plan and preflight are read-only; preflight also runs the exact check. Deploy takes the reviewed
 `plan_sha256` and holds the production lock. It refuses a `latched.json`, a worker that is not
 running its pinned binary, changed load inputs or unit files, a running unit or an unfinished
