@@ -42,6 +42,14 @@ impl Coordinator {
                 Ok(())
             })?;
         }
+        let distribution = self.distribution.lock().unwrap().clone();
+        if let Some(distribution) = distribution {
+            let store = self.store.lock().unwrap();
+            distribution.withdraw(&worker::Revocation {
+                recovery_epoch: store.state().recovery.epoch,
+                sessions: store.state().recovery.revoked.clone(),
+            })?;
+        }
         self.deliver_revocations().await
     }
 

@@ -158,6 +158,12 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
     }
     let coordinator =
         Coordinator::open_with_serving(&data_dir.join("control"), groups, routers, query_ingress)?;
+    let rpc = zakura_cookie
+        .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
+        .transpose()?;
+    if let Some(rpc) = rpc.as_ref() {
+        coordinator.distribute_from(rpc.clone())?;
+    }
     if let Some(listen) = artifact_listen {
         let artifacts = coordinator.artifact_router();
         let artifact = tokio::spawn(http.serve(listen, artifacts));
@@ -184,9 +190,6 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
     let task = tokio::spawn(http.serve(listen, routes));
     tasks.own(&task);
     let journal = EnhanceJournal::open(&data_dir)?;
-    let rpc = zakura_cookie
-        .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
-        .transpose()?;
     let prevouts = crate::zakura::Prevouts::new(prevout_cache_outputs);
     crate::application::run_until(
         crate::application::Config {
