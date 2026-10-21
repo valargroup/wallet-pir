@@ -90,8 +90,13 @@ PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 # Autonomous HTTPS History providers (publisher `http_only`): each worker pins its
 # configuration and unit, and its holdings decide the only ready identity it may
 # report. A full-holdings provider has no assignment; a recent provider owns the
-# `assignment.json` its own bootstrap staged (routing/manager.rs).
+# `assignment.json` its own bootstrap staged (routing/manager.rs). Settings are
+# the enabled `transparent_history.settings` of the `--config FILE`, whose whole
+# bytes are pinned.
 PROVIDER_PIN_KEYS = {'ready_identity', 'limits', 'args', 'config_sha256', 'unit_sha256'}
+# The publisher discovery contract (src/shared/pir-service-discovery) a current
+# query server requires before it synchronizes; same major is compatible.
+DISCOVERY_PATH, DISCOVERY_MAJOR = '/.well-known/pir-service-discovery', '1'
 PROVIDER_IDENTITY = {True: {'role': None, 'worker_id': None},
                      False: {'role': 'recent-replica', 'worker_id': 'provider'}}
 
@@ -531,10 +536,38 @@ class Upgrade:
         words = units.split_exec(service['ExecStart'][-1])[2].split()
         if words[:1] != ['--config'] or len(words) < 2:
             raise ValueError('unit does not run --config FILE')
-        config = json.loads(ex.read(target.host, words[1]) or 'null')
+        document = json.loads(ex.read(target.host, words[1]) or 'null')
+        history = document.get('transparent_history') if isinstance(document, dict) else None
+        if not isinstance(history, dict) or history.get('enabled') is not True:
+            raise ValueError('%s does not enable transparent_history' % words[1])
+        config = history.get('settings')
         if not isinstance(config, dict):
-            raise ValueError('%s is not a JSON object' % words[1])
+            raise ValueError('%s has no transparent_history.settings object' % words[1])
         return words[1], config
+
+    def discovery_problems(self, ex):
+        """Read-only: every provider's publisher must serve a compatible discovery document.
+
+        A current query server refuses to synchronize from a publisher that
+        answers 404 at the discovery path, so restarting onto it would leave the
+        provider unable to follow its publisher.
+        """
+        problems = []
+        for target in self.workers:
+            try:
+                publisher = self.provider_config(ex, target)[1]['publisher'].rstrip('/')
+            except (TypeError, KeyError, ValueError, AttributeError) as error:
+                problems.append('%s provider configuration: %s' % (target.key, error))
+                continue
+            status, body = ex.http_get(target.host, publisher + DISCOVERY_PATH)
+            try:
+                document = json.loads(body) if status == 200 else None
+                major = document['version'].split('.')[0] if document['service'] == 'pir-publisher' else None
+            except (ValueError, TypeError, KeyError, AttributeError):
+                major = None
+            problem_if(major != DISCOVERY_MAJOR, '%s publisher %s answered discovery %s, not a pir-publisher %s.x '
+                       'document; upgrade the publisher first' % (target.key, publisher, status, DISCOVERY_MAJOR), problems)
+        return problems
 
     def provider_problems(self, ex, key, document):
         """Provider ownership from its own `<shard_dir>/active.json` record (history/live.rs Publication).
@@ -573,6 +606,8 @@ class Upgrade:
 
     def problems(self, ex, targets=None):
         problems = self.controller_problems(ex)
+        if self.providers:
+            problems += self.discovery_problems(ex)
         for target in self.workers if targets is None else targets:
             problems.extend(self.worker_problems(ex, target))
         return problems

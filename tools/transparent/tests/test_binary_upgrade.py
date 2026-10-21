@@ -862,6 +862,9 @@ class UnifiedHistoryUpgrade(UnifiedOwner, Harness):
         self.publisher_untouched()
 
 
+PUBLISHER_ORIGIN = 'https://enhance-pir.example'
+
+
 def provider_shard_dir(unit):
     return '/srv/transparent-activity/provider/%s' % unit.removesuffix('.service')
 
@@ -887,14 +890,24 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
         self.place('coordinator', PUBLISHER_CONFIG, self.configuration)
         for unit, full in self.FULL.items():
             root = provider_shard_dir(unit)
-            self.place('v12', history_config(unit), {
-                'publisher': 'https://publisher.example/v1', 'full_holdings': full, 'shard_dir': root})
+            self.place('v12', history_config(unit), self.provider_document(full, root))
             self.install_active(unit, MAP)
             self.fake.health_shapes[('v12', unit)] = lambda ready_, exe, unit=unit: {
                 **self.provider_ready(unit, self.map[0]), 'ready': ready_,
                 **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
+        self.discovery = (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))
+        http_get = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            self.discovery if url == PUBLISHER_ORIGIN + binary_upgrade.DISCOVERY_PATH else http_get(host, url, timeout))
         self.write_request()
         self.fake.log.clear()
+
+    @staticmethod
+    def provider_document(full, root):
+        """The installed `pir-query-server --config FILE` shape: settings under enabled transparent_history."""
+        return {'management_listen': '127.0.0.1:18393', 'transparent_history': {'enabled': True, 'settings': {
+            'publisher': PUBLISHER_ORIGIN, 'publisher_network': 'main', 'publisher_genesis': '00' * 32,
+            'listen': '10.142.0.9:8093', 'shard_dir': root, 'full_holdings': full}}}
 
     def place(self, host, path, value):
         """Fixture state, not a deployment write."""
@@ -960,6 +973,33 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
                 self.refuses(change_request=change, message=message)
                 self.assertEqual(set(self.running().values()), {sha256(OLD)})
         self.write_request()
+
+    def test_provider_configuration_without_enabled_history_refuses(self):
+        self.run_cli('baseline')
+        recent = 'transparent-v12-recent.service'
+        root = provider_shard_dir(recent)
+        disabled = self.provider_document(False, root)
+        disabled['transparent_history']['enabled'] = False
+        cases = {'disabled': disabled, 'missing': {'management_listen': '127.0.0.1:18393'},
+                 'top-level settings': disabled['transparent_history']['settings']}
+        for name, document in cases.items():
+            with self.subTest(name):
+                self.place('v12', history_config(recent), document)
+                self.write_request()  # pins the changed bytes, so only the shape refuses
+                self.refuses(message='transparent_history')
+                self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.place('v12', history_config(recent), self.provider_document(False, root))
+        self.write_request()
+
+    def test_publisher_without_discovery_refuses_before_any_change(self):
+        self.run_cli('baseline')
+        for name, reply in {'404': (404, 'not found'),
+                            'other major': (200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'}))}.items():
+            with self.subTest(name):
+                self.discovery = reply
+                self.refuses(message='upgrade the publisher first')
+                self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
 
     def test_provider_ownership_or_readiness_mismatch_refuses(self):
         self.run_cli('baseline')
