@@ -512,6 +512,15 @@ impl<'a> Acquired<'a> {
             runtimes: Some(staged.directory.clone()),
         };
         let cold = owner.live.is_none();
+        // Revocation permanently cancels a snapshot, even when the publisher
+        // later restores its map. Rebuild private data before that recovery.
+        if owner
+            .pending
+            .as_ref()
+            .is_some_and(LiveService::is_invalidated)
+        {
+            owner.pending = None;
+        }
         let live = if let Some(live) = owner.live.as_ref().or(owner.pending.as_ref()) {
             live.clone()
         } else {
