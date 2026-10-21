@@ -45,6 +45,7 @@ enhance-tests = [
     "zakura-pir-client/testing",
 ]
 transparent-tests = [
+    "wallet-recovery-tests",
     "publisher-host",
     "transparent-history",
     "transparent-detail",
@@ -66,6 +67,25 @@ transparent-tests = [
     "zakura-server-chain/testing-node",
     "dep:zakura-pir-client",
     "zakura-pir-client/transparent",
+    "zakura-pir-client/testing",
+    "dep:zakura-pir-publisher",
+    "zakura-pir-publisher/transparent",
+    "dep:zakura-pir-protocol",
+    "zakura-pir-protocol/transparent",
+    "reqwest/blocking",
+]
+# The wallet consumer regression does not need node fixtures or host binaries.
+wallet-recovery-tests = [
+    "transparent-history",
+    "dep:hex",
+    "dep:transparent-query-server",
+    "dep:transparent-shared",
+    "transparent-shared/test-support",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/engine-store",
+    "zakura-pir-client/recovery",
+    "zakura-pir-client/reqwest",
     "zakura-pir-client/testing",
     "dep:zakura-pir-publisher",
     "zakura-pir-publisher/transparent",
@@ -133,6 +153,8 @@ required-features = ["transparent-tests"]
 test = false
 
 [dev-dependencies]
+# Address fixtures belong to the wallet consumer tests, never serving libraries.
+transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 tempfile = "3"
@@ -222,3 +244,8 @@ required-features = ["transparent-tests"]
 name = "transparent_provider_installation"
 path = "tests/transparent_provider_installation.rs"
 required-features = ["transparent-tests"]
+
+[[test]]
+name = "wallet_revision_reuse"
+path = "tests/wallet_revision_reuse.rs"
+required-features = ["wallet-recovery-tests"]

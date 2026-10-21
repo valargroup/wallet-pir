@@ -2216,6 +2216,7 @@ dependencies = [
  "zakura-pir-publisher",
  "zakura-pir-query-server",
  "zakura-server-chain",
+ "zakura-transparent",
 ]
 
 [[package]]
@@ -3732,7 +3733,6 @@ dependencies = [
  "zakura-pir-protocol",
  "zakura-pir-publisher",
  "zakura-pir-query-server",
- "zakura-transparent",
 ]
 
 [[package]]

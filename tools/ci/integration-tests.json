@@ -49,7 +49,6 @@
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
-      "wallet_revision_reuse",
       "wallet_sync"
     ]
   },
@@ -97,7 +96,8 @@
       "shard_filters",
       "transparent_host_processes",
       "transparent_provider_installation",
-      "unified_http_sync_campaign"
+      "unified_http_sync_campaign",
+      "wallet_revision_reuse"
     ]
   },
   "zakura-server-chain": {
