@@ -8,6 +8,28 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def test_interrupted_verification_resumes_without_restarting_publisher(self):
+        self.ex.fail_probe = True
+        with self.assertRaises(DeployError):
+            self.deploy()
+        before = self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id']
+        self.ex.fail_probe = False
+        self.ex.effects.clear()
+        self.assertEqual(self.target.verify()['phase'], 'committed')
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id'], before)
+        self.assertFalse(any(publisher.UNIT in args and args[0] in ('start', 'stop', 'restart')
+                             for args in self.ex.effects))
+
+    def test_verification_recovery_refuses_changed_configuration(self):
+        self.ex.fail_probe = True
+        with self.assertRaises(DeployError):
+            self.deploy()
+        self.ex.put('coordinator', publisher.CONFIG, 'foreign configuration')
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'managed file changed'):
+            self.target.verify()
+        self.assertEqual(self.ex.effects, [])
+
     def test_rollback_terminates_only_the_stalled_candidate_invocation(self):
         self.deploy()
         original = self.ex.systemctl
