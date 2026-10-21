@@ -1046,6 +1046,10 @@ async fn prepare_candidate(
     {
         return Err("candidate invalidated while preparing".into());
     }
+    // Shutdown can arrive while the canonicality request is awaiting its reply.
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
     let prepared_unix = unix_now();
     if config.shadow {
         authority.0.status.write().unwrap()["phase"] = "shadow_verified".into();
@@ -1092,6 +1096,12 @@ async fn activate_history(
         || authority.0.epoch.load(Ordering::Acquire) != epoch
     {
         return Err("candidate invalidated before activation".into());
+    }
+    // The node request can outlive a stop request. Until activation intent is
+    // written, abandoning the candidate still leaves the active publication alone.
+    if authority.0.shutdown.requested() {
+        tracing::info!(height, "candidate activation stopped by shutdown");
+        return Ok(());
     }
     let directory = &candidate.publication.directory;
     publication::write_atomic(
