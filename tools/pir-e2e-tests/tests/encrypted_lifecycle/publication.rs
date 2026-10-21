@@ -1066,7 +1066,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         pinned.read_to_string(&mut bytes).unwrap();
         assert_eq!(bytes, "interrupted candidate", "already-open streams survive collection");
         assert!(root.join("objects/operator-note").exists());
-        initial.verify(&root).unwrap();
+        enhance_publisher::publication::verify(&root, initial).unwrap();
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());
