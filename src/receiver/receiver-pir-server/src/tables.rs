@@ -349,7 +349,12 @@ pub struct Tables {
     live: Arc<AtomicUsize>,
     loads: AtomicU64,
     entries: Mutex<Entries>,
+    /// One gate per key being loaded; see [`Tables::once`].
+    loading: Mutex<HashMap<Key, Arc<Mutex<()>>>>,
 }
+
+/// A cache key: a table's session ID, or a filter's digest (`true`).
+type Key = (Hash, bool);
 
 /// Cached entries by session ID, or by digest for a filter (`true`), with their last use.
 #[derive(Default)]
@@ -366,6 +371,7 @@ impl Tables {
             live: Arc::new(AtomicUsize::new(0)),
             loads: AtomicU64::new(0),
             entries: Mutex::new(Entries::default()),
+            loading: Mutex::new(HashMap::new()),
         }
     }
 
@@ -389,20 +395,23 @@ impl Tables {
     /// since they keep their bytes until their queries finish: if evicting every idle
     /// table could not make room, the load is [`LoadError::Busy`] and nothing is evicted.
     pub fn get(&self, source: &Source) -> Result<Arc<Resident>, LoadError> {
-        if let Some(found) = self.touch(&(source.id, false)) {
+        let key = (source.id, false);
+        if let Some(found) = self.touch(&key) {
             return Ok(found);
         }
-        self.reserve(source.resident_bytes())?;
-        let bytes = source.resident_bytes();
-        let loaded = match (source.load)(self) {
-            Ok(loaded) if loaded.id() == source.id => loaded,
-            failed => {
-                self.live.fetch_sub(bytes, Ordering::SeqCst);
-                return Err(failed.err().unwrap_or(Error::Malformed.into()));
-            }
-        };
-        self.loads.fetch_add(1, Ordering::SeqCst);
-        Ok(self.cache((source.id, false), Content::Table(Box::new(loaded)), bytes))
+        self.once(key, || {
+            self.reserve(source.resident_bytes())?;
+            let bytes = source.resident_bytes();
+            let loaded = match (source.load)(self) {
+                Ok(loaded) if loaded.id() == source.id => loaded,
+                failed => {
+                    self.live.fetch_sub(bytes, Ordering::SeqCst);
+                    return Err(failed.err().unwrap_or(Error::Malformed.into()));
+                }
+            };
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            Ok(self.cache(key, Content::Table(Box::new(loaded)), bytes))
+        })
     }
 
     /// `source`'s filter encoding, reading it if it is not cached, within the budget as
@@ -413,6 +422,12 @@ impl Tables {
         if let Some(found) = self.touch(&key) {
             return Ok(found);
         }
+        self.once(key, || self.read_filter(source))
+    }
+
+    /// Reads, checks and caches `source`'s encoding; see [`Self::filter`].
+    fn read_filter(&self, source: &FilterSource) -> Result<Arc<Resident>, LoadError> {
+        let key = (source.digest, true);
         let bytes = source.bytes as usize;
         self.reserve(bytes)?;
         let loaded = (source.load)().and_then(|encoding| {
@@ -446,6 +461,30 @@ impl Tables {
             self.live.fetch_add(bytes, Ordering::SeqCst);
         }
         self.cache((source.id, false), Content::Table(Box::new(loaded)), bytes)
+    }
+
+    /// The entry for `key`, running `load` only if no concurrent caller is loading it:
+    /// one that is makes this one wait and share its cached result, so concurrent misses
+    /// for one key reserve and load once. After a failed load the next waiter tries.
+    fn once(
+        &self,
+        key: Key,
+        load: impl FnOnce() -> Result<Arc<Resident>, LoadError>,
+    ) -> Result<Arc<Resident>, LoadError> {
+        let gate = self.loading.lock().unwrap().entry(key).or_default().clone();
+        let result = {
+            let _turn = gate.lock().unwrap_or_else(|e| e.into_inner());
+            match self.touch(&key) {
+                Some(found) => Ok(found),
+                None => load(),
+            }
+        };
+        let mut loading = self.loading.lock().unwrap();
+        // Only the map and this caller hold the gate: no one waits on it.
+        if Arc::strong_count(&gate) == 2 {
+            loading.remove(&key);
+        }
+        result
     }
 
     /// The cached entry for `id`, marked used.
@@ -556,6 +595,45 @@ mod tests {
             move || Ok(table.clone()),
         )
         .unwrap()
+    }
+
+    /// Concurrent misses for one filter read it once and share the cached copy.
+    #[test]
+    fn concurrent_filter_misses_load_once() {
+        use receiver_directory::shards::{Coverage, ShardFilter};
+        let coverage = Coverage {
+            start_height: 100,
+            end_height: 101,
+            end_hash: [3; 32],
+        };
+        let filter =
+            ShardFilter::build([1; 32], 0, coverage, &[crate::common::receiver()]).unwrap();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let source = Arc::new(FilterSource::stored(
+            filter.digest(),
+            filter.bytes().len() as u32,
+            filter.receivers(),
+            {
+                let (reads, encoding) = (reads.clone(), filter.bytes().to_vec());
+                move || {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    Ok(encoding.clone())
+                }
+            },
+        ));
+        let tables = Arc::new(Tables::new(1 << 30));
+        let loads: Vec<_> = (0..8)
+            .map(|_| {
+                let (tables, source) = (tables.clone(), source.clone());
+                std::thread::spawn(move || tables.filter(&source).unwrap())
+            })
+            .collect();
+        let loaded: Vec<_> = loads.into_iter().map(|l| l.join().unwrap()).collect();
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert!(loaded.iter().all(|l| Arc::ptr_eq(l, &loaded[0])));
+        assert_eq!(tables.resident(), filter.bytes().len());
+        assert!(tables.loading.lock().unwrap().is_empty());
     }
 
     /// A load that idle tables cannot make room for is `Busy` without evicting the tables
