@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use transparent_shared::tx_detail::synth;
 
-#[path = "../../transparent/transparent-query-server/tests/support/display_world.rs"]
+#[path = "../../../src/transparent/transparent-query-server/tests/support/display_world.rs"]
 mod display_world;
 use display_world::*;
 
-#[path = "../../transparent/transparent-query-server/tests/support/operator_set.rs"]
+#[path = "../../../src/transparent/transparent-query-server/tests/support/operator_set.rs"]
 mod operator_set;
 
 fn free_port() -> u16 {

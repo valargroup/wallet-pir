@@ -26,6 +26,8 @@ class CudaSelectionTests(unittest.TestCase):
                      'src/status/status-query-server/src/backend.rs',
                      'src/shared/pir-runtime/src/evaluation.rs',
                      'src/pir-query-server/tests/operator.rs',
+                     'tools/pir-e2e-tests/tests/http.rs',
+                     'tools/pir-e2e-tests/tests/support/encrypted.rs',
                      '.github/workflows/ci-cuda.yml', 'rust-toolchain.toml'):
             with self.subTest(path=path):
                 self.assertTrue(self.select([path])['cuda'])

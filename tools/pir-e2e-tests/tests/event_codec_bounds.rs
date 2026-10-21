@@ -10,7 +10,7 @@ fn snapshot_extent_bounds_match_the_compiled_event_codec() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
-        .expect("the end-to-end tests live under src/pir-e2e-tests");
+        .expect("the end-to-end tests live under tools/pir-e2e-tests");
     let check = r#"
 import importlib.util
 import sys

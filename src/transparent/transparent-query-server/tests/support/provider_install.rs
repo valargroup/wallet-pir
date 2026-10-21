@@ -36,7 +36,7 @@ async fn tls(root: &Path, upstream: &str) -> (String, tokio::process::Child) {
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../transparent/transparent-query-server/tests/support/provider_tls.py"
+            "/../../src/transparent/transparent-query-server/tests/support/provider_tls.py"
         ))
         .arg(upstream.strip_prefix("http://").unwrap())
         .arg(root.join("ca.pem"))
@@ -293,6 +293,10 @@ async fn installation_case(case: Case) {
     }
     let mut replies = BTreeMap::<String, Vec<u8>>::new();
     replies.insert(
+        pir_service_discovery::PATH.into(),
+        pir_service_discovery::Document::publisher().to_json(),
+    );
+    replies.insert(
         "/provider/v1/current".into(),
         serde_json::to_vec(&current).unwrap(),
     );
@@ -390,7 +394,12 @@ async fn installation_case(case: Case) {
         };
         async move { axum::Json(answer) }
     };
+    // The publisher edge proxies exactly this path to its management listener.
     let app = axum::Router::new()
+        .route(
+            pir_service_discovery::PATH,
+            axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+        )
         .route("/provider/v1/anchors/check", axum::routing::post(batch))
         .fallback(axum::routing::get(
             move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
@@ -455,7 +464,7 @@ async fn installation_case(case: Case) {
     terminal.spawn_prewarm().await.unwrap();
     let (archive, archive_server) = serve(terminal).await;
     let (archive, mut archive_tls) = tls(root, &archive).await;
-    // Compiled into pir-e2e-tests: src/pir-e2e-tests is two levels below the root.
+    // Compiled into pir-e2e-tests: tools/pir-e2e-tests is two levels below the root.
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)

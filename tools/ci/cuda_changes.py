@@ -26,8 +26,8 @@ CONTRACTS = (
     'src/pir-query-server/tests/operator.rs',
     'src/pir-query-server/src/main.rs',
     'src/pir-query-server/src/config.rs',
-    'src/pir-e2e-tests/tests/http.rs',
-    'src/pir-e2e-tests/tests/support/encrypted.rs',
+    'tools/pir-e2e-tests/tests/http.rs',
+    'tools/pir-e2e-tests/tests/support/encrypted.rs',
     'src/status/status-query-server/tests/status_wallet.rs',
 )
 TOOLS = {
@@ -47,7 +47,7 @@ FORWARDERS = {
     'src/enhance/enhance-query-server/Cargo.toml',
     'src/status/status-query-server/Cargo.toml',
     'src/status/status-publisher/Cargo.toml', 'src/pir-query-server/Cargo.toml',
-    'src/pir-e2e-tests/Cargo.toml',
+    'tools/pir-e2e-tests/Cargo.toml',
 }
 
 
