@@ -824,26 +824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enhance-pir-exercise"
-version = "0.0.1"
-dependencies = [
- "axum",
- "clap",
- "enhance-publisher",
- "enhance-query-server",
- "hdrhistogram",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "enhance-pir-load-test"
 version = "0.0.1"
 dependencies = [

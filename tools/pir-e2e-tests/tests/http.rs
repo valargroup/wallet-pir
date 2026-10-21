@@ -882,13 +882,6 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
             replicas,
         });
     }
-    let inventory = serde_json::json!({"groups": groups.iter().map(|g| serde_json::json!({
-        "name":g.id, "replicas":g.replicas.iter().map(|r| serde_json::json!({"name":r.name,"url":r.url})).collect::<Vec<_>>()
-    })).collect::<Vec<_>>()});
-    let inventory_path = root.path().join("inventory.json");
-    let policy_path = root.path().join("policy.json");
-    std::fs::write(&inventory_path, serde_json::to_vec(&inventory).unwrap()).unwrap();
-    std::fs::write(&policy_path, br#"{"kind":"isolated-test-policy"}"#).unwrap();
     let serving = serving::Serving::start(root.path(), &root.path().join("control"), groups)
         .await
         .unwrap();
@@ -921,41 +914,6 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
     assert_eq!(blocked["capacity"]["memory_limit"]["records"], 67);
     let demand = blocked["capacity"]["requested"].as_str().unwrap();
     assert_eq!(blocked["capacity"]["requests"][demand]["target_groups"], 3);
-    // Run the actual operations entrypoint against live coordinator health. This
-    // freezes demand and inputs only; no provider calls or provisioning occur.
-    let operations = root.path().join("operations");
-    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/enhance/scripts/expansion-journal.py");
-    let observe = || {
-        let output = std::process::Command::new("python3")
-            .arg(&script)
-            .arg("--state-dir")
-            .arg(&operations)
-            .arg("--coordinator-url")
-            .arg(&operator)
-            .arg("--inventory")
-            .arg(&inventory_path)
-            .arg("--policy")
-            .arg(&policy_path)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["operation"], demand);
-        assert_eq!(result["phase"], "requested");
-        assert_eq!(result["target_groups"], 3);
-    };
-    observe();
-    let persisted = std::fs::read(operations.join("journal.json")).unwrap();
-    observe();
-    assert_eq!(
-        std::fs::read(operations.join("journal.json")).unwrap(),
-        persisted
-    );
     refuse.store(false, std::sync::atomic::Ordering::SeqCst);
     coordinator.reconcile().await.unwrap();
     coordinator
@@ -968,12 +926,6 @@ async fn new_shard_uses_admitted_alternative_group_over_http() {
         .json()
         .await
         .unwrap();
-    observe();
-    assert_eq!(
-        std::fs::read(operations.join("journal.json")).unwrap(),
-        persisted,
-        "successful publication must not replace unsatisfied provisioning demand"
-    );
     assert_eq!(health["published_replica_counts"]["g1"], 2);
     assert!(health["published_replica_counts"].get("g0").is_none());
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();

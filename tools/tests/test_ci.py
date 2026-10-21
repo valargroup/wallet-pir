@@ -403,7 +403,6 @@ class BoundaryTests(unittest.TestCase):
                      {**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'},
                      {**self.edge('enhance-pir-load-test'), 'path': 'tools/enhance/loadtest/'},
                      {**self.edge('enhance-pir-client'), 'path': 'tools/enhance/client/'},
-                     {**self.edge('enhance-pir-exercise'), 'path': 'tools/enhance/exercise/'},
                      {**self.edge('pir-monitor'), 'path': 'tools/shared/pir-monitor/'},
                      {**self.edge('unlisted-tool'), 'path': 'tools/enhance/unlisted/'},
                      {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},

@@ -327,7 +327,7 @@ class FastBuildTests(unittest.TestCase):
                          'pir-e2e-tests/enhance-tests,pir-e2e-tests/transparent-tests,pir-publisher/status-tests')
         self.assertNotIn('--bins', build)
         self.assertEqual(bins, [
-            'enhance-pir-exercise', 'enhance-pir-load-test',
+            'enhance-pir-load-test',
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'rate-query',
             'txid-quality-canary', 'txid-rate'])
         self.assertEqual(tests, [

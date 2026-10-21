@@ -33,10 +33,6 @@ pattern = "tools/pir-e2e-tests/tests/fixtures/*.json"
 reason = "Independent Ironwood record oracle consumed by the host's Enhance regressions."
 
 [[allow_data]]
-pattern = "tools/enhance/fixtures/*.json"
-reason = "Frozen operator API payloads used by operations tests."
-
-[[allow_data]]
 pattern = "tools/tests/operations/fixtures/*.json"
 reason = "DigitalOcean layout contract used by operations tests."
 

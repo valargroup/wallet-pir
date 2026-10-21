@@ -120,7 +120,6 @@
     "family": "enhance",
     "targets": [
       "native:enhance-pir-client:bin:enhance-pir-cli",
-      "native:enhance-pir-exercise:bin:enhance-pir-exercise",
       "native:enhance-pir-load-test:bin:enhance-pir-load-test",
       "native:enhance-query-server:test:routing_contract",
       "native:pir-apm:bin:pir-apm",
