@@ -1232,10 +1232,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let zero = BlockHash::from_internal_bytes([0; 32]);
         let journal = |name: &str, tip: u64, fork: Option<u64>| {
-            let mut store =
-                EventStore::open(root.path().join(name), &"00".repeat(32), 0).unwrap();
+            let mut store = EventStore::open(root.path().join(name), &"00".repeat(32), 0).unwrap();
             for h in 0..=tip {
-                let tag = if fork.is_some_and(|f| h >= f) { 0x80 } else { 0 } | (h as u8 + 1);
+                let forked = if fork.is_some_and(|f| h >= f) {
+                    0x80
+                } else {
+                    0
+                };
+                let tag = forked | (h as u8 + 1);
                 block(&mut store, h, tag);
             }
             store
