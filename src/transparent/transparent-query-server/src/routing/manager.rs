@@ -122,6 +122,7 @@ impl HistorySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another publication consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let invalid: BTreeSet<String> =
             match std::fs::read(config.directory.join("active.invalid.json")) {
                 Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -210,6 +211,9 @@ impl HistorySync {
             &mut self.revocations,
         )
         .await?;
+        // Repair after refreshing authority, before staging can refuse a
+        // withdrawn object shared with the next publication.
+        crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         let Some(current) = current else {
             return Ok(Input::Unchanged);
         };

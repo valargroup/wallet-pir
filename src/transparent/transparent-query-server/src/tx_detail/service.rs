@@ -190,6 +190,7 @@ impl WarmState {
 }
 
 struct Inner {
+    validation: std::sync::OnceLock<crate::validation::Scope>,
     set: DisplaySet,
     runtime: Arc<DisplayRuntime>,
     /// One parameter set per geometry the set names, per table kind.
@@ -316,8 +317,9 @@ impl DisplayState {
         let target = held.len();
         Metrics::set(&runtime.metrics.target_runtimes, target as u64);
         let prewarm_slots = runtime.cache.prewarm_concurrency();
-        Ok(Self {
+        let state = Self {
             inner: Arc::new(Inner {
+                validation: std::sync::OnceLock::new(),
                 set,
                 runtime: runtime.clone(),
                 params,
@@ -337,7 +339,9 @@ impl DisplayState {
                 prewarm_slots,
                 retired: AtomicBool::new(false),
             }),
-        })
+        };
+        state.validation();
+        Ok(state)
     }
 
     /// Warm current revisions in the background under the shared cache budget.
@@ -364,6 +368,7 @@ impl DisplayState {
                         let Some((digest, table, segment)) = next else {
                             break;
                         };
+                        if state.validation().unavailable(&digest) { continue; }
                         let Some(revision) = inner.set.held(&digest) else {
                             continue;
                         };
@@ -412,6 +417,46 @@ impl DisplayState {
         });
         *task = Some(running.abort_handle());
         running
+    }
+
+    pub(crate) fn artifact_validation(&self) -> serde_json::Value {
+        self.validation().status()
+    }
+
+    fn validation(&self) -> &crate::validation::Scope {
+        self.inner.validation.get_or_init(|| {
+            let mut scope = crate::validation::Scope::default();
+            for revision in self.inner.set.current().iter().filter(|r| r.held()) {
+                scope.current(revision.manifest.shard_id, &revision.digest);
+            }
+            // A wallet can still request a retained predecessor by its digest.
+            for revision in self.inner.set.revisions().iter().filter(|r| r.held()) {
+                for (table, segment) in revision.targets() {
+                    let Some(source) = revision.segment(table, segment) else {
+                        continue;
+                    };
+                    let shared = &self.inner.params[&(revision.geometry.name, kind(table))];
+                    let key = runtime_key(&revision.digest, table, segment);
+                    scope.add(
+                        &revision.digest,
+                        revision.manifest.shard_id,
+                        source.path(),
+                        &self.inner.runtime.cache,
+                        &key,
+                    );
+                    if let Some(shipped) = &self.inner.set.shipped {
+                        scope.add(
+                            &revision.digest,
+                            revision.manifest.shard_id,
+                            &shipped.path(&key, shared, source.sha256()),
+                            &self.inner.runtime.cache,
+                            &key,
+                        );
+                    }
+                }
+            }
+            scope
+        })
     }
 
     pub fn set(&self) -> &DisplaySet {
@@ -655,7 +700,19 @@ pub fn router(state: DisplayState) -> Router {
         .route(&format!("/v2/txid/recent/{SETUP}"), get(setup_recent))
         .route(&format!("/v2/txid/archive/{QUERY}"), post(query_archive))
         .route(&format!("/v2/txid/recent/{QUERY}"), post(query_recent))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            validate_request,
+        ))
         .with_state(state)
+}
+
+async fn validate_request(
+    State(state): State<DisplayState>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    state.validation().serve(request, next).await
 }
 
 async fn health(State(state): State<DisplayState>) -> Response {
@@ -688,6 +745,7 @@ async fn ready(State(state): State<DisplayState>) -> Response {
     let inner = &state.inner;
     let warm = state.is_warm();
     let mut body = serde_json::json!({
+        "artifact_validation": state.validation().status(),
         "ready": state.is_ready(),
         "role": inner.set.role.as_str(),
         "map_sha256": inner.set.map_digest,
@@ -716,7 +774,9 @@ async fn metrics(State(state): State<DisplayState>) -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        state.metrics().render(&snapshot) + &state.metrics().render_display(&snapshot),
+        state.metrics().render(&snapshot)
+            + &state.metrics().render_display(&snapshot)
+            + &state.validation().metrics(),
     )
         .into_response()
 }

@@ -2,12 +2,13 @@
 
 Cargo unifies features for every package named in one command. Shared crates
 and product libraries stay on one command with a fixed feature set, so a warm
-cache still hits. The publisher, query server, and end-to-end hosts are a
-second command that enables only the products this diff touches. Campaign
-targets are never selected. Test programs retain their package directory and
-Cargo environment. The Enhance HTTP smokes run alone, as does the filter
-library on fewer than eight cores. The remaining programs share a pool of at
-most three processes.
+cache still hits. Transparent host tests join that command and only enable the
+history and detail edges the graph already builds. Enhance and Status fixture
+features stay on a second command: they pull chain test nodes and wallet
+clients that would rebuild the shared graph. Campaign targets are never
+selected. Test programs retain their package directory and Cargo environment.
+The Enhance HTTP smokes run alone, as does the filter library on fewer than
+eight cores. The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -71,12 +72,20 @@ def compile_roots(selected, available):
 # the chain reader's test node.
 HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'})
 
-# Each feature pulls one product's wallet client and chain fixtures into the hosts.
+# Fixture features pull one product's wallet client and chain test node into
+# every crate on their command. Fast leaves those on the second command.
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-tests',
     'transparent': 'pir-e2e-tests/transparent-tests',
     'status': 'pir-publisher/status-tests',
 }
+
+# History and detail are already unified by the publisher dev-dependency.
+# Enabling them on the host reuses those rlibs instead of compiling a second copy.
+TRANSPARENT_LINK_FEATURES = frozenset({
+    'pir-publisher/transparent-history',
+    'pir-publisher/transparent-detail',
+})
 
 # A fast target that requires one of these is compiled only for a diff that
 # touches that product. Shared crates never receive them.
@@ -127,13 +136,15 @@ def feature_serves(feature, products):
 
 
 def host_features_for(products, package_names):
-    """Host features for the products this diff touches."""
+    """Fixture features that must stay off the stable command.
+
+    Transparent fast tests do not use `transparent-tests`: that feature enables
+    publisher fixtures and compiles the same libraries again. History and detail
+    are linked separately, on the command that already builds those libraries.
+    """
     features = set()
-    if 'pir-e2e-tests' in package_names:
-        if 'enhance' in products:
-            features.add(PRODUCT_HOST_FEATURES['enhance'])
-        if 'transparent' in products:
-            features.add(PRODUCT_HOST_FEATURES['transparent'])
+    if 'pir-e2e-tests' in package_names and 'enhance' in products:
+        features.add(PRODUCT_HOST_FEATURES['enhance'])
     if 'pir-publisher' in package_names and 'status' in products:
         features.add(PRODUCT_HOST_FEATURES['status'])
     return features
@@ -321,10 +332,13 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         'stable': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
         'hosts': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
     }
+    # A second command exists only for fixture features. Otherwise the hosts
+    # join the stable command and reuse its rlibs.
+    separate_hosts = bool(host_features_for(products, HOST_PACKAGES & compile_packages))
     expected_units = set()
     for package in packages.values():
         name = package['name']
-        group = groups['hosts' if name in HOST_PACKAGES else 'stable']
+        group = groups['hosts' if name in HOST_PACKAGES and separate_hosts else 'stable']
         group['names'].add(name)
         # Product gates stay on the host command. The stable command's features
         # do not change when the diff moves from one product to another.
@@ -357,6 +371,9 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         group['bins'].append((skipped_bin, included_bins))
         group['integrations'].update(target for pkg, target in compile_integrations if pkg == name)
     groups['hosts']['features'].update(host_features_for(products, groups['hosts']['names']))
+    if 'transparent' in products:
+        home = 'hosts' if 'pir-publisher' in groups['hosts']['names'] else 'stable'
+        groups[home]['features'].update(TRANSPARENT_LINK_FEATURES)
     for feature in additional_features:
         if feature_serves(feature, products):
             groups['hosts']['features'].add(feature)

@@ -102,6 +102,7 @@ impl PrewarmProduced {
 type ParamsKey = (&'static str, Table);
 
 pub struct Inner {
+    validation: std::sync::OnceLock<crate::validation::Scope>,
     set: ShardSet,
     /// One parameter set per geometry the loaded set actually uses, per table.
     params: HashMap<ParamsKey, Arc<SharedParams>>,
@@ -321,8 +322,9 @@ impl ServiceState {
                 )
             }
         };
-        Ok(Self {
+        let state = Self {
             inner: Arc::new(Inner {
+                validation: std::sync::OnceLock::new(),
                 set,
                 params,
                 cache,
@@ -343,7 +345,9 @@ impl ServiceState {
                 shipped,
                 archive: previous.and_then(|s| s.inner.archive.clone()),
             }),
-        })
+        };
+        state.validation();
+        Ok(state)
     }
 
     /// Builds every runtime this worker should hold, in the order the set
@@ -389,6 +393,7 @@ impl ServiceState {
                         let Some((digest, table, segment)) = next else {
                             break;
                         };
+                        if state.validation().unavailable(&digest) { continue; }
                         let Some(shard) = inner.set.revision(&digest) else {
                             continue;
                         };
@@ -522,6 +527,52 @@ impl ServiceState {
         {
             self.inner.warm.cancelled.store(true, Ordering::Release);
         }
+    }
+
+    pub(crate) fn artifact_validation(&self) -> serde_json::Value {
+        self.validation().status()
+    }
+
+    fn validation(&self) -> &crate::validation::Scope {
+        self.inner.validation.get_or_init(|| {
+            let mut scope = crate::validation::Scope::default();
+            for shard in self.inner.set.current() {
+                scope.current(shard.manifest.shard_id, &shard.digest);
+            }
+            // A wallet can still request a retained predecessor by its digest.
+            for shard in self.inner.set.revisions() {
+                for table in shard.tables() {
+                    let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
+                    for segment in 0..shard.segments(table) {
+                        let Some(source) = shard.segment(table, segment) else {
+                            continue;
+                        };
+                        let key = (
+                            shard.runtime_identity(table).to_string(),
+                            table.kind(),
+                            segment,
+                        );
+                        scope.add(
+                            &shard.digest,
+                            shard.manifest.shard_id,
+                            source.path(),
+                            &self.inner.cache,
+                            &key,
+                        );
+                        if let Some(shipped) = &self.inner.shipped {
+                            scope.add(
+                                &shard.digest,
+                                shard.manifest.shard_id,
+                                &shipped.path(&key, shared, source.sha256()),
+                                &self.inner.cache,
+                                &key,
+                            );
+                        }
+                    }
+                }
+            }
+            scope
+        })
     }
 
     pub(crate) fn set(&self) -> &ShardSet {
@@ -751,7 +802,19 @@ pub fn router(state: ServiceState) -> Router {
             state.archive().is_some(),
             archive_hop,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            validate_request,
+        ))
         .with_state(state)
+}
+
+async fn validate_request(
+    State(state): State<ServiceState>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    state.validation().serve(request, next).await
 }
 
 async fn archive_hop(
@@ -769,6 +832,7 @@ async fn archive_hop(
 async fn health(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
     let mut body = serde_json::json!({
+        "artifact_validation": state.validation().status(),
         "phase": "serving",
         "shards": inner.set.len(),
         "assigned_shards": inner.set.assigned_len(),
@@ -819,6 +883,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
     };
     let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
+        "artifact_validation": state.validation().status(),
         "archive_forwarding": inner.archive.is_some(),
         "mode": "loaded-only",
         "map_sha256": inner.set.map_digest,
@@ -861,7 +926,7 @@ async fn metrics(State(state): State<ServiceState>) -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        state.inner.metrics.render(&state.snapshot()),
+        state.inner.metrics.render(&state.snapshot()) + &state.validation().metrics(),
     )
         .into_response()
 }

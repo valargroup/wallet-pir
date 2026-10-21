@@ -129,7 +129,7 @@ floors, qualification durations, and rollback gates are not iteration shortcuts.
 
 ## Transparent loading policy
 
-- For Transparent, trust publisher preparation; hash artifacts once during download, check only their expected size on disk reload, and run correctness smoke tests separately after the service is serving. A failed smoke test fails validation without stopping or restarting the service.
+- For Transparent, trust publisher preparation; check artifact lengths during HTTPS download, hash large artifacts once after serving starts on the query-prioritized background validator, and check only their expected size on disk reload, and run correctness smoke tests separately after the service is serving. A failed smoke test fails validation without stopping or restarting the service.
 
 ## Focused changes
 

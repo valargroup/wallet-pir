@@ -35,8 +35,10 @@ five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
 Native tests compile shared crates and product libraries once, on a feature set
-that does not change with the diff. The publisher, query server, and end-to-end
-hosts compile separately, with only the products that diff touches. Executables
+that does not change with the diff. Transparent host tests link history and
+detail on that same command. Enhance and Status fixture features compile on a
+second command so their chain test node does not rebuild the shared graph.
+Executables
 then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
 builds every binary. Mutable service state is fresh; only immutable public
@@ -143,7 +145,9 @@ Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. That command
 also names the stable fast dev-dependency roots, so a smaller affected set does
 not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
-dependency graph. The reader's receiver and status RPC targets stay in full
+dependency graph. Transparent host tests are part of this command. A second
+invocation is only the Enhance or Status fixture feature, which must not unify
+into the stable graph. The reader's receiver and status RPC targets stay in full
 qualification; those features are not part of the closure, and enabling them
 rebuilds every cached consumer. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
