@@ -103,7 +103,8 @@
     "family": "transparent",
     "targets": [
       "transparent:transparent-query-server:test:wallet_continuation",
-      "transparent:transparent-query-server:test:wallet_recut"
+      "transparent:transparent-query-server:test:wallet_recut",
+      "transparent:transparent-query-server:test:wallet_revision_reuse"
     ]
   },
   "transparent-wallet-sync": {

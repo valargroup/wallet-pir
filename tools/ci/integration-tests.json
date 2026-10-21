@@ -49,6 +49,7 @@
       "wallet_anchor",
       "wallet_continuation",
       "wallet_recut",
+      "wallet_revision_reuse",
       "wallet_sync"
     ]
   },
