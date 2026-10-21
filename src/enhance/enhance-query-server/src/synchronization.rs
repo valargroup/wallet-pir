@@ -14,7 +14,6 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::io::AsyncWriteExt;
 
 pub type Error = pir_sync_manager::Error;
 
@@ -544,37 +543,22 @@ impl Client {
                 .create_new(true)
                 .open(&temporary)
                 .await?;
-            let mut response = self
+            let response = self
                 .source
                 .request(&format!("objects/{}", object.sha256), None)
                 .await?;
-            if !response.status().is_success() {
-                let status = response.status();
-                response.discard().await?;
-                return Err::<(), Error>(
-                    format!("publication object unavailable: {status}").into(),
-                );
-            }
-            let mut length = 0u64;
-            let mut hash = Sha256::new();
-            while let Some(chunk) = response.chunk().await? {
-                length = length
-                    .checked_add(chunk.len() as u64)
-                    .ok_or("object size overflow")?;
-                if length > object.bytes {
-                    return Err("publication object exceeds declared length".into());
-                }
-                hash.update(&chunk);
-                file.write_all(&chunk).await?;
-            }
-            if length != object.bytes || hex::encode(hash.finalize()) != object.sha256 {
-                return Err("publication object length or checksum mismatch".into());
-            }
+            response
+                .copy_to(
+                    &mut file,
+                    object.bytes,
+                    pir_sync_manager::Verification::Sha256(&object.sha256),
+                )
+                .await?;
             file.sync_all().await?;
             drop(file);
             tokio::fs::rename(&temporary, &path).await?;
             File::open(self.root.join("objects"))?.sync_all()?;
-            Ok(())
+            Ok::<(), Error>(())
         }
         .await;
         if result.is_err() {
