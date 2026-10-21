@@ -734,7 +734,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
             observed["verified_publication"]["map_sha256"],
             set.map_digest
         );
-        assert_eq!(observed["runtime_readiness"]["warm"], true);
+        assert_eq!(get(&origin, "/v1/ready").await.status(), StatusCode::OK);
         assert_eq!(
             live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
             set.map_digest

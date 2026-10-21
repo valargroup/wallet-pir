@@ -263,9 +263,8 @@ pub struct SetupResponse {
 }
 
 impl DisplayState {
-    /// Prepares a snapshot of `set` over the shared runtime. In warm mode the
-    /// role's runtimes must fit the cache with nothing evicted, as for a
-    /// history worker's assignment.
+    /// Prepare a serving snapshot without loading its runtimes. Required
+    /// publisher material is checked by size before activation.
     pub fn build(mut set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
         if runtime.required {
             // Check required files by size even if runtimes are already resident.
@@ -341,8 +340,7 @@ impl DisplayState {
         })
     }
 
-    /// Builds every runtime of the role's current revisions and marks the
-    /// snapshot warm when done; in warm mode the handles stay pinned.
+    /// Warm current revisions in the background under the shared cache budget.
     pub fn spawn_prewarm(&self) -> tokio::task::JoinHandle<()> {
         let mut task = self.inner.warm.task.lock().unwrap();
         let state = self.clone();
@@ -685,8 +683,7 @@ async fn health(State(state): State<DisplayState>) -> Response {
     )
 }
 
-/// Ready once the role's runtimes are warm. Readiness reads only counters,
-/// because the edge checks it every second.
+/// Readiness is independent of background warming and reads no artifact bodies.
 async fn ready(State(state): State<DisplayState>) -> Response {
     let inner = &state.inner;
     let warm = state.is_warm();

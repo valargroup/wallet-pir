@@ -796,16 +796,8 @@ async fn health(State(state): State<ServiceState>) -> Response {
     json(StatusCode::OK, body)
 }
 
-/// What readiness attests depends on the mode.
-///
-/// Loaded-only: a set is loaded, which is the only precondition for serving
-/// correctly. Runtimes build on demand, so a cold worker is slow, not wrong;
-/// this is the correctness pilot's mode.
-///
-/// Warm: every assigned runtime has been built, so a router that health-checks
-/// this route holds a restarting worker out of rotation until it can answer at
-/// full speed. The body carries the map and assignment digests either way, so
-/// a deploy can assert which set and assignment a worker is actually running.
+/// Ready after metadata and file-size checks, independently of warming.
+/// The response identifies the active map and assignment for operators.
 async fn ready(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
     // The router checks this route every second and ejects a worker that
