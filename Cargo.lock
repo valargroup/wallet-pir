@@ -911,6 +911,7 @@ dependencies = [
  "pir-observability",
  "pir-runtime",
  "pir-serving",
+ "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -2197,6 +2198,7 @@ dependencies = [
  "pir-publisher",
  "pir-query-server",
  "pir-service-discovery",
+ "pir-sync-manager",
  "reqwest",
  "serde",
  "serde_json",
@@ -2338,10 +2340,10 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "pir-pipeline",
  "pir-service-discovery",
  "reqwest",
  "rustls",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -3277,6 +3279,7 @@ dependencies = [
  "pir-control",
  "pir-pipeline",
  "pir-query-server",
+ "pir-service-discovery",
  "reqwest",
  "serde",
  "serde_json",
@@ -5034,12 +5037,11 @@ dependencies = [
  "tracing",
  "zakura-chain",
  "zakura-orchard",
- "zakura-primitives",
  "zakura-protocol",
  "zakura-receiver-crypto",
  "zakura-state",
  "zakura-test",
- "zakura-transparent",
+ "zakura-transaction-wire",
  "zcash_script",
 ]
 
@@ -5105,6 +5107,16 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "zakura-transaction-wire"
+version = "0.1.0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=fc99f90a2f32810d5a38ff4412f336dcbf2fbffe#fc99f90a2f32810d5a38ff4412f336dcbf2fbffe"
+dependencies = [
+ "blake2b_simd",
+ "sha2 0.10.9",
+ "zakura-protocol",
 ]
 
 [[package]]

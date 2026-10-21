@@ -23,20 +23,19 @@ transparent-history = []
 transparent-detail = []
 status = ["dep:status-publisher", "pir-publisher/status"]
 rocksdb-reader = ["transparent-history", "pir-publisher/rocksdb-reader"]
+# In-process Enhance hint and operator checks. Fast feedback uses this graph.
+# The chain node and wallet client stay on enhance-tests for qualification.
+enhance-fast = ["enhance"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
+    "enhance-fast",
     "publisher-host",
     "pir-publisher/enhance",
-    "enhance",
     "query-host",
-    "dep:enhance-publisher",
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
     "enhance-publisher/local-serving",
-    "dep:enhance-query-server",
     "enhance-query-server/client",
-    "dep:pir-query-server",
-    "pir-query-server/enhance",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
     "zakura-server-chain/testing-node",
@@ -156,6 +155,7 @@ test = false
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
 transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
+pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
 zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["transparent"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
@@ -173,7 +173,7 @@ required-features = ["enhance-tests"]
 [[test]]
 name = "ci_hint"
 path = "tests/ci_hint.rs"
-required-features = ["enhance-tests"]
+required-features = ["enhance-fast"]
 
 [[test]]
 name = "encrypted_lifecycle"

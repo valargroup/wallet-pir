@@ -641,9 +641,13 @@ class Deployer:
     def schema_fence(self):
         mutation_fence(self.inventory, self.ex, self.lock)
 
+    def can_replace_incomplete(self, journal):
+        """Product recovery may prove a stopped transaction has restored its processes."""
+        return False
+
     def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
-        if latest is not None and latest.status not in FINAL:
+        if latest is not None and latest.status not in FINAL and not self.can_replace_incomplete(latest):
             raise DeployError('transaction %s is %s; finish it with rollback before deploying again'
                               % (latest.id, latest.status))
         plans, problems = self.assess(sha, binary, allow_drift, retire_historical)
@@ -657,6 +661,8 @@ class Deployer:
         baseline = json.loads(self.baseline_path.read_text())
         journal = Journal.create(self.state_dir, self.service.name, sha, source,
                                  [self.record(plan) for plan in plans], baseline)
+        if latest is not None and latest.status not in FINAL:
+            journal.event('replaces incomplete transaction', transaction=latest.id, status=latest.status)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
         try:
             self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)

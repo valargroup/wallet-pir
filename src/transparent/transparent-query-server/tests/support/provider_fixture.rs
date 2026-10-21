@@ -11,9 +11,7 @@ use crate::{generated, genesis, hash_at, revision, script, FIRST};
 use std::{collections::BTreeMap, sync::Arc};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{SealParameters, ShardMap};
-use transparent_query_server::history::service::{
-    router, ReadinessMode, ServiceConfig, ServiceState,
-};
+use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_query_server::routing::archive::Archive;
 use transparent_query_server::routing::router::{plan, RosterEntry};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
@@ -290,7 +288,6 @@ pub(crate) fn terminal_prepared(
     ServiceState::build_with_runtimes(
         ShardSet::open_with(dir, &options).unwrap(),
         ServiceConfig {
-            readiness: ReadinessMode::Warm,
             query_slots: 1,
             max_waiters: 0,
             ..ServiceConfig::default()

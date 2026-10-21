@@ -223,7 +223,7 @@ impl Mixed {
             let Transaction::V5 {
                 sapling_shielded_data: Some(mut sapling),
                 ..
-            } = Transaction::zcash_deserialize(raw.as_slice()).unwrap()
+            } = Transaction::zcash_deserialize(&mut raw.as_slice()).unwrap()
             else {
                 panic!("fixture is a V5 Sapling transaction");
             };
@@ -286,7 +286,7 @@ pub fn block_from_raw(transactions: &[Vec<u8>], nonce: u8) -> (String, String) {
     for transaction in transactions {
         raw.extend_from_slice(transaction);
     }
-    let parsed = Block::zcash_deserialize(raw.as_slice()).unwrap();
+    let parsed = Block::zcash_deserialize(&mut raw.as_slice()).unwrap();
     (hex::encode(raw), parsed.hash().to_string())
 }
 
@@ -574,7 +574,7 @@ pub mod receiver {
             raw.push(2);
             coinbase.zcash_serialize(&mut raw).unwrap();
             tx.zcash_serialize(&mut raw).unwrap();
-            let mut block = Self(Block::zcash_deserialize(raw.as_slice()).unwrap());
+            let mut block = Self(Block::zcash_deserialize(&mut raw.as_slice()).unwrap());
             block.seal();
             block
         }

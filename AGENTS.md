@@ -122,10 +122,15 @@ links when removing superseded documents. Production protocol defaults, rollout
 floors, qualification durations, and rollback gates are not iteration shortcuts.
 
 - Commit only code, tests, configuration and concise documentation needed for the requested change; keep generated run output, AI task reports and exploratory scripts out of Git, and promote only essential evidence or tested reusable tools.
+- Never add, modify, rename or delete specification files under docs/spec/ as part of a PR unless a human explicitly instructs that specification change; implementation, refactoring and documentation requests alone do not authorize changing specifications.
 
 ## Dependency and release boundary
 
 - Keep release dependencies one-way: wallet-pir may consume wallet-libraries, but wallet-libraries must not depend on packages owned or released by wallet-pir, including normal, optional, build, target-specific and development dependencies.
+
+## Transparent loading policy
+
+- For Transparent, trust publisher preparation; check artifact lengths during HTTPS download, hash large artifacts once after serving starts on the query-prioritized background validator, and check only their expected size on disk reload, and run correctness smoke tests separately after the service is serving. A failed smoke test fails validation without stopping or restarting the service.
 
 ## Focused changes
 

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The optional direct database reader decodes stored block and previous-transaction
+  bytes with the lightweight wire reader instead of constructing full node
+  transactions. It retains the existing node storage dependencies and database format.
+
+- Transactions are read with `zakura-transaction-wire` (wallet-libraries PR 287)
+  instead of `zakura-primitives`, and block headers are framed and hashed locally.
+  Transaction IDs, block hashes, Merkle roots, fees, compact fields, coinbase
+  heights and expiry heights are unchanged and tested against the node's decoder.
+  Shielded fields are no longer checked to be valid curve points; the node
+  validated them. `zakura-orchard` is now enabled only by `receiver`, and
+  `tools/ci/chain_graph.py` refuses any typed decoder or shielded backend in the
+  production RPC and Transparent, Enhance and Status readers.
+
 - Moved from wallet-libraries (`zakura/pir-chain`, revision
   `f48b62b80ec7d9d7fb7893401435a24b189b8ec2`) into wallet-pir's root workspace at
   `src/shared/pir-chain`, with unchanged behavior, features and dependency pins.

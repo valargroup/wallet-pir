@@ -56,7 +56,12 @@ adapter. Database readers additionally enable the existing `rocksdb-reader` feat
 Fast Rust checks run every library unit test, and every binary that declares one,
 in `release-fast`, plus classified bounded integration targets. The compile names
 a stable dev-dependency closure so a smaller affected set reuses the warm
-dependency graph; only affected packages run. A binary with no
+dependency graph; only affected packages run. Transparent publication tests
+stay in that closure. The query host still receives history and detail through
+the publisher library's dev-dependency. The publisher host binary does not:
+those features link the same library again. Publisher fixtures stay off this
+command. The in-process Enhance hint graph stays on a separate command. Chain-node
+fixtures for Enhance and Status stay in qualification. A binary with no
 unit tests is left out of that compile; qualification still builds every binary.
 There are no named slow-unit exclusions.
 Required CLI features are enabled for binary unit targets. Ordinary cache,

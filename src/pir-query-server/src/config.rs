@@ -205,6 +205,7 @@ impl Config {
         layout.listener("management", self.management_listen)?;
         #[cfg(feature = "enhance")]
         if let Some(role) = active(&self.enhance)? {
+            role.validate()?;
             for addr in role.listens() {
                 layout.listener("enhance", addr)?;
             }

@@ -2,6 +2,11 @@
 
 ## 0.0.1 — Unreleased
 
+- Load autonomous ingress router assignments from host JSON and enforce publisher
+  compatibility before opening state or listeners. A confirmed major-version
+  mismatch during synchronization stops the host with the discovery error;
+  transient failures still retry.
+
 - Read canonical blocks, fees and Status chain data through wallet-libraries'
   server-only chain adapters (`zakura-server-chain`); the server no longer
   depends on the node's crates. Fee rules, spent-output caching and batching, and

@@ -1,4 +1,6 @@
 //! Encrypted publication and restart through real listeners.
+#[path = "encrypted_lifecycle/discovery.rs"]
+mod discovery;
 #[path = "support/encrypted.rs"]
 mod encrypted;
 #[path = "encrypted_lifecycle/publication.rs"]
@@ -19,6 +21,7 @@ use std::time::Duration;
 /// No HTTP listeners or consumer processes participate in publication preparation.
 #[test]
 fn offline_publication_loads_and_answers_without_consumers() {
+    use enhance_publisher::publication::Hashed;
     use enhance_query_server::{
         client::QuerySession,
         prepared_packing,
@@ -33,11 +36,12 @@ fn offline_publication_loads_and_answers_without_consumers() {
         .unwrap();
     let epochs = [(0, "0".into())].into();
     let source = |start, count| Ok((start..start + count as u64).flat_map(record).collect());
-    let inventory =
+    let prepared =
         enhance_publisher::publication::prepare(root.path(), coverage.clone(), &epochs, source)
             .unwrap();
     let cold = started.elapsed();
-    inventory.verify(root.path()).unwrap();
+    let inventory = prepared.inventory().clone();
+    enhance_publisher::publication::verify(root.path(), inventory.clone()).unwrap();
     let domain = &inventory.domains[0];
     let object_path = domain.packing_object().path(root.path()).unwrap();
     let installed = std::fs::metadata(&object_path).unwrap().modified().unwrap();
@@ -108,10 +112,15 @@ fn offline_publication_loads_and_answers_without_consumers() {
             record(position)
         );
     }
+    // Let the cold build's objects settle so their hashes may be reused.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let began_reuse = std::time::Instant::now();
     let reused =
         enhance_publisher::publication::prepare(root.path(), coverage, &epochs, source).unwrap();
-    assert_eq!(protocol::digest(&inventory), protocol::digest(&reused));
+    assert_eq!(
+        protocol::digest(&inventory),
+        protocol::digest(reused.inventory())
+    );
     assert_eq!(
         installed,
         std::fs::metadata(&object_path).unwrap().modified().unwrap()
@@ -132,6 +141,55 @@ fn offline_publication_loads_and_answers_without_consumers() {
         "offline preparation cold={cold:?} reuse={:?}",
         began_reuse.elapsed()
     );
+    let mut objects = std::collections::BTreeMap::new();
+    for domain in &inventory.domains {
+        let packing = domain.packing_object();
+        for object in domain
+            .rows
+            .iter()
+            .chain([&domain.hint, &domain.public, &packing])
+        {
+            objects.insert(object.sha256.clone(), object.bytes);
+        }
+    }
+    let every_object = Hashed {
+        files: objects.len() as u64,
+        bytes: objects.values().sum(),
+        reused: 0,
+    };
+    assert_eq!(
+        reused.hashed(),
+        every_object,
+        "preparation reads each referenced object once"
+    );
+    assert_eq!(
+        enhance_publisher::publication::verify(root.path(), inventory.clone())
+            .unwrap()
+            .hashed(),
+        every_object,
+        "an inventory without evidence is hashed in full"
+    );
+    let published = reused.recheck(root.path()).unwrap();
+    assert_eq!(
+        published.hashed(),
+        Hashed {
+            files: 0,
+            bytes: 0,
+            reused: objects.len() as u64,
+        },
+        "publication rereads no unchanged object"
+    );
+    // A hint naming the settled rows object keeps its role-required length, so
+    // only the object check can see that those bytes have another length.
+    let mut aliased = inventory.clone();
+    let rows = aliased.domains[0].rows[0].clone();
+    assert_ne!(rows.bytes, aliased.domains[0].hint.bytes);
+    aliased.domains[0].hint.sha256 = rows.sha256;
+    aliased.validate().unwrap();
+    assert!(
+        enhance_publisher::publication::verify(root.path(), aliased).is_err(),
+        "a reference is checked against its own length, not an earlier one"
+    );
     let rows_path = domain.rows[0].path(root.path()).unwrap();
     std::fs::OpenOptions::new()
         .write(true)
@@ -139,7 +197,11 @@ fn offline_publication_loads_and_answers_without_consumers() {
         .unwrap()
         .set_len(1)
         .unwrap();
-    assert!(inventory.verify(root.path()).is_err());
+    assert!(enhance_publisher::publication::verify(root.path(), inventory).is_err());
+    assert!(
+        published.recheck(root.path()).is_err(),
+        "a truncated object is rehashed despite preparation evidence"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

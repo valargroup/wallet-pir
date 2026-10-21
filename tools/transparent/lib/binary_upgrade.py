@@ -27,6 +27,7 @@ from pathlib import Path
 from wallet_pir_ops import durable
 from wallet_pir_ops.deploy import descriptors, units
 from wallet_pir_ops.deploy.engine import Deployer, DeployError
+from wallet_pir_ops.deploy.transaction import Journal
 
 SCHEMA = 'transparent-binary-upgrade/1'
 GIT = re.compile('^[0-9a-f]{40}$')
@@ -122,8 +123,8 @@ def validate(request):
         if not condition:
             raise DeployError('invalid upgrade request: ' + message)
     require(isinstance(request, dict) and REQUEST_KEYS <= set(request)
-            and set(request) <= REQUEST_KEYS | {'staging_adapter', 'previous_maps'},
-            'keys must be %s with optional staging_adapter and previous_maps' % sorted(REQUEST_KEYS))
+            and set(request) <= REQUEST_KEYS | {'staging_adapter', 'previous_maps', 'repair'},
+            'keys must be %s with optional staging_adapter, previous_maps and repair' % sorted(REQUEST_KEYS))
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
@@ -147,6 +148,16 @@ def validate(request):
         require(providers and isinstance(previous, dict) and previous and set(previous) <= set(workers)
                 and all(isinstance(value, str) and SHA256.fullmatch(value) for value in previous.values()),
                 'previous_maps pins older publication hashes for existing HTTPS provider workers only')
+    if 'repair' in request:
+        repair = request['repair']
+        require(providers and isinstance(repair, dict) and set(repair) == {'transaction', 'predecessors'}
+                and isinstance(repair['transaction'], str)
+                and re.fullmatch(r'transparent-history-[A-Za-z0-9-]+', repair['transaction'])
+                and isinstance(repair['predecessors'], dict) and repair['predecessors']
+                and set(repair['predecessors']) <= set(workers)
+                and all(isinstance(v, str) and SHA256.fullmatch(v)
+                        and v != request['release'].get('binary_sha256') for v in repair['predecessors'].values()),
+                'repair pins the failed History transaction and exact predecessor binaries')
     release = request['release']
     require(isinstance(release, dict) and set(release) == {'git_sha', 'binary_sha256'}, 'release is {git_sha, binary_sha256}')
     require(bool(GIT.match(release['git_sha'])), 'release.git_sha is a full 40-digit revision')
@@ -453,8 +464,16 @@ class Upgrade:
         # This applies only to the predecessor; the replacement must be current.
         previous = (self.request.get('previous_maps', {}).get(target.key)
                     if state['exe_sha256'] != self.request['release']['binary_sha256'] else None)
-        problems.extend(self.ready_problems(ex, target.key, target.host,
-                                           target.url(target.role.ready_url or target.role.health), previous=previous))
+        repair = self.request.get('repair', {}).get('predecessors', {}).get(target.key)
+        if repair and state['exe_sha256'] != self.request['release']['binary_sha256']:
+            # Only the recorded failed rollback process may lack readiness.
+            # Configuration and ownership checks above still apply, and the
+            # replacement follows the normal current-publication checks.
+            problem_if(state['active_state'] != 'active' or state['exe_sha256'] != repair,
+                       '%s repair predecessor differs from the pinned running binary' % target.key, problems)
+        else:
+            problems.extend(self.ready_problems(ex, target.key, target.host,
+                                               target.url(target.role.ready_url or target.role.health), previous=previous))
         return problems
 
     def authority_problems(self, ex):
@@ -669,6 +688,17 @@ class UpgradeDeployer(Deployer):
         self.operation = operation
         self.load_was_active = None
 
+    def can_replace_incomplete(self, journal):
+        repair = self.upgrade.request.get('repair')
+        if (not repair or repair['transaction'] != journal.id or journal.status != 'rollback-failed'):
+            return False
+        touched = [journal.hosts[index] for index in journal.touched()]
+        return bool(touched) and set(repair['predecessors']) == {r['key'] for r in touched} and all(
+            r['role'] == 'worker' and r['action'] != 'install'
+            and repair['predecessors'][r['key']] == r['previous']['exe_sha256']
+            and self.restored_process_running(journal, r, repair['predecessors'][r['key']])
+            for r in touched)
+
     def assess(self, *args, **kwargs):
         plans, problems = super().assess(*args, **kwargs)
         adapter = self.upgrade.request.get('staging_adapter')
@@ -721,15 +751,28 @@ class UpgradeDeployer(Deployer):
             _, problems = self.upgrade.authority_problems(self.ex)
             if problems:
                 return False, '; '.join(problems)
-        if (ok and record['role'] == 'worker' and self.upgrade.request.get('previous_maps')
-                and expected == self.upgrade.request['release']['binary_sha256']):
-            # A recovered provider can briefly restore its old active record.
-            # Wait for current publication readiness within the existing budget.
-            problems = self.upgrade.ready_problems(
-                self.ex, record['key'], record['host'],
-                record['verify'].get('ready_url') or record['verify']['health'])
-            if problems:
-                return False, '; '.join(problems)
+        if ok and record['role'] == 'worker' and expected == self.upgrade.request['release']['binary_sha256']:
+            # The process can serve on demand before its background warmup
+            # finishes. Keep the existing full-warm acceptance gate in the
+            # bounded wait instead of failing the immediate post-start check.
+            status, body = self.ex.http_get(record['host'],
+                                            record['verify'].get('ready_url') or record['verify']['health'])
+            try:
+                document = json.loads(body) if status == 200 else {}
+            except ValueError:
+                document = {}
+            if isinstance(document, dict):
+                warm, target = document.get('warm_runtimes'), document.get('target_runtimes')
+                if ((type(warm) is int and type(target) is int and 0 <= warm < target)
+                        or (self.upgrade.request['service'] == 'transparent-display'
+                            and document.get('warm') is False)):
+                    return False, 'background warming has not reached the acceptance target'
+            if self.upgrade.request.get('previous_maps') or self.upgrade.request.get('repair'):
+                problems = self.upgrade.ready_problems(
+                    self.ex, record['key'], record['host'],
+                    record['verify'].get('ready_url') or record['verify']['health'])
+                if problems:
+                    return False, '; '.join(problems)
         return ok, reason
 
     def wait_verified(self, record, expected):
@@ -747,6 +790,10 @@ class UpgradeDeployer(Deployer):
             # journal independently checks ownership of every restored change.
             problems = self.upgrade.controller_problems(self.ex, check_authority=False)
         else:
+            if self.upgrade.request.get('repair'):
+                previous = Journal.load(self.state_dir, self.service.name)
+                if previous is None or not self.can_replace_incomplete(previous):
+                    raise DeployError('repair requires the exact acknowledged restored processes of the failed rollback')
             problems = self.upgrade.problems(self.ex)
             problems += self.upgrade.load_problems(self.ex, check_pin=True)
         if problems:

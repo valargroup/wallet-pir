@@ -834,8 +834,6 @@ impl Drop for PendingSave {
 /// One cache entry's shared state.
 struct Slot {
     runtime: tokio::sync::OnceCell<Arc<TableRuntime>>,
-    // Kept with the bounded cache entry, after the shipped file self-check succeeds.
-    verified_shipped: std::sync::OnceLock<(std::ffi::OsString, [u8; 32])>,
 }
 
 struct Entry {
@@ -859,6 +857,7 @@ pub struct RuntimeCache {
     build_slots: Arc<tokio::sync::Semaphore>,
     restore_slots: Arc<tokio::sync::Semaphore>,
     prewarm_concurrency: usize,
+    background_slots: Arc<tokio::sync::Semaphore>,
     metrics: Arc<Metrics>,
     disk: Option<disk::DiskCache>,
     /// Shipped files refused by a production operation that then could not
@@ -885,8 +884,9 @@ impl RuntimeCache {
             }),
             budget,
             build_slots: Arc::new(tokio::sync::Semaphore::new(build_slots.max(1))),
-            restore_slots: Arc::new(tokio::sync::Semaphore::new(1)),
-            prewarm_concurrency: build_slots.max(1),
+            restore_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            prewarm_concurrency: 1,
+            background_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             metrics,
             disk: None,
             refused_shipped: Mutex::new(std::collections::HashSet::new()),
@@ -894,9 +894,9 @@ impl RuntimeCache {
     }
 
     pub fn with_disk(mut self, disk: Option<disk::DiskCache>) -> Self {
-        let restores = disk.as_ref().map_or(1, |disk| disk.restore_slots.max(1));
+        let restores = disk.as_ref().map_or(2, |disk| disk.restore_slots.max(2));
         self.restore_slots = Arc::new(tokio::sync::Semaphore::new(restores));
-        self.prewarm_concurrency = self.prewarm_concurrency.max(restores);
+
         self.disk = disk;
         self
     }
@@ -904,6 +904,35 @@ impl RuntimeCache {
     /// The allocation budget shared by runtime construction and admitted queries.
     pub fn work_memory(&self) -> &Arc<crate::runtime::memory::WorkMemory> {
         &self.work_memory
+    }
+
+    /// At most one background load across all snapshots; other restore
+    /// capacity remains available to requests.
+    pub async fn background_slot(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.background_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("background semaphore stays open")
+    }
+
+    /// Keep an admitted background load and its permit alive if its snapshot
+    /// stops warming. The detached operation owns no serving snapshot.
+    pub async fn get_background_from(
+        self: &Arc<Self>,
+        key: RuntimeKey,
+        shared: Arc<SharedParams>,
+        source: SegmentSource,
+        shipped: Option<disk::ShippedRuntimes>,
+    ) -> Result<(RuntimeHandle, Produced), CacheError> {
+        let background = self.background_slot().await;
+        let cache = self.clone();
+        tokio::spawn(async move {
+            let _background = background;
+            cache.get_from(key, shared, source, shipped).await
+        })
+        .await
+        .map_err(|error| CacheError::Failed(error.to_string()))?
     }
 
     pub fn prewarm_concurrency(&self) -> usize {
@@ -916,18 +945,7 @@ impl RuntimeCache {
                 "hits":Metrics::get(&self.metrics.disk_hits),"misses":Metrics::get(&self.metrics.disk_misses),
                 "write_failures":Metrics::get(&self.metrics.disk_write_failures),
                 "pending_saves":Metrics::get(&self.metrics.disk_save_pending),
-                "restore_slots":disk.restore_slots.max(1)}))
-    }
-
-    /// Checked bytes of a resident shipped runtime, bound to its key and
-    /// filename (which includes parameters and source digest). A pending or
-    /// locally built runtime supplies no evidence. Eviction drops the proof.
-    pub fn verified_shipped(&self, key: &RuntimeKey, name: &std::ffi::OsStr) -> Option<[u8; 32]> {
-        let inner = self.inner.lock().expect("cache");
-        let slot = &inner.entries.get(key)?.slot;
-        slot.runtime.get()?;
-        let (checked_name, checksum) = slot.verified_shipped.get()?;
-        (checked_name == name).then_some(*checksum)
+                "restore_slots":disk.restore_slots.max(2)}))
     }
 
     pub fn budget(&self) -> u64 {
@@ -953,9 +971,9 @@ impl RuntimeCache {
     /// [`Self::get`], trying `shipped` first when the runtime has to be
     /// produced, and saying how it was.
     ///
-    /// A shipped runtime is loaded read-only under the restore path's slot
-    /// and memory reservation, then self-checked against the segment's
-    /// verified rows ([`TableRuntime::self_check`]). It is never saved to
+    /// A publisher-validated runtime is loaded read-only under the restore
+    /// path's slot and memory reservation, without hashing or a self-test.
+    /// It is never saved to
     /// this worker's disk cache. A missing, rejected or failing file is
     /// counted as a fallback, and the runtime is restored or built as if none
     /// had been offered.
@@ -1257,15 +1275,11 @@ impl RuntimeCache {
             let _pin = pin;
             let started = std::time::Instant::now();
             let path = shipped.path(&key, &shared, source.sha256());
-            let name = path
-                .file_name()
-                .ok_or_else(|| CacheError::Failed("unnamed shipped runtime".into()))?
-                .to_owned();
             let file = match crate::verification::open(&path) {
                 Ok(file) => file,
                 Err(error) => return Ok(Err(error.to_string())),
             };
-            let (runtime, checksum) = match file.try_clone().and_then(|handle| {
+            let runtime = match file.try_clone().and_then(|handle| {
                 disk::ShippedRuntimes::load_received_file(
                     &path,
                     handle,
@@ -1284,18 +1298,8 @@ impl RuntimeCache {
                 Err(error) => return Ok(Err(error.to_string())),
             };
             let loaded = started.elapsed();
-            // The restore slot bounds concurrent reads of runtime files; the
-            // self-check below is build-pool work under the memory reservation,
-            // so release the slot here and let the next shipped file load.
             drop(permit);
-            let check_micros = match disk::ShippedRuntimes::check_loaded_material(
-                &path, &file, &key, &shared, &source, &runtime,
-            ) {
-                Ok(micros) => micros,
-                Err(error) => return Ok(Err(format!("self-check failed: {error}"))),
-            };
-            Metrics::add(&metrics.shipped_check_micros, check_micros);
-            let _ = _pin.verified_shipped.set((name, checksum));
+            let check_micros = 0;
             Metrics::incr(&metrics.shipped_loads);
             tracing::info!(
                 key = ?key,
@@ -1346,7 +1350,6 @@ impl RuntimeCache {
 
         let slot = Arc::new(Slot {
             runtime: tokio::sync::OnceCell::new(),
-            verified_shipped: Default::default(),
         });
         inner.entries.insert(
             key,
@@ -1445,6 +1448,35 @@ impl RuntimeCache {
         );
     }
 
+    /// Remove these idle entries and persisted derivatives of their runtime
+    /// identities before a withdrawn shard is repaired. A live query, load or
+    /// snapshot writer keeps its accounting until it finishes. A busy disk
+    /// writer defers eviction rather than blocking the cache on its file lock.
+    pub fn evict_keys(&self, keys: &[RuntimeKey]) -> std::io::Result<bool> {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        if keys.iter().any(|key| {
+            inner
+                .entries
+                .get(key)
+                .is_some_and(|entry| Arc::strong_count(&entry.slot) != 1)
+        }) {
+            return Ok(false);
+        }
+        if let Some(disk) = &self.disk {
+            if !disk.invalidate(keys)? {
+                return Ok(false);
+            }
+        }
+        for key in keys {
+            if let Some(entry) = inner.entries.remove(key) {
+                inner.resident -= entry.reserved;
+                Metrics::incr(&self.metrics.evictions);
+            }
+        }
+        self.publish(&inner);
+        Ok(true)
+    }
+
     /// Prune unused persisted runtimes while retaining the caller's active keys.
     pub fn prune_disk(
         &self,
@@ -1463,6 +1495,84 @@ impl RuntimeCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[test]
+    fn repair_evicts_only_affected_idle_runtime_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let disk = disk::DiskCache::new(root.path().to_path_buf(), 1024).unwrap();
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default())).with_disk(Some(disk));
+        let affected = ("affected".to_string(), Table::Directory, 0);
+        let healthy = ("healthy".to_string(), Table::Directory, 0);
+        use sha2::{Digest, Sha256};
+        let affected_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(affected.0.as_bytes()))
+        ));
+        let healthy_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(healthy.0.as_bytes()))
+        ));
+        std::fs::write(&affected_disk, b"derived from corrupt source").unwrap();
+        std::fs::write(&healthy_disk, b"unrelated runtime").unwrap();
+        let pinned = Arc::new(Slot {
+            runtime: tokio::sync::OnceCell::new(),
+        });
+        {
+            let mut inner = cache.inner.lock().unwrap();
+            inner.entries.insert(
+                affected.clone(),
+                Entry {
+                    slot: pinned.clone(),
+                    reserved: 10,
+                    last_used: 0,
+                },
+            );
+            inner.entries.insert(
+                healthy.clone(),
+                Entry {
+                    slot: Arc::new(Slot {
+                        runtime: tokio::sync::OnceCell::new(),
+                    }),
+                    reserved: 20,
+                    last_used: 0,
+                },
+            );
+            inner.resident = 30;
+        }
+        assert!(!cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            affected_disk.exists(),
+            "an active snapshot writer keeps its file"
+        );
+        assert_eq!(
+            cache.resident_bytes(),
+            30,
+            "an in-flight request retains its budget"
+        );
+        drop(pinned);
+        let writer = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".lock"))
+            .unwrap();
+        writer.lock().unwrap();
+        assert!(
+            !cache.evict_keys(std::slice::from_ref(&affected)).unwrap(),
+            "an unrelated disk writer must defer repair without blocking the cache"
+        );
+        assert!(affected_disk.exists());
+        drop(writer);
+        assert!(cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            !affected_disk.exists(),
+            "a repaired source cannot restore its old derivative"
+        );
+        assert!(healthy_disk.exists());
+        assert_eq!(cache.resident_bytes(), 20);
+        assert!(cache.inner.lock().unwrap().entries.contains_key(&healthy));
+    }
 
     /// The scan shape keys every prepared runtime and disk cache entry. The
     /// digest was captured on the base commit before the shared runtime
@@ -1795,7 +1905,6 @@ pub(crate) mod tests {
         // A stale slot cannot rewrite a replacement's charge.
         let stale = Arc::new(Slot {
             runtime: tokio::sync::OnceCell::new(),
-            verified_shipped: Default::default(),
         });
         cache.settle(&key(1), &stale, 0);
         assert_eq!(cache.resident_bytes(), held + bound);

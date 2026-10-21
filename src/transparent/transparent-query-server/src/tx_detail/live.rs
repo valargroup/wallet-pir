@@ -29,7 +29,7 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 use transparent_shard::display::DisplayMap;
@@ -170,7 +170,7 @@ impl crate::activation::Adapter for DisplayActivation {
             .map(|active| {
                 (
                     active.publication.map_sha256.clone(),
-                    active.publication.map_sha256 == requested && active.state.is_warm(),
+                    active.publication.map_sha256 == requested && active.state.is_ready(),
                 )
             })
             .unwrap_or_default()
@@ -197,7 +197,7 @@ impl crate::activation::Adapter for DisplayActivation {
     }
 
     fn ready(candidate: &Candidate) -> bool {
-        candidate.state.is_warm()
+        candidate.state.is_ready()
     }
 
     fn validate(&self, candidate: &Candidate) -> Result<BTreeSet<String>, String> {
@@ -245,7 +245,6 @@ impl crate::activation::Adapter for DisplayActivation {
 
 /// Never set: staging is not cancelled by reorgs, which cannot reach a
 /// sealed revision without halting the controller.
-static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 impl DisplayLive {
     pub fn new(
@@ -263,7 +262,7 @@ impl DisplayLive {
             Err(e) => return Err(e.to_string()),
         };
         if let Some((state, _)) = &initial {
-            state.release_pins(Some(&invalid));
+            state.stop_warming(Some(&invalid));
         }
         Ok(Self(Arc::new(Inner {
             _directory_owner: None,
@@ -324,7 +323,7 @@ impl DisplayLive {
             self.0.epoch.fetch_add(1, Ordering::AcqRel);
             invalid.extend(digests.iter().cloned());
             for a in active.iter().chain(retired.iter()) {
-                a.state.release_pins(Some(&invalid));
+                a.state.stop_warming(Some(&invalid));
             }
         }
         persist(&self.0.record.with_extension("invalid.json"), &*invalid)
@@ -404,7 +403,9 @@ impl DisplayLive {
                     .as_ref()
                     .is_some_and(|c| c.publication.map_sha256 == map_sha256);
                 if discarded {
-                    *candidate = None;
+                    if let Some(discarded) = candidate.take() {
+                        discarded.state.stop_warming(None);
+                    }
                 }
                 Ok(reply(serde_json::json!({"discarded": discarded})))
             }
@@ -433,8 +434,10 @@ impl DisplayLive {
         let staged: Vec<String> = self.0.staged.lock().unwrap().keys().cloned().collect();
         reply(serde_json::json!({
             "role": self.0.role.as_str(),
+            "artifact_validation": active.as_ref().map(|a| a.state.artifact_validation()),
             "active": active.as_ref().map(|a| &a.publication),
             "staged": staged,
+            "ready": active.as_ref().is_some_and(|a| a.state.is_ready() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),
             "warm": active.as_ref().is_some_and(|a| a.state.is_warm() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),
             "binary_sha256": pir_control::binary_sha256(),
             "candidate": candidate,
@@ -491,22 +494,12 @@ impl DisplayLive {
             *self.0.in_stage.lock().unwrap() = Some(revision.clone());
             InStage(&self.0.in_stage)
         };
-        let revision = tokio::task::spawn_blocking(move || revision.verify_tables())
+        let revision = tokio::task::spawn_blocking(move || revision.for_serving())
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        let mut handles = Vec::new();
-        let mut built = 0;
-        for (table, segment) in revision.targets() {
-            let (handle, produced) = self
-                .0
-                .runtime
-                .runtime(&revision, table, segment, &NOT_CANCELLED, None)
-                .await
-                .map_err(|e| format!("staging {} {segment}: {e}", table.label()))?;
-            handles.push(handle);
-            built += u64::from(produced.is_some());
-        }
+        let handles = Vec::new();
+        let built = 0;
         tracing::info!(digest = %digest, built, seconds = started.elapsed().as_secs_f64(), "display revision staged");
         self.0.staged.lock().unwrap().insert(
             digest.clone(),
@@ -535,9 +528,10 @@ impl DisplayLive {
                 Default::default()
             };
             reply(serde_json::json!({
-                "warm": true,
-                "built": built,
-                "reused": (state.warm_target() as u64).saturating_sub(built),
+                "ready": state.is_ready(),
+                "warm": state.is_warm(),
+                "built": 0,
+                "reused": state.resident_targets(),
                 "shipped": shipped,
                 "shipped_fallbacks": fallbacks,
                 "self_check_ms": check.as_secs_f64() * 1e3,
@@ -547,7 +541,8 @@ impl DisplayLive {
         let previous = {
             let active = self.0.active.read().unwrap();
             if let Some(active) = active.as_ref() {
-                if active.publication.map_sha256 == publication.map_sha256 && active.state.is_warm()
+                if active.publication.map_sha256 == publication.map_sha256
+                    && active.state.is_ready()
                 {
                     return Ok(prepared(&active.state, 0));
                 }
@@ -563,7 +558,7 @@ impl DisplayLive {
         };
         if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
             c.publication.map_sha256 == publication.map_sha256
-                && c.state.is_warm()
+                && c.state.is_ready()
                 && c.epoch == epoch
         }) {
             return Ok(prepared(&candidate.state, candidate.built));
@@ -586,18 +581,12 @@ impl DisplayLive {
                 .lock()
                 .await
                 .as_ref()
-                .filter(|candidate| candidate.epoch == epoch && candidate.state.is_warm())
+                .filter(|candidate| candidate.epoch == epoch && candidate.state.is_ready())
                 .map(|candidate| candidate.state.clone()),
         };
-        *self.0.candidate.lock().await = None;
-        let staged: Vec<DisplayRevision> = self
-            .0
-            .staged
-            .lock()
-            .unwrap()
-            .values()
-            .map(|staged| staged.revision.clone())
-            .collect();
+        if let Some(candidate) = self.0.candidate.lock().await.take() {
+            candidate.state.stop_warming(None);
+        }
         let runtime = self.0.runtime.clone();
         let (role, retain) = (self.0.role, self.0.retain);
         let directory = publication.directory.clone();
@@ -605,16 +594,8 @@ impl DisplayLive {
         let (next, report) = tokio::task::spawn_blocking(move || {
             // Idle retired runtimes give way to the candidate's builds;
             // active, staged and in-flight runtimes are pinned.
-            runtime.cache.evict_unpinned();
-            let staged: Vec<&DisplayRevision> = staged.iter().collect();
-            let set = DisplaySet::open_reusing(
-                &directory,
-                retain,
-                previous.as_ref().map(DisplayState::set),
-                &staged,
-                role,
-            )
-            .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
+            let set = DisplaySet::open_for_serving(&directory, retain, role)
+                .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
             let report = set.verification().clone();
             tracing::info!(
                 map = %map_sha256,
@@ -652,16 +633,12 @@ impl DisplayLive {
         if let Some(preparing) = self.0.preparing.write().unwrap().as_mut() {
             preparing.phase = "warming";
         }
-        next.spawn_prewarm()
-            .await
-            .map_err(|e| Refusal::Runtime(e.to_string()))?;
+        let _prewarm = next.spawn_prewarm();
         if self.0.epoch.load(Ordering::Acquire) != epoch {
             return Err(Refusal::Superseded("reorg invalidated preparation".into()));
         }
-        if !next.is_warm() {
-            return Err(Refusal::Admission(
-                "candidate did not become completely warm within the shared budget".into(),
-            ));
+        if !next.is_ready() {
+            return Err(Refusal::Admission("candidate is not ready".into()));
         }
         let built = next.built();
         let result = prepared(&next, built);
@@ -731,7 +708,7 @@ impl DisplayLive {
         let mut invalid = inner.invalid.write().unwrap();
         invalid.extend(orphaned.iter().cloned());
         for snapshot in &snapshots {
-            snapshot.state.release_pins(Some(&invalid));
+            snapshot.state.stop_warming(Some(&invalid));
         }
         // Persisted before it is acknowledged: a restart must not resurrect
         // an orphaned revision.

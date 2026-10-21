@@ -61,15 +61,30 @@ pub(crate) async fn evaluate<G>(
     route_count: usize,
     mut select: impl FnMut(Option<&str>) -> Result<(String, G), Error>,
 ) -> Result<Answer, Error> {
+    evaluate_exact(http, request, route_count, |excluded| {
+        select(excluded).map(|(url, guard)| (url, None, guard))
+    })
+    .await
+}
+
+/// Autonomous peers also bind acceptance to the process that promised readiness.
+pub(crate) async fn evaluate_exact<G>(
+    http: &reqwest::Client,
+    request: &Evaluate,
+    route_count: usize,
+    mut select: impl FnMut(Option<&str>) -> Result<(String, Option<String>, G), Error>,
+) -> Result<Answer, Error> {
     let mut excluded = None;
     for attempt in 0..2 {
-        let (worker, _lease) = select(excluded.as_deref())?;
-        let response = http
+        let (worker, incarnation, _lease) = select(excluded.as_deref())?;
+        let mut builder = http
             .post(format!("{worker}/internal/evaluate"))
             .timeout(std::time::Duration::from_secs(30))
-            .json(request)
-            .send()
-            .await;
+            .json(request);
+        if let Some(incarnation) = incarnation {
+            builder = builder.header("x-enhance-worker-incarnation", incarnation);
+        }
+        let response = builder.send().await;
         match response {
             Err(e) if e.is_connect() && attempt == 0 && route_count > 1 => {
                 excluded = Some(worker);

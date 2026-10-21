@@ -1185,18 +1185,18 @@ by default; v2 does not enable it.
   `SharedParams` per table kind across controller cycles and reuse
   `publish_parts`' verification instead of `verify_tables` again (about 0.8 s of
   the 2.8 s prebuild).
-- [ ] Lower the replica's load-time interference (lookup p99 1.4× the quiet tail
-  while loading or receiving): cap the self-check's build-pool threads or run it
-  at lower priority, and keep rsync's receiver work off the query threads.
+- [ ] Measure replica load-time interference with background warming and the
+  download-only checksum policy; preparation self-tests now run at the publisher.
+  Keep receiver work off query threads.
 - [ ] Pin the self-check's any-row claim with a test where rows B differ from
   rows A in one row only; use `rand::rng` for the sampled row and say why it must
   be unpredictable to the publisher. The one-row test now exists for history
   runtimes (`a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact`),
   through the same `TableRuntime::self_check`; the sampled row's randomness is
   unchanged.
-- [x] Count a refused shipped file once per slot on an `Overloaded` retry: the
-  cache now remembers a refusal until its production operation ends
-  (`a_refusal_is_counted_once_across_admission_retries`).
+- [x] Count a malformed shipped file once per production operation across
+  admission retries. Worker self-test refusal scenarios have been removed with
+  the publisher-owned preparation policy.
 - [ ] Document in `txid-display.md` that the prebuild runs before
   `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
   archive owners receive the recent runtimes at seal boundaries; correct the bench

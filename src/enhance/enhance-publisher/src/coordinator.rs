@@ -701,7 +701,7 @@ impl Coordinator {
         let root = distribution.root().to_path_buf();
         let coverage = manifest.coverage.clone();
         let epochs = manifest.domain_recovery_epochs.clone();
-        let inventory = tokio::task::spawn_blocking(move || {
+        let prepared = tokio::task::spawn_blocking(move || {
             crate::publication::prepare(&root, coverage, &epochs, |start, count| {
                 snapshot
                     .read_records(start, count)
@@ -710,7 +710,7 @@ impl Coordinator {
         })
         .await
         .map_err(|e| e.to_string())??;
-        distribution.publish(manifest, inventory).await
+        distribution.publish_prepared(manifest, prepared).await
     }
 
     pub async fn refresh_routers(&self) {

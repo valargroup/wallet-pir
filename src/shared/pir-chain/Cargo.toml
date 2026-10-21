@@ -16,7 +16,8 @@ default = []
 transparent = []
 enhance = []
 status = []
-receiver = ["dep:zakura-receiver-crypto"]
+## Receiver indexing; it checks Ironwood tree roots with Orchard's field encoding.
+receiver = ["dep:zakura-receiver-crypto", "dep:orchard"]
 ## The node JSON-RPC client and its asynchronous reads, for service hosts and tools.
 rpc = ["dep:reqwest", "dep:tokio"]
 ## Synthetic chain fixtures for service tests: raw blocks and transactions built
@@ -44,10 +45,13 @@ tokio = { version = "1", features = ["rt", "macros", "sync"], optional = true }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "dcff84dc42258bb1e4c5d368094e11ea27c7ed4f", optional = true }
 sha2 = "0.10"
 zcash_script = "0.6"
-zcash_primitives = { package = "zakura-primitives", version = "=4.0.0-rc1", default-features = false, features = ["std", "backend-halo2"] }
 zcash_protocol = { package = "zakura-protocol", version = "=4.0.0-rc1" }
-transparent = { package = "zakura-transparent", version = "=4.0.0-rc1", default-features = false, features = ["std"] }
-orchard = { package = "zakura-orchard", version = "=4.0.0-rc1", default-features = false, features = ["std", "backend-halo2"] }
+# Borrowed transaction wire reader from
+# https://github.com/zakura-core/wallet-libraries/pull/287. It depends only on
+# zakura-protocol and two hash crates, so reading transactions does not compile the
+# Sapling, Orchard or Halo2 stack. It checks framing, not curve points or proofs.
+zcash_transaction_wire = { package = "zakura-transaction-wire", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
+orchard = { package = "zakura-orchard", version = "=4.0.0-rc1", default-features = false, features = ["std", "backend-halo2"], optional = true }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: the
 # `rocksdb` reader opens the node's database directly, so its format must match
 # the running node's.

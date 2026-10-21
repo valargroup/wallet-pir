@@ -79,6 +79,7 @@ impl DisplaySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another display consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let source = Source::for_product(&config, PREFIX, SCHEMA)?;
         let mut floor: Floor = match std::fs::read(config.directory.join("revocation-floor.json")) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -125,6 +126,7 @@ impl DisplaySync {
             let sync=sync.clone(); let live=live.clone(); async move {
                 let status=live.command(DisplayCommand::Status).await.unwrap_or_default();
                 axum::Json(serde_json::json!({"synchronization":sync.read().unwrap().clone(),
+                    "artifact_validation":status["artifact_validation"],
                     "verified_publication":status["active"],"runtime_readiness":{"warm":status["warm"]},
                     "revoked_revisions":status["revoked_revisions"]}))
             }
@@ -169,6 +171,7 @@ impl DisplaySync {
     }
     async fn update(&mut self) -> Result<serde_json::Value, Error> {
         let current = self.observe().await?;
+        crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         if self.current.as_ref() == Some(&current) {
             return Ok(serde_json::json!({"unchanged":true,"revision":current.revision}));
         }
@@ -200,7 +203,7 @@ impl DisplaySync {
         self.live
             .command(DisplayCommand::Status)
             .await
-            .is_ok_and(|s| s["active"].is_object() && s["warm"] == true)
+            .is_ok_and(|s| s["active"].is_object() && s["ready"] == true)
     }
     async fn download(&mut self, current: &Current) -> Result<DisplayPublication, Error> {
         let raw = self

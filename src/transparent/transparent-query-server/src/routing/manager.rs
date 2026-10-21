@@ -6,7 +6,7 @@ use crate::{
     control::persist,
     history::{
         live::{Command, LiveService, Publication},
-        service::{ReadinessMode, ServiceConfig, ServiceState},
+        service::{ServiceConfig, ServiceState},
     },
     routing::bootstrap::{self, Config},
     source::Source,
@@ -108,7 +108,7 @@ pub struct Stages {
     pub activation_seconds: f64,
 }
 impl HistorySync {
-    pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
+    pub fn new(mut config: Config, service: ServiceConfig) -> Result<Self, Error> {
         let source = Source::new(&config)?;
         std::fs::create_dir_all(&config.directory)?;
         if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
@@ -122,6 +122,7 @@ impl HistorySync {
             .open(config.directory.join("bootstrap.lock"))?;
         lock.try_lock()
             .map_err(|_| "another publication consumer owns this directory")?;
+        crate::validation::cleanup_repairs(&config.directory)?;
         let invalid: BTreeSet<String> =
             match std::fs::read(config.directory.join("active.invalid.json")) {
                 Ok(bytes) => serde_json::from_slice(&bytes)?,
@@ -139,7 +140,6 @@ impl HistorySync {
             intent.digests.extend(invalid);
             persist_floor(&config.directory, &intent)?;
         }
-        service.readiness = ReadinessMode::Warm;
         // No disk-cache restore/build path in this mode, including after restart.
         Ok(Self {
             config,
@@ -211,6 +211,9 @@ impl HistorySync {
             &mut self.revocations,
         )
         .await?;
+        // Repair after refreshing authority, before staging can refuse a
+        // withdrawn object shared with the next publication.
+        crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         let Some(current) = current else {
             return Ok(Input::Unchanged);
         };
@@ -290,9 +293,10 @@ impl HistorySync {
             }
         };
         let load_options = options.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&directory, &load_options))
-                .await??;
+        let set = tokio::task::spawn_blocking(move || {
+            ShardSet::open_for_serving(&directory, &load_options)
+        })
+        .await??;
         if set.map_digest != publication.map_sha256
             || set.map.network != self.config.network
             || set.map.genesis_hash != self.config.genesis_hash
@@ -314,7 +318,8 @@ impl HistorySync {
             Some(archive) => state.with_archive(archive.clone()),
             None => state,
         };
-        state.spawn_prewarm().await?;
+        state.check_required_material()?;
+        let _prewarm = state.spawn_prewarm();
         let live = LiveService::new_required(
             state,
             publication.clone(),
@@ -536,7 +541,8 @@ impl<'a> Acquired<'a> {
             let root = staged.directory.clone();
             let options = staged.options.clone();
             let set =
-                tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+                tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+                    .await??;
             let state = ServiceState::build_with_runtimes(
                 set,
                 owner.service,
@@ -549,10 +555,8 @@ impl<'a> Acquired<'a> {
             };
             stages.loading_seconds = loading.elapsed().as_secs_f64();
             let warming = std::time::Instant::now();
-            state.spawn_prewarm().await?;
-            if !state.is_warm() {
-                return Err("required publication failed prewarm".into());
-            }
+            let _prewarm = state.spawn_prewarm();
+            state.check_required_material()?;
             stages.prewarm_seconds = warming.elapsed().as_secs_f64();
             LiveService::new_required(
                 state,
@@ -697,10 +701,10 @@ impl Prepared<'_> {
             &staged.directory.join("verified-inventory.json"),
             &staged.inventory,
         )?;
-        live.collect_memory().await?;
         owner.pending = None;
-        owner.live = Some(live);
+        owner.live = Some(live.clone());
         owner.current = Some(current.clone());
+        collect_disk(&live, &owner.config.directory, &staged.directory).await;
         stages.activation_seconds = activating.elapsed().as_secs_f64();
         Ok(Progress {
             unchanged: false,
@@ -709,6 +713,32 @@ impl Prepared<'_> {
             downloaded_files: staged.downloaded_files,
             stages: Some(stages),
         })
+    }
+}
+/// Disk retention after an activation follows the owner's snapshot policy:
+/// `Collect` keeps the active, retained and candidate trees, three more unused
+/// ones and the catalog revisions they reference; objects that no remaining
+/// tree links are then unlinked. Activation already succeeded, so a failed or
+/// deferred collection is logged and retried after the next activation.
+async fn collect_disk(live: &LiveService, root: &Path, active: &Path) {
+    match live.command(Command::Collect).await {
+        Ok(reply) if reply["source_collection_deferred"] == false => {
+            let (root, linked) = (root.to_path_buf(), active.join("shards.json"));
+            match tokio::task::spawn_blocking(move || {
+                crate::objects::collect_objects(&root, &linked).map_err(|e| e.to_string())
+            })
+            .await
+            {
+                Ok(Ok(Some((files, bytes)))) => {
+                    tracing::info!(files, bytes, "collected unreferenced objects")
+                }
+                Ok(Ok(None)) => tracing::info!("object collection deferred"),
+                Ok(Err(error)) => tracing::warn!(%error, "object collection failed"),
+                Err(error) => tracing::warn!(%error, "object collection task failed"),
+            }
+        }
+        Ok(_) => tracing::info!("publication source collection deferred"),
+        Err(error) => tracing::warn!(%error, "publication disk collection failed"),
     }
 }
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]

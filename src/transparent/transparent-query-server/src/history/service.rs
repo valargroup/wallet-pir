@@ -40,7 +40,7 @@ use zakura_pir_protocol::transparent::shard as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
 use crate::admission::{Admission, Admitted};
-pub use crate::config::{ReadinessMode, ServiceConfig};
+pub use crate::config::ServiceConfig;
 use crate::request::{answer_query, json, within, Query, RequestError, Worker};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
@@ -56,18 +56,16 @@ use transparent_shard::manifest::query_binding;
 use transparent_shared::history::shardset::{LoadedShard, ShardSet, Table, TableRef};
 use transparent_shared::runtime::disk::{DiskCache, ShippedRuntimes};
 use transparent_shared::runtime::metrics::{Metrics, Snapshot};
-use transparent_shared::runtime::{
-    warm_bytes, Produced, RuntimeCache, RuntimeHandle, SharedParams,
-};
+use transparent_shared::runtime::{Produced, RuntimeCache, RuntimeHandle, SharedParams};
 
 /// The prewarm's progress toward holding every assigned runtime.
 struct WarmState {
-    mode: ReadinessMode,
     target: usize,
     finished: AtomicBool,
     cancelled: AtomicBool,
+    stopped: AtomicBool,
+    task: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
     count: std::sync::atomic::AtomicU64,
-    pins: std::sync::Mutex<Vec<(String, RuntimeHandle)>>,
     /// How this snapshot's prewarm came by the targets it found not
     /// resident; see [`ServiceState::preparation`].
     produced: PrewarmProduced,
@@ -104,6 +102,7 @@ impl PrewarmProduced {
 type ParamsKey = (&'static str, Table);
 
 pub struct Inner {
+    validation: std::sync::OnceLock<crate::validation::Scope>,
     set: ShardSet,
     /// One parameter set per geometry the loaded set actually uses, per table.
     params: HashMap<ParamsKey, Arc<SharedParams>>,
@@ -121,19 +120,6 @@ pub struct Inner {
     /// every runtime itself, as it always has.
     shipped: Option<ShippedRuntimes>,
     archive: Option<Arc<crate::routing::archive::Archive>>,
-    /// The body checksum of each required runtime file, by name, whose bytes
-    /// this snapshot's verification self-checked or matched to an earlier
-    /// check; see [`ServiceState::verify_required_material`].
-    verified_material: std::sync::Mutex<HashMap<std::ffi::OsString, [u8; 32]>>,
-}
-
-/// What one [`ServiceState::verify_required_material`] did per runtime file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-pub struct MaterialVerification {
-    /// Files loaded and fully self-checked here.
-    pub checked: usize,
-    /// Files whose bytes match an earlier successful check.
-    pub reused: usize,
 }
 
 #[derive(Clone)]
@@ -313,26 +299,6 @@ impl ServiceState {
                     .with_disk(disk),
             )
         });
-        // What every current assigned runtime holds together once built, plus
-        // the bound for as many as the prewarm can have in flight. In warm
-        // mode that has to fit the cache with nothing evicted: an assignment
-        // that needs eviction to be served is a worker that thrashes, and it
-        // is refused here rather than discovered under load.
-        let mut assigned = Vec::new();
-        for shard in set.current() {
-            for table in shard.tables() {
-                for _ in 0..shard.segments(table) {
-                    assigned.push(params[&(shard.geometry.name, table.kind())].as_ref());
-                }
-            }
-        }
-        let assigned_bytes = warm_bytes(assigned, cache.prewarm_concurrency());
-        if config.readiness == ReadinessMode::Warm && assigned_bytes > config.cache_bytes {
-            return Err(format!(
-                "the assignment needs {assigned_bytes} bytes of runtimes, the cache budget is {}",
-                config.cache_bytes
-            ));
-        }
         Metrics::set(&metrics.target_runtimes, target as u64);
         let prewarm_slots = cache.prewarm_concurrency();
         let admission = previous
@@ -356,8 +322,9 @@ impl ServiceState {
                 )
             }
         };
-        Ok(Self {
+        let state = Self {
             inner: Arc::new(Inner {
+                validation: std::sync::OnceLock::new(),
                 set,
                 params,
                 cache,
@@ -366,20 +333,21 @@ impl ServiceState {
                 metrics,
                 max_query_bytes,
                 warm: WarmState {
-                    mode: config.readiness,
                     target,
                     finished: AtomicBool::new(false),
                     cancelled: AtomicBool::new(false),
+                    stopped: AtomicBool::new(false),
+                    task: std::sync::Mutex::new(None),
                     count: std::sync::atomic::AtomicU64::new(0),
-                    pins: std::sync::Mutex::new(Vec::new()),
                     produced: PrewarmProduced::default(),
                 },
                 prewarm_slots,
                 shipped,
                 archive: previous.and_then(|s| s.inner.archive.clone()),
-                verified_material: Default::default(),
             }),
-        })
+        };
+        state.validation();
+        Ok(state)
     }
 
     /// Builds every runtime this worker should hold, in the order the set
@@ -391,8 +359,9 @@ impl ServiceState {
     /// yet is served the ordinary way, and the prewarm finds that runtime
     /// resident when it gets there.
     pub fn spawn_prewarm(&self) -> tokio::task::JoinHandle<()> {
+        let mut task = self.inner.warm.task.lock().unwrap();
         let state = self.clone();
-        tokio::spawn(async move {
+        let running = tokio::spawn(async move {
             let inner = &state.inner;
             let started = std::time::Instant::now();
             let current: std::collections::BTreeSet<String> = inner
@@ -419,11 +388,12 @@ impl ServiceState {
                 workers.spawn(async move {
                     let inner = &state.inner;
                     loop {
-                        if inner.warm.cancelled.load(Ordering::Acquire) {break;}
+                        if inner.warm.cancelled.load(Ordering::Acquire) || inner.warm.stopped.load(Ordering::Acquire) {break;}
                         let next = queue.lock().unwrap().pop_front();
                         let Some((digest, table, segment)) = next else {
                             break;
                         };
+                        if state.validation().unavailable(&digest) { continue; }
                         let Some(shard) = inner.set.revision(&digest) else {
                             continue;
                         };
@@ -432,20 +402,19 @@ impl ServiceState {
                             continue;
                         };
                         let key = (shard.runtime_identity(table).to_string(), table.kind(), segment);
+                        if inner.warm.stopped.load(Ordering::Acquire) { break; }
                         match transparent_shared::runtime::prewarm::retry(
                             &inner.warm.cancelled,
                             std::time::Duration::from_secs(30),
-                            || inner.cache.get_from(key.clone(), shared.clone(), source.clone(), inner.shipped.clone()),
+                            || inner.cache.get_background_from(key.clone(), shared.clone(), source.clone(), inner.shipped.clone()),
                         ).await
                         {
                             Ok((handle, produced)) => {
-                                if inner.warm.cancelled.load(Ordering::Acquire) {break;}
+                                if inner.warm.cancelled.load(Ordering::Acquire) || inner.warm.stopped.load(Ordering::Acquire) {break;}
                                 inner.warm.produced.record(produced);
                                 if current.contains(&digest) {
                                     inner.warm.count.fetch_add(1, Ordering::Release);
-                                    if inner.warm.mode == ReadinessMode::Warm {
-                                        inner.warm.pins.lock().unwrap().push((digest.clone(), handle));
-                                    }
+                                    drop(handle);
                                 }
                                 Metrics::incr(&inner.metrics.warm_runtimes);
                             }
@@ -470,7 +439,9 @@ impl ServiceState {
                 seconds = started.elapsed().as_secs_f64(),
                 "prewarm finished"
             );
-        })
+        });
+        *task = Some(running.abort_handle());
+        running
     }
 
     /// The worker's identity for reports: assignment digest, id and role when
@@ -496,8 +467,11 @@ impl ServiceState {
         })
     }
 
-    pub(crate) fn release_pins(&self) {
-        self.inner.warm.pins.lock().unwrap().clear();
+    pub(crate) fn stop_warming(&self) {
+        self.inner.warm.stopped.store(true, Ordering::Release);
+        if let Some(task) = self.inner.warm.task.lock().unwrap().take() {
+            task.abort();
+        }
     }
 
     pub(crate) fn evict_unpinned(&self) {
@@ -514,32 +488,14 @@ impl ServiceState {
     pub(crate) fn required_material(&self) -> bool {
         self.inner.shipped.as_ref().is_some_and(|s| s.is_required())
     }
-    /// A reused in-memory runtime cannot verify the replacement's persistent
-    /// native files. Required providers verify those files independently before
-    /// committing a restart pointer, even on an unchanged map/cache hit.
-    ///
-    /// A file `previous` verified is accepted again without loading or
-    /// self-checking it only under the same name, which commits to the
-    /// runtime key, parameters and source digest, and only once every byte of
-    /// it has been hashed from one open handle and found equal to the bytes
-    /// that check loaded, or a local receipt binds the complete
-    /// check to its network download identity. Receipts also survive restart. Anything
-    /// else is loaded from that handle and
-    /// self-checked in full, and the evidence kept is the checksum those
-    /// loaded bytes matched. Only a fully verified snapshot keeps evidence, and
-    /// only for its own current files.
-    pub fn verify_required_material(
-        &self,
-        previous: Option<&Self>,
-    ) -> Result<MaterialVerification, String> {
-        let Some(shipped) = &self.inner.shipped else {
-            return Err("provider requires prepared runtimes".into());
-        };
-        let proven = previous
-            .map(|s| s.inner.verified_material.lock().unwrap().clone())
-            .unwrap_or_default();
-        let mut verified = HashMap::new();
-        let mut done = MaterialVerification::default();
+    /// Check required files without loading runtimes or scanning their contents.
+    pub fn check_required_material(&self) -> Result<usize, String> {
+        let shipped = self
+            .inner
+            .shipped
+            .as_ref()
+            .ok_or("provider requires prepared runtimes")?;
+        let mut checked = 0;
         for shard in self.inner.set.current() {
             for table in shard.tables() {
                 let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
@@ -552,33 +508,16 @@ impl ServiceState {
                         table.kind(),
                         segment,
                     );
-                    let path = shipped.path(&key, shared, source.sha256());
-                    let name = path.file_name().ok_or("unnamed runtime")?.to_owned();
-                    let proof = proven
-                        .get(&name)
-                        .copied()
-                        .or_else(|| self.inner.cache.verified_shipped(&key, &name));
-                    let (checksum, reused) = shipped
-                        .verify_material(&key, shared, source, proof)
+                    shipped
+                        .check_size(&key, shared, source.sha256())
                         .map_err(|e| e.to_string())?;
-                    if reused {
-                        done.reused += 1;
-                    } else {
-                        done.checked += 1;
-                    }
-                    verified.insert(name, checksum);
+                    checked += 1;
                 }
             }
         }
-        *self.inner.verified_material.lock().unwrap() = verified;
-        tracing::info!(
-            map = %self.inner.set.map_digest,
-            checked = done.checked,
-            reused = done.reused,
-            "required runtime material verified"
-        );
-        Ok(done)
+        Ok(checked)
     }
+
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
         if self
             .inner
@@ -588,12 +527,52 @@ impl ServiceState {
         {
             self.inner.warm.cancelled.store(true, Ordering::Release);
         }
-        self.inner
-            .warm
-            .pins
-            .lock()
-            .unwrap()
-            .retain(|(digest, _)| !digests.contains(digest));
+    }
+
+    pub(crate) fn artifact_validation(&self) -> serde_json::Value {
+        self.validation().status()
+    }
+
+    fn validation(&self) -> &crate::validation::Scope {
+        self.inner.validation.get_or_init(|| {
+            let mut scope = crate::validation::Scope::default();
+            for shard in self.inner.set.current() {
+                scope.current(shard.manifest.shard_id, &shard.digest);
+            }
+            // A wallet can still request a retained predecessor by its digest.
+            for shard in self.inner.set.revisions() {
+                for table in shard.tables() {
+                    let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
+                    for segment in 0..shard.segments(table) {
+                        let Some(source) = shard.segment(table, segment) else {
+                            continue;
+                        };
+                        let key = (
+                            shard.runtime_identity(table).to_string(),
+                            table.kind(),
+                            segment,
+                        );
+                        scope.add(
+                            &shard.digest,
+                            shard.manifest.shard_id,
+                            source.path(),
+                            &self.inner.cache,
+                            &key,
+                        );
+                        if let Some(shipped) = &self.inner.shipped {
+                            scope.add(
+                                &shard.digest,
+                                shard.manifest.shard_id,
+                                &shipped.path(&key, shared, source.sha256()),
+                                &self.inner.cache,
+                                &key,
+                            );
+                        }
+                    }
+                }
+            }
+            scope
+        })
     }
 
     pub(crate) fn set(&self) -> &ShardSet {
@@ -602,6 +581,10 @@ impl ServiceState {
 
     pub(crate) fn is_invalidated(&self) -> bool {
         self.inner.warm.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.is_invalidated()
     }
 
     pub(crate) fn is_warm(&self) -> bool {
@@ -819,7 +802,19 @@ pub fn router(state: ServiceState) -> Router {
             state.archive().is_some(),
             archive_hop,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            validate_request,
+        ))
         .with_state(state)
+}
+
+async fn validate_request(
+    State(state): State<ServiceState>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    state.validation().serve(request, next).await
 }
 
 async fn archive_hop(
@@ -837,6 +832,7 @@ async fn archive_hop(
 async fn health(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
     let mut body = serde_json::json!({
+        "artifact_validation": state.validation().status(),
         "phase": "serving",
         "shards": inner.set.len(),
         "assigned_shards": inner.set.assigned_len(),
@@ -847,10 +843,7 @@ async fn health(State(state): State<ServiceState>) -> Response {
         "cache_budget_bytes": inner.cache.budget(),
         "cache_resident_bytes": inner.cache.resident_bytes(),
         "runtimes_built": inner.cache.entries(),
-        "readiness_mode": match inner.warm.mode {
-            ReadinessMode::LoadedOnly => "loaded-only",
-            ReadinessMode::Warm => "warm",
-        },
+        "readiness_mode": "loaded-only",
         "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
         "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
         "work_memory_reserved_bytes": inner.cache.work_memory().reserved_bytes(),
@@ -867,16 +860,8 @@ async fn health(State(state): State<ServiceState>) -> Response {
     json(StatusCode::OK, body)
 }
 
-/// What readiness attests depends on the mode.
-///
-/// Loaded-only: a set is loaded, which is the only precondition for serving
-/// correctly. Runtimes build on demand, so a cold worker is slow, not wrong;
-/// this is the correctness pilot's mode.
-///
-/// Warm: every assigned runtime has been built, so a router that health-checks
-/// this route holds a restarting worker out of rotation until it can answer at
-/// full speed. The body carries the map and assignment digests either way, so
-/// a deploy can assert which set and assignment a worker is actually running.
+/// Ready after metadata and file-size checks, independently of warming.
+/// The response identifies the active map and assignment for operators.
 async fn ready(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
     // The router checks this route every second and ejects a worker that
@@ -898,11 +883,9 @@ async fn ready(State(state): State<ServiceState>) -> Response {
     };
     let warm = inner.warm.count.load(Ordering::Acquire);
     let mut body = serde_json::json!({
+        "artifact_validation": state.validation().status(),
         "archive_forwarding": inner.archive.is_some(),
-        "mode": match inner.warm.mode {
-            ReadinessMode::LoadedOnly => "loaded-only",
-            ReadinessMode::Warm => "warm",
-        },
+        "mode": "loaded-only",
         "map_sha256": inner.set.map_digest,
         "shards": inner.set.len(),
         "assigned_shards": inner.set.assigned_len(),
@@ -935,18 +918,6 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         object.insert("reason".into(), serde_json::json!("no shards loaded"));
         return json(StatusCode::SERVICE_UNAVAILABLE, body);
     }
-    if inner.warm.mode == ReadinessMode::Warm && (warm as usize) < inner.warm.target {
-        object.insert("ready".into(), serde_json::json!(false));
-        object.insert(
-            "reason".into(),
-            serde_json::json!(if inner.warm.finished.load(Ordering::Acquire) {
-                "prewarm finished short of its target"
-            } else {
-                "prewarming"
-            }),
-        );
-        return json(StatusCode::SERVICE_UNAVAILABLE, body);
-    }
     object.insert("ready".into(), serde_json::json!(true));
     json(StatusCode::OK, body)
 }
@@ -955,7 +926,7 @@ async fn metrics(State(state): State<ServiceState>) -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        state.inner.metrics.render(&state.snapshot()),
+        state.inner.metrics.render(&state.snapshot()) + &state.validation().metrics(),
     )
         .into_response()
 }

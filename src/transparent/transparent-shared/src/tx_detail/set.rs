@@ -10,22 +10,15 @@
 //! derivation alone. With `--ship-runtimes` it also writes the recent
 //! revision's runtimes there as plain `.runtime` files; their presence marks
 //! the set as shipped (see `super::prebuild`).
-//! Every manifest is read and checked, whatever the worker's role, so any
-//! worker can serve the map and every manifest. Tables are verified only for
-//! the revisions the role serves: streamed SHA-256 per segment, then every
-//! row through [`display::verify_rows`] with seek reads, so a corrupt shard is
-//! refused at load rather than served as a PIR fault.
-//!
-//! A revision already verified by the previous snapshot, or staged ahead of
-//! its seal, is taken over without re-reading only when every segment of the
-//! new directory resolves to the very file this process hashed, unmodified
-//! since ([`crate::history::shardset::FileStamp`]). Claiming the same digest never
-//! skips verification. Display runtimes are keyed by revision digest, so the
-//! revision, not the segment, is the unit a later publication can inherit.
+//! Every manifest is checked for the worker's role. Publisher verification
+//! scans source contents and validates rows. `open_for_serving` checks only
+//! local table sizes: preparation correctness belongs to the publisher.
 
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
-use crate::history::shardset::{LoadError, SegmentSource, VerificationClock, VerificationReport};
+use crate::history::shardset::{
+    LoadError, SegmentSource, Stop, VerificationClock, VerificationReport, NEVER,
+};
 use crate::runtime::disk::ShippedRuntimes;
 use crate::tx_detail::{kind, runtime_key, serves, DisplayRole};
 use sha2::{Digest, Sha256};
@@ -163,7 +156,12 @@ impl DisplayRevision {
     /// Verifies every segment against the manifest, then every row, and
     /// returns the revision holding its sources.
     pub fn verify_tables(self) -> Result<Self, LoadError> {
-        self.verify_tables_reusing(None, &mut VerificationReport::default())
+        self.verify_tables_reusing(None, &mut VerificationReport::default(), false, NEVER)
+    }
+
+    /// Trust publisher preparation and check every held segment's size.
+    pub fn for_serving(self) -> Result<Self, LoadError> {
+        self.verify_tables_reusing(None, &mut VerificationReport::default(), true, NEVER)
     }
 
     /// Verifies the revision, taking over any segment `earlier` — a held
@@ -174,6 +172,8 @@ impl DisplayRevision {
         mut self,
         earlier: Option<&Self>,
         report: &mut VerificationReport,
+        size_only: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let earlier = earlier.filter(|earlier| earlier.digest == self.digest && earlier.held());
         let geometry = self.geometry;
@@ -204,17 +204,22 @@ impl DisplayRevision {
                     row_bytes,
                     segment.sha256.clone(),
                     rows,
-                )
-                .verify_or_reuse(
-                    earlier.and_then(|earlier| earlier.segment(table, index as u32)),
-                    report,
-                    false,
-                )?;
+                );
+                let source = if size_only {
+                    source.for_serving()?
+                } else {
+                    source.verify_or_reuse(
+                        earlier.and_then(|earlier| earlier.segment(table, index as u32)),
+                        report,
+                        false,
+                        stop,
+                    )?
+                };
                 sources.push(source);
             }
             buckets.push(sources);
         }
-        if earlier.is_some() && report.segments_hashed == hashed_before {
+        if size_only || (earlier.is_some() && report.segments_hashed == hashed_before) {
             self.buckets = buckets;
             return Ok(self);
         }
@@ -241,13 +246,18 @@ impl DisplayRevision {
         let seeds = self.manifest.placement_seeds();
         let width = geometry.directory_row_bytes;
         let mut row_checked = 0u64;
-        display::verify_rows(
+        let mut stopped = false;
+        let checked = display::verify_rows(
             shard_id,
             geometry,
             &directory_segments,
             &records,
             &seeds,
             |table, segment, row| {
+                if stop() {
+                    stopped = true;
+                    return Err(txid::Error("stopped".into()));
+                }
                 let file = directory_files
                     .get_mut(table.bucket() as usize)
                     .and_then(|files| files.get_mut(segment))
@@ -260,8 +270,11 @@ impl DisplayRevision {
                 row_checked += width as u64;
                 Ok(bytes)
             },
-        )
-        .map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
+        );
+        if stopped {
+            return Err(LoadError::Stopped);
+        }
+        checked.map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
         report.bytes_row_checked += row_checked;
         self.buckets = buckets;
         Ok(self)
@@ -305,6 +318,41 @@ impl DisplaySet {
         previous: Option<&Self>,
         staged: &[&DisplayRevision],
         role: DisplayRole,
+    ) -> Result<Self, LoadError> {
+        Self::open_material(dir, retain, previous, staged, role, false, NEVER)
+    }
+
+    /// [`Self::open_reusing`] for the publisher, asking `stop` before each
+    /// revision, each bounded read of a hash and each row check. A stop
+    /// returns [`LoadError::Stopped`] and loads nothing.
+    pub fn open_reusing_until(
+        dir: &Path,
+        retain: usize,
+        previous: Option<&Self>,
+        staged: &[&DisplayRevision],
+        role: DisplayRole,
+        stop: Stop<'_>,
+    ) -> Result<Self, LoadError> {
+        Self::open_material(dir, retain, previous, staged, role, false, stop)
+    }
+
+    /// Load received material with metadata and file-size checks only.
+    pub fn open_for_serving(
+        dir: &Path,
+        retain: usize,
+        role: DisplayRole,
+    ) -> Result<Self, LoadError> {
+        Self::open_material(dir, retain, None, &[], role, true, NEVER)
+    }
+
+    fn open_material(
+        dir: &Path,
+        retain: usize,
+        previous: Option<&Self>,
+        staged: &[&DisplayRevision],
+        role: DisplayRole,
+        size_only: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let map_path = dir.join(MAP_FILE);
         let raw = read(&map_path)?;
@@ -361,7 +409,10 @@ impl DisplaySet {
                 .copied()
                 .chain(previous.and_then(|set| set.held(&revision.digest)))
                 .find(|old| old.digest == revision.digest && old.held());
-            revision.verify_tables_reusing(earlier, &mut verification)
+            if stop() {
+                return Err(LoadError::Stopped);
+            }
+            revision.verify_tables_reusing(earlier, &mut verification, size_only, stop)
         };
 
         let mut revisions = Vec::with_capacity(map.shards.len());

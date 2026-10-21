@@ -86,6 +86,7 @@ pub struct Admission {
 /// Dropped without [`Pending::complete`] having been called, it counts as a
 /// cancellation.
 pub struct Pending {
+    _validation: crate::validation::QueryActivity,
     _waiter: OwnedSemaphorePermit,
     _body: Option<OwnedSemaphorePermit>,
     body_bytes: u64,
@@ -238,6 +239,7 @@ impl Admission {
         Metrics::add(&self.metrics.query_queue_depth, 1);
         Metrics::add(&self.metrics.body_bytes_in_flight, body_bytes);
         Ok(Pending {
+            _validation: crate::validation::query_activity(),
             _waiter: waiter,
             _body: body,
             body_bytes,

@@ -10,14 +10,12 @@ use crate::objects::{link_object, remove_partials, PARTIAL};
 pub(crate) use crate::source::sync_tree;
 pub use crate::source::Config;
 use crate::{
-    history::service::{ReadinessMode, ServiceConfig, ServiceState},
+    history::service::{ServiceConfig, ServiceState},
     routing::router::{plan, RosterEntry},
     source::Source,
 };
 use serde::Serialize;
-use sha2::Digest;
 use std::{path::PathBuf, sync::Arc};
-use tokio::io::AsyncWriteExt;
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
@@ -63,22 +61,19 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     let options = staged.options;
     let result = async {
         let root = stage.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+        let set = tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+            .await??;
         let state = ServiceState::build_with_runtimes(
             set,
             ServiceConfig {
                 cache_bytes: config.cache_bytes,
-                readiness: ReadinessMode::Warm,
                 ..ServiceConfig::default()
             },
             None,
             Some(ShippedRuntimes::required(stage.clone())),
         )?;
-        state.spawn_prewarm().await?;
-        if !state.is_warm() {
-            return Err("required prepared publication failed production loader/self-check".into());
-        }
+        let _prewarm = state.spawn_prewarm();
+        state.check_required_material()?;
         // HTTP current, not files or a last-success timestamp, is the bootstrap
         // freshness source. Supersession/withdrawal/outage cannot activate it.
         source.check_anchor(&config.directory, &current).await?;
@@ -202,25 +197,17 @@ pub(crate) async fn stage_holdings(
                     .write(true)
                     .open(&target)
                     .await?;
-                let mut response = source
+                let response = source
                     .get(&format!("artifacts/{}", artifact.sha256))
                     .await?;
-                let mut remaining = artifact.bytes;
-                let mut hash = sha2::Sha256::new();
-                while let Some(chunk) = response.chunk().await? {
-                    if chunk.len() as u64 > remaining {
-                        return Err("artifact exceeds declared length".into());
-                    }
-                    hash.update(&chunk);
-                    output.write_all(&chunk).await?;
-                    remaining -= chunk.len() as u64;
-                }
-                if remaining != 0 {
-                    return Err("artifact incomplete".into());
-                }
-                if hex::encode(hash.finalize()) != artifact.sha256 {
-                    return Err("artifact digest mismatch".into());
-                }
+                let verification = if artifact.kind == publication::Kind::Metadata {
+                    pir_sync_manager::Verification::Sha256(&artifact.sha256)
+                } else {
+                    pir_sync_manager::Verification::Length
+                };
+                response
+                    .copy_to(&mut output, artifact.bytes, verification)
+                    .await?;
                 transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);

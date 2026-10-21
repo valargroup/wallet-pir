@@ -10,6 +10,7 @@ use std::sync::{
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
+    version: RwLock<String>,
 }
 #[path = "../../../tests/support/status_tls.rs"]
 mod tls;
@@ -54,10 +55,23 @@ async fn setup() -> (
     let current = Arc::new(Origin {
         current: RwLock::new(pointer()),
         canonical: AtomicBool::new(true),
+        version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
     });
     let shared = current.clone();
     let anchors = current.clone();
+    let discovery = current.clone();
     let app = Router::new()
+        .route(
+            pir_sync_manager::service_discovery::PATH,
+            get(move || {
+                let discovery = discovery.clone();
+                async move {
+                    let mut document = pir_sync_manager::service_discovery::Document::publisher();
+                    document.version = discovery.version.read().unwrap().clone();
+                    Json(document)
+                }
+            }),
+        )
         .route(
             &format!("{PREFIX}current"),
             get(move |headers: HeaderMap| {
@@ -340,5 +354,51 @@ async fn loading_worker_keeps_normal_poll_cadence_without_serving() {
     );
     assert!(service.serving().await.is_err());
     peer.abort();
+    server.abort();
+}
+
+#[tokio::test]
+async fn incompatible_discovery_stops_polling_without_observing_product_state() {
+    let (_root, service, mut task, origin, _tls, server) = setup().await;
+    *origin.version.write().unwrap() = "999.0.0".into();
+    let error = task.synchronize().await.unwrap_err();
+    assert!(task.terminal(&error));
+    assert!(task.floor.current.is_none());
+    assert!(!service.dir.join("publisher-high-water.json").exists());
+    let returned = pir_sync_manager::SyncManager::new(task).run().await;
+    assert!(pir_sync_manager::is_incompatible(returned.as_ref()));
+    server.abort();
+}
+
+#[tokio::test]
+async fn ordinary_discovery_failure_is_retryable_and_never_renews_freshness() {
+    let (_root, service, mut task, _origin, tls, server) = setup().await;
+    let before = service
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .current()
+        .manifest()
+        .observed_ms;
+    fs::write(&tls.control, "refused-body").unwrap();
+    let error = task.synchronize().await.unwrap_err();
+    assert!(!task.terminal(&error));
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .unwrap()
+            .current()
+            .manifest()
+            .observed_ms,
+        before
+    );
+    assert!(task.floor.current.is_none());
     server.abort();
 }

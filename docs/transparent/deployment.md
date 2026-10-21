@@ -426,27 +426,27 @@ open rollout gates and [evidence](../../evidence/transparent/README.md) for reco
 
 ### Verification carried across revisions
 
-HTTPS consumers compute SHA-256 while receiving each artifact and check it
-against the publisher inventory before renaming the completed object to its
-digest. Reusing a completed cache object checks its byte size and regular-file
-status. Local storage is trusted: same-size corruption, including local edits,
-is outside this integrity boundary. No filesystem-specific integrity feature
-is required; macOS and Linux use the same policy.
+HTTPS consumers check exact byte counts while receiving bulk artifacts and
+store the publisher's expected digest with the completed file. Small metadata
+is hashed immediately. Bulk SHA-256 checks run once after serving starts, on
+one process-wide thread that pauses between chunks while queries wait or run.
+A failed check withdraws only dependent shards until a refetched replacement
+passes validation. Unchanged checked files reuse their saved validation across
+restarts. See [prepared distribution](prepared-distribution.md) for the trust
+boundary, recovery policy and operational status. No filesystem-specific
+integrity feature is required; macOS and Linux use the same policy.
 
-Local sidecar receipts carry the download identity to hard-linked or copied
-staged files. A successful source or native-runtime consistency check records
-its context against that download identity. Unchanged files reuse those checks
-across publications and restarts. Runtime format, shape, setup parameters and
-source identity remain part of the check context; different downloaded bytes
-cannot inherit an earlier runtime check. Missing or malformed receipts repeat
-the semantic check. Files used directly by the publisher or developer, without
-network receipts, retain their full verification path.
+Local sidecar receipts carry the download identity to staged files. Publisher
+preparation owns semantic source and runtime checks; query activation checks
+receipt identity, regular-file status and size without repeating those checks.
+Copied files receive their own background hash check. Files used directly by
+the publisher or developer, without network receipts, retain their full
+verification path.
 
 Existing catalog copies must match the downloaded artifact before receiving
 its identity. Receipt generation 2 invalidates older download and semantic
 receipts, which could have been assigned to different same-size catalog bytes.
-The first load after upgrading repeats the semantic checks; later loads reuse
-the new receipts normally.
+Older receipt identities cannot inherit a new validation result.
 
 Receipts establish checked content, not serving authority. Fresh publisher
 information, canonical anchors, withdrawal records and activation fences still

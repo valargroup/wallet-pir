@@ -271,7 +271,8 @@ def diff_products(packages, paths):
     A product library selects that product. A host test file selects the
     product that test asks for, and a shared test helper selects every product
     the host's tests ask for. The host library and shared crates select none.
-    A workspace manifest or any other unscoped path still selects every product.
+    An owned package manifest selects that same product. A workspace manifest
+    or any other unscoped path still selects every product.
     Tooling-only paths select none.
     """
     from fast_build import PRODUCT_HOST_FEATURES, product_of_package, products_for_host_path
@@ -281,12 +282,14 @@ def diff_products(packages, paths):
     by_name = {package['name']: package for package in packages}
 
     def unscoped(path):
-        workspace = path in {'Cargo.toml', 'Cargo.lock', 'Makefile'}
-        manifest = path.startswith('.cargo/') or path.endswith('/Cargo.toml')
-        if workspace or manifest:
+        if path in {'Cargo.toml', 'Cargo.lock', 'Makefile'} or path.startswith('.cargo/'):
             return True
+        # An owned manifest stays with its package. A manifest Cargo cannot
+        # attribute, like a deleted crate, still selects every product.
         if owner(packages, path):
             return False
+        if path.endswith('/Cargo.toml'):
+            return True
         return route(path) is None
 
     if any(unscoped(path) for path in relevant):

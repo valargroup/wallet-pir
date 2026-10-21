@@ -21,6 +21,8 @@ pub const MAX_OBJECT_BYTES: u64 = 32768 * ROW_BYTES as u64;
 pub struct Current {
     pub version: u16,
     pub revision: u64,
+    /// Most recent explicit withdrawal, preserved across ordinary publication.
+    pub withdrawal_revision: u64,
     pub recovery_epoch: u64,
     pub revoked: std::collections::BTreeSet<String>,
     pub eligible: bool,
@@ -32,6 +34,7 @@ impl Current {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != VERSION
             || self.revision == 0
+            || self.withdrawal_revision > self.revision
             || self.revoked.iter().any(|id| !protocol::canonical_hash(id))
             || self.manifest.is_some() != self.inventory.is_some()
             || (self.eligible && self.manifest.is_none())
@@ -52,6 +55,7 @@ impl Current {
         self.validate().is_ok()
             && previous.validate().is_ok()
             && self.revision >= previous.revision
+            && self.withdrawal_revision >= previous.withdrawal_revision
             && self.recovery_epoch >= previous.recovery_epoch
             && previous.revoked.is_subset(&self.revoked)
             && (self.revision > previous.revision || self == previous)
@@ -104,10 +108,11 @@ impl Object {
     pub fn validate(&self) -> Result<(), String> {
         // Reference packing can be larger than the source rows. Native and
         // reference formats retain their own stricter shape checks below.
-        #[cfg(not(feature = "native-reinspiring"))]
-        let limit = MAX_OBJECT_BYTES.max(prepared_packing::expected_len(32768)?);
-        #[cfg(feature = "native-reinspiring")]
-        let limit = MAX_OBJECT_BYTES;
+        let limit = if cfg!(feature = "native-reinspiring") {
+            MAX_OBJECT_BYTES
+        } else {
+            MAX_OBJECT_BYTES.max(prepared_packing::expected_len(32768)?)
+        };
         if !protocol::canonical_hash(&self.sha256) || self.bytes == 0 || self.bytes > limit {
             return Err("invalid publication object".into());
         }
@@ -117,16 +122,6 @@ impl Object {
     pub fn path(&self, root: &Path) -> Result<PathBuf, String> {
         self.validate()?;
         Ok(root.join("objects").join(&self.sha256))
-    }
-
-    pub fn verify(&self, root: &Path) -> Result<(), String> {
-        let path = self.path(root)?;
-        if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() != self.bytes
-            || prepared_packing::hash_file(&path)? != self.sha256
-        {
-            return Err("publication object checksum or length mismatch".into());
-        }
-        Ok(())
     }
 }
 
@@ -243,17 +238,5 @@ impl Inventory {
             }
         }
         Ok(true)
-    }
-
-    /// Verify every referenced file before a publisher makes the inventory current.
-    pub fn verify(&self, root: &Path) -> Result<(), String> {
-        self.validate()?;
-        for domain in &self.domains {
-            for object in domain.rows.iter().chain([&domain.hint, &domain.public]) {
-                object.verify(root)?;
-            }
-            domain.packing_object().verify(root)?;
-        }
-        Ok(())
     }
 }

@@ -23,10 +23,9 @@
 //! the set before it stops the running service, and a check deferred to first
 //! query would move that failure to after the cutover.
 //!
-//! Verification here is paranoid about *the operator's own files*, not only
-//! about a hostile network. A shard whose table no longer matches its manifest
-//! digest would be served as if it were the published shard, and every client
-//! would reject its rows as a PIR fault rather than as a corrupt shard.
+//! Publishers and explicit verification tools scan source contents. Serving
+//! loads use `open_for_serving`: they trust publisher preparation and check
+//! local source sizes without hashing or scanning rows.
 //!
 //! # Revisions
 //!
@@ -155,7 +154,18 @@ pub enum LoadError {
     ChangedDuringVerification { path: PathBuf },
     #[error("{0}")]
     Invalid(String),
+    /// The caller asked verification to stop. Nothing was proved and no
+    /// evidence or receipt was recorded for the file being read.
+    #[error("verification stopped")]
+    Stopped,
 }
+
+/// Asked between bounded reads and before each unit of verification work;
+/// once it answers true the work ends with [`LoadError::Stopped`].
+pub type Stop<'a> = &'a (dyn Fn() -> bool + Sync);
+
+/// A [`Stop`] that never stops, for callers without a stop request.
+pub const NEVER: Stop<'static> = &|| false;
 
 fn read(path: &Path) -> Result<Vec<u8>, LoadError> {
     std::fs::read(path).map_err(|source| LoadError::Io {
@@ -255,15 +265,8 @@ pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
 
 /// Where one segment's bytes are, and what they must be.
 ///
-/// Retained in place of the bytes themselves. `load` is the only way back to
-/// them, and it re-checks both length and digest, so a file replaced or
-/// truncated after startup fails the build rather than being packed into a
-/// runtime and served.
-///
-/// A verified input record: only the loaders construct one, from a manifest
-/// they have checked, and its fields are read-only. Naming a path and a digest
-/// is not enough to obtain one, so nothing outside the loader can present an
-/// arbitrary file as a verified segment.
+/// Publisher loads verify source contents; serving loads check only length.
+/// The manifest digest remains the runtime identity in both cases.
 #[derive(Clone, Debug)]
 pub struct SegmentSource {
     path: PathBuf,
@@ -282,6 +285,7 @@ pub struct SegmentSource {
     /// when that observation is certain enough to vouch for the file later;
     /// see [`FileStamp`]. In memory only, so a restart verifies everything.
     evidence: Option<FileStamp>,
+    size_only: bool,
 }
 
 /// The identity and change metadata of a file this process hashed.
@@ -310,7 +314,7 @@ pub struct FileStamp {
 }
 
 impl FileStamp {
-    fn of(meta: &std::fs::Metadata) -> Option<Self> {
+    pub(crate) fn of(meta: &std::fs::Metadata) -> Option<Self> {
         use std::os::unix::fs::MetadataExt;
         meta.is_file().then(|| Self {
             dev: meta.dev(),
@@ -333,6 +337,12 @@ impl FileStamp {
         let changed = i128::from(self.ctime_sec) * 1_000_000_000 + i128::from(self.ctime_nsec);
         modified.max(changed) + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Source loads on this thread that streamed the bytes through SHA-256.
+    pub(crate) static LOADS_HASHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// How long before a read a file must last have been modified for its stamp
@@ -416,7 +426,29 @@ impl SegmentSource {
             sha256,
             zero_from_row,
             evidence: None,
+            size_only: false,
         }
+    }
+
+    /// Trust publisher preparation and check only the local file's size.
+    pub fn for_serving(mut self) -> Result<Self, LoadError> {
+        let file = crate::verification::open(&self.path).map_err(|source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        })?;
+        if file
+            .metadata()
+            .map_err(|source| LoadError::Io {
+                path: self.path.clone(),
+                source,
+            })?
+            .len()
+            != self.bytes() as u64
+        {
+            return Err(LoadError::Invalid("source segment length mismatch".into()));
+        }
+        self.size_only = true;
+        Ok(self)
     }
 
     pub fn path(&self) -> &Path {
@@ -455,24 +487,25 @@ impl SegmentSource {
     /// every shard at startup and a fleet-sized set would otherwise need its
     /// whole plaintext resident to prove it is intact.
     pub fn verify(&self) -> Result<(), LoadError> {
-        self.verify_stamped().map(drop)
+        self.verify_stamped(NEVER).map(drop)
     }
 
     /// Verifies the segment and returns what was observed of its file, when
     /// that is settled enough to serve as evidence later.
-    fn verify_stamped(&self) -> Result<Option<FileStamp>, LoadError> {
-        self.verify_stamped_observing(|| {})
+    fn verify_stamped(&self, stop: Stop<'_>) -> Result<Option<FileStamp>, LoadError> {
+        self.verify_stamped_observing(|| {}, stop)
     }
 
     fn verify_stamped_observing(
         &self,
         mut after_read: impl FnMut(),
+        stop: Stop<'_>,
     ) -> Result<Option<FileStamp>, LoadError> {
         // Collecting an old publication removes hard links and changes ctime
         // even when its shared table bytes are untouched. Retry the whole hash,
         // never the stamp alone. Content errors and persistent churn still fail.
         for attempt in 0..3 {
-            match self.verify_stamped_once(&mut after_read) {
+            match self.verify_stamped_once(&mut after_read, stop) {
                 Err(LoadError::ChangedDuringVerification { .. }) if attempt < 2 => continue,
                 result => return result,
             }
@@ -483,6 +516,7 @@ impl SegmentSource {
     fn verify_stamped_once(
         &self,
         after_read: &mut impl FnMut(),
+        stop: Stop<'_>,
     ) -> Result<Option<FileStamp>, LoadError> {
         let io = |source| LoadError::Io {
             path: self.path.clone(),
@@ -508,6 +542,11 @@ impl SegmentSource {
         let zero_from = self.zero_from();
         let mut tail_data = false;
         loop {
+            // Checked before each bounded read: a stop leaves the file
+            // unproved, with no receipt or evidence recorded for it.
+            if stop() {
+                return Err(LoadError::Stopped);
+            }
             let read = (&file).read(&mut buffer).map_err(io)?;
             if read == 0 {
                 break;
@@ -552,6 +591,7 @@ impl SegmentSource {
         mut self,
         report: &mut VerificationReport,
         page: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
             path: self.path.clone(),
@@ -563,7 +603,7 @@ impl SegmentSource {
             &self.sha256,
             self.bytes() as u64,
         );
-        self.evidence = self.verify_stamped()?;
+        self.evidence = self.verify_stamped(stop)?;
         if received {
             report.reused(&self);
         } else {
@@ -595,11 +635,13 @@ impl SegmentSource {
 
     /// Takes over earlier verification of the same committed segment, or
     /// verifies it. Used by every loader so no table has a second policy.
+    /// `stop` is asked before each bounded read of a hash.
     pub fn verify_or_reuse<'a>(
         self,
         earlier: impl IntoIterator<Item = &'a SegmentSource>,
         report: &mut VerificationReport,
         page: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         // Local receipts preserve a successful source check across publication
         // changes and restart. Received files are trusted after their network
@@ -622,7 +664,7 @@ impl SegmentSource {
                 report.reused(&reused);
                 Ok(reused)
             }
-            None => self.verify_into(report, page),
+            None => self.verify_into(report, page, stop),
         }
     }
 
@@ -633,10 +675,12 @@ impl SegmentSource {
     /// plaintext beside it would be the accounting error this whole change
     /// exists to remove.
     pub fn load(&self) -> Result<Vec<u8>, LoadError> {
-        let file = std::fs::File::open(&self.path).map_err(|source| LoadError::Io {
+        let io = |source| LoadError::Io {
             path: self.path.clone(),
             source,
-        })?;
+        };
+        let file = std::fs::File::open(&self.path).map_err(io)?;
+        let before = file.metadata().map_err(io)?;
         let mut bytes = Vec::with_capacity(self.bytes());
         // One extra byte detects an oversized/replaced source without allowing
         // an untrusted file length to drive an unbounded allocation.
@@ -647,12 +691,23 @@ impl SegmentSource {
             .by_ref()
             .take(self.bytes() as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|source| LoadError::Io {
-                path: self.path.clone(),
-                source,
-            })?;
+            .map_err(io)?;
         crate::runtime::filecache::consumed(&file);
-        if !inherited {
+        // Publisher evidence can avoid a second hash; serving loads trust the
+        // publisher and check only the length, even when evidence is present.
+        let vouched = !self.size_only && !inherited && self.vouches_for(&file, &before);
+        if self.size_only {
+            if bytes.len() != self.bytes() {
+                return Err(LoadError::Invalid("source segment length mismatch".into()));
+            }
+        } else if vouched {
+            if bytes.len() != self.bytes() {
+                return Err(LoadError::Invalid("verified segment length changed".into()));
+            }
+            self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))?;
+        } else if !inherited {
+            #[cfg(test)]
+            LOADS_HASHED.with(|n| n.set(n.get() + 1));
             if !crate::verification::matches_received(
                 &self.path,
                 &file,
@@ -675,6 +730,28 @@ impl SegmentSource {
             ));
         }
         Ok(bytes)
+    }
+
+    /// What this process observed of the file when it verified it, if that
+    /// is settled enough to vouch for the same unchanged file later.
+    pub(crate) fn evidence(&self) -> Option<FileStamp> {
+        self.evidence
+    }
+
+    /// Whether this process's evidence vouches for `file`, opened at this
+    /// segment's path and observed as `before` when it was opened: the same
+    /// inode, unmodified since it was hashed, both before and now, and still
+    /// what the path names. Without settled evidence the answer is `false`.
+    pub(crate) fn vouches_for(&self, file: &std::fs::File, before: &std::fs::Metadata) -> bool {
+        let Some(evidence) = self.evidence else {
+            return false;
+        };
+        let now = file.metadata().ok();
+        let named = std::fs::metadata(&self.path).ok();
+        FileStamp::of(before) == Some(evidence)
+            && now.as_ref().and_then(FileStamp::of) == Some(evidence)
+            && named.as_ref().and_then(FileStamp::of) == Some(evidence)
+            && evidence.len == self.bytes() as u64
     }
 
     fn verification_context(&self) -> Vec<u8> {
@@ -947,6 +1024,8 @@ impl LoadedShard {
             meta,
             &Evidence::default(),
             &mut VerificationReport::default(),
+            false,
+            NEVER,
         )
     }
 
@@ -959,6 +1038,8 @@ impl LoadedShard {
         meta: RevisionMeta,
         evidence: &Evidence<'_>,
         report: &mut VerificationReport,
+        size_only: bool,
+        stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
         let RevisionMeta {
             manifest,
@@ -992,17 +1073,21 @@ impl LoadedShard {
                     kind.row_bytes(geometry),
                 )));
             }
-            SegmentSource::published(
+            let source = SegmentSource::published(
                 dir.join(format!("{}.{index}.bin", table.name())),
                 published.rows,
                 published.row_bytes,
                 published.sha256.clone(),
                 zero_from_row,
-            )
-            .verify_or_reuse(
+            );
+            if size_only {
+                return source.for_serving();
+            }
+            source.verify_or_reuse(
                 evidence.get(identity, kind, index as u32).iter().copied(),
                 report,
                 kind == Table::Pages,
+                stop,
             )
         };
         if manifest.directory_segments.is_empty() {
@@ -1056,7 +1141,10 @@ impl LoadedShard {
                 segments,
             });
         }
-        if !directory_reused {
+        if !size_only && !directory_reused {
+            if stop() {
+                return Err(LoadError::Stopped);
+            }
             verify_choice_routes(&manifest, geometry, &directory, report)?;
         }
 
@@ -1238,6 +1326,34 @@ impl ShardSet {
         options: &LoadOptions,
         previous: Option<&Self>,
     ) -> Result<Self, LoadError> {
+        Self::open_material(dir, options, previous, false, NEVER)
+    }
+
+    /// [`Self::open_reusing`] for the publisher, asking `stop` before each
+    /// revision, before each bounded read of a hash and before route checks.
+    /// A stop returns [`LoadError::Stopped`] and loads nothing; segments
+    /// already hashed by this call leave no evidence behind.
+    pub fn open_reusing_until(
+        dir: &Path,
+        options: &LoadOptions,
+        previous: Option<&Self>,
+        stop: Stop<'_>,
+    ) -> Result<Self, LoadError> {
+        Self::open_material(dir, options, previous, false, stop)
+    }
+
+    /// Load publisher-prepared material without scanning table contents.
+    pub fn open_for_serving(dir: &Path, options: &LoadOptions) -> Result<Self, LoadError> {
+        Self::open_material(dir, options, None, true, NEVER)
+    }
+
+    fn open_material(
+        dir: &Path,
+        options: &LoadOptions,
+        previous: Option<&Self>,
+        size_only: bool,
+        stop: Stop<'_>,
+    ) -> Result<Self, LoadError> {
         let clock = VerificationClock::start();
         let evidence = Evidence::of(previous);
         let mut verification = VerificationReport::default();
@@ -1383,8 +1499,17 @@ impl ShardSet {
             parent_digest = meta.digest.clone();
             current_revision.insert(entry.shard_id, (manifest.revision, manifest.sealed));
             if assigned(entry.shard_id) {
-                let shard =
-                    LoadedShard::verify_tables_reusing(&path, meta, &evidence, &mut verification)?;
+                if stop() {
+                    return Err(LoadError::Stopped);
+                }
+                let shard = LoadedShard::verify_tables_reusing(
+                    &path,
+                    meta,
+                    &evidence,
+                    &mut verification,
+                    size_only,
+                    stop,
+                )?;
                 metadata.insert(
                     shard.digest.clone(),
                     RevisionMeta {
@@ -1476,11 +1601,16 @@ impl ShardSet {
                 if within {
                     kept += 1;
                     kept_bytes += bytes;
+                    if stop() {
+                        return Err(LoadError::Stopped);
+                    }
                     let shard = LoadedShard::verify_tables_reusing(
                         &path,
                         meta,
                         &evidence,
                         &mut verification,
+                        size_only,
+                        stop,
                     )?;
                     revisions.push(shard);
                 } else if options.prune_excess {
@@ -1723,6 +1853,25 @@ mod tests {
     }
 
     #[test]
+    fn serving_sources_need_no_receipt_and_never_rehash_local_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = small_source(dir.path());
+        let expected = std::fs::read(source.path()).unwrap();
+        let serving = source.clone().for_serving().unwrap();
+        let mut changed = expected.clone();
+        changed[0] ^= 1;
+        std::fs::write(source.path(), &changed).unwrap();
+        assert_eq!(serving.load().unwrap(), changed);
+        assert!(
+            source.verify().is_err(),
+            "publisher still checks source contents"
+        );
+        std::fs::write(source.path(), &expected[..expected.len() - 1]).unwrap();
+        assert!(serving.load().is_err());
+        assert!(source.for_serving().is_err());
+    }
+
+    #[test]
     fn collecting_a_hard_link_rechecks_the_complete_source() {
         let dir = tempfile::tempdir().unwrap();
         let source = small_source(dir.path());
@@ -1730,13 +1879,16 @@ mod tests {
         std::fs::hard_link(source.path(), &link).unwrap();
         let mut reads = 0;
         let evidence = source
-            .verify_stamped_observing(|| {
-                reads += 1;
-                if reads == 1 {
-                    next_timestamp_tick(source.path());
-                    std::fs::remove_file(&link).unwrap();
-                }
-            })
+            .verify_stamped_observing(
+                || {
+                    reads += 1;
+                    if reads == 1 {
+                        next_timestamp_tick(source.path());
+                        std::fs::remove_file(&link).unwrap();
+                    }
+                },
+                NEVER,
+            )
             .unwrap();
         assert_eq!(
             reads, 2,
@@ -1753,13 +1905,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source = small_source(dir.path());
         let mut reads = 0;
-        let result = source.verify_stamped_observing(|| {
-            reads += 1;
-            let mut changed = [0u8; 32];
-            changed[0] = 1;
-            next_timestamp_tick(source.path());
-            std::fs::write(source.path(), changed).unwrap();
-        });
+        let result = source.verify_stamped_observing(
+            || {
+                reads += 1;
+                let mut changed = [0u8; 32];
+                changed[0] = 1;
+                next_timestamp_tick(source.path());
+                std::fs::write(source.path(), changed).unwrap();
+            },
+            NEVER,
+        );
         assert!(
             matches!(result, Err(LoadError::Invalid(_))),
             "the second hash must reject changed bytes"
@@ -1776,15 +1931,18 @@ mod tests {
         let source = small_source(dir.path());
         let link = dir.path().join("retired.bin");
         let mut reads = 0;
-        let result = source.verify_stamped_observing(|| {
-            reads += 1;
-            next_timestamp_tick(source.path());
-            if link.exists() {
-                std::fs::remove_file(&link).unwrap();
-            } else {
-                std::fs::hard_link(source.path(), &link).unwrap();
-            }
-        });
+        let result = source.verify_stamped_observing(
+            || {
+                reads += 1;
+                next_timestamp_tick(source.path());
+                if link.exists() {
+                    std::fs::remove_file(&link).unwrap();
+                } else {
+                    std::fs::hard_link(source.path(), &link).unwrap();
+                }
+            },
+            NEVER,
+        );
         assert!(matches!(
             result,
             Err(LoadError::ChangedDuringVerification { .. })
@@ -1806,15 +1964,121 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         let source =
             SegmentSource::published(path.clone(), 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
-                .verify_into(&mut VerificationReport::default(), true)
+                .verify_into(&mut VerificationReport::default(), true, NEVER)
                 .unwrap();
         assert!(source.evidence.is_some());
         file.write_all_at(&[1], 0).unwrap();
         file.set_modified(modified).unwrap();
         let candidate = SegmentSource::published(path, 2, 16, source.sha256.clone(), 2);
         assert!(candidate.verify_or_reuse(
-            Some(&source), &mut VerificationReport::default(), true,
+            Some(&source), &mut VerificationReport::default(), true, NEVER,
         ).is_err(), "a changed source must be hashed and rejected even if its modification time was restored");
+    }
+
+    /// A stop between bounded reads ends verification with nothing proved:
+    /// no evidence, no receipt; verification resumed later hashes it whole.
+    #[test]
+    fn a_stop_during_a_source_scan_proves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.bin");
+        let bytes = vec![0u8; (2 << 20) + 32];
+        std::fs::write(&path, &bytes).unwrap();
+        let rows = bytes.len() as u64 / 32;
+        let source = SegmentSource::published(
+            path.clone(),
+            rows,
+            32,
+            hex::encode(Sha256::digest(&bytes)),
+            rows,
+        );
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        let stop = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1;
+        let mut report = VerificationReport::default();
+        let result = source
+            .clone()
+            .verify_or_reuse(None, &mut report, true, &stop);
+        assert!(matches!(result, Err(LoadError::Stopped)));
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "stopped after one chunk"
+        );
+        assert_eq!(report.segments_hashed, 0);
+        assert!(crate::verification::Receipt::new(
+            &path,
+            &std::fs::File::open(&path).unwrap(),
+            &source.verification_context()
+        )
+        .is_none_or(|receipt| !receipt.matches()));
+        source
+            .verify_or_reuse(None, &mut report, true, NEVER)
+            .unwrap();
+        assert_eq!(report.segments_hashed, 1);
+    }
+
+    fn hashed_loads() -> u64 {
+        LOADS_HASHED.with(std::cell::Cell::get)
+    }
+
+    /// A file verified with settled evidence by this process.
+    fn settled_source(dir: &Path) -> (SegmentSource, std::fs::File, std::time::SystemTime) {
+        let path = dir.join("source.bin");
+        let bytes = vec![0u8; 32];
+        std::fs::write(&path, &bytes).unwrap();
+        let file = std::fs::File::options().write(true).open(&path).unwrap();
+        let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        file.set_modified(modified).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let source = SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+            .verify_into(&mut VerificationReport::default(), true, NEVER)
+            .unwrap();
+        assert!(source.evidence.is_some());
+        (source, file, modified)
+    }
+
+    #[test]
+    fn an_unchanged_verified_source_loads_without_another_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let (source, _file, _) = settled_source(dir.path());
+        let before = hashed_loads();
+        assert_eq!(source.load().unwrap(), vec![0u8; 32]);
+        assert_eq!(hashed_loads(), before, "the evidence vouches for the file");
+        let unverified = SegmentSource::published(
+            source.path().to_path_buf(),
+            2,
+            16,
+            source.sha256().to_string(),
+            2,
+        );
+        unverified.load().unwrap();
+        assert_eq!(hashed_loads(), before + 1, "a first load is hashed");
+    }
+
+    #[test]
+    fn a_same_size_change_with_restored_mtime_fails_an_evidence_backed_load() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (source, file, modified) = settled_source(dir.path());
+        next_timestamp_tick(source.path());
+        file.write_all_at(&[1], 0).unwrap();
+        file.set_modified(modified).unwrap();
+        let before = hashed_loads();
+        assert!(source.load().is_err());
+        assert_eq!(hashed_loads(), before + 1, "changed ctime forces a hash");
+    }
+
+    #[test]
+    fn a_replaced_path_is_hashed_again_even_with_identical_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (source, _file, _) = settled_source(dir.path());
+        let replacement = dir.path().join("replacement.bin");
+        std::fs::write(&replacement, vec![0u8; 32]).unwrap();
+        std::fs::rename(&replacement, source.path()).unwrap();
+        let before = hashed_loads();
+        source.load().unwrap();
+        assert_eq!(hashed_loads(), before + 1, "another inode has no evidence");
+        std::fs::write(source.path(), vec![1u8; 32]).unwrap();
+        assert!(source.load().is_err());
     }
 
     /// A segment whose rows past the ones its queries select hold data is refused

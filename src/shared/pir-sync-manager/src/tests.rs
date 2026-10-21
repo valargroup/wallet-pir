@@ -338,6 +338,52 @@ struct Probe {
     completed: Vec<(tokio::time::Instant, bool)>,
 }
 struct Task(Arc<Mutex<Probe>>);
+
+#[tokio::test(start_paused = true)]
+async fn peer_maintenance_runs_between_passes_without_shortening_error_backoff() {
+    struct Maintained {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        waiting: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl SyncTask for Maintained {
+        type Report = ();
+        type Error = ();
+        async fn synchronize(&mut self) -> Result<(), ()> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(())
+        }
+        async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+            self.waiting.notify_one();
+            self.release.notified().await;
+            tokio::time::sleep_until(deadline).await;
+        }
+    }
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let waiting = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let task = Maintained {
+        calls: calls.clone(),
+        waiting: waiting.clone(),
+        release: release.clone(),
+    };
+    let running = tokio::spawn(SyncManager::new(task).run());
+    waiting.notified().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(9)).await;
+    release.notify_one();
+    tokio::task::yield_now().await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "maintenance must not start another publication pass"
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    waiting.notified().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    running.abort();
+    let _ = running.await;
+}
 impl SyncTask for Task {
     type Report = ();
     type Error = ();
@@ -512,4 +558,75 @@ impl SyncTask for Terminal {
 async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error() {
     let manager = SyncManager::new(Terminal(0));
     assert_eq!(manager.run().await, "fatal");
+}
+
+#[tokio::test]
+async fn streamed_objects_preserve_length_digest_and_aggregate_budget() {
+    let tls = Tls::new().await;
+    let digest = "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721";
+    let mut source = tls.source(100);
+    for (length, verification, succeeds) in [
+        (6, Verification::Sha256(digest), true),
+        (6, Verification::Length, true),
+        (7, Verification::Length, false),
+        (5, Verification::Length, false),
+        (6, Verification::Sha256(&"00".repeat(32)), false),
+    ] {
+        let mut output = Vec::new();
+        let result = source
+            .request("ok", None)
+            .await
+            .unwrap()
+            .copy_to(&mut output, length, verification)
+            .await;
+        assert_eq!(result.is_ok(), succeeds);
+        if let Ok(report) = result {
+            assert_eq!(report.bytes, 6);
+            assert_eq!(output, b"abcdef");
+        }
+    }
+    assert_eq!(source.downloaded(), 30);
+    let mut source = tls.source(10);
+    source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut Vec::new(), 6, Verification::Length)
+        .await
+        .unwrap();
+    assert!(source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut Vec::new(), 6, Verification::Length)
+        .await
+        .is_err());
+    assert_eq!(source.downloaded(), 12);
+}
+
+#[tokio::test]
+async fn streamed_objects_propagate_writer_errors_and_reject_refused_bodies() {
+    let tls = Tls::new().await;
+    let mut source = tls.source(100);
+    let (mut closed_writer, reader) = tokio::io::duplex(2);
+    drop(reader);
+    let error = source
+        .request("ok", None)
+        .await
+        .unwrap()
+        .copy_to(&mut closed_writer, 6, Verification::Length)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.downcast_ref::<std::io::Error>().is_some());
+    let mut output = Vec::new();
+    assert!(source
+        .request("fail", None)
+        .await
+        .unwrap()
+        .copy_to(&mut output, 7, Verification::Length)
+        .await
+        .is_err());
+    assert!(output.is_empty());
+    assert_eq!(source.downloaded(), 13);
 }

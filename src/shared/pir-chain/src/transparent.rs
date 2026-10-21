@@ -234,7 +234,7 @@ pub struct FetchedBlock(Arc<Block>);
 impl FetchedBlock {
     /// The block serialized in `raw`.
     pub fn from_bytes(raw: &[u8]) -> Result<Self, NodeError> {
-        Block::zcash_deserialize(raw)
+        Block::zcash_deserialize(&mut &raw[..])
             .map(|block| Self(Arc::new(block)))
             .map_err(|error| NodeError::Block(error.to_string()))
     }
@@ -670,7 +670,7 @@ mod rpc {
                     };
                     let raw = hex::decode(raw_hex)?;
                     let transaction =
-                        Transaction::zcash_deserialize(raw.as_slice()).map_err(|error| {
+                        Transaction::zcash_deserialize(&mut raw.as_slice()).map_err(|error| {
                             NodeError::Transaction(displayed.clone(), error.to_string())
                         })?;
                     if transaction.hash().0 != *txid {
@@ -773,8 +773,10 @@ mod tests {
                 lock_time: zakura_chain::transaction::LockTime::unlocked(),
             };
             Arc::new(
-                Transaction::zcash_deserialize(node.zcash_serialize_to_vec().unwrap().as_slice())
-                    .unwrap(),
+                Transaction::zcash_deserialize(
+                    &mut node.zcash_serialize_to_vec().unwrap().as_slice(),
+                )
+                .unwrap(),
             )
         }
     }
