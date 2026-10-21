@@ -1509,3 +1509,81 @@ async fn display_answers_are_pinned() {
     t.send(&owner, &q0, Upload::Sized(vec![0; 16])).await;
     t.check("display_answers.txt");
 }
+
+/// A superseded first load is checked data, never serving authority. Its
+/// unchanged archive rows survive the next preparation without being rechecked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cold_preparation_reuses_checked_rows_without_serving_them() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = write_shard(root.path(), &spec(0, 100, 199, true, ""), &records(10, &[]));
+    let recent = write_shard(
+        root.path(),
+        &spec(1, 200, 260, false, &archive.digest),
+        &records(20, &[]),
+    );
+    let first = synth::write_candidate(
+        root.path(),
+        &params(1),
+        &[archive.clone(), recent.clone()],
+        "first",
+    )
+    .unwrap();
+    let mut next_spec = spec(1, 200, 261, false, &archive.digest);
+    next_spec.revision = 1;
+    next_spec.supersedes = recent.digest.clone();
+    let next_recent = write_shard(root.path(), &next_spec, &records(21, &[]));
+    let next =
+        synth::write_candidate(root.path(), &params(1), &[archive, next_recent], "next").unwrap();
+    let worker = Worker::new(root.path(), DisplayRole::Combined, config(), vec![]);
+    let prepare = |publication: &(PathBuf, String)| DisplayCommand::Prepare {
+        expected: String::new(),
+        publication: DisplayPublication {
+            directory: publication.0.clone(),
+            map_sha256: publication.1.clone(),
+        },
+    };
+    // Verification may reuse a file only after its last write is older than
+    // a full filesystem timestamp tick.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    worker.command(prepare(&first)).await.unwrap();
+    let first_status = worker.command(DisplayCommand::Status).await.unwrap();
+    let first_checked = first_status["last_preparation"]["verification"]["bytes_row_checked"]
+        .as_u64()
+        .unwrap();
+    assert!(worker.live.expected().is_empty());
+    assert_eq!(
+        worker
+            .live
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/ready")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    worker.command(prepare(&next)).await.unwrap();
+    let status = worker.command(DisplayCommand::Status).await.unwrap();
+    let verification = &status["last_preparation"]["verification"];
+    assert!(
+        verification["segments_reused"].as_u64().unwrap() > 0,
+        "checked rows must survive a superseded cold preparation: {status}"
+    );
+    assert!(verification["bytes_row_checked"].as_u64().unwrap() < first_checked);
+    assert!(
+        worker.live.expected().is_empty(),
+        "preparation cannot publish a serving view"
+    );
+    worker
+        .command(DisplayCommand::Activate {
+            expected: String::new(),
+            map_sha256: next.1.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(worker.live.expected(), next.1);
+}
