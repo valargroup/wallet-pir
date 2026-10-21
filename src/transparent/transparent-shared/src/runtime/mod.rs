@@ -398,6 +398,32 @@ fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
     (random % used as u64) as usize
 }
 
+/// Columns [`first_differing_column`] compares per pass over the rows: one
+/// interleaved block of a byte database, so both it and the row-major
+/// segment are read a cache line at a time instead of one line per byte.
+const SELF_CHECK_COLUMNS: usize = 16;
+
+/// The lowest column with a row where `differs`, visiting every cell of a
+/// `cols` x `rows` table. Columns are taken in tiles of
+/// [`SELF_CHECK_COLUMNS`] and every row is read within a tile; a column-major
+/// walk of row-major segment bytes touches a new page for every byte.
+fn first_differing_column(
+    cols: usize,
+    rows: usize,
+    differs: impl Fn(usize, usize) -> bool,
+) -> Option<usize> {
+    (0..cols).step_by(SELF_CHECK_COLUMNS).find_map(|start| {
+        let tile = start..(start + SELF_CHECK_COLUMNS).min(cols);
+        (0..rows)
+            .any(|row| tile.clone().any(|col| differs(row, col)))
+            .then(|| {
+                tile.clone()
+                    .find(|&col| (0..rows).any(|row| differs(row, col)))
+            })
+            .flatten()
+    })
+}
+
 /// A runtime's encoded database.
 pub(crate) enum Database {
     /// A 16-bit table's coefficients, scanned by ipir-sp's server.
@@ -658,26 +684,22 @@ impl TableRuntime {
             Database::Wide(server) => {
                 let padded = server.db_rows_padded();
                 let db = server.db();
-                for col in 0..profile.cols {
-                    let column = &db[col * padded..col * padded + profile.rows];
-                    if (0..profile.rows).any(|row| {
-                        column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
-                    }) {
-                        return Err(format!("database column {col} differs from the segment"));
-                    }
+                if let Some(col) = first_differing_column(profile.cols, profile.rows, |row, col| {
+                    db[col * padded + row]
+                        != native::row_coefficient(rows, profile.row_bytes, row, col)
+                }) {
+                    return Err(format!("database column {col} differs from the segment"));
                 }
             }
             Database::Bytes(db) => {
                 if db.len() != rows.len() {
                     return Err("database length differs from the segment".into());
                 }
-                for col in 0..profile.cols {
-                    if (0..profile.rows).any(|row| {
-                        db[interleaved_index(profile.rows, col, row)]
-                            != rows[row * profile.row_bytes + col]
-                    }) {
-                        return Err(format!("database column {col} differs from the segment"));
-                    }
+                if let Some(col) = first_differing_column(profile.cols, profile.rows, |row, col| {
+                    db[interleaved_index(profile.rows, col, row)]
+                        != rows[row * profile.row_bytes + col]
+                }) {
+                    return Err(format!("database column {col} differs from the segment"));
                 }
             }
         }
@@ -1455,6 +1477,29 @@ pub(crate) mod tests {
             )),
             "d270081346ced7386c22ffc61e3b504090e9951242f5fa5b3e1598eac2c6ee48"
         );
+    }
+
+    /// The tiled walk visits every cell and names the lowest differing
+    /// column, as the column-order walk it replaced did, at tile edges and in
+    /// a partial last tile.
+    #[test]
+    fn self_check_tiles_find_the_lowest_differing_column() {
+        let (cols, rows) = (2 * SELF_CHECK_COLUMNS + 5, 9);
+        assert_eq!(first_differing_column(cols, rows, |_, _| false), None);
+        for col in 0..cols {
+            for row in [0, rows / 2, rows - 1] {
+                assert_eq!(
+                    first_differing_column(cols, rows, |r, c| (r, c) == (row, col)),
+                    Some(col)
+                );
+            }
+            let other = (col + SELF_CHECK_COLUMNS) % cols;
+            assert_eq!(
+                first_differing_column(cols, rows, |r, c| (r == 0 && c == other)
+                    || (r == rows - 1 && c == col)),
+                Some(col.min(other))
+            );
+        }
     }
 
     #[test]
