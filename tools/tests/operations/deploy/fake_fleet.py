@@ -196,6 +196,14 @@ class FakeFleet(Executor):
         self._mutate(host, 'remove', path)
         self.host(host).files.pop(path, None)
 
+    def remove_tree(self, host, path, owner):
+        self._mutate(host, 'remove_tree', path)
+        if os.path.dirname(path) != owner.rstrip('/'):
+            raise ValueError('%s is not directly below %s' % (path, owner))
+        h = self.host(host)
+        h.files = {p: data for p, data in h.files.items() if not p.startswith(path + '/')}
+        h.dirs = {d for d in h.dirs if d != path and not d.startswith(path + '/')}
+
     def free_bytes(self, host, path):
         return self.host(host).free
 

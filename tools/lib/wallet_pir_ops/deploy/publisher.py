@@ -429,6 +429,8 @@ class Cutover:
             if self.serving:
                 self.serving.stage(journal, serving_binary)
             if self.request['schema'] == SERVING_SCHEMA:
+                # Fully verifies a pin of the active History publication while
+                # the predecessor serves; a refusal never stops it.
                 from .publisher_restore import HistoryRestore
                 HistoryRestore(self).prepare(journal, plan['binary'], staged_config)
             self.unchanged_during_staging(plan)
@@ -469,11 +471,12 @@ class Cutover:
                 'installation recovery requires publisher-cutover/3 with its checker stopped')
         with production_lock(self.inventory, self.ex) as self.lock:
             journal = self.latest()
+            from .publisher_restore import staged_effects
             require(journal is not None and journal['request'] == self.request
                     and journal['phase'] == 'installing'
                     and journal['intent'] == 'stop ' + UNIT
                     and journal['completed'] == ['stage executable', 'stage configuration',
-                                                 *(['prepare history restore'] if 'history_restore' in journal else [])],
+                                                 *staged_effects(journal)],
                     'installation recovery requires the interrupted predecessor stop')
             plan = journal['plan']
             self.resources()
@@ -592,68 +595,75 @@ class Cutover:
 
     def rollback(self):
         with production_lock(self.inventory, self.ex) as self.lock:
-            require(self.ex.publisher_resources(self.host, [CONFIG])['machine_id'] == self.request['machine_id'],
-                    'coordinator machine identity differs')
-            journal = self.latest()
-            require(journal is not None, 'no publisher cutover to restore')
-            require(journal['request'] == self.request, 'request differs from latest publisher cutover')
-            if journal['phase'] == 'rolled-back':
-                return journal
-            plan = journal['plan']
-            for path, digest in plan['executables'].items():
-                require(self.ex.sha256(self.host, path) == digest, 'rollback executable changed: ' + path)
-            for path, desired in plan['desired'].items():
-                require(self.read(path) in (plan['before'][path]['text'], desired), 'managed file changed outside transaction: ' + path)
-            for name in self.old:
-                observed = stable_unit(self.ex.probe_unit(self.host, name))
-                require(all(observed[key] == plan['units'][name][key] for key in ('fragment_text', 'drop_ins')),
-                        'predecessor service configuration changed: ' + name)
-            if self.serving:
-                self.serving.restore_guard(journal)
-            if self.request['schema'] == HTTPS_SCHEMA:
-                self.serving.cleanup_staging(journal)
-            if journal['phase'] == 'staging':
-                self.unchanged_during_staging(plan)
-                journal['staging_only'] = True
-                self.save(journal, 'rolled-back')
-                return journal
-            self.save(journal, 'restoring')
-            for name in (LOAD, UNIT, *self.old):
-                if self.ex.probe_unit(self.host, name)['load_state'] != 'not-found':
-                    self.effect(journal, 'restore stop ' + name,
-                                lambda name=name: self.stop_candidate_for_restore(journal) if name == UNIT else self.stop(name))
-            self.unlocked()
-            if self.serving:
-                self.serving.restore(journal)
-            from .publisher_restore import HistoryRestore
-            HistoryRestore(self).rollback(journal)
-            if self.ex.probe_unit(self.host, UNIT)['load_state'] != 'not-found':
-                self.effect(journal, 'disable publisher', lambda: self.ex.systemctl(self.host, 'disable', UNIT))
-            for path, previous in plan['before'].items():
-                def restore(path=path, previous=previous):
-                    if previous['text'] is None:
-                        self.ex.remove(self.host, path)
-                    else:
-                        self.write(path, previous['text'], previous['mode'])
-                self.effect(journal, 'restore ' + path, restore)
-            self.effect(journal, 'restore reload', lambda: self.ex.systemctl(self.host, 'daemon-reload'))
-            for name in (*self.old, UNIT):
-                before = plan['units'][name]
-                if before['load_state'] == 'not-found':
-                    continue
-                enabled = before['unit_file_state'] in ('enabled', 'enabled-runtime')
-                self.effect(journal, 'restore enable ' + name,
-                            lambda name=name, enabled=enabled: self.ex.systemctl(self.host, 'enable' if enabled else 'disable', name))
-                if before['active_state'] == 'active':
-                    self.effect(journal, 'restore start ' + name, lambda name=name: self.ex.systemctl(self.host, 'start', name))
-            self.ready(plan['units'][UNIT]['active_state'] == 'active')
-            if self.serving:
-                self.serving.verify(journal, restored=True)
-            self.exact(journal)
-            if plan['units'][LOAD]['active_state'] == 'active':
-                self.effect(journal, 'restore continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            return self.restore_transaction()
+
+    def restore_transaction(self):
+        """Roll the latest transaction back; the caller holds the production lock."""
+        require(self.ex.publisher_resources(self.host, [CONFIG])['machine_id'] == self.request['machine_id'],
+                'coordinator machine identity differs')
+        journal = self.latest()
+        require(journal is not None, 'no publisher cutover to restore')
+        require(journal['request'] == self.request, 'request differs from latest publisher cutover')
+        if journal['phase'] == 'rolled-back':
+            return journal
+        plan = journal['plan']
+        for path, digest in plan['executables'].items():
+            require(self.ex.sha256(self.host, path) == digest, 'rollback executable changed: ' + path)
+        for path, desired in plan['desired'].items():
+            require(self.read(path) in (plan['before'][path]['text'], desired), 'managed file changed outside transaction: ' + path)
+        for name in self.old:
+            observed = stable_unit(self.ex.probe_unit(self.host, name))
+            require(all(observed[key] == plan['units'][name][key] for key in ('fragment_text', 'drop_ins')),
+                    'predecessor service configuration changed: ' + name)
+        if self.serving:
+            self.serving.restore_guard(journal)
+        from .publisher_restore import HistoryRestore
+        history_restore = HistoryRestore(self)
+        history_restore.guard(journal)
+        if self.request['schema'] == HTTPS_SCHEMA:
+            self.serving.cleanup_staging(journal)
+        if journal['phase'] == 'staging':
+            self.unchanged_during_staging(plan)
+            history_restore.rollback(journal)
+            journal['staging_only'] = True
             self.save(journal, 'rolled-back')
             return journal
+        self.save(journal, 'restoring')
+        for name in (LOAD, UNIT, *self.old):
+            if self.ex.probe_unit(self.host, name)['load_state'] != 'not-found':
+                self.effect(journal, 'restore stop ' + name,
+                            lambda name=name: self.stop_candidate_for_restore(journal) if name == UNIT else self.stop(name))
+        self.unlocked()
+        if self.serving:
+            self.serving.restore(journal)
+        history_restore.rollback(journal)
+        if self.ex.probe_unit(self.host, UNIT)['load_state'] != 'not-found':
+            self.effect(journal, 'disable publisher', lambda: self.ex.systemctl(self.host, 'disable', UNIT))
+        for path, previous in plan['before'].items():
+            def restore(path=path, previous=previous):
+                if previous['text'] is None:
+                    self.ex.remove(self.host, path)
+                else:
+                    self.write(path, previous['text'], previous['mode'])
+            self.effect(journal, 'restore ' + path, restore)
+        self.effect(journal, 'restore reload', lambda: self.ex.systemctl(self.host, 'daemon-reload'))
+        for name in (*self.old, UNIT):
+            before = plan['units'][name]
+            if before['load_state'] == 'not-found':
+                continue
+            enabled = before['unit_file_state'] in ('enabled', 'enabled-runtime')
+            self.effect(journal, 'restore enable ' + name,
+                        lambda name=name, enabled=enabled: self.ex.systemctl(self.host, 'enable' if enabled else 'disable', name))
+            if before['active_state'] == 'active':
+                self.effect(journal, 'restore start ' + name, lambda name=name: self.ex.systemctl(self.host, 'start', name))
+        self.ready(plan['units'][UNIT]['active_state'] == 'active')
+        if self.serving:
+            self.serving.verify(journal, restored=True)
+        self.exact(journal)
+        if plan['units'][LOAD]['active_state'] == 'active':
+            self.effect(journal, 'restore continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+        self.save(journal, 'rolled-back')
+        return journal
 
 
 def register(commands):
