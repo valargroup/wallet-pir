@@ -1292,6 +1292,10 @@ async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
     })
     .await
     .unwrap();
+    if checking.is_finished() {
+        let (_, result) = checking.await.unwrap();
+        panic!("bootstrap stopped before the final source check: {result:?}");
+    }
     assert!(tls.control.with_extension("entered").exists());
     authority
         .0
