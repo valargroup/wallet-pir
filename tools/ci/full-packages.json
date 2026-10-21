@@ -5,6 +5,7 @@
     "pir-runtime",
     "pir-pipeline",
     "pir-sync-manager",
+    "pir-service-discovery",
     "pir-serving",
     "pir-cuda",
     "zakura-server-chain"

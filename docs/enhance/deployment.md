@@ -43,6 +43,22 @@ and artifact receipt.
 
 ## Build and local validation
 
+The first increment of [autonomous HTTPS synchronization](https-sync-development-plan.md)
+can prepare a complete publication offline from a stopped canonical journal and
+its matching wallet manifest:
+
+```sh
+pir-publisher enhance prepare-publication --source /path/to/enhance-journal --manifest /path/to/wallet-manifest.json --output /path/to/prepared-publication
+```
+
+The command checks the journal's committed anchor and record count against the
+manifest, prepares rows, hints and packing locally, then verifies the generated
+session identities against that manifest. It installs the immutable inventory
+last and prints its digest. Repeating it reuses verified domain material. This
+maintenance command does not grant serving authority or change consumer state;
+production synchronization still follows the deployed implementation until the
+complete cutover passes its gates.
+
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help

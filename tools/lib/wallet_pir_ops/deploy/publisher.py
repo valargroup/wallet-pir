@@ -359,6 +359,16 @@ class Cutover:
             journal.setdefault('checks', {})[product] = {'passed': True, 'output': output[-2000:]}
             self.save(journal)
 
+    def unchanged_during_staging(self, plan):
+        require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
+                'managed files changed during staging')
+        require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
+                    for name, before in plan['units'].items()), 'publisher fleet changed during staging')
+        require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
+                'publisher input changed during staging')
+        if self.serving:
+            self.serving.unchanged_during_staging(plan['serving'])
+
     def deploy(self, binary, expected_plan, serving_binary=None):
         require(file_sha256(binary) == self.request['release']['binary_sha256'] and
                 Path(binary).stat().st_size == self.request['release']['binary_bytes'], 'publisher executable does not match request')
@@ -377,6 +387,7 @@ class Cutover:
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
             if self.serving:
                 self.serving.stage(journal, serving_binary)
+            self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
             self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
@@ -451,17 +462,10 @@ class Cutover:
                         'predecessor service configuration changed: ' + name)
             if self.serving:
                 self.serving.restore_guard(journal)
+            if self.request['schema'] == HTTPS_SCHEMA:
+                self.serving.cleanup_staging(journal)
             if journal['phase'] == 'staging':
-                require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
-                        'managed files changed during read-only staging')
-                require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
-                            for name, before in plan['units'].items()),
-                        'publisher service changed during read-only staging')
-                if self.serving:
-                    serving = plan['serving']
-                    require(all(stable_unit(self.ex.probe_unit(role['host'], role['unit'])) == before
-                                for role, before in zip(serving['roles'], serving['units'])),
-                            'query service changed during read-only staging')
+                self.unchanged_during_staging(plan)
                 journal['staging_only'] = True
                 self.save(journal, 'rolled-back')
                 return journal

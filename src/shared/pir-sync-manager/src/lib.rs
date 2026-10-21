@@ -2,7 +2,10 @@
 //!
 //! Products own schemas, replay protection, durable authority, preparation and
 //! activation. A successful transfer or poll confers no permission to serve.
+mod discovery;
 mod transport;
+pub use discovery::{is_incompatible, DiscoveryError, DISCOVERY_DEADLINE};
+pub use pir_service_discovery as service_discovery;
 pub use transport::{HttpsSource, Response};
 
 use std::{
@@ -29,6 +32,11 @@ pub trait SyncTask: Send {
     }
     /// Continuous-loop logging; one-shot callers retain their existing logging.
     fn report(&self, _result: &Result<Self::Report, Self::Error>) {}
+    /// Whether `error` must stop continuous synchronization instead of being
+    /// retried. By default every failure is retried.
+    fn terminal(&self, _error: &Self::Error) -> bool {
+        false
+    }
 }
 
 /// Owns one adapter and runs complete, non-overlapping synchronization passes.
@@ -57,15 +65,17 @@ impl<T: SyncTask> SyncManager<T> {
             .finished(&result, SystemTime::now(), started.elapsed());
         result
     }
-    pub async fn run(mut self) {
+    /// Poll until a pass fails with an error the task marks terminal, and
+    /// return that error unchanged. Every other failure is retried with backoff.
+    pub async fn run(mut self) -> T::Error {
         let mut failures = 0u32;
         loop {
             let result = self.poll_once().await;
             self.task.report(&result);
-            failures = if result.is_ok() {
-                0
-            } else {
-                failures.saturating_add(1)
+            failures = match result {
+                Ok(_) => 0,
+                Err(error) if self.task.terminal(&error) => return error,
+                Err(_) => failures.saturating_add(1),
             };
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)

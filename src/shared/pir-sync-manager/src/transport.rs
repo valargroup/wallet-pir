@@ -4,9 +4,9 @@ use std::time::Duration;
 /// HTTPS requests to one explicit origin and distribution prefix. The byte
 /// budget spans metadata, artifacts and refused bodies until `reset_budget`.
 pub struct HttpsSource {
-    origin: reqwest::Url,
+    pub(crate) origin: reqwest::Url,
     base: reqwest::Url,
-    client: reqwest::Client,
+    pub(crate) client: reqwest::Client,
     budget: u64,
     downloaded: u64,
 }
