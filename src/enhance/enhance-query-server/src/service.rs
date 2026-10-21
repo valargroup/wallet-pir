@@ -46,6 +46,8 @@ pub struct IngressConfig {
     pub requests: usize,
     #[serde(default = "default_uploads")]
     pub uploads: usize,
+    #[serde(default)]
+    pub synchronization: Option<crate::ingress_sync::Config>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,6 +119,37 @@ pub async fn run_ingress_on(
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
+    if let Some(sync) = config.synchronization {
+        let ingress = crate::ingress_sync::QueryIngress::open(
+            &config.data_dir,
+            sync,
+            config.requests,
+            config.uploads,
+        )?;
+        let manager = pir_sync_manager::SyncManager::new(ingress.synchronizer()?);
+        let public_app = ingress
+            .public_router()
+            .into_make_service_with_connect_info::<SocketAddr>();
+        let control_app = ingress.control_router();
+        let (notify, public_stop, control_stop) = stop_pair(shutdown);
+        let _notify = notify;
+        let serving = async move {
+            tokio::try_join!(
+                async move {
+                    axum::serve(public, public_app)
+                        .with_graceful_shutdown(public_stop)
+                        .await
+                },
+                crate::shutdown::serve_until(control, control_app, control_stop)
+            )
+            .map(|_| ())
+        };
+        tokio::select! {
+            result = serving => result?,
+            _ = manager.run() => return Err("Enhance ingress synchronization stopped".into()),
+        }
+        return Ok(());
+    }
     let ingress = crate::query_ingress::QueryIngress::open_with_uploads(
         &config.data_dir,
         config.requests,
@@ -245,6 +278,8 @@ pub enum ServingRole {
         requests: usize,
         #[serde(default = "default_uploads")]
         uploads: usize,
+        #[serde(default)]
+        synchronization: Option<crate::ingress_sync::Config>,
     },
     PackingRouter {
         data_dir: PathBuf,
@@ -273,6 +308,13 @@ impl ServingRole {
             sync.validate(PlacementPolicy {
                 sealed_shards: *sealed_shards,
             })?;
+        }
+        if let Self::QueryIngress {
+            synchronization: Some(sync),
+            ..
+        } = self
+        {
+            sync.validate()?;
         }
         if let Self::PackingRouter {
             synchronization,
@@ -382,6 +424,7 @@ pub async fn run_serving(
             control_listen,
             requests,
             uploads,
+            synchronization,
         } => {
             listeners.reverse();
             let public = take(&mut listeners)?;
@@ -393,6 +436,7 @@ pub async fn run_serving(
                     control_listen,
                     requests,
                     uploads,
+                    synchronization,
                 },
                 public,
                 control,

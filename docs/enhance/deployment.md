@@ -106,6 +106,16 @@ Explicit invalidation closes and retires the obsolete active view, while admitte
 queries remain charged and fenced. Neither memory limits nor source-authority
 windows are increased to force an update through.
 
+The autonomous ingress accepts `synchronization` with the HTTPS source settings
+and a `routers` map from domain IDs to private router origins. It downloads
+metadata only and requires compatible router readiness for every published domain
+before advertising a manifest. It keeps each upstream promise through the active
+view and admitted response bodies, then releases it; lost releases expire after
+thirty seconds. Requests bind the selected router incarnation and are forwarded
+once. Existing upload, client and forwarding limits remain in force, and a stale
+wallet generation still receives `stale_routing`. Restarted ingress acquires
+fresh publisher and router authority before becoming ready.
+
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help

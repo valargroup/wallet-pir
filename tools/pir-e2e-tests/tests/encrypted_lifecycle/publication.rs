@@ -106,6 +106,378 @@ impl Published {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_updates() {
+    use enhance_query_server::{
+        client::QuerySession, ingress_sync, protocol::ShardSession, router_sync, worker_sync,
+        RECORD_BYTES,
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let fixture = Published::new().await;
+        let worker = worker_sync::Worker::open(
+            &fixture.scratch.path().join("worker"),
+            worker_sync::Config {
+                source: fixture.source(),
+                shards: [0, 1].into(),
+            },
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let mut worker_sync = worker.synchronizer().unwrap();
+        let worker_http = serve(worker.router()).await;
+        let router_root = fixture.scratch.path().join("router");
+        let router_config = router_sync::Config {
+            source: fixture.source(),
+            workers: [
+                (0, vec![worker_http.url.clone()]),
+                (1, vec![worker_http.url.clone()]),
+            ]
+            .into(),
+            preferred: Default::default(),
+        };
+        let router =
+            router_sync::PackingRouter::open(&router_root, router_config.clone(), 6, 4).unwrap();
+        let mut router_sync = router.synchronizer().unwrap();
+        let pause = Arc::new(AtomicBool::new(false));
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let released = Arc::new(tokio::sync::Notify::new());
+        let pausing = pause.clone();
+        let entering = entered.clone();
+        let releasing = released.clone();
+        let router_http = serve(router.public_router().merge(router.control_router()).layer(
+            axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let pause = request.uri().path() == "/v1/enhance/query"
+                        && pausing.swap(false, Ordering::AcqRel);
+                    let entering = entering.clone();
+                    let releasing = releasing.clone();
+                    async move {
+                        if pause {
+                            entering.notify_one();
+                            releasing.notified().await;
+                        }
+                        next.run(request).await
+                    }
+                },
+            ),
+        ))
+        .await;
+        let ingress_root = fixture.scratch.path().join("ingress");
+        let ingress_config = ingress_sync::Config {
+            source: fixture.source(),
+            routers: [
+                (0, vec![router_http.url.clone()]),
+                (1, vec![router_http.url.clone()]),
+            ]
+            .into(),
+        };
+        let ingress =
+            ingress_sync::QueryIngress::open(&ingress_root, ingress_config.clone(), 16, 256)
+                .unwrap();
+        assert!(
+            ingress_sync::QueryIngress::open(&ingress_root, ingress_config.clone(), 16, 256)
+                .is_err()
+        );
+        let mut ingress_sync = ingress.synchronizer().unwrap();
+        let ingress_http = serve(ingress.public_router()).await;
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap();
+        let init_url = format!("{}/v1/enhance/init", ingress_http.url);
+        let endpoint = format!("{}/v1/enhance/query", ingress_http.url);
+        ingress_sync.poll_once().await.unwrap();
+        assert!(!http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        worker_sync.poll_once().await.unwrap();
+        ingress_sync.poll_once().await.unwrap();
+        assert!(
+            !http
+                .get(&init_url)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success(),
+            "workers alone do not authorize ingress"
+        );
+        router_sync.poll_once().await.unwrap();
+        ingress_sync.poll_once().await.unwrap();
+        let initial: Manifest = http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(initial, fixture.manifest);
+        let session: ShardSession = http
+            .get(format!("{}/v1/enhance/sessions/1/0", ingress_http.url))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let session = QuerySession::new(&initial, session).unwrap();
+        let (query, slot) = session.prepare_position(66).unwrap();
+        let running_http = http.clone();
+        let running_endpoint = endpoint.clone();
+        let body = query.body().to_vec();
+        pause.store(true, Ordering::Release);
+        let in_flight = tokio::spawn(async move {
+            running_http
+                .post(running_endpoint)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        let mut advanced = initial.clone();
+        advanced.generation += 1;
+        fixture
+            .distribution
+            .publish(advanced.clone(), fixture.inventory.clone())
+            .await
+            .unwrap();
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        let before: Manifest = http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(before, initial, "ingress advertises its own ready view");
+        // This reaches a router that already advanced: the ingress promise must
+        // retain the old view before the router has admitted the query itself.
+        let (old_query, old_slot) = session.prepare_position(0).unwrap();
+        let answer = http
+            .post(&endpoint)
+            .body(old_query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let row = session.decode(old_query, &answer).unwrap();
+        assert_eq!(
+            &row[old_slot * RECORD_BYTES..(old_slot + 1) * RECORD_BYTES],
+            record(0)
+        );
+        ingress_sync.poll_once().await.unwrap();
+        let after: Manifest = http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(after, advanced);
+        released.notify_one();
+        let row = session.decode(query, &in_flight.await.unwrap()).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(66)
+        );
+        let (stale, _) = session.prepare_position(0).unwrap();
+        assert_eq!(
+            http.post(&endpoint)
+                .body(stale.body().to_vec())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::CONFLICT
+        );
+
+        let session_doc: ShardSession = http
+            .get(format!(
+                "{}/v1/enhance/session/{}",
+                ingress_http.url,
+                hex::encode(advanced.session_id(0).unwrap())
+            ))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let session = QuerySession::new(&advanced, session_doc).unwrap();
+        let (query, slot) = session.prepare_position(33).unwrap();
+        let answer = http
+            .post(&endpoint)
+            .body(query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let row = session.decode(query, &answer).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(33)
+        );
+
+        // Advance past the retained-generation limit. A released promise must
+        // free downstream capacity even while its old source lease is young.
+        let mut latest = advanced.clone();
+        for _ in 0..6 {
+            latest.generation += 1;
+            fixture
+                .distribution
+                .publish(latest.clone(), fixture.inventory.clone())
+                .await
+                .unwrap();
+            for _ in 0..3 {
+                worker_sync.poll_once().await.unwrap();
+                router_sync.poll_once().await.unwrap();
+                ingress_sync.poll_once().await.unwrap();
+            }
+            let current: Manifest = http
+                .get(&init_url)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(
+                current, latest,
+                "released promises must allow continued publication"
+            );
+        }
+
+        let mut session = session;
+        session.rebind(&latest).unwrap();
+
+        let router_address = router_http
+            .url
+            .strip_prefix("http://")
+            .unwrap()
+            .parse()
+            .unwrap();
+        router_http.stop().await;
+        drop(router_sync);
+        drop(router);
+        let router = router_sync::PackingRouter::open(&router_root, router_config, 6, 4).unwrap();
+        let mut router_sync = router.synchronizer().unwrap();
+        router_sync.poll_once().await.unwrap();
+        let _router_http = super::encrypted::serve_at(
+            router.public_router().merge(router.control_router()),
+            router_address,
+        )
+        .await;
+        let (query, _) = session.prepare_position(0).unwrap();
+        assert!(
+            !http
+                .post(&endpoint)
+                .body(query.body().to_vec())
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success(),
+            "ingress must learn the new router incarnation"
+        );
+        ingress_sync.poll_once().await.unwrap();
+        let (query, slot) = session.prepare_position(0).unwrap();
+        let answer = http
+            .post(&endpoint)
+            .body(query.body().to_vec())
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let row = session.decode(query, &answer).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(0)
+        );
+
+        ingress_http.stop().await;
+        drop(ingress_sync);
+        drop(ingress);
+        let ingress =
+            ingress_sync::QueryIngress::open(&ingress_root, ingress_config, 16, 256).unwrap();
+        let mut ingress_sync = ingress.synchronizer().unwrap();
+        let listener = serve(ingress.public_router()).await;
+        let init_url = format!("{}/v1/enhance/init", listener.url);
+        assert!(
+            !http
+                .get(&init_url)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .is_success(),
+            "cached metadata cannot authorize ingress restart"
+        );
+        ingress_sync.poll_once().await.unwrap();
+        assert!(http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        fixture
+            .distribution
+            .withdraw(&Revocation::default())
+            .unwrap();
+        assert!(ingress_sync.poll_once().await.is_err());
+        assert!(!http
+            .get(&init_url)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+    })
+    .await
+    .expect("autonomous ingress wallet flow exceeded correctness budget");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
     use enhance_query_server::{router_sync, worker_sync};
     tokio::time::timeout(Duration::from_secs(30), async {

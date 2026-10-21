@@ -400,6 +400,20 @@ impl Synchronizer {
                 view.lease = observed;
                 return Ok(());
             }
+            // A fresh lease authorizes bytes, but only an upstream pin promises
+            // that unadmitted requests may still need a prior view. Admitted
+            // evaluations already own their loaded domains independently.
+            if inner.views.len() >= RETAINED_GENERATIONS {
+                let removable = inner
+                    .views
+                    .iter()
+                    .filter(|(key, _)| Some(*key) != active.as_ref() && !pinned.contains(*key))
+                    .map(|(key, view)| (view.manifest.generation, key.clone()))
+                    .min();
+                if let Some((_, key)) = removable {
+                    inner.views.remove(&key);
+                }
+            }
             if !inner.views.contains_key(&id) && inner.views.len() >= RETAINED_GENERATIONS {
                 // Waiting for old material is coordination, not a transport retry.
                 return Ok(());
@@ -673,5 +687,159 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             unavailable("matrix-vector evaluation unavailable").into_response()
         }
         Err(error) => unavailable(error).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn abandoned_readiness_promises_expire_and_old_incarnations_cannot_release_them() {
+        let root = tempfile::tempdir().unwrap();
+        let source = SourceConfig {
+            publisher_origin: "https://publisher.example".into(),
+            trusted_ca: None,
+            download_budget_bytes: 16 * 1024 * 1024,
+            cache_limit_bytes: 16 * 1024 * 1024,
+        };
+        let worker = Worker::open(
+            root.path(),
+            Config {
+                source,
+                shards: [0].into(),
+            },
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let geometry = protocol::Geometry::default();
+        let coverage = protocol::Lifecycle::default()
+            .coverage(1, geometry)
+            .unwrap();
+        let plan =
+            crate::runtime::plan(coverage.shards[0].clone(), crate::test_support::records).unwrap();
+        let manifest = Manifest {
+            recovery_epoch: 0,
+            placement_revision: 1,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: protocol::SCHEMA_VERSION,
+            protocol_revision: protocol::PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 1,
+            anchor_block_hash: "01".repeat(32),
+            geometry,
+            coverage,
+            sessions: vec![protocol::SessionRef {
+                shard_id: 0,
+                public_params_sha256: "02".repeat(32),
+                parameter_id: protocol::parameter_id(plan.shard.logical_rows).unwrap(),
+            }],
+            unit_identities: [(0, plan.units)].into(),
+        };
+        let id = digest(&manifest);
+        let lease = Lease::from_response(
+            crate::publication::AuthorityResponse {
+                current: crate::publication::Current {
+                    version: crate::publication::VERSION,
+                    revision: 1,
+                    withdrawal_revision: 1,
+                    recovery_epoch: 0,
+                    revoked: Default::default(),
+                    eligible: true,
+                    manifest: Some(manifest.clone()),
+                    inventory: Some(crate::publication::Object {
+                        sha256: "03".repeat(32),
+                        bytes: 1,
+                    }),
+                },
+                authorized_manifest_sha256: id.clone(),
+                observed_unix_ms: crate::synchronization::now_ms().unwrap(),
+            },
+            &manifest,
+            &worker.safety,
+        )
+        .unwrap();
+        worker.inner.lock().unwrap().views.insert(
+            id.clone(),
+            View {
+                manifest,
+                domains: Default::default(),
+                lease,
+            },
+        );
+        for index in 0..MAX_PINS {
+            // Discard the response as if the holder never received its promise.
+            let _ = readiness(
+                State(worker.clone()),
+                Json(ReadinessRequest {
+                    manifest_sha256: id.clone(),
+                    holder: Some(format!("{index:032x}")),
+                }),
+            )
+            .await
+            .unwrap();
+        }
+        let holder = "ff".repeat(16);
+        assert_eq!(
+            readiness(
+                State(worker.clone()),
+                Json(ReadinessRequest {
+                    manifest_sha256: id.clone(),
+                    holder: Some(holder.clone())
+                })
+            )
+            .await
+            .unwrap_err()
+            .0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        let mut release_request = Release {
+            manifest_sha256: id.clone(),
+            holder: "00".repeat(16),
+            worker_incarnation: "ee".repeat(16),
+        };
+        assert_eq!(
+            release(State(worker.clone()), Json(release_request.clone()))
+                .await
+                .unwrap_err()
+                .0,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(worker.inner.lock().unwrap().pins.len(), MAX_PINS);
+        // Advance only the expired promise's deadline, without spending the
+        // correctness budget waiting thirty real seconds.
+        *worker
+            .inner
+            .lock()
+            .unwrap()
+            .pins
+            .get_mut(&(release_request.holder.clone(), id.clone()))
+            .unwrap() = std::time::Instant::now() - Duration::from_millis(1);
+        let _ = readiness(
+            State(worker.clone()),
+            Json(ReadinessRequest {
+                manifest_sha256: id.clone(),
+                holder: Some(holder.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(worker.inner.lock().unwrap().pins.len(), MAX_PINS);
+        release_request.holder = holder.clone();
+        release_request.worker_incarnation = worker.incarnation.clone();
+        assert_eq!(
+            release(State(worker.clone()), Json(release_request))
+                .await
+                .unwrap(),
+            StatusCode::NO_CONTENT
+        );
+        assert!(!worker
+            .inner
+            .lock()
+            .unwrap()
+            .pins
+            .contains_key(&(holder, id)));
     }
 }
