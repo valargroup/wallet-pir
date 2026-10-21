@@ -1254,3 +1254,64 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cold_history_bootstrap_retries_without_exposing_checked_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set) = publication(root.path());
+    let prepared =
+        transparent_shared::runtime::prebuild::prepare_publication(&set, &directory, &[], &|| {
+            false
+        })
+        .unwrap();
+    assert!(prepared.failures.is_empty());
+    let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let authority = authority(&directory, Some(finalized), rpc.client.clone());
+    let tls = tls(root.path(), authority.clone()).await;
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let consumer_root = root.path().join("consumer");
+    let mut manager = transparent_query_server::routing::manager::Manager::new(
+        config(&tls, consumer_root.clone()),
+        transparent_query_server::config::ServiceConfig {
+            cache_bytes: 4 << 30,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .with_full_holdings();
+    let checking = tokio::spawn(async move {
+        let result = manager.poll_once().await;
+        (manager, result)
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !tls.control.with_extension("entered").exists() && !checking.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(tls.control.with_extension("entered").exists());
+    authority
+        .0
+        .distribution_revision
+        .fetch_add(1, Ordering::AcqRel);
+    std::fs::write(&tls.control, "").unwrap();
+    let (mut manager, result) = checking.await.unwrap();
+    assert!(
+        result.is_err(),
+        "a source change must reject the first activation"
+    );
+    assert!(
+        manager.live().is_none(),
+        "unpublished checked data must remain private"
+    );
+    assert!(!consumer_root.join("active.json").exists());
+    manager.poll_once().await.unwrap();
+    assert!(manager.live().is_some());
+    assert!(
+        consumer_root.join("active.json").exists(),
+        "retry must durably activate the initial view"
+    );
+}

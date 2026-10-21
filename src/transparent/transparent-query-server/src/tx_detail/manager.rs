@@ -17,7 +17,7 @@ use transparent_shared::{
     publication::{self, Current, Error},
     tx_detail::{
         distribution::{Inventory, PREFIX, SCHEMA},
-        set::{DisplaySet, MAP_FILE},
+        set::MAP_FILE,
         DisplayRole,
     },
 };
@@ -302,21 +302,25 @@ impl DisplaySync {
         if !directory.starts_with(&self.config.directory) {
             return Err("saved display publication escapes provider root".into());
         }
-        let set = DisplaySet::open(&directory, 0, DisplayRole::Combined)?;
-        if set.map_digest != publication.map_sha256
-            || set.map.network != self.config.network
-            || set.map.genesis_hash != self.config.genesis_hash
+        // Preparation below strictly verifies every referenced revision. Read
+        // the identity-bound map here for the final chain-anchor checks rather
+        // than loading and checking all tables twice on every retry.
+        let map: zakura_pir_protocol::transparent::shard::display::DisplayMap =
+            serde_json::from_slice(&std::fs::read(directory.join(MAP_FILE))?)?;
+        if map.sha256() != publication.map_sha256
+            || map.network != self.config.network
+            || map.genesis_hash != self.config.genesis_hash
         {
             return Err("saved display publication identity mismatch".into());
         }
-        let anchors: Vec<_> = set
-            .current()
+        let anchors: Vec<_> = map
+            .shards
             .iter()
-            .map(|r| {
+            .map(|shard| {
                 (
-                    r.digest.clone(),
-                    r.manifest.end_height,
-                    r.manifest.terminal_block_hash.clone(),
+                    shard.manifest_digest.clone(),
+                    shard.end_height,
+                    shard.terminal_block_hash.clone(),
                 )
             })
             .collect();
