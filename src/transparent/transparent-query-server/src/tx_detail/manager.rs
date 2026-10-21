@@ -125,6 +125,7 @@ impl DisplaySync {
             let sync=sync.clone(); let live=live.clone(); async move {
                 let status=live.command(DisplayCommand::Status).await.unwrap_or_default();
                 axum::Json(serde_json::json!({"synchronization":sync.read().unwrap().clone(),
+                    "artifact_validation":status["artifact_validation"],
                     "verified_publication":status["active"],"runtime_readiness":{"warm":status["warm"]},
                     "revoked_revisions":status["revoked_revisions"]}))
             }
@@ -169,6 +170,7 @@ impl DisplaySync {
     }
     async fn update(&mut self) -> Result<serde_json::Value, Error> {
         let current = self.observe().await?;
+        crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         if self.current.as_ref() == Some(&current) {
             return Ok(serde_json::json!({"unchanged":true,"revision":current.revision}));
         }

@@ -224,6 +224,18 @@ pub struct Artifact {
     pub bytes: u64,
     pub kind: Kind,
 }
+
+/// Expected publisher identity saved at receipt; this is not proof of a body hash.
+#[derive(Clone, Debug)]
+pub struct ReceivedArtifact {
+    pub sha256: String,
+    pub bytes: u64,
+    pub object: PathBuf,
+}
+
+pub fn received_artifact(path: &Path) -> io::Result<Option<ReceivedArtifact>> {
+    crate::verification::expected(path)
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
@@ -258,6 +270,8 @@ pub fn safe_path(path: &str) -> bool {
                 && c != ".."
                 // Publisher artifacts cannot overwrite private local receipts.
                 && !c.ends_with(".received.json")
+                && !c.contains(".validation.")
+                && !c.starts_with(".validation-")
                 && !c.contains(".checked-")
                 && c.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))

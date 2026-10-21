@@ -1448,6 +1448,28 @@ impl RuntimeCache {
         );
     }
 
+    /// Remove only these idle entries before a withdrawn shard is repaired.
+    /// A live query or load keeps its accounting until it finishes.
+    pub fn evict_keys(&self, keys: &[RuntimeKey]) -> bool {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        if keys.iter().any(|key| {
+            inner
+                .entries
+                .get(key)
+                .is_some_and(|entry| Arc::strong_count(&entry.slot) != 1)
+        }) {
+            return false;
+        }
+        for key in keys {
+            if let Some(entry) = inner.entries.remove(key) {
+                inner.resident -= entry.reserved;
+                Metrics::incr(&self.metrics.evictions);
+            }
+        }
+        self.publish(&inner);
+        true
+    }
+
     /// Prune unused persisted runtimes while retaining the caller's active keys.
     pub fn prune_disk(
         &self,
@@ -1466,6 +1488,48 @@ impl RuntimeCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[test]
+    fn repair_evicts_only_affected_idle_runtime_entries() {
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default()));
+        let affected = ("affected".to_string(), Table::Directory, 0);
+        let healthy = ("healthy".to_string(), Table::Directory, 0);
+        let pinned = Arc::new(Slot {
+            runtime: tokio::sync::OnceCell::new(),
+        });
+        {
+            let mut inner = cache.inner.lock().unwrap();
+            inner.entries.insert(
+                affected.clone(),
+                Entry {
+                    slot: pinned.clone(),
+                    reserved: 10,
+                    last_used: 0,
+                },
+            );
+            inner.entries.insert(
+                healthy.clone(),
+                Entry {
+                    slot: Arc::new(Slot {
+                        runtime: tokio::sync::OnceCell::new(),
+                    }),
+                    reserved: 20,
+                    last_used: 0,
+                },
+            );
+            inner.resident = 30;
+        }
+        assert!(!cache.evict_keys(std::slice::from_ref(&affected)));
+        assert_eq!(
+            cache.resident_bytes(),
+            30,
+            "an in-flight request retains its budget"
+        );
+        drop(pinned);
+        assert!(cache.evict_keys(std::slice::from_ref(&affected)));
+        assert_eq!(cache.resident_bytes(), 20);
+        assert!(cache.inner.lock().unwrap().entries.contains_key(&healthy));
+    }
 
     /// The scan shape keys every prepared runtime and disk cache entry. The
     /// digest was captured on the base commit before the shared runtime

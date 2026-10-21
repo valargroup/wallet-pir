@@ -434,6 +434,7 @@ impl DisplayLive {
         let staged: Vec<String> = self.0.staged.lock().unwrap().keys().cloned().collect();
         reply(serde_json::json!({
             "role": self.0.role.as_str(),
+            "artifact_validation": active.as_ref().map(|a| a.state.artifact_validation()),
             "active": active.as_ref().map(|a| &a.publication),
             "staged": staged,
             "ready": active.as_ref().is_some_and(|a| a.state.is_ready() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),

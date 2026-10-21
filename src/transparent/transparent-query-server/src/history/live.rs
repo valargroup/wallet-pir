@@ -466,6 +466,7 @@ impl LiveService {
             "binary_sha256":pir_control::binary_sha256(),
             "incarnation":pir_control::Identity::process().incarnation,
             "verified_publication":{"map_sha256":active.publication.map_sha256},
+            "artifact_validation":state.artifact_validation(),
             "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
                 "required":state.required_material(),"preparation":state.preparation()},
             "active_coverage":coverage,
@@ -548,7 +549,7 @@ impl LiveService {
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"artifact_validation":active.state.artifact_validation(),"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.clone().lock_owned().await;

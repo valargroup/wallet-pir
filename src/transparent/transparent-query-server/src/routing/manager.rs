@@ -180,22 +180,29 @@ impl HistorySync {
     }
     async fn reconcile(&mut self) -> Result<Progress, Error> {
         let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
-        match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
-            Input::Work(progress) => Ok(progress),
-            Input::Unchanged => Ok(Progress {
-                unchanged: true,
-                revision: self
-                    .current
-                    .as_ref()
-                    .expect("conditional poll has an active snapshot")
-                    .revision,
-                downloaded_bytes: self.source.downloaded(),
-                downloaded_files: 0,
-                stages: None,
-            }),
-            // HTTPS acquisition has no deferred queue or admission outcome.
-            Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
+        let result =
+            match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ())
+                .await?
+            {
+                Input::Work(progress) => Ok(progress),
+                Input::Unchanged => Ok(Progress {
+                    unchanged: true,
+                    revision: self
+                        .current
+                        .as_ref()
+                        .expect("conditional poll has an active snapshot")
+                        .revision,
+                    downloaded_bytes: self.source.downloaded(),
+                    downloaded_files: 0,
+                    stages: None,
+                }),
+                // HTTPS acquisition has no deferred queue or admission outcome.
+                Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
+            };
+        if result.is_ok() {
+            crate::validation::repair_failed(&mut self.source, &self.config.directory).await;
         }
+        result
     }
     async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Error> {
         self.source.reset_budget();
