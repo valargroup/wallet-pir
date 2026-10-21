@@ -5,21 +5,23 @@ from an immutable source tree and does not restart itself. When that script is
 at fault, this operation installs the reviewed script and starts only that unit.
 It writes nothing else:
 
-- The request pins the unit fragment (no drop-ins), the script it runs now, the
-  load's `pins.json`, `rate-query` and `fixture.json`, and each pinned worker. Every
-  pinned worker must be running its pinned binary.
-- The script comes from this operations release (`check_installed` binds the
-  release to `script.git_sha`). It is copied to the immutable
-  `<SCRIPTS>/<sha256>/transparent-quality-load.py`. The new unit is the old
-  fragment with only the script path changed. Its arguments, resource limits,
-  pins, permit, incident history and thresholds stay as they are.
+- The request pins the unit fragment and every drop-in it has now, the script
+  it runs now, the load's `pins.json`, `rate-query` and `fixture.json`, and each
+  pinned worker. Every pinned worker must be running its pinned binary.
+- The script comes from this checkout or operations release (`check_installed`
+  binds an unpacked release to `script.git_sha`). It is copied to the immutable
+  `<SCRIPTS>/<sha256>/transparent-quality-load.py`. Only the file that owns the
+  effective `ExecStart` (on the coordinator, the publisher's `zzz…-publisher.conf`
+  drop-in) is rewritten, with only the script path changed; the effective unit
+  must differ in nothing else. Its arguments, resource limits, controller
+  bindings, pins, permit, incident history and thresholds stay as they are.
 - Under the production lock: refuse a critical latch, a pinned binary that
   changed, or an unfinished transaction. Stage the script, then run the request's
   independent encrypted-answer check. Only then write the unit and start it, and
   wait until the load reports `running`.
-- Every effect is journaled together with the previous unit bytes. The old script
-  stays where it was. A failure, or `rollback`, stops the unit and restores the
-  previous fragment, which leaves the load stopped as it was before. A latch or
+- Every effect is journaled together with the previous bytes of that file. The
+  old script stays where it was. A failure, or `rollback`, stops the unit and
+  restores those bytes, which leaves the load stopped as it was before. A latch or
   incident record is never removed.
 """
 import hashlib
@@ -74,11 +76,14 @@ def validate(request):
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     require(isinstance(request['host'], str) and request['host'], 'host is the coordinator inventory host')
     previous, script, load = request['previous'], request['script'], request['load']
-    require(isinstance(previous, dict) and set(previous) == {'unit_sha256', 'script_path', 'script_sha256'}
+    require(isinstance(previous, dict) and set(previous) == {'unit_sha256', 'drop_ins', 'script_path', 'script_sha256'}
             and is_sha256(previous['unit_sha256']) and is_sha256(previous['script_sha256'])
+            and isinstance(previous['drop_ins'], dict)
+            and all(isinstance(k, str) and k.startswith('/') and is_sha256(v) for k, v in previous['drop_ins'].items())
             and isinstance(previous['script_path'], str) and previous['script_path'].startswith('/')
             and os.path.basename(previous['script_path']) == SCRIPT_NAME,
-            'previous is {unit_sha256, script_path (absolute, %s), script_sha256}' % SCRIPT_NAME)
+            'previous is {unit_sha256, drop_ins {path: sha256} (every one, {} for none), '
+            'script_path (absolute, %s), script_sha256}' % SCRIPT_NAME)
     require(isinstance(script, dict) and set(script) == {'git_sha', 'sha256'} and is_sha256(script['sha256'])
             and isinstance(script['git_sha'], str) and re.fullmatch('[0-9a-f]{40}', script['git_sha']) is not None,
             'script is {git_sha (40 lowercase hex), sha256}')
@@ -102,15 +107,36 @@ def script_path(sha):
     return '%s/%s/%s' % (SCRIPTS, sha, SCRIPT_NAME)
 
 
-def repaired_text(text, old_path, new_path):
-    """The fragment with only its ExecStart script replaced; raises if it is not `python3 -B <old_path> ...`."""
-    _, binary, tail = units.split_exec(units.exec_start(units.effective([text])))
-    words = tail.split()
-    if binary != PYTHON or words[:2] != ['-B', old_path]:
-        raise DeployError('ExecStart is not %s -B %s ...' % (PYTHON, old_path))
+def unit_files(state):
+    """`[(path, text)]` for the fragment and its drop-ins in the order systemd applies them."""
+    return [(state['fragment_path'], state['fragment_text'])] + [(d['path'], d['text']) for d in state['drop_ins']]
+
+
+def repaired_file(files, old_path, new_path):
+    """`(index, text)`: the file owning the effective ExecStart with only its script replaced.
+
+    The owner is the last file that assigns ExecStart. The effective command
+    must be `python3 -B <old_path> ...`, and the repaired effective
+    configuration must equal the current one with that single path changed, so
+    no argument, limit or binding moves.
+    """
+    texts = [text for _, text in files]
+    current = units.effective(texts)
+    _, binary, tail = units.split_exec(units.exec_start(current))
+    if binary != PYTHON or tail.split()[:2] != ['-B', old_path]:
+        raise DeployError('effective ExecStart is not %s -B %s ...' % (PYTHON, old_path))
+    owner = max(i for i, text in enumerate(texts) if units.sets_exec_start(text))
+    path, text = files[owner]
+    if not (path == FRAGMENT or path.startswith(FRAGMENT + '.d/')):
+        raise DeployError('effective ExecStart is set by %s, outside %s{,.d/}' % (path, FRAGMENT))
     if text.count(old_path) != 1:
-        raise DeployError('the unit names the script path more than once')
-    return text.replace(old_path, new_path)
+        raise DeployError('%s names the script path %d times, not once' % (path, text.count(old_path)))
+    repaired = text.replace(old_path, new_path)
+    expected = units.effective(texts)
+    expected['Service']['ExecStart'] = [line.replace(old_path, new_path) for line in expected['Service']['ExecStart']]
+    if units.effective(texts[:owner] + [repaired] + texts[owner + 1:]) != expected:
+        raise DeployError('replacing the script path in %s would change more than ExecStart' % path)
+    return owner, repaired
 
 
 class Repair:
@@ -160,16 +186,20 @@ class Repair:
         """`(plan, new unit text, unit state, problems)`; the plan names the bytes a deploy installs."""
         previous, script = self.request['previous'], self.request['script']
         state = self.ex.probe_unit(self.host, UNIT)
-        problems, new_text = [], None
-        if state['load_state'] != 'loaded' or state['fragment_path'] != FRAGMENT or state['drop_ins']:
-            problems.append('%s must be loaded from %s alone (no drop-ins)' % (UNIT, FRAGMENT))
+        problems, owner, new_text = [], None, None
+        drop_ins = {d['path']: text_sha256(d['text']) for d in state['drop_ins']}
+        if state['load_state'] != 'loaded' or state['fragment_path'] != FRAGMENT:
+            problems.append('%s must be loaded from %s' % (UNIT, FRAGMENT))
         elif text_sha256(state['fragment_text']) != previous['unit_sha256']:
             problems.append('%s differs from previous.unit_sha256' % FRAGMENT)
+        elif drop_ins != previous['drop_ins']:
+            problems.append('%s drop-ins %s differ from previous.drop_ins' % (UNIT, drop_ins))
         else:
             try:
-                new_text = repaired_text(state['fragment_text'], previous['script_path'], script_path(script['sha256']))
+                owner, new_text = repaired_file(unit_files(state), previous['script_path'], script_path(script['sha256']))
             except (DeployError, units.UnitError) as error:
                 problems.append(str(error))
+        owner_path, owner_text = unit_files(state)[owner] if owner is not None else (None, None)
         if state['active_state'] == 'active':
             problems.append('%s is running; this repairs only a stopped load' % UNIT)
         if self.ex.sha256(self.host, previous['script_path']) != previous['script_sha256']:
@@ -180,16 +210,17 @@ class Repair:
             problems.append('immutable %s holds different bytes' % script_path(script['sha256']))
         problems += self.guard_problems()
         plan = {'request_sha256': self.request_sha256, 'host': self.host, 'unit': UNIT,
-                'previous_unit_sha256': previous['unit_sha256'], 'new_unit_sha256': text_sha256(new_text),
+                'previous_unit_sha256': previous['unit_sha256'], 'previous_drop_ins': previous['drop_ins'],
+                'path': owner_path, 'previous_sha256': text_sha256(owner_text), 'new_sha256': text_sha256(new_text),
                 'script_path': script_path(script['sha256']), 'script_sha256': script['sha256'],
                 'exact_check': self.request['exact_check']}
-        return plan, new_text, state, problems
+        return plan, (owner_text, new_text), state, problems
 
     def describe(self, plan, state):
         self.out('%s on %s: %s; ExecStart script %s -> %s'
                  % (UNIT, self.host, state['active_state'], self.request['previous']['script_path'], plan['script_path']))
-        self.out('unit %s -> %s; script %s from git %s'
-                 % (plan['previous_unit_sha256'], plan['new_unit_sha256'], plan['script_sha256'], self.request['script']['git_sha']))
+        self.out('%s %s -> %s; script %s from git %s'
+                 % (plan['path'], plan['previous_sha256'], plan['new_sha256'], plan['script_sha256'], self.request['script']['git_sha']))
         self.out('plan_sha256: ' + durable.digest(plan))
 
     def exact_check(self, journal=None):
@@ -220,7 +251,7 @@ class Repair:
         latest = Journal.load(self.state_dir, SERVICE)
         if latest is not None and latest.status not in FINAL:
             raise DeployError('transaction %s is %s; finish it with rollback first' % (latest.id, latest.status))
-        plan, new_text, state, problems = self.assess()
+        plan, (old_text, new_text), state, problems = self.assess()
         self.describe(plan, state)
         if problems:
             raise DeployError('refused under the lock; nothing was changed:\n  ' + '\n  '.join(problems))
@@ -228,8 +259,8 @@ class Repair:
             raise DeployError('plan differs from --expect-plan-sha256; nothing was changed')
         sha = self.request['script']['sha256']
         record = {'key': 'load', 'role': 'load', 'host': self.host, 'unit': UNIT, 'phase': 'pending',
-                  'changes': [{'op': 'write', 'path': FRAGMENT, 'previous': state['fragment_text'], 'new': new_text,
-                               'previous_sha256': plan['previous_unit_sha256'], 'new_sha256': plan['new_unit_sha256']}],
+                  'changes': [{'op': 'write', 'path': plan['path'], 'previous': old_text, 'new': new_text,
+                               'previous_sha256': plan['previous_sha256'], 'new_sha256': plan['new_sha256']}],
                   'previous_active_state': state['active_state'], 'script': {'path': plan['script_path'], 'sha256': sha}}
         journal = Journal.create(self.state_dir, SERVICE, sha, {'request_sha256': self.request_sha256,
                                  'git_sha': self.request['script']['git_sha'], 'plan_sha256': expect_plan_sha256}, [record], None)
@@ -239,6 +270,8 @@ class Repair:
             self.exact_check(journal)
             self.lock.verify()
             problems = self.guard_problems()
+            if unit_files(self.ex.probe_unit(self.host, UNIT)) != unit_files(state):
+                problems.append('%s files changed during the exact check' % UNIT)
             if problems:
                 raise DeployError('refused after the exact check; the unit was not changed:\n  ' + '\n  '.join(problems))
             journal.set_status('activating')
@@ -276,19 +309,19 @@ class Repair:
         self.out('%s: staged %s' % (self.host, path))
 
     def apply(self, journal, new):
-        """Write the new unit and start it, or stop the unit and restore the previous fragment."""
+        """Write the repaired unit file and start the unit, or stop it and restore the file's previous bytes."""
         record, change = journal.hosts[0], journal.hosts[0]['changes'][0]
         self.lock.verify()
         if not new:
             journal.set_phase(0, 'restoring')
             self.ex.systemctl(self.host, 'stop', UNIT)
-            self.ex.write(self.host, FRAGMENT, change['previous'].encode(), 0o644)
+            self.ex.write(self.host, change['path'], change['previous'].encode(), 0o644)
             self.ex.systemctl(self.host, 'daemon-reload')
             journal.set_phase(0, 'restored')
             self.out('%s: previous unit restored and left stopped; latch and incidents untouched' % UNIT)
             return
         journal.set_phase(0, 'installing')
-        self.ex.write(self.host, FRAGMENT, change['new'].encode(), 0o644)
+        self.ex.write(self.host, change['path'], change['new'].encode(), 0o644)
         self.ex.systemctl(self.host, 'daemon-reload')
         before = {'invocation_id': self.ex.probe_unit(self.host, UNIT).get('invocation_id'),
                   'status_sha256': self.ex.sha256(self.host, LOAD_ROOT + '/status.json')}
@@ -321,10 +354,10 @@ class Repair:
     def restore(self, journal, force=False):
         journal.set_status('rolling-back')
         change = journal.hosts[0]['changes'][0]
-        current = self.ex.sha256(self.host, FRAGMENT)
+        current = self.ex.sha256(self.host, change['path'])
         if current not in (change['previous_sha256'], change['new_sha256']) and not force:
             journal.set_status('rollback-refused', current_sha256=current)
-            raise DeployError('rollback refused; %s changed outside the transaction (review, then --force)' % FRAGMENT)
+            raise DeployError('rollback refused; %s changed outside the transaction (review, then --force)' % change['path'])
         try:
             self.apply(journal, new=False)
         except BaseException:
@@ -378,8 +411,9 @@ def run(args, executor, out, inventory, lock=None, clock=time.monotonic, sleep=t
         if action == 'status' and latest is not None and latest.status == 'committed' \
                 and latest.data['source']['request_sha256'] == args.request_sha256:
             # After the repair the request's pins describe the earlier unit.
-            if executor.sha256(request['host'], FRAGMENT) != latest.hosts[0]['changes'][0]['new_sha256']:
-                problems.append('%s is no longer the unit transaction %s installed' % (FRAGMENT, latest.id))
+            change = latest.hosts[0]['changes'][0]
+            if executor.sha256(request['host'], change['path']) != change['new_sha256']:
+                problems.append('%s is no longer the file transaction %s installed' % (change['path'], latest.id))
         else:
             plan, _, state, found = repair.assess()
             repair.describe(plan, state)
