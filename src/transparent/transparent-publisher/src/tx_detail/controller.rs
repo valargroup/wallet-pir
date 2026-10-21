@@ -1464,6 +1464,13 @@ impl Controller {
             prebuild,
         } = candidate;
         self.deliver_invalidations().await;
+        // Delivery awaits workers; a stop requested meanwhile abandons the
+        // unactivated candidate. Once worker activation begins, it and its
+        // commit finish.
+        if self.shutdown.requested() {
+            tracing::info!(tip, "display candidate activation stopped by shutdown");
+            return Ok(());
+        }
         // The rollback record vouches only for what replicas held when it was
         // made. This candidate may reach some replicas without being
         // committed, so a restart from here on withdraws the recent range.
