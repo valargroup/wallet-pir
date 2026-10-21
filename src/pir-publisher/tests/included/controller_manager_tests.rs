@@ -326,7 +326,7 @@ fn fixture_copies_are_independent_and_refuse_symlinks() {
     }
 }
 
-fn manager(tls: &Tls, root: &Path) -> Manager {
+async fn manager(tls: &Tls, root: &Path) -> Manager {
     Manager::new(
         config(tls, root.to_path_buf()),
         ServiceConfig {
@@ -334,6 +334,7 @@ fn manager(tls: &Tls, root: &Path) -> Manager {
             ..ServiceConfig::default()
         },
     )
+    .await
     .unwrap()
 }
 // In-process retirement can outlive the last manager or listener handle while
@@ -348,7 +349,9 @@ async fn restart_manager(tls: &Tls, root: &Path) -> Manager {
                 cache_bytes: 4 << 30,
                 ..ServiceConfig::default()
             },
-        ) {
+        )
+        .await
+        {
             Ok(manager) => return manager,
             Err(error)
                 if error.to_string() == "another publication consumer owns this directory"
@@ -553,7 +556,7 @@ async fn manager_reuses_immutable_transfers_and_serves_through_failed_update() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     let first = follow.poll_once().await.unwrap();
     assert!(first.downloaded_files > 0);
     let stages = first.stages.expect("a changed pass reports its stages");
@@ -725,7 +728,7 @@ async fn manager_persists_invalidation_and_refuses_equal_revision_reenable_after
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -792,7 +795,7 @@ async fn manager_restarts_interrupted_staging_and_rejects_superseded_activation(
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
     std::fs::write(&tls.control, "pause-artifact").unwrap();
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     let work = tokio::spawn(async move { follow.poll_once().await });
     entered(&tls).await;
     assert!(!state.join("active.json").exists());
@@ -881,7 +884,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     let owner = authority(&directory, Some(original), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -928,7 +931,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     );
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -981,7 +984,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
     if high_water_fault.is_some() {
         owner.0.distribution_revision.store(10, Ordering::Release);
     }
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -1128,7 +1131,7 @@ async fn control_write_failure(pause_at: Option<u32>, failed_record: &str) {
         } else {
             std::fs::write(startup_root.join(record), b"{").unwrap();
         }
-        let mut startup = manager(&tls, &startup_root);
+        let mut startup = manager(&tls, &startup_root).await;
         assert!(startup.poll_once().await.is_err());
         assert!(startup.live().is_none());
     }
@@ -1209,7 +1212,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
     let (origin, task) = worker(live.clone()).await;
@@ -1310,7 +1313,7 @@ async fn recovery_poll_write_failure(pause_at: u32) {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     drop(follow);
     let mut restarted = restart_manager(&tls, &state).await;
@@ -1386,7 +1389,7 @@ async fn manager_rejects_replayed_different_map_below_durable_revocation_floor()
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     std::fs::create_dir(state.join("publisher-high-water.tmp")).unwrap();
@@ -1488,7 +1491,7 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
     let state = root.path().join("provider");
-    let mut follow = manager(&tls, &state);
+    let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let (origin, task) = worker(follow.live().unwrap()).await;
     let encrypted = query_and_upload(&origin, &set).await;

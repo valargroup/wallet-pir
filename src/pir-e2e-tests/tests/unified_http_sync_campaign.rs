@@ -172,6 +172,7 @@ impl Ledger {
 async fn tls(
     label: &str,
     upstream: &str,
+    discovery: &str,
     cert: &Path,
     key: &Path,
     out: &Path,
@@ -189,6 +190,9 @@ async fn tls(
             key.to_str().unwrap(),
             control.to_str().unwrap(),
         ])
+        // Discovery is served by the publisher's management listener; the edge
+        // proxies that exact path there.
+        .env("DISCOVERY_UPSTREAM", discovery)
         .stdout(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -296,29 +300,23 @@ impl Provider {
         wait_through(&mut self.process, history, "/v2/shards/init", height).await;
         wait_through(&mut self.process, display, "/v2/txid/init", height).await;
     }
-    /// Both products refused to start; the host process stays up and reports them failed.
+    /// Without a reachable publisher the host refuses to start: service
+    /// discovery fails before any listener is bound, and the process exits.
     async fn wait_refused(&mut self) {
-        let origin = format!("http://{}", self.management);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        loop {
-            self.process.assert_running();
-            if let Some(health) = json(&origin, "/health").await {
-                let products = &health["products"];
-                if products["transparent_history"]["phase"] == "failed"
-                    && products["transaction_details"]["phase"] == "failed"
-                {
-                    assert_eq!(health["ready"], false);
-                    return;
-                }
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{} products started without live authority: {}",
-                self.process.name,
-                std::fs::read_to_string(&self.process.log).unwrap()
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        let mut child = self.process.child.take().unwrap();
+        let status = tokio::time::timeout(Duration::from_secs(30), child.wait())
+            .await
+            .expect("host started without a reachable publisher")
+            .unwrap();
+        let log = std::fs::read_to_string(&self.process.log).unwrap();
+        assert!(!status.success(), "{}: {log}", self.process.name);
+        assert!(log.contains("service discovery failed"), "{log}");
+        assert!(
+            json(&format!("http://{}", self.management), "/health")
+                .await
+                .is_none(),
+            "management served after a refused start"
+        );
     }
 }
 async fn recovery(client: &Path, origin: &str, journal: &Path, ledger: &Ledger) {
@@ -555,8 +553,10 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         .status()
         .unwrap()
         .success());
-    let (history_origin, _history_tls) = tls("history", &history_listen, &cert, &key, &out).await;
-    let (display_origin, _display_tls) = tls("display", &display_listen, &cert, &key, &out).await;
+    let (history_origin, _history_tls) =
+        tls("history", &history_listen, &management, &cert, &key, &out).await;
+    let (display_origin, _display_tls) =
+        tls("display", &display_listen, &management, &cert, &key, &out).await;
     let mut publisher = Process::new(
         "unified-publisher",
         std::env::var_os("WALLET_PIR_PUBLISHER_BIN").unwrap().into(),

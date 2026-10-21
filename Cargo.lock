@@ -2232,6 +2232,7 @@ dependencies = [
  "clap",
  "enhance-publisher",
  "pir-pipeline",
+ "pir-service-discovery",
  "receiver-indexer",
  "reqwest",
  "serde",
@@ -2239,6 +2240,7 @@ dependencies = [
  "status-publisher",
  "tempfile",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
@@ -2283,6 +2285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-service-discovery"
+version = "1.0.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pir-serving"
 version = "0.1.0"
 dependencies = [
@@ -2297,6 +2308,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "pir-pipeline",
+ "pir-service-discovery",
  "reqwest",
  "rustls",
  "tempfile",
@@ -3588,6 +3600,8 @@ dependencies = [
  "pir-control",
  "pir-observability",
  "pir-pipeline",
+ "pir-query-server",
+ "pir-service-discovery",
  "prometheus",
  "reqwest",
  "serde",

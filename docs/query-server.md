@@ -113,6 +113,31 @@ same exit status. It conflicts with `--check` and the Enhance subcommands.
 Configuration files never set `verify_only`; ordinary startup rejects
 `verify_only: true`.
 
+### Publisher compatibility
+
+A section with `publisher` set synchronizes over HTTPS. Before the host binds
+any listener, opens state or starts a product, it fetches the publisher's
+`/.well-known/pir-service-discovery` document from that origin, trusting the
+configured `publisher_ca` roots, following no redirect, within 10 seconds and
+16 KiB. The publisher's contract version must have the same major version as
+the query server's
+[`pir-service-discovery`](../src/shared/pir-service-discovery/README.md)
+version; minor and patch versions may differ in either direction. Any failure
+(unreachable publisher, HTTP error or missing endpoint, another service, a
+malformed document or version, or a different major version) stops the whole
+query server with the publisher origin and reason. A mismatch names both
+versions: an older query server is told to upgrade; a newer one is told the
+publisher is older and must be upgraded, or replaced by a query server release
+for the publisher's major version. There is no bypass. `--check` stays offline;
+`--verify-only` also checks discovery.
+
+Every synchronization pass, unchanged ones included, checks discovery again
+before any product request. A network error or invalid response skips that
+pass, keeps the current serving view and retries with the usual backoff. A
+confirmed major version mismatch stops wallet serving and exits the whole
+process with that error; a saved predecessor publication cannot mask it.
+Sections without `publisher` are not checked.
+
 ## Readiness
 
 Management `/health` stays up while a product is failing. `/ready` answers 503

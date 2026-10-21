@@ -37,6 +37,7 @@ pub struct Report {
 }
 pub async fn verify(config: Config) -> Result<Report, Error> {
     let mut source = Source::new(&config)?;
+    source.discover().await?;
     std::fs::create_dir_all(&config.directory)?;
     if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
         return Err("bootstrap root must be a real directory".into());
