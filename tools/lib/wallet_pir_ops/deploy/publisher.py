@@ -428,6 +428,9 @@ class Cutover:
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
             if self.serving:
                 self.serving.stage(journal, serving_binary)
+            if self.request['schema'] == SERVING_SCHEMA:
+                from .publisher_restore import HistoryRestore
+                HistoryRestore(self).prepare(journal, plan['binary'], staged_config)
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
@@ -437,6 +440,8 @@ class Cutover:
                 self.require_stopped_load()
             self.effect(journal, 'stop ' + UNIT, lambda: self.stop(UNIT))
             self.unlocked()
+            from .publisher_restore import HistoryRestore
+            HistoryRestore(self).install(journal)
             if self.serving:
                 self.serving.activate(journal)
             for path, text in plan['desired'].items():
@@ -467,7 +472,8 @@ class Cutover:
             require(journal is not None and journal['request'] == self.request
                     and journal['phase'] == 'installing'
                     and journal['intent'] == 'stop ' + UNIT
-                    and journal['completed'] == ['stage executable', 'stage configuration'],
+                    and journal['completed'] == ['stage executable', 'stage configuration',
+                                                 *(['prepare history restore'] if 'history_restore' in journal else [])],
                     'installation recovery requires the interrupted predecessor stop')
             plan = journal['plan']
             self.resources()
@@ -491,6 +497,8 @@ class Cutover:
             if self.serving:
                 self.serving.unchanged_during_staging(plan['serving'])
             self.unlocked()
+            from .publisher_restore import HistoryRestore
+            HistoryRestore(self).install(journal)
             if self.serving:
                 self.serving.activate(journal)
             for path, text in plan['desired'].items():
@@ -617,6 +625,8 @@ class Cutover:
             self.unlocked()
             if self.serving:
                 self.serving.restore(journal)
+            from .publisher_restore import HistoryRestore
+            HistoryRestore(self).rollback(journal)
             if self.ex.probe_unit(self.host, UNIT)['load_state'] != 'not-found':
                 self.effect(journal, 'disable publisher', lambda: self.ex.systemctl(self.host, 'disable', UNIT))
             for path, previous in plan['before'].items():

@@ -32,7 +32,14 @@ the same record for a pinned publication after the full checks, without a
 journal writer or service. A restarted publisher with such a record restores the
 same inventory from metadata digests, safe regular paths, exact lengths and
 runtime identity headers, and serves it only after fresh canonicality, intent
-and fleet checks. Missing or malformed evidence uses the full preparation path.
+and fleet checks. Only a missing record uses the full preparation path; a
+malformed or incompatible record, unsafe or incomplete files, or an unreadable
+failure record refuse to start until the record is removed. An ordinary
+`publisher-cutover/3` deploy runs this command against the active publication
+while the predecessor still serves, installs the record only if the active
+publication is unchanged after the stop, and otherwise restarts the predecessor
+and refuses so the deploy can be retried. Deploy readiness does not wait for
+background validation.
 After serving starts, one background thread hashes every listed artifact
 (`integrity_validation` in `/v1/status`) and then loads and self-checks each
 runtime under memory admission (`correctness_validation`). A correctness failure
