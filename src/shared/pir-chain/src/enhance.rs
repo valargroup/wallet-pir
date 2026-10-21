@@ -167,7 +167,7 @@ mod rpc {
             prevouts: &Prevouts,
         ) -> Result<([u8; 32], Vec<EnhanceAction>), NodeError> {
             let raw = self.raw_block(height.to_string()).await?;
-            let block = Block::zcash_deserialize(raw.as_slice())
+            let block = Block::zcash_deserialize(&mut raw.as_slice())
                 .map_err(|error| NodeError::Block(error.to_string()))?;
             let actions = self.block_actions(&block, prevouts).await?;
             Ok((block.hash().0, actions))
@@ -288,9 +288,10 @@ mod rpc {
                         _ => NodeError::Rpc(code, message),
                     })?;
                     let raw = hex::decode(raw_hex)?;
-                    let tx = Transaction::zcash_deserialize(raw.as_slice()).map_err(|error| {
-                        NodeError::Transaction(txid.to_string(), error.to_string())
-                    })?;
+                    let tx =
+                        Transaction::zcash_deserialize(&mut raw.as_slice()).map_err(|error| {
+                            NodeError::Transaction(txid.to_string(), error.to_string())
+                        })?;
                     if tx.hash() != *txid {
                         return Err(NodeError::Transaction(
                             txid.to_string(),
@@ -313,7 +314,7 @@ pub fn raw_transaction_actions(
     raw: &[u8],
     spent: &HashMap<([u8; 32], u32), u64>,
 ) -> Result<Vec<EnhanceAction>, NodeError> {
-    let transaction = Transaction::zcash_deserialize(raw)
+    let transaction = Transaction::zcash_deserialize(&mut &raw[..])
         .map_err(|error| NodeError::Transaction(String::new(), error.to_string()))?;
     let mut utxos = HashMap::new();
     for (&(txid, index), &value) in spent {
@@ -387,7 +388,7 @@ mod tests {
     fn canonical_ironwood_transaction_has_actual_fee_and_expiry() {
         let bytes =
             hex::decode(include_str!("../tests/fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
-        let tx = Transaction::zcash_deserialize(bytes.as_slice()).unwrap();
+        let tx = Transaction::zcash_deserialize(&mut bytes.as_slice()).unwrap();
         assert_eq!(
             tx.hash().to_string(),
             "f337d9675817668120ae626021f61e5350ff5412beeb5e42b67bd412452b8d13"

@@ -10,7 +10,12 @@ member unifies features into the reader, prove that:
   optional RocksDB and fixture configurations may still resolve them;
 - each product feature activates only its own adapter, and only `receiver`
   resolves receiver recovery;
-- the RocksDB reader's public surface needs no node type.
+- the RocksDB reader's public surface needs no node type;
+- the production RPC reader and the Transparent, Enhance and Status readers
+  compile no typed transaction decoder (`zakura-primitives`) or shielded
+  proving backend: they read transactions with the borrowed wire reader. The
+  Receiver reader keeps Orchard to check Ironwood tree roots, and the node
+  fixtures (`testing`) and RocksDB reader keep the node's own decoder.
 
 Only active normal and build edges count for the runtime, node and database
 rules: an optional dependency that Cargo resolves but does not enable, and a
@@ -43,6 +48,13 @@ NODE = {
     'zakura-state', 'zakura-test',
 }
 DATABASE = {'rocksdb', 'librocksdb-sys'}
+# The typed transaction decoder and the shielded proving stacks behind it.
+SHIELDED = {
+    'zakura-primitives', 'zakura-orchard', 'zakura-orchard-legacy', 'zakura-sapling-crypto',
+    'zakura-halo2-proofs', 'zakura-halo2-gadgets', 'zakura-bellman', 'zakura-redjubjub',
+}
+# Receiver recovery and its Ironwood root check genuinely need Orchard's curve types.
+RECEIVER_SHIELDED = {'zakura-orchard', 'zakura-orchard-legacy'}
 # Runtime and HTTP stacks that only the `rpc` client and the HTTP node double add.
 TRANSPORT_PACKAGES = {'tokio', 'reqwest', 'axum', 'hyper', 'hyper-util', 'h2', 'tower'}
 
@@ -68,6 +80,14 @@ def rpc_dependency_problems(graph, node_packages=NODE):
     return [f'RPC consumer compiles node/database package {name}'
             for name in sorted(set(active_packages(graph)))
             if name in node_packages or name in DATABASE]
+
+
+def shielded_dependency_problems(graph, kind, allowed=frozenset()):
+    """A transaction reader without node fixtures must compile no typed decoder or
+    shielded proving backend, except the `allowed` packages it validates with."""
+    return [f'{kind}: reader compiles shielded backend {name}'
+            for name in sorted(set(active_packages(graph)))
+            if name in SHIELDED and name not in allowed]
 
 
 def transport_dependency_problems(graph, kind):
@@ -160,7 +180,8 @@ def consumers():
 def checks(kind):
     """Graph rules for a consumer, by name."""
     if kind == 'server-production':
-        return [rpc_dependency_problems, lambda g: product_dependency_problems(g, None)]
+        return [rpc_dependency_problems, lambda g: product_dependency_problems(g, None),
+                lambda g: shielded_dependency_problems(g, kind)]
     if kind == 'server-fixtures':
         return [lambda g: product_dependency_problems(g, None),
                 lambda g: transport_dependency_problems(g, kind)]
@@ -171,7 +192,11 @@ def checks(kind):
                  # interpretation nor its fixtures may pull a runtime or HTTP stack.
                  lambda g: transport_dependency_problems(g, kind)]
         if not kind.endswith('-testing'):
-            rules.append(rpc_dependency_problems)
+            # `testing` builds fixtures with the node's encoders, which carry the
+            # full decoder; product readers alone must not.
+            allowed = RECEIVER_SHIELDED if product == 'receiver' else frozenset()
+            rules.extend([rpc_dependency_problems,
+                          lambda g: shielded_dependency_problems(g, kind, allowed)])
         return rules
     return []
 
@@ -261,7 +286,7 @@ def main(argv=None):
     if errors:
         raise SystemExit('chain reader graph failed:\n  ' + '\n  '.join(sorted(set(errors))))
     print(f'verified: {len(consumers())} fresh chain reader consumers; decoding is runtime-free, '
-          'RPC is node-free and products are isolated')
+          'RPC is node-free, products are isolated and readers compile no shielded backend')
 
 
 if __name__ == '__main__':

@@ -29,6 +29,18 @@ class RpcDependencyTests(unittest.TestCase):
                 with self.subTest(name=name, kind=kind):
                     self.assertTrue(graph.rpc_dependency_problems(self.graph(True, kind, name)))
 
+    def test_readers_reject_active_shielded_backends_except_allowed(self):
+        for name in ('zakura-primitives', 'zakura-orchard', 'zakura-sapling-crypto', 'zakura-halo2-proofs'):
+            with self.subTest(name=name):
+                self.assertTrue(graph.shielded_dependency_problems(self.graph(True, None, name), 'product'))
+                self.assertTrue(graph.shielded_dependency_problems(self.graph(True, 'build', name), 'product'))
+                self.assertEqual(graph.shielded_dependency_problems(self.graph(False, None, name), 'product'), [])
+                self.assertEqual(graph.shielded_dependency_problems(self.graph(True, 'dev', name), 'product'), [])
+        orchard = self.graph(True, None, 'zakura-orchard')
+        self.assertEqual(graph.shielded_dependency_problems(orchard, 'receiver', graph.RECEIVER_SHIELDED), [])
+        primitives = self.graph(True, None, 'zakura-primitives')
+        self.assertTrue(graph.shielded_dependency_problems(primitives, 'receiver', graph.RECEIVER_SHIELDED))
+
     def test_fixture_dependency_does_not_enter_rpc_build(self):
         self.assertEqual(graph.rpc_dependency_problems(self.graph(True, 'dev')), [])
 
