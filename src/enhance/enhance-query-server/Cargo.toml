@@ -22,6 +22,7 @@ pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
+pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 pir-serving = { path = "../../shared/pir-serving" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }
 rand_chacha = { version = "0.3", optional = true }

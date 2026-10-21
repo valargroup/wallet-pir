@@ -23,6 +23,45 @@ or incompatible recent runtime prevents finalization. It verifies native body
 checksums, public-mask binding and source self-consistency through the production
 loader; a header/length match alone is insufficient.
 
+Those checks apply to new publication bytes. Once they pass, and before the
+active pointer moves, the publisher writes `history-restore.json` beside the
+publication: the exact inventory bytes and SHA-256, map, chain and anchor
+identity, holdings mode and completed phases. `pir-publisher
+prepare-history-restore --config FILE --publication DIR --output RECORD` writes
+the same record for a pinned publication after the full checks, without a
+journal writer or service. A restarted publisher with such a record restores the
+same inventory from metadata digests, safe regular paths, exact lengths and
+runtime identity headers, and serves it only after fresh canonicality, intent
+and fleet checks. Only a missing record, or unresolved withdrawal or activation
+intent, uses the full preparation path. A malformed or incompatible record,
+unsafe or incomplete files, or an unreadable failure record refuse to start;
+deleting the record clears neither recorded integrity failures nor intent, so
+the remedy is a deploy of verified replacement bytes. An ordinary
+`publisher-cutover/3` deploy pins the active publication with the snapshot
+helper while the predecessor still serves, runs this command on the pin,
+refuses before stopping if the active publication moved, and keeps the pin
+across the stop. It installs the record only if the active pointer and map are
+unchanged after the stop and every pinned file is still the same inode with the
+same size in the live publication; otherwise it restarts the predecessor and
+refuses so the deploy can be retried. Rollback
+restores a replaced record's exact bytes, or its absence. Deploy readiness does
+not wait for background validation.
+After serving starts, one low-priority background thread, yielding to
+distribution and candidate preparation, hashes every listed artifact
+(`integrity_validation` in `/v1/status`) and then loads and self-checks each
+runtime under memory admission (`correctness_validation`), using only the files
+it hashed unchanged; a newer publication or a withdrawal stops it. A correctness
+failure is reported and the publication keeps serving. A confirmed integrity
+mismatch is recorded in `integrity-failures.json` and withdraws every
+publication listing those bytes, in this and later processes, until freshly
+verified replacement bytes are published. Withdrawing the publisher's own
+routes would leave the router proxying setup and query requests to workers
+that still serve the publication, so unless the controller is HTTP-only or a
+shadow, it also sends the fleet `withdraw` operation, retried each publication
+pass until it succeeds; a restarted process with such a record sends it before
+anything else. A later activation of verified replacement bytes supersedes a
+withdrawal still pending.
+
 All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
 | Route | Response |
@@ -145,9 +184,10 @@ the explicitly configured origin for its first current record.
 Each attempt stages in a new private tree. The production assignment planner
 selects the complete recent tier; its inert archive row is cost/accounting only
 and does not establish a route. The production shard loader verifies metadata
-and recent tables; unassigned archive tables may be absent. Prewarm uses
-`ShippedRuntimes::required`: missing, incompatible, corrupt or failed-self-check
-prepared files fail without disk-restore or local-build fallback. That view
+and recent table sizes; unassigned archive tables may be absent. Required
+prepared files must be present and have their recorded sizes before activation.
+On demand, the loader parses their formats without a checksum scan or self-test.
+Missing or incompatible required files fail without local-build fallback. That view
 retains its strict policy on subsequent cache misses. Existing optional views
 retain their fallback behavior.
 
@@ -207,8 +247,9 @@ production TLS, distribution scale, hardware or the complete service.
 ## Following publications with the recent worker
 
 Omit `--verify-only` from the command above to run the manager and existing recent
-worker in `pir-query-server`. A successful initial fetch or verified predecessor recovery, strict load, prewarm
-and live owner check precede listener binding. Startup source failure refuses to
+worker in `pir-query-server`. A successful initial fetch or verified predecessor recovery, metadata and size checks
+and a live owner check precede listener binding. Every assigned range is then
+queryable; runtimes load on first use and prewarming runs in the background. Startup source failure refuses to
 listen; restart retries through the operator's normal process supervisor. A saved
 predecessor can recover through fresh exact-anchor checks while a newer candidate
 fails to download; the saved pointer alone grants no authority. When the
@@ -237,28 +278,37 @@ Unchanged responses do not fetch inventories/artifacts, update a success-time
 lease, or authorize an activation. Transparent still has no lease.
 
 Completed objects live under `objects/<sha256>`, read-only. Downloads stream into
-a unique `<sha256>.partial-*` name while hashing and enforcing the declared length
-and body budget, and are synced before and after their rename. Every reuse of a
-regular object verifies exact length and digest again; anything else under that
-name is unlinked, never followed. Each fresh staging tree hard-links those
-verified inodes, which nothing writes, so staging does not hash them again; only
-a filesystem that reports linking unsupported receives a copy that is verified
-on its own. Then the production loader verifies tables and prewarms required
-native runtimes. On
-later preparation, native files are also loaded and self-checked independently of
-resident cache hits before recording a replacement directory, even on the same map. Files,
-child directories and staging parents are synced before publishing an active
-pointer. Interrupted partials are removed before staging and never reused.
-A corrupt object is downloaded again; a bad download never replaces its completed
-object. Successful artifacts from an interrupted attempt are reusable without
+unique partial files, enforce the declared byte count and body budget, and are
+synced before and after atomic promotion. Metadata hashes remain immediate;
+large table and runtime bodies are not hashed during receipt or activation.
+Their `.received.json` records contain the publisher's expected identity, not
+proof of a completed body hash. Local reloads check expected size. Staging uses
+hard links, with size-checked copies only when linking is unsupported. Recorded
+download identities cannot be changed to label existing bytes as another artifact.
+The serving loader checks metadata and sizes, then parses runtimes on demand
+without checksum scans or encrypted self-tests. Interrupted partials are never
+reused. A size mismatch refuses a transfer before promotion; a same-size digest
+mismatch is detected by the background validator after serving starts.
+Successful artifacts from an interrupted attempt are reusable without
 relying on old inventories, deltas or saved proofs. Interrupted staging and old
 objects remain non-authoritative. On activation and every subsequent poll, the
 manager releases unused in-memory views with the owner's existing policy: retain
 three recent predecessors and any older snapshot still held by an admitted
 request. A long request does not retain other unused generations, and completing
-it permits collection on an unchanged poll. This collection never deletes source
-trees or immutable objects; disk-retention automation is not implemented
-in this slice, so operators must budget disk for retained trees and objects.
+it permits collection on an unchanged poll. After each successful activation the
+manager also collects disk with the owner's `Collect`: it keeps the active tree,
+every retained predecessor (including one an admitted request still holds), any
+candidate, the three most recent other trees and every catalog revision those
+reference, and removes other staging trees and catalog revisions. It then
+unlinks each completed object that no remaining tree links (link count one). It
+skips objects when the active stage was copied rather than linked, and defers
+while a stage holds the catalog lock. The publication switch has already committed
+and serving continues during collection. The synchronization call waits for
+collection before returning, delaying its next publisher poll; collection errors
+cannot fail or reverse the committed activation. A deferred or failed collection
+is logged and retried after the next activation. Unchanged polls and restarts do
+not collect disk. Retention has no fixed tree-count limit: every older view still
+held by a request is kept in addition to the three recent predecessors.
 
 `publisher-high-water.json` retains replay/withdrawal fencing. A failed write
 also attempts `publisher-high-water-fallback.json` with the same complete source
@@ -347,7 +397,7 @@ The operator must supply the trusted deployment address: this document assigns
 no public hostname/IP and changes no production routing. `archive_ca` may add
 an explicit trusted PEM root; certificate/hostname verification remains enabled.
 Only isolated loopback fixtures may use plain HTTP. The configured upstream must
-terminate at an owner running this serving implementation with warm readiness,
+terminate at an owner running this serving implementation with loaded readiness,
 not another forwarding provider. Redirects and wallet-supplied destinations are
 never used. There is one upstream and no automatic switching or query replay.
 
@@ -355,7 +405,7 @@ Maps, filters, manifests and initialization remain verified local metadata for
 the complete publication, including distinct archive geometries. Eligible exact
 local revisions execute through the existing worker. Nonlocal current revisions
 obtain setup and encrypted answers through the fixed archive. Each operation
-checks terminal warm readiness, network/genesis/profile/native parameters, exact
+checks terminal readiness, network/genesis/profile/native parameters, exact
 manifest and setup identity. Query replies must have the exact segment framing,
 revision/table prefix and qualified mask epochs. The wallet retains its own
 validation. Readiness is an observation, not a lease or a completeness proof.
@@ -665,11 +715,12 @@ Before enabling it, run the rendered argument array as that user:
 python3 -c 'import json,subprocess; r=json.load(open("role.json")); subprocess.run(["./history-release/pir-query-server",*r["check"]],check=True)'
 ```
 
- This real preflight downloads/verifies and
-prewarms required material and checks live authority through the managed owner;
+This preflight checks downloaded bytes, local file sizes and live authority
+through the managed owner;
 it may prime state but opens no listener. The unit repeats the same check in
-`ExecStartPre` on every start/restart. Missing, corrupt or incompatible runtimes
-refuse preparation/start/restart and later cache misses, without local builds.
+`ExecStartPre` on every start/restart. Missing or incorrectly sized required
+files refuse preparation/start/restart; malformed formats fail when loaded,
+without local-build fallback. Preparation correctness is tested by the publisher.
 Existing fleet/static optional preparation policy is unchanged.
 
 Use `history-provider.caddy` from the same operations release as the TLS route
@@ -720,3 +771,54 @@ reader. Code reversion alone must not erase revocation observations.
 To remove an installation, stop/disable its history provider unit and withdraw
 only its operator TLS route. Retain state/safety records, artifacts and unit for
 review and recovery. No data or resource deletion is part of this procedure.
+
+## Preparation trust and post-start smoke validation
+
+The publisher owns preparation correctness, including comparing prepared
+material with its sources and testing encrypted answers before publication.
+Query servers trust those prepared bytes. HTTPS downloads check exact length;
+local reloads check expected size. After serving starts, one process-wide OS
+thread validates each new table/runtime body against its recorded SHA-256. It
+pauses before each 1-MiB read/hash chunk while retrieval requests are pending or
+executing. A chunk already running may briefly overlap a new query; sustained
+query traffic can delay validation indefinitely. Successful `.validation.json`
+records are reused across publications and restarts, with separate checks for
+copied files. Same-size local content changes are outside this integrity policy. Normal format parsing and
+publication authority, replay, withdrawal and canonicality checks still apply.
+
+Recent, Archive and transaction detail become ready before background warming
+finishes. A first query can pay the runtime loading cost. Loading remains
+single-flight per runtime and bounded by cache and work-memory budgets. One
+background load at a time shares the cache across snapshots; a separate restore
+slot remains available for foreground requests.
+
+A background hash failure withdraws only dependent shard revisions: their
+requests return 503, including responses whose evaluation was already running.
+Unrelated shards remain available and immutable public maps are not rewritten.
+Failures persist across restart. After a fresh successful publisher reconciliation,
+the synchronization manager refetches failed artifacts under its existing TLS and
+transfer budgets. Replacements are hashed by the same query-prioritized thread;
+affected idle runtime entries and their persisted derivatives are evicted before
+the repaired shard is re-enabled. Validation covers retained revisions as well as
+the current map. A withdrawn shared file can be linked into a newer publication,
+but its dependent revisions remain unavailable; other shards can advance.
+Startup removes interrupted repair files while holding the consumer's exclusive
+directory lock.
+A shared artifact can withdraw more than one shard. `/v1/ready`, `/metrics` and
+health output report pending, validated and failed artifacts and withdrawals.
+Validation covers every held revision that can answer a request, including
+retained predecessors; their saved failures remain enforced after restart.
+
+Run correctness validation as a separate process after the serving API is ready.
+`quality-canary --all` checks every table in its pinned fixture and each table's
+segments against expected row hashes. Supply a fixture covering the assigned
+history directory and page tables. Transaction detail's `txid-quality-canary`
+accepts repeated `--fixture` arguments for pinned lookups covering its assigned
+material. Both tools return nonzero on an invalid oracle, an unavailable query
+or an incorrect answer. A failed run fails deployment acceptance; neither tool
+stops or restarts the service. These probes are outside startup timing.
+
+The startup target is under 15 seconds with the assigned files already downloaded.
+Measure readiness separately from first-query loading latency and background
+warming, recording cold filesystem-cache results on an isolated host. This policy
+does not establish a measured fleet startup time by itself.

@@ -65,9 +65,17 @@ async fn the_database_reader_agrees_with_rpc_and_refuses_missing_blocks() {
     // Block 1 pays a standard and a nonstandard script; block 2 spends both, and
     // spends its own first transaction's output in the same block.
     let mined = coinbase(1, &[(50_000, P2PKH), (20_000, ODD)]);
-    let first = child(&genesis, std::slice::from_ref(&mined));
+    // A shielded parent also pays a transparent output. Resolving it must read
+    // the complete transaction boundary and identity before copying that output.
+    // Its Ironwood balance is zero: the pool is empty at height 1.
+    let shielded_parent = Mixed::new(vec![], &[5_000], 0).build();
+    let first = child(&genesis, &[mined.clone(), shielded_parent.clone()]);
     let parent = transfer(
-        vec![spend(&mined, 0), spend(&mined, 1)],
+        vec![
+            spend(&mined, 0),
+            spend(&mined, 1),
+            spend(&shielded_parent, 0),
+        ],
         &[(60_000, &[]), (9_000, P2PKH)],
     );
     let spender = transfer(vec![spend(&parent, 0)], &[(59_000, ODD)]);
@@ -99,12 +107,12 @@ async fn the_database_reader_agrees_with_rpc_and_refuses_missing_blocks() {
     let [_, made, spent] = &read.transactions[..] else {
         panic!("three transactions");
     };
-    assert_eq!(made.fee, Fee::Exact(50_000 + 20_000 - 69_000));
+    assert_eq!(made.fee, Fee::Exact(50_000 + 20_000 + 5_000 - 69_000));
     assert_eq!(made.inputs[1].spent.script, ODD);
     assert_eq!(spent.inputs[0].spent.script, Vec::<u8>::new());
     assert_eq!(spent.fee, Fee::Exact(1_000));
-    // Both of block 1's outputs come from the database; the same-block spend does not.
-    assert_eq!(read.lookups + read.cache_hits, 2);
+    // All three earlier outputs come from the database; the same-block spend does not.
+    assert_eq!((read.lookups, read.cache_hits), (2, 1));
 
     // The RPC path over the same blocks reads the same transactions.
     let chain: SharedChain = Arc::new(Mutex::new(Chain::default()));

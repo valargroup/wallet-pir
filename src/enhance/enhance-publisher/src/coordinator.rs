@@ -29,6 +29,7 @@ fn preparation_request(http: &reqwest::Client, worker_url: &str) -> reqwest::Req
 
 #[derive(Clone)]
 pub struct Coordinator {
+    distribution: Arc<Mutex<Option<crate::distribution::Distribution>>>,
     operator: OperatorStatus,
     store: Arc<Mutex<Store>>,
     publication: Arc<Semaphore>,
@@ -233,6 +234,7 @@ impl Coordinator {
             serving: serving.clone(),
         });
         Ok(Self {
+            distribution: Arc::new(Mutex::new(None)),
             operator: OperatorStatus::new(status, packing_budget, snapshots),
             serving,
             store,
@@ -660,7 +662,55 @@ impl Coordinator {
     }
 
     pub fn artifact_router(&self) -> Router {
-        super::serving_control::ServingControl::artifact_router(self.root.clone())
+        let router = super::serving_control::ServingControl::artifact_router(self.root.clone());
+        match self.distribution.lock().unwrap().as_ref() {
+            Some(distribution) => router.merge(distribution.router()),
+            None => router,
+        }
+    }
+
+    pub(crate) fn distribute_from(&self, rpc: crate::zakura::ZakuraClient) -> Result<(), String> {
+        let distribution = crate::distribution::Distribution::open(&self.root.join("https"), rpc)?;
+        let state = self.store.lock().unwrap();
+        distribution.withdraw(&worker::Revocation {
+            recovery_epoch: state.state().recovery.epoch,
+            sessions: state.state().recovery.revoked.clone(),
+        })?;
+        *self.distribution.lock().unwrap() = Some(distribution);
+        Ok(())
+    }
+
+    pub(crate) async fn publish_distribution(
+        &self,
+        journal: &crate::store::RecordJournal,
+    ) -> Result<(), String> {
+        let distribution = self.distribution.lock().unwrap().clone();
+        let Some(distribution) = distribution else {
+            return Ok(());
+        };
+        let Some(manifest) = self.manifest().await else {
+            return Ok(());
+        };
+        if distribution.is_current(&manifest) {
+            return Ok(());
+        }
+        let snapshot = journal.snapshot().map_err(|e| e.to_string())?;
+        if snapshot.tree_size() != manifest.coverage.records {
+            return Err("committed publication differs from journal snapshot".into());
+        }
+        let root = distribution.root().to_path_buf();
+        let coverage = manifest.coverage.clone();
+        let epochs = manifest.domain_recovery_epochs.clone();
+        let prepared = tokio::task::spawn_blocking(move || {
+            crate::publication::prepare(&root, coverage, &epochs, |start, count| {
+                snapshot
+                    .read_records(start, count)
+                    .map_err(|e| e.to_string())
+            })
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        distribution.publish_prepared(manifest, prepared).await
     }
 
     pub async fn refresh_routers(&self) {

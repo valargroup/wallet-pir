@@ -121,7 +121,7 @@ impl crate::activation::Adapter for HistoryActivation {
             active.publication.map_sha256.clone(),
             !inner.required_runtimes
                 && active.publication.map_sha256 == requested
-                && active.state.is_warm(),
+                && active.state.is_ready(),
         )
     }
 
@@ -146,7 +146,7 @@ impl crate::activation::Adapter for HistoryActivation {
     }
 
     fn ready(candidate: &Candidate) -> bool {
-        candidate.state.is_warm()
+        candidate.state.is_ready()
     }
 
     fn validate(&self, candidate: &Candidate) -> Result<(), String> {
@@ -178,7 +178,7 @@ impl crate::activation::Adapter for HistoryActivation {
         );
         // Normal predecessors remain available to in-flight wallets, but
         // only current and preparing assignments are residency obligations.
-        old.state.release_pins();
+        old.state.stop_warming();
         inner.retired.write().unwrap().push(old);
     }
 }
@@ -272,7 +272,7 @@ impl LiveService {
         };
         let old = {
             let active = self.0.active.read().unwrap();
-            if active.publication.map_sha256 == publication.map_sha256 && active.state.is_warm() {
+            if active.publication.map_sha256 == publication.map_sha256 && active.state.is_ready() {
                 if !held_as_requested(active.state.set()) {
                     return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
                 }
@@ -289,7 +289,7 @@ impl LiveService {
         };
         if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
             c.publication.map_sha256 == publication.map_sha256
-                && c.state.is_warm()
+                && c.state.is_ready()
                 && c.epoch == epoch
                 && (!self.0.required_runtimes || c.publication.directory == publication.directory)
         }) {
@@ -308,7 +308,9 @@ impl LiveService {
             },
         );
         // Release an obsolete candidate's pins before reserving anew.
-        *self.0.candidate.lock().await = None;
+        if let Some(candidate) = self.0.candidate.lock().await.take() {
+            candidate.state.stop_warming();
+        }
         let mut options = self.0.options.clone();
         match (&options.scope, &publication.assignment) {
             (LoadScope::Assigned { worker_id, .. }, Some(path)) => {
@@ -362,13 +364,13 @@ impl LiveService {
         let config = self.0.config;
         let loading_started = std::time::Instant::now();
         let retiring = old.clone();
-        let (next, verification) = tokio::task::spawn_blocking(move || {
+        let (next, verification, material) = tokio::task::spawn_blocking(move || {
             tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
             let eviction_started = std::time::Instant::now();
             old.evict_unpinned();
             tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
             let open_started = std::time::Instant::now();
-            let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
+            let set = ShardSet::open_for_serving(&directory, &options)
                 .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
             let verification = set.verification().clone();
             tracing::info!(
@@ -397,11 +399,15 @@ impl LiveService {
             let state = ServiceState::build_reusing(set, config, None, Some(&old), shipped);
             tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
             let state = state.and_then(|state| {
-                if state.required_material() { state.verify_required_material()?; }
-                Ok(state)
+                let material = if state.required_material() {
+                    Some(state.check_required_material()?)
+                } else {
+                    None
+                };
+                Ok((state, material))
             });
             state
-                .map(|state| (state, verification))
+                .map(|(state, material)| (state, verification, material))
                 .map_err(Refusal::Runtime)
         })
         .await
@@ -414,18 +420,14 @@ impl LiveService {
         let loading_seconds = loading_started.elapsed().as_secs_f64();
         let warming_started = std::time::Instant::now();
         self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
-        next.spawn_prewarm()
-            .await
-            .map_err(|e| Refusal::Runtime(e.to_string()))?;
+        let _prewarm = next.spawn_prewarm();
         let warming_seconds = warming_started.elapsed().as_secs_f64();
         tracing::info!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
         if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
             return Err(Refusal::Superseded("reorg invalidated preparation".into()));
         }
-        if !next.is_warm() {
-            return Err(Refusal::Admission(
-                "candidate did not become completely warm within the shared budget".into(),
-            ));
+        if !next.is_ready() {
+            return Err(Refusal::Admission("candidate is not ready".into()));
         }
         let [loading, warming, total] = &next.metrics().prepare_seconds;
         loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
@@ -440,7 +442,7 @@ impl LiveService {
             epoch,
         });
         Ok(
-            serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification}),
+            serde_json::json!({"prepared":publication.map_sha256,"loading_seconds":loading_seconds,"warming_seconds":warming_seconds,"runtimes":preparation,"verification":verification,"required_material":material}),
         )
     }
 
@@ -464,11 +466,17 @@ impl LiveService {
             "binary_sha256":pir_control::binary_sha256(),
             "incarnation":pir_control::Identity::process().incarnation,
             "verified_publication":{"map_sha256":active.publication.map_sha256},
+            "artifact_validation":state.artifact_validation(),
             "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
                 "required":state.required_material(),"preparation":state.preparation()},
             "active_coverage":coverage,
             "archive_reachability":state.archive().map(|a| a.observation()),
         })
+    }
+
+    /// Whether revocation permanently cancelled the current snapshot.
+    pub(crate) fn is_invalidated(&self) -> bool {
+        self.0.active.read().unwrap().state.is_invalidated()
     }
 
     pub fn router(&self) -> Router {
@@ -541,7 +549,7 @@ impl LiveService {
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"artifact_validation":active.state.artifact_validation(),"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.clone().lock_owned().await;
@@ -633,7 +641,9 @@ impl LiveService {
                     .as_ref()
                     .is_some_and(|c| c.publication.map_sha256 == map_sha256)
                 {
-                    *candidate = None;
+                    if let Some(discarded) = candidate.take() {
+                        discarded.state.stop_warming();
+                    }
                 }
                 Ok(serde_json::json!({"discarded":map_sha256}))
             }
@@ -729,7 +739,7 @@ impl LiveService {
             let _gate = self.0.publication_gate.lock().unwrap();
             let active = self.0.active.read().unwrap();
             if active.publication.map_sha256 != map_sha256
-                || !active.state.is_warm()
+                || !active.state.is_ready()
                 || active.state.is_invalidated()
                 || active
                     .state
@@ -884,7 +894,8 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
 }
 
 /// Collect unused publications and then revisions no remaining publication
-/// references. Staging uses the same file lock for linking and rsync. Defer
+/// references, including private HTTPS staging trees. Staging uses the same
+/// file lock while linking catalog sources. Defer
 /// rather than blocking control commands behind a slow transfer.
 fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
     use std::fs::{self, OpenOptions, TryLockError};
@@ -906,10 +917,27 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         })
     };
+    // A recovered record may name its tree through another spelling of the
+    // same directory; compare resolved paths so it is never mistaken as unused.
+    let keep: BTreeSet<PathBuf> = keep
+        .iter()
+        .flat_map(|path| std::iter::once(path.clone()).chain(fs::canonicalize(path).ok()))
+        .collect();
+    let kept = |path: &Path| {
+        keep.contains(path) || fs::canonicalize(path).is_ok_and(|path| keep.contains(&path))
+    };
     let mut publications = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        if digest(&entry.file_name()) && entry.file_type()?.is_dir() {
+        let name = entry.file_name();
+        let staged = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("staging-"))
+            .and_then(|name| name.split_once('-'))
+            .is_some_and(|(revision, time)| {
+                revision.parse::<u64>().is_ok() && time.parse::<u128>().is_ok()
+            });
+        if (digest(&name) || staged) && entry.file_type()?.is_dir() {
             publications.push(entry);
         }
     }
@@ -917,7 +945,7 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
     let mut unused = 0;
     let mut referenced = BTreeSet::new();
     for publication in publications {
-        if !keep.contains(&publication.path()) {
+        if !kept(&publication.path()) {
             unused += 1;
             if unused > 3 {
                 fs::remove_dir_all(publication.path())?;
@@ -951,6 +979,73 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
 #[cfg(test)]
 mod collection_tests {
     use super::*;
+    #[test]
+    fn collection_keeps_https_staging_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let catalog = root.path().join(".sources");
+        std::fs::create_dir(&catalog).unwrap();
+        let mut keep = BTreeSet::new();
+        // Active, candidate and retained publications all use HTTPS names.
+        for n in 0..8 {
+            let revision = format!("{n:064x}");
+            std::fs::create_dir(catalog.join(&revision)).unwrap();
+            std::fs::write(catalog.join(&revision).join("rows.bin"), b"checked rows").unwrap();
+            let publication = root.path().join(format!("staging-{n}-100"));
+            std::fs::create_dir(&publication).unwrap();
+            std::os::unix::fs::symlink(
+                format!("../.sources/{revision}"),
+                publication.join(&revision),
+            )
+            .unwrap();
+            if n < 3 {
+                keep.insert(publication);
+            }
+        }
+        let orphan = catalog.join("f".repeat(64));
+        std::fs::create_dir(&orphan).unwrap();
+        collect_publications(root.path(), &keep).unwrap();
+        for (n, publication) in keep.iter().enumerate() {
+            assert_eq!(
+                std::fs::read(publication.join(format!("{n:064x}")).join("rows.bin")).unwrap(),
+                b"checked rows"
+            );
+        }
+        assert!(!orphan.exists());
+        assert_eq!(
+            std::fs::read_dir(root.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("staging-"))
+                .count(),
+            keep.len() + 3
+        );
+    }
+
+    #[test]
+    fn collection_keeps_a_tree_named_through_another_path() {
+        let real = tempfile::tempdir().unwrap();
+        let alias = tempfile::tempdir().unwrap();
+        let spelled = alias.path().join("provider");
+        std::os::unix::fs::symlink(real.path(), &spelled).unwrap();
+        let epoch = std::time::SystemTime::UNIX_EPOCH;
+        for n in 0..5u64 {
+            let publication = real.path().join(format!("staging-{n}-100"));
+            std::fs::create_dir(&publication).unwrap();
+            std::fs::File::open(&publication)
+                .unwrap()
+                .set_modified(epoch + std::time::Duration::from_secs(1_000 + n))
+                .unwrap();
+        }
+        // The oldest tree would be the first unused one removed.
+        let keep = BTreeSet::from([spelled.join("staging-0-100")]);
+        assert!(collect_publications(real.path(), &keep).unwrap());
+        assert!(real.path().join("staging-0-100").is_dir());
+        assert!(!real.path().join("staging-1-100").exists());
+        for n in 2..5 {
+            assert!(real.path().join(format!("staging-{n}-100")).is_dir());
+        }
+    }
+
     #[test]
     fn collection_keeps_referenced_sources_and_defers_during_staging() {
         let root = tempfile::tempdir().unwrap();

@@ -18,23 +18,6 @@ from .publisher_serving import Serving
 
 KINDS = ('history-archive', 'history-recent', 'transaction-details')
 
-# The remote command transport retains only its last 4,000 characters. Keep
-# the complete verifier streams beside the staged config, and return the small
-# authority fields rather than the potentially large list of held shard hashes.
-VERIFY_SNAPSHOT = r'''
-import json,os,pathlib,subprocess,sys
-binary,config=sys.argv[1:]
-result=subprocess.run([binary,'--config',config,'--verify-only'],capture_output=True,text=True,timeout=290)
-for name,content in [('stdout',result.stdout),('stderr',result.stderr)]:
-    path=pathlib.Path(config+'.verification.'+name)
-    with open(path,'w',opener=lambda p,flags:os.open(p,flags,0o600)) as stream:stream.write(content)
-if result.returncode:
-    print(result.stderr[-1000:]);sys.exit(result.returncode)
-report=json.loads(result.stdout)
-assert report.get('verified') is True, 'verifier did not confirm the publication'
-print(json.dumps({key:report[key] for key in ('verified','map_sha256','shards','warm_target') if key in report}))
-'''
-
 # The old workers have stopped before this runs. Only immutable bytes are
 # reused: the provider still verifies every object against fresh HTTPS authority.
 SEED_OBJECTS = r'''
@@ -71,8 +54,8 @@ def validate(request, inventory):
     require(origin.scheme == 'https' and origin.hostname and origin.port in (None, 443)
             and not origin.username and not origin.password and origin.path in ('', '/')
             and not origin.query and not origin.fragment, 'publisher must use a trusted HTTPS origin')
-    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] >= 32 << 30,
-            'full prepared publications need at least a 32 GiB publisher staging budget')
+    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] > 0,
+            'publisher preparation needs a positive additional disk allowance')
     consumers = settings['consumers']
     edge = settings['history_edge']
     require(isinstance(edge, dict) and set(edge) == {'host', 'origin', 'before_sha256'}
@@ -268,16 +251,14 @@ class HttpsServing(Serving):
                               'seed_paths': sorted(set(seed_paths)), 'legacy_active_record': legacy_active,
                               'legacy_shard_dir': legacy_shards})
         plan['https_consumers'] = consumers
-        from .publisher_warmup import SCRIPT
-        plan['snapshot_warmer_sha256'] = sha(SCRIPT)
         return plan
 
     def stage(self, parent, binary):
         super().stage(parent, binary)
         owner = self.cutover
-        self.verify_production_snapshots(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).stage(parent)
+        self.pin_production_snapshots(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).stage(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
             host, target = consumer['host'], consumer['binary']
             owner.effect(parent, 'stage HTTPS executable ' + host, lambda host=host, target=target:
@@ -289,17 +270,12 @@ class HttpsServing(Serving):
             code, output = owner.ex.run(host, [target, '--config', config_path, '--check'], 60)
             require(code == 0, 'staged HTTPS consumer rejects its configuration: ' + output[-1000:])
 
-    def verify_production_snapshots(self, parent):
-        """Load both complete immutable publications before stopping any owner.
-
-        These are publication snapshots, not copies of writable journals. The
-        normal loaders check every held revision and the full runtime capacity.
-        Moving or collected inputs refuse the cutover before its service changes.
-        """
+    def pin_production_snapshots(self, parent):
+        """Pin public inputs; the actual services validate their bytes at startup."""
         owner = self.cutover
-        for section, root_key, data_key, map_name, maximum in (
-                ('transparent_history', 'publication_root', 'shard_dir', 'shards.json', 44 << 30),
-                ('transaction_details', 'root', 'publication_dir', 'txid-shards.json', 32 << 30)):
+        for section, root_key, map_name in (
+                ('transparent_history', 'publication_root', 'shards.json'),
+                ('transaction_details', 'root', 'txid-shards.json')):
             root = owner.request['configuration'][section]['settings'][root_key]
             snapshot = json.loads(owner.read(root + '/active.json'))
             source, digest = snapshot['directory'], snapshot['map_sha256']
@@ -308,8 +284,8 @@ class HttpsServing(Serving):
             map_path = source + '/' + map_name
             raw_digest = owner.ex.sha256(owner.host, map_path)
             require(raw_digest is not None, 'production snapshot map is missing')
-            from .publisher_warmup import SnapshotWarmup
-            pin = SnapshotWarmup(self).pin_snapshot(parent, section, source)
+            from .publisher_warmup import SnapshotPreparation
+            pin = SnapshotPreparation(self).pin_snapshot(parent, section, source)
             map_path = pin + '/' + map_name
             require(owner.ex.sha256(owner.host, map_path) == raw_digest, 'pinned production snapshot differs')
             if section == 'transparent_history':
@@ -321,41 +297,13 @@ class HttpsServing(Serving):
                     canonical = {}
                 require(code == 0 and canonical.get('map_sha256') == digest,
                         'production history snapshot differs from its active record')
-            resources = owner.resources()
-            budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
-            require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
-                    'production snapshot verification would leave less than 20 percent memory')
-            settings = {data_key: pin, 'cache_bytes': budget,
-                        'listen': '127.0.0.1:18990'}
-            if section == 'transaction_details':
-                settings['role'] = 'combined'
-            config = {'management_listen': '127.0.0.1:18991',
-                      section: {'enabled': True, 'settings': settings}}
-            path = '/opt/pir-query-server/transactions/' + parent['id'] + '/snapshot-' + section + '.json'
-            owner.effect(parent, 'stage production snapshot check ' + section,
-                         lambda path=path, config=config: self.write(owner.host, path,
-                             json.dumps(config, sort_keys=True) + '\n', 0o600))
-            target = self.deployer.service.release_binary(self.release['binary_sha256'], 'pir-query-server')
-            code, output = owner.ex.run(owner.host, ['python3', '-c', VERIFY_SNAPSHOT, target, path], 300)
-            reports = []
-            for line in output.splitlines():
-                try:
-                    reports.append(json.loads(line))
-                except ValueError:
-                    pass
-            require(code == 0 and any(isinstance(report, dict) and report.get('verified') is True
-                                      for report in reports),
-                    'complete production snapshot failed verification: ' + section + ': ' + output[-1000:])
-            if section == 'transaction_details':
-                require(any(isinstance(report, dict) and report.get('map_sha256') == digest for report in reports),
-                        'production detail snapshot differs from its active record')
-            require(owner.ex.sha256(owner.host, map_path) == raw_digest,
-                    'production snapshot changed during verification')
+            else:
+                require(raw_digest == digest, 'production detail snapshot differs from its active record')
             parent.setdefault('production_snapshots', {})[section] = {
-                'directory': source, 'map_sha256': digest, 'verified': True,
+                'directory': source, 'map_sha256': digest, 'metadata_verified': True,
                 'pin': pin,
                 'raw_map_sha256': raw_digest,
-                'query_binary_sha256': self.release['binary_sha256'], 'cache_bytes': budget}
+                'query_binary_sha256': self.release['binary_sha256']}
             if section == 'transparent_history':
                 parent['production_snapshots'][section]['identity'] = canonical
             owner.save(parent)
@@ -375,8 +323,8 @@ class HttpsServing(Serving):
 
     def activate(self, parent):
         super().activate(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).seed(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).seed(parent)
         owner = self.cutover
         # The distribution prefixes can become reachable while consumers are stopped;
         # the publisher starts only after its old writer has released every lock.
@@ -492,8 +440,8 @@ class HttpsServing(Serving):
 
     def restore_guard(self, parent):
         super().restore_guard(parent)
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).guard(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).guard(parent)
         edge = parent['plan']['serving']['history_edge']
         require(self.cutover.ex.read(edge['host'], '/etc/caddy/Caddyfile') in (edge['before'], edge['after']),
                 'history edge changed outside the HTTPS transaction')
@@ -557,8 +505,8 @@ class HttpsServing(Serving):
         return unit in parent.get('https_started', [])
 
     def cleanup_staging(self, parent):
-        from .publisher_warmup import SnapshotWarmup
-        SnapshotWarmup(self).cleanup(parent)
+        from .publisher_warmup import SnapshotPreparation
+        SnapshotPreparation(self).cleanup(parent)
 
     def unchanged_during_staging(self, plan):
         super().unchanged_during_staging(plan)

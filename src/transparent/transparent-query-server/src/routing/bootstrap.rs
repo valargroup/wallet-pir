@@ -4,16 +4,18 @@
 //! Continuous reconciliation/activation belongs to the manager.
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 
+use crate::objects::{ensure_object, prepare_objects, stage_object};
+#[cfg(test)]
+use crate::objects::{link_object, remove_partials, PARTIAL};
 pub(crate) use crate::source::sync_tree;
 pub use crate::source::Config;
 use crate::{
-    history::service::{ReadinessMode, ServiceConfig, ServiceState},
+    history::service::{ServiceConfig, ServiceState},
     routing::router::{plan, RosterEntry},
     source::Source,
 };
 use serde::Serialize;
 use std::{path::PathBuf, sync::Arc};
-use tokio::io::AsyncWriteExt;
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
@@ -59,22 +61,19 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
     let options = staged.options;
     let result = async {
         let root = stage.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+        let set = tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+            .await??;
         let state = ServiceState::build_with_runtimes(
             set,
             ServiceConfig {
                 cache_bytes: config.cache_bytes,
-                readiness: ReadinessMode::Warm,
                 ..ServiceConfig::default()
             },
             None,
             Some(ShippedRuntimes::required(stage.clone())),
         )?;
-        state.spawn_prewarm().await?;
-        if !state.is_warm() {
-            return Err("required prepared publication failed production loader/self-check".into());
-        }
+        let _prewarm = state.spawn_prewarm();
+        state.check_required_material()?;
         // HTTP current, not files or a last-success timestamp, is the bootstrap
         // freshness source. Supersession/withdrawal/outage cannot activate it.
         source.check_anchor(&config.directory, &current).await?;
@@ -149,8 +148,8 @@ pub(crate) async fn stage_holdings(
     if !cache && total > config.max_download_bytes {
         return Err("prepared publication exceeds download budget".into());
     }
-    // New private staging tree; never join untrusted paths into an existing
-    // publication or follow its symlinks. Failed trees remain non-authoritative.
+    // New private staging tree; only verified immutable objects enter the
+    // sibling source catalog. Failed trees remain non-authoritative.
     // Validate the cache before enumerating it: a symlinked object directory
     // is refused without reading or cleaning its target.
     let objects = if cache {
@@ -180,46 +179,40 @@ pub(crate) async fn stage_holdings(
                 .filter(|f| (full || f.kind.local()) && f.path != "shards.json"),
         ) {
             let target = stage.join(&artifact.path);
-            std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
             if let Some(objects) = &objects {
                 if ensure_object(source, objects, artifact, &mut transfer).await? {
                     downloaded_files += 1;
                 }
-                link_object(
+                stage_object(
+                    &config.directory,
+                    &stage,
                     &objects.join(&artifact.sha256),
-                    &target,
                     artifact,
-                    |from, to| std::fs::hard_link(from, to),
                 )?;
             } else {
+                std::fs::create_dir_all(target.parent().ok_or("artifact has no parent")?)?;
                 let fetching = std::time::Instant::now();
                 let mut output = tokio::fs::OpenOptions::new()
                     .create_new(true)
                     .write(true)
                     .open(&target)
                     .await?;
-                let mut response = source
+                let response = source
                     .get(&format!("artifacts/{}", artifact.sha256))
                     .await?;
-                let mut remaining = artifact.bytes;
-                while let Some(chunk) = response.chunk().await? {
-                    if chunk.len() as u64 > remaining {
-                        return Err("artifact exceeds declared length".into());
-                    }
-                    output.write_all(&chunk).await?;
-                    remaining -= chunk.len() as u64;
-                }
-                if remaining != 0 {
-                    return Err("artifact incomplete".into());
-                }
+                let verification = if artifact.kind == publication::Kind::Metadata {
+                    pir_sync_manager::Verification::Sha256(&artifact.sha256)
+                } else {
+                    pir_sync_manager::Verification::Length
+                };
+                response
+                    .copy_to(&mut output, artifact.bytes, verification)
+                    .await?;
                 transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);
                 downloaded_files += 1;
-                let file = artifact.clone();
-                let path = target.clone();
-                tokio::task::spawn_blocking(move || publication::verify_file(&path, &file))
-                    .await??;
+                publication::record_received_file(&target, artifact, &target)?;
             }
             if artifact.path == "shards.json" {
                 let map: transparent_filter::ShardMap =
@@ -260,160 +253,6 @@ pub(crate) async fn stage_holdings(
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
-}
-
-const PARTIAL: &str = ".partial-";
-
-/// Create or open `<directory>/objects`, refuse anything but a real directory
-/// before enumerating it, and remove interrupted partials. This directory has
-/// one owner; an interrupted object is never reused.
-fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
-    let objects = directory.join("objects");
-    std::fs::create_dir_all(&objects)?;
-    if !std::fs::symlink_metadata(&objects)?.is_dir() {
-        return Err("object cache must be a real directory".into());
-    }
-    remove_partials(&objects)?;
-    Ok(objects)
-}
-
-fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
-    let entries = match std::fs::read_dir(objects) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
-    };
-    for entry in entries {
-        let entry = entry?;
-        // Includes the previous `<sha256>.partial` copy name.
-        if entry.file_name().to_string_lossy().contains(".partial") {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
-    Ok(())
-}
-
-/// Make `objects/<sha256>` a complete, verified, read-only object and return
-/// whether its body was downloaded. A reused regular file is made read-only,
-/// hashed again and synced before every stage, so a legacy writable object is
-/// never linked writable; anything else under that name is unlinked and fetched.
-/// Downloads stream into a unique partial name while hashing, so a partial
-/// never has a digest name, and are synced before and after the rename.
-async fn ensure_object(
-    source: &mut Source,
-    objects: &std::path::Path,
-    artifact: &publication::Artifact,
-    transfer: &mut std::time::Duration,
-) -> Result<bool, Error> {
-    use sha2::Digest;
-    if !std::fs::symlink_metadata(objects)?.is_dir() {
-        return Err("object cache must be a real directory".into());
-    }
-    let object = objects.join(&artifact.sha256);
-    match std::fs::symlink_metadata(&object) {
-        Ok(metadata) => {
-            if metadata.is_file() {
-                let (path, file) = (object.clone(), artifact.clone());
-                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
-                    return Ok(false);
-                }
-            }
-            // A corrupt object, or a symlink/directory under its name: unlink
-            // the entry itself and never follow it.
-            if metadata.is_dir() {
-                std::fs::remove_dir_all(&object)?;
-            } else {
-                std::fs::remove_file(&object)?;
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
-    }
-    let partial = objects.join(format!(
-        "{}{PARTIAL}{}-{}",
-        artifact.sha256,
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
-    let fetching = std::time::Instant::now();
-    let result = async {
-        let mut output = tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&partial)
-            .await?;
-        let mut response = source
-            .get(&format!("artifacts/{}", artifact.sha256))
-            .await?;
-        let mut hash = sha2::Sha256::new();
-        let mut remaining = artifact.bytes;
-        while let Some(chunk) = response.chunk().await? {
-            if chunk.len() as u64 > remaining {
-                return Err::<(), Error>("artifact exceeds declared length".into());
-            }
-            hash.update(&chunk);
-            output.write_all(&chunk).await?;
-            remaining -= chunk.len() as u64;
-        }
-        if remaining != 0 {
-            return Err("artifact incomplete".into());
-        }
-        if hex::encode(hash.finalize()) != artifact.sha256 {
-            return Err("artifact digest mismatch".into());
-        }
-        let mut permissions = output.metadata().await?.permissions();
-        permissions.set_readonly(true);
-        output.set_permissions(permissions).await?;
-        output.sync_all().await?;
-        drop(output);
-        std::fs::rename(&partial, &object)?;
-        std::fs::File::open(objects)?.sync_all()?;
-        Ok(())
-    }
-    .await;
-    *transfer += fetching.elapsed();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&partial);
-    }
-    result.map(|()| true)
-}
-
-/// Make a cached regular file read-only, then verify and sync it. Returns
-/// whether it may be linked; a digest mismatch leaves it for replacement.
-fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
-    let file = std::fs::File::open(path)?;
-    let mut permissions = file.metadata()?.permissions();
-    if !permissions.readonly() {
-        permissions.set_readonly(true);
-        file.set_permissions(permissions)?;
-    }
-    if publication::verify_file(path, artifact).is_err() {
-        return Ok(false);
-    }
-    file.sync_all()?;
-    Ok(true)
-}
-
-/// Stage a verified immutable object by hard link: the stage and cache share
-/// one read-only inode that nothing writes, so it is not hashed again here.
-/// Only a filesystem that explicitly cannot link falls back to a copy, which
-/// is then verified on its own.
-fn link_object(
-    object: &std::path::Path,
-    target: &std::path::Path,
-    artifact: &publication::Artifact,
-    link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
-) -> Result<(), Error> {
-    match link(object, target) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
-            std::fs::copy(object, target)?;
-            publication::verify_file(target, artifact)
-        }
-        Err(e) => Err(e.into()),
-    }
 }
 
 /// Holdings selected for this provider by the production assignment planner,
@@ -512,7 +351,7 @@ mod object_tests {
     }
 
     #[test]
-    fn only_unsupported_links_fall_back_to_a_verified_copy() {
+    fn only_unsupported_links_fall_back_to_a_size_checked_copy() {
         let root = tempfile::tempdir().unwrap();
         let (path, artifact) = object(root.path(), b"immutable");
         let unsupported = || std::io::Error::from(std::io::ErrorKind::Unsupported);
@@ -524,7 +363,7 @@ mod object_tests {
             std::fs::metadata(&path).unwrap().ino()
         );
         let mut wrong = artifact.clone();
-        wrong.sha256 = "00".repeat(32);
+        wrong.bytes += 1;
         assert!(
             link_object(&path, &root.path().join("bad"), &wrong, |_, _| Err(
                 unsupported()

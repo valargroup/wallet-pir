@@ -116,11 +116,25 @@ impl Service {
         self.control_routes().merge(self.query_routes())
     }
 }
+fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {
+    let roots = match &config.publisher_ca {
+        Some(path) => vec![reqwest::Certificate::from_pem(&std::fs::read(path)?)?],
+        None => Vec::new(),
+    };
+    pir_sync_manager::HttpsSource::new(&config.publisher, PREFIX, attempt_limit(), &roots)
+}
+
+pub async fn discover(config: &RoleConfig) -> Result<(), Failure> {
+    source(config)?.discover().await?;
+    Ok(())
+}
+
 pub async fn serve_role_on(
     config: RoleConfig,
     listen: tokio::net::TcpListener,
     query_listen: Option<tokio::net::TcpListener>,
 ) -> Result<(), Failure> {
+    discover(&config).await?;
     let network = hex::decode(&config.network_hex)?
         .try_into()
         .map_err(|_| "network must be 32 bytes")?;
@@ -133,6 +147,9 @@ pub async fn serve_role_on(
     let task = sync::StatusSync::new(service.clone(), &config)?;
     let mut manager = pir_sync_manager::SyncManager::new(task);
     if let Err(error) = manager.poll_once().await {
+        if pir_sync_manager::is_incompatible(error.as_ref()) {
+            return Err(error);
+        }
         tracing::warn!(%error, "Status initial synchronization deferred");
     }
     let mut tasks = pir_pipeline::service::Tasks::default();
@@ -142,9 +159,9 @@ pub async fn serve_role_on(
         let app = service.query_routes();
         let wallet = tokio::spawn(async move { axum::serve(query_listener, app).await });
         tasks.own(&wallet);
-        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = wallet => { result??; }, result = polling => { result?; return Err("Status synchronization stopped".into()); } }
+        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = wallet => { result??; }, result = polling => return Err(result?), }
     } else {
-        tokio::select! { result = axum::serve(listen, service.routes()) => result?, result = polling => { result?; return Err("Status synchronization stopped".into()); } }
+        tokio::select! { result = axum::serve(listen, service.routes()) => result?, result = polling => return Err(result?), }
     }
     Ok(())
 }

@@ -271,3 +271,33 @@ class CutoverTests(unittest.TestCase):
             load_request(path, sha(path.read_bytes()))
         with self.assertRaises(DeployError):
             load_request(path, '0' * 64)
+
+    def test_parser_accepts_installed_publisher_probe_timeouts(self):
+        for check, timeout in zip(self.checks.values(), (210, 180, 420, 420)):
+            check['timeout'] = timeout
+        path = Path(self.root.name) / 'request.json'
+        path.write_text(json.dumps(self.request))
+        self.assertEqual(load_request(path, sha(path.read_bytes())), self.request)
+        installed = json.loads(self.host.read('coordinator', INVENTORY))
+        installed['services']['publisher']['exact_check']['products'] = self.checks
+        self.host.put('coordinator', INVENTORY, json.dumps(installed))
+        self.cutover.preflight()
+        for timeout in (0, 901, True):
+            self.checks['status']['timeout'] = timeout
+            path.write_text(json.dumps(self.request))
+            with self.assertRaisesRegex(DeployError, 'invalid exact check'):
+                load_request(path, sha(path.read_bytes()))
+
+    def test_long_probe_is_capped_by_remaining_recovery_time(self):
+        self.checks['status']['timeout'] = 420
+        original = self.host.run
+        timeouts = []
+
+        def record(host, argv, timeout):
+            if argv[0] == 'exact':
+                timeouts.append(timeout)
+            return original(host, argv, timeout)
+
+        self.host.run = record
+        self.cutover.checks(deadline=30)
+        self.assertEqual(timeouts, [10, 30, 10, 10])

@@ -1,16 +1,11 @@
 use super::{Hash, Height, Input, OutPoint, Output, Script, Utxo};
-use std::{
-    collections::HashMap,
-    io::{self, Read},
-};
-use zcash_primitives::transaction::Transaction as WalletTransaction;
-use zcash_protocol::{
-    consensus::BranchId,
-    value::{ZatBalance, Zatoshis},
-};
-use zcash_script::{opcode::Evaluable as _, script::Evaluable};
+use std::{collections::HashMap, io};
+use zcash_protocol::value::{ZatBalance, Zatoshis};
+use zcash_script::opcode::Evaluable as _;
+use zcash_transaction_wire::TransactionView;
 
 /// Only the action fields ingestion consumes, in their canonical byte encodings.
+#[derive(Debug)]
 pub(crate) struct Action {
     pub cv: [u8; 32],
     pub nullifier: [u8; 32],
@@ -19,63 +14,134 @@ pub(crate) struct Action {
     pub enc_ciphertext: [u8; 580],
     pub out_ciphertext: [u8; 80],
 }
+/// A Sapling output's compact fields: note commitment, ephemeral key and the first
+/// 52 bytes of its note ciphertext.
+#[derive(Debug)]
+pub(crate) struct SaplingOutput {
+    pub cmu: [u8; 32],
+    pub ephemeral_key: [u8; 32],
+    pub compact_ciphertext: [u8; 52],
+}
+/// The value balances the fee needs, as read from the wire. `sprout` is `None` when
+/// a partial sum of its JoinSplits leaves the money range.
+#[derive(Debug)]
+struct Balances {
+    sprout: Option<ZatBalance>,
+    sapling: ZatBalance,
+    orchard: ZatBalance,
+    ironwood: ZatBalance,
+}
+/// The fields ingestion reads from one transaction, copied out of its wire encoding.
+///
+/// Decoding checks the wire grammar, amount ranges, the transaction boundary and the
+/// coinbase rules below; it does not check that shielded fields are valid curve points,
+/// proofs or signatures, which remains the node's responsibility.
 #[derive(Debug)]
 pub(crate) struct Transaction {
-    inner: WalletTransaction,
+    txid: Hash,
     inputs: Vec<Input>,
     outputs: Vec<Output>,
+    expiry_height: u32,
+    has_shielded_data: bool,
+    balances: Balances,
+    sapling_nullifiers: Vec<[u8; 32]>,
+    sapling_outputs: Vec<SaplingOutput>,
+    orchard_actions: Vec<Action>,
+    ironwood_actions: Vec<Action>,
 }
 impl Transaction {
-    pub(crate) fn zcash_deserialize(reader: impl Read) -> io::Result<Self> {
-        // Legacy transaction IDs hash the serialized bytes, independently of the
-        // branch passed here. V5/V6 read their branch ID from the transaction.
-        // We do not use this value to make signatures or validate consensus.
-        let inner = WalletTransaction::read(reader.take(super::MAX_BLOCK_BYTES), BranchId::Sprout)?;
-        if matches!(inner.version(), zcash_primitives::transaction::TxVersion::Sprout(version) if version > 2)
-        {
-            return Err(io::Error::other("unsupported legacy transaction version"));
-        }
-        if u32::from(inner.expiry_height()) > i32::MAX as u32 {
+    /// Reads one transaction from the start of `input` and advances it past the
+    /// transaction. At most [`super::MAX_BLOCK_BYTES`] are read.
+    pub(crate) fn zcash_deserialize(input: &mut &[u8]) -> io::Result<Self> {
+        let limited = &input[..input.len().min(super::MAX_BLOCK_BYTES as usize)];
+        let (view, rest) = TransactionView::parse_prefix(limited).map_err(io::Error::other)?;
+        let transaction = Self::from_view(&view)?;
+        *input = &input[limited.len() - rest.len()..];
+        Ok(transaction)
+    }
+    fn from_view(view: &TransactionView<'_>) -> io::Result<Self> {
+        // Versions 1 and 2 have no expiry height; the node reports it as zero.
+        let expiry_height = view.expiry_height().unwrap_or(0);
+        if expiry_height > i32::MAX as u32 {
             return Err(io::Error::other("expiry height out of range"));
         }
-        let mut inputs = Vec::new();
-        let mut outputs = Vec::new();
-        if let Some(bundle) = inner.transparent_bundle() {
-            for input in &bundle.vin {
-                let prevout = input.prevout();
-                if prevout.hash() == &[0; 32] && prevout != &transparent::bundle::OutPoint::NULL {
-                    return Err(io::Error::other("invalid null input index"));
+        let mut inputs = Vec::with_capacity(view.transparent_inputs().len());
+        for input in view.transparent_inputs() {
+            let null_hash = input.prevout_txid == &[0; 32];
+            inputs.push(if null_hash && input.prevout_index == u32::MAX {
+                Input::Coinbase {
+                    height: Some(coinbase_height(input.script_sig).ok_or_else(|| {
+                        io::Error::other("invalid coinbase height or script length")
+                    })?),
                 }
-                inputs.push(if prevout == &transparent::bundle::OutPoint::NULL {
-                    Input::Coinbase {
-                        height: Some(
-                            coinbase_height(&input.script_sig().0.to_bytes()).ok_or_else(|| {
-                                io::Error::other("invalid coinbase height or script length")
-                            })?,
-                        ),
-                    }
-                } else {
-                    Input::PrevOut {
-                        outpoint: OutPoint {
-                            hash: Hash(*prevout.hash()),
-                            index: prevout.n(),
-                        },
-                    }
-                });
-            }
-            outputs.extend(bundle.vout.iter().map(|output| Output {
-                value: output.value(),
-                lock_script: Script::new(&output.script_pubkey().0.to_bytes()),
-            }));
+            } else if null_hash {
+                return Err(io::Error::other("invalid null input index"));
+            } else {
+                Input::PrevOut {
+                    outpoint: OutPoint {
+                        hash: Hash(*input.prevout_txid),
+                        index: input.prevout_index,
+                    },
+                }
+            });
         }
+        let outputs = view
+            .transparent_outputs()
+            .iter()
+            .map(|output| Output {
+                value: output.value,
+                lock_script: Script::new(output.script_pubkey),
+            })
+            .collect();
+        let sapling = view.sapling();
+        let actions = |bundle: Option<&zcash_transaction_wire::ActionBundle<'_>>| {
+            bundle
+                .into_iter()
+                .flat_map(|b| &b.actions)
+                .map(|a| Action {
+                    cv: *a.cv,
+                    nullifier: *a.nullifier,
+                    cm_x: *a.cmx,
+                    ephemeral_key: *a.ephemeral_key,
+                    enc_ciphertext: *a.enc_ciphertext,
+                    out_ciphertext: *a.out_ciphertext,
+                })
+                .collect()
+        };
         Ok(Self {
-            inner,
+            txid: Hash(view.txid()),
             inputs,
             outputs,
+            expiry_height,
+            has_shielded_data: view.has_shielded_components(),
+            balances: Balances {
+                sprout: view.sprout_value_balance(),
+                sapling: view.sapling_value_balance(),
+                orchard: view.orchard_value_balance(),
+                ironwood: view.ironwood_value_balance(),
+            },
+            sapling_nullifiers: sapling
+                .into_iter()
+                .flat_map(|b| &b.spends)
+                .map(|spend| *spend.nullifier)
+                .collect(),
+            sapling_outputs: sapling
+                .into_iter()
+                .flat_map(|b| &b.outputs)
+                .map(|output| SaplingOutput {
+                    cmu: *output.cmu,
+                    ephemeral_key: *output.ephemeral_key,
+                    compact_ciphertext: output.enc_ciphertext[..52]
+                        .try_into()
+                        .expect("fixed compact ciphertext"),
+                })
+                .collect(),
+            orchard_actions: actions(view.orchard()),
+            ironwood_actions: actions(view.ironwood()),
         })
     }
     pub(crate) fn hash(&self) -> Hash {
-        Hash(*self.inner.txid().as_ref())
+        self.txid
     }
     pub(crate) fn inputs(&self) -> &[Input] {
         &self.inputs
@@ -95,30 +161,22 @@ impl Transaction {
         !self.outputs.is_empty()
     }
     pub(crate) fn has_shielded_data(&self) -> bool {
-        self.inner.sprout_bundle().is_some()
-            || self.inner.sapling_bundle().is_some()
-            || self.inner.orchard_bundle().is_some()
-            || self.inner.ironwood_bundle().is_some()
+        self.has_shielded_data
     }
     pub(crate) fn expiry_height(&self) -> Option<Height> {
-        Some(Height(self.inner.expiry_height().into()))
+        Some(Height(self.expiry_height))
     }
-    pub(crate) fn ironwood_actions(&self) -> impl Iterator<Item = Action> + '_ {
-        self.inner
-            .ironwood_bundle()
-            .into_iter()
-            .flat_map(|b| b.actions().iter())
-            .map(action)
+    pub(crate) fn sapling_nullifiers(&self) -> &[[u8; 32]] {
+        &self.sapling_nullifiers
     }
-    pub(crate) fn orchard_actions(&self) -> impl Iterator<Item = Action> + '_ {
-        self.inner
-            .orchard_bundle()
-            .into_iter()
-            .flat_map(|b| b.actions().iter())
-            .map(action)
+    pub(crate) fn sapling_outputs(&self) -> &[SaplingOutput] {
+        &self.sapling_outputs
     }
-    pub(crate) fn wallet(&self) -> &WalletTransaction {
-        &self.inner
+    pub(crate) fn ironwood_actions(&self) -> impl Iterator<Item = &Action> + '_ {
+        self.ironwood_actions.iter()
+    }
+    pub(crate) fn orchard_actions(&self) -> impl Iterator<Item = &Action> + '_ {
+        self.orchard_actions.iter()
     }
     pub(crate) fn fee(&self, utxos: &HashMap<OutPoint, Utxo>) -> Result<u64, String> {
         let inputs = self
@@ -144,47 +202,18 @@ impl Transaction {
             .ok_or("transparent output value out of range")?;
         let transparent = (ZatBalance::from(input_value) - output_value)
             .ok_or("transparent balance out of range")?;
-        let sprout = self
-            .inner
-            .sprout_bundle()
-            .map(|b| b.value_balance())
-            .unwrap_or(Some(ZatBalance::zero()))
-            .ok_or("Sprout balance out of range")?;
-        let sapling = self
-            .inner
-            .sapling_bundle()
-            .map(|b| *b.value_balance())
-            .unwrap_or(ZatBalance::zero());
-        let orchard = self
-            .inner
-            .orchard_bundle()
-            .map(|b| *b.value_balance())
-            .unwrap_or(ZatBalance::zero());
-        let ironwood = self
-            .inner
-            .ironwood_bundle()
-            .map(|b| *b.value_balance())
-            .unwrap_or(ZatBalance::zero());
-        let balance = [transparent, sprout, sapling, orchard, ironwood]
-            .into_iter()
-            .sum::<Option<ZatBalance>>()
-            .ok_or("transaction balance out of range")?;
+        let sprout = self.balances.sprout.ok_or("Sprout balance out of range")?;
+        let balance = [
+            transparent,
+            sprout,
+            self.balances.sapling,
+            self.balances.orchard,
+            self.balances.ironwood,
+        ]
+        .into_iter()
+        .sum::<Option<ZatBalance>>()
+        .ok_or("transaction balance out of range")?;
         u64::try_from(balance).map_err(|e| e.to_string())
-    }
-}
-fn action(
-    a: &orchard::Action<
-        orchard::primitives::redpallas::Signature<orchard::primitives::redpallas::SpendAuth>,
-    >,
-) -> Action {
-    let note = a.encrypted_note();
-    Action {
-        cv: a.cv_net().to_bytes(),
-        nullifier: a.nullifier().to_bytes(),
-        cm_x: a.cmx().to_bytes(),
-        ephemeral_key: note.epk_bytes,
-        enc_ciphertext: note.enc_ciphertext,
-        out_ciphertext: note.out_ciphertext,
     }
 }
 

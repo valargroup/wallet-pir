@@ -44,6 +44,7 @@ zakura-pir-publisher = { version = "=0.0.1-rc1", default-features = false, featu
 zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, optional = true }
 
 [dev-dependencies]
+pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
 # The lifecycle regression drives real worker and router roles.
 pir-query-server = { path = "../../pir-query-server", features = ["status"] }
 tempfile = "3"

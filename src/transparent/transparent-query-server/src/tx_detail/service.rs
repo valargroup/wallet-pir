@@ -10,7 +10,7 @@ use zakura_pir_protocol::transparent::shard as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
 use crate::admission::{Admission, AdmissionConfig, Admitted};
-use crate::config::{ReadinessMode, ServiceConfig};
+use crate::config::ServiceConfig;
 pub(crate) use crate::request::json;
 use crate::request::{answer_query, within, Query, RequestError, Worker};
 use axum::extract::{Path as AxumPath, Request, State};
@@ -29,7 +29,7 @@ use transparent_shared::history::shardset::{SegmentSource, Table};
 use transparent_shared::runtime::metrics::{Metrics, Snapshot};
 use transparent_shared::runtime::{
     disk::{DiskCache, ShippedRuntimes},
-    warm_bytes, CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
+    CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
 };
 use transparent_shared::tx_detail::set::{DisplayRevision, DisplaySet};
 use transparent_shared::tx_detail::{kind, runtime_key, tier};
@@ -138,7 +138,7 @@ impl DisplayRuntime {
             cancelled,
             std::time::Duration::from_secs(30),
             || {
-                self.cache.get_from(
+                self.cache.get_background_from(
                     key.clone(),
                     shared.clone(),
                     source.clone(),
@@ -153,10 +153,11 @@ impl DisplayRuntime {
 
 /// The prewarm's progress toward holding every runtime of the role.
 struct WarmState {
-    mode: ReadinessMode,
     target: usize,
     finished: AtomicBool,
     cancelled: AtomicBool,
+    stopped: AtomicBool,
+    task: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
     count: AtomicU64,
     /// Targets that were not resident when the prewarm reached them.
     built: AtomicU64,
@@ -165,7 +166,6 @@ struct WarmState {
     shipped: AtomicU64,
     shipped_fallbacks: AtomicU64,
     self_check_micros: AtomicU64,
-    pins: Mutex<Vec<(String, RuntimeHandle)>>,
 }
 
 impl WarmState {
@@ -190,6 +190,7 @@ impl WarmState {
 }
 
 struct Inner {
+    validation: std::sync::OnceLock<crate::validation::Scope>,
     set: DisplaySet,
     runtime: Arc<DisplayRuntime>,
     /// One parameter set per geometry the set names, per table kind.
@@ -263,24 +264,38 @@ pub struct SetupResponse {
 }
 
 impl DisplayState {
-    /// Prepares a snapshot of `set` over the shared runtime. In warm mode the
-    /// role's runtimes must fit the cache with nothing evicted, as for a
-    /// history worker's assignment.
+    /// Prepare a serving snapshot without loading its runtimes. Required
+    /// publisher material is checked by size before activation.
     pub fn build(mut set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
         if runtime.required {
-            // Read every required native body through the production verifier even
-            // when a previous snapshot has the same runtime resident in memory.
+            // Check required files by size even if runtimes are already resident.
             let root = set
                 .current()
                 .first()
                 .and_then(|r| r.dir.parent())
                 .ok_or("display set has no root")?
                 .to_path_buf();
-            transparent_shared::tx_detail::distribution::Finalized::prepare(&root)
-                .map_err(|e| e.to_string())?;
-            set.shipped = Some(ShippedRuntimes::required(root));
+            let shipped = ShippedRuntimes::required(root);
+            // The set above already checked the map and source tables. Verify
+            // native files here without rebuilding a publisher distribution:
+            // provider-owned stable revision links are not publisher inputs.
+            let mut checked = 0usize;
+            for revision in set.current() {
+                for (table, segment) in revision.targets() {
+                    let source = revision
+                        .segment(table, segment)
+                        .ok_or("missing display source")?;
+                    let params = runtime.params(revision.geometry, kind(table))?;
+                    let key = runtime_key(&revision.digest, table, segment);
+                    shipped
+                        .check_size(&key, &params, source.sha256())
+                        .map_err(|e| e.to_string())?;
+                    checked += 1;
+                }
+            }
+            tracing::info!(checked, "display required runtime sizes checked");
+            set.shipped = Some(shipped);
         }
-        let config = runtime.config;
         let mut params = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
@@ -300,44 +315,40 @@ impl DisplayState {
             }
         }
         let target = held.len();
-        let needed = warm_bytes(held, runtime.cache.prewarm_concurrency());
-        if config.readiness == ReadinessMode::Warm && needed > config.cache_bytes {
-            return Err(format!(
-                "the role's display tables need {needed} bytes of runtimes, the cache budget is {}",
-                config.cache_bytes
-            ));
-        }
         Metrics::set(&runtime.metrics.target_runtimes, target as u64);
         let prewarm_slots = runtime.cache.prewarm_concurrency();
-        Ok(Self {
+        let state = Self {
             inner: Arc::new(Inner {
+                validation: std::sync::OnceLock::new(),
                 set,
                 runtime: runtime.clone(),
                 params,
                 max_query_bytes,
                 warm: WarmState {
-                    mode: config.readiness,
                     target,
                     finished: AtomicBool::new(false),
                     cancelled: AtomicBool::new(false),
+                    stopped: AtomicBool::new(false),
+                    task: std::sync::Mutex::new(None),
                     count: AtomicU64::new(0),
                     built: AtomicU64::new(0),
                     shipped: AtomicU64::new(0),
                     shipped_fallbacks: AtomicU64::new(0),
                     self_check_micros: AtomicU64::new(0),
-                    pins: Mutex::new(Vec::new()),
                 },
                 prewarm_slots,
                 retired: AtomicBool::new(false),
             }),
-        })
+        };
+        state.validation();
+        Ok(state)
     }
 
-    /// Builds every runtime of the role's current revisions and marks the
-    /// snapshot warm when done; in warm mode the handles stay pinned.
+    /// Warm current revisions in the background under the shared cache budget.
     pub fn spawn_prewarm(&self) -> tokio::task::JoinHandle<()> {
+        let mut task = self.inner.warm.task.lock().unwrap();
         let state = self.clone();
-        tokio::spawn(async move {
+        let running = tokio::spawn(async move {
             let inner = &state.inner;
             let started = std::time::Instant::now();
             let queue = Arc::new(Mutex::new(std::collections::VecDeque::from(
@@ -350,16 +361,18 @@ impl DisplayState {
                 workers.spawn(async move {
                     let inner = &state.inner;
                     loop {
-                        if inner.warm.cancelled.load(Ordering::Acquire) {
+                        if inner.warm.cancelled.load(Ordering::Acquire) || inner.warm.stopped.load(Ordering::Acquire) {
                             break;
                         }
                         let next = queue.lock().unwrap().pop_front();
                         let Some((digest, table, segment)) = next else {
                             break;
                         };
+                        if state.validation().unavailable(&digest) { continue; }
                         let Some(revision) = inner.set.held(&digest) else {
                             continue;
                         };
+                        if inner.warm.stopped.load(Ordering::Acquire) { break; }
                         match inner
                             .runtime
                             .runtime(
@@ -372,14 +385,12 @@ impl DisplayState {
                             .await
                         {
                             Ok((handle, produced)) => {
-                                if inner.warm.cancelled.load(Ordering::Acquire) {
+                                if inner.warm.cancelled.load(Ordering::Acquire) || inner.warm.stopped.load(Ordering::Acquire) {
                                     break;
                                 }
                                 inner.warm.record(produced);
                                 inner.warm.count.fetch_add(1, Ordering::Release);
-                                if inner.warm.mode == ReadinessMode::Warm {
-                                    inner.warm.pins.lock().unwrap().push((digest, handle));
-                                }
+                                drop(handle);
                                 Metrics::incr(&inner.runtime.metrics.warm_runtimes);
                             }
                             Err(error) => {
@@ -403,6 +414,48 @@ impl DisplayState {
                 map = %inner.set.map_digest,
                 "display prewarm finished"
             );
+        });
+        *task = Some(running.abort_handle());
+        running
+    }
+
+    pub(crate) fn artifact_validation(&self) -> serde_json::Value {
+        self.validation().status()
+    }
+
+    fn validation(&self) -> &crate::validation::Scope {
+        self.inner.validation.get_or_init(|| {
+            let mut scope = crate::validation::Scope::default();
+            for revision in self.inner.set.current().iter().filter(|r| r.held()) {
+                scope.current(revision.manifest.shard_id, &revision.digest);
+            }
+            // A wallet can still request a retained predecessor by its digest.
+            for revision in self.inner.set.revisions().iter().filter(|r| r.held()) {
+                for (table, segment) in revision.targets() {
+                    let Some(source) = revision.segment(table, segment) else {
+                        continue;
+                    };
+                    let shared = &self.inner.params[&(revision.geometry.name, kind(table))];
+                    let key = runtime_key(&revision.digest, table, segment);
+                    scope.add(
+                        &revision.digest,
+                        revision.manifest.shard_id,
+                        source.path(),
+                        &self.inner.runtime.cache,
+                        &key,
+                    );
+                    if let Some(shipped) = &self.inner.set.shipped {
+                        scope.add(
+                            &revision.digest,
+                            revision.manifest.shard_id,
+                            &shipped.path(&key, shared, source.sha256()),
+                            &self.inner.runtime.cache,
+                            &key,
+                        );
+                    }
+                }
+            }
+            scope
         })
     }
 
@@ -421,6 +474,21 @@ impl DisplayState {
     /// The largest body any geometry of this set can legitimately send.
     pub fn max_query_bytes(&self) -> usize {
         self.inner.max_query_bytes
+    }
+
+    pub(crate) fn resident_targets(&self) -> usize {
+        self.inner
+            .set
+            .warm_targets()
+            .into_iter()
+            .filter(|(digest, table, segment)| {
+                self.inner
+                    .runtime
+                    .cache
+                    .cached(&runtime_key(digest, *table, *segment))
+                    .is_some()
+            })
+            .count()
     }
 
     pub fn warm_target(&self) -> usize {
@@ -444,6 +512,10 @@ impl DisplayState {
         )
     }
 
+    pub(crate) fn is_ready(&self) -> bool {
+        !self.inner.warm.cancelled.load(Ordering::Acquire)
+    }
+
     pub fn is_warm(&self) -> bool {
         !self.inner.warm.cancelled.load(Ordering::Acquire)
             && self.inner.warm.finished.load(Ordering::Acquire)
@@ -454,13 +526,19 @@ impl DisplayState {
         Arc::strong_count(&self.inner) > 1
     }
 
-    /// Drops residency pins: every one, or those of `digests`. An invalidated
-    /// revision is no longer an obligation.
-    pub(crate) fn release_pins(&self, digests: Option<&BTreeSet<String>>) {
-        let mut pins = self.inner.warm.pins.lock().unwrap();
-        match digests {
-            None => pins.clear(),
-            Some(digests) => pins.retain(|(digest, _)| !digests.contains(digest)),
+    /// Stop warming invalidated material without changing request authority.
+    pub(crate) fn stop_warming(&self, digests: Option<&BTreeSet<String>>) {
+        if digests.is_none_or(|digests| {
+            self.inner
+                .set
+                .current()
+                .iter()
+                .any(|r| digests.contains(&r.digest))
+        }) {
+            self.inner.warm.stopped.store(true, Ordering::Release);
+            if let Some(task) = self.inner.warm.task.lock().unwrap().take() {
+                task.abort();
+            }
         }
     }
 
@@ -471,7 +549,7 @@ impl DisplayState {
     /// waits for. Such a client is sent to refresh its map (409) instead.
     pub(crate) fn retire(&self) {
         self.inner.retired.store(true, Ordering::Release);
-        self.release_pins(None);
+        self.stop_warming(None);
     }
 
     pub fn is_retired(&self) -> bool {
@@ -622,7 +700,19 @@ pub fn router(state: DisplayState) -> Router {
         .route(&format!("/v2/txid/recent/{SETUP}"), get(setup_recent))
         .route(&format!("/v2/txid/archive/{QUERY}"), post(query_archive))
         .route(&format!("/v2/txid/recent/{QUERY}"), post(query_recent))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            validate_request,
+        ))
         .with_state(state)
+}
+
+async fn validate_request(
+    State(state): State<DisplayState>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    state.validation().serve(request, next).await
 }
 
 async fn health(State(state): State<DisplayState>) -> Response {
@@ -650,13 +740,13 @@ async fn health(State(state): State<DisplayState>) -> Response {
     )
 }
 
-/// Ready once the role's runtimes are warm. Readiness reads only counters,
-/// because the edge checks it every second.
+/// Readiness is independent of background warming and reads no artifact bodies.
 async fn ready(State(state): State<DisplayState>) -> Response {
     let inner = &state.inner;
     let warm = state.is_warm();
     let mut body = serde_json::json!({
-        "ready": warm || inner.warm.mode == ReadinessMode::LoadedOnly,
+        "artifact_validation": state.validation().status(),
+        "ready": state.is_ready(),
         "role": inner.set.role.as_str(),
         "map_sha256": inner.set.map_digest,
         "warm": warm,
@@ -684,7 +774,9 @@ async fn metrics(State(state): State<DisplayState>) -> Response {
     (
         StatusCode::OK,
         [("content-type", "text/plain; version=0.0.4")],
-        state.metrics().render(&snapshot) + &state.metrics().render_display(&snapshot),
+        state.metrics().render(&snapshot)
+            + &state.metrics().render_display(&snapshot)
+            + &state.validation().metrics(),
     )
         .into_response()
 }

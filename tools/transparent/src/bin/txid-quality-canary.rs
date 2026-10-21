@@ -33,8 +33,8 @@ struct Args {
     #[arg(long, default_value = "https://transparent-pir.valargroup.dev")]
     url: String,
     /// The pinned `{"txid", "height", "entry_sha256"}` document.
-    #[arg(long)]
-    fixture: PathBuf,
+    #[arg(long, required = true)]
+    fixture: Vec<PathBuf>,
     /// Per-request timeout. A cold lookup fetches init, the map, an index
     /// chunk, a manifest and the bucket's setups before its one query.
     #[arg(long, default_value_t = 15)]
@@ -142,26 +142,33 @@ impl TxidTransport for Http {
 }
 
 fn probe(args: &Args) -> &'static str {
-    let Some(pin) = std::fs::read(&args.fixture)
-        .ok()
-        .and_then(|bytes| parse_fixture(&bytes))
-    else {
-        return "oracle_invalid";
-    };
-    let Ok(client) = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(args.timeout_seconds))
-        .user_agent("pir-independent-canary")
-        .build()
-    else {
-        return "unavailable";
-    };
-    let mut transport = Http {
-        client,
-        base: args.url.trim_end_matches('/').to_string(),
-    };
-    // A fresh client every run: the cold path, with no cached map or setups.
-    let outcome = TxidDisplayClient::new().lookup(&mut transport, pin.txid, pin.height, &|| false);
-    judge(outcome, &pin)
+    for fixture in &args.fixture {
+        let Some(pin) = std::fs::read(fixture)
+            .ok()
+            .and_then(|bytes| parse_fixture(&bytes))
+        else {
+            return "oracle_invalid";
+        };
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(args.timeout_seconds))
+            .user_agent("pir-independent-canary")
+            .build()
+        else {
+            return "unavailable";
+        };
+        let mut transport = Http {
+            client,
+            base: args.url.trim_end_matches('/').to_string(),
+        };
+        // A fresh client every run: the cold path, with no cached map or setups.
+        let outcome =
+            TxidDisplayClient::new().lookup(&mut transport, pin.txid, pin.height, &|| false);
+        let result = judge(outcome, &pin);
+        if !result.is_empty() {
+            return result;
+        }
+    }
+    ""
 }
 
 fn main() {

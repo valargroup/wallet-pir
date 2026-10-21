@@ -23,20 +23,19 @@ transparent-history = []
 transparent-detail = []
 status = ["dep:status-publisher", "pir-publisher/status"]
 rocksdb-reader = ["transparent-history", "pir-publisher/rocksdb-reader"]
+# In-process Enhance hint and operator checks. Fast feedback uses this graph.
+# The chain node and wallet client stay on enhance-tests for qualification.
+enhance-fast = ["enhance"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
+    "enhance-fast",
     "publisher-host",
     "pir-publisher/enhance",
-    "enhance",
     "query-host",
-    "dep:enhance-publisher",
     "enhance-publisher/fault-injection",
     "enhance-publisher/fixtures",
     "enhance-publisher/local-serving",
-    "dep:enhance-query-server",
     "enhance-query-server/client",
-    "dep:pir-query-server",
-    "pir-query-server/enhance",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
     "zakura-server-chain/testing-node",
@@ -45,6 +44,7 @@ enhance-tests = [
     "zakura-pir-client/testing",
 ]
 transparent-tests = [
+    "wallet-recovery-tests",
     "publisher-host",
     "transparent-history",
     "transparent-detail",
@@ -66,6 +66,25 @@ transparent-tests = [
     "zakura-server-chain/testing-node",
     "dep:zakura-pir-client",
     "zakura-pir-client/transparent",
+    "zakura-pir-client/testing",
+    "dep:zakura-pir-publisher",
+    "zakura-pir-publisher/transparent",
+    "dep:zakura-pir-protocol",
+    "zakura-pir-protocol/transparent",
+    "reqwest/blocking",
+]
+# The wallet consumer regression does not need node fixtures or host binaries.
+wallet-recovery-tests = [
+    "transparent-history",
+    "dep:hex",
+    "dep:transparent-query-server",
+    "dep:transparent-shared",
+    "transparent-shared/test-support",
+    "dep:zakura-pir-client",
+    "zakura-pir-client/transparent",
+    "zakura-pir-client/engine-store",
+    "zakura-pir-client/recovery",
+    "zakura-pir-client/reqwest",
     "zakura-pir-client/testing",
     "dep:zakura-pir-publisher",
     "zakura-pir-publisher/transparent",
@@ -133,7 +152,10 @@ required-features = ["transparent-tests"]
 test = false
 
 [dev-dependencies]
+# Address fixtures belong to the wallet consumer tests, never serving libraries.
+transparent = { package = "zakura-transparent", version = "=4.0.0-rc3", default-features = false }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
+pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
 zakura-pir-query-server = { version = "=0.0.1-rc1", default-features = false, features = ["transparent"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
@@ -151,7 +173,7 @@ required-features = ["enhance-tests"]
 [[test]]
 name = "ci_hint"
 path = "tests/ci_hint.rs"
-required-features = ["enhance-tests"]
+required-features = ["enhance-fast"]
 
 [[test]]
 name = "encrypted_lifecycle"
@@ -222,3 +244,8 @@ required-features = ["transparent-tests"]
 name = "transparent_provider_installation"
 path = "tests/transparent_provider_installation.rs"
 required-features = ["transparent-tests"]
+
+[[test]]
+name = "wallet_revision_reuse"
+path = "tests/wallet_revision_reuse.rs"
+required-features = ["wallet-recovery-tests"]

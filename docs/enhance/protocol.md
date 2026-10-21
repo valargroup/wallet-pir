@@ -96,7 +96,7 @@ Routing revision, placement revision, anchor and lifecycle label are excluded.
 Consequently sealing and placement alone preserve identity; changed content,
 composition or domain recovery epoch does not. The server and wallet share a
 [frozen vector](../../src/enhance/enhance-query-server/tests/fixtures/v7-session.json) checked by
-[an independent encoder](../../tools/enhance/v7-interop/check_vectors.py). The vector digest is
+the worker, packing-router and publisher recovery tests. The vector digest is
 `09d98421023fcb7801828a031db61a263a69aabba820d214d22e773cbeb12e0b`.
 
 The PIR profile is `simplepir-p16-q48-v1`: 48-bit query transport, p16

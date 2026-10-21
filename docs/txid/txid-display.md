@@ -577,8 +577,8 @@ Placement, certificates, runtime memory, rebuild and query time of the served
 `txid-2k8` in the [gate evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/txid-display-2k8-gates-2026-10-11/README.md)
 and the [8-bit evidence](../../evidence/txid/txid-display-p8-2026-10-13/README.md).
 
-The journal census in `tools/txid/txid-sizing` measured v2x journals.
-It builds against the last pre-v2 source, `a368f19b`.
+The journal census, retired with the rest of the [sizing tools](https://github.com/valargroup/wallet-pir/blob/f26b9476fbcd37aca4b4882b9264e90c1896be16/tools/txid/txid-sizing/README.md),
+measured v2x journals and builds against the last pre-v2 source, `a368f19b`.
 
 ## Reproduce the native demo
 
@@ -659,3 +659,12 @@ derives P2PKH and P2SH input addresses from scriptSigs without parent lookups.
 
 Transaction bytes cannot recover contact names, original intent, collaborative
 attribution or application grouping.
+
+## Prepared material and startup
+
+Transaction detail follows the [Transparent loading policy](../transparent/prepared-distribution.md#preparation-trust-and-post-start-smoke-validation):
+the publisher validates preparation, downloads check SHA-256 once, and disk
+reloads check size without rehashing or self-testing. Readiness does not wait
+for background warming. A separate `txid-quality-canary` process validates
+serving after startup; repeat `--fixture` for multiple pinned lookups. Failure
+fails validation without stopping or restarting the service.

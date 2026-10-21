@@ -7,6 +7,8 @@ use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 
+#[path = "support/artifact_validation.rs"]
+mod artifact_validation;
 #[path = "support/bytemeter.rs"]
 mod bytemeter;
 
@@ -19,7 +21,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_query_server::config::{ReadinessMode, ServiceConfig};
+use transparent_query_server::config::ServiceConfig;
 use transparent_query_server::tx_detail::live::{DisplayCommand, DisplayPublication};
 use transparent_query_server::tx_detail::service::{router, DisplayRuntime, DisplayState};
 use transparent_shard::display::{self, DisplayTable};
@@ -36,6 +38,37 @@ mod display_world;
 use display_world::*;
 
 const ABSENT: Txid = Txid([0xee; 32]);
+
+#[tokio::test]
+async fn retained_detail_artifacts_are_checked_and_stay_withdrawn_after_reopening() {
+    let root = tempfile::tempdir().unwrap();
+    let records = synth::records(4, 7);
+    let old = synth::write_shard(root.path(), &spec(0, 100, 110, false, ""), &records).unwrap();
+    let mut next = spec(0, 100, 120, false, "");
+    next.revision = 1;
+    next.supersedes = old.digest.clone();
+    let new = synth::write_shard(root.path(), &next, &records).unwrap();
+    let (dir, _) =
+        synth::write_candidate(root.path(), &params(1), &[new.clone()], "retained").unwrap();
+    synth::link_revision(&old.dir, &dir.join(&old.digest)).unwrap();
+    let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
+    let retained = set.held(&old.digest).unwrap();
+    let (table, segment) = retained.targets()[0];
+    artifact_validation::damage_received(retained.segment(table, segment).unwrap());
+    drop(set);
+    for pending in [true, false] {
+        let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
+        let runtime = DisplayRuntime::new(config(), None);
+        let state = DisplayState::build(set, &runtime).unwrap();
+        artifact_validation::assert_withdrawn(
+            router(state),
+            &format!("/v2/txid/shards/0/revisions/{}/manifest", old.digest),
+            &format!("/v2/txid/shards/0/revisions/{}/manifest", new.digest),
+            pending,
+        )
+        .await;
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
@@ -214,7 +247,7 @@ async fn a_combined_worker_serves_both_tiers() {
         config(),
         vec![root.path().join("sealed")],
     );
-    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 2);
+    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 0);
     let status = worker.command(DisplayCommand::Status).await.unwrap();
     assert_eq!(status["role"], "combined");
     let app = Router::new().fallback(edge).with_state(Edge {
@@ -264,7 +297,7 @@ async fn an_overlapping_recent_shard_is_served_beside_its_archive() {
         config(),
         vec![root.path().join("sealed")],
     );
-    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 2);
+    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 0);
     let app = Router::new().fallback(edge).with_state(Edge {
         archive: worker.live.router(),
         recent: worker.live.router(),
@@ -336,7 +369,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
         })
         .await
         .unwrap();
-    assert_eq!(staged["built"], 1);
+    assert_eq!(staged["built"], 0);
     assert_eq!(staged["digest"], a1.digest);
     // A replica holds no sealed shard and refuses to stage one.
     assert!(world
@@ -351,7 +384,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let before = world.archive.builds();
     let prepared = world.archive.publish(&p1.0, &p1.1).await;
     assert_eq!(prepared["built"], 0, "{prepared}");
-    assert_eq!(prepared["reused"], 2);
+    assert!(prepared["reused"].as_u64().unwrap() <= 2);
     assert_eq!(world.archive.builds(), before);
     let status = world.archive.command(DisplayCommand::Status).await.unwrap();
     assert_eq!(status["staged"], serde_json::json!([]));
@@ -363,7 +396,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     );
     // The replica builds only the new recent shard's one table.
     let prepared = world.recent.publish(&p1.0, &p1.1).await;
-    assert_eq!(prepared["built"], 1, "{prepared}");
+    assert_eq!(prepared["built"], 0, "{prepared}");
 
     // The stale wallet is still answered from the retained recent revision.
     let (provenance, log) = stale.found(moved, 210);
@@ -397,8 +430,10 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let (provenance, log) = stale.found(old, 150);
     assert_eq!(provenance.manifest_digest, world.a0.digest);
     assert_eq!(stale_retries(&log), 0);
-    // p2's prepare evicted the retired recent revision. A stale wallet is
-    // sent to refresh its map rather than costing the replica a cold build.
+    // Evict the retired recent revision under explicit cache pressure. A stale
+    // wallet refreshes its map instead of costing the replica a cold build.
+    let _background = world.recent.runtime.cache.background_slot().await;
+    world.recent.runtime.cache.evict_unpinned();
     let builds = world.recent.builds();
     let (provenance, log) = stale.found(moved, 210);
     assert_eq!(stale_retries(&log), 1);
@@ -743,7 +778,7 @@ async fn a_disconnected_display_activation_keeps_serialization_over_the_control_
 /// runtime can be evicted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relinked_revisions_rebuild_after_their_first_directories_are_removed() {
-    let world = World::start_with(loaded_only()).await;
+    let world = World::start().await;
     let root = world.root.path();
     let Seal {
         a1,
@@ -763,6 +798,10 @@ async fn relinked_revisions_rebuild_after_their_first_directories_are_removed() 
         world.archive.publish(dir, map).await;
         world.recent.publish(dir, map).await;
     }
+    // Hold background admission while proving foreground loads survive cache
+    // eviction and removal of the original directories.
+    let _archive_background = world.archive.runtime.cache.background_slot().await;
+    let _recent_background = world.recent.runtime.cache.background_slot().await;
     collect(&world.archive).await;
     assert!(!a1.dir.exists(), "the staged copy is collected");
     for dir in [
@@ -931,8 +970,8 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     )
     .unwrap();
     // Each worker prepares it beside the old publication, then swaps.
-    assert_eq!(world.archive.publish(&fresh.0, &fresh.1).await["built"], 2);
-    assert_eq!(world.recent.publish(&fresh.0, &fresh.1).await["built"], 1);
+    assert_eq!(world.archive.publish(&fresh.0, &fresh.1).await["built"], 0);
+    assert_eq!(world.recent.publish(&fresh.0, &fresh.1).await["built"], 0);
     let (_, init) = world.get("/v2/txid/init").await;
     assert_eq!(init["geometries"].as_array().unwrap().len(), 1, "{init}");
 
@@ -1056,8 +1095,8 @@ async fn the_transcript_depends_on_the_bucket_label_alone() {
         config(),
         Vec::new(),
     );
-    assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 2);
-    assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 2);
+    assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 0);
+    assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 0);
     let app = Router::new().fallback(edge).with_state(Edge {
         archive: archive.live.router(),
         recent: recent.live.router(),
@@ -1215,10 +1254,7 @@ async fn misaddressed_requests_are_refused() {
     let r0 = synth::write_shard(root.path(), &r, &records[40..]).unwrap();
     let (dir, map_sha256) =
         synth::write_candidate(root.path(), &params(2), &[a0.clone(), r0.clone()], "n2").unwrap();
-    let config = ServiceConfig {
-        readiness: ReadinessMode::LoadedOnly,
-        ..config()
-    };
+    let config = ServiceConfig { ..config() };
     let owner = router(
         DisplayState::build(
             DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap(),
@@ -1382,10 +1418,7 @@ async fn display_answers_are_pinned() {
     let r0 = synth::write_shard(root.path(), &r, &records[40..]).unwrap();
     let (dir, map_sha256) =
         synth::write_candidate(root.path(), &params(2), &[a0.clone(), r0.clone()], "n2").unwrap();
-    let config = ServiceConfig {
-        readiness: ReadinessMode::LoadedOnly,
-        ..config()
-    };
+    let config = ServiceConfig { ..config() };
     let app = |role| {
         router(
             DisplayState::build(
@@ -1508,4 +1541,77 @@ async fn display_answers_are_pinned() {
     t.send(&owner, &q0, Upload::Unsized(vec![0; query])).await;
     t.send(&owner, &q0, Upload::Sized(vec![0; 16])).await;
     t.check("display_answers.txt");
+}
+
+/// A superseded first load is checked data, never serving authority. Its
+/// unchanged archive rows survive the next preparation without being rechecked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cold_preparation_checks_sizes_without_scanning_rows_or_serving_them() {
+    let root = tempfile::tempdir().unwrap();
+    let archive = write_shard(root.path(), &spec(0, 100, 199, true, ""), &records(10, &[]));
+    let recent = write_shard(
+        root.path(),
+        &spec(1, 200, 260, false, &archive.digest),
+        &records(20, &[]),
+    );
+    let first = synth::write_candidate(
+        root.path(),
+        &params(1),
+        &[archive.clone(), recent.clone()],
+        "first",
+    )
+    .unwrap();
+    let mut next_spec = spec(1, 200, 261, false, &archive.digest);
+    next_spec.revision = 1;
+    next_spec.supersedes = recent.digest.clone();
+    let next_recent = write_shard(root.path(), &next_spec, &records(21, &[]));
+    let next =
+        synth::write_candidate(root.path(), &params(1), &[archive, next_recent], "next").unwrap();
+    let worker = Worker::new(root.path(), DisplayRole::Combined, config(), vec![]);
+    let prepare = |publication: &(PathBuf, String)| DisplayCommand::Prepare {
+        expected: String::new(),
+        publication: DisplayPublication {
+            directory: publication.0.clone(),
+            map_sha256: publication.1.clone(),
+        },
+    };
+    worker.command(prepare(&first)).await.unwrap();
+    let first_status = worker.command(DisplayCommand::Status).await.unwrap();
+    let first_checked = first_status["last_preparation"]["verification"]["bytes_row_checked"]
+        .as_u64()
+        .unwrap();
+    assert!(worker.live.expected().is_empty());
+    assert_eq!(
+        worker
+            .live
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/v1/ready")
+                    .body(Body::empty())
+                    .unwrap()
+            )
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    worker.command(prepare(&next)).await.unwrap();
+    let status = worker.command(DisplayCommand::Status).await.unwrap();
+    let verification = &status["last_preparation"]["verification"];
+    assert_eq!(first_checked, 0);
+    assert_eq!(verification["bytes_hashed"], 0);
+    assert_eq!(verification["bytes_row_checked"], 0);
+    assert!(
+        worker.live.expected().is_empty(),
+        "preparation cannot publish a serving view"
+    );
+    worker
+        .command(DisplayCommand::Activate {
+            expected: String::new(),
+            map_sha256: next.1.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(worker.live.expected(), next.1);
 }

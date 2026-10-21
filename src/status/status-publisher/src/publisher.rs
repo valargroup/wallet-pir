@@ -35,6 +35,17 @@ pub struct Config {
 struct Published {
     current: Option<Current>,
     manifest: Option<Manifest>,
+    // An in-flight preparation holds its token, preventing pointer reuse even
+    // when several withdrawals leave the public eligibility flag unchanged.
+    fence: Arc<()>,
+}
+impl Published {
+    fn check_fence(&self, expected: &Arc<()>) -> Result<(), Failure> {
+        if !Arc::ptr_eq(&self.fence, expected) {
+            return Err("Status authority changed during preparation".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone)]
 pub struct Publisher {
@@ -87,6 +98,7 @@ impl Publisher {
     }
     fn withdraw(&self) {
         let mut state = self.published.write().unwrap();
+        state.fence = Arc::new(());
         if let Some(current) = &mut state.current {
             current.eligible = false;
         }
@@ -147,6 +159,7 @@ impl Publisher {
         cache: &mut Option<Generation>,
         rpc: &ZakuraClient,
     ) -> Result<Generation, Failure> {
+        let expected = self.published.read().unwrap().fence.clone();
         let (generation, epoch) = authority.next_identity()?;
         let previous = cache.clone();
         let prepared = tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
@@ -187,25 +200,33 @@ impl Publisher {
             self.withdraw();
             return Err("Status candidate anchor disconnected".into());
         }
-        manifest.fresh(now_ms())?;
-        authority.commit(&manifest)?;
-        let current = Current {
-            schema: SCHEMA.into(),
-            revision: self.revision()?,
-            recovery_epoch: epoch,
-            network: manifest.network,
-            salt: manifest.salt,
-            generation: manifest.generation,
-            inventory: Some(object),
-            eligible: true,
-        };
-        // The current pointer is durable only after all referenced objects and
-        // authority. A restart allocates a new revision and recovery epoch.
-        durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
-        *self.published.write().unwrap() = Published {
-            current: Some(current),
-            manifest: Some(manifest.clone()),
-        };
+        // A withdrawal while preparation was running must survive this pass.
+        // Hold the same lock through the durable commit and pointer switch so
+        // a concurrent withdrawal cannot be replaced by an eligible view.
+        {
+            let mut published = self.published.write().unwrap();
+            published.check_fence(&expected)?;
+            manifest.fresh(now_ms())?;
+            authority.commit(&manifest)?;
+            let current = Current {
+                schema: SCHEMA.into(),
+                revision: self.revision()?,
+                recovery_epoch: epoch,
+                network: manifest.network,
+                salt: manifest.salt,
+                generation: manifest.generation,
+                inventory: Some(object),
+                eligible: true,
+            };
+            // The current pointer is durable only after all referenced objects and
+            // authority. A restart allocates a new revision and recovery epoch.
+            durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
+            *published = Published {
+                current: Some(current),
+                manifest: Some(manifest.clone()),
+                fence: expected,
+            };
+        }
         tracing::info!(
             generation,
             recovery_epoch = epoch,
@@ -317,6 +338,32 @@ impl Publisher {
             }
             tokio::select! { result = rx.changed() => result?, _ = shutdown.cancelled() => return Ok(()) }
         }
+    }
+}
+
+#[cfg(test)]
+mod withdrawal_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_withdrawals_refuse_preparations_even_without_an_eligible_publication() {
+        let root = tempfile::tempdir().unwrap();
+        let publisher = Publisher::new(Config {
+            state_dir: root.path().into(),
+            salt_hex: "01".repeat(32),
+            window_blocks: 1,
+            private_listen: "127.0.0.1:8480".parse().unwrap(),
+        })
+        .unwrap();
+        let before = publisher.published.read().unwrap().fence.clone();
+        publisher.withdraw();
+        let recovery = publisher.published.read().unwrap().fence.clone();
+        publisher.withdraw();
+        let published = publisher.published.read().unwrap();
+        assert!(published.current.is_none());
+        assert!(published.check_fence(&before).is_err());
+        assert!(published.check_fence(&recovery).is_err());
+        assert!(published.check_fence(&published.fence).is_ok());
     }
 }
 fn durable(root: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {

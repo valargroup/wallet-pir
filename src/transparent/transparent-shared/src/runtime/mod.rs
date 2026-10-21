@@ -398,6 +398,32 @@ fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
     (random % used as u64) as usize
 }
 
+/// Columns [`first_differing_column`] compares per pass over the rows: one
+/// interleaved block of a byte database, so both it and the row-major
+/// segment are read a cache line at a time instead of one line per byte.
+const SELF_CHECK_COLUMNS: usize = 16;
+
+/// The lowest column with a row where `differs`, visiting every cell of a
+/// `cols` x `rows` table. Columns are taken in tiles of
+/// [`SELF_CHECK_COLUMNS`] and every row is read within a tile; a column-major
+/// walk of row-major segment bytes touches a new page for every byte.
+fn first_differing_column(
+    cols: usize,
+    rows: usize,
+    differs: impl Fn(usize, usize) -> bool,
+) -> Option<usize> {
+    (0..cols).step_by(SELF_CHECK_COLUMNS).find_map(|start| {
+        let tile = start..(start + SELF_CHECK_COLUMNS).min(cols);
+        (0..rows)
+            .any(|row| tile.clone().any(|col| differs(row, col)))
+            .then(|| {
+                tile.clone()
+                    .find(|&col| (0..rows).any(|row| differs(row, col)))
+            })
+            .flatten()
+    })
+}
+
 /// A runtime's encoded database.
 pub(crate) enum Database {
     /// A 16-bit table's coefficients, scanned by ipir-sp's server.
@@ -485,6 +511,20 @@ pub fn build_pool() -> &'static rayon::ThreadPool {
             .start_handler(|_| lower_priority())
             .build()
             .expect("runtime build pool")
+    })
+}
+
+/// One low-priority thread for background publication validation, so any
+/// parallel work inside a runtime load or check stays on a single CPU.
+pub fn validation_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .thread_name(|_| "history-validation".into())
+            .start_handler(|_| lower_priority())
+            .build()
+            .expect("validation pool")
     })
 }
 
@@ -658,26 +698,22 @@ impl TableRuntime {
             Database::Wide(server) => {
                 let padded = server.db_rows_padded();
                 let db = server.db();
-                for col in 0..profile.cols {
-                    let column = &db[col * padded..col * padded + profile.rows];
-                    if (0..profile.rows).any(|row| {
-                        column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
-                    }) {
-                        return Err(format!("database column {col} differs from the segment"));
-                    }
+                if let Some(col) = first_differing_column(profile.cols, profile.rows, |row, col| {
+                    db[col * padded + row]
+                        != native::row_coefficient(rows, profile.row_bytes, row, col)
+                }) {
+                    return Err(format!("database column {col} differs from the segment"));
                 }
             }
             Database::Bytes(db) => {
                 if db.len() != rows.len() {
                     return Err("database length differs from the segment".into());
                 }
-                for col in 0..profile.cols {
-                    if (0..profile.rows).any(|row| {
-                        db[interleaved_index(profile.rows, col, row)]
-                            != rows[row * profile.row_bytes + col]
-                    }) {
-                        return Err(format!("database column {col} differs from the segment"));
-                    }
+                if let Some(col) = first_differing_column(profile.cols, profile.rows, |row, col| {
+                    db[interleaved_index(profile.rows, col, row)]
+                        != rows[row * profile.row_bytes + col]
+                }) {
+                    return Err(format!("database column {col} differs from the segment"));
                 }
             }
         }
@@ -835,6 +871,7 @@ pub struct RuntimeCache {
     build_slots: Arc<tokio::sync::Semaphore>,
     restore_slots: Arc<tokio::sync::Semaphore>,
     prewarm_concurrency: usize,
+    background_slots: Arc<tokio::sync::Semaphore>,
     metrics: Arc<Metrics>,
     disk: Option<disk::DiskCache>,
     /// Shipped files refused by a production operation that then could not
@@ -861,8 +898,9 @@ impl RuntimeCache {
             }),
             budget,
             build_slots: Arc::new(tokio::sync::Semaphore::new(build_slots.max(1))),
-            restore_slots: Arc::new(tokio::sync::Semaphore::new(1)),
-            prewarm_concurrency: build_slots.max(1),
+            restore_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            prewarm_concurrency: 1,
+            background_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             metrics,
             disk: None,
             refused_shipped: Mutex::new(std::collections::HashSet::new()),
@@ -870,9 +908,9 @@ impl RuntimeCache {
     }
 
     pub fn with_disk(mut self, disk: Option<disk::DiskCache>) -> Self {
-        let restores = disk.as_ref().map_or(1, |disk| disk.restore_slots.max(1));
+        let restores = disk.as_ref().map_or(2, |disk| disk.restore_slots.max(2));
         self.restore_slots = Arc::new(tokio::sync::Semaphore::new(restores));
-        self.prewarm_concurrency = self.prewarm_concurrency.max(restores);
+
         self.disk = disk;
         self
     }
@@ -880,6 +918,35 @@ impl RuntimeCache {
     /// The allocation budget shared by runtime construction and admitted queries.
     pub fn work_memory(&self) -> &Arc<crate::runtime::memory::WorkMemory> {
         &self.work_memory
+    }
+
+    /// At most one background load across all snapshots; other restore
+    /// capacity remains available to requests.
+    pub async fn background_slot(&self) -> tokio::sync::OwnedSemaphorePermit {
+        self.background_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("background semaphore stays open")
+    }
+
+    /// Keep an admitted background load and its permit alive if its snapshot
+    /// stops warming. The detached operation owns no serving snapshot.
+    pub async fn get_background_from(
+        self: &Arc<Self>,
+        key: RuntimeKey,
+        shared: Arc<SharedParams>,
+        source: SegmentSource,
+        shipped: Option<disk::ShippedRuntimes>,
+    ) -> Result<(RuntimeHandle, Produced), CacheError> {
+        let background = self.background_slot().await;
+        let cache = self.clone();
+        tokio::spawn(async move {
+            let _background = background;
+            cache.get_from(key, shared, source, shipped).await
+        })
+        .await
+        .map_err(|error| CacheError::Failed(error.to_string()))?
     }
 
     pub fn prewarm_concurrency(&self) -> usize {
@@ -892,7 +959,7 @@ impl RuntimeCache {
                 "hits":Metrics::get(&self.metrics.disk_hits),"misses":Metrics::get(&self.metrics.disk_misses),
                 "write_failures":Metrics::get(&self.metrics.disk_write_failures),
                 "pending_saves":Metrics::get(&self.metrics.disk_save_pending),
-                "restore_slots":disk.restore_slots.max(1)}))
+                "restore_slots":disk.restore_slots.max(2)}))
     }
 
     pub fn budget(&self) -> u64 {
@@ -918,9 +985,9 @@ impl RuntimeCache {
     /// [`Self::get`], trying `shipped` first when the runtime has to be
     /// produced, and saying how it was.
     ///
-    /// A shipped runtime is loaded read-only under the restore path's slot
-    /// and memory reservation, then self-checked against the segment's
-    /// verified rows ([`TableRuntime::self_check`]). It is never saved to
+    /// A publisher-validated runtime is loaded read-only under the restore
+    /// path's slot and memory reservation, without hashing or a self-test.
+    /// It is never saved to
     /// this worker's disk cache. A missing, rejected or failing file is
     /// counted as a fallback, and the runtime is restored or built as if none
     /// had been offered.
@@ -1221,7 +1288,20 @@ impl RuntimeCache {
             let _memory = memory;
             let _pin = pin;
             let started = std::time::Instant::now();
-            let runtime = match shipped.load(&key, &shared, source.sha256()) {
+            let path = shipped.path(&key, &shared, source.sha256());
+            let file = match crate::verification::open(&path) {
+                Ok(file) => file,
+                Err(error) => return Ok(Err(error.to_string())),
+            };
+            let runtime = match file.try_clone().and_then(|handle| {
+                disk::ShippedRuntimes::load_received_file(
+                    &path,
+                    handle,
+                    &key,
+                    &shared,
+                    source.sha256(),
+                )
+            }) {
                 Ok(runtime) => runtime,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(Err(format!(
@@ -1232,29 +1312,13 @@ impl RuntimeCache {
                 Err(error) => return Ok(Err(error.to_string())),
             };
             let loaded = started.elapsed();
-            // The restore slot bounds concurrent reads of runtime files; the
-            // self-check below is build-pool work under the memory reservation,
-            // so release the slot here and let the next shipped file load.
             drop(permit);
-            // Verifies the segment as a restore does, and keeps its rows for
-            // the self-check.
-            let rows = source
-                .load()
-                .map_err(|error| CacheError::Failed(error.to_string()))?;
-            let check_started = std::time::Instant::now();
-            let checked = build_pool().install(|| runtime.self_check(&shared, &rows));
-            let check_micros = check_started.elapsed().as_micros() as u64;
-            Metrics::add(&metrics.shipped_check_micros, check_micros);
-            let row = match checked {
-                Ok(row) => row,
-                Err(error) => return Ok(Err(format!("self-check failed: {error}"))),
-            };
+            let check_micros = 0;
             Metrics::incr(&metrics.shipped_loads);
             tracing::info!(
                 key = ?key,
                 load_seconds = loaded.as_secs_f64(),
                 check_seconds = check_micros as f64 / 1e6,
-                row,
                 "loaded shipped runtime"
             );
             Ok(Ok((runtime, check_micros)))
@@ -1398,6 +1462,35 @@ impl RuntimeCache {
         );
     }
 
+    /// Remove these idle entries and persisted derivatives of their runtime
+    /// identities before a withdrawn shard is repaired. A live query, load or
+    /// snapshot writer keeps its accounting until it finishes. A busy disk
+    /// writer defers eviction rather than blocking the cache on its file lock.
+    pub fn evict_keys(&self, keys: &[RuntimeKey]) -> std::io::Result<bool> {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        if keys.iter().any(|key| {
+            inner
+                .entries
+                .get(key)
+                .is_some_and(|entry| Arc::strong_count(&entry.slot) != 1)
+        }) {
+            return Ok(false);
+        }
+        if let Some(disk) = &self.disk {
+            if !disk.invalidate(keys)? {
+                return Ok(false);
+            }
+        }
+        for key in keys {
+            if let Some(entry) = inner.entries.remove(key) {
+                inner.resident -= entry.reserved;
+                Metrics::incr(&self.metrics.evictions);
+            }
+        }
+        self.publish(&inner);
+        Ok(true)
+    }
+
     /// Prune unused persisted runtimes while retaining the caller's active keys.
     pub fn prune_disk(
         &self,
@@ -1417,6 +1510,84 @@ impl RuntimeCache {
 #[cfg(test)]
 pub(crate) mod tests {
 
+    #[test]
+    fn repair_evicts_only_affected_idle_runtime_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let disk = disk::DiskCache::new(root.path().to_path_buf(), 1024).unwrap();
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default())).with_disk(Some(disk));
+        let affected = ("affected".to_string(), Table::Directory, 0);
+        let healthy = ("healthy".to_string(), Table::Directory, 0);
+        use sha2::{Digest, Sha256};
+        let affected_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(affected.0.as_bytes()))
+        ));
+        let healthy_disk = root.path().join(format!(
+            "{}-cached.runtime",
+            hex::encode(Sha256::digest(healthy.0.as_bytes()))
+        ));
+        std::fs::write(&affected_disk, b"derived from corrupt source").unwrap();
+        std::fs::write(&healthy_disk, b"unrelated runtime").unwrap();
+        let pinned = Arc::new(Slot {
+            runtime: tokio::sync::OnceCell::new(),
+        });
+        {
+            let mut inner = cache.inner.lock().unwrap();
+            inner.entries.insert(
+                affected.clone(),
+                Entry {
+                    slot: pinned.clone(),
+                    reserved: 10,
+                    last_used: 0,
+                },
+            );
+            inner.entries.insert(
+                healthy.clone(),
+                Entry {
+                    slot: Arc::new(Slot {
+                        runtime: tokio::sync::OnceCell::new(),
+                    }),
+                    reserved: 20,
+                    last_used: 0,
+                },
+            );
+            inner.resident = 30;
+        }
+        assert!(!cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            affected_disk.exists(),
+            "an active snapshot writer keeps its file"
+        );
+        assert_eq!(
+            cache.resident_bytes(),
+            30,
+            "an in-flight request retains its budget"
+        );
+        drop(pinned);
+        let writer = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".lock"))
+            .unwrap();
+        writer.lock().unwrap();
+        assert!(
+            !cache.evict_keys(std::slice::from_ref(&affected)).unwrap(),
+            "an unrelated disk writer must defer repair without blocking the cache"
+        );
+        assert!(affected_disk.exists());
+        drop(writer);
+        assert!(cache.evict_keys(std::slice::from_ref(&affected)).unwrap());
+        assert!(
+            !affected_disk.exists(),
+            "a repaired source cannot restore its old derivative"
+        );
+        assert!(healthy_disk.exists());
+        assert_eq!(cache.resident_bytes(), 20);
+        assert!(cache.inner.lock().unwrap().entries.contains_key(&healthy));
+    }
+
     /// The scan shape keys every prepared runtime and disk cache entry. The
     /// digest was captured on the base commit before the shared runtime
     /// extraction; it must never change.
@@ -1430,6 +1601,29 @@ pub(crate) mod tests {
             )),
             "d270081346ced7386c22ffc61e3b504090e9951242f5fa5b3e1598eac2c6ee48"
         );
+    }
+
+    /// The tiled walk visits every cell and names the lowest differing
+    /// column, as the column-order walk it replaced did, at tile edges and in
+    /// a partial last tile.
+    #[test]
+    fn self_check_tiles_find_the_lowest_differing_column() {
+        let (cols, rows) = (2 * SELF_CHECK_COLUMNS + 5, 9);
+        assert_eq!(first_differing_column(cols, rows, |_, _| false), None);
+        for col in 0..cols {
+            for row in [0, rows / 2, rows - 1] {
+                assert_eq!(
+                    first_differing_column(cols, rows, |r, c| (r, c) == (row, col)),
+                    Some(col)
+                );
+            }
+            let other = (col + SELF_CHECK_COLUMNS) % cols;
+            assert_eq!(
+                first_differing_column(cols, rows, |r, c| (r == 0 && c == other)
+                    || (r == rows - 1 && c == col)),
+                Some(col.min(other))
+            );
+        }
     }
 
     #[test]

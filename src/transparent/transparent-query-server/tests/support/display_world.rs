@@ -19,7 +19,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_query_server::config::{ReadinessMode, ServiceConfig};
+use transparent_query_server::config::ServiceConfig;
 use transparent_query_server::tx_detail::live::{DisplayCommand, DisplayLive, DisplayPublication};
 use transparent_query_server::tx_detail::service::DisplayRuntime;
 use transparent_shard::display::{DisplaySealParams, TXID_2K8};
@@ -147,15 +147,7 @@ pub fn write_shard(root: &Path, spec: &ShardSpec, records: &[DisplayRecord]) -> 
 pub fn config() -> ServiceConfig {
     ServiceConfig {
         cache_bytes: 2 << 30,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
-    }
-}
-
-pub fn loaded_only() -> ServiceConfig {
-    ServiceConfig {
-        readiness: ReadinessMode::LoadedOnly,
-        ..config()
     }
 }
 
@@ -307,8 +299,8 @@ impl World {
         let recent = Worker::new(root.path(), DisplayRole::RecentReplica, config, Vec::new());
         // Both start empty and take the publication through control, as a
         // freshly deployed worker does: one table each, the shard's bucket.
-        assert_eq!(archive.publish(&p0.0, &p0.1).await["built"], 1);
-        assert_eq!(recent.publish(&p0.0, &p0.1).await["built"], 1);
+        assert_eq!(archive.publish(&p0.0, &p0.1).await["built"], 0);
+        assert_eq!(recent.publish(&p0.0, &p0.1).await["built"], 0);
         let faults = Faults::default();
         let app = Router::new().fallback(edge).with_state(Edge {
             archive: archive.live.router(),

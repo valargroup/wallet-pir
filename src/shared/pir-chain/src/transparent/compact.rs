@@ -89,34 +89,18 @@ impl FetchedBlock {
                     script: output.lock_script.as_raw_bytes().to_vec(),
                 })
                 .collect();
-            let sapling_spends = tx
-                .wallet()
-                .sapling_bundle()
-                .into_iter()
-                .flat_map(|bundle| bundle.shielded_spends())
-                .map(|spend| spend.nullifier().0)
-                .collect();
-            let sapling_outputs = tx
-                .wallet()
-                .sapling_bundle()
-                .into_iter()
-                .flat_map(|bundle| bundle.shielded_outputs())
-                .map(|output| {
-                    Ok(CompactSaplingOutput {
-                        cmu: output.cmu().to_bytes().to_vec(),
-                        ephemeral_key: output.ephemeral_key().0.to_vec(),
-                        ciphertext: output.enc_ciphertext()[..52].to_vec(),
-                    })
+            let sapling_spends = tx.sapling_nullifiers().to_vec();
+            let sapling_outputs: Vec<_> = tx
+                .sapling_outputs()
+                .iter()
+                .map(|output| CompactSaplingOutput {
+                    cmu: output.cmu.to_vec(),
+                    ephemeral_key: output.ephemeral_key.to_vec(),
+                    ciphertext: output.compact_ciphertext.to_vec(),
                 })
-                .collect::<Result<Vec<_>, std::io::Error>>()?;
-            let orchard_actions = tx
-                .orchard_actions()
-                .map(action)
-                .collect::<Result<Vec<_>, _>>()?;
-            let ironwood_actions = tx
-                .ironwood_actions()
-                .map(action)
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect();
+            let orchard_actions: Vec<_> = tx.orchard_actions().map(action).collect();
+            let ironwood_actions: Vec<_> = tx.ironwood_actions().map(action).collect();
             for (count, n) in after.iter_mut().zip([
                 sapling_outputs.len(),
                 orchard_actions.len(),
@@ -152,11 +136,11 @@ impl FetchedBlock {
     }
 }
 
-fn action(a: Action) -> Result<CompactAction, std::io::Error> {
-    Ok(CompactAction {
+fn action(a: &Action) -> CompactAction {
+    CompactAction {
         nullifier: a.nullifier.to_vec(),
         cmx: a.cm_x.to_vec(),
         ephemeral_key: a.ephemeral_key.to_vec(),
         ciphertext: a.enc_ciphertext[..52].to_vec(),
-    })
+    }
 }
