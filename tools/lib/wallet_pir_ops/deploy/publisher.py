@@ -434,6 +434,49 @@ class Cutover:
             self.save(journal, 'committed')
             return journal
 
+    def verify(self):
+        """Finish checks after a lost connection, without restarting a running candidate."""
+        require(self.request['schema'] == SERVING_SCHEMA, 'verification recovery requires publisher-cutover/3')
+        with production_lock(self.inventory, self.ex) as self.lock:
+            journal = self.latest()
+            require(journal is not None and journal['request'] == self.request
+                    and journal['phase'] == 'verifying' and journal['intent'] is None,
+                    'verification recovery requires this interrupted verification')
+            self.resources()
+            plan = journal['plan']
+            def unchanged():
+                require(all(self.read(path) == text for path, text in plan['desired'].items()),
+                        'managed file changed before verification recovery')
+                require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
+                        'publisher input changed before verification recovery')
+                state = self.ex.probe_unit(self.host, UNIT)
+                require(state['active_state'] == 'active' and not state['need_daemon_reload']
+                        and state['exe_sha256'] == self.request['release']['binary_sha256'],
+                        'verification recovery requires the running candidate')
+                return state['invocation_id']
+            invocation = unchanged()
+            if not self.resume_load:
+                self.require_stopped_load()
+            if self.serving:
+                self.serving.restore_guard(journal)
+            self.ready(True)
+            if self.serving:
+                self.serving.verify(journal)
+                edge = plan['serving']
+                if self.read('/etc/caddy/Caddyfile') == edge['edge_before']:
+                    self.serving.route(journal)
+                else:
+                    self.effect(journal, 'verify reload wallet edge',
+                                lambda: self.ex.systemctl(self.host, 'reload', 'caddy.service'))
+            self.exact(journal)
+            require(unchanged() == invocation, 'publisher invocation changed during verification recovery')
+            if self.resume_load:
+                self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            else:
+                self.require_stopped_load()
+            self.save(journal, 'committed')
+            return journal
+
     def restart(self):
         """Exercise cooperative shutdown without changing the retained rollback baseline."""
         with production_lock(self.inventory, self.ex) as self.lock:
@@ -536,7 +579,7 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -551,7 +594,7 @@ def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
     request, inventory = load_request(args.request, args.request_sha256,
-                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart'))
+                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
@@ -560,6 +603,8 @@ def dispatch(args, executor=None, **_options):
         return target.rollback()
     if operation == 'restart':
         return target.restart()
+    if operation == 'verify':
+        return target.verify()
     if operation == 'status':
         result = {'transaction': target.latest(), 'units': {name: stable_unit(executor.probe_unit(request['host'], name))
                   for name in (*target.old, UNIT, LOAD)}}
