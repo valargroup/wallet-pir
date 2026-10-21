@@ -431,7 +431,11 @@ fn finalization_lists_present_bytes_and_stops_when_asked() {
     let recent = table(Kind::RecentTable).unwrap();
     let changed = table(Kind::ArchiveTable).unwrap();
     let path = directory.join(&recent.path);
-    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
     let modified = file.metadata().unwrap().modified().unwrap();
     let mut first = [0u8; 1];
     file.read_exact_at(&mut first, 0).unwrap();
@@ -441,7 +445,11 @@ fn finalization_lists_present_bytes_and_stops_when_asked() {
     assert!(Finalized::prepare(&directory, &set, 2).is_err());
     file.write_all_at(&first, 0).unwrap();
     let path = directory.join(&changed.path);
-    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
     let modified = file.metadata().unwrap().modified().unwrap();
     let mut first = [0u8; 1];
     file.read_exact_at(&mut first, 0).unwrap();

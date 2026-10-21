@@ -122,6 +122,11 @@ rather than attempting recovery over potentially unfinished work.
 
 SIGINT and SIGTERM request cooperative shutdown. Publishers finish their current
 publication operations and stop owned auxiliary tasks before releasing state.
+History candidate preparation is the exception: runtime preparation and
+inventory finalization check the stop request between segments and files, and
+a stopped candidate is abandoned as a normal outcome without beginning
+activation or changing the active publication. Blocking candidate work is
+awaited before state is released. Activation that has begun still completes.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -152,6 +157,14 @@ history fleet command/configuration and display workers file can be omitted.
 The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.
+
+History finalization lists a table with the digest its verified set proved
+when this process hashed that same file and its device, inode, length,
+modification and change times are unchanged; any other table is hashed again.
+Each runtime is loaded once: that read checks its body checksum and yields its
+inventory digest, and the runtime is self-checked against its source rows.
+Hard links created for a new candidate change a runtime's change time, so
+linked runtimes are checked again in each candidate.
 
 History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
 pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product
