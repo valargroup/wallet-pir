@@ -7,6 +7,7 @@ separate gates. No installed services or cloud resources are touched.
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import platform
 import re
@@ -19,9 +20,12 @@ def provenance(bin_dir):
     candidate = bin_dir / 'candidate.json'
     if candidate.exists():
         metadata = json.loads(candidate.read_text())
-        if (metadata.get('kind') != 'enhance-pir'
+        if (metadata.get('kind') not in ('enhance-pir', 'enhance-pir-native')
                 or metadata.get('qualification') != 'unqualified'
-                or metadata.get('protocol_revision') != 'ironwood-enhance-pir-v7'
+                or metadata.get('protocol_revision') != {
+                    'enhance-pir': 'ironwood-enhance-pir-v7',
+                    'enhance-pir-native': 'ironwood-enhance-pir-v9-native-two-mask-m29'
+                }.get(metadata.get('kind'))
                 or metadata.get('schema_version') != 11
                 or not isinstance(metadata.get('source_dirty'), bool)
                 or not re.fullmatch('[0-9a-f]{40}', metadata.get('source_revision', ''))):
@@ -42,6 +46,7 @@ def provenance(bin_dir):
 
 def main():
     from local_fleet import Fleet, Publications, fetch
+    from fixture_node import PROFILES
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, default=Path('target/release-fast'))
     parser.add_argument('--out', type=Path, required=True)
@@ -49,12 +54,17 @@ def main():
     parser.add_argument('--concurrency', default='1,2,4,8')
     parser.add_argument('--open-loop', action='store_true')
     parser.add_argument('--require-publications', type=int, default=0)
+    parser.add_argument('--profile', choices=PROFILES, default='smoke')
+    parser.add_argument('--block-interval', type=float, default=10)
+    parser.add_argument('--ready-timeout', type=int, default=120)
     args = parser.parse_args()
     concurrencies = [int(value) for value in args.concurrency.split(',')]
     if args.seconds < 1 or args.require_publications < 0 or not concurrencies or min(concurrencies) < 1:
         parser.error('duration and concurrency must be positive')
     if args.open_loop and 2 not in concurrencies:
         parser.error('--open-loop needs a concurrency=2 baseline')
+    if not math.isfinite(args.block_interval) or args.block_interval <= 0 or not 1 <= args.ready_timeout <= 1800:
+        parser.error('block interval must be finite and positive; readiness timeout must be 1..1800 seconds')
     args.out.mkdir(parents=True, exist_ok=False)
     binaries = args.bin_dir.resolve()
     load = binaries / 'enhance-pir-load-test'
@@ -62,14 +72,17 @@ def main():
                 **provenance(binaries), 'binaries': {
                     name: hashlib.sha256((binaries / name).read_bytes()).hexdigest()
                     for name in ['pir-query-server', 'pir-publisher', 'enhance-pir-load-test']},
-                'seconds_per_step': args.seconds, 'results': []}
+                'seconds_per_step': args.seconds, 'profile': args.profile,
+                'fixture': {**PROFILES[args.profile], 'block_interval': args.block_interval}, 'results': []}
     with tempfile.TemporaryDirectory(prefix='enhance-pull-') as directory:
-        fleet = Fleet(binaries, directory, args.out)
+        fleet = Fleet(binaries, directory, args.out, profile=args.profile,
+                      block_interval=args.block_interval,
+                      sealed_shards=7 if args.profile == 'seven-sealed' else 6)
         publications = None
         try:
             fleet.start_roles()
             fleet.start_publisher()
-            manifest['initial_manifest'] = fleet.wait_ready()
+            manifest['initial_manifest'] = fleet.wait_ready(args.ready_timeout)
             origin, operator = fleet.origin, 'http://' + fleet.operator
             manifest['load_start_manifest'] = fetch(origin + '/v1/enhance/init')
             publications = Publications(origin, manifest['load_start_manifest'])
@@ -116,7 +129,9 @@ def main():
         finally:
             if publications is not None:
                 publications.close()
+                (args.out / 'publications.json').write_text(json.dumps(publications.report(), indent=2) + '\n')
             fleet.close()
+            manifest['resources'] = fleet.resource_report()
             source = Path(directory) / 'publisher'
             for name in ['source-mode']:
                 if (source / name).exists():

@@ -34,9 +34,9 @@ and that same format, adding CUDA only for qualified GPU workers.
 
 `pir-publisher enhance prepare-publication` prepares a complete publication from
 a stopped canonical journal and an exact wallet manifest. Runtime publishing
-uses canonical node RPC only; the isolated smoke checks supply a trusted RPC fixture,
-which writes `source-mode=synthetic-fixture` and refuses to adopt existing state.
-A canonical publisher rejects a directory carrying that synthetic marker.
+uses canonical node RPC only. The isolated smoke checks supply a trusted RPC
+fixture and fresh state directories. A canonical publisher rejects a directory
+carrying the old `source-mode=synthetic-fixture` marker.
 
 The small native fixtures cover independent record bytes, wallet decryption,
 real HTTPS, process restart and journal repair. `tools/enhance/scripts/test-local.py`
@@ -47,6 +47,19 @@ fixture chain continues advancing. The script retains
 logs/reports outside Git and cannot establish consensus or hardware qualification.
 Full profiles use explicit static consumer assignments;
 there is no publisher-owned inventory expansion.
+
+Select `--profile full-shard`, `five-shards`, `six-sealed` or `seven-sealed` for
+explicit deployed-size local checks. These use repeated public transactions in
+synthetic blocks, independent frozen record bytes at row/unit/shard boundaries,
+and the ordinary canonical publisher and serving executables. Sealed profiles
+include 1,000 confirmation blocks and then append into a successor. Use
+`--ready-timeout` for local cold preparation and `--block-interval` to exercise
+publication cadence; neither changes serving authority or production limits.
+Reports retain executable hashes, observed publications and sampled process RSS.
+These profiles do not replace Linux memory/swap, CUDA, real-chain or sustained
+production qualification. Seven sealed shards remain opt-in until qualified.
+The five-shard fixture can include sealed predecessors; it does not establish
+the separate worst case of five simultaneously growing shards.
 
 ## Fresh deployment layout
 
