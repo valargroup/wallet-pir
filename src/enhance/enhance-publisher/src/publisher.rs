@@ -470,12 +470,6 @@ mod tests {
             inventory.verify(publisher.distribution.root()).unwrap();
             assert!(inventory.supports(manifest).unwrap());
             assert!(publisher.work(&journal).unwrap().is_none());
-            journal.append_block(2, format!("{:064x}", 2), &[vec![1u8; enhance_query_server::RECORD_BYTES]]).unwrap();
-            let stale = publisher.work(&journal).unwrap().unwrap();
-            publisher.revoke_after(0).unwrap();
-            assert!(publisher.publish(stale).await.is_err());
-            let work = publisher.work(&journal).unwrap().unwrap();
-            publisher.publish(work).await.unwrap();
             let before_restart = publisher.distribution.durable_current();
             let old_work = publisher.work(&journal).unwrap();
             assert!(old_work.is_none());
@@ -485,6 +479,10 @@ mod tests {
             assert!(publisher.distribution.durable_current().withdrawal_revision > before_restart.withdrawal_revision);
             let work = publisher.work(&journal).unwrap().unwrap(); publisher.publish(work).await.unwrap();
             assert!(publisher.distribution.durable_current().manifest.unwrap().generation > before_restart.manifest.unwrap().generation);
+            journal.append_block(2, format!("{:064x}", 2), &[vec![1u8; enhance_query_server::RECORD_BYTES]]).unwrap();
+            let stale = publisher.work(&journal).unwrap().unwrap();
+            publisher.revoke_after(0).unwrap();
+            assert!(publisher.publish(stale).await.is_err(), "an eligible predecessor cannot authorize pre-withdrawal work");
             node.abort();
         }).await.expect("local publisher exceeded correctness budget");
     }

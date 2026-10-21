@@ -9,7 +9,7 @@ second command. Chain-node fixtures stay in qualification: they pull the
 wallet client and node stack into every crate on their command. Campaign
 targets are never selected. Test programs
 retain their package directory and Cargo environment.
-The Enhance hint oracle runs alone, as does the filter library on fewer than
+Enhance publication fixtures run alone, as does the filter library on fewer than
 eight cores. The remaining programs share a pool of at most three processes.
 """
 import json
@@ -430,7 +430,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
                              exclusive=publisher_runs_alone(name, target['kind'])
-                             or identity == ('pir-e2e-tests', 'ci_hint'),
+                             or identity == ('pir-e2e-tests', 'ci_hint')
+                             or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         programs.extend(bounded_programs(program, names))
