@@ -134,14 +134,105 @@ async fn single_unit_hint_matches_independent_generic_68() {
     hint_matches_generic(68).await;
 }
 
+fn sha256_file(path: &std::path::Path) -> String {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).unwrap();
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    hex::encode(hasher.finalize())
+}
+
+async fn sha256_response(mut response: reqwest::Response) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        hasher.update(&chunk);
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// One-byte or one-length edit of a hint file, remembered so it can be undone
+/// on the same inode. Replacing the file would leave the worker's open handle
+/// on the damaged inode and force another preparation.
+enum HintDamage {
+    Byte { offset: u64, saved: u8 },
+    Truncated { saved: u8 },
+    Trailing,
+}
+
+fn harm_hint(path: &std::path::Path, fault: &str, len: u64) -> HintDamage {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let damage = match fault {
+        "truncated" => {
+            file.seek(SeekFrom::End(-1)).unwrap();
+            let mut saved = [0u8; 1];
+            file.read_exact(&mut saved).unwrap();
+            file.set_len(len - 1).unwrap();
+            HintDamage::Truncated { saved: saved[0] }
+        }
+        "trailing" => {
+            file.seek(SeekFrom::End(0)).unwrap();
+            file.write_all(&[0]).unwrap();
+            HintDamage::Trailing
+        }
+        other => {
+            let offset = match other {
+                "shape" => 8,
+                "format" => 0,
+                _ => len - 1,
+            };
+            file.seek(SeekFrom::Start(offset)).unwrap();
+            let mut saved = [0u8; 1];
+            file.read_exact(&mut saved).unwrap();
+            file.seek(SeekFrom::Start(offset)).unwrap();
+            file.write_all(&[saved[0] ^ 1]).unwrap();
+            HintDamage::Byte {
+                offset,
+                saved: saved[0],
+            }
+        }
+    };
+    file.flush().unwrap();
+    damage
+}
+
+fn heal_hint(path: &std::path::Path, len: u64, damage: HintDamage) {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    match damage {
+        HintDamage::Truncated { saved } => {
+            file.set_len(len).unwrap();
+            file.seek(SeekFrom::End(-1)).unwrap();
+            file.write_all(&[saved]).unwrap();
+        }
+        HintDamage::Trailing => file.set_len(len).unwrap(),
+        HintDamage::Byte { offset, saved } => {
+            file.seek(SeekFrom::Start(offset)).unwrap();
+            file.write_all(&[saved]).unwrap();
+        }
+    }
+    file.flush().unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
     use enhance_query_server::{
         ipir::shard_artifact_dir,
         worker::{Abort, Retain},
     };
-    use sha2::Digest;
-    use std::io::{Seek, SeekFrom, Write};
     let root = tempfile::tempdir().unwrap();
     let (worker, mut candidate) = prepare_hint_fixture(root.path(), 67).await;
     let worker_root = root.path().join("worker-0");
@@ -149,52 +240,37 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         .join("artifacts-9")
         .join(candidate.plans[0].units[0].digest());
     let path = shard_artifact_dir(&artifact_root, DatabaseId::Enhance, 0).join("partial-crs.bin");
-    let original = std::fs::read(&path).unwrap();
+    let len = std::fs::metadata(&path).unwrap().len();
     let http = reqwest::Client::new();
     let url = format!("{}/internal/hint/0", worker.url);
-    // Each distinct fault is refused on these bytes. Re-preparing the runtime
-    // for every fault rebuilds the same candidate; qualification keeps that
-    // campaign. Fast re-opens the file for the other faults and recovers once
-    // over HTTP.
+    // Each distinct fault is refused on these bytes. The fast path edits the
+    // open file in place and keeps that runtime for the pin and retirement
+    // checks. Qualification still refuses every fault over HTTP, which retires
+    // the open file and prepares the same candidate again.
     let faults = ["corrupt", "truncated", "shape", "trailing", "format"];
     let degree = enhance_query_server::runtime::rlwe().d;
     let per_block = (degree * 8 + 4) * degree + 4;
-    assert_eq!((original.len() - 8) % per_block, 0, "hint encoding length");
-    let blocks = (original.len() - 8) / per_block;
-    let digest = hex::encode(sha2::Sha256::digest(&original));
-    assert!(
+    assert_eq!((len - 8) % per_block as u64, 0, "hint encoding length");
+    let blocks = ((len - 8) / per_block as u64) as usize;
+    let digest = serde_json::from_reader::<_, serde_json::Value>(
+        std::fs::File::open(path.with_file_name("metadata.json")).unwrap(),
+    )
+    .unwrap()["crs_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let hint_ok = |path: &std::path::Path| {
         enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
-            &path,
-            original.len() as u64,
-            &digest,
-            blocks,
-            degree,
+            path, len, &digest, blocks, degree,
         )
-        .is_ok(),
+    };
+    assert!(
+        hint_ok(&path).is_ok(),
         "prepared hint must pass the worker checks"
     );
-    let damage = |fault: &str| {
-        let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-        match fault {
-            "truncated" => file.set_len(original.len() as u64 - 1).unwrap(),
-            "trailing" => {
-                file.seek(SeekFrom::End(0)).unwrap();
-                file.write_all(&[0]).unwrap();
-            }
-            _ => {
-                let offset = match fault {
-                    "shape" => 8,
-                    "format" => 0,
-                    _ => original.len() - 1,
-                };
-                file.seek(SeekFrom::Start(offset as u64)).unwrap();
-                file.write_all(&[original[offset] ^ 1]).unwrap();
-            }
-        }
-    };
     if cfg!(feature = "qualification-tests") {
         for fault in faults {
-            damage(fault);
+            let damage = harm_hint(&path, fault, len);
             let response = http.get(&url).send().await.unwrap();
             assert_eq!(
                 response.status(),
@@ -202,6 +278,7 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
                 "{fault}"
             );
             let _ = response.bytes().await.unwrap();
+            heal_hint(&path, len, damage);
             hint_command(
                 &http,
                 &worker.url,
@@ -213,52 +290,16 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
                 },
             )
             .await;
-            let replacement = path.with_extension("replacement");
-            std::fs::write(&replacement, &original).unwrap();
-            std::fs::rename(replacement, &path).unwrap();
             candidate.attempt += 1;
             hint_command(&http, &worker.url, "reserve", &candidate).await;
             hint_command(&http, &worker.url, "prepare", &candidate).await;
         }
     } else {
         for fault in faults {
-            damage(fault);
-            assert!(
-                enhance_query_server::artifact::PublicationArtifact::revalidate_hint_file(
-                    &path,
-                    original.len() as u64,
-                    &digest,
-                    blocks,
-                    degree,
-                )
-                .is_err(),
-                "{fault}"
-            );
-            let replacement = path.with_extension("replacement");
-            std::fs::write(&replacement, &original).unwrap();
-            std::fs::rename(replacement, &path).unwrap();
+            let damage = harm_hint(&path, fault, len);
+            assert!(hint_ok(&path).is_err(), "{fault}");
+            heal_hint(&path, len, damage);
         }
-        damage("corrupt");
-        let response = http.get(&url).send().await.unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
-        let _ = response.bytes().await.unwrap();
-        hint_command(
-            &http,
-            &worker.url,
-            "abort",
-            &Abort {
-                epoch: candidate.epoch,
-                operation: candidate.operation.clone(),
-                attempt: candidate.attempt,
-            },
-        )
-        .await;
-        let replacement = path.with_extension("replacement");
-        std::fs::write(&replacement, &original).unwrap();
-        std::fs::rename(replacement, &path).unwrap();
-        candidate.attempt += 1;
-        hint_command(&http, &worker.url, "reserve", &candidate).await;
-        hint_command(&http, &worker.url, "prepare", &candidate).await;
     }
     // Disconnect does not poison healthy shared validation state.
     drop(http.get(&url).send().await.unwrap());
@@ -297,24 +338,24 @@ async fn single_unit_hint_rejects_damage_and_pins_retired_file() {
         !artifact_root.exists(),
         "retirement must reclaim the unit directory"
     );
-    assert_eq!(response.bytes().await.unwrap().as_ref(), original);
-    // A saved path alone cannot authorize serving, even if it contains valid bytes.
+    assert_eq!(sha256_response(response).await, digest);
+    // A saved path alone cannot authorize serving, even when it holds the
+    // prepared bytes. Copying keeps the shared fixture's inode untouched.
+    let relative = path.strip_prefix(&worker_root).unwrap();
+    let source = encrypted::shared_hint_fixture(&candidate.plans[0]);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, &original).unwrap();
+    std::fs::copy(source.join(relative), &path).unwrap();
     let response = http.get(&url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
     let _ = response.bytes().await.unwrap();
     // Corruption, unlinking and retirement touched only this worker's copy.
     {
-        let relative = path.strip_prefix(&worker_root).unwrap();
-        let source = encrypted::shared_hint_fixture(&candidate.plans[0]);
         let mut next_epoch = candidate.plans[0].clone();
         next_epoch.units[0].recovery_epoch += 1;
         assert_eq!(encrypted::shared_hint_fixture(&next_epoch), source);
         next_epoch.units[0].content_sha256 = "00".repeat(32);
         assert_ne!(encrypted::shared_hint_fixture(&next_epoch), source);
-        let retained = std::fs::read(source.join(relative)).unwrap();
-        assert_eq!(retained, original);
+        assert_eq!(sha256_file(&source.join(relative)), digest);
     }
     drop(http);
     worker.stop().await;
