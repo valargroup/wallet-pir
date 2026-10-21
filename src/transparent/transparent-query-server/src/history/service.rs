@@ -121,6 +121,19 @@ pub struct Inner {
     /// every runtime itself, as it always has.
     shipped: Option<ShippedRuntimes>,
     archive: Option<Arc<crate::routing::archive::Archive>>,
+    /// The body checksum of each required runtime file, by name, whose bytes
+    /// this snapshot's verification self-checked or matched to an earlier
+    /// check; see [`ServiceState::verify_required_material`].
+    verified_material: std::sync::Mutex<HashMap<std::ffi::OsString, [u8; 32]>>,
+}
+
+/// What one [`ServiceState::verify_required_material`] did per runtime file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct MaterialVerification {
+    /// Files loaded and fully self-checked here.
+    pub checked: usize,
+    /// Files the previous snapshot checked whose inode is unchanged.
+    pub reused: usize,
 }
 
 #[derive(Clone)]
@@ -364,6 +377,7 @@ impl ServiceState {
                 prewarm_slots,
                 shipped,
                 archive: previous.and_then(|s| s.inner.archive.clone()),
+                verified_material: Default::default(),
             }),
         })
     }
@@ -503,10 +517,27 @@ impl ServiceState {
     /// A reused in-memory runtime cannot verify the replacement's persistent
     /// native files. Required providers verify those files independently before
     /// committing a restart pointer, even on an unchanged map/cache hit.
-    pub(crate) fn verify_required_material(&self) -> Result<(), String> {
+    ///
+    /// A file `previous` verified is accepted again without loading or
+    /// self-checking it only under the same name, which commits to the
+    /// runtime key, parameters and source digest, and only once every byte of
+    /// it has been hashed from one open handle and found equal to the bytes
+    /// that check loaded. Anything else is loaded from that handle and
+    /// self-checked in full, and the evidence kept is the checksum those
+    /// loaded bytes matched. Only a fully verified snapshot keeps evidence, and
+    /// only for its own current files.
+    pub fn verify_required_material(
+        &self,
+        previous: Option<&Self>,
+    ) -> Result<MaterialVerification, String> {
         let Some(shipped) = &self.inner.shipped else {
             return Err("provider requires prepared runtimes".into());
         };
+        let proven = previous
+            .map(|s| s.inner.verified_material.lock().unwrap().clone())
+            .unwrap_or_default();
+        let mut verified = HashMap::new();
+        let mut done = MaterialVerification::default();
         for shard in self.inner.set.current() {
             for table in shard.tables() {
                 let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
@@ -519,16 +550,45 @@ impl ServiceState {
                         table.kind(),
                         segment,
                     );
-                    let runtime = shipped
-                        .load(&key, shared, source.sha256())
-                        .map_err(|e| e.to_string())?;
-                    runtime
-                        .self_check(shared, &source.load().map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?;
+                    let path = shipped.path(&key, shared, source.sha256());
+                    let name = path.file_name().ok_or("unnamed runtime")?.to_owned();
+                    let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+                    let unchanged = proven.get(&name).filter(|proven| {
+                        ShippedRuntimes::checksum_file(&file, &key, shared, source.sha256())
+                            .is_ok_and(|checksum| &checksum == *proven)
+                    });
+                    let checksum = match unchanged {
+                        Some(checksum) => {
+                            done.reused += 1;
+                            *checksum
+                        }
+                        None => {
+                            let (runtime, checksum) = ShippedRuntimes::load_file_checked(
+                                file,
+                                &key,
+                                shared,
+                                source.sha256(),
+                            )
+                            .map_err(|e| e.to_string())?;
+                            runtime
+                                .self_check(shared, &source.load().map_err(|e| e.to_string())?)
+                                .map_err(|e| e.to_string())?;
+                            done.checked += 1;
+                            checksum
+                        }
+                    };
+                    verified.insert(name, checksum);
                 }
             }
         }
-        Ok(())
+        *self.inner.verified_material.lock().unwrap() = verified;
+        tracing::info!(
+            map = %self.inner.set.map_digest,
+            checked = done.checked,
+            reused = done.reused,
+            "required runtime material verified"
+        );
+        Ok(done)
     }
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
         if self

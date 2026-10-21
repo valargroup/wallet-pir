@@ -148,7 +148,32 @@ impl DiskCache {
         shared: &SharedParams,
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
-        let mut file = File::open(self.path(key, shared, source_sha))?;
+        Self::load_file(
+            File::open(self.path(key, shared, source_sha))?,
+            key,
+            shared,
+            source_sha,
+        )
+    }
+
+    /// [`Self::load`] from an already open entry, read from its start.
+    fn load_file(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        Self::load_file_checked(file, key, shared, source_sha).map(|(runtime, _)| runtime)
+    }
+
+    /// [`Self::load_file`], with the body checksum the loaded bytes matched.
+    fn load_file_checked(
+        mut file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<(TableRuntime, [u8; 32])> {
+        file.seek(SeekFrom::Start(0))?;
         let length = file.metadata()?.len();
         if !Self::entry_bytes_range(shared).contains(&length) {
             return Err(invalid("runtime cache length mismatch"));
@@ -206,7 +231,43 @@ impl DiskCache {
         // Mapped preprocessing pages are not dropped by the advice; the
         // database and mask pages already copied into owned memory are.
         crate::runtime::filecache::consumed(&file);
-        Ok(runtime)
+        Ok((runtime, header[32..].try_into().expect("checksum bytes")))
+    }
+
+    /// The body checksum of an open entry for this identity, after hashing
+    /// every byte past its header from `file` and finding they match it.
+    /// Nothing is parsed or allocated beyond a read buffer.
+    fn checksum_file(
+        mut file: &File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<[u8; 32]> {
+        file.seek(SeekFrom::Start(0))?;
+        let length = file.metadata()?.len();
+        if !Self::entry_bytes_range(shared).contains(&length) {
+            return Err(invalid("runtime cache length mismatch"));
+        }
+        let mut header = [0u8; HEADER_BYTES as usize];
+        file.read_exact(&mut header)?;
+        if header[..32] != Self::identity(key, shared, source_sha) {
+            return Err(invalid("runtime cache identity mismatch"));
+        }
+        let mut hash = Sha256::new();
+        let mut buffer = vec![0u8; 1 << 20];
+        let mut remaining = length - HEADER_BYTES;
+        while remaining > 0 {
+            let read = file.read(&mut buffer[..remaining.min(1 << 20) as usize])?;
+            if read == 0 {
+                return Err(invalid("runtime cache changed while hashing"));
+            }
+            hash.update(&buffer[..read]);
+            remaining -= read as u64;
+        }
+        if hash.finalize().as_slice() != &header[32..] {
+            return Err(invalid("runtime cache checksum mismatch"));
+        }
+        Ok(header[32..].try_into().expect("checksum bytes"))
     }
 
     /// A 16-bit table's column-major u16 database, fed straight into the
@@ -554,6 +615,41 @@ impl ShippedRuntimes {
         source_sha: &str,
     ) -> io::Result<TableRuntime> {
         self.0.load(key, shared, source_sha)
+    }
+
+    /// [`Self::load`] from a handle the caller opened at [`Self::path`], so
+    /// the loaded bytes are those of the inode the caller already read.
+    pub fn load_file(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        DiskCache::load_file(file, key, shared, source_sha)
+    }
+
+    /// [`Self::load_file`], also returning the body checksum in the header
+    /// the loaded bytes matched: evidence of exactly the bytes loaded.
+    pub fn load_file_checked(
+        file: File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<(TableRuntime, [u8; 32])> {
+        DiskCache::load_file_checked(file, key, shared, source_sha)
+    }
+
+    /// The body checksum of the open file for `key`, read without loading
+    /// it: its length and header identity are checked and every byte past
+    /// the header is hashed from `file` and must match the checksum. Equal
+    /// checksums mean equal bytes to what an earlier load verified.
+    pub fn checksum_file(
+        file: &File,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<[u8; 32]> {
+        DiskCache::checksum_file(file, key, shared, source_sha)
     }
 
     /// The length of the completed file this directory holds for `key`, if
@@ -1359,6 +1455,42 @@ mod shipped_tests {
                 );
             }
         }
+    }
+
+    /// A load from an open handle checks that inode, not whatever the path
+    /// names by then: a publisher that hashed a corrupt file is refused even
+    /// if a valid one replaces it before the check, and the reverse holds.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_handle_load_checks_the_opened_inode_not_its_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 2_048, 4);
+        let local = crate::runtime::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        let shipped = candidate(dir.path(), "replaced");
+        let path = shipped.path(&s.key, &s.shared, s.source.sha256());
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &local)
+            .unwrap();
+        let valid = fs::read(&path).unwrap();
+        let mut corrupt = valid.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x40;
+        let replace = |bytes: &[u8]| {
+            let staged = path.with_extension("staged");
+            fs::write(&staged, bytes).unwrap();
+            fs::rename(&staged, &path).unwrap();
+        };
+        let load = |file| ShippedRuntimes::load_file(file, &s.key, &s.shared, s.source.sha256());
+
+        replace(&corrupt);
+        let opened = File::open(&path).unwrap();
+        replace(&valid);
+        assert!(load(opened).is_err());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_ok());
+
+        let opened = File::open(&path).unwrap();
+        replace(&corrupt);
+        assert!(load(opened).is_ok());
+        assert!(shipped.load(&s.key, &s.shared, s.source.sha256()).is_err());
     }
 
     /// Missing, truncated, corrupted and wrongly named shipped files are all
