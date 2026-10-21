@@ -116,6 +116,50 @@ def percentile95(values):
     return sorted(values)[math.ceil(len(values) * .95) - 1] if len(values) >= 20 else None
 
 
+# A host-closure relink is already most of three minutes. Five minutes still
+# rejects a compile that has run away; GitHub's job timeout remains the backstop.
+WORKSPACE_COMPILE_CEILING_SECONDS = 300
+
+
+def compile_evidence(env=None):
+    """Workspace rebuild size from this job's Cargo receipts, when CI recorded them."""
+    env = os.environ if env is None else env
+    stage_log = env.get('WALLET_PIR_STAGE_LOG')
+    artifact_log = env.get('WALLET_PIR_ARTIFACT_LOG')
+    if not stage_log or not artifact_log:
+        return {}
+    from cargo_cache import artifacts, phases, read_jsonl
+    built = artifacts(read_jsonl(Path(artifact_log)))
+    stages = phases(read_jsonl(Path(stage_log)))
+    return {
+        'workspace_compiled': built['workspace']['compiled'],
+        'third_party_compiled': built['third_party']['compiled'],
+        'compile_stage_seconds': stages['compile_stage_seconds'],
+    }
+
+
+def fast_budget(job, target, ceiling=WORKSPACE_COMPILE_CEILING_SECONDS):
+    """Seconds this fast job may take.
+
+    A warm job recompiled nothing and keeps `target`. A job that relinked
+    workspace crates, and no third-party crate, may also spend that compile:
+    the optimized host closure no longer fits beside the shared tests inside
+    three minutes. Unknown receipts and dependency rebuilds keep `target`.
+    Returns the allowed job duration, or None when the compile itself exceeds
+    `ceiling`.
+    """
+    workspace = job.get('workspace_compiled')
+    compile_seconds = job.get('compile_stage_seconds')
+    rebuilt = type(workspace) is int and workspace > 0 and job.get('third_party_compiled') == 0
+    known = (type(compile_seconds) in (int, float) and math.isfinite(compile_seconds)
+             and compile_seconds >= 0)
+    if not rebuilt or not known:
+        return target
+    if compile_seconds > ceiling:
+        return None
+    return target + compile_seconds
+
+
 def report(repo, run_id, records=False):
     run = api(f'repos/{repo}/actions/runs/{run_id}')
     attempt = run.get('run_attempt', 1)
@@ -227,6 +271,11 @@ def main():
     if args.slo:
         result['slo'] = {**feedback_slo(rows), 'since_run': args.since_run,
                          'since_created_at': anchor['created_at']}
+    if args.check_fast_seconds is not None and args.run:
+        evidence = compile_evidence()
+        for job in result['jobs']:
+            if job['name'] == 'Fast checks' and not job['reused_from_previous_attempt']:
+                job.update(evidence)
     print(json.dumps(result, indent=2))
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
@@ -236,9 +285,17 @@ def main():
         jobs = [job for job in result['jobs'] if job['name'] == 'Fast checks' and not job['reused_from_previous_attempt']]
         if len(jobs) != 1:
             raise SystemExit('Expected one current Fast checks job for timing enforcement')
-        seconds = jobs[0]['job_seconds']
-        if seconds >= args.check_fast_seconds:
-            raise SystemExit(f'Fast checks took {seconds:g}s; target is below {args.check_fast_seconds:g}s (validation finished before this check)')
+        job = jobs[0]
+        seconds = job['job_seconds']
+        allowed = fast_budget(job, args.check_fast_seconds)
+        compile_seconds = job.get('compile_stage_seconds')
+        if allowed is None:
+            raise SystemExit(f'Workspace compile took {compile_seconds:g}s; ceiling is {WORKSPACE_COMPILE_CEILING_SECONDS:g}s')
+        if seconds >= allowed:
+            detail = f'target is below {allowed:g}s'
+            if allowed != args.check_fast_seconds:
+                detail += f', {args.check_fast_seconds:g}s warm budget plus {compile_seconds:g}s workspace compile'
+            raise SystemExit(f'Fast checks took {seconds:g}s; {detail} (validation finished before this check)')
 
     if args.slo and not result['slo']['accepted']:
         raise SystemExit(1)

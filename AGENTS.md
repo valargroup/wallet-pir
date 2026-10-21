@@ -58,7 +58,7 @@ subcommands, and product features are selected independently.
 
 ## Iteration and validation
 
-- Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. Retain full service qualification separately.
+- Temporarily let PR and main CI validation finish without a three-minute cancellation; enforce the three-minute timing check only after validation on pushes to main. A warm run must finish in three minutes. A run that relinks workspace crates may add that compile time, and a compile over five minutes still fails. Retain full service qualification separately.
 - Keep every automated CPU correctness test below 30 seconds and the complete
   warm correctness run below five minutes, including incremental compilation,
   setup, teardown, tooling and lint. `make check-correctness` enforces the budget;
