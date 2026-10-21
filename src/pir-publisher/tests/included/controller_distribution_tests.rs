@@ -35,6 +35,7 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         observed: RwLock::new(BTreeMap::new()),
         membership: None,
         prepared_set: std::sync::Mutex::new(None),
+        checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
     }))
