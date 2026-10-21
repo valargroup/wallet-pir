@@ -34,6 +34,7 @@ const SESSION_LIMIT: usize = 32 * 1024 * 1024;
 pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
+    #[serde(deserialize_with = "crate::synchronization::domains")]
     pub routers: BTreeMap<u64, Vec<String>>,
 }
 impl Config {
@@ -437,6 +438,9 @@ impl SyncTask for Synchronizer {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance ingress synchronization deferred");
         }
+    }
+    fn terminal(&self, error: &Error) -> bool {
+        pir_sync_manager::is_incompatible(error.as_ref())
     }
 }
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {

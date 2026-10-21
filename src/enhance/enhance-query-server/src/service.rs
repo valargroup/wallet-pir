@@ -146,7 +146,7 @@ pub async fn run_ingress_on(
         };
         tokio::select! {
             result = serving => result?,
-            _ = manager.run() => return Err("Enhance ingress synchronization stopped".into()),
+            error = manager.run() => return Err(error),
         }
         return Ok(());
     }
@@ -337,7 +337,7 @@ impl ServingRole {
         }
         Ok(())
     }
-    /// Check publisher service discovery for an autonomous worker or router.
+    /// Check publisher service discovery for every autonomous Enhance role.
     /// The host runs this before binding listeners or opening state; legacy
     /// push roles have no publisher origin and are not checked.
     pub async fn discover(&self) -> Result<(), Error> {
@@ -347,6 +347,10 @@ impl ServingRole {
                 ..
             } => sync.source.discover().await,
             Self::PackingRouter {
+                synchronization: Some(sync),
+                ..
+            } => sync.source.discover().await,
+            Self::QueryIngress {
                 synchronization: Some(sync),
                 ..
             } => sync.source.discover().await,

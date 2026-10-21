@@ -35,22 +35,10 @@ pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
     /// Domain responsibilities and private worker replicas are local configuration.
-    #[serde(deserialize_with = "domains")]
+    #[serde(deserialize_with = "crate::synchronization::domains")]
     pub workers: BTreeMap<u64, Vec<String>>,
-    #[serde(default, deserialize_with = "domains")]
+    #[serde(default, deserialize_with = "crate::synchronization::domains")]
     pub preferred: BTreeMap<u64, BTreeSet<String>>,
-}
-/// JSON object keys are strings. Inside the host's tagged role and this
-/// flattened source they are not converted to integers, so parse them here.
-fn domains<'de, D, V>(deserializer: D) -> Result<BTreeMap<u64, V>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    V: Deserialize<'de>,
-{
-    BTreeMap::<String, V>::deserialize(deserializer)?
-        .into_iter()
-        .map(|(domain, value)| Ok((domain.parse().map_err(serde::de::Error::custom)?, value)))
-        .collect()
 }
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
