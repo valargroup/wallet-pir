@@ -576,6 +576,21 @@ pub(crate) async fn repair_failed(source: &mut crate::source::Source, root: &Pat
     repair(&core(), source, root).await;
 }
 
+// A cancelled synchronization must leave the artifact retryable and remove its
+// unfinished replacement. Ownership transfers to the checker only after enqueue.
+struct IncomingRepair {
+    job: Arc<Job>,
+    path: Option<PathBuf>,
+}
+impl Drop for IncomingRepair {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+            self.job.phase.store(FAILED, Ordering::Release);
+        }
+    }
+}
+
 async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Path) {
     use tokio::io::AsyncWriteExt;
     let jobs: Vec<_> = {
@@ -590,14 +605,18 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
             .filter(|job| {
                 job.enabled.load(Ordering::Acquire)
                     && job.expected.object.parent() == Some(root.join("objects").as_path())
-                    && job
-                        .phase
-                        .compare_exchange(FAILED, REPAIRING, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok()
+                    && job.phase.load(Ordering::Acquire) == FAILED
             })
             .collect()
     };
     for job in jobs {
+        if job
+            .phase
+            .compare_exchange(FAILED, REPAIRING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            continue;
+        }
         let partial = root.join("objects").join(format!(
             "{}.validation.repair-{}",
             job.expected.sha256,
@@ -606,12 +625,18 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
                 .unwrap()
                 .as_nanos()
         ));
+        let mut incoming = IncomingRepair {
+            job: job.clone(),
+            path: Some(partial.clone()),
+        };
         let result = async {
-            let mut output = tokio::fs::OpenOptions::new()
+            // Create synchronously so cancellation cannot race a pending open
+            // that creates the file after the cleanup guard has removed it.
+            let output = std::fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
-                .open(&partial)
-                .await?;
+                .open(&partial)?;
+            let mut output = tokio::fs::File::from_std(output);
             let mut response = source
                 .get(&format!("artifacts/{}", job.expected.sha256))
                 .await?;
@@ -639,13 +664,11 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
             Ok(()) => {
                 core.shared.state.lock().unwrap().queue.push_back(Work {
                     job: Arc::downgrade(&job),
-                    replacement: Some(partial),
+                    replacement: incoming.path.take(),
                 });
                 core.shared.wake.notify_all();
             }
             Err(error) => {
-                let _ = std::fs::remove_file(partial);
-                job.phase.store(FAILED, Ordering::Release);
                 tracing::warn!(%error, sha256 = %job.expected.sha256, "withdrawn artifact repair deferred");
             }
         }

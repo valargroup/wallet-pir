@@ -40,6 +40,38 @@ async fn phase(job: &Job, phase: u8) {
 }
 
 #[tokio::test]
+async fn cancelled_repair_removes_its_file_and_allows_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let (path, _) = artifact(root.path(), b"expected", b"wrong!!!");
+    let mut scope = scope();
+    scope.add("first", 1, &path, &cache(), &key("first"));
+    let job = scope.revisions["first"].1[0].clone();
+    job.phase.store(REPAIRING, Ordering::Release);
+    let partial = root.path().join("cancelled-repair");
+    std::fs::write(&partial, b"unfinished").unwrap();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let path = partial.clone();
+    let repairing = job.clone();
+    let task = tokio::spawn(async move {
+        let _incoming = IncomingRepair {
+            job: repairing,
+            path: Some(path),
+        };
+        started.send(()).unwrap();
+        std::future::pending::<()>().await;
+    });
+    ready.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!partial.exists());
+    assert_eq!(job.phase.load(Ordering::Acquire), FAILED);
+    assert!(job
+        .phase
+        .compare_exchange(FAILED, REPAIRING, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok());
+}
+
+#[tokio::test]
 async fn receipt_and_activation_do_not_hash_while_queries_have_priority() {
     let root = tempfile::tempdir().unwrap();
     let (path, _) = artifact(root.path(), b"expected", b"wrong!!!");

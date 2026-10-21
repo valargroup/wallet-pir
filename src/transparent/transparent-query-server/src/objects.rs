@@ -145,6 +145,7 @@ fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Res
 /// one read-only inode that nothing writes, so it is not hashed again here.
 /// Only a filesystem that explicitly cannot link falls back to a copy, which
 /// is then verified on its own.
+#[cfg(test)]
 pub(crate) fn link_object(
     object: &std::path::Path,
     target: &std::path::Path,
@@ -244,7 +245,7 @@ pub(crate) fn stage_object(
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            link_object(object, &source, artifact, |a, b| std::fs::hard_link(a, b))?;
+            link_object_locked(object, &source, artifact, |a, b| std::fs::hard_link(a, b))?;
             // The copy fallback creates new data outside the stage tree.
             // Sync it here because syncing the stage does not follow directory links.
             std::fs::File::open(&source)?.sync_all()?;
