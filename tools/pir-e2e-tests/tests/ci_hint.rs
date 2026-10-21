@@ -1,6 +1,15 @@
 //! Independent hint oracles and damaged-artifact checks over real HTTP.
+//!
+//! The other fast Enhance contracts live in this executable so a publisher or
+//! query-server change links them once. Each contract still runs.
+#[path = "boundary_recovery_model.rs"]
+mod boundary_recovery_model;
 #[path = "support/encrypted.rs"]
 mod encrypted;
+#[path = "record_layout.rs"]
+mod record_layout;
+#[path = "status_routes.rs"]
+mod status_routes;
 use encrypted::{record, workers, Listening};
 use enhance_query_server::types::DatabaseId;
 use std::sync::{atomic::AtomicBool, Arc};

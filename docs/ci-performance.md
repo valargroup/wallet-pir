@@ -127,7 +127,9 @@ removed-member and unrecognized changes retain complete workspace coverage.
 CI tooling changes run tool tests and workflow contracts; they retain broad full
 qualification without starting unrelated operations fixtures in fast feedback.
 Documentation-only changes run documentation checks without installing Rust.
-Operations-only changes run helper checks without compiling Rust. Main compares against
+Operations-only changes run helper checks without compiling Rust. Non-CI
+workflows, including publish, deploy and configure, are operations inputs:
+they run workflow contracts and do not select the Rust workspace. Main compares against
 the last successful main fast run or a newer completed full fast preparation on
 main's ancestry. Preparation reuse requires successful complete-workspace compile
 and validation plus affected-graph validation from the same successful attempt

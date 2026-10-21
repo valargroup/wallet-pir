@@ -79,10 +79,7 @@
   },
   "pir-e2e-tests": {
     "fast": [
-      "boundary_recovery_model",
-      "ci_hint",
-      "record_layout",
-      "status_routes"
+      "ci_hint"
     ],
     "full": [
       "canonical_record",
