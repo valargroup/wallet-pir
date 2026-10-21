@@ -375,7 +375,7 @@ pub struct Synchronizer {
 impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
         self.ingress.maintain().await;
-        self.client.begin();
+        self.client.begin().await?;
         let response = self.client.current().await?;
         let manifest = response
             .current
