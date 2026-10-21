@@ -342,7 +342,7 @@ impl StatePreviousOutputs<'_> {
         else {
             return Ok(None);
         };
-        let mut bytes = raw.raw_bytes();
+        let mut bytes = raw.raw_bytes().as_slice();
         let transaction = Transaction::zcash_deserialize(&mut bytes)?;
         if !bytes.is_empty() {
             return Err("trailing bytes after previous transaction".into());

@@ -67,7 +67,8 @@ async fn the_database_reader_agrees_with_rpc_and_refuses_missing_blocks() {
     let mined = coinbase(1, &[(50_000, P2PKH), (20_000, ODD)]);
     // A shielded parent also pays a transparent output. Resolving it must read
     // the complete transaction boundary and identity before copying that output.
-    let shielded_parent = Mixed::new(vec![], &[5_000], 5_000).build();
+    // Its Ironwood balance is zero: the pool is empty at height 1.
+    let shielded_parent = Mixed::new(vec![], &[5_000], 0).build();
     let first = child(&genesis, &[mined.clone(), shielded_parent.clone()]);
     let parent = transfer(
         vec![
