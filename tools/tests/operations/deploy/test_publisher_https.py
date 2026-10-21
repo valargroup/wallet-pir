@@ -155,6 +155,25 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         archive = self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']
         self.assertEqual(snapshots['transparent_history']['verification_cache_bytes'], archive['cache_bytes'])
 
+    def test_smaller_additional_allowance_still_preserves_free_disk(self):
+        self.request['https']['publisher_budget_bytes'] = 16 << 30
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.deploy()
+        for record in self.target.latest()['warm_snapshots'].values():
+            self.assertEqual(record['disk_bytes'] - record['retained_runtime_bytes'], 16 << 30)
+
+        self.request['https']['publisher_budget_bytes'] = 1 << 60
+        self.target = self.make_target()
+        with self.assertRaisesRegex(DeployError, '20 percent disk headroom'):
+            self.target.plan()
+
+    def test_additional_allowance_must_be_positive(self):
+        for allowance in (0, -1, True):
+            self.request['https']['publisher_budget_bytes'] = allowance
+            with self.assertRaisesRegex(DeployError, 'positive additional disk allowance'):
+                self.make_target()
+
     def test_archive_memory_budget_cannot_be_an_implicit_native_default(self):
         del self.request['https']['consumers'][0]['configuration']['transparent_history']['settings']['cache_bytes']
         with self.assertRaisesRegex(DeployError, 'archive cache memory budget must be explicit'):

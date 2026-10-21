@@ -303,8 +303,11 @@ release, serving and exact-check fields. Only `http_only` and `ship_runtimes` ma
 change to true for both Transparent products, plus `distribute_prepared` for
 history. All other installed product settings must match. The additional `https`
 object contains the existing publisher TLS `origin`, a `publisher_budget_bytes`
-staging allowance of at least 32 GiB, and three ordered `consumers`: history
-archive, history recent, and combined transaction details. Each consumer names
+positive allowance for additional staging writes, and three ordered `consumers`: history
+archive, history recent, and combined transaction details. Choose the additional
+allowance using the remaining work after completed runtime files are reused;
+the tool reserves 20 percent free disk and checks native cache capacity before
+switching the live fleet. Each consumer names
 its existing `host` and `unit`, a root-owned `config_path`, its root query-server
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate

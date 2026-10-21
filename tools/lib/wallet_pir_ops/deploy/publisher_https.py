@@ -71,8 +71,8 @@ def validate(request, inventory):
     require(origin.scheme == 'https' and origin.hostname and origin.port in (None, 443)
             and not origin.username and not origin.password and origin.path in ('', '/')
             and not origin.query and not origin.fragment, 'publisher must use a trusted HTTPS origin')
-    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] >= 32 << 30,
-            'full prepared publications need at least a 32 GiB publisher staging budget')
+    require(type(settings['publisher_budget_bytes']) is int and settings['publisher_budget_bytes'] > 0,
+            'publisher preparation needs a positive additional disk allowance')
     consumers = settings['consumers']
     edge = settings['history_edge']
     require(isinstance(edge, dict) and set(edge) == {'host', 'origin', 'before_sha256'}
