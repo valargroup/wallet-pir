@@ -8,7 +8,9 @@ use super::*;
 use crate::tx_detail::fixture::{self, chain_records};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::fixture::{block_hash, chain_sources};
-use crate::tx_detail::offline::{bench_recent, plan_start, synthetic_records, verify};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::offline::{bench_recent, synthetic_records};
+use crate::tx_detail::offline::{plan_start, verify};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::publisher::CANDIDATE_PREFIX;
 use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
@@ -24,6 +26,7 @@ use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 #[cfg(feature = "qualification-tests")]
 use transparent_filter::BlockHash;
+#[cfg(feature = "qualification-tests")]
 use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
 #[cfg(feature = "qualification-tests")]
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
@@ -1464,6 +1467,7 @@ fn verify_reproduces_a_running_root() {
     }
 }
 
+#[cfg(feature = "qualification-tests")]
 #[test]
 fn bench_records_follow_the_requested_case_mix() {
     // Large enough that the 1% of outputs without an address is countable.
