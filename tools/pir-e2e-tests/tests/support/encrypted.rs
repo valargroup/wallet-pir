@@ -170,7 +170,10 @@ fn fixture_plan(
     fixture
 }
 
-fn seed_hint_fixture(root: &std::path::Path, plan: &enhance_query_server::runtime::DomainPlan) {
+pub(super) fn seed_hint_fixture(
+    root: &std::path::Path,
+    plan: &enhance_query_server::runtime::DomainPlan,
+) {
     let prepared = shared_hint_fixture(plan);
     let cache = prepared.parent().unwrap();
     std::fs::create_dir_all(cache).unwrap();

@@ -1,5 +1,5 @@
 //! The real publisher distribution router, node RPC and TLS transport.
-use super::encrypted::{record, serve};
+use super::encrypted::{record, seed_hint_fixture, serve};
 use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
@@ -49,21 +49,11 @@ impl Published {
         .unwrap();
         let publisher = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(
-                &root,
-                Lifecycle::default()
-                    .coverage(67, Geometry::default())
-                    .unwrap(),
-                &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap()
-        .inventory()
-        .clone();
+        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&root, 67))
+            .await
+            .unwrap()
+            .inventory()
+            .clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -457,9 +447,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
-        let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
-            Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
+        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&preparing, 67)).await.unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -560,6 +548,24 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         assert!(synchronizer.poll_once().await.is_err());
         assert!(!http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success(), "revocation closes loaded material");
     }).await.expect("autonomous worker lifecycle exceeded correctness budget");
+}
+
+/// Prepare a publication of `count` fixture records through the real publisher.
+/// The publisher's evaluation engine starts from the process-wide hint fixture,
+/// as test workers do; it still loads and validates those bytes, and rows,
+/// packing, setup and every published object are produced and hashed here.
+fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publication::Prepared {
+    let read =
+        |start: u64, count: usize| Ok((start..start + count as u64).flat_map(record).collect());
+    let coverage = Lifecycle::default()
+        .coverage(count, Geometry::default())
+        .unwrap();
+    for shard in &coverage.shards {
+        let plan = enhance_query_server::runtime::plan(shard.clone(), read).unwrap();
+        seed_hint_fixture(&root.join("preparation"), &plan);
+    }
+    enhance_publisher::publication::prepare(root, coverage, &[(0, "0".into())].into(), read)
+        .unwrap()
 }
 
 /// A publisher's distribution routes with the service discovery that a
@@ -697,10 +703,8 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert_eq!(before.observed_unix_ms, 0);
         let prepare_root = root.clone();
         let prepared = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(&prepare_root,
-                Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()))
-        }).await.unwrap().unwrap();
+            prepare_publication(&prepare_root, 67)
+        }).await.unwrap();
         let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
@@ -807,10 +811,8 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
-        let initial = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(
-            &prepare_root, Lifecycle::default().coverage(1, Geometry::default()).unwrap(),
-            &[(0, "0".into())].into(), |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-        )).await.unwrap().unwrap().inventory().clone();
+        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 1))
+            .await.unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
