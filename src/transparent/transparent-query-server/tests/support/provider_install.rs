@@ -394,7 +394,12 @@ async fn installation_case(case: Case) {
         };
         async move { axum::Json(answer) }
     };
+    // The publisher edge proxies exactly this path to its management listener.
     let app = axum::Router::new()
+        .route(
+            pir_service_discovery::PATH,
+            axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+        )
         .route("/provider/v1/anchors/check", axum::routing::post(batch))
         .fallback(axum::routing::get(
             move |uri: axum::http::Uri, headers: axum::http::HeaderMap| {
