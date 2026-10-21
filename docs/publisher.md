@@ -438,4 +438,6 @@ bounded rehearsals. HTTP-only distribution requires live canonicality checks.
 No executable aliases or data conversion are needed. Install the matching binary,
 configuration and unit together through the supported deployment tooling.
 
+For a stopped-checker repair, `publisher-cutover/3` may pin an existing disk-capacity incident with `expected_disk_latch_sha256` and `resume_load: false`. Only the known History worker/router disk-headroom reasons are accepted. The latch must remain byte-for-byte identical; it is never removed or acknowledged, and the checker stays stopped through deployment and rollback. Answer failures, memory incidents, OOMs and changed latches still refuse the operation.
+
 A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.

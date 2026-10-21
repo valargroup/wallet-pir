@@ -1,5 +1,6 @@
 """Publisher updates preserve product settings and recover after interrupted effects."""
 import copy
+import json
 import unittest
 from publisher_fixture import PublisherFixture
 from wallet_pir_ops.deploy import publisher
@@ -162,6 +163,49 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
         self.target.rollback()
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.LOAD)['active_state'], 'active')
+
+    def disk_latched_target(self, reasons=None):
+        self.stopped_load_target()
+        text = json.dumps({'utc': '2026-10-21T00:00:00Z', 'reason': reasons or [
+            'transparent-pir-v12-archive: disk headroom below 20%']})
+        self.ex.put('coordinator', publisher.LOAD_LATCH, text)
+        self.request['expected_disk_latch_sha256'] = publisher.sha(text)
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        return text
+
+    def test_reviewed_disk_latch_survives_repair_and_rollback_with_checker_stopped(self):
+        text = self.disk_latched_target()
+        self.assertEqual(self.deploy()['phase'], 'committed')
+        self.assert_load_stopped()
+        self.assertEqual(self.ex.read('coordinator', publisher.LOAD_LATCH), text)
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+        self.assert_load_stopped()
+        self.assertEqual(self.ex.read('coordinator', publisher.LOAD_LATCH), text)
+
+    def test_other_critical_latches_still_refuse_before_effects(self):
+        for reason in ['encrypted answer mismatch', 'transparent-pir-v12-archive: oom increased',
+                       'transparent-pir-v12-archive: available memory below 20%']:
+            self.disk_latched_target([reason])
+            self.ex.effects.clear()
+            with self.assertRaisesRegex(DeployError, 'only the reviewed disk-headroom'):
+                self.target.plan()
+            self.assertEqual(self.ex.effects, [])
+
+    def test_reviewed_latch_change_invalidates_the_repair(self):
+        self.disk_latched_target()
+        self.ex.put('coordinator', publisher.LOAD_LATCH, 'changed')
+        with self.assertRaisesRegex(DeployError, 'latch changed'):
+            self.target.plan()
+        self.ex.remove('coordinator', publisher.LOAD_LATCH)
+        with self.assertRaisesRegex(DeployError, 'latch changed'):
+            self.target.plan()
+
+    def test_disk_latch_permission_cannot_resume_the_checker(self):
+        self.disk_latched_target()
+        self.request['resume_load'] = True
+        with self.assertRaisesRegex(DeployError, 'resume_load:false'):
+            self.make_target()
 
     def stopped_load_target(self, active='inactive'):
         self.ex.systemctl('coordinator', 'stop', publisher.LOAD)

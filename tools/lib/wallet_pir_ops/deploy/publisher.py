@@ -60,9 +60,15 @@ def load_request(path, expected, *, recovery=False):
                 | ({'serving'} if request.get('schema') in SERVING_SCHEMAS else set())
                 | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())
                 | ({'resume_load'} if 'resume_load' in request else set())
+                | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
                 | ({'preserve_serving'} if 'preserve_serving' in request else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
+    if 'expected_disk_latch_sha256' in request:
+        require(request['schema'] == SERVING_SCHEMA and request.get('resume_load') is False
+                and isinstance(request['expected_disk_latch_sha256'], str)
+                and re.fullmatch('[a-f0-9]{64}', request['expected_disk_latch_sha256']),
+                'expected_disk_latch_sha256 pins an existing disk-only incident with resume_load:false')
     if 'preserve_serving' in request:
         require(request['schema'] == SERVING_SCHEMA and type(request['preserve_serving']) is bool,
                 'preserve_serving must be a boolean for publisher-cutover/3 only')
@@ -278,12 +284,26 @@ class Cutover:
         self.save(journal)
 
     def require_stopped_load(self, state=None):
-        """Stopped-checker updates retain its state and cannot bypass a critical incident."""
+        """Preserve a reviewed disk-only incident while its stopped owner is repaired."""
         state = state if state is not None else self.ex.probe_unit(self.host, LOAD)
         require(state['active_state'] in ('inactive', 'failed') and state['main_pid'] == 0,
                 'resume_load:false requires the continuous exact load stopped with MainPID 0')
-        require(self.ex.sha256(self.host, LOAD_LATCH) is None,
-                'continuous load has an unresolved critical latch: ' + LOAD_LATCH)
+        observed = self.ex.sha256(self.host, LOAD_LATCH)
+        expected = self.request.get('expected_disk_latch_sha256')
+        if expected is None:
+            require(observed is None, 'continuous load has an unresolved critical latch: ' + LOAD_LATCH)
+            return
+        require(observed == expected, 'reviewed disk latch changed or disappeared')
+        try:
+            incident = json.loads(self.read(LOAD_LATCH))
+        except (TypeError, ValueError) as error:
+            raise DeployError('reviewed disk latch is unreadable') from error
+        reasons = incident.get('reason') if isinstance(incident, dict) else None
+        allowed = {name + ': disk headroom below 20%' for name in
+                   ('transparent-pir-v12-archive', 'transparent-pir-v12-recent', 'transparent-router')}
+        require(isinstance(incident, dict) and set(incident) == {'utc', 'reason'}
+                and isinstance(reasons, list) and reasons and all(isinstance(r, str) and r in allowed for r in reasons),
+                'only the reviewed disk-headroom incident may remain during a stopped-checker repair')
 
     def stop(self, name):
         self.ex.systemctl(self.host, 'stop', name)
