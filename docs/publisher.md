@@ -160,11 +160,11 @@ for consumers, and refuses to publish incomplete prepared material.
 
 History finalization lists a table with the digest its verified set proved
 when this process hashed that same file and its device, inode, length,
-modification and change times are unchanged; any other table is hashed again.
-Each runtime is loaded once: that read checks its body checksum and yields its
-inventory digest, and the runtime is self-checked against its source rows.
-Hard links created for a new candidate change a runtime's change time, so
-linked runtimes are checked again in each candidate.
+modification and change times are unchanged; any other table is hashed again,
+and every listed table must match its manifest digest. A runtime self-check
+reads its source rows under the same rule. Every runtime is hashed; one whose
+name and whole-file digest match a runtime this process already loaded and
+self-checked is not loaded again.
 
 History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
 pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product
