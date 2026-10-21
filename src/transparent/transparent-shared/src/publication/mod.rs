@@ -386,7 +386,13 @@ impl Finalized {
         self.files.get(digest).map(PathBuf::as_path)
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, false)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            false,
+            &mut CheckedRuntimes::default(),
+        )
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
     pub fn prepare_full(
@@ -394,14 +400,35 @@ impl Finalized {
         set: &ShardSet,
         recent_from_height: u64,
     ) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, true)
+        Self::prepare_holdings(
+            root,
+            set,
+            recent_from_height,
+            true,
+            &mut CheckedRuntimes::default(),
+        )
+    }
+    /// [`Self::prepare`] or [`Self::prepare_full`], skipping the load and
+    /// self-check of runtimes whose exact bytes `checked` already proved.
+    pub fn prepare_reusing(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked)
     }
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
+        checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
+        let previous = std::mem::take(&mut checked.passed);
+        checked.loaded = 0;
+        checked.reused = 0;
         let recent = set
             .map
             .shards
@@ -421,8 +448,8 @@ impl Finalized {
             artifacts: Vec::new(),
         };
         let mut files = BTreeMap::new();
-        let mut paths = BTreeSet::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<(), Error> {
+        let mut paths = BTreeMap::new();
+        let mut add = |path: PathBuf, kind: Kind| -> Result<String, Error> {
             let relative = path
                 .strip_prefix(root)?
                 .to_str()
@@ -441,8 +468,8 @@ impl Finalized {
                     return Err("symlink in publisher artifact".into());
                 }
             }
-            if !paths.insert(relative.clone()) {
-                return Ok(());
+            if let Some(sha256) = paths.get(&relative) {
+                return Ok(String::clone(sha256));
             }
             let mut file = std::fs::File::open(&path)?;
             if !file.metadata()?.is_file() {
@@ -455,13 +482,14 @@ impl Finalized {
             if full || kind.local() {
                 files.insert(sha256.clone(), path);
             }
+            paths.insert(relative.clone(), sha256.clone());
             inventory.artifacts.push(Artifact {
                 path: relative,
-                sha256,
+                sha256: sha256.clone(),
                 bytes,
                 kind,
             });
-            Ok(())
+            Ok(sha256)
         };
         add(root.join("shards.json"), Kind::Metadata)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -483,7 +511,7 @@ impl Finalized {
                     let source = shard
                         .segment(table, segment)
                         .ok_or("missing source segment")?;
-                    add(
+                    let source_sha256 = add(
                         source.path().to_path_buf(),
                         if local {
                             Kind::RecentTable
@@ -491,23 +519,55 @@ impl Finalized {
                             Kind::ArchiveTable
                         },
                     )?;
+                    // The inventory publishes the bytes just hashed; they must
+                    // be the committed segment whether or not a runtime is loaded.
+                    if source_sha256 != source.sha256() {
+                        return Err("source segment differs from its manifest".into());
+                    }
                     if let Some(shared) = &params {
                         let key = (
                             shard.runtime_identity(table).to_string(),
                             table.kind(),
                             segment,
                         );
-                        // Header/length checks alone cannot finalize malformed native bytes.
-                        let runtime = shipped.load(&key, shared, source.sha256())?;
-                        runtime.self_check(shared, &source.load()?)?;
-                        add(
-                            shipped.path(&key, shared, source.sha256()),
-                            if local {
-                                Kind::RecentRuntime
-                            } else {
-                                Kind::ArchiveRuntime
-                            },
-                        )?;
+                        let path = shipped.path(&key, shared, source.sha256());
+                        let kind = if local {
+                            Kind::RecentRuntime
+                        } else {
+                            Kind::ArchiveRuntime
+                        };
+                        // The file name binds the runtime key, parameters and
+                        // source digest; the digest computed by `add` binds
+                        // every byte. A pair this process already loaded and
+                        // self-checked therefore names the same proven input.
+                        let name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or("non-UTF8 runtime name")?
+                            .to_string();
+                        let runtime_sha256 = match previous.get(&name) {
+                            Some(proven) => {
+                                let sha256 = add(path.clone(), kind)?;
+                                if &sha256 == proven {
+                                    checked.reused += 1;
+                                } else {
+                                    check(&shipped, &key, shared, source)?;
+                                    // The loader read the file again; refuse a
+                                    // replacement since the inventory hash.
+                                    if digest_file(&path)? != sha256 {
+                                        return Err("runtime changed while it was checked".into());
+                                    }
+                                    checked.loaded += 1;
+                                }
+                                sha256
+                            }
+                            None => {
+                                check(&shipped, &key, shared, source)?;
+                                checked.loaded += 1;
+                                add(path.clone(), kind)?
+                            }
+                        };
+                        checked.passed.insert(name, runtime_sha256);
                     }
                 }
             }
@@ -524,6 +584,34 @@ impl Finalized {
             files,
         })
     }
+}
+/// Runtimes one process loaded and self-checked while finalizing, by file
+/// name and whole-file SHA-256. Each preparation keeps only the runtimes of
+/// its own publication, so this never grows past one inventory. Neither
+/// value is trusted from disk: the name is derived and the digest recomputed.
+#[derive(Debug, Default)]
+pub struct CheckedRuntimes {
+    passed: BTreeMap<String, String>,
+    /// Runtimes the last preparation loaded and self-checked.
+    pub loaded: usize,
+    /// Runtimes the last preparation accepted from an earlier check.
+    pub reused: usize,
+}
+/// Header/length checks alone cannot finalize malformed native bytes.
+fn check(
+    shipped: &ShippedRuntimes,
+    key: &crate::runtime::RuntimeKey,
+    shared: &SharedParams,
+    source: &crate::history::shardset::SegmentSource,
+) -> Result<(), Error> {
+    let runtime = shipped.load(key, shared, source.sha256())?;
+    runtime.self_check(shared, &source.load()?)?;
+    Ok(())
+}
+fn digest_file(path: &Path) -> Result<String, Error> {
+    let mut hash = Sha256::new();
+    io::copy(&mut std::fs::File::open(path)?, &mut HashWriter(&mut hash))?;
+    Ok(hex::encode(hash.finalize()))
 }
 struct HashWriter<'a>(&'a mut Sha256);
 impl io::Write for HashWriter<'_> {
