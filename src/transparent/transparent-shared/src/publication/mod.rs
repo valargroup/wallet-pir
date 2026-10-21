@@ -542,11 +542,7 @@ impl Finalized {
                         } else {
                             Kind::ArchiveTable
                         },
-                        source.evidence().map(|stamp| Known {
-                            sha256: source.sha256().to_owned(),
-                            bytes: source.bytes() as u64,
-                            stamp,
-                        }),
+                        Known::of(source),
                     )?;
                     if let Some(shared) = &params {
                         let key = (
@@ -635,13 +631,27 @@ pub struct CheckedRuntimes {
 }
 
 /// A digest and length this process verified for a file with this stamp.
-struct Known {
+pub(crate) struct Known {
     sha256: String,
     bytes: u64,
     stamp: FileStamp,
 }
+impl Known {
+    /// The verification `source` holds for its exact file, if any: only a
+    /// source this process hashed with settled evidence; never a receipt-only,
+    /// received or size-only one.
+    pub(crate) fn of(source: &crate::history::shardset::SegmentSource) -> Option<Self> {
+        source.evidence().map(|stamp| Self {
+            sha256: source.sha256().to_owned(),
+            bytes: source.bytes() as u64,
+            stamp,
+        })
+    }
+}
 
-pub(crate) fn hash_artifacts(
+/// [`hash_listed`] without evidence or a stop: every file is hashed.
+#[cfg(test)]
+fn hash_artifacts(
     root: &Path,
     pending: Vec<(PathBuf, Kind)>,
 ) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
@@ -652,10 +662,10 @@ pub(crate) fn hash_artifacts(
     hash_listed(root, pending, &|| false)
 }
 
-/// [`hash_artifacts`], listing a file with its `Known` digest when it is
+/// Hash each pending artifact, listing a file with its `Known` digest when it is
 /// unchanged since verified, and ending with [`Stopped`] once `stop` answers
-/// true before a file is read.
-fn hash_listed(
+/// true before a file or any bounded read of one.
+pub(crate) fn hash_listed(
     root: &Path,
     pending: Vec<(PathBuf, Kind, Option<Known>)>,
     stop: &(dyn Fn() -> bool + Sync),
@@ -689,7 +699,7 @@ fn hash_listed(
                 let known = known
                     .as_ref()
                     .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
-                let (sha256, bytes) = listed_digest(&path, &mut file, known)?;
+                let (sha256, bytes) = listed_digest(&path, &mut file, known, stop)?;
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok((
@@ -718,10 +728,15 @@ impl std::fmt::Display for Stopped {
 }
 impl std::error::Error for Stopped {}
 
+/// Inventory files streamed through SHA-256, from any pool thread.
 #[cfg(test)]
-thread_local! {
-    /// Inventory files this thread streamed through SHA-256.
-    static LISTED_HASHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+static LISTED_HASHED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// How many inventory files under `dir` were streamed through SHA-256.
+#[cfg(test)]
+pub(crate) fn listed_hashes(dir: &Path) -> usize {
+    let hashed = LISTED_HASHED.lock().unwrap();
+    hashed.iter().filter(|path| path.starts_with(dir)).count()
 }
 
 /// The digest and length to list for `file`, opened at `path`: `known` when
@@ -731,6 +746,7 @@ fn listed_digest(
     path: &Path,
     file: &mut std::fs::File,
     known: Option<(&str, u64, FileStamp)>,
+    stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<(String, u64), Error> {
     let opened = file.metadata()?;
     if !opened.is_file() {
@@ -746,23 +762,23 @@ fn listed_digest(
         }
     }
     #[cfg(test)]
-    LISTED_HASHED.with(|n| n.set(n.get() + 1));
+    LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
     let bytes = opened.len();
     let mut hash = Sha256::new();
-    io::copy(file, &mut HashWriter(&mut hash))?;
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        if stop() {
+            return Err(Box::new(Stopped));
+        }
+        let read = io::Read::read(file, &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
     Ok((hex::encode(hash.finalize()), bytes))
 }
 
-struct HashWriter<'a>(&'a mut Sha256);
-impl io::Write for HashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
     let file = crate::verification::open(path)?;
     if file.metadata()?.len() != expected.bytes {
@@ -875,8 +891,30 @@ mod tests {
         std::os::unix::fs::symlink(root.join("real.bin"), root.join("link.bin")).unwrap();
         assert!(hash_artifacts(root, vec![(root.join("link.bin"), Kind::RecentTable)]).is_err());
     }
-    fn listed_hashes() -> u64 {
-        LISTED_HASHED.with(std::cell::Cell::get)
+    /// A stop between bounded reads ends the hash of a file mid-stream, and
+    /// one before a file ends the listing before it is opened.
+    #[test]
+    fn a_stop_ends_listing_between_bounded_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.bin");
+        std::fs::write(&path, vec![7u8; (2 << 20) + 1]).unwrap();
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        let stop = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1;
+        let mut file = std::fs::File::open(&path).unwrap();
+        let error = listed_digest(&path, &mut file, None, &stop).unwrap_err();
+        assert!(error.is::<Stopped>());
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one chunk was read"
+        );
+        let pending = vec![(path.clone(), Kind::RecentTable, None)];
+        let error = hash_listed(dir.path(), pending, &|| true).unwrap_err();
+        assert!(error.is::<Stopped>());
+        // Resumed without a stop, the same file is hashed whole.
+        let pending = vec![(path.clone(), Kind::RecentTable, None)];
+        let listed = hash_listed(dir.path(), pending, &|| false).unwrap();
+        assert_eq!(listed[0].0.sha256, digest(&vec![7u8; (2 << 20) + 1]));
     }
 
     #[test]
@@ -888,10 +926,10 @@ mod tests {
         let stamp = FileStamp::of(&std::fs::metadata(&path).unwrap()).unwrap();
         let sha = digest(b"verified table");
         let open = || std::fs::File::open(&path).unwrap();
-        let before = listed_hashes();
-        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
+        let before = listed_hashes(dir.path());
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
         assert_eq!(listed, (sha.clone(), 14));
-        assert_eq!(listed_hashes(), before);
+        assert_eq!(listed_hashes(dir.path()), before);
         // Same size, different bytes: the stamp no longer matches, so the
         // listed digest is that of the bytes now present.
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -901,14 +939,14 @@ mod tests {
             .unwrap()
             .write_all_at(b"V", 0)
             .unwrap();
-        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
         assert_eq!(listed, (digest(b"Verified table"), 14));
-        assert_eq!(listed_hashes(), before + 1);
+        assert_eq!(listed_hashes(dir.path()), before + 1);
         // A replaced path is another inode.
         std::fs::write(dir.path().join("next"), b"verified table").unwrap();
         std::fs::rename(dir.path().join("next"), &path).unwrap();
-        listed_digest(&path, &mut open(), Some((&sha, 14, stamp))).unwrap();
-        assert_eq!(listed_hashes(), before + 2);
+        listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
+        assert_eq!(listed_hashes(dir.path()), before + 2);
     }
 
     #[test]
