@@ -618,7 +618,7 @@ def common_family_violations(packages, patches):
     """Reject stale Common releases and mixed sources, including unused lock entries.
 
     A root protocol patch selects a development family. Without it, the published
-    rc3 family is required. Both modes reject mixed sources and stale releases.
+    4.0.0 release is required. Both modes reject mixed sources and stale releases.
     """
     names = {name for name in COMMON if name.startswith('zakura-')}
     patches = {name: patch for name, patch in patches.items() if name in names}
@@ -637,7 +637,7 @@ def common_family_violations(packages, patches):
         if package['name'] not in names:
             continue
         version_ok = (package['version'].split('.')[0] == '4' if selected
-                      else package['version'] == '4.0.0-rc3')
+                      else package['version'] == '4.0.0')
         if not version_ok or package.get('source') != expected:
             problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 family")
     return problems

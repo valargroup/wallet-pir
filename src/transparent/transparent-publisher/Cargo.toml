@@ -58,8 +58,8 @@ transparent-shared = { path = "../transparent-shared" }
 # matches the running node's database format.
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["transparent", "rpc"] }
 
-zakura-pir-protocol = { version = "=0.0.1-rc1", default-features = false, features = ["transparent"] }
-zakura-pir-publisher = { version = "=0.0.1-rc1", default-features = false, features = ["transparent"] }
+zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, features = ["transparent"] }
+zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, features = ["transparent"] }
 # Query server, wallet client and small helpers for the host's Transparent
 # regressions. Production builds leave them off.
 base64 = { version = "0.22", optional = true }
@@ -67,7 +67,7 @@ libc = { version = "0.2", optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
 transparent-query-server = { path = "../transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, optional = true }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
 # The unified-host regression drives real history and display query roles.

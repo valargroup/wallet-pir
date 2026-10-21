@@ -103,9 +103,9 @@ pir-query-server = { path = "../../src/pir-query-server", optional = true }
 transparent-query-server = { path = "../../src/transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
 zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, optional = true }
-zakura-pir-publisher = { version = "=0.0.1-rc1", default-features = false, optional = true }
-zakura-pir-protocol = { version = "=0.0.1-rc1", default-features = false, optional = true }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
+zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, optional = true }
+zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, optional = true }
 pir-pipeline = { path = "../../src/shared/pir-pipeline" }
 hex = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
@@ -153,10 +153,10 @@ test = false
 
 [dev-dependencies]
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
-transparent = { package = "zakura-transparent", version = "=4.0.0-rc3", default-features = false }
+transparent = { package = "zakura-transparent", version = "=4.0.0", default-features = false }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 pir-sync-manager = { path = "../../src/shared/pir-sync-manager" }
-zakura-pir-query-server = { version = "=0.0.1-rc1", default-features = false, features = ["transparent"] }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["transparent"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 sha2 = "0.10"

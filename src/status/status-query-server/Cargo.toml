@@ -40,13 +40,13 @@ thiserror = "2"
 tracing = "0.1"
 url = "2"
 
-zakura-pir-query-server = { version = "=0.0.1-rc1", default-features = false, features = ["status"], optional = true }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native"], optional = true }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["status"], optional = true }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native"], optional = true }
 
 [dev-dependencies]
 hex = "0.4"
 # Independent wallet client exercises the serving wire contract.
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false, features = ["native", "status"] }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native", "status"] }
 
 
 [dev-dependencies.status-query-server]

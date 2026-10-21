@@ -26,9 +26,8 @@ Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency acces
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
-The service workspace and standalone txid sizing exporter use published Common
-4.0.0-rc3. Their root patches keep the wallet-library family on one source revision.
-Update both roots and lockfiles together. The dependency boundary check rejects
+The service workspace uses published Common 4.0.0. Its root patch keeps the
+wallet-library family on one source revision. The dependency boundary check rejects
 older Common releases and mixed sources, including stale lockfile entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 

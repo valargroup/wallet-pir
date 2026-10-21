@@ -67,4 +67,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-client = { version = "=0.0.1-rc1", default-features = false }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false }
