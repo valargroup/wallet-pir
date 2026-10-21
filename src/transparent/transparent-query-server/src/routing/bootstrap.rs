@@ -151,8 +151,8 @@ pub(crate) async fn stage_holdings(
     if !cache && total > config.max_download_bytes {
         return Err("prepared publication exceeds download budget".into());
     }
-    // New private staging tree; never join untrusted paths into an existing
-    // publication or follow its symlinks. Failed trees remain non-authoritative.
+    // New private staging tree; only verified immutable objects enter the
+    // sibling source catalog. Failed trees remain non-authoritative.
     // Validate the cache before enumerating it: a symlinked object directory
     // is refused without reading or cleaning its target.
     let objects = if cache {

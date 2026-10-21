@@ -279,6 +279,9 @@ pub(crate) fn stage_object(
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             link_object(object, &source, artifact, |a, b| std::fs::hard_link(a, b))?;
+            // The copy fallback creates new data outside the stage tree.
+            // Sync it here because syncing the stage does not follow directory links.
+            std::fs::File::open(&source)?.sync_all()?;
             std::fs::File::open(&parent)?.sync_all()?;
         }
         Err(error) => return Err(error.into()),
