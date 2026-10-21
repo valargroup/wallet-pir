@@ -385,9 +385,9 @@ impl Tables {
     }
 
     /// `source`'s prepared table, loading it if it is not cached. Loading first evicts the
-    /// least recently used cached tables until it fits; tables still in use keep their
-    /// bytes until their queries finish, and if they alone fill the budget the load is
-    /// [`LoadError::Busy`].
+    /// least recently used idle tables until it fits. Tables in use are never evicted,
+    /// since they keep their bytes until their queries finish: if evicting every idle
+    /// table could not make room, the load is [`LoadError::Busy`] and nothing is evicted.
     pub fn get(&self, source: &Source) -> Result<Arc<Resident>, LoadError> {
         if let Some(found) = self.touch(&(source.id, false)) {
             return Ok(found);
@@ -458,8 +458,8 @@ impl Tables {
         Some(resident.clone())
     }
 
-    /// Counts `bytes` against the budget, evicting idle and then any least recently used
-    /// cached tables to make room.
+    /// Counts `bytes` against the budget, evicting the least recently used idle entries to
+    /// make room; see [`Self::get`].
     fn reserve(&self, bytes: usize) -> Result<(), LoadError> {
         let mut entries = self.entries.lock().unwrap();
         loop {
@@ -468,14 +468,24 @@ impl Tables {
                 self.live.fetch_add(bytes, Ordering::SeqCst);
                 return Ok(());
             }
+            let idle = |resident: &Arc<Resident>| Arc::strong_count(resident) == 1;
+            let freeable: usize = entries
+                .tables
+                .values()
+                .filter(|(resident, _)| idle(resident))
+                .map(|(resident, _)| resident.bytes)
+                .sum();
+            if live.saturating_sub(freeable) + bytes > self.budget {
+                return Err(LoadError::Busy);
+            }
             let oldest = entries
                 .tables
                 .iter()
-                .min_by_key(|(_, (resident, used))| (Arc::strong_count(resident) > 1, *used))
+                .filter(|(_, (resident, _))| idle(resident))
+                .min_by_key(|(_, (_, used))| *used)
                 .map(|(id, _)| *id);
             match oldest {
-                // Dropping the cache's reference frees an idle table at once and an
-                // in-use one when its query finishes.
+                // Dropping the cache's only reference frees an idle entry at once.
                 Some(id) => {
                     let evicted = entries.tables.remove(&id);
                     drop(entries);
@@ -546,6 +556,29 @@ mod tests {
             move || Ok(table.clone()),
         )
         .unwrap()
+    }
+
+    /// A load that idle tables cannot make room for is `Busy` without evicting the tables
+    /// in use, so they stay cached for their next query; an idle one is evicted instead.
+    #[test]
+    fn a_full_budget_never_evicts_tables_in_use() {
+        let tables = Tables::new(2 * resident_bytes(MIN_ROWS));
+        let (one, two, three) = (
+            payments(snapshot(1)),
+            payments(snapshot(2)),
+            payments(snapshot(3)),
+        );
+        let (first, second) = (tables.get(&one).unwrap(), tables.get(&two).unwrap());
+        let loads = tables.loads();
+        assert!(matches!(tables.get(&three), Err(LoadError::Busy)));
+        assert!(Arc::ptr_eq(&tables.get(&one).unwrap(), &first));
+        assert!(Arc::ptr_eq(&tables.get(&two).unwrap(), &second));
+        assert_eq!(tables.loads(), loads);
+        drop(second);
+        assert!(tables.get(&three).is_ok());
+        assert!(Arc::ptr_eq(&tables.get(&one).unwrap(), &first));
+        assert_eq!(tables.loads(), loads + 1);
+        assert!(tables.resident() <= tables.budget());
     }
 
     /// At a budget of exactly its geometry's pair, a cold witness load evicts an idle
