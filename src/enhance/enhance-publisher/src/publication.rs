@@ -211,7 +211,7 @@ fn verify_with(
     prior: &BTreeMap<String, FileIdentity>,
 ) -> Result<Prepared, String> {
     inventory.validate()?;
-    let mut evidence = BTreeMap::new();
+    let mut evidence: BTreeMap<String, FileIdentity> = BTreeMap::new();
     let mut hashed = Hashed::default();
     for domain in &inventory.domains {
         let packing = domain.packing_object();
@@ -220,7 +220,10 @@ fn verify_with(
             .iter()
             .chain([&domain.hint, &domain.public, &packing])
         {
-            if evidence.contains_key(&object.sha256) {
+            if let Some(identity) = evidence.get(&object.sha256) {
+                if identity.len != object.bytes {
+                    return Err("publication object checksum or length mismatch".into());
+                }
                 continue;
             }
             if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
@@ -465,6 +468,71 @@ mod tests {
         assert!(!identity.settled_before(ctime));
         assert!(!identity.settled_before(ctime + SETTLED - Duration::from_nanos(1)));
         assert!(identity.settled_before(ctime + SETTLED));
+    }
+
+    #[test]
+    fn repeated_digest_with_a_different_length_is_rejected() {
+        use enhance_query_server::{protocol, RECORD_BYTES};
+
+        let root = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(1, Geometry::default())
+            .unwrap();
+        let mut read = |_, count| Ok(vec![0; count * RECORD_BYTES]);
+        let plan = runtime::plan(coverage.shards[0].clone(), &mut read).unwrap();
+        let bytes = runtime::unit_rows(&plan.shard, &plan.shard.units[0], &mut read).unwrap();
+        let rows = object(root.path(), &bytes);
+        let parameters = protocol::parameters(plan.shard.logical_rows).unwrap();
+        #[cfg(feature = "native-reinspiring")]
+        let public_bytes =
+            enhance_query_server::native::public_len(enhance_query_server::native::COLS);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let public_bytes = (parameters.db_cols
+            * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q))
+        .div_ceil(8);
+        let public = Object {
+            sha256: "11".repeat(32),
+            bytes: public_bytes as u64,
+        };
+        let hint = Object {
+            sha256: rows.sha256.clone(),
+            bytes: crate::wire::crs_encoded_len(
+                parameters.db_cols / runtime::rlwe().d,
+                runtime::rlwe().d,
+            )
+            .unwrap(),
+        };
+        assert_ne!(rows.bytes, hint.bytes);
+        let packing = prepared_packing::Artifact {
+            name: prepared_packing::artifact_name(plan.shard.logical_rows, &public.sha256).unwrap(),
+            sha256: "22".repeat(32),
+            #[cfg(feature = "native-reinspiring")]
+            bytes: 192 * 1024 * 1024,
+            #[cfg(not(feature = "native-reinspiring"))]
+            bytes: prepared_packing::expected_len(plan.shard.logical_rows).unwrap(),
+            format: prepared_packing::FORMAT,
+        };
+        let inventory = Inventory {
+            version: VERSION,
+            network: "main".into(),
+            profile: PROTOCOL_REVISION.into(),
+            coverage,
+            domains: vec![Domain {
+                plan,
+                rows: vec![rows],
+                hint,
+                public,
+                packing,
+            }],
+        };
+        inventory.validate().unwrap();
+        settle();
+        // Only the row file exists: verification must reject the contradictory
+        // hint length before attempting to open the later public or packing files.
+        assert_eq!(
+            verify(root.path(), inventory).unwrap_err(),
+            "publication object checksum or length mismatch"
+        );
     }
 
     #[test]
