@@ -74,6 +74,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             with Path(control + ".requests").open("a") as requests:
                 requests.write(self.path + "\n")
+        if fault == "missing-inventory" and "/inventories/" in self.path:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if fault == "malformed-current" and self.path.endswith("/current"):
             self.send_response(200)
             self.send_header("Content-Length", "1")

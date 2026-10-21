@@ -214,6 +214,11 @@ impl Publications {
         true
     }
 
+    /// The rolling window served now, if any; a revocation clears it.
+    pub fn filter_window(&self) -> Option<Arc<crate::blocks::BlockWindow>> {
+        self.0.read().unwrap().filters.clone()
+    }
+
     /// The current rolling window, whether or not a PIR publication is ready.
     pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
         self.0
@@ -233,6 +238,11 @@ impl Publications {
             drop(state);
             self.0.write().unwrap().expire();
         }
+    }
+
+    /// The highest history correction revision accepted so far.
+    pub fn history_revision(&self) -> u64 {
+        self.0.read().unwrap().history_revision
     }
 
     /// The recovery epoch. Every revocation advances it.

@@ -379,6 +379,10 @@ pub struct Controller {
     lag_alerted: Option<Instant>,
     /// Cycles whose runtime prebuild failed since this process started.
     prebuild_failures: u64,
+    /// The stop request of the running loop. Candidate preparation observes
+    /// it between its blocking steps and ends without activating; once
+    /// worker activation begins, the cycle finishes its commit.
+    shutdown: pir_pipeline::service::Shutdown,
     last_cycle: Value,
     /// Unix milliseconds of the last activation by a cycle, and of the last
     /// seal staged on its owners; 0 before the first since this start.
@@ -534,6 +538,7 @@ impl Controller {
             saved_invalidations,
             lag_alerted: None,
             prebuild_failures: 0,
+            shutdown: Default::default(),
             last_cycle: Value::Null,
             last_success_ms: 0,
             last_seal_ms: 0,
@@ -722,6 +727,7 @@ impl Controller {
         &mut self,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<Outcome, BoxError> {
+        self.shutdown = shutdown.clone();
         let result = self.run_loop(shutdown).await;
         // Every return path waits for builders and worker transports before
         // dropping the controller and its exclusive root/journal ownership.
@@ -744,14 +750,24 @@ impl Controller {
         if let Some(distribution) = &self.settings.distribution {
             // A reorg while stopped can orphan the saved tip. Keep HTTP
             // authority withdrawn while the source loop repairs that view.
-            if !distribution
-                .restore(
+            // A stop ends the restore before it commits; nothing was activated.
+            match distribution
+                .restore_until(
                     self.active.directory.clone(),
                     vec![self.active.directory.clone()],
+                    shutdown.clone(),
                 )
-                .await?
+                .await
             {
-                tracing::warn!("saved display publication is noncanonical; rebuilding");
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::warn!("saved display publication is noncanonical; rebuilding")
+                }
+                Err(_) if shutdown.requested() => {
+                    tracing::info!("display distribution restore stopped by shutdown");
+                    return Ok(Outcome::Idle);
+                }
+                Err(error) => return Err(error),
             }
         }
         let errors = self
@@ -1375,12 +1391,28 @@ impl Controller {
                 .filter(|(id, _, _)| *id == recent_id)
                 .map(|(_, _, p)| p.clone()),
         };
+        // A stop abandons the unactivated candidate as a normal outcome.
+        // Each blocking step is awaited; publishing the recent shard and
+        // prebuilding its runtimes each finish once started.
+        let stopped = |controller: &Self| {
+            let stopped = controller.shutdown.requested();
+            if stopped {
+                tracing::info!(tip, "display candidate preparation stopped by shutdown");
+            }
+            stopped
+        };
+        if stopped(self) {
+            return Ok(Input::Unchanged);
+        }
         let parts = self.cache.records(recent_start..=tip);
         let (root, layout) = (self.root.clone(), self.layout.clone());
         let recent =
             tokio::task::spawn_blocking(move || publish_parts(&root, &layout, &spec, &parts))
                 .await
                 .map_err(retry)??;
+        if stopped(self) {
+            return Ok(Input::Unchanged);
+        }
         let map = self.layout.map(&archives, recent.entry.clone());
         map.check_shape()
             .map_err(|e| CycleError::Halt(Halt::SealedEntryChanged(e)))?;
@@ -1390,6 +1422,9 @@ impl Controller {
         let (candidate, sha) = write_candidate(&self.root, &map).map_err(retry)?;
         let candidate_ms = ms(candidate_started);
         let prebuild = self.prebuild(&candidate, &recent.digest).await;
+        if stopped(self) {
+            return Ok(Input::Unchanged);
+        }
 
         Ok(Input::Work(DisplayCandidate {
             started,
@@ -1429,6 +1464,13 @@ impl Controller {
             prebuild,
         } = candidate;
         self.deliver_invalidations().await;
+        // Delivery awaits workers; a stop requested meanwhile abandons the
+        // unactivated candidate. Once worker activation begins, it and its
+        // commit finish.
+        if self.shutdown.requested() {
+            tracing::info!(tip, "display candidate activation stopped by shutdown");
+            return Ok(());
+        }
         // The rollback record vouches only for what replicas held when it was
         // made. This candidate may reach some replicas without being
         // committed, so a restart from here on withdraws the recent range.

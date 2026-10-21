@@ -461,6 +461,52 @@ async fn restart_rechecks_the_record_and_reorgs_revoke_serving() {
     check_staged_publication(StagedCase::Restart).await;
 }
 
+/// A correction record that raises the history revision and then fails its rows is
+/// refused once. Raising the revision revoked the served publication, and that
+/// self-revocation is not mistaken for an outside one, so the same invalid record is
+/// not loaded again on every poll.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_correction_is_loaded_once() {
+    let world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start();
+    let a_id = session(&a);
+    world
+        .until("first publication", &mut served, |h| h["serving"] == a_id)
+        .await;
+    let mut manifest = a.manifest.clone();
+    manifest.history_revision = 1;
+    let corrected = Snapshot {
+        manifest,
+        data: a.data.clone(),
+    };
+    let (dir, rev) = stage(&root, "corrected", &corrected, Some(&a_witness));
+    let rows = dir.join(format!("{rev}.rows"));
+    let mut bytes = std::fs::read(&rows).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&rows, bytes).unwrap();
+    world.assign(&dir, &rev);
+    world
+        .until("refused correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == rev.as_str()
+                && refusal(h).0 == "invalid_source"
+        })
+        .await;
+    // Several record polls later the record has still been prepared only once.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let log = std::fs::read_to_string(world.root.path().join("worker.log")).unwrap();
+    let prepared = log
+        .lines()
+        .filter(|l| l.contains("publication prepared") && l.contains(rev.as_str()))
+        .count();
+    assert_eq!(prepared, 1, "{log}");
+}
+
 async fn check_staged_publication(case: StagedCase) {
     let world = World::new().await;
     let root = world.root.path().join("publications");

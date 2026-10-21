@@ -2,10 +2,6 @@
   "transparent-contracts": {
     "family": "transparent",
     "targets": [
-      "export:txid-sizing-export:bin:txid-sizing-export",
-      "export:txid-sizing-export:test:codec_bounds",
-      "export:txid-sizing-export:test:executing_identity",
-      "export:txid-sizing-export:test:source_identity",
       "transparent:pir-e2e-tests:test:unified_http_sync_campaign",
       "transparent:transparent-query-server:doc:transparent_query_server",
       "transparent:transparent-tools:bin:shard-assign",
@@ -107,7 +103,8 @@
     "family": "transparent",
     "targets": [
       "transparent:transparent-query-server:test:wallet_continuation",
-      "transparent:transparent-query-server:test:wallet_recut"
+      "transparent:transparent-query-server:test:wallet_recut",
+      "transparent:pir-e2e-tests:test:wallet_revision_reuse"
     ]
   },
   "transparent-wallet-sync": {
@@ -120,7 +117,6 @@
     "family": "enhance",
     "targets": [
       "native:enhance-pir-client:bin:enhance-pir-cli",
-      "native:enhance-pir-exercise:bin:enhance-pir-exercise",
       "native:enhance-pir-load-test:bin:enhance-pir-load-test",
       "native:enhance-query-server:test:routing_contract",
       "native:pir-apm:bin:pir-apm",

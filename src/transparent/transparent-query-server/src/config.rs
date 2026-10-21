@@ -35,21 +35,6 @@ pub struct ServiceConfig {
     pub upload_deadline: std::time::Duration,
     /// How long a request may wait in total before a retryable refusal.
     pub query_deadline: std::time::Duration,
-    /// What `/v1/ready` attests; see [`ReadinessMode`].
-    pub readiness: ReadinessMode,
-}
-
-/// What readiness means for this process.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadinessMode {
-    /// Ready once a set is loaded. Runtimes build on demand, so a cold worker
-    /// is serving correctly and slowly. The correctness pilot's mode, and the
-    /// whole-set default.
-    LoadedOnly,
-    /// Ready once every assigned runtime is warm. A worker in a fleet is held
-    /// out of rotation until it can answer at full speed, which is what lets
-    /// a restarting replica rejoin without a wallet meeting its cold cache.
-    Warm,
 }
 
 impl Default for ServiceConfig {
@@ -63,7 +48,6 @@ impl Default for ServiceConfig {
             max_body_bytes: admission.max_body_bytes,
             upload_deadline: admission.upload_deadline,
             query_deadline: admission.query_deadline,
-            readiness: ReadinessMode::LoadedOnly,
         }
     }
 }

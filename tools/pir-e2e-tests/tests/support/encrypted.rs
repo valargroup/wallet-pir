@@ -28,7 +28,10 @@ impl Drop for Listening {
     }
 }
 pub(super) async fn serve(router: axum::Router) -> Listening {
-    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    serve_at(router, "127.0.0.1:0".parse().unwrap()).await
+}
+pub(super) async fn serve_at(router: axum::Router, address: std::net::SocketAddr) -> Listening {
+    let socket = tokio::net::TcpListener::bind(address).await.unwrap();
     let url = format!("http://{}", socket.local_addr().unwrap());
     let (stop, done) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {

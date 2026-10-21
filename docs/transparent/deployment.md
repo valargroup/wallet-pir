@@ -426,8 +426,33 @@ open rollout gates and [evidence](../../evidence/transparent/README.md) for reco
 
 ### Verification carried across revisions
 
-Workers and the publisher each verify the tables they hold; a restart
-verifies everything again. Within a running process, a candidate publication
+HTTPS consumers check exact byte counts while receiving bulk artifacts and
+store the publisher's expected digest with the completed file. Small metadata
+is hashed immediately. Bulk SHA-256 checks run once after serving starts, on
+one process-wide thread that pauses between chunks while queries wait or run.
+A failed check withdraws only dependent shards until a refetched replacement
+passes validation. Unchanged checked files reuse their saved validation across
+restarts. See [prepared distribution](prepared-distribution.md) for the trust
+boundary, recovery policy and operational status. No filesystem-specific
+integrity feature is required; macOS and Linux use the same policy.
+
+Local sidecar receipts carry the download identity to staged files. Publisher
+preparation owns semantic source and runtime checks; query activation checks
+receipt identity, regular-file status and size without repeating those checks.
+Copied files receive their own background hash check. Files used directly by
+the publisher or developer, without network receipts, retain their full
+verification path.
+
+Existing catalog copies must match the downloaded artifact before receiving
+its identity. Receipt generation 2 invalidates older download and semantic
+receipts, which could have been assigned to different same-size catalog bytes.
+Older receipt identities cannot inherit a new validation result.
+
+Receipts establish checked content, not serving authority. Fresh publisher
+information, canonical anchors, withdrawal records and activation fences still
+apply. Changes to semantic verification must bump the local receipt version.
+
+For local source files without a network receipt, a candidate publication within a running process
 inherits verification from the publication it replaces, per table segment:
 only when the candidate's segment is the same committed segment (runtime
 identity — the revision digest for a directory, the chained child identity
@@ -448,6 +473,24 @@ thread CPU time; `prepare` replies and the control `status` (`last_preparation`)
 carry it, with the refusal kind (`invalid_source`, `runtime`, `admission`,
 `superseded`) when a prepare fails. The on-disk runtime and publication formats
 are unchanged.
+
+Required history and transaction-detail runtime checks also accept
+process-local byte-checksum evidence from an earlier successful self-check.
+For received files the saved network digest supplies the byte identity;
+standalone local runtimes still require a full checksum scan.
+
+Measure baseline and candidate on the same isolated Linux host with the same
+publication sequence, data size, query load, build flags and initial page-cache
+condition. Use at least three alternating runs each. Record median and min/max
+for first load, staging, preparation, warming, activation and public
+advertisement; include CPU seconds, source verification counters, runtime
+checked/reused counts, peak memory and disk overhead. Keep first load and
+restart separate from steady updates. Capture CPU and off-CPU profiles separately
+from unprofiled timings and identify the top three paths before and after.
+The improvement target is under 30 seconds for each representative update with
+one of 96 source segments changed; the existing 60-second readiness budget is
+unchanged. Retain raw runs under ignored `.local-pir/` and report exact commits
+and host identity. Production catch-up remains a separate deployment check.
 
 ## Ingest, infrastructure and aging
 
@@ -3948,6 +3991,52 @@ component. `baseline` records both components.
   beyond the binary refuses. Shipping stays disabled for history.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
+
+## Continuous load repair
+
+`transparent-load-repair-{plan,preflight,deploy,status,rollback}` (`tools/transparent/lib/load_repair.py`)
+restores a stopped `transparent-v2-5qps-continuous.service` when its checker script is at fault. It
+installs this operations release's `transparent-quality-load.py` at the immutable
+`/srv/transparent-activity/ops/load-scripts/<sha256>/` and changes only the script path in the
+file that owns the effective `ExecStart`. On the coordinator that is the publisher's
+`zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf` drop-in, not the fragment. The rewritten
+effective unit must equal the current one except for that path, so arguments, limits and controller
+bindings are kept. It starts only that unit. The request (`transparent-load-repair/1`) pins:
+
+- the fragment bytes, every drop-in as `previous.drop_ins` `{path: sha256}` (`{}` for none), and
+  the script the effective `ExecStart` runs now;
+- the load's `pins.json`, `rate-query` and `fixture.json`;
+- each pinned worker's `{host, unit}`;
+- an independent encrypted-answer `exact_check` `{host, argv, timeout}`. Copy it from the
+  inventory's History exact check.
+
+If a prior upgrade left stale load pins, `load.replacement_pins` may explicitly map
+every worker ID to its reviewed running binary hash. The operation still pins the
+old `pins.json` bytes and refuses worker or input drift. It writes replacement pins
+only after the independent encrypted-answer check, alongside the repaired unit file.
+Rollback restores both previous files and leaves the checker stopped. Without this
+field, the existing worker pins must match and are never changed.
+
+Plan and preflight are read-only; preflight also runs the exact check. Deploy takes the reviewed
+`plan_sha256` and holds the production lock. It refuses a `latched.json`, a worker that is not
+running its pinned binary, changed load inputs or unit files, a running unit or an unfinished
+transaction. It then stages the script and runs the exact check, and only after that writes the
+owning file and starts the unit. It waits up to 300 s for `status.json` to report `running`. A
+failure or `rollback` stops the unit and restores the journaled previous bytes of that file;
+rollback refuses a file changed outside the transaction unless `--force`. The fragment and other
+drop-ins, old script, pins, permit, latch and incident logs are never written. Run from an unpacked
+operations release, deploy requires that release to be `script.git_sha`; a checkout without
+`operations.json` is accepted as for other recipes.
+
+```sh
+D=tools/scripts/wallet-pir-deploy.py; R=(--request repair.json --request-sha256 "$(sha256sum < repair.json | cut -d' ' -f1)")
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-plan "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-preflight "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-deploy "${R[@]}" --expect-plan-sha256 <plan_sha256>
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-status "${R[@]}"
+```
+
+Tests: `tools/transparent/tests/test_load_repair.py`, in `make check-ops-deploy`.
 
 ## Transparent alert activation
 

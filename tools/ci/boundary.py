@@ -8,8 +8,9 @@ wallet-pir packages. The receiver framing packages use only the library-owned
 wire codec, with cryptography disabled.
 
 No manifest may declare a direct dependency of any kind on a Zakura Common or
-node package except the ratcheted allowlist. Pure PIR packages may use only the
-canonical PIR packages and the explicit receiver codec adapter from
+node package except the chain reader, the ratcheted allowlist, and the address
+fixture dev-dependency of the unpublished end-to-end test consumer. Pure PIR
+packages may use only the canonical PIR packages and the explicit receiver codec adapter from
 wallet-libraries. Their normal/build graphs
 must contain no Common or node packages. Cargo unifies features in whole-workspace
 metadata, where the indexer enables receiver cryptography and client fixtures
@@ -82,11 +83,10 @@ WALLET_LIBRARIES = 'github.com/zakura-core/wallet-libraries'
 # The chain reader and the only direct Common and node edges it may declare.
 CHAIN_READER = 'zakura-server-chain'
 CHAIN_READER_MANIFEST = 'src/shared/pir-chain/Cargo.toml'
+WALLET_TEST_MANIFEST = 'tools/pir-e2e-tests/Cargo.toml'
 CHAIN_READER_EDGES = {
-    'zakura-primitives': 'Common transaction decoding and transaction IDs for RPC reads',
     'zakura-protocol': 'Common network parameters and consensus branch identities',
-    'zakura-transparent': 'Common transparent bundle decoding',
-    'zakura-orchard': 'Common Ironwood action decoding',
+    'zakura-orchard': 'Ironwood tree root validation, enabled only by the receiver feature',
     'zakura-chain': 'node encoders for synthetic fixtures, the RocksDB block conversion and '
                     'the independent decoder oracle in tests',
     'zakura-state': "the opt-in RocksDB reader of the node's finalized state; its format "
@@ -119,7 +119,7 @@ TOOLS = 'tools/'
 # Serving libraries compose into them, never the reverse.
 APPLICATIONS = {
     'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-query-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
-    'enhance-pir-client', 'enhance-pir-exercise', 'native-certificate', 'transparent-publisher',
+    'enhance-pir-client', 'native-certificate', 'transparent-publisher',
     'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
@@ -128,12 +128,12 @@ SHARED_SCOPES = {
     'src/shared/pir-serving/': ('src/enhance/', 'src/status/'),
 }
 
-# Lifecycle code has no product, chain, wallet or cryptographic dependency.
+# Lifecycle code has no product, chain, wallet or PIR-engine dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
 # graph. Every kind of edge counts, including optional and target-specific edges.
 # Synchronization is transport and scheduling, never a product or PIR engine.
 SYNC_MANAGER = 'pir-sync-manager'
-SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'tokio',
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
@@ -275,6 +275,7 @@ def manifests(root=ROOT):
                          'dependencies': dependencies,
                          'features': sorted(data.get('features', {})),
                          'autobins': data['package'].get('autobins', True),
+                         'publish': data['package'].get('publish', True),
                          'bins': [target.get('name') for target in data.get('bin', [])],
                          'preserved': relative.startswith(EXCLUDED)})
     return packages
@@ -341,6 +342,12 @@ def violations(packages, allowed):
                     reader_revisions.add((dependency['git'], dependency.get('rev', '')))
                 continue
             if name in COMMON or name in NODE:
+                if (package['name'] == 'pir-e2e-tests'
+                        and package['manifest'] == WALLET_TEST_MANIFEST
+                        and package.get('publish') is False
+                        and dependency['kind'] == 'dev-dependencies'
+                        and name == 'zakura-transparent'):
+                    continue
                 edge = f"{package['name']} -> {name}"
                 found.add(edge)
                 if edge not in allowed:
@@ -611,7 +618,7 @@ def common_family_violations(packages, patches):
     """Reject stale Common releases and mixed sources, including unused lock entries.
 
     A root protocol patch selects a development family. Without it, the published
-    rc3 family is required. Both modes reject mixed sources and stale releases.
+    4.0.0 release is required. Both modes reject mixed sources and stale releases.
     """
     names = {name for name in COMMON if name.startswith('zakura-')}
     patches = {name: patch for name, patch in patches.items() if name in names}
@@ -630,7 +637,7 @@ def common_family_violations(packages, patches):
         if package['name'] not in names:
             continue
         version_ok = (package['version'].split('.')[0] == '4' if selected
-                      else package['version'] == '4.0.0-rc3')
+                      else package['version'] == '4.0.0')
         if not version_ok or package.get('source') != expected:
             problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 family")
     return problems
@@ -650,8 +657,8 @@ def main(argv=None):
     problems += serving_binary_violations(packages)
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
-    # these are the two workspaces used by the current services and sizing tool.
-    for name in ('Cargo.lock', 'tools/txid/txid-sizing/export/Cargo.lock'):
+    # this is the workspace used by the current services.
+    for name in ('Cargo.lock',):
         packages = tomllib.loads((ROOT / name).read_text())['package']
         problems += [f'{name}: {problem}'
                      for problem in common_family_violations(packages, patches)]

@@ -122,6 +122,21 @@ rather than attempting recovery over potentially unfinished work.
 
 SIGINT and SIGTERM request cooperative shutdown. Publishers finish their current
 publication operations and stop owned auxiliary tasks before releasing state.
+History candidate preparation is the exception: the candidate build checks the
+stop request before each journal block and each shard that block completes;
+source-set verification before each revision, each 1 MiB read of a hash and
+route checks; runtime preparation between segments; and inventory finalization
+before each file, each 1 MiB read and each runtime self-check. A stopped
+candidate is abandoned as a normal outcome without beginning activation or
+changing the active publication; the build writes no map, and an interrupted
+hash records no evidence or receipt. Display stops the same way while it
+restores its saved distribution at startup (verification, row checks, runtime
+segments, finalization) and between the recent-shard build, candidate write and
+runtime prebuild of a cycle. Blocking work is awaited before state is released:
+the unit already running when the stop arrives, one shard's files, one runtime
+build or self-check, or one Display recent-shard build or prebuild, finishes
+first. Activation that has begun still completes, including the Display
+inventory finalized after its workers activate.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -152,6 +167,14 @@ history fleet command/configuration and display workers file can be omitted.
 The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.
+
+History and Display finalization list a source table with the digest their
+verified set proved when this process hashed that same file and its device, inode, length,
+modification and change times are unchanged; any other table is hashed again,
+and every listed table must match its manifest digest. A runtime self-check
+reads its source rows under the same rule. Every runtime is hashed; one whose
+name and whole-file digest match a runtime this process already loaded and
+self-checked is not loaded again.
 
 History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
 pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product
@@ -275,6 +298,13 @@ ingress to change together. The `serving` object pins the matching query-server
 `--serving-binary` to plan, preflight and deploy. Existing workers retain their
 wallet wire protocol. Ordinary publisher updates do not restart Transparent workers.
 
+An ordinary `publisher-cutover/3` request may set `resume_load: false` when the
+continuous checker is already inactive or failed with `MainPID=0` and has no
+critical latch. The update and subsequent restart leave it stopped; rollback
+restores its captured activity. Omitting the option retains the running-checker
+requirement and resumes it after the independent encrypted-answer probes.
+
+
 Run plan and preflight with `--request` and its exact `--request-sha256`;
 preflight also takes the clean `pir-publisher` `--archive`. Review the returned
 `plan_sha256`, then deploy with `--expect-plan-sha256` and the same inputs.
@@ -303,8 +333,11 @@ release, serving and exact-check fields. Only `http_only` and `ship_runtimes` ma
 change to true for both Transparent products, plus `distribute_prepared` for
 history. All other installed product settings must match. The additional `https`
 object contains the existing publisher TLS `origin`, a `publisher_budget_bytes`
-staging allowance of at least 32 GiB, and three ordered `consumers`: history
-archive, history recent, and combined transaction details. Each consumer names
+positive allowance for additional staging writes, and three ordered `consumers`: history
+archive, history recent, and combined transaction details. Choose the additional
+allowance using the remaining work after completed runtime files are reused;
+the tool reserves 20 percent free disk and checks native cache capacity before
+switching the live fleet. Each consumer names
 its existing `host` and `unit`, a root-owned `config_path`, its root query-server
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate
@@ -334,37 +367,26 @@ service invocation; changed ownership is refused. It verifies that the process
 has stopped and the writer locks are free before restoring the previous owner.
 Ordinary predecessor stops keep their existing shutdown behavior.
 
-Before stopping the publisher, the HTTPS path pins both complete active public
-snapshots with hard links and runs the new query server's read-only verifier
-against those pins. It checks
-every revision and the runtime capacity while preserving the twenty percent
-memory reserve, and records each source directory, map digest and executable
-digest. This reads immutable publications; it neither copies nor opens a second
+Before stopping the publisher, the HTTPS path checks artifact identities,
+configuration, resource reserves and publication map metadata. It pins both
+active public snapshots with hard links and records their source directories,
+map digests and executable digests. These immutable files do not open another
 writer on the live journals.
 
-The same staging phase warms every current runtime through the qualified
-query-server executable. A temporary
-service has a memory ceiling that preserves the coordinator's twenty percent
-reserve. History is checked one shard at a time; transaction details use combined
-holdings. Loopback readiness must report the expected map, executable, assignment
-and complete runtime coverage. Pending cache writes must finish without errors.
-The verifier keeps the query server's normal revision retention, so superseded
-revisions in an immutable snapshot are checked without pruning its files.
-Each snapshot has a one-hour staging allowance, with at most fifteen minutes
-for any one history shard or the combined transaction-detail group. These
-preparation limits leave the publisher startup and consumer readiness gates unchanged.
-The service and its children stop before staging can finish. A failed warmup
-leaves the existing publisher, workers and edges running; reconciliation cleans
-up the transaction-owned validator. Completed cache files remain reusable by a
-later attempt, with native validation against its fresh snapshot.
-The staging allowance covers additional disk writes. The cache limit includes
-completed files already present through hard links. Before warming history,
-the native verifier checks the complete archive against its actual memory
-budget and the remaining cache space; its sizing report is retained with the
-warmup results.
+Staging reuses completed runtime files from the preceding transaction by hard
+link, including across builds. Native format, parameter, source and checksum
+checks still validate reused files during actual startup. The additional staging
+allowance covers new writes rather than files already present and preserves the
+twenty percent disk reserve. Staging does not load another full archive or start
+temporary query servers.
+
+The actual publisher and consumers load their state once during startup. The
+cutover waits for their readiness and checks encrypted answers before committing
+the cutover. A failed startup or answer check restores the saved fleet. Recovery
+also cleans up transaction-owned temporary validators retained by older attempts.
 
 After the old publisher stops and releases its writer locks, the cutover links
-those prepared cache files into its current publication. It then starts the new
+the reusable cache files into its current publication. It then starts the new
 publisher and waits for canonical HTTPS metadata before starting consumers.
 Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
 the unchanged wallet at its existing TLS origin.
@@ -415,3 +437,9 @@ services run through the root configuration. Display settings retain `mode`
 bounded rehearsals. HTTP-only distribution requires live canonicality checks.
 No executable aliases or data conversion are needed. Install the matching binary,
 configuration and unit together through the supported deployment tooling.
+
+For a stopped-checker repair, `publisher-cutover/3` may pin an existing disk-capacity incident with `expected_disk_latch_sha256` and `resume_load: false`. Only the known History worker/router disk-headroom reasons are accepted. The latch must remain byte-for-byte identical; it is never removed or acknowledged, and the checker stays stopped through deployment and rollback. Answer failures, memory incidents, OOMs and changed latches still refuse the operation.
+
+A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.
+
+If the connection was lost while stopping the predecessor, `publisher-cutover-continue` can finish that exact stopped-checker transaction. It requires the recorded stop intent, unchanged publisher configuration and inputs, unchanged serving processes, and the original staged executable. It refuses a running publisher or any other interrupted phase; ordinary verification recovery still uses `publisher-cutover-verify`.

@@ -23,7 +23,7 @@ mod rpc {
         /// node's canonical hash at that height.
         pub async fn status_block(&self, height: u64) -> Result<StatusBlock, NodeError> {
             let raw = self.raw_block(height.to_string()).await?;
-            let block = Block::zcash_deserialize(raw.as_slice())
+            let block = Block::zcash_deserialize(&mut raw.as_slice())
                 .map_err(|error| NodeError::Block(error.to_string()))?;
             let hash = block.hash();
             let canonical = self

@@ -34,8 +34,14 @@ cleanup. `--record-only --case-seconds 5` retains every case and lists all
 five-second overruns in its receipt. Diagnostic success establishes correctness;
 only an enforced passing run establishes compliance with the selected budget.
 
-Native tests compile once with a consistent feature set, then run Cargo-reported
-executables with at most three programs active and one case per program. The fast
+Native tests compile shared crates and product libraries once, on a feature set
+that does not change with the diff. Transparent publication tests use that
+command. History and detail reach the query host through the publisher
+library's dev-dependency; the publisher host binary does not enable them,
+because that links the same library again. The in-process Enhance hint graph compiles on a
+second command. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
+Executables
+then run with at most three programs active and one case per program. The fast
 compile leaves out binaries that declare no unit tests; qualification still
 builds every binary. Mutable service state is fresh; only immutable public
 runtime material is shared within
@@ -141,7 +147,10 @@ Rust feedback compiles the selected unit tests, CLI test binaries and named fast
 integration targets together in one `release-fast` Cargo invocation. That command
 also names the stable fast dev-dependency roots, so a smaller affected set does
 not drop chain `testing` or reqwest `blocking` and rebuild a second copy of the
-dependency graph. The reader's receiver and status RPC targets stay in full
+dependency graph. Transparent publication tests are part of this command, and
+the publisher host is not relinked with history and detail. A second
+invocation is only the in-process Enhance hint graph, which must not unify
+into the stable graph. Chain-node fixtures stay in qualification. The reader's receiver and status RPC targets stay in full
 qualification; those features are not part of the closure, and enabling them
 rebuilds every cached consumer. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
@@ -242,8 +251,12 @@ that revision.
 Dependency cache priming runs independently on relevant main changes.
 Both PR and main feedback target three minutes from job start through final
 cleanup; report queueing separately. Validation finishes before main's final
-timing check enforces 180 seconds through reporting. Completed-run evidence
-also includes the remaining cleanup. PRs and manual runs report timings.
+timing check. A warm fast job, with no workspace crate rebuilt, must finish
+in 180 seconds through reporting. When that job relinked workspace crates and
+no third-party crate, the same 180 seconds covers everything except the
+release-fast compile, and the compile itself must finish within five minutes.
+Completed-run evidence also includes the remaining cleanup. PRs and manual
+runs report timings.
 A completed over-budget run provides diagnostic coverage, not a timing pass.
 The pre-push health guard follows this workflow, rather than long qualification.
 
@@ -518,7 +531,9 @@ This needs at least 20 representative runs, coverage of all service families,
 shared changes, operations and docs, and a p95 below 180 seconds. Workflow-only,
 canceled, cold and unknown-cache samples cannot qualify the target. Failed runs
 remain visible. Warm means Cargo reported no third-party compilation; workspace
-source can still rebuild. Queueing and final job cleanup count. A missing sample
+source can still rebuild. The main gate adds that rebuild's compile time on top
+of the 180-second warm budget instead of failing the push for the relink alone.
+Queueing and final job cleanup count. A missing sample
 population is an unqualified target, not a measured guarantee.
 
 ## Prepared-artifact deployment

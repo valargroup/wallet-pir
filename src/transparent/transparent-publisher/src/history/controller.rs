@@ -1,6 +1,8 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
 use zakura_pir_publisher::transparent::filter as transparent_filter;
+use zakura_pir_publisher::transparent::layout::Geometry;
+use zakura_pir_publisher::transparent::seal::DecoupledPolicy;
 
 pub(crate) use crate::history::distribution::advance_distribution_revision;
 #[cfg(all(test, feature = "fixtures"))]
@@ -153,9 +155,27 @@ struct Inner {
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
     prepared_set: std::sync::Mutex<Option<transparent_shared::history::shardset::ShardSet>>,
+    /// The service's stop request. Candidate preparation observes it between
+    /// files and segments and ends without activating; activation completes.
+    shutdown: pir_pipeline::service::Shutdown,
+    /// Distributed runtimes this process already loaded and self-checked; the
+    /// next inventory rehashes them but checks only changed bytes again.
+    checked_runtimes: std::sync::Mutex<transparent_shared::publication::CheckedRuntimes>,
     /// Runtime preparation outcomes since this process started.
     runtime_preparations: AtomicU64,
     runtime_preparation_failures: AtomicU64,
+    /// Background body validation of restored publications.
+    validation: super::validator::Queue,
+    /// The active publication lists bytes that failed integrity validation.
+    integrity_failed: AtomicBool,
+    /// Integrity withdrawal the fleet has not yet confirmed. Withdrawing this
+    /// process's routes leaves the router proxying setup and query requests
+    /// to workers that still serve the publication; the publication loop,
+    /// which also owns activation, sends the fleet `withdraw` until it succeeds.
+    fleet_withdrawal: AtomicBool,
+    /// Candidate preparation and activation in progress; background
+    /// validation waits while any runs.
+    foreground: AtomicU64,
 }
 #[derive(Clone)]
 pub struct Authority(Arc<Inner>);
@@ -313,6 +333,41 @@ pub async fn run_managed(
     if public.filters.map().genesis_hash != store.lock().await.genesis_hash() {
         return Err("publication genesis does not match the journal".into());
     }
+    let started = std::time::Instant::now();
+    let mut public = public;
+    let mut restored = None;
+    let mut failed = None;
+    if config.distribute_prepared && active_path.exists() {
+        match restore_public(&config, &public) {
+            Ok(Restore::Restored(found)) => {
+                public.distribution = Some(found.finalized);
+                restored = Some(found.validation);
+            }
+            // Only an installation without completion evidence (a fresh one,
+            // or one written before this record existed) is prepared in full.
+            Ok(Restore::Absent) => tracing::warn!(
+                "completed publication has no restore record; it is prepared again in full before serving"
+            ),
+            // Recorded corrupt bytes stay withdrawn in this process too; only
+            // a candidate with verified replacement bytes serves again.
+            Ok(Restore::Failed(failure)) => {
+                tracing::error!(path = %failure.path, reason = %failure.reason,
+                    "the saved publication lists bytes that failed integrity validation; it stays withdrawn");
+                failed = Some(failure);
+            }
+            // Present but unusable evidence, unsafe or incomplete files, an
+            // unreadable integrity record or unresolved intent refuse to
+            // start rather than hiding a full scan after a deploy stop.
+            Err(error) => {
+                return Err(format!(
+                    "completed publication {} cannot be restored: {error}; deleting its completion record does not clear recorded integrity failures or publication intent, so deploy verified replacement bytes",
+                    public.publication.directory.display()
+                )
+                .into())
+            }
+        }
+    }
+    let restore_seconds = started.elapsed().as_secs_f64();
     let authority = Authority(Arc::new(Inner {
         cycle_duration: Default::default(),
         publication_freshness: Default::default(),
@@ -324,21 +379,40 @@ pub async fn run_managed(
         withdrawn: AtomicBool::new(true),
         epoch: AtomicU64::new(0),
         distribution_revision: AtomicU64::new(distribution_revision),
-        distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        distribution_slots: Arc::new(tokio::sync::Semaphore::new(DISTRIBUTION_SLOTS)),
         canonicality: Some(rpc.clone()),
         invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
         last_init: std::sync::Mutex::new(None),
-        status: RwLock::new(serde_json::json!({"phase":"starting"})),
+        status: RwLock::new(serde_json::json!({"phase":"starting",
+            "integrity_validation":{"state":"pending"},
+            "correctness_validation":{"state":"pending"}})),
         observed: RwLock::new(BTreeMap::new()),
         http: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()?,
         membership: membership_path(&config.fleet_config),
         prepared_set: std::sync::Mutex::new(None),
+        shutdown: shutdown.clone(),
+        checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
+        validation: Default::default(),
+        integrity_failed: AtomicBool::new(failed.is_some()),
+        // Workers may still serve what the previous process activated.
+        fleet_withdrawal: AtomicBool::new(failed.is_some()),
+        foreground: AtomicU64::new(0),
     }));
+    if let Some(failure) = failed {
+        let mut status = authority.0.status.write().unwrap();
+        status["phase"] = "integrity_failed".into();
+        status["integrity_validation"] = serde_json::json!({"state":"failed",
+            "publication":{"height":authority.0.active.read().unwrap().publication.height,
+                "hash":authority.0.active.read().unwrap().publication.hash},
+            "map_sha256":failure.map_sha256,"inventory_sha256":failure.inventory_sha256,
+            "reason":format!("{}: {}", failure.path, failure.reason),
+            "artifact":serde_json::to_value(&failure).unwrap_or_default()});
+    }
     struct Fence(Authority);
     impl Drop for Fence {
         fn drop(&mut self) {
@@ -346,6 +420,25 @@ pub async fn run_managed(
         }
     }
     let _fence = Fence(authority.clone());
+    // Joined when this function returns, before the controller lock is released.
+    let _validator = super::validator::Validator::spawn(
+        authority.0.validation.clone(),
+        Arc::new(transparent_shared::runtime::memory::WorkMemory::default()),
+        {
+            let authority = authority.clone();
+            let root = config.publication_root.clone();
+            Box::new(move || {
+                authority.0.distribution_slots.available_permits() < DISTRIBUTION_SLOTS
+                    || authority.0.foreground.load(Ordering::Acquire) > 0
+                    || super::validator::held_by_test(&root)
+            })
+        },
+        {
+            let authority = authority.clone();
+            let root = config.publication_root.clone();
+            Box::new(move |identity, event| validation_event(&root, &authority, identity, event))
+        },
+    )?;
     let mut tasks = pir_pipeline::service::Tasks::default();
     let server = tokio::spawn(http.serve(config.listen, authority.router()));
     tasks.own(&server);
@@ -381,6 +474,28 @@ pub async fn run_managed(
         result
     });
     tasks.own(&ingest);
+    if let Some(validation) = restored {
+        // Serve the restored publication as soon as authority allows; its
+        // bodies are verified again in the background.
+        match serve_restored(&config, &rpc, &store, &authority, validation).await {
+            Ok(()) => {
+                let mut status = authority.0.status.write().unwrap();
+                status["restore"] = serde_json::json!({
+                    "metadata_seconds": restore_seconds,
+                    "serving_seconds": started.elapsed().as_secs_f64(),
+                });
+                tracing::info!(
+                    metadata_seconds = restore_seconds,
+                    serving_seconds = started.elapsed().as_secs_f64(),
+                    "restored completed publication is serving"
+                );
+            }
+            Err(error) => tracing::warn!(
+                %error,
+                "restored publication is not served; preparing it again in full"
+            ),
+        }
+    }
     loop {
         if shutdown.requested() {
             ingest.await??;
@@ -393,7 +508,16 @@ pub async fn run_managed(
             }
             return Err("history publisher background service stopped".into());
         }
+        if let Err(error) = withdraw_fleet(&config, &authority).await {
+            tracing::error!(%error, "fleet withdrawal of corrupt bytes failed; retrying");
+            authority.0.status.write().unwrap()["fleet_withdrawal_error"] =
+                error.to_string().into();
+        }
         if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
+            if shutdown.requested() {
+                tracing::info!(%error, "publication cycle ended by shutdown");
+                continue;
+            }
             authority
                 .0
                 .publication_failures
@@ -504,8 +628,12 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         });
         if retain.is_none() {
             authority.0.withdrawn.store(true, Ordering::Release);
+            authority.0.validation.cancel();
         }
-        authority.0.epoch.fetch_add(1, Ordering::AcqRel);
+        let epoch = authority.0.epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        if retain.is_some() {
+            authority.0.validation.retain(epoch);
+        }
         authority.0.invalidated_from.store(from, Ordering::Release);
         if config.distribute_prepared {
             authority.0.distribution_revision.store(
@@ -537,6 +665,26 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         &config.publication_root.join("withdrawn.json"),
         &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":true}))?,
     )?;
+    Ok(())
+}
+
+/// Send a pending integrity withdrawal to the fleet. Shadow and HTTP-only
+/// controllers own no worker routing and only clear the request.
+async fn withdraw_fleet(config: &Config, authority: &Authority) -> Result<(), BoxError> {
+    if !authority.0.fleet_withdrawal.swap(false, Ordering::AcqRel)
+        || config.shadow
+        || config.http_only
+    {
+        return Ok(());
+    }
+    if let Err(error) = fleet(config, serde_json::json!({"operation":"withdraw"})).await {
+        authority.0.fleet_withdrawal.store(true, Ordering::Release);
+        return Err(error);
+    }
+    tracing::warn!("fleet routing withdrawn for a publication listing corrupt bytes");
+    if let Some(status) = authority.0.status.write().unwrap().as_object_mut() {
+        status.remove("fleet_withdrawal_error");
+    }
     Ok(())
 }
 
@@ -756,20 +904,63 @@ struct HistoryCandidate {
     prepared: serde_json::Value,
 }
 
+type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
+
 async fn publish_once(
     config: &Config,
     rpc: &NodeClient,
     store: &Arc<tokio::sync::Mutex<EventStore>>,
     authority: &Authority,
 ) -> Result<(), BoxError> {
+    publish_candidate(
+        config,
+        rpc,
+        store,
+        authority,
+        DecoupledPolicy::for_geometry,
+        Some(config.archive_geometry.clone()),
+        Some(config.recent_from),
+    )
+    .await
+}
+
+async fn publish_candidate(
+    config: &Config,
+    rpc: &NodeClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+    seal: HistorySeal,
+    archive_geometry: Option<String>,
+    recent_from: Option<u64>,
+) -> Result<(), BoxError> {
     let input = pir_pipeline::acquire(
         acquire_history(config, rpc, store, authority),
         &mut HistoryProgress,
     )
     .await?;
+    struct Foreground<'a>(&'a AtomicU64);
+    impl Drop for Foreground<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+    let _foreground = matches!(input, Input::Work(_)).then(|| {
+        authority.0.foreground.fetch_add(1, Ordering::AcqRel);
+        Foreground(&authority.0.foreground)
+    });
     pir_pipeline::advance(
         input,
-        |work| prepare_history(config, rpc, authority, work),
+        |work| {
+            prepare_candidate(
+                config,
+                rpc,
+                authority,
+                work,
+                seal,
+                archive_geometry.clone(),
+                recent_from,
+            )
+        },
         |candidate| activate_history(config, rpc, authority, candidate),
         &mut HistoryProgress,
     )
@@ -815,8 +1006,11 @@ async fn acquire_history(
     }
     if height == old.publication.height
         && hash == old.publication.hash
-        && !authority.0.withdrawn.load(Ordering::Acquire)
+        && (!authority.0.withdrawn.load(Ordering::Acquire)
+            || authority.0.integrity_failed.load(Ordering::Acquire))
     {
+        // An integrity failure needs replacement bytes, not another full
+        // preparation of the same ones.
         return Ok(Input::Unchanged);
     }
     if config.shadow
@@ -839,11 +1033,14 @@ async fn acquire_history(
     }))
 }
 
-async fn prepare_history(
+async fn prepare_candidate(
     config: &Config,
     rpc: &NodeClient,
     authority: &Authority,
     work: HistoryWork,
+    seal: HistorySeal,
+    archive_geometry: Option<String>,
+    recent_from: Option<u64>,
 ) -> Result<Input<HistoryCandidate>, BoxError> {
     let HistoryWork {
         old,
@@ -853,6 +1050,22 @@ async fn prepare_history(
         hash,
     } = work;
     let started = std::time::Instant::now();
+    // A stop ends preparation as a normal outcome: the active publication is
+    // untouched and activation never begins. Blocking work is always awaited.
+    let stopped = || {
+        tracing::info!(height, "candidate preparation stopped by shutdown");
+        Ok(Input::Unchanged)
+    };
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
+    // Asked by every interruptible blocking step below, between its units.
+    let stop = {
+        let authority = authority.clone();
+        move || {
+            authority.0.shutdown.requested() || authority.0.epoch.load(Ordering::Acquire) != epoch
+        }
+    };
     let same = height == old.publication.height && hash == old.publication.hash;
     let directory = if same {
         old.publication.directory.clone()
@@ -872,8 +1085,8 @@ async fn prepare_history(
             output: directory.clone(),
             previous: Some(old.publication.directory.clone()),
             recent_geometry: config.recent_geometry.clone(),
-            archive_geometry: Some(config.archive_geometry.clone()),
-            recent_from: Some(config.recent_from),
+            archive_geometry,
+            recent_from,
             zakura_rpc_url: config.rpc_url.clone(),
             zakura_cookie: config.rpc_cookie.clone(),
             through: Some(height),
@@ -882,16 +1095,36 @@ async fn prepare_history(
             directory_choice: config.directory_choice,
             range_profile: config.range_profile.clone(),
         };
-        tokio::task::spawn_blocking(move || {
-            publication::publish(&options, &snapshot, BlockHash::from_internal_bytes([0; 32]))
+        let stop = stop.clone();
+        let published = tokio::task::spawn_blocking(move || {
+            publication::publish_until(
+                &options,
+                &snapshot,
+                BlockHash::from_internal_bytes([0; 32]),
+                &seal,
+                &stop,
+            )
         })
-        .await??;
+        .await?;
+        match published {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
+                return Err("candidate invalidated while preparing".into())
+            }
+            result => drop(result?),
+        }
+    }
+    if authority.0.shutdown.requested() {
+        return stopped();
     }
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let published_unix = unix_now();
     let runtimes = if config.ship_runtimes {
-        Some(prepare_runtimes(config, authority, &directory, epoch).await?)
+        match prepare_runtimes(config, authority, &directory, epoch).await {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            result => Some(result?),
+        }
     } else {
         None
     };
@@ -908,17 +1141,36 @@ async fn prepare_history(
         let root = directory.clone();
         let cutoff = config.recent_from;
         let full = config.http_only;
-        let (set, distribution) = tokio::task::spawn_blocking(move || {
-            let result = if full {
-                transparent_shared::publication::Finalized::prepare_full(&root, &set, cutoff)
-            } else {
-                transparent_shared::publication::Finalized::prepare(&root, &set, cutoff)
-            };
-            (set, result)
+        let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
+        let started = std::time::Instant::now();
+        let stop = stop.clone();
+        let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
+            let result = transparent_shared::publication::Finalized::prepare_reusing_until(
+                &root,
+                &set,
+                cutoff,
+                full,
+                &mut checked,
+                &stop,
+            );
+            (set, checked, result)
         })
         .await?;
+        tracing::info!(
+            loaded = checked.loaded,
+            reused = checked.reused,
+            seconds = started.elapsed().as_secs_f64(),
+            "prepared distribution inventory"
+        );
+        *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
-        candidate.distribution = Some(distribution?);
+        candidate.distribution = Some(match distribution {
+            Err(_) if authority.0.shutdown.requested() => return stopped(),
+            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
+                return Err("candidate invalidated while preparing".into())
+            }
+            result => result?,
+        });
     }
     let mut request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
     if runtimes.is_some() {
@@ -941,14 +1193,22 @@ async fn prepare_history(
     } else {
         tokio::select! {
             biased;
+            _ = authority.0.shutdown.cancelled() => return stopped(),
             _ = invalidated => return Err("candidate invalidated while preparing".into()),
             result = fleet(config, request) => result?,
         }
     };
+    if authority.0.shutdown.requested() {
+        return stopped();
+    }
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
         return Err("candidate invalidated while preparing".into());
+    }
+    // Shutdown can arrive while the canonicality request is awaiting its reply.
+    if authority.0.shutdown.requested() {
+        return stopped();
     }
     let prepared_unix = unix_now();
     if config.shadow {
@@ -997,7 +1257,31 @@ async fn activate_history(
     {
         return Err("candidate invalidated before activation".into());
     }
+    // The node request can outlive a stop request. Until activation intent is
+    // written, abandoning the candidate still leaves the active publication alone.
+    if authority.0.shutdown.requested() {
+        tracing::info!(height, "candidate activation stopped by shutdown");
+        return Ok(());
+    }
     let directory = &candidate.publication.directory;
+    if let Some(distribution) = &candidate.distribution {
+        let failures = integrity_failures(&config.publication_root)?;
+        if distribution.inventory().artifacts.iter().any(|a| {
+            failures
+                .iter()
+                .any(|f| f.found_sha256.as_deref() == Some(a.sha256.as_str()))
+        }) {
+            return Err("candidate lists bytes that failed integrity validation".into());
+        }
+        // Completion evidence for a cheap restart, written only now that the
+        // required preparation passed and before the active pointer moves.
+        let record =
+            distribution.restore_record(config.http_only, config.recent_from, height, &hash)?;
+        publication::write_atomic(
+            &directory.join(transparent_shared::publication::RESTORE_FILE),
+            &serde_json::to_vec(&record)?,
+        )?;
+    }
     publication::write_atomic(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
@@ -1049,6 +1333,29 @@ async fn activate_history(
             .invalidated_from
             .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
+        authority.0.integrity_failed.store(false, Ordering::Release);
+        // The fleet activated these verified bytes; a withdrawal still
+        // pending for the replaced publication is obsolete.
+        authority.0.fleet_withdrawal.store(false, Ordering::Release);
+        // Preparation verified these bytes; a restored predecessor's
+        // validation is obsolete and releases its directory.
+        authority.0.validation.cancel();
+        // Freshly prepared bytes listed as a failed artifact was are verified
+        // replacements; other recorded failures remain.
+        if let Some(distribution) = &authority.0.active.read().unwrap().distribution {
+            let failures = integrity_failures(&config.publication_root)?;
+            let remaining: Vec<_> = failures
+                .iter()
+                .filter(|f| !lists_failed(std::slice::from_ref(*f), distribution.inventory()))
+                .cloned()
+                .collect();
+            if remaining.len() != failures.len() {
+                publication::write_atomic(
+                    &config.publication_root.join(INTEGRITY_FAILURES),
+                    &serde_json::to_vec(&remaining)?,
+                )?;
+            }
+        }
         for name in ["activation.json", "withdrawn.json"] {
             let p = config.publication_root.join(name);
             if p.exists() {
@@ -1078,6 +1385,14 @@ async fn activate_history(
         status["freshness_seconds"] = freshness.into();
         status["ready_replicas"] = activated["recent_replicas"].clone();
         status.as_object_mut().unwrap().remove("publication_error");
+        status.as_object_mut().unwrap().remove("restored");
+        // Preparation ran both phases over these exact bytes before activation.
+        for phase in ["integrity_validation", "correctness_validation"] {
+            status[phase] = serde_json::json!({"state":"passed","source":"preparation",
+                "publication":{"height":height,"hash":hash},
+                "map_sha256":publication.map_sha256,
+                "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
+        }
         // What this cycle did, for operators and measurements: when its
         // candidate was published, accepted by a preparation quorum and
         // activated, what its runtimes cost here, and what each worker
@@ -1118,6 +1433,355 @@ fn unix_now() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+/// Concurrent distribution responses; background validation waits while any runs.
+const DISTRIBUTION_SLOTS: usize = 4;
+/// Artifacts whose bytes failed integrity validation, kept across restarts.
+const INTEGRITY_FAILURES: &str = "integrity-failures.json";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct IntegrityFailure {
+    path: String,
+    expected_sha256: String,
+    found_sha256: Option<String>,
+    inventory_sha256: String,
+    map_sha256: String,
+    reason: String,
+}
+
+fn integrity_failures(root: &Path) -> Result<Vec<IntegrityFailure>, BoxError> {
+    match std::fs::read(root.join(INTEGRITY_FAILURES)) {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Whether `inventory` lists a failed artifact as it was, or bytes found corrupt.
+fn lists_failed(
+    failures: &[IntegrityFailure],
+    inventory: &transparent_shared::publication::Inventory,
+) -> bool {
+    inventory.artifacts.iter().any(|a| {
+        failures.iter().any(|f| {
+            (f.path == a.path && f.expected_sha256 == a.sha256)
+                || f.found_sha256.as_deref() == Some(a.sha256.as_str())
+        })
+    })
+}
+
+enum Restore {
+    /// No completion evidence: the ordinary path prepares it in full.
+    Absent,
+    /// The saved inventory lists bytes recorded as failing integrity.
+    Failed(IntegrityFailure),
+    Restored(Box<transparent_shared::publication::Restored>),
+}
+
+/// The saved publication's completed distribution, without reading its bodies.
+fn restore_public(config: &Config, public: &Public) -> Result<Restore, BoxError> {
+    use transparent_shared::publication::{Finalized, RestoreExpectation, RESTORE_FILE};
+    // Recorded withdrawal or unfinished activation intent is resolved by the
+    // ordinary path, which starts withdrawn; it is never bypassed.
+    for intent in ["withdrawn.json", "activation.json"] {
+        if config.publication_root.join(intent).exists() {
+            tracing::warn!(
+                intent,
+                "unresolved publication intent; not restoring cheaply"
+            );
+            return Ok(Restore::Absent);
+        }
+    }
+    let directory = &public.publication.directory;
+    let record = match std::fs::read(directory.join(RESTORE_FILE)) {
+        Ok(record) => record,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Restore::Absent),
+        Err(e) => return Err(format!("unreadable completed-publication record: {e}").into()),
+    };
+    let map = public.filters.map();
+    let restored = Finalized::restore_completed(
+        directory,
+        &record,
+        &RestoreExpectation {
+            network: map.network.clone(),
+            genesis_hash: map.genesis_hash.clone(),
+            map_sha256: public.publication.map_sha256.clone(),
+            full: config.http_only,
+            recent_from_height: config.recent_from,
+            anchor_height: public.publication.height,
+            anchor_hash: public.publication.hash.clone(),
+        },
+    )?;
+    let failures = integrity_failures(&config.publication_root)?;
+    if let Some(failure) = failures
+        .iter()
+        .find(|f| lists_failed(std::slice::from_ref(*f), restored.finalized.inventory()))
+    {
+        return Ok(Restore::Failed(failure.clone()));
+    }
+    Ok(Restore::Restored(Box::new(restored)))
+}
+
+/// Make a restored publication public after fresh authority checks: its exact
+/// anchor is still the journal's and the node's, no invalidation intervened,
+/// and the fleet (unless HTTP-only) prepared and activated it.
+async fn serve_restored(
+    config: &Config,
+    rpc: &NodeClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+    validation: transparent_shared::publication::Validation,
+) -> Result<(), BoxError> {
+    let epoch = authority.0.epoch.load(Ordering::Acquire);
+    let current = authority.0.active.read().unwrap().clone();
+    let publication = current.publication.clone();
+    let distribution = current
+        .distribution
+        .clone()
+        .ok_or("restored publication has no distribution")?;
+    let anchored = || async {
+        let journal = store.lock().await;
+        journal
+            .block_at(publication.height)
+            .is_some_and(|b| b.block_hash.to_display_hex() == publication.hash)
+    };
+    if !anchored().await || rpc.block_hash_display(publication.height).await? != publication.hash {
+        return Err("restored anchor is not canonical".into());
+    }
+    let mut upstreams = publication.upstreams.clone();
+    if !config.http_only {
+        let request = serde_json::json!({"operation":"prepare","directory":publication.directory,
+            "map_sha256":publication.map_sha256,"recent_from":config.recent_from,
+            "source_sha":config.source_sha,"runtimes":publication.directory});
+        let prepared = fleet(config, request).await?;
+        if authority.0.epoch.load(Ordering::Acquire) != epoch {
+            return Err("restored publication invalidated while preparing".into());
+        }
+        publication::write_atomic(
+            &config.publication_root.join("activation.json"),
+            &serde_json::to_vec(&publication)?,
+        )?;
+        let activated = fleet(
+            config,
+            serde_json::json!({"operation":"activate",
+            "directory":publication.directory,"map_sha256":publication.map_sha256,
+            "prepared":prepared}),
+        )
+        .await?;
+        upstreams = serde_json::from_value(activated["upstreams"].clone())?;
+    }
+    if !anchored().await || rpc.block_hash_display(publication.height).await? != publication.hash {
+        authority.0.withdrawn.store(true, Ordering::Release);
+        if !config.http_only {
+            fleet(config, serde_json::json!({"operation":"withdraw"})).await?;
+        }
+        return Err("restored anchor is not canonical".into());
+    }
+    {
+        let _gate = authority.0.publication_gate.lock().unwrap();
+        if authority.0.epoch.load(Ordering::Acquire) != epoch
+            || config.publication_root.join("withdrawn.json").exists()
+            || authority.0.integrity_failed.load(Ordering::Acquire)
+        {
+            return Err("restored publication invalidated before serving".into());
+        }
+        if upstreams != publication.upstreams {
+            let mut next = read_public(publication.directory.clone(), upstreams)?;
+            next.distribution = Some(distribution.clone());
+            publication::write_atomic(
+                &config.publication_root.join("active.json"),
+                &serde_json::to_vec(&next.publication)?,
+            )?;
+            *authority.0.active.write().unwrap() = Arc::new(next);
+        }
+        authority
+            .0
+            .invalidated_from
+            .store(u64::MAX, Ordering::Release);
+        authority.0.withdrawn.store(false, Ordering::Release);
+        let pending = config.publication_root.join("activation.json");
+        if pending.exists() {
+            std::fs::remove_file(pending)?;
+        }
+    }
+    {
+        let mut status = authority.0.status.write().unwrap();
+        status["phase"] = "serving".into();
+        status["restored"] = true.into();
+        status["public_height"] = publication.height.into();
+        status["public_hash"] = publication.hash.clone().into();
+        status["map_sha256"] = publication.map_sha256.clone().into();
+    }
+    authority.0.validation.submit(super::validator::Job {
+        identity: super::validator::Identity {
+            directory: publication.directory.clone(),
+            map_sha256: publication.map_sha256.clone(),
+            inventory_sha256: distribution.sha256().to_string(),
+            height: publication.height,
+            hash: publication.hash.clone(),
+            epoch,
+        },
+        inventory: distribution.inventory().clone(),
+        validation,
+    });
+    Ok(())
+}
+
+/// A validation status object for `identity`.
+fn validation_status(identity: &super::validator::Identity, state: &str) -> serde_json::Value {
+    serde_json::json!({
+        "state": state,
+        "publication": {"height": identity.height, "hash": identity.hash},
+        "map_sha256": identity.map_sha256,
+        "inventory_sha256": identity.inventory_sha256,
+    })
+}
+
+/// Apply one validator result. A result changes status only while it is about
+/// the active inventory; a confirmed mismatch is always recorded, and
+/// withdraws the active publication whenever it lists the same bytes.
+fn validation_event(
+    root: &Path,
+    authority: &Authority,
+    identity: &super::validator::Identity,
+    event: super::validator::Event,
+) {
+    use super::validator::Event;
+    use transparent_shared::publication::{CorrectnessError, IntegrityError};
+    // Callers hold the publication gate: an activation, reorg or withdrawal
+    // advances the epoch or replaces the active publication, after which a
+    // result about the old one changes nothing.
+    let current = || {
+        let active = authority.0.active.read().unwrap();
+        authority.0.epoch.load(Ordering::Acquire) == identity.epoch
+            && !authority.0.withdrawn.load(Ordering::Acquire)
+            && active.publication.directory == identity.directory
+            && active.publication.map_sha256 == identity.map_sha256
+            && active.publication.height == identity.height
+            && active.publication.hash == identity.hash
+            && active
+                .distribution
+                .as_ref()
+                .is_some_and(|d| d.sha256() == identity.inventory_sha256)
+    };
+    let set = |key: &str, value: serde_json::Value| {
+        if current() {
+            authority.0.status.write().unwrap()[key] = value;
+        }
+    };
+    let key = |phase: &str| format!("{phase}_validation");
+    let mismatch = matches!(
+        event,
+        Event::Integrity(Err(IntegrityError::Mismatch { .. }))
+    );
+    // The mismatch arm takes the gate itself.
+    let _gate = (!mismatch).then(|| authority.0.publication_gate.lock().unwrap());
+    let update = |phase: &str, f: &dyn Fn(&mut serde_json::Value)| {
+        if current() {
+            let mut status = authority.0.status.write().unwrap();
+            f(&mut status[key(phase)]);
+        }
+    };
+    match event {
+        Event::Started(phase) => {
+            let mut value = validation_status(identity, "pending");
+            value["started_unix"] = unix_now().into();
+            set(&key(phase), value);
+        }
+        Event::Progress(phase, bytes) => update(phase, &|v| v["bytes_hashed"] = bytes.into()),
+        Event::Integrity(Ok(bytes)) => update("integrity", &|v| {
+            let started = v["started_unix"].as_f64().unwrap_or_else(unix_now);
+            v["state"] = "passed".into();
+            v["bytes_hashed"] = bytes.into();
+            v["seconds"] = (unix_now() - started).into();
+            v.as_object_mut().map(|o| o.remove("reason"));
+        }),
+        Event::Integrity(Err(IntegrityError::Mismatch {
+            path,
+            expected_sha256,
+            found_sha256,
+            reason,
+        })) => {
+            tracing::error!(%path, %reason, inventory = %identity.inventory_sha256,
+                "publication artifact failed integrity validation");
+            let failure = IntegrityFailure {
+                path,
+                expected_sha256,
+                found_sha256,
+                inventory_sha256: identity.inventory_sha256.clone(),
+                map_sha256: identity.map_sha256.clone(),
+                reason: reason.clone(),
+            };
+            let _gate = authority.0.publication_gate.lock().unwrap();
+            // An unreadable record is never replaced by one holding only this
+            // failure; the publication is withdrawn below either way.
+            match integrity_failures(root) {
+                Ok(mut failures) => {
+                    if !failures.contains(&failure) {
+                        failures.push(failure.clone());
+                    }
+                    if let Err(error) = serde_json::to_vec(&failures)
+                        .map_err(BoxError::from)
+                        .and_then(|bytes| {
+                            publication::write_atomic(&root.join(INTEGRITY_FAILURES), &bytes)
+                        })
+                    {
+                        tracing::error!(%error, "could not record the integrity failure");
+                    }
+                }
+                Err(error) => tracing::error!(
+                    %error,
+                    "integrity failure record is unreadable; kept as is and the publication withdrawn"
+                ),
+            }
+            let active = authority.0.active.read().unwrap().clone();
+            if let Some(distribution) = &active.distribution {
+                if lists_failed(std::slice::from_ref(&failure), distribution.inventory()) {
+                    authority.0.integrity_failed.store(true, Ordering::Release);
+                    authority.0.withdrawn.store(true, Ordering::Release);
+                    authority.0.fleet_withdrawal.store(true, Ordering::Release);
+                    let mut status = authority.0.status.write().unwrap();
+                    status["phase"] = "integrity_failed".into();
+                    let mut value = validation_status(identity, "failed");
+                    value["reason"] = format!("{}: {reason}", failure.path).into();
+                    value["artifact"] = serde_json::to_value(&failure).unwrap_or_default();
+                    status["integrity_validation"] = value;
+                }
+            }
+        }
+        Event::Integrity(Err(
+            error @ (IntegrityError::Unavailable(_) | IntegrityError::Stopped),
+        )) => update("integrity", &|v| {
+            v["state"] = "pending".into();
+            v["reason"] = error.to_string().into();
+        }),
+        Event::Correctness(Ok(checked)) => {
+            update("correctness", &|v| {
+                let started = v["started_unix"].as_f64().unwrap_or_else(unix_now);
+                v["state"] = "passed".into();
+                v["runtimes_checked"] = checked.loaded.into();
+                v["seconds"] = (unix_now() - started).into();
+                v.as_object_mut().map(|o| o.remove("reason"));
+            });
+            if current() {
+                authority.0.checked_runtimes.lock().unwrap().adopt(checked);
+            }
+        }
+        Event::Correctness(Err(CorrectnessError::Failed(reason))) => {
+            tracing::error!(%reason, inventory = %identity.inventory_sha256,
+                "publication failed correctness validation; still serving");
+            update("correctness", &|v| {
+                v["state"] = "failed".into();
+                v["reason"] = reason.clone().into();
+            })
+        }
+        Event::Correctness(Err(error)) => update("correctness", &|v| {
+            v["state"] = "pending".into();
+            v["reason"] = error.to_string().into();
+        }),
+    }
 }
 
 /// Prepares the runtimes of the candidate in `directory` beside its
@@ -1161,7 +1825,9 @@ async fn prepare_runtimes(
     let previous = authority.0.prepared_set.lock().unwrap().take();
     let stop = {
         let authority = authority.clone();
-        move || authority.0.epoch.load(Ordering::Acquire) != epoch
+        move || {
+            authority.0.shutdown.requested() || authority.0.epoch.load(Ordering::Acquire) != epoch
+        }
     };
     let directory = directory.to_path_buf();
     let (previous, prepared) = tokio::task::spawn_blocking(move || {
@@ -1171,13 +1837,18 @@ async fn prepare_runtimes(
             prune_excess: true,
             ..LoadOptions::whole(transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS)
         };
-        match ShardSet::open_reusing(&directory, &options, previous.as_ref()) {
+        match ShardSet::open_reusing_until(&directory, &options, previous.as_ref(), &stop) {
             Ok(set) => {
                 let prepared = transparent_shared::runtime::prebuild::prepare_publication(
                     &set, &directory, &retained, &stop,
                 );
                 (Some(set), prepared.map_err(|e| e.to_string()))
             }
+            // A stopped scan proved nothing; the earlier set keeps its evidence.
+            Err(transparent_shared::history::shardset::LoadError::Stopped) => (
+                previous,
+                Err("candidate invalidated while preparing".to_string()),
+            ),
             Err(error) => (
                 previous,
                 Err(format!("the candidate did not verify: {error}")),
@@ -1624,6 +2295,26 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                 status["freshness_seconds"].as_f64().unwrap_or(0.),
             ),
             ("reorg_depth", status["reorg_depth"].as_f64().unwrap_or(0.)),
+            (
+                "integrity_validation_state",
+                validation_state(&status["integrity_validation"]),
+            ),
+            (
+                "integrity_validation_seconds",
+                status["integrity_validation"]["seconds"]
+                    .as_f64()
+                    .unwrap_or(0.),
+            ),
+            (
+                "correctness_validation_state",
+                validation_state(&status["correctness_validation"]),
+            ),
+            (
+                "correctness_validation_seconds",
+                status["correctness_validation"]["seconds"]
+                    .as_f64()
+                    .unwrap_or(0.),
+            ),
         ] {
             text.push_str(&format!("# TYPE transparent_publication_{name} gauge\ntransparent_publication_{name} {value}\n"));
         }
@@ -1753,6 +2444,15 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
     }
 }
 
+/// 0 pending, 1 passed, -1 failed.
+fn validation_state(value: &serde_json::Value) -> f64 {
+    match value["state"].as_str() {
+        Some("passed") => 1.,
+        Some("failed") => -1.,
+        _ => 0.,
+    }
+}
+
 fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxError> {
     let active = authority
         .0
@@ -1766,6 +2466,7 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
         .ok()
         .and_then(|b| serde_json::from_slice::<ActivePublication>(&b).ok())
         .map(|p| p.directory);
+    let validating = authority.0.validation.held();
     let mut unused: Vec<_> = std::fs::read_dir(&config.publication_root)?
         .filter_map(Result::ok)
         .filter(|e| {
@@ -1775,6 +2476,7 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
                     .is_some_and(|s| s.starts_with("candidate-"))
                 && e.path() != active
                 && pending.as_ref() != Some(&e.path())
+                && !validating.contains(&e.path())
         })
         .collect();
     unused.sort_by_key(|e| std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok()));
@@ -1855,6 +2557,57 @@ mod tests {
 
     use super::*;
     use axum::{routing::post, Json};
+
+    /// A few empty blocks close a shard. The service follow path does not use this.
+    #[cfg(not(feature = "qualification-tests"))]
+    fn two_script_seal(geometry: &Geometry) -> DecoupledPolicy {
+        let mut policy = DecoupledPolicy::for_geometry(geometry);
+        policy.scripts.target = 2;
+        policy
+    }
+
+    async fn publish_follow(
+        config: &Config,
+        rpc: &NodeClient,
+        store: &Arc<tokio::sync::Mutex<EventStore>>,
+        authority: &Authority,
+    ) -> Result<(), BoxError> {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            return publish_candidate(config, rpc, store, authority, two_script_seal, None, None)
+                .await;
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            publish_once(config, rpc, store, authority).await
+        }
+    }
+
+    async fn prepare_follow(
+        config: &Config,
+        rpc: &NodeClient,
+        authority: &Authority,
+        work: HistoryWork,
+    ) -> Result<Input<HistoryCandidate>, BoxError> {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            return prepare_candidate(config, rpc, authority, work, two_script_seal, None, None)
+                .await;
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            prepare_candidate(
+                config,
+                rpc,
+                authority,
+                work,
+                DecoupledPolicy::for_geometry,
+                Some(config.archive_geometry.clone()),
+                Some(config.recent_from),
+            )
+            .await
+        }
+    }
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
     struct MockNode {
         chain: Chain,
@@ -1960,8 +2713,16 @@ mod tests {
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: Some("decoupled-32k-32k".into()),
-            recent_from: Some(2),
+            archive_geometry: if cfg!(feature = "qualification-tests") {
+                Some("decoupled-32k-32k".into())
+            } else {
+                None
+            },
+            recent_from: if cfg!(feature = "qualification-tests") {
+                Some(2)
+            } else {
+                None
+            },
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
             through: None,
@@ -1970,7 +2731,16 @@ mod tests {
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
+        #[cfg(feature = "qualification-tests")]
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
+        #[cfg(not(feature = "qualification-tests"))]
+        publication::publish_with(
+            &options,
+            &journal,
+            BlockHash::from_internal_bytes([0; 32]),
+            &two_script_seal,
+        )
+        .unwrap();
         let hook = root.path().join("fleet.py");
         std::fs::write(&hook, r#"#!/usr/bin/env python3
 import json,sys,time
@@ -2034,8 +2804,14 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            shutdown: Default::default(),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
+            validation: Default::default(),
+            integrity_failed: AtomicBool::new(false),
+            fleet_withdrawal: AtomicBool::new(false),
+            foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -2053,7 +2829,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         assert_eq!(store.lock().await.covered_through(), Some(4));
         let fail = config.fleet_command.with_extension("fail");
         std::fs::write(&fail, []).unwrap();
-        assert!(publish_once(&config, &client, &store, &authority)
+        assert!(publish_follow(&config, &client, &store, &authority)
             .await
             .is_err());
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
@@ -2074,7 +2850,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         else {
             panic!("new durable work expected");
         };
-        let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
+        let Input::Work(ready) = prepare_follow(&config, &client, &authority, work)
             .await
             .unwrap()
         else {
@@ -2118,7 +2894,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         let entered = config.fleet_command.with_extension("entered");
         std::fs::write(&pause, []).unwrap();
         {
-            let publication = publish_once(&config, &client, &store, &authority);
+            let publication = publish_follow(&config, &client, &store, &authority);
             tokio::pin!(publication);
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 loop {
@@ -2160,7 +2936,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             std::fs::remove_file(&pause).unwrap();
             assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         }
-        publish_once(&config, &client, &store, &authority)
+        publish_follow(&config, &client, &store, &authority)
             .await
             .unwrap();
         assert_eq!(authority.0.active.read().unwrap().publication.height, 4);
@@ -2172,7 +2948,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .publication
             .map_sha256
             .clone();
-        // Same-height fork beginning inside the sealed first shard.
+        // Same-height fork of the published tip.
         {
             let mut blocks = chain.write().unwrap();
             blocks.truncate(1);
@@ -2207,7 +2983,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             ingest.await.unwrap();
         }
         assert!(authority.0.withdrawn.load(Ordering::Acquire));
-        publish_once(&config, &client, &store, &authority)
+        publish_follow(&config, &client, &store, &authority)
             .await
             .unwrap();
         assert!(!authority.0.withdrawn.load(Ordering::Acquire));
@@ -2296,16 +3072,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             output: initial.clone(),
             previous: None,
             recent_geometry: "decoupled-2k-8k".into(),
-            archive_geometry: if !failures_only && !cfg!(feature = "qualification-tests") {
-                None
-            } else {
-                Some("decoupled-32k-32k".into())
-            },
-            recent_from: if !failures_only && !cfg!(feature = "qualification-tests") {
-                None
-            } else {
-                Some(2)
-            },
+            archive_geometry: Some("decoupled-32k-32k".into()),
+            recent_from: Some(2),
             zakura_rpc_url: String::new(),
             zakura_cookie: cookie.clone(),
             through: None,
@@ -2377,8 +3145,14 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             http: reqwest::Client::new(),
             membership: None,
             prepared_set: std::sync::Mutex::new(None),
+            shutdown: Default::default(),
+            checked_runtimes: Default::default(),
             runtime_preparations: AtomicU64::new(0),
             runtime_preparation_failures: AtomicU64::new(0),
+            validation: Default::default(),
+            integrity_failed: AtomicBool::new(false),
+            fleet_withdrawal: AtomicBool::new(false),
+            foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -2397,68 +3171,6 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 })
                 .collect()
         };
-
-        if !failures_only && !cfg!(feature = "qualification-tests") {
-            // Exercise the real cold preparation, fleet offer and activation
-            // phases on a minimal valid publication. The qualified branch
-            // below also acquires new blocks and builds both deployed tiers.
-            let old = authority.0.active.read().unwrap().clone();
-            let height = old.publication.height;
-            let hash = old.publication.hash.clone();
-            let snapshot = {
-                let journal = store.lock().await;
-                Snapshot::capture(&journal, old.filters.map(), config.snapshot_dir()).unwrap()
-            };
-            let epoch = authority.0.epoch.load(Ordering::Acquire);
-            let work = HistoryWork {
-                old,
-                epoch,
-                snapshot,
-                height,
-                hash,
-            };
-            let Input::Work(ready) = prepare_history(&config, &client, &authority, work)
-                .await
-                .unwrap()
-            else {
-                panic!("cold preparation must produce a candidate")
-            };
-            let first = ready.candidate.publication.clone();
-            let files = runtime_files(&first.directory);
-            let set =
-                transparent_shared::history::shardset::ShardSet::open(&first.directory, 3).unwrap();
-            assert!(!files.is_empty());
-            assert_eq!(files.len(), set.warm_targets().len());
-            assert_eq!(ready.runtimes.as_ref().unwrap()["built"], files.len());
-            let offered = requests();
-            let request = offered
-                .iter()
-                .find(|r| r["operation"] == "prepare")
-                .unwrap();
-            assert_eq!(request["runtimes"], serde_json::json!(first.directory));
-            activate_history(&config, &client, &authority, ready)
-                .await
-                .unwrap();
-            assert_eq!(
-                authority.0.active.read().unwrap().publication.map_sha256,
-                first.map_sha256
-            );
-
-            // A separately staged candidate must link the verified completed
-            // runtimes of the active publication, preserving their inodes.
-            let next = config.publication_root.join("candidate-bounded-linked");
-            candidate_inputs(&first.directory, &next);
-            let report = prepare_runtimes(&config, &authority, &next, epoch)
-                .await
-                .unwrap();
-            assert_eq!(report["built"], 0);
-            assert_eq!(report["linked"], files.len());
-            let linked = runtime_files(&next);
-            assert_eq!(files, linked);
-            assert_eq!(authority.0.runtime_preparations.load(Ordering::Relaxed), 2);
-            server.abort();
-            return;
-        }
 
         let source = if failures_only {
             authority.0.active.read().unwrap().publication.clone()
@@ -2634,6 +3346,334 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             report["failures"].as_array().unwrap().len() as u64
         );
         server.abort();
+    }
+
+    /// A five-block node whose journal and publication end at height two, and
+    /// a fleet hook that logs every request and, while `fleet.pause` exists,
+    /// holds an activation after touching `fleet.entered`.
+    struct Follow {
+        _root: tempfile::TempDir,
+        server: tokio::task::JoinHandle<()>,
+        client: NodeClient,
+        config: Config,
+        store: Arc<tokio::sync::Mutex<EventStore>>,
+    }
+    async fn follow_fixture() -> Follow {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let chain: Chain = Arc::new(RwLock::new(Vec::new()));
+        extend(&mut chain.write().unwrap(), 5, 1);
+        let node = Arc::new(MockNode {
+            chain: chain.clone(),
+            pause_ancestor: AtomicBool::new(false),
+            ancestor_started: tokio::sync::Notify::new(),
+            resume: tokio::sync::Notify::new(),
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route("/", post(rpc)).with_state(node);
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let cookie = root.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let client = crate::ingest::zakura::connect(format!("http://{address}"), &cookie).unwrap();
+        let journal_dir = root.path().join("journal");
+        let mut journal = EventStore::open(
+            &journal_dir,
+            &hash(&chain.read().unwrap()[0]).to_display_hex(),
+            0,
+        )
+        .unwrap();
+        for h in 0..3 {
+            journal
+                .append_block(h, hash(&chain.read().unwrap()[h as usize]), &[])
+                .unwrap();
+        }
+        journal.commit().unwrap();
+        let initial = root.path().join("initial");
+        let qualification = cfg!(feature = "qualification-tests");
+        let options = PublishOptions {
+            data_dir: journal_dir.clone(),
+            output: initial.clone(),
+            previous: None,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: qualification.then(|| "decoupled-32k-32k".into()),
+            recent_from: qualification.then_some(2),
+            zakura_rpc_url: String::new(),
+            zakura_cookie: cookie.clone(),
+            through: None,
+            record: None,
+            source_sha: None,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+        };
+        publication::publish_with(
+            &options,
+            &journal,
+            BlockHash::from_internal_bytes([0; 32]),
+            &follow_seal,
+        )
+        .unwrap();
+        let hook = root.path().join("fleet.py");
+        std::fs::write(&hook, r#"#!/usr/bin/env python3
+import json,sys,time
+from pathlib import Path
+r=json.load(sys.stdin)
+with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
+pause=Path(__file__).with_suffix('.pause')
+if r['operation']=='activate' and pause.exists():
+    pause.with_suffix('.entered').touch()
+    deadline=time.monotonic()+60
+    while pause.exists():
+        if time.monotonic()>deadline: raise RuntimeError('fixture activation pause expired')
+        time.sleep(.01)
+print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
+"#).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let publications = root.path().join("publications");
+        std::fs::create_dir(&publications).unwrap();
+        let config = Config {
+            data_dir: journal_dir,
+            publication_root: publications,
+            initial_publication: initial,
+            recent_from: 2,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
+            rpc_url: format!("http://{address}"),
+            rpc_cookie: cookie,
+            fleet_command: hook,
+            fleet_config: root.path().join("unused"),
+            listen: address,
+            source_sha: "fixture".into(),
+            shadow: false,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            follow_journal: false,
+            snapshot_dir: None,
+            ship_runtimes: false,
+            distribute_prepared: false,
+            http_only: false,
+        };
+        let store = Arc::new(tokio::sync::Mutex::new(journal));
+        Follow {
+            _root: root,
+            server,
+            client,
+            config,
+            store,
+        }
+    }
+    /// The seal policy [`publish_follow`] publishes under.
+    fn follow_seal(geometry: &Geometry) -> DecoupledPolicy {
+        #[cfg(not(feature = "qualification-tests"))]
+        {
+            two_script_seal(geometry)
+        }
+        #[cfg(feature = "qualification-tests")]
+        {
+            DecoupledPolicy::for_geometry(geometry)
+        }
+    }
+    impl Follow {
+        /// The authority a publisher starting now would hold: the publication
+        /// `active.json` names, checked against its map as at startup, or the
+        /// initial one.
+        fn authority(&self, shutdown: pir_pipeline::service::Shutdown) -> Authority {
+            let saved = self.config.publication_root.join("active.json");
+            let public = if saved.exists() {
+                let saved: ActivePublication =
+                    serde_json::from_slice(&std::fs::read(saved).unwrap()).unwrap();
+                let loaded = read_public(saved.directory, saved.upstreams).unwrap();
+                assert_eq!(loaded.publication.map_sha256, saved.map_sha256);
+                loaded
+            } else {
+                read_public(self.config.initial_publication.clone(), Vec::new()).unwrap()
+            };
+            Authority(Arc::new(Inner {
+                cycle_duration: Default::default(),
+                publication_freshness: Default::default(),
+                telemetry: Default::default(),
+                publication_attempts: AtomicU64::new(0),
+                publication_failures: AtomicU64::new(0),
+                last_publication: AtomicU64::new(0),
+                active: RwLock::new(Arc::new(public)),
+                withdrawn: AtomicBool::new(false),
+                epoch: AtomicU64::new(0),
+                distribution_revision: AtomicU64::new(1),
+                distribution_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+                canonicality: None,
+                invalidated_from: AtomicU64::new(u64::MAX),
+                publication_gate: std::sync::Mutex::new(()),
+                last_init: std::sync::Mutex::new(None),
+                status: RwLock::new(serde_json::json!({})),
+                observed: RwLock::new(BTreeMap::new()),
+                http: reqwest::Client::new(),
+                membership: None,
+                prepared_set: std::sync::Mutex::new(None),
+                shutdown,
+                checked_runtimes: Default::default(),
+                runtime_preparations: AtomicU64::new(0),
+                runtime_preparation_failures: AtomicU64::new(0),
+                validation: Default::default(),
+                integrity_failed: AtomicBool::new(false),
+                fleet_withdrawal: AtomicBool::new(false),
+                foreground: AtomicU64::new(0),
+            }))
+        }
+        /// Brings the journal to the node's tip, height four.
+        async fn ingest(&self, authority: &Authority) {
+            let (notify, _) = tokio::sync::watch::channel(0);
+            ingest_once(
+                &self.config,
+                &self.client,
+                &self.store,
+                authority,
+                &mut OutputCache::new(100),
+                &notify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(self.store.lock().await.covered_through(), Some(4));
+        }
+        /// The operations of every fleet request so far.
+        fn operations(&self) -> Vec<String> {
+            std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
+                .unwrap_or_default()
+                .lines()
+                .map(|line| {
+                    let request: serde_json::Value = serde_json::from_str(line).unwrap();
+                    request["operation"].as_str().unwrap().to_string()
+                })
+                .collect()
+        }
+    }
+
+    /// A stop requested while the candidate is being published ends its
+    /// preparation as a normal outcome: the build writes no map, the fleet is
+    /// not asked, nothing is activated and no failure is counted. A
+    /// publisher started afterwards prepares and activates the same height.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_during_the_candidate_build_is_unchanged_and_a_restart_resumes() {
+        static STOPPING: std::sync::LazyLock<pir_pipeline::service::Shutdown> =
+            std::sync::LazyLock::new(Default::default);
+        // Asked as the build starts, after preparation checked for a stop.
+        fn stopping_seal(geometry: &Geometry) -> DecoupledPolicy {
+            STOPPING.request();
+            follow_seal(geometry)
+        }
+        let follow = follow_fixture().await;
+        let config = &follow.config;
+        let authority = follow.authority(STOPPING.clone());
+        follow.ingest(&authority).await;
+        let Input::Work(work) = acquire_history(config, &follow.client, &follow.store, &authority)
+            .await
+            .unwrap()
+        else {
+            panic!("new durable work expected");
+        };
+        let qualification = cfg!(feature = "qualification-tests");
+        let prepared = prepare_candidate(
+            config,
+            &follow.client,
+            &authority,
+            work,
+            stopping_seal,
+            qualification.then(|| config.archive_geometry.clone()),
+            qualification.then_some(config.recent_from),
+        )
+        .await;
+        assert!(STOPPING.requested());
+        assert!(
+            matches!(prepared, Ok(Input::Unchanged)),
+            "stopped as a normal outcome: {:?}",
+            prepared.err()
+        );
+        assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+        assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
+        assert!(follow.operations().is_empty(), "the fleet was not asked");
+        for name in ["active.json", "activation.json"] {
+            assert!(!config.publication_root.join(name).exists(), "{name}");
+        }
+        let candidates: Vec<_> = std::fs::read_dir(&config.publication_root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.is_dir())
+            .collect();
+        assert_eq!(candidates.len(), 1, "{candidates:?}");
+        assert!(
+            !candidates[0].join("shards.json").exists(),
+            "no map written"
+        );
+
+        let restarted = follow.authority(Default::default());
+        publish_follow(config, &follow.client, &follow.store, &restarted)
+            .await
+            .unwrap();
+        assert_eq!(restarted.0.active.read().unwrap().publication.height, 4);
+        assert_eq!(follow.operations(), ["prepare", "activate"]);
+        follow.server.abort();
+    }
+
+    /// A stop requested once fleet activation has begun does not abandon the
+    /// cycle: it completes the post-activation canonicality check and the
+    /// pointer commit, counts no failure, sends no further fleet request,
+    /// and a publisher started afterwards loads the same active record.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stop_during_fleet_activation_still_commits_the_publication() {
+        let follow = follow_fixture().await;
+        let config = &follow.config;
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let authority = follow.authority(shutdown.clone());
+        follow.ingest(&authority).await;
+        let pause = config.fleet_command.with_extension("pause");
+        let entered = config.fleet_command.with_extension("entered");
+        std::fs::write(&pause, []).unwrap();
+        let publication = publish_follow(config, &follow.client, &follow.store, &authority);
+        tokio::pin!(publication);
+        loop {
+            tokio::select! {
+                result = &mut publication => panic!("activation did not pause: {result:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                    if entered.exists() { break; }
+                }
+            }
+        }
+        shutdown.request();
+        std::fs::remove_file(&pause).unwrap();
+        publication.await.unwrap();
+
+        let active = authority.0.active.read().unwrap().publication.clone();
+        assert_eq!(active.height, 4);
+        let saved: ActivePublication = serde_json::from_slice(
+            &std::fs::read(config.publication_root.join("active.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            (&saved.directory, &saved.map_sha256, saved.height),
+            (&active.directory, &active.map_sha256, active.height)
+        );
+        assert!(!config.publication_root.join("activation.json").exists());
+        assert!(!authority.0.withdrawn.load(Ordering::Acquire));
+        assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
+        {
+            let status = authority.0.status.read().unwrap();
+            assert_eq!(status["phase"], "serving");
+            assert_eq!(status["public_height"], 4);
+            assert!(status.get("publication_error").is_none());
+        }
+        // Nothing is left to retry.
+        publish_follow(config, &follow.client, &follow.store, &authority)
+            .await
+            .unwrap();
+        assert_eq!(follow.operations(), ["prepare", "activate"]);
+
+        let restarted = follow.authority(Default::default());
+        assert_eq!(
+            restarted.0.active.read().unwrap().publication.map_sha256,
+            active.map_sha256
+        );
+        follow.server.abort();
     }
 }
 

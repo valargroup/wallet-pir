@@ -87,12 +87,6 @@ def commands(group, groups, lint=False, compile_only=False):
         result.extend([*runner, '--locked', '--profile', 'release-fast', '-p', CHAIN_READER, *targets,
                        '--features', ','.join(f'{CHAIN_READER}/{feature}' for feature in selection)]
                       for selection, targets in CHAIN_READER_SELECTIONS)
-    if group == 'transparent':
-        # This analysis tool has its own workspace. Its journal-reader identity
-        # and compiled-codec contracts run first, so another service test's
-        # failure cannot hide whether those contracts passed on Linux.
-        result.insert(0, [*runner, '--locked', '--profile', 'release-fast',
-                          '--manifest-path', 'tools/txid/txid-sizing/export/Cargo.toml'])
     return result
 
 

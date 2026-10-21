@@ -53,9 +53,8 @@ class PlannerTests(unittest.TestCase):
     def test_product_analysis_keeps_tooling_checks(self):
         for path in ('tools/transparent/filters/transparent_filter_build.py',
                      'tools/transparent/parent-filters/transparent_parent_evaluate.py',
-                     'tools/enhance/schema11-interop/run.py',
                      'tools/status/status_qualification.py',
-                     'tools/txid/txid-sizing/survey.py', 'tools/txid/txid-display/demo.py'):
+                     'tools/txid/txid-display/demo.py'):
             self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}), path)
 
     def test_docs_do_not_need_rust_or_other_helpers(self):
@@ -316,7 +315,7 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn('native-reinspiring', calls[-1])
         groups = full.inventory()
         self.assertIn('enhance-pir-client/native-reinspiring', full.commands('enhance', groups)[0][-1].split(','))
-        self.assertNotIn('--features', full.commands('transparent', groups)[0])
+        self.assertEqual(len(full.commands('transparent', groups)), 1)
 
 
     def test_explicit_disabled_integration_target_cannot_pass_with_zero_tests(self):

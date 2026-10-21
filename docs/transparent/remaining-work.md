@@ -744,7 +744,7 @@ pin remains unavailable through the sanctioned read-only RPC interface.
 - [x] Build a parent-free canonical export path with complete eligibility, shared shielded flags, raw outputs and current display bytes; bound unknown exact-fee encoded length using canonical monetary limits.
 - [x] Complete the fixed-anchor, era-stratified whole-range probability sample within the one-day budget; publish clustered uncertainty, all requested cutoffs, 85/90/95/99 frontiers and conservative fee-size membership.
 - [x] Select a useful cutoff strictly above 80% from that bounded study and assess independent coarse/hash lookup with global/broad overflow, joint routes, excess counts, thin revisions and timing. Sample estimates do not qualify population anonymity minima.
-- [x] Add and locally validate the [read-only coordinator journal census command](../../tools/txid/txid-sizing/JOURNAL-CENSUS.md), including safe fee-size page bounds, unique identities, shared k-archive tables and smaller page geometries.
+- [x] Add and locally validate the [read-only coordinator journal census command](https://github.com/valargroup/wallet-pir/blob/f26b9476fbcd37aca4b4882b9264e90c1896be16/tools/txid/txid-sizing/JOURNAL-CENSUS.md), including safe fee-size page bounds, unique identities, shared k-archive tables and smaller page geometries.
 - [ ] Receive Roman's completed genesis-journal JSON at fixed height 3,508,673 with its anchor hash and ingest source/executable and total/eligible/shielded-only exclusion receipt; compare conservative coverage and geometry demand against the existing recommendation. The orchestrator owns the ingest; do not run a gateway scan or resume the old prefix.
 - [ ] Remaining full-data gate: obtain sanctioned bulk/archive-local extraction and reconcile canonical genesis-to-anchor eligibility, exact identity and membership. Resolve exact fees only when their encoded-size uncertainty can change a decision. No full UTXO reconstruction is required for display sizing.
 - [ ] Before changing production geometry, replay all observable joint routes across retained revisions, segment/request counts, refresh boundaries and relevant timing/history conditioning. Require distinct-real-candidate policy decisions for K=1000/10000; padding, fragments and a global overflow route cannot widen a narrow lookup class.
@@ -1185,18 +1185,18 @@ by default; v2 does not enable it.
   `SharedParams` per table kind across controller cycles and reuse
   `publish_parts`' verification instead of `verify_tables` again (about 0.8 s of
   the 2.8 s prebuild).
-- [ ] Lower the replica's load-time interference (lookup p99 1.4× the quiet tail
-  while loading or receiving): cap the self-check's build-pool threads or run it
-  at lower priority, and keep rsync's receiver work off the query threads.
+- [ ] Measure replica load-time interference with background warming and the
+  download-only checksum policy; preparation self-tests now run at the publisher.
+  Keep receiver work off query threads.
 - [ ] Pin the self-check's any-row claim with a test where rows B differ from
   rows A in one row only; use `rand::rng` for the sampled row and say why it must
   be unpredictable to the publisher. The one-row test now exists for history
   runtimes (`a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact`),
   through the same `TableRuntime::self_check`; the sampled row's randomness is
   unchanged.
-- [x] Count a refused shipped file once per slot on an `Overloaded` retry: the
-  cache now remembers a refusal until its production operation ends
-  (`a_refusal_is_counted_once_across_admission_retries`).
+- [x] Count a malformed shipped file once per production operation across
+  admission retries. Worker self-test refusal scenarios have been removed with
+  the publisher-owned preparation policy.
 - [ ] Document in `txid-display.md` that the prebuild runs before
   `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
   archive owners receive the recent runtimes at seal boundaries; correct the bench

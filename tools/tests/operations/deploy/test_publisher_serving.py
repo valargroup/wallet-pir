@@ -14,6 +14,31 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class ServingTests(PublisherFixture, unittest.TestCase):
+    def test_publisher_only_update_keeps_the_pinned_serving_processes(self):
+        self.deploy()
+        roles = [('router-01', 'enhance-pir-packing-router.service'),
+                 ('coordinator', 'enhance-pir-query-ingress.service')]
+        before = {unit: self.ex.probe_unit(host, unit)['invocation_id'] for host, unit in roles}
+        self.request['preserve_serving'] = True
+        self.request['release']['git_sha'] = 'f' * 40
+        self.request['serving']['caddy_sha256'] = publisher.sha(self.ex.read('coordinator', publisher_serving.CADDY))
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.ex.effects.clear()
+        self.assertEqual(self.deploy()['phase'], 'committed')
+        self.assertEqual({unit: self.ex.probe_unit(host, unit)['invocation_id'] for host, unit in roles}, before)
+        self.assertFalse(any(args[0] in ('stop', 'restart', 'start') and args[1] in before for args in self.ex.effects))
+        self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
+        self.assertEqual({unit: self.ex.probe_unit(host, unit)['invocation_id'] for host, unit in roles}, before)
+
+    def test_preserved_serving_refuses_an_upgrade_before_effects(self):
+        self.request['preserve_serving'] = True
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        with self.assertRaisesRegex(DeployError, 'preserve_serving requires'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
     def test_json_response_is_not_mixed_with_progress(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -25,6 +50,7 @@ class ServingTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(result['phase'], 'committed')
         edge = self.ex.read('coordinator', publisher_serving.CADDY)
         self.assertIn('handle /v1/enhance/*', edge)
+        self.assertEqual(edge.count(publisher_serving.DISCOVERY), 1)
         self.assertIn('respond 404', edge)
         self.assertNotIn('127.0.0.1:8080', edge)
         self.assertTrue(all(r['phase'] == 'verified' for r in result['serving_journal']['hosts']))
@@ -35,8 +61,25 @@ class ServingTests(PublisherFixture, unittest.TestCase):
     def test_subsequent_update_keeps_the_installed_wallet_routes(self):
         self.deploy()
         edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        self.request['serving']['caddy_sha256'] = publisher.sha(edge)
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
         self.assertEqual(self.deploy()['phase'], 'committed')
         self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), edge)
+
+    def test_foreign_discovery_route_is_refused(self):
+        edge = self.ex.read('coordinator', publisher_serving.CADDY)
+        foreign = publisher_serving.DISCOVERY.replace('127.0.0.1:18080', '127.0.0.1:8080')
+        self.ex.put('coordinator', publisher_serving.CADDY,
+                    edge.replace(publisher_serving.WALLET, publisher_serving.WALLET + foreign))
+        self.request['serving']['caddy_sha256'] = publisher.sha(
+            self.ex.read('coordinator', publisher_serving.CADDY))
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'unknown publisher discovery route'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
 
     def test_retained_cutover_journal_restores_its_saved_wallet_routes(self):
         result = self.deploy()

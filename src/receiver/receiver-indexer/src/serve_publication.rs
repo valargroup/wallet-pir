@@ -529,12 +529,20 @@ impl Updater {
             let config = self.config.clone();
             let loading = record.clone();
             let serving = self.publications.clone();
+            let revision = self.publications.history_revision();
             let loaded =
                 tokio::task::spawn_blocking(move || load(&loading, &config, Some(&serving)))
                     .await
                     .unwrap_or_else(|e| {
                         Err(Refusal::InvalidSource(format!("preparation failed: {e}")))
                     });
+            // A higher correction revision in this record revoked what was served. That
+            // is this record's own doing, not a revocation to verify it again after, so
+            // the epoch it left is the one its outcome settles in.
+            if self.publications.history_revision() > revision {
+                self.activated_epoch = Some(self.publications.epoch());
+                self.reporter.update(|status| status.loaded = None);
+            }
             info!(
                 revision = %record.revision,
                 elapsed_ms = started.elapsed().as_millis() as u64,

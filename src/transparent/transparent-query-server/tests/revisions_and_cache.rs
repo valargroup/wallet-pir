@@ -28,12 +28,16 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+#[path = "support/artifact_validation.rs"]
+mod artifact_validation;
 #[path = "support/revision.rs"]
 mod revision;
 use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::ShardManifest;
-use transparent_shared::history::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
+use transparent_shared::history::shardset::{
+    LoadOptions, ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS,
+};
 use transparent_shared::runtime::metrics::Metrics;
 use transparent_shared::runtime::{reserved_bytes, CacheError, RuntimeCache, SharedParams};
 
@@ -284,6 +288,32 @@ fn a_set_holding_a_superseded_revision_loads() {
     assert_eq!(set.get(0).unwrap().digest, new, "the map names the current");
     assert!(set.revision(&old).is_some(), "the predecessor is reachable");
     assert!(set.revision(&new).is_some());
+}
+
+#[tokio::test]
+async fn retained_history_artifacts_are_checked_and_stay_withdrawn_after_reopening() {
+    let dir = tempfile::tempdir().unwrap();
+    let (old, new) = two_revisions(dir.path());
+    let options = LoadOptions::whole(DEFAULT_RETAIN_REVISIONS);
+    let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
+    artifact_validation::damage_received(
+        set.revision(&old)
+            .unwrap()
+            .segment(TableRef::Directory, 0)
+            .unwrap(),
+    );
+    drop(set);
+    for pending in [true, false] {
+        let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
+        let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
+        artifact_validation::assert_withdrawn(
+            router(state),
+            &format!("/v2/shards/0/revisions/{old}/manifest"),
+            &format!("/v2/shards/0/revisions/{new}/manifest"),
+            pending,
+        )
+        .await;
+    }
 }
 
 /// Retention is bounded. Keeping every revision a growing tail ever had would
@@ -710,8 +740,7 @@ async fn a_built_runtime_returns_its_unused_reservation_to_the_budget() {
 /// warm, nothing evicted or refused, each snapshot charged its file length.
 /// A restart restores both from disk at the same charge.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
-    use transparent_query_server::history::service::ReadinessMode;
+async fn background_warming_respects_memory_and_disk_budgets() {
     use transparent_shared::runtime::disk::DiskCache;
     use transparent_shared::runtime::warm_bytes;
     let root = tempfile::tempdir().unwrap();
@@ -745,15 +774,17 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
         .is_err());
     let config = |cache_bytes| ServiceConfig {
         cache_bytes,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
-    assert!(ServiceState::build_with_disk(
-        open(),
-        config(needed - 1),
-        Some(disk("cache", entries + excess))
-    )
-    .is_err());
+    assert!(
+        ServiceState::build_with_disk(
+            open(),
+            config(needed - 1),
+            Some(disk("cache", entries + excess))
+        )
+        .is_ok(),
+        "startup does not require the whole assignment to be resident"
+    );
 
     let warm = |state: ServiceState| async move {
         state.spawn_prewarm().await.unwrap();
@@ -801,7 +832,6 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
 #[tokio::test(flavor = "multi_thread")]
 async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     let root = tempfile::tempdir().unwrap();
     let a = root.path().join("initial");
@@ -812,7 +842,6 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
     let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
     let config = ServiceConfig {
         cache_bytes: pair * 8,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let disk =
@@ -867,10 +896,9 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         // Each pair is charged its built size, not its reservation.
         let built = [Table::Directory, Table::Pages]
             .map(|table| SharedParams::build(&GEOMETRY, table).unwrap().held_bytes());
-        assert_eq!(
-            metrics.cache_entries.load(Ordering::Relaxed),
-            4,
-            "only the current and preparing pair remain resident, even with spare cache capacity"
+        assert!(
+            metrics.cache_entries.load(Ordering::Relaxed) <= 4,
+            "preparing a cold candidate cannot require more than the current and preparing pair"
         );
         let resident = metrics.resident_bytes.load(Ordering::Relaxed);
         assert!(resident <= (built[0] + built[1]) * 2, "{resident}");
@@ -916,9 +944,9 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "runtime"))
         .count();
-    assert_eq!(
-        cached, 8,
-        "only the four live/retained revision pairs remain on disk"
+    assert!(
+        cached <= 8,
+        "at most the four live/retained revision pairs remain on disk"
     );
 }
 
@@ -1421,7 +1449,6 @@ async fn a_disconnected_activation_keeps_serialization_over_the_control_socket()
 #[tokio::test(flavor = "multi_thread")]
 async fn live_prepare_activate_and_invalidate() {
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     let root = tempfile::tempdir().unwrap();
     let a = root.path().join("a");
@@ -1434,7 +1461,6 @@ async fn live_prepare_activate_and_invalidate() {
     let old_map = set.map_digest.clone();
     let config = ServiceConfig {
         cache_bytes: 1 << 30,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let state = ServiceState::build(set, config).unwrap();
@@ -1640,7 +1666,6 @@ mod burst_query;
 async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
     use std::path::PathBuf;
     use transparent_query_server::history::live::{Command, LiveService, Publication};
-    use transparent_query_server::history::service::ReadinessMode;
     use transparent_shared::history::shardset::LoadOptions;
     use transparent_shared::runtime::prebuild::prepare_publication;
     let prepare = |dir: &Path, retained: &[PathBuf]| {
@@ -1659,7 +1684,6 @@ async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
     let pair = one_runtime(Table::Directory) + one_runtime(Table::Pages);
     let config = ServiceConfig {
         cache_bytes: pair * 8,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let set = ShardSet::open(&initial, 3).unwrap();
@@ -1715,7 +1739,7 @@ async fn prepared_runtimes_serve_preparation_and_restart_within_reorg_fences() {
         assert_eq!(produced["built"], 0, "{reply}");
         assert_eq!(produced["restored"], 0, "{reply}");
         assert_eq!(produced["shipped_fallbacks"], 0, "{reply}");
-        assert!(produced["shipped"].as_u64().unwrap() > 0, "{reply}");
+        assert_eq!(reply["verification"]["bytes_hashed"], 0, "{reply}");
         live.command(Command::Activate {
             expected,
             map_sha256: map_sha256.clone(),
@@ -1820,4 +1844,63 @@ fn an_invalidated_preparation_stops_between_segments() {
     assert_eq!(prepared.files.len(), targets);
     assert_eq!(prepared.linked(), 1);
     assert_eq!(prepared.built(), targets - 1);
+}
+
+/// Restart and restaging do not require semantic evidence or read runtime bodies.
+#[tokio::test(flavor = "multi_thread")]
+async fn required_material_checks_size_without_warming_or_rehashing() {
+    use transparent_shared::runtime::{disk::ShippedRuntimes, prebuild::prepare_publication};
+    let root = tempfile::tempdir().unwrap();
+    two_revisions(root.path());
+    let set = ShardSet::open(root.path(), 3).unwrap();
+    let prepared = prepare_publication(&set, root.path(), &[], &|| false).unwrap();
+    assert!(prepared.failures.is_empty());
+    let count = set
+        .current()
+        .map(|shard| {
+            shard
+                .tables()
+                .into_iter()
+                .map(|table| shard.segments(table) as usize)
+                .sum::<usize>()
+        })
+        .sum::<usize>();
+    let shard = set.current().next().unwrap();
+    let table = shard.tables().into_iter().next().unwrap();
+    let source = shard.segment(table, 0).unwrap();
+    let params = SharedParams::build(shard.geometry, table.kind()).unwrap();
+    let key = (shard.runtime_identity(table).to_string(), table.kind(), 0);
+    let path =
+        ShippedRuntimes::required(root.path().to_path_buf()).path(&key, &params, source.sha256());
+    let build = || {
+        ServiceState::build_with_runtimes(
+            ShardSet::open_for_serving(root.path(), &LoadOptions::whole(3)).unwrap(),
+            ServiceConfig::default(),
+            None,
+            Some(ShippedRuntimes::required(root.path().to_path_buf())),
+        )
+        .unwrap()
+    };
+    assert_eq!(build().check_required_material().unwrap(), count);
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[64] ^= 1;
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(build().check_required_material().unwrap(), count);
+    std::fs::write(&path, b"short").unwrap();
+    assert!(build().check_required_material().is_err());
+}
+
+#[tokio::test]
+async fn a_cold_archive_is_ready_before_any_runtime_is_loaded() {
+    let root = tempfile::tempdir().unwrap();
+    two_revisions(root.path());
+    let set = ShardSet::open_for_serving(root.path(), &LoadOptions::whole(3)).unwrap();
+    assert_eq!(set.verification().bytes_hashed, 0);
+    let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
+    let (status, body) = get(&state, "/v1/ready").await;
+    assert_eq!(status, StatusCode::OK);
+    let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(ready["ready"], true);
+    assert_eq!(ready["warm_runtimes"], 0);
+    assert_eq!(ready["prewarm_finished"], false);
 }

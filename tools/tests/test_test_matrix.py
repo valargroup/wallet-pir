@@ -36,7 +36,6 @@ class MatrixTests(unittest.TestCase):
             self.assertIn(('full-test', shard), cargo_cache.SCOPES)
         for kind in ('bin', 'doc', 'example', 'check'):
             self.assertTrue(any(t['kind'] == kind for t in targets.values()), kind)
-        self.assertTrue(any(t['variant'] == 'export' for t in targets.values()))
 
     def test_missing_duplicate_stale_and_new_targets_fail_closed(self):
         registry, _, _, packages, _ = self.plan
@@ -79,16 +78,6 @@ class MatrixTests(unittest.TestCase):
                           'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
-
-    def test_exporter_keeps_the_shared_extractor_fixtures_enabled(self):
-        _, contexts, _, packages, _ = self.plan
-        exporter = packages['txid-sizing-export']
-        enabled = matrix.enabled_features(exporter, contexts['export']['features'])
-        self.assertIn('fixtures', enabled)
-        fixture_dependency = next(dependency for dependency in exporter['dependencies']
-                                  if dependency['name'] == 'zakura-server-chain' and dependency['kind'] == 'dev')
-        self.assertIn('testing', fixture_dependency['features'])
-        self.assertNotIn('transparent-publisher', {dependency['name'] for dependency in exporter['dependencies']})
 
     def test_database_reader_binaries_remain_in_full_qualification(self):
         registry, contexts, targets, packages, _ = self.plan

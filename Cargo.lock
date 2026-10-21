@@ -247,6 +247,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip32"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0271a2fe2a6f05231419e878b5f50152a5a6dbcc60c18855d924892ecc85a33a"
+dependencies = [
+ "bs58",
+ "hmac",
+ "ripemd 0.2.0",
+ "secp256k1",
+ "sha2 0.11.1",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "bitcoin-consensus-encoding"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -356,7 +371,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
 dependencies = [
- "sha2",
+ "sha2 0.10.9",
  "tinyvec",
 ]
 
@@ -711,7 +726,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "curve25519-dalek-derive",
- "digest",
+ "digest 0.10.7",
  "fiat-crypto",
  "rustc_version",
  "subtle",
@@ -762,6 +777,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer 0.12.1",
+ "crypto-common 0.2.2",
+ "ctutils",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,7 +821,7 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.4",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zeroize",
 ]
@@ -821,26 +847,6 @@ dependencies = [
  "hex",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "enhance-pir-exercise"
-version = "0.0.1"
-dependencies = [
- "axum",
- "clap",
- "enhance-publisher",
- "enhance-query-server",
- "hdrhistogram",
- "hex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -873,7 +879,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -905,6 +911,7 @@ dependencies = [
  "pir-observability",
  "pir-runtime",
  "pir-serving",
+ "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -912,7 +919,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "simplepir-kernel",
  "tempfile",
  "thiserror 2.0.18",
@@ -1316,6 +1323,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1640,7 +1656,7 @@ dependencies = [
  "rand 0.9.2",
  "rand_chacha 0.3.1",
  "reinspiring",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1659,7 +1675,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2",
+ "sha2 0.10.9",
  "simplepir-kernel",
  "valar-spiral-rs",
  "zeroize",
@@ -1942,7 +1958,7 @@ dependencies = [
  "rayon",
  "reinspiring",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "zakura-pir-server-core",
 ]
@@ -2139,7 +2155,7 @@ dependencies = [
  "http-body",
  "rand 0.8.5",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -2168,10 +2184,11 @@ dependencies = [
  "pir-publisher",
  "pir-query-server",
  "pir-service-discovery",
+ "pir-sync-manager",
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-publisher",
  "tempfile",
  "tokio",
@@ -2187,6 +2204,7 @@ dependencies = [
  "zakura-pir-publisher",
  "zakura-pir-query-server",
  "zakura-server-chain",
+ "zakura-transparent",
 ]
 
 [[package]]
@@ -2202,7 +2220,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -2265,7 +2283,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "tempfile",
  "tokio",
@@ -2308,10 +2326,10 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "pir-pipeline",
  "pir-service-discovery",
  "reqwest",
  "rustls",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-rustls",
@@ -2703,7 +2721,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2738,7 +2756,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "zakura-receiver-directory",
@@ -2793,7 +2811,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "valar-spiral-rs",
  "zeroize",
@@ -2861,7 +2879,16 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd124222d17ad93a644ed9d011a40f4fb64aa54275c08cc216524a9ea82fb09f"
 dependencies = [
- "digest",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "ripemd"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159"
+dependencies = [
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -2965,6 +2992,15 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "same-file"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
+dependencies = [
+ "winapi-util",
+]
 
 [[package]]
 name = "scopeguard"
@@ -3072,7 +3108,7 @@ checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -3083,8 +3119,19 @@ checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
  "sha2-asm",
+]
+
+[[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3208,10 +3255,11 @@ dependencies = [
  "pir-control",
  "pir-pipeline",
  "pir-query-server",
+ "pir-service-discovery",
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
@@ -3242,7 +3290,7 @@ dependencies = [
  "reinspiring",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "thiserror 2.0.18",
  "tracing",
@@ -3607,7 +3655,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3640,7 +3688,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -3671,7 +3719,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -3708,7 +3756,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -3819,7 +3867,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
 ]
 
@@ -4020,6 +4068,15 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"
@@ -4428,9 +4485,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-address"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50d66e410009b8e0ec9e28f6c3fc4caf9f69f9b4a56288165a58863f1f13d779"
+checksum = "e8621c37ff7444685ce23b2e36c3516d5309c241c63c89de83d4abab2fcdf8e4"
 dependencies = [
  "bech32",
  "blake2b_simd",
@@ -4447,9 +4504,9 @@ checksum = "5430858c18a683aa4b9a52c21651dc5966b6735869599968820cf4dfade818b6"
 
 [[package]]
 name = "zakura-bellman"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7baa4a5290dbf54d66fb816b0ed5455624e87959d6b038b66d5440e78802ce1"
+checksum = "14951c09302fea912334d5053d0513930bba31db0ef9e6d6c2ae0b6c9fdd9b50"
 dependencies = [
  "bitvec",
  "blake2s_simd",
@@ -4463,9 +4520,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-bls12-381"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05290bf1b9aa52e3d676eb322c044ed059e5b651e1a719422d3e67fad9c92a61"
+checksum = "4c29fa2e8eb48b4dfec34e395515bad046355cac6292275e666818757ea4b077"
 dependencies = [
  "ff",
  "group",
@@ -4477,7 +4534,7 @@ dependencies = [
 [[package]]
 name = "zakura-chain"
 version = "10.0.0-rc1"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "bech32",
  "bitflags",
@@ -4498,10 +4555,10 @@ dependencies = [
  "lazy_static",
  "rand_core 0.6.4",
  "rayon",
- "ripemd",
+ "ripemd 0.1.3",
  "secp256k1",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4526,9 +4583,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-equihash"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59e0a92073b5c0e6a1d198a478a555a43afb624284b51db048e531c6bfb70b30"
+checksum = "b2f460f432240b51eba911f4389ac40a549399cd14589d6773cb39239583f20c"
 dependencies = [
  "blake2b_simd",
  "corez",
@@ -4537,7 +4594,7 @@ dependencies = [
 [[package]]
 name = "zakura-filters"
 version = "0.0.1-rc0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "bitcoin-io",
  "bitcoin_hashes",
@@ -4545,9 +4602,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-gadgets"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8b8f922bd5a58ffa24a08f90dcaa29eafde8aaeb3423378e9db103c88b90ef2"
+checksum = "bef6f7773ca5b921daadbe5e9af0c9f79cfcadf06d32ed064f40df2ed852ba59"
 dependencies = [
  "arrayvec",
  "ff",
@@ -4560,9 +4617,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-poseidon"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc1ab6f480b6fc63724a2906d0f6bb3bb181c60ff93ce8b5b2b3b59c6653708d"
+checksum = "dd0834743e66872b7d4fb793eec6e04792fa4bf8820247ba2a074827dd9e081b"
 dependencies = [
  "bitvec",
  "ff",
@@ -4572,9 +4629,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-halo2-proofs"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bbb8b2d17b2ab781d0a28f97c8c4a2bc1eb9ac990c7f80f9c206b6f7e0f0969"
+checksum = "75017874a7c0e2f8f1ffacf5b68ca96951cd4e470f2eb9aa3822becb19453d25"
 dependencies = [
  "blake2b_simd",
  "ff",
@@ -4589,20 +4646,20 @@ dependencies = [
 [[package]]
 name = "zakura-header-chain"
 version = "5.0.0"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "chrono",
  "rayon",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-chain",
 ]
 
 [[package]]
 name = "zakura-jubjub"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0ad8fdbe6bdb126c50ff59154bd00d32cfeba61ab0abbd6d440cf0a4f371a8b"
+checksum = "8573c50855bc41efbac00f595fe3f93eeb0aaac33b0d508899940ad33f958699"
 dependencies = [
  "bitvec",
  "ff",
@@ -4629,7 +4686,7 @@ dependencies = [
 [[package]]
 name = "zakura-mmr-tree"
 version = "0.0.1"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "blake2b_simd",
  "byteorder",
@@ -4639,7 +4696,7 @@ dependencies = [
 [[package]]
 name = "zakura-node-services"
 version = "5.0.0-rc1"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "tokio",
  "tower",
@@ -4649,9 +4706,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-note-encryption"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e827bae8c1ce59964790fa8f7e7ed3803bf06b1d722c862b498002757b15e68"
+checksum = "0ae22fc88267ae8e8145cdbc7010758846563766745fc3f16e1e6430dcb3fc7d"
 dependencies = [
  "chacha20",
  "chacha20poly1305",
@@ -4662,9 +4719,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-orchard"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "221e74d7dd896806add8c2ab05f35e67a31730ddafd339834cdd93d15e122b2f"
+checksum = "ded68d0841754e5cd9c6a976e3c1bf64275fbfa4cfca0e5b4ee5ee44d5bb7e74"
 dependencies = [
  "aes",
  "bitvec",
@@ -4689,9 +4746,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-orchard-legacy"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11cf5acf2f666a4328f693365eced9436564d8473742cf0ea87196dfcea65f1b"
+checksum = "02810d2eb43f874d5dde9af4079d53deb8a971d662f900dc7144df6cfbd64dd4"
 dependencies = [
  "ff",
  "group",
@@ -4705,18 +4762,18 @@ dependencies = [
 
 [[package]]
 name = "zakura-pairing"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "030e3a516a6704d347261e3afdd3bf6c4a7f33e614a2e688d973dd8a700f946d"
+checksum = "ed51c91aa634b4b56e6ada8ceef6053ac4102eeaba6725fb9af90c794a451551"
 dependencies = [
  "group",
 ]
 
 [[package]]
 name = "zakura-pasta-curves"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2ecacc37417befb74e88716b57713120fdbba6924b9e822e7365f11e00961d"
+checksum = "f6ff39b7440a3e61ae9b19afc4254f027bb6be69796b24566504e0e78a525cb6"
 dependencies = [
  "blake2b_simd",
  "cc",
@@ -4731,8 +4788,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-pir-client"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "axum",
  "base64",
@@ -4744,9 +4801,11 @@ dependencies = [
  "reinspiring",
  "reqwest",
  "rusqlite",
+ "rustix 1.1.4",
+ "same-file",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-note-encryption",
  "zakura-orchard",
@@ -4755,12 +4814,13 @@ dependencies = [
  "zakura-pir-query-server",
  "zakura-pir-server-core",
  "zakura-protocol",
+ "zakura-transparent",
 ]
 
 [[package]]
 name = "zakura-pir-protocol"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "base64",
  "bitcoin_hashes",
@@ -4771,22 +4831,24 @@ dependencies = [
  "reinspiring",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
+ "zakura-protocol",
+ "zakura-transparent",
 ]
 
 [[package]]
 name = "zakura-pir-publisher"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "base64",
  "bitcoin_hashes",
  "hex",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
  "zakura-pir-protocol",
@@ -4795,8 +4857,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-pir-query-server"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "rayon",
  "reinspiring",
@@ -4806,8 +4868,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-pir-server-core"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "rayon",
  "reinspiring",
@@ -4816,9 +4878,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-primitives"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe791c7e5d2643d90ae68768c38b95fb8a1ada697df7a079d8b0db2cb2057377"
+checksum = "c380aeac887e935cbe05aebe0f417cb1cd16ecc802ee67b05b1cbaf2294d8467"
 dependencies = [
  "blake2b_simd",
  "corez",
@@ -4827,7 +4889,7 @@ dependencies = [
  "incrementalmerkletree",
  "nonempty",
  "rand_core 0.10.1",
- "sha2",
+ "sha2 0.10.9",
  "zakura-equihash",
  "zakura-jubjub",
  "zakura-note-encryption",
@@ -4841,9 +4903,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-protocol"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f61dc8c9a61f7903eb32cdf2899eeb3863515284647e049d4b61329ddb50ac3"
+checksum = "b28415ef2e0210e62bc4f9277a1d2878aecdcf13d71dc92aac5582a108cd1ff5"
 dependencies = [
  "corez",
  "hex",
@@ -4852,8 +4914,8 @@ dependencies = [
 
 [[package]]
 name = "zakura-receiver-crypto"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "incrementalmerkletree",
  "thiserror 2.0.18",
@@ -4865,13 +4927,13 @@ dependencies = [
 
 [[package]]
 name = "zakura-receiver-directory"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "bitcoin_hashes",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
  "zakura-receiver-crypto",
@@ -4879,15 +4941,15 @@ dependencies = [
 
 [[package]]
 name = "zakura-receiver-pir"
-version = "0.0.1-rc1"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=20ec522052ffda07deb2064b5d81e85edb6e7189#20ec522052ffda07deb2064b5d81e85edb6e7189"
+version = "0.0.1-rc2"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
  "hex",
  "ipir-sp",
  "rand 0.8.5",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-pir-client",
  "zakura-pir-query-server",
@@ -4897,9 +4959,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-reddsa"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb6a61d7fc148746daa06f92a84b2c4a611a1db1cd9b4e51a7e9f8c90b1d4c88"
+checksum = "f78f4044021672bbbdb7a780de81e7f1e15315af85425ed6f525ad5815d38cc7"
 dependencies = [
  "blake2b_simd",
  "group",
@@ -4912,9 +4974,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-redjubjub"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9434acdf85cb2de1a396ad61e214a882dea86c8a06a1c41cd71a08116b0605c3"
+checksum = "49ba9fdc71a5b108c81355e82d6b7ab2c87782617221c9629d652531c9d98a52"
 dependencies = [
  "rand_core 0.10.1",
  "serde",
@@ -4934,9 +4996,9 @@ dependencies = [
 
 [[package]]
 name = "zakura-sapling-crypto"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bda0d985bd0474fcbc243f51e7b4766a5d7fb0a6e722d14e0154b51964402b8"
+checksum = "c723f61c7b67b057185edf592111ffab15909b7f2649b6b5690ee6ac47d70d5d"
 dependencies = [
  "bitvec",
  "blake2b_simd",
@@ -4970,27 +5032,26 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
  "zakura-chain",
  "zakura-orchard",
- "zakura-primitives",
  "zakura-protocol",
  "zakura-receiver-crypto",
  "zakura-state",
  "zakura-test",
- "zakura-transparent",
+ "zakura-transaction-wire",
  "zcash_script",
 ]
 
 [[package]]
 name = "zakura-sinsemilla"
-version = "4.0.0-rc3"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d19f5c7798cf11c1ee90dcd9d08afe925ce20f47d683327fc8f06b36f71ff0fb"
+checksum = "f7dc75ec00057cd09465b97673674581725eb3bc260043e88f0f22bf4cccc84c"
 dependencies = [
  "group",
  "once_cell",
@@ -5001,7 +5062,7 @@ dependencies = [
 [[package]]
 name = "zakura-state"
 version = "11.0.0-rc1"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "chrono",
  "derive-new",
@@ -5015,7 +5076,7 @@ dependencies = [
  "rayon",
  "semver",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "tower",
@@ -5031,7 +5092,7 @@ dependencies = [
 [[package]]
 name = "zakura-test"
 version = "3.0.0-rc1"
-source = "git+https://github.com/zakura-core/zakura.git?rev=fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6#fe97e33b67e6a5f5cd1bfb8b90731192f56d89e6"
+source = "git+https://github.com/zakura-core/zakura.git?rev=ae0f629bbee85cfe80d89e65d86fb2e931832efe#ae0f629bbee85cfe80d89e65d86fb2e931832efe"
 dependencies = [
  "eyre",
  "futures",
@@ -5051,24 +5112,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "zakura-transparent"
-version = "4.0.0-rc3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07e41245575119f409af8789a67b78d9c2042feb78579c50e9ad150939476888"
+name = "zakura-transaction-wire"
+version = "0.1.0"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=166fc196ee019653fb170210906a014ed1f5982d#166fc196ee019653fb170210906a014ed1f5982d"
 dependencies = [
+ "blake2b_simd",
+ "sha2 0.10.9",
+ "zakura-protocol",
+]
+
+[[package]]
+name = "zakura-transparent"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56d9a18d51d990c681baf2b6eb427173ba7899f58d9c0f8966901d2257bda9e4"
+dependencies = [
+ "bip32",
  "bs58",
  "corez",
  "getset",
  "hex",
  "nonempty",
- "ripemd",
+ "ripemd 0.1.3",
  "secp256k1",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zakura-address",
  "zakura-protocol",
  "zcash_script",
  "zcash_spec",
+ "zip32",
 ]
 
 [[package]]
@@ -5077,12 +5150,14 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10106859d08a2a4119af8a0fa8db72afe35647768b562f94b7a2124adad41275"
 dependencies = [
+ "bip32",
  "bitflags",
  "bounded-vec",
- "ripemd",
+ "hex",
+ "ripemd 0.1.3",
  "secp256k1",
  "sha1",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 

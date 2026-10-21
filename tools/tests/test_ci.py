@@ -152,6 +152,18 @@ class BoundaryTests(unittest.TestCase):
                 self.assertEqual(len(boundary.violations(packages, [])), 1, (kind, name))
                 self.assertEqual(boundary.violations(packages, [f'svc -> {name}']), [])
 
+    def test_wallet_address_fixture_is_only_a_dev_edge_of_the_test_consumer(self):
+        fixture = {'name': 'pir-e2e-tests', 'manifest': boundary.WALLET_TEST_MANIFEST, 'publish': False,
+                   'dependencies': [self.edge('zakura-transparent', 'dev-dependencies')]}
+        self.assertEqual(boundary.violations([fixture], []), [])
+        for kind in ['dependencies', 'build-dependencies', 'target.cfg(unix).dev-dependencies']:
+            changed = {**fixture, 'dependencies': [self.edge('zakura-transparent', kind)]}
+            self.assertTrue(boundary.violations([changed], []), kind)
+        for change in [{'name': 'transparent-query-server'}, {'manifest': 'other/Cargo.toml'}, {'publish': True},
+                       {'dependencies': [self.edge('zakura-chain', 'dev-dependencies')]}]:
+            self.assertTrue(boundary.violations([{**fixture, **change}], []), change)
+
+
     def reader(self, *dependencies, manifest=boundary.CHAIN_READER_MANIFEST):
         return {'name': boundary.CHAIN_READER, 'manifest': manifest, 'dependencies': list(dependencies)}
 
@@ -403,7 +415,6 @@ class BoundaryTests(unittest.TestCase):
                      {**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'},
                      {**self.edge('enhance-pir-load-test'), 'path': 'tools/enhance/loadtest/'},
                      {**self.edge('enhance-pir-client'), 'path': 'tools/enhance/client/'},
-                     {**self.edge('enhance-pir-exercise'), 'path': 'tools/enhance/exercise/'},
                      {**self.edge('pir-monitor'), 'path': 'tools/shared/pir-monitor/'},
                      {**self.edge('unlisted-tool'), 'path': 'tools/enhance/unlisted/'},
                      {**self.edge('receiver-store'), 'path': 'src/receiver/receiver-store/'},
@@ -1430,23 +1441,13 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn("REFERENCE_LIB_FILTERS = ['ipir::tests',", runner)
         self.assertIn('backend_load_failure_does_not_rebuild_or_replace_published_units', runner)
 
-    def test_transparent_full_checks_include_the_standalone_exporter(self):
+    def test_transparent_full_checks_run_one_workspace_command(self):
         full = load_full()
         groups = {'transparent': ['transparent-publisher'], 'shared': ['pir-control']}
-        manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
-        self.assertEqual(full.commands('transparent', groups)[0], [
-            'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
-            '--manifest-path', manifest,
-        ])
-        self.assertEqual(full.commands('transparent', groups, compile_only=True)[0], [
-            'cargo', 'test', '--no-run', '--locked', '--profile', 'release-fast',
-            '--manifest-path', manifest,
-        ])
-        self.assertEqual(len(full.commands('transparent', groups)), 2)
-        self.assertIn('transparent-publisher', full.commands('transparent', groups)[1])
+        self.assertEqual(len(full.commands('transparent', groups)), 1)
+        self.assertIn('transparent-publisher', full.commands('transparent', groups)[0])
         self.assertEqual(len(full.commands('shared', groups)), 1)
         self.assertEqual(len(full.commands('transparent', groups, lint=True)), 1)
-
 
 def load_full():
     import sys

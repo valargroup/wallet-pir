@@ -39,7 +39,7 @@ use transparent_publisher::ingest::extract::{
 use transparent_publisher::tx_detail::publisher::{
     publish_shard, write_candidate, DisplayRoot, ShardSpec,
 };
-use transparent_query_server::config::{ReadinessMode, ServiceConfig};
+use transparent_query_server::config::ServiceConfig;
 use transparent_query_server::tx_detail::{
     live::{DisplayCommand, DisplayLive, DisplayPublication},
     service::DisplayRuntime,
@@ -269,7 +269,6 @@ async fn worker(
 ) -> Result<DisplayLive, Error> {
     let config = ServiceConfig {
         cache_bytes: 2 << 30,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let runtime = DisplayRuntime::new(config, None);
