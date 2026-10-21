@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "src/pir-publisher",
     "src/pir-query-server",
-    "src/pir-e2e-tests",
+    "tools/pir-e2e-tests",
     "src/receiver/receiver-store",
     "src/receiver/receiver-indexer",
     "src/receiver/receiver-pir-server",

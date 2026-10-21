@@ -30,7 +30,7 @@ use zakura_pir_publisher::transparent::{
     seal::DecoupledPolicy,
 };
 
-#[path = "../../transparent/transparent-query-server/tests/support/display_world.rs"]
+#[path = "../../../src/transparent/transparent-query-server/tests/support/display_world.rs"]
 mod display_world;
 
 const GENESIS: &str = filter::MAINNET_GENESIS_DISPLAY;
@@ -182,7 +182,7 @@ async fn tls(
     let mut child = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../pir-publisher/tests/support/distribution_tls.py"
+            "/../../src/pir-publisher/tests/support/distribution_tls.py"
         ))
         .args([
             upstream,

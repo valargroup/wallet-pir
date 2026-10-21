@@ -236,7 +236,7 @@ impl Terminator {
         let mut child = tokio::process::Command::new("python3")
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../pir-publisher/tests/support/distribution_tls.py"
+                "/../../src/pir-publisher/tests/support/distribution_tls.py"
             ))
             .arg(&self.upstream)
             .arg(self.root.join("ca.pem"))
@@ -856,7 +856,7 @@ async fn archive(
     let mut tls = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../transparent/transparent-query-server/tests/support/provider_tls.py"
+            "/../../src/transparent/transparent-query-server/tests/support/provider_tls.py"
         ))
         .arg(addr.to_string())
         .arg(root.join("ca.pem"))
