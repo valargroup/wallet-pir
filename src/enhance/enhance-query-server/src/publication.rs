@@ -108,10 +108,11 @@ impl Object {
     pub fn validate(&self) -> Result<(), String> {
         // Reference packing can be larger than the source rows. Native and
         // reference formats retain their own stricter shape checks below.
-        #[cfg(not(feature = "native-reinspiring"))]
-        let limit = MAX_OBJECT_BYTES.max(prepared_packing::expected_len(32768)?);
-        #[cfg(feature = "native-reinspiring")]
-        let limit = MAX_OBJECT_BYTES;
+        let limit = if cfg!(feature = "native-reinspiring") {
+            MAX_OBJECT_BYTES
+        } else {
+            MAX_OBJECT_BYTES.max(prepared_packing::expected_len(32768)?)
+        };
         if !protocol::canonical_hash(&self.sha256) || self.bytes == 0 || self.bytes > limit {
             return Err("invalid publication object".into());
         }

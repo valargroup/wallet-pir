@@ -442,15 +442,18 @@ impl Client {
 
     pub async fn object(&mut self, object: &Object) -> Result<PathBuf, Error> {
         object.validate()?;
-        let root = self.root.clone();
-        let checked = object.clone();
-        if tokio::task::spawn_blocking(move || checked.verify(&root))
-            .await?
-            .is_ok()
-        {
-            return Ok(object.path(&self.root)?);
-        }
         let path = object.path(&self.root)?;
+        // A cached file is reused only if its length and digest still match.
+        let (cached, expected) = (path.clone(), object.clone());
+        if tokio::task::spawn_blocking(move || {
+            std::fs::metadata(&cached).is_ok_and(|m| m.len() == expected.bytes)
+                && crate::prepared_packing::hash_file(&cached)
+                    .is_ok_and(|digest| digest == expected.sha256)
+        })
+        .await?
+        {
+            return Ok(path);
+        }
         if path.exists() {
             fs::remove_file(&path)?;
         }
