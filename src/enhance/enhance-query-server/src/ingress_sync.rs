@@ -392,11 +392,9 @@ impl Synchronizer {
         self.ingress.maintain().await;
         self.client.begin().await?;
         let response = self.client.current().await?;
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
+        let Some(manifest) = response.current.manifest.clone() else {
+            return Ok(());
+        };
         let observed =
             Lease::from_response(response.clone(), &manifest, &self.ingress.authority.safety)?;
         {

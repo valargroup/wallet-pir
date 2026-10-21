@@ -7,6 +7,86 @@ use pir_e2e_tests::enhance_fixture::{record, System};
 #[path = "support/publication.rs"]
 mod publication_source;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_publication_preparation_defers_without_transport_backoff_or_serving_authority() {
+    use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
+    use enhance_query_server::{ingress_sync, router_sync, synchronization, worker_sync};
+    use pir_e2e_tests::enhance_fixture::{serve, tls};
+    let root = tempfile::tempdir().unwrap();
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let distribution = Distribution::open(
+        &root.path().join("source"),
+        ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap(),
+    )
+    .unwrap();
+    let publisher = serve(distribution.router()).await;
+    let transport = tls(root.path(), &publisher.url).await;
+    let source = synchronization::Config {
+        publisher_origin: transport.origin.clone(),
+        trusted_ca: Some(root.path().join("ca.pem")),
+        download_budget_bytes: 16 * 1024 * 1024,
+        cache_limit_bytes: 16 * 1024 * 1024,
+    };
+    let worker = worker_sync::Worker::open(
+        &root.path().join("worker"),
+        worker_sync::Config {
+            source: source.clone(),
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let mut worker_sync = worker.synchronizer().unwrap();
+    let worker_http = serve(worker.router()).await;
+    let router = router_sync::PackingRouter::open(
+        &root.path().join("router"),
+        router_sync::Config {
+            source: source.clone(),
+            workers: [(0, vec![worker_http.url.clone()])].into(),
+            preferred: Default::default(),
+        },
+        6,
+        4,
+    )
+    .unwrap();
+    let mut router_sync = router.synchronizer().unwrap();
+    let control = serve(router.control_router()).await;
+    let query = serve(router.public_router()).await;
+    let ingress = ingress_sync::QueryIngress::open(
+        &root.path().join("ingress"),
+        ingress_sync::Config {
+            source,
+            routers: [(
+                0,
+                vec![ingress_sync::RouterPeer {
+                    control_origin: control.url.clone(),
+                    query_origin: query.url.clone(),
+                }],
+            )]
+            .into(),
+        },
+        16,
+        256,
+    )
+    .unwrap();
+    let mut ingress_sync = ingress.synchronizer().unwrap();
+    let public = serve(ingress.public_router()).await;
+    for _ in 0..2 {
+        worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        ingress_sync.poll_once().await.unwrap();
+        assert_eq!(
+            reqwest::get(format!("{}/v1/enhance/init", public.url))
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+}
+
 async fn advance_during_authorization(
     source: &publication_source::Published,
     generation: u64,

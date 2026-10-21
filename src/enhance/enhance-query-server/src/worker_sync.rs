@@ -390,11 +390,11 @@ impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
         self.client.begin().await?;
         let response = self.client.current().await?;
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
+        let Some(manifest) = response.current.manifest.clone() else {
+            // A valid empty current is a publisher still preparing its first
+            // publication. Keep the ordinary cadence without granting a lease.
+            return Ok(());
+        };
         let observed = Lease::from_response(response.clone(), &manifest, &self.worker.safety)?;
         let id = digest(&manifest);
         {

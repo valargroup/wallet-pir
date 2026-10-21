@@ -503,11 +503,9 @@ impl Synchronizer {
                 }
             }
         }
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
+        let Some(manifest) = response.current.manifest.clone() else {
+            return Ok(());
+        };
         let observed =
             Lease::from_response(response.clone(), &manifest, &self.router.authority.safety)?;
         if self
