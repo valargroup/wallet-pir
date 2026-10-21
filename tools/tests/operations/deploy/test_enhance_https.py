@@ -99,6 +99,43 @@ class EnhanceTests(PublisherFixture, unittest.TestCase):
             self.deploy()
         self.assertEqual(self.ex.effects, [])
 
+    def test_consumer_cache_space_is_reserved_before_staging(self):
+        target = next(t for t in self.target.serving.deployer.targets if t.host != 'coordinator')
+        allowance = target.settings['synchronization']['cache_limit_bytes']
+        original = self.ex.publisher_resources
+
+        def resources(host, paths):
+            result = original(host, paths)
+            if host == target.host:
+                for disk in result['disks'].values():
+                    disk['available'] = (20 << 30) + allowance - 1
+            return result
+
+        self.ex.publisher_resources = resources
+        with self.assertRaisesRegex(DeployError, 'consumer cache staging.*20 percent'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_coordinator_cache_and_publisher_preparation_share_the_same_headroom(self):
+        cache = sum(t.settings['synchronization']['cache_limit_bytes']
+                    for t in self.target.serving.deployer.targets if t.host == 'coordinator')
+        self.assertGreater(cache, 0)
+        preparation = (self.request['enhance_https']['publisher_budget_bytes']
+                       + self.request['release']['binary_bytes'] + self.request['serving']['binary_bytes'])
+        original = self.ex.publisher_resources
+
+        def resources(host, paths):
+            result = original(host, paths)
+            if host == 'coordinator':
+                for disk in result['disks'].values():
+                    disk['available'] = (20 << 30) + preparation + cache - 1
+            return result
+
+        self.ex.publisher_resources = resources
+        with self.assertRaisesRegex(DeployError, '20 percent disk headroom'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
     def test_other_product_settings_cannot_be_changed(self):
         self.target.request['configuration']['status']['settings']['cookie'] = '/another-cookie'
         with self.assertRaisesRegex(DeployError, 'every other product'):

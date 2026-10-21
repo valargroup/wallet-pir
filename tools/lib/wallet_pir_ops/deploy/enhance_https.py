@@ -135,6 +135,20 @@ class EnhanceServing(Serving):
     def capture(self):
         owner = self.cutover
         mutation_fence(owner.inventory, owner.ex)
+        budgets = {}
+        for target in self.deployer.targets:
+            kind = 'cuda' if target.settings.get('matvec_backend') == 'cuda' else 'cpu'
+            allowance = (target.settings['synchronization']['cache_limit_bytes']
+                         + self.release_for(kind)['binary_bytes'])
+            budgets[target.host] = budgets.get(target.host, 0) + allowance
+        for target in self.deployer.targets:
+            # The safety file identifies the actual cache filesystem even when
+            # the new state directory has not been created. This probe is read-only.
+            path = str(Path(target.settings['data_dir']) / 'sync.json')
+            resources = owner.ex.publisher_resources(target.host, [path])
+            require(all(disk['available'] - budgets[target.host] >= disk['total'] * .2
+                        for disk in resources['disks'].values()),
+                    'Enhance consumer cache staging would leave less than 20 percent disk headroom')
         roles, states = {}, {}
         for kind, deployer in self.groups.items():
             deployer.check_identities()

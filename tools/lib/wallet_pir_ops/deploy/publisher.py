@@ -213,6 +213,10 @@ class Cutover:
             extra += self.request['enhance_https']['publisher_budget_bytes']
             extra += self.request['serving']['binary_bytes']
             extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
+            # Ingress or another consumer can share the coordinator filesystem.
+            # Reserve its declared cache in addition to publisher preparation.
+            extra += sum(target.settings['synchronization']['cache_limit_bytes']
+                         for target in self.serving.deployer.targets if target.host == self.host)
         resource = self.resources(extra)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():

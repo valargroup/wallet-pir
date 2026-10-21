@@ -155,6 +155,9 @@ request and matching artifacts. `--serving-binary` supplies the CPU query host;
 workers. Both must have the publisher's source revision and reviewed executable
 digests. The serving roles' existing configuration, units, executable identities
 and public edge are captured for rollback before any interruption.
+Preflight reserves each consumer's declared cache allowance while retaining the
+existing 20 percent disk-headroom floor. Consumers sharing a host are counted
+together; a coordinator consumer's cache is additional to publisher preparation.
 
 Production `publisher-cutover-deploy` runs as root on the existing coordinator
 from its immutable, checksummed operations release. It installs two uniquely
