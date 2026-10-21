@@ -9,6 +9,10 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- HTTPS staging refuses conflicting content at an existing catalog path before
+  assigning a download receipt. Older receipt generations are discarded so
+  checks made with an incorrectly assigned identity cannot be reused.
+
 - Transaction-detail publishers reuse the previous verified display set and
   its shipped-runtime builds, rehash every distributed artifact in parallel,
   refuse sources that no longer match their manifests, and reload and

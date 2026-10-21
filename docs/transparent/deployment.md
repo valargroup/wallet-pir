@@ -442,6 +442,12 @@ cannot inherit an earlier runtime check. Missing or malformed receipts repeat
 the semantic check. Files used directly by the publisher or developer, without
 network receipts, retain their full verification path.
 
+Existing catalog copies must match the downloaded artifact before receiving
+its identity. Receipt generation 2 invalidates older download and semantic
+receipts, which could have been assigned to different same-size catalog bytes.
+The first load after upgrading repeats the semantic checks; later loads reuse
+the new receipts normally.
+
 Receipts establish checked content, not serving authority. Fresh publisher
 information, canonical anchors, withdrawal records and activation fences still
 apply. Changes to semantic verification must bump the local receipt version.

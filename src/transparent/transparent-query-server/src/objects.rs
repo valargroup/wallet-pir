@@ -162,6 +162,7 @@ pub(crate) fn link_object(
 /// both are part of the proof that previously checked rows are still unchanged.
 /// Hold the collector's lock until the stage references its source; if collection
 /// owns it, refuse this attempt so the next synchronization can retry safely.
+/// An existing copy must match the downloaded content before receiving its receipt.
 pub(crate) fn stage_object(
     root: &std::path::Path,
     stage: &std::path::Path,
@@ -220,9 +221,7 @@ pub(crate) fn stage_object(
             }
             let cached = std::fs::symlink_metadata(object)?;
             if metadata.dev() != cached.dev() || metadata.ino() != cached.ino() {
-                if metadata.len() != artifact.bytes {
-                    return Err("catalog source length mismatch".into());
-                }
+                publication::verify_file(&source, artifact)?;
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -385,5 +384,55 @@ mod tests {
         permissions.set_readonly(true);
         std::fs::set_permissions(&source, permissions).unwrap();
         assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+    }
+
+    #[test]
+    fn catalog_source_refuses_a_different_equal_size_download_without_relabeling() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let first = root.path().join("staging-first");
+        let next = root.path().join("staging-next");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&next).unwrap();
+        stage_object(root.path(), &first, &object, &artifact).unwrap();
+        let source = root.path().join(".sources").join(&artifact.path);
+        let receipt = source.with_file_name("rows.bin.received.json");
+        let original_receipt = std::fs::read(&receipt).unwrap();
+
+        let replacement = root.path().join("other-object");
+        std::fs::write(&replacement, b"changed rows").unwrap();
+        let mut permissions = std::fs::metadata(&replacement).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&replacement, permissions).unwrap();
+        let conflicting = publication::Artifact {
+            sha256: publication::digest(b"changed rows"),
+            ..artifact.clone()
+        };
+        for _ in 0..2 {
+            assert!(stage_object(root.path(), &next, &replacement, &conflicting).is_err());
+            assert_eq!(std::fs::read(&receipt).unwrap(), original_receipt);
+            assert_eq!(std::fs::read(&source).unwrap(), b"checked rows");
+            assert!(!next.join(&artifact.path).exists());
+        }
+        stage_object(root.path(), &next, &object, &artifact).unwrap();
+        publication::verify_file(&next.join(&artifact.path), &artifact).unwrap();
+    }
+
+    #[test]
+    fn catalog_source_accepts_an_unmarked_copy_only_when_its_bytes_match() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-first");
+        std::fs::create_dir(&stage).unwrap();
+        let source = root.path().join(".sources").join(&artifact.path);
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::copy(&object, &source).unwrap();
+        assert_ne!(
+            std::fs::metadata(&object).unwrap().ino(),
+            std::fs::metadata(&source).unwrap().ino()
+        );
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
     }
 }
