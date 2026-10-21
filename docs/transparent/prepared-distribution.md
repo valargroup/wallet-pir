@@ -145,9 +145,10 @@ the explicitly configured origin for its first current record.
 Each attempt stages in a new private tree. The production assignment planner
 selects the complete recent tier; its inert archive row is cost/accounting only
 and does not establish a route. The production shard loader verifies metadata
-and recent tables; unassigned archive tables may be absent. Prewarm uses
-`ShippedRuntimes::required`: missing, incompatible, corrupt or failed-self-check
-prepared files fail without disk-restore or local-build fallback. That view
+and recent table sizes; unassigned archive tables may be absent. Required
+prepared files must be present and have their recorded sizes before activation.
+On demand, the loader parses their formats without a checksum scan or self-test.
+Missing or incompatible required files fail without local-build fallback. That view
 retains its strict policy on subsequent cache misses. Existing optional views
 retain their fallback behavior.
 
@@ -207,8 +208,9 @@ production TLS, distribution scale, hardware or the complete service.
 ## Following publications with the recent worker
 
 Omit `--verify-only` from the command above to run the manager and existing recent
-worker in `pir-query-server`. A successful initial fetch or verified predecessor recovery, strict load, prewarm
-and live owner check precede listener binding. Startup source failure refuses to
+worker in `pir-query-server`. A successful initial fetch or verified predecessor recovery, metadata and size checks
+and a live owner check precede listener binding. Every assigned range is then
+queryable; runtimes load on first use and prewarming runs in the background. Startup source failure refuses to
 listen; restart retries through the operator's normal process supervisor. A saved
 predecessor can recover through fresh exact-anchor checks while a newer candidate
 fails to download; the saved pointer alone grants no authority. When the
@@ -239,14 +241,13 @@ lease, or authorize an activation. Transparent still has no lease.
 Completed objects live under `objects/<sha256>`, read-only. Downloads stream into
 a unique `<sha256>.partial-*` name while hashing and enforcing the declared length
 and body budget, and are synced before and after their rename. Every reuse of a
-regular object verifies exact length and digest again; anything else under that
-name is unlinked, never followed. Each fresh staging tree hard-links those
+regular object checks its expected length without hashing it again; anything
+else under that name is unlinked, never followed. Each fresh staging tree hard-links those
 verified inodes, which nothing writes, so staging does not hash them again; only
-a filesystem that reports linking unsupported receives a copy that is verified
-on its own. Then the production loader verifies tables and prewarms required
-native runtimes. On
-later preparation, native files are also loaded and self-checked independently of
-resident cache hits before recording a replacement directory, even on the same map. Files,
+a filesystem that reports linking unsupported receives a size-checked copy.
+The serving loader checks metadata and file sizes; it does not scan table
+contents, hash native files or run encrypted self-tests. This applies equally
+to initial startup, restart and publication updates in Recent and Archive. Files,
 child directories and staging parents are synced before publishing an active
 pointer. Interrupted partials are removed before staging and never reused.
 A corrupt object is downloaded again; a bad download never replaces its completed
@@ -347,7 +348,7 @@ The operator must supply the trusted deployment address: this document assigns
 no public hostname/IP and changes no production routing. `archive_ca` may add
 an explicit trusted PEM root; certificate/hostname verification remains enabled.
 Only isolated loopback fixtures may use plain HTTP. The configured upstream must
-terminate at an owner running this serving implementation with warm readiness,
+terminate at an owner running this serving implementation with loaded readiness,
 not another forwarding provider. Redirects and wallet-supplied destinations are
 never used. There is one upstream and no automatic switching or query replay.
 
@@ -355,7 +356,7 @@ Maps, filters, manifests and initialization remain verified local metadata for
 the complete publication, including distinct archive geometries. Eligible exact
 local revisions execute through the existing worker. Nonlocal current revisions
 obtain setup and encrypted answers through the fixed archive. Each operation
-checks terminal warm readiness, network/genesis/profile/native parameters, exact
+checks terminal readiness, network/genesis/profile/native parameters, exact
 manifest and setup identity. Query replies must have the exact segment framing,
 revision/table prefix and qualified mask epochs. The wallet retains its own
 validation. Readiness is an observation, not a lease or a completeness proof.
@@ -665,11 +666,12 @@ Before enabling it, run the rendered argument array as that user:
 python3 -c 'import json,subprocess; r=json.load(open("role.json")); subprocess.run(["./history-release/pir-query-server",*r["check"]],check=True)'
 ```
 
- This real preflight downloads/verifies and
-prewarms required material and checks live authority through the managed owner;
+This preflight checks downloaded bytes, local file sizes and live authority
+through the managed owner;
 it may prime state but opens no listener. The unit repeats the same check in
-`ExecStartPre` on every start/restart. Missing, corrupt or incompatible runtimes
-refuse preparation/start/restart and later cache misses, without local builds.
+`ExecStartPre` on every start/restart. Missing or incorrectly sized required
+files refuse preparation/start/restart; malformed formats fail when loaded,
+without local-build fallback. Preparation correctness is tested by the publisher.
 Existing fleet/static optional preparation policy is unchanged.
 
 Use `history-provider.caddy` from the same operations release as the TLS route
@@ -720,3 +722,32 @@ reader. Code reversion alone must not erase revocation observations.
 To remove an installation, stop/disable its history provider unit and withdraw
 only its operator TLS route. Retain state/safety records, artifacts and unit for
 review and recovery. No data or resource deletion is part of this procedure.
+
+## Preparation trust and post-start smoke validation
+
+The publisher owns preparation correctness, including comparing prepared
+material with its sources and testing encrypted answers before publication.
+Query servers trust those prepared bytes. Download streams check exact length
+and SHA-256 once; local reloads check size without rehashing. Same-size local
+content changes are outside this integrity policy. Normal format parsing and
+publication authority, replay, withdrawal and canonicality checks still apply.
+
+Recent, Archive and transaction detail become ready before background warming
+finishes. A first query can pay the runtime loading cost. Loading remains
+single-flight per runtime and bounded by cache and work-memory budgets. One
+background load at a time shares the cache across snapshots; a separate restore
+slot remains available for foreground requests.
+
+Run correctness validation as a separate process after the serving API is ready.
+`quality-canary --all` checks every table in its pinned fixture and each table's
+segments against expected row hashes. Supply a fixture covering the assigned
+history directory and page tables. Transaction detail's `txid-quality-canary`
+accepts repeated `--fixture` arguments for pinned lookups covering its assigned
+material. Both tools return nonzero on an invalid oracle, an unavailable query
+or an incorrect answer. A failed run fails deployment acceptance; neither tool
+stops or restarts the service. These probes are outside startup timing.
+
+The startup target is under 15 seconds with the assigned files already downloaded.
+Measure readiness separately from first-query loading latency and background
+warming, recording cold filesystem-cache results on an isolated host. This policy
+does not establish a measured fleet startup time by itself.

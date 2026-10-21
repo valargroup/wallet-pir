@@ -25,9 +25,7 @@ mod history_set;
 #[path = "support/revision.rs"]
 mod revision;
 use history_set::*;
-use transparent_query_server::history::service::{
-    router, ReadinessMode, ServiceConfig, ServiceState,
-};
+use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_query_server::routing::router::{files_for, plan, render_caddyfile};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{ShardManifest, SCHEMA};
@@ -170,7 +168,6 @@ async fn get(state: &ServiceState, path: &str) -> (StatusCode, Vec<u8>) {
 fn warm_config() -> ServiceConfig {
     ServiceConfig {
         cache_bytes: 4 << 30,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     }
 }
@@ -372,7 +369,6 @@ fn an_assignment_that_does_not_fit_the_cache_is_refused_in_warm_mode() {
         set,
         ServiceConfig {
             cache_bytes: 64 << 20,
-            readiness: ReadinessMode::Warm,
             ..ServiceConfig::default()
         },
     )

@@ -1,6 +1,6 @@
 //! History worker process. The `transparent-query-server` binary parses arguments
 //! and calls [`run`]; the query-server host uses the same function.
-use super::service::{router, ReadinessMode, ServiceConfig, ServiceState};
+use super::service::{router, ServiceConfig, ServiceState};
 use serde::Deserialize;
 use std::{future::IntoFuture, net::SocketAddr, path::PathBuf, sync::Arc};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -104,8 +104,6 @@ pub struct HistoryProcess {
     #[serde(default)]
     pub prune_excess: bool,
     #[serde(default)]
-    pub pilot_cold: bool,
-    #[serde(default)]
     pub verify_only: bool,
     #[serde(default)]
     pub control_socket: Option<PathBuf>,
@@ -176,7 +174,6 @@ pub async fn run_with(
                 max_body_bytes: config.body_bytes,
                 upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
                 query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
-                readiness: ReadinessMode::Warm,
             };
             let mut manager = crate::routing::manager::Manager::new(provider, service).await?;
             if config.full_holdings {
@@ -290,7 +287,7 @@ pub async fn run_with(
         prune_excess: config.prune_excess,
         scope,
     };
-    let set = ShardSet::open_with(&config.shard_dir, &options)?;
+    let set = ShardSet::open_for_serving(&config.shard_dir, &options)?;
     tracing::info!(
         shards = set.len(),
         assigned = set.assigned_len(),
@@ -313,11 +310,6 @@ pub async fn run_with(
             "superseded revision past the retention bound; prune it"
         );
     }
-    let readiness = if config.assignment.is_some() && !config.pilot_cold {
-        ReadinessMode::Warm
-    } else {
-        ReadinessMode::LoadedOnly
-    };
     let service = ServiceConfig {
         cache_bytes: config.cache_bytes,
         build_slots: config.build_slots,
@@ -326,7 +318,6 @@ pub async fn run_with(
         max_body_bytes: config.body_bytes,
         upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
         query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
-        readiness,
     };
     if config.verify_only {
         let report = disk.as_ref().map(|disk| disk.check_set(&set)).transpose()?;
@@ -376,7 +367,7 @@ pub async fn run_with(
         Some(listener) => listener,
         None => tokio::net::TcpListener::bind(config.listen).await?,
     };
-    tracing::info!(listen = %config.listen, max_query_bytes = limit, ?readiness, "serving");
+    tracing::info!(listen = %config.listen, max_query_bytes = limit, "serving");
     let _prewarm = state.spawn_prewarm();
     drop(state);
     axum::serve(listener, app).await?;

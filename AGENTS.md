@@ -127,6 +127,10 @@ floors, qualification durations, and rollback gates are not iteration shortcuts.
 
 - Keep release dependencies one-way: wallet-pir may consume wallet-libraries, but wallet-libraries must not depend on packages owned or released by wallet-pir, including normal, optional, build, target-specific and development dependencies.
 
+## Transparent loading policy
+
+- For Transparent, trust publisher preparation; hash artifacts once during download, check only their expected size on disk reload, and run correctness smoke tests separately after the service is serving. A failed smoke test fails validation without stopping or restarting the service.
+
 ## Focused changes
 
 - Give each change one outcome; split independently useful refactors, operations features, benchmarks and unrelated fixes.

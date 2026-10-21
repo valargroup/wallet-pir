@@ -121,7 +121,7 @@ impl crate::activation::Adapter for HistoryActivation {
             active.publication.map_sha256.clone(),
             !inner.required_runtimes
                 && active.publication.map_sha256 == requested
-                && active.state.is_warm(),
+                && active.state.is_ready(),
         )
     }
 
@@ -146,7 +146,7 @@ impl crate::activation::Adapter for HistoryActivation {
     }
 
     fn ready(candidate: &Candidate) -> bool {
-        candidate.state.is_warm()
+        candidate.state.is_ready()
     }
 
     fn validate(&self, candidate: &Candidate) -> Result<(), String> {
@@ -178,7 +178,7 @@ impl crate::activation::Adapter for HistoryActivation {
         );
         // Normal predecessors remain available to in-flight wallets, but
         // only current and preparing assignments are residency obligations.
-        old.state.release_pins();
+        old.state.stop_warming();
         inner.retired.write().unwrap().push(old);
     }
 }
@@ -272,7 +272,7 @@ impl LiveService {
         };
         let old = {
             let active = self.0.active.read().unwrap();
-            if active.publication.map_sha256 == publication.map_sha256 && active.state.is_warm() {
+            if active.publication.map_sha256 == publication.map_sha256 && active.state.is_ready() {
                 if !held_as_requested(active.state.set()) {
                     return Err(Refusal::Admission(ASSIGNMENT_CHANGED.into()));
                 }
@@ -289,7 +289,7 @@ impl LiveService {
         };
         if let Some(candidate) = self.0.candidate.lock().await.as_ref().filter(|c| {
             c.publication.map_sha256 == publication.map_sha256
-                && c.state.is_warm()
+                && c.state.is_ready()
                 && c.epoch == epoch
                 && (!self.0.required_runtimes || c.publication.directory == publication.directory)
         }) {
@@ -308,7 +308,9 @@ impl LiveService {
             },
         );
         // Release an obsolete candidate's pins before reserving anew.
-        *self.0.candidate.lock().await = None;
+        if let Some(candidate) = self.0.candidate.lock().await.take() {
+            candidate.state.stop_warming();
+        }
         let mut options = self.0.options.clone();
         match (&options.scope, &publication.assignment) {
             (LoadScope::Assigned { worker_id, .. }, Some(path)) => {
@@ -368,7 +370,7 @@ impl LiveService {
             old.evict_unpinned();
             tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
             let open_started = std::time::Instant::now();
-            let set = ShardSet::open_reusing(&directory, &options, Some(old.set()))
+            let set = ShardSet::open_for_serving(&directory, &options)
                 .map_err(|e| Refusal::InvalidSource(e.to_string()))?;
             let verification = set.verification().clone();
             tracing::info!(
@@ -398,7 +400,7 @@ impl LiveService {
             tracing::info!(map = %digest, seconds = build_started.elapsed().as_secs_f64(), succeeded = state.is_ok(), "publication service construction finished");
             let state = state.and_then(|state| {
                 let material = if state.required_material() {
-                    Some(state.verify_required_material(Some(&old))?)
+                    Some(state.check_required_material()?)
                 } else {
                     None
                 };
@@ -418,18 +420,14 @@ impl LiveService {
         let loading_seconds = loading_started.elapsed().as_secs_f64();
         let warming_started = std::time::Instant::now();
         self.0.preparing.write().unwrap().as_mut().unwrap().phase = "warming";
-        next.spawn_prewarm()
-            .await
-            .map_err(|e| Refusal::Runtime(e.to_string()))?;
+        let _prewarm = next.spawn_prewarm();
         let warming_seconds = warming_started.elapsed().as_secs_f64();
         tracing::info!(map = %publication.map_sha256, loading_seconds, warming_seconds, "publication preparation stages");
         if self.0.epoch.load(std::sync::atomic::Ordering::Acquire) != epoch {
             return Err(Refusal::Superseded("reorg invalidated preparation".into()));
         }
-        if !next.is_warm() {
-            return Err(Refusal::Admission(
-                "candidate did not become completely warm within the shared budget".into(),
-            ));
+        if !next.is_ready() {
+            return Err(Refusal::Admission("candidate is not ready".into()));
         }
         let [loading, warming, total] = &next.metrics().prepare_seconds;
         loading.observe(std::time::Duration::from_secs_f64(loading_seconds));
@@ -642,7 +640,9 @@ impl LiveService {
                     .as_ref()
                     .is_some_and(|c| c.publication.map_sha256 == map_sha256)
                 {
-                    *candidate = None;
+                    if let Some(discarded) = candidate.take() {
+                        discarded.state.stop_warming();
+                    }
                 }
                 Ok(serde_json::json!({"discarded":map_sha256}))
             }
@@ -738,7 +738,7 @@ impl LiveService {
             let _gate = self.0.publication_gate.lock().unwrap();
             let active = self.0.active.read().unwrap();
             if active.publication.map_sha256 != map_sha256
-                || !active.state.is_warm()
+                || !active.state.is_ready()
                 || active.state.is_invalidated()
                 || active
                     .state

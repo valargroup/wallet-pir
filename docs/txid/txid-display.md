@@ -659,3 +659,12 @@ derives P2PKH and P2SH input addresses from scriptSigs without parent lookups.
 
 Transaction bytes cannot recover contact names, original intent, collaborative
 attribution or application grouping.
+
+## Prepared material and startup
+
+Transaction detail follows the [Transparent loading policy](../transparent/prepared-distribution.md#preparation-trust-and-post-start-smoke-validation):
+the publisher validates preparation, downloads check SHA-256 once, and disk
+reloads check size without rehashing or self-testing. Readiness does not wait
+for background warming. A separate `txid-quality-canary` process validates
+serving after startup; repeat `--fixture` for multiple pinned lookups. Failure
+fails validation without stopping or restarting the service.

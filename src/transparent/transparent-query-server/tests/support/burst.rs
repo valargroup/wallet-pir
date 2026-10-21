@@ -5,7 +5,6 @@ use super::*;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 use transparent_query_server::history::live::{Command, LiveService, Publication};
-use transparent_query_server::history::service::ReadinessMode;
 use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shared::history::shardset::LoadOptions;
 use zakura_pir_client::transparent::engine::transport::{Overloaded, StaleRevision};
@@ -115,7 +114,6 @@ async fn publication_burst_under_exact_load() {
     let config = ServiceConfig {
         cache_bytes: if fixture.is_some() { 5 << 30 } else { 1 << 30 },
         build_slots: slots,
-        readiness: ReadinessMode::Warm,
         ..ServiceConfig::default()
     };
     let disk = fixture.as_ref().map(|_| {

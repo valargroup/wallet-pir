@@ -6,7 +6,7 @@ use crate::{
     control::persist,
     history::{
         live::{Command, LiveService, Publication},
-        service::{ReadinessMode, ServiceConfig, ServiceState},
+        service::{ServiceConfig, ServiceState},
     },
     routing::bootstrap::{self, Config},
     source::Source,
@@ -108,7 +108,7 @@ pub struct Stages {
     pub activation_seconds: f64,
 }
 impl HistorySync {
-    pub fn new(mut config: Config, mut service: ServiceConfig) -> Result<Self, Error> {
+    pub fn new(mut config: Config, service: ServiceConfig) -> Result<Self, Error> {
         let source = Source::new(&config)?;
         std::fs::create_dir_all(&config.directory)?;
         if !std::fs::symlink_metadata(&config.directory)?.is_dir() {
@@ -139,7 +139,6 @@ impl HistorySync {
             intent.digests.extend(invalid);
             persist_floor(&config.directory, &intent)?;
         }
-        service.readiness = ReadinessMode::Warm;
         // No disk-cache restore/build path in this mode, including after restart.
         Ok(Self {
             config,
@@ -290,9 +289,10 @@ impl HistorySync {
             }
         };
         let load_options = options.clone();
-        let set =
-            tokio::task::spawn_blocking(move || ShardSet::open_with(&directory, &load_options))
-                .await??;
+        let set = tokio::task::spawn_blocking(move || {
+            ShardSet::open_for_serving(&directory, &load_options)
+        })
+        .await??;
         if set.map_digest != publication.map_sha256
             || set.map.network != self.config.network
             || set.map.genesis_hash != self.config.genesis_hash
@@ -314,7 +314,8 @@ impl HistorySync {
             Some(archive) => state.with_archive(archive.clone()),
             None => state,
         };
-        state.spawn_prewarm().await?;
+        state.check_required_material()?;
+        let _prewarm = state.spawn_prewarm();
         let live = LiveService::new_required(
             state,
             publication.clone(),
@@ -536,7 +537,8 @@ impl<'a> Acquired<'a> {
             let root = staged.directory.clone();
             let options = staged.options.clone();
             let set =
-                tokio::task::spawn_blocking(move || ShardSet::open_with(&root, &options)).await??;
+                tokio::task::spawn_blocking(move || ShardSet::open_for_serving(&root, &options))
+                    .await??;
             let state = ServiceState::build_with_runtimes(
                 set,
                 owner.service,
@@ -549,10 +551,8 @@ impl<'a> Acquired<'a> {
             };
             stages.loading_seconds = loading.elapsed().as_secs_f64();
             let warming = std::time::Instant::now();
-            state.spawn_prewarm().await?;
-            if !state.is_warm() {
-                return Err("required publication failed prewarm".into());
-            }
+            let _prewarm = state.spawn_prewarm();
+            state.check_required_material()?;
             stages.prewarm_seconds = warming.elapsed().as_secs_f64();
             LiveService::new_required(
                 state,

@@ -194,8 +194,7 @@ impl Archive {
             .map_err(|_| "invalid archive readiness")?;
         // A configured provider is never a terminal archive, even if its address
         // happens to be reachable or some of its metadata matches.
-        if ready["ready"] != true || ready["mode"] != "warm" || ready["archive_forwarding"] != false
-        {
+        if ready["ready"] != true || ready["archive_forwarding"] != false {
             return Err("archive is unready or not a terminal owner".into());
         }
         if !ready["map_sha256"].as_str().is_some_and(|s| {
