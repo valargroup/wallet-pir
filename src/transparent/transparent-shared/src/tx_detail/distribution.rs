@@ -95,7 +95,12 @@ pub struct Finalized {
 impl Finalized {
     /// Verify source tables and every required native runtime before publication.
     pub fn prepare(root: &Path) -> Result<Self, Error> {
-        let set = DisplaySet::open(root, 0, DisplayRole::Combined)?;
+        Self::prepare_set(root, &DisplaySet::open(root, 0, DisplayRole::Combined)?)
+    }
+    /// [`Self::prepare`] from the `Combined` set the caller just opened at
+    /// `root`, whose tables are verified. Every published byte is still
+    /// hashed here and every runtime still loaded and self-checked.
+    pub fn prepare_set(root: &Path, set: &DisplaySet) -> Result<Self, Error> {
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         let mut inventory = Inventory {
             schema: SCHEMA.into(),

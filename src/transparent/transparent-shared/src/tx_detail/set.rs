@@ -703,6 +703,29 @@ mod tests {
     }
 
     #[test]
+    fn finalizing_an_opened_set_reuses_its_verification_but_not_its_bytes() {
+        use crate::tx_detail::{distribution::Finalized, prebuild::build_shipped_verified};
+        let root = tempfile::tempdir().unwrap();
+        let (dir, shards) = publication(root.path());
+        let set = DisplaySet::open(&dir, 0, DisplayRole::Combined).unwrap();
+        assert_eq!(set.verification().segments_hashed, 2);
+        for revision in set.current() {
+            build_shipped_verified(revision, &dir, &[]).unwrap();
+        }
+        let finalized = Finalized::prepare_set(&dir, &set).unwrap();
+        assert_eq!(finalized.sha256, Finalized::prepare(&dir).unwrap().sha256);
+
+        // A source replaced after the set verified it is still refused: every
+        // published source is reloaded against its manifest digest.
+        let segment = dir.join(&shards[1].digest).join("directory-0.0.bin");
+        let mut bytes = std::fs::read(&segment).unwrap();
+        bytes[100] ^= 1;
+        std::fs::remove_file(&segment).unwrap();
+        std::fs::write(&segment, &bytes).unwrap();
+        assert!(Finalized::prepare_set(&dir, &set).is_err());
+    }
+
+    #[test]
     fn tampering_and_inconsistency_are_refused() {
         let root = tempfile::tempdir().unwrap();
         let (dir, shards) = publication(root.path());
