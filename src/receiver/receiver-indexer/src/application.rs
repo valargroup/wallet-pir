@@ -7,7 +7,7 @@ use crate::{
 use pir_pipeline::{FailurePolicy, Input};
 use receiver_directory::snapshot::{Snapshot, MAX_ROWS};
 use receiver_pir_server::{Publication, Publications};
-use receiver_store::{Config as StoreConfig, Error, PayoutStore, Store};
+use receiver_store::{Checkpoint, Config as StoreConfig, Error, PayoutStore, Store};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -328,21 +328,11 @@ async fn collect_inner<'a>(
         );
     }
     log_stage("ingestion", started);
-    // Hints activate before witness/PIR preparation and are not held by session grace.
-    // The guard also checks this anchor while expensive preparation runs.
-    let filter_started = std::time::Instant::now();
-    let filters = store.block_filters(args.filter_blocks, args.history_revision)?;
     if let Some(serving) = serving {
-        let window =
-            receiver_pir_server::blocks::BlockWindow::new(genesis, args.history_revision, filters)?;
-        rpc.check_network(genesis).await?;
-        if !is_canonical(rpc, tip.height, tip.hash).await?
-            || !serving.publish_filters(window, epoch.unwrap())
-        {
-            return Err("filter anchor changed during collection; retrying".into());
-        }
+        let filter_started = std::time::Instant::now();
+        publish_filters(args, rpc, store, serving, genesis, &tip, epoch.unwrap()).await?;
+        log_stage("block_filters", filter_started);
     }
-    log_stage("block_filters", filter_started);
     if serving.is_some_and(|s| s.ready_at().is_some()) {
         return Ok(None);
     }
@@ -357,6 +347,32 @@ async fn collect_inner<'a>(
         epoch,
         refresh_started,
     }))
+}
+
+/// Activates the rolling filter window ending at `tip` on `serving`, fenced by `epoch`,
+/// before witness and PIR preparation; the canonical guard also checks its anchor while
+/// that runs. Only serving builds one: a one-shot run writes no filter artifact.
+async fn publish_filters(
+    args: &Config,
+    rpc: &NodeClient,
+    store: &mut Store,
+    serving: &Publications,
+    genesis: [u8; 32],
+    tip: &Checkpoint,
+    epoch: u64,
+) -> Result<()> {
+    let first = (tip
+        .height
+        .saturating_sub(args.filter_blocks.saturating_sub(1)))
+    .max(args.start_height);
+    let filters = store.block_filters(args.filter_blocks, args.history_revision)?;
+    let window =
+        receiver_pir_server::blocks::BlockWindow::new(genesis, args.history_revision, filters)?;
+    rpc.check_network(genesis).await?;
+    if !is_canonical(rpc, tip.height, tip.hash).await? || !serving.publish_filters(window, epoch) {
+        return Err("filter anchor changed during collection; retrying".into());
+    }
+    Ok(())
 }
 
 impl<'a> Collected<'a> {
@@ -941,6 +957,23 @@ mod tests {
         paused.state = State::default();
         let refused = paused.refresh().await.unwrap_err().to_string();
         assert!(refused.contains("below"), "{refused}");
+    }
+
+    /// A one-shot run writes no rolling filters, so it neither builds them nor fails on
+    /// them: a filter window that cannot be built leaves its publication unaffected,
+    /// while a serving run, which does build it, refuses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_one_shot_run_does_not_build_rolling_filters() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.filter_blocks = receiver_store::blocks::MAX_FILTER_BLOCKS + 1;
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        refresh(&paused.args, rpc, genesis, None, &mut State::default())
+            .await
+            .unwrap();
+        let written = std::fs::read_dir(paused.dir.path().join("publications")).unwrap();
+        assert!(written.count() > 0);
+        assert!(paused.refresh().await.is_err());
     }
 
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.
