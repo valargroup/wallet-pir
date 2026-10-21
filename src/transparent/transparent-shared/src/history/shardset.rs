@@ -732,6 +732,13 @@ impl SegmentSource {
         Ok(bytes)
     }
 
+    /// Check `bytes`, read from this segment's file, against its manifest
+    /// length and digest and its zero tail, whatever evidence it carries.
+    pub(crate) fn verify_bytes(&self, bytes: &[u8]) -> Result<(), LoadError> {
+        self.check(bytes.len(), Sha256::digest(bytes).as_slice())?;
+        self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))
+    }
+
     /// What this process observed of the file when it verified it, if that
     /// is settled enough to vouch for the same unchanged file later.
     pub(crate) fn evidence(&self) -> Option<FileStamp> {

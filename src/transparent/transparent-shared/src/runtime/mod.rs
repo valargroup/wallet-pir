@@ -514,6 +514,20 @@ pub fn build_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+/// One low-priority thread for background publication validation, so any
+/// parallel work inside a runtime load or check stays on a single CPU.
+pub fn validation_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .thread_name(|_| "history-validation".into())
+            .start_handler(|_| lower_priority())
+            .build()
+            .expect("validation pool")
+    })
+}
+
 #[cfg(target_os = "linux")]
 fn lower_priority() {
     // On Linux, PRIO_PROCESS with a thread id changes only that thread.

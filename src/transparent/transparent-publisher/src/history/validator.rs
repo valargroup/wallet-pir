@@ -1,11 +1,12 @@
 //! The History publisher's low-priority body validator. A restored
 //! publication serves first; this thread then hashes its artifacts on one CPU
 //! (integrity) and loads and checks its runtimes one at a time (correctness).
-//! It keeps the running job and only the newest pending one.
+//! It keeps the running job and only the newest pending one; a newer job or a
+//! cancellation stops the running one between reads or runtime checks.
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use transparent_shared::publication::{
-    CheckedRuntimes, CorrectnessError, IntegrityError, Inventory, Validation,
+    CheckedRuntimes, CorrectnessError, IntegrityError, Inventory, Validation, Verified,
 };
 
 /// What a validation result is about. A result only applies to the exact
@@ -17,7 +18,8 @@ pub(crate) struct Identity {
     pub inventory_sha256: String,
     pub height: u64,
     pub hash: String,
-    /// The authority epoch the job was submitted under.
+    /// The authority epoch the job runs under; [`Queue::retain`] moves it
+    /// forward when an invalidation keeps this publication public.
     pub epoch: u64,
 }
 
@@ -42,7 +44,11 @@ type Busy = dyn Fn() -> bool + Send + Sync;
 #[derive(Default)]
 struct State {
     pending: Option<Job>,
-    running: Option<PathBuf>,
+    /// The running job's directory and current epoch.
+    running: Option<(PathBuf, u64)>,
+    /// Advanced by every submission and cancellation; a running job whose
+    /// generation is older is obsolete.
+    generation: u64,
     stop: bool,
 }
 
@@ -50,11 +56,33 @@ struct State {
 #[derive(Clone, Default)]
 pub(crate) struct Queue(Arc<(Mutex<State>, Condvar)>);
 impl Queue {
-    /// Replace any pending job with `job`; the running one continues.
+    /// Replace any pending job with `job` and stop the running one.
     pub fn submit(&self, job: Job) {
         let (state, wake) = &*self.0;
-        state.lock().unwrap().pending = Some(job);
+        let mut state = state.lock().unwrap();
+        state.pending = Some(job);
+        state.generation += 1;
         wake.notify_all();
+    }
+    /// Drop the pending job and stop the running one: its publication was
+    /// withdrawn or replaced.
+    pub fn cancel(&self) {
+        let (state, wake) = &*self.0;
+        let mut state = state.lock().unwrap();
+        state.pending = None;
+        state.generation += 1;
+        wake.notify_all();
+    }
+    /// An invalidation advanced the authority epoch to `epoch` but kept the
+    /// validated publication public; later results are about it under `epoch`.
+    pub fn retain(&self, epoch: u64) {
+        let mut state = self.0 .0.lock().unwrap();
+        if let Some((_, running)) = &mut state.running {
+            *running = epoch;
+        }
+        if let Some(job) = &mut state.pending {
+            job.identity.epoch = epoch;
+        }
     }
     /// Directories a job still reads; candidate collection keeps them.
     pub fn held(&self) -> Vec<PathBuf> {
@@ -62,12 +90,21 @@ impl Queue {
         state
             .running
             .iter()
-            .cloned()
+            .map(|(directory, _)| directory.clone())
             .chain(state.pending.iter().map(|j| j.identity.directory.clone()))
             .collect()
     }
-    fn stopping(&self) -> bool {
-        self.0 .0.lock().unwrap().stop
+    /// Whether the job of `generation` must end now.
+    fn obsolete(&self, generation: u64) -> bool {
+        let state = self.0 .0.lock().unwrap();
+        state.stop || state.generation != generation
+    }
+    fn identity(&self, job: &Job) -> Identity {
+        let mut identity = job.identity.clone();
+        if let Some((_, epoch)) = &self.0 .0.lock().unwrap().running {
+            identity.epoch = *epoch;
+        }
+        identity
     }
 }
 
@@ -111,8 +148,10 @@ fn run(
     busy: Box<Busy>,
     report: Box<Report>,
 ) {
+    // Artifacts verified unchanged by an earlier job of this process.
+    let mut known: Option<Verified> = None;
     loop {
-        let job = {
+        let (job, generation) = {
             let (state, wake) = &*queue.0;
             let mut state = state.lock().unwrap();
             state.running = None;
@@ -121,20 +160,25 @@ fn run(
                     return;
                 }
                 if let Some(job) = state.pending.take() {
-                    state.running = Some(job.identity.directory.clone());
-                    break job;
+                    state.running = Some((job.identity.directory.clone(), job.identity.epoch));
+                    break (job, state.generation);
                 }
                 state = wake.wait(state).unwrap();
             }
         };
-        // An unexpected panic is a failure to validate, never a reason to stop
-        // the publisher.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            validate(&queue, &memory, &*busy, &*report, &job)
-        }));
+        // Any parallel work inside a runtime load or check stays on one
+        // low-priority thread. An unexpected panic is a failure to validate,
+        // never a reason to stop the publisher.
+        let outcome = transparent_shared::runtime::validation_pool().install(|| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                validate(
+                    &queue, generation, &memory, &*busy, &*report, &job, &mut known,
+                )
+            }))
+        });
         if outcome.is_err() {
             report(
-                &job.identity,
+                &queue.identity(&job),
                 Event::Integrity(Err(IntegrityError::Unavailable(
                     "validator panicked".into(),
                 ))),
@@ -145,65 +189,65 @@ fn run(
 
 fn validate(
     queue: &Queue,
+    generation: u64,
     memory: &Arc<transparent_shared::runtime::memory::WorkMemory>,
     busy: &Busy,
     report: &Report,
     job: &Job,
+    known: &mut Option<Verified>,
 ) {
+    let send = |event| report(&queue.identity(job), event);
     let chunks = std::sync::atomic::AtomicU64::new(0);
     // Asked between 1 MiB reads and runtime checks: foreground distribution
-    // and publication work go first; a stop ends the job.
-    let pause = || {
-        while busy() && !queue.stopping() {
+    // and publication work go first; a stop or newer job ends this one.
+    let wait = || {
+        while busy() && !queue.obsolete(generation) {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        queue.obsolete(generation)
+    };
+    let pause = || {
         let read = chunks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         if read % 256 == 0 {
-            report(&job.identity, Event::Progress("integrity", read << 20));
+            send(Event::Progress("integrity", read << 20));
         }
-        queue.stopping()
+        wait()
     };
     loop {
-        report(&job.identity, Event::Started("integrity"));
-        match job.validation.integrity(&job.inventory, &|_| false, &pause) {
-            Err(IntegrityError::Unavailable(reason)) if !queue.stopping() => {
-                report(
-                    &job.identity,
-                    Event::Integrity(Err(IntegrityError::Unavailable(reason))),
-                );
-                if !retry_later(queue) {
+        send(Event::Started("integrity"));
+        let verified = match job.validation.integrity(&job.inventory, known.as_ref(), &pause) {
+            Ok(verified) => verified,
+            Err(IntegrityError::Unavailable(reason)) if !queue.obsolete(generation) => {
+                send(Event::Integrity(Err(IntegrityError::Unavailable(reason))));
+                if !retry_later(queue, generation) {
                     return;
                 }
+                continue;
             }
-            result => {
-                let passed = result.is_ok();
-                report(&job.identity, Event::Integrity(result));
-                if !passed {
-                    return;
-                }
-                break;
+            Err(error) => {
+                send(Event::Integrity(Err(error)));
+                return;
             }
-        }
-    }
-    loop {
-        report(&job.identity, Event::Started("correctness"));
-        let pause = || {
-            while busy() && !queue.stopping() {
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-            queue.stopping()
         };
-        match job.validation.correctness(&job.inventory, memory, &pause) {
+        send(Event::Integrity(Ok(verified.hashed)));
+        send(Event::Started("correctness"));
+        match job
+            .validation
+            .correctness(&job.inventory, &verified, memory, &wait)
+        {
+            // A file replaced since it was hashed is hashed again first.
             Err(error @ (CorrectnessError::NoCapacity | CorrectnessError::Unavailable(_)))
-                if !queue.stopping() =>
+                if !queue.obsolete(generation) =>
             {
-                report(&job.identity, Event::Correctness(Err(error)));
-                if !retry_later(queue) {
+                send(Event::Correctness(Err(error)));
+                *known = Some(verified);
+                if !retry_later(queue, generation) {
                     return;
                 }
             }
             result => {
-                report(&job.identity, Event::Correctness(result));
+                send(Event::Correctness(result));
+                *known = Some(verified);
                 return;
             }
         }
@@ -211,14 +255,14 @@ fn validate(
 }
 
 /// Wait before retrying a job that could not be validated now. False when a
-/// stop or a newer job ends it.
-fn retry_later(queue: &Queue) -> bool {
+/// stop or a newer job ends it; never waits on memory for obsolete work.
+fn retry_later(queue: &Queue, generation: u64) -> bool {
     let (state, wake) = &*queue.0;
     let state = state.lock().unwrap();
     let (state, _) = wake
         .wait_timeout_while(state, std::time::Duration::from_secs(30), |s| {
-            !s.stop && s.pending.is_none()
+            !s.stop && s.generation == generation
         })
         .unwrap();
-    !state.stop && state.pending.is_none()
+    !state.stop && state.generation == generation
 }

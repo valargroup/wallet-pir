@@ -954,35 +954,75 @@ pub struct Validation {
     recent_from_height: u64,
     full: bool,
 }
+/// The exact files one integrity pass found to hold their listed bytes:
+/// each artifact's path, digest and the stamp of the inode hashed, unchanged
+/// from opening to the end of reading and still the one its path names.
+/// Correctness checks only these inodes, and a later pass reuses an entry only
+/// while the file still has the same stamp.
+#[derive(Clone, Debug, Default)]
+pub struct Verified {
+    /// Bytes hashed by this pass; reused entries are not counted.
+    pub hashed: u64,
+    files: BTreeMap<String, (String, FileStamp)>,
+}
+impl Verified {
+    fn stamp(&self, artifact: &Artifact) -> Option<FileStamp> {
+        self.files
+            .get(&artifact.path)
+            .filter(|(sha256, _)| *sha256 == artifact.sha256)
+            .map(|(_, stamp)| *stamp)
+    }
+}
+
+/// The stamp of `file`, opened at `path`, when the path still names it.
+fn same_file(path: &Path, file: &std::fs::File) -> io::Result<Option<FileStamp>> {
+    let opened = FileStamp::of(&file.metadata()?);
+    let named = FileStamp::of(&std::fs::symlink_metadata(path)?);
+    Ok(opened.filter(|_| opened == named))
+}
+
 impl Validation {
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// Hash every listed artifact, one at a time, in 1 MiB reads. `pause` is
-    /// asked before each read; true stops. `skip` names artifacts (path and
-    /// digest) already verified unchanged in this process.
+    /// asked before each read; true stops. An artifact `known` verified is
+    /// not read again while its path still names the same unchanged inode.
     pub fn integrity(
         &self,
         inventory: &Inventory,
-        skip: &dyn Fn(&Artifact) -> bool,
+        known: Option<&Verified>,
         pause: &dyn Fn() -> bool,
-    ) -> Result<u64, IntegrityError> {
-        let mut hashed = 0;
+    ) -> Result<Verified, IntegrityError> {
+        let mut verified = Verified::default();
         for artifact in &inventory.artifacts {
-            if skip(artifact) {
-                continue;
+            if let Some(stamp) = known.and_then(|k| k.stamp(artifact)) {
+                let path = self.root.join(&artifact.path);
+                let still = std::fs::symlink_metadata(&path)
+                    .ok()
+                    .and_then(|m| FileStamp::of(&m));
+                if safe_path(&artifact.path) && still == Some(stamp) {
+                    verified
+                        .files
+                        .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
+                    continue;
+                }
             }
-            hashed += self.hash_one(artifact, pause)?;
+            let stamp = self.hash_one(artifact, pause)?;
+            verified.hashed += artifact.bytes;
+            verified
+                .files
+                .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
         }
-        Ok(hashed)
+        Ok(verified)
     }
 
     fn hash_one(
         &self,
         artifact: &Artifact,
         pause: &dyn Fn() -> bool,
-    ) -> Result<u64, IntegrityError> {
+    ) -> Result<FileStamp, IntegrityError> {
         use io::Read;
         let unavailable = |e: &dyn std::fmt::Display| {
             IntegrityError::Unavailable(format!("{}: {e}", artifact.path))
@@ -1012,6 +1052,11 @@ impl Validation {
         if metadata.len() != artifact.bytes {
             return Err(mismatch(None, "artifact length changed"));
         }
+        // A file replaced or rewritten while it is read says nothing about
+        // either version; it is read again later.
+        let before = same_file(&checked, &file)
+            .map_err(|e| unavailable(&e))?
+            .ok_or_else(|| unavailable(&"artifact was replaced while opening"))?;
         let mut hash = Sha256::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0u64;
@@ -1026,6 +1071,9 @@ impl Validation {
             total += read as u64;
             hash.update(&buffer[..read]);
         }
+        if same_file(&checked, &file).map_err(|e| unavailable(&e))? != Some(before) {
+            return Err(unavailable(&"artifact changed while it was read"));
+        }
         let found = hex::encode(hash.finalize());
         if total != artifact.bytes {
             return Err(mismatch(
@@ -1036,16 +1084,20 @@ impl Validation {
         if found != artifact.sha256 {
             return Err(mismatch(Some(found), "artifact digest mismatch"));
         }
-        Ok(total)
+        Ok(before)
     }
 
     /// Load each listed runtime alone, admitted by `memory`, and check it
-    /// against its source rows with a sampled private query. Returns the
-    /// runtimes checked, as preparation records them, so later preparations
-    /// in this process reuse them while their bytes are unchanged.
+    /// against its source rows with a sampled private query. Only the inodes
+    /// `verified` hashed are used: a runtime or source replaced or changed
+    /// since then leaves this phase unavailable, never passed, and source rows
+    /// are checked against their manifest digest again as they are read.
+    /// Returns the runtimes checked, as preparation records them, so later
+    /// preparations in this process reuse them while their bytes are unchanged.
     pub fn correctness(
         &self,
         inventory: &Inventory,
+        verified: &Verified,
         memory: &std::sync::Arc<crate::runtime::memory::WorkMemory>,
         pause: &dyn Fn() -> bool,
     ) -> Result<CheckedRuntimes, CorrectnessError> {
@@ -1056,6 +1108,36 @@ impl Validation {
             .iter()
             .map(|a| (self.root.join(&a.path), a))
             .collect();
+        let relative = |path: &Path| {
+            path.strip_prefix(&self.root)
+                .ok()
+                .and_then(|p| p.to_str())
+                .and_then(|p| inventory.artifacts.iter().find(|a| a.path == p))
+        };
+        // Open `path` only while it still names the inode integrity hashed.
+        let open = |path: &Path, artifact: &Artifact| {
+            let stamp = verified.stamp(artifact).ok_or_else(|| {
+                CorrectnessError::Unavailable(format!("{} was not integrity-verified", artifact.path))
+            })?;
+            let file = crate::verification::open(path)
+                .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+            match same_file(path, &file) {
+                Ok(Some(found)) if found == stamp => Ok((file, stamp)),
+                Ok(_) => Err(CorrectnessError::Unavailable(format!(
+                    "{} changed since integrity validation",
+                    artifact.path
+                ))),
+                Err(e) => Err(CorrectnessError::Unavailable(e.to_string())),
+            }
+        };
+        let unchanged = |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| {
+            match same_file(path, file) {
+                Ok(Some(found)) if found == stamp => Ok(()),
+                _ => Err(CorrectnessError::Unavailable(format!(
+                    "{name} changed during correctness validation"
+                ))),
+            }
+        };
         let mut checked = CheckedRuntimes::default();
         for (path, key, shared, source) in plan.native {
             if pause() {
@@ -1064,17 +1146,30 @@ impl Validation {
             let artifact = listed
                 .get(&path)
                 .ok_or_else(|| CorrectnessError::Failed("runtime is not listed".into()))?;
+            let source_artifact = relative(source.path())
+                .ok_or_else(|| CorrectnessError::Failed("source is not listed".into()))?;
             let _admitted = memory
                 .reserve(artifact.bytes.saturating_add(source.bytes() as u64))
                 .ok_or(CorrectnessError::NoCapacity)?;
-            let file = crate::verification::open(&path)
+            let (file, stamp) = open(&path, artifact)?;
+            let probe = file
+                .try_clone()
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
             let runtime = ShippedRuntimes::load_file(file, &key, &shared, source.sha256())
                 .map_err(|e| match e.kind() {
                     io::ErrorKind::InvalidData => CorrectnessError::Failed(e.to_string()),
                     _ => CorrectnessError::Unavailable(e.to_string()),
                 })?;
-            let rows = source.load().map_err(|e| match e {
+            unchanged(&path, &probe, stamp, &artifact.path)?;
+            let (mut rows_file, rows_stamp) = open(source.path(), source_artifact)?;
+            let mut rows = Vec::with_capacity(source.bytes());
+            io::Read::read_to_end(
+                &mut io::Read::take(&mut rows_file, source.bytes() as u64 + 1),
+                &mut rows,
+            )
+            .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+            unchanged(source.path(), &rows_file, rows_stamp, &source_artifact.path)?;
+            source.verify_bytes(&rows).map_err(|e| match e {
                 crate::history::shardset::LoadError::Invalid(reason) => {
                     CorrectnessError::Failed(reason)
                 }

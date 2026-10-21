@@ -168,6 +168,9 @@ struct Inner {
     validation: super::validator::Queue,
     /// The active publication lists bytes that failed integrity validation.
     integrity_failed: AtomicBool,
+    /// Candidate preparation and activation in progress; background
+    /// validation waits while any runs.
+    foreground: AtomicU64,
 }
 #[derive(Clone)]
 pub struct Authority(Arc<Inner>);
@@ -344,12 +347,8 @@ pub async fn run_managed(
             // start rather than hiding a full scan after a deploy stop.
             Err(error) => {
                 return Err(format!(
-                    "completed publication cannot be restored: {error}; remove {} to prepare it again in full",
-                    public
-                        .publication
-                        .directory
-                        .join(transparent_shared::publication::RESTORE_FILE)
-                        .display()
+                    "completed publication {} cannot be restored: {error}; deleting its completion record does not clear recorded integrity failures or publication intent, so deploy verified replacement bytes",
+                    public.publication.directory.display()
                 )
                 .into())
             }
@@ -387,6 +386,7 @@ pub async fn run_managed(
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
         integrity_failed: AtomicBool::new(false),
+        foreground: AtomicU64::new(0),
     }));
     struct Fence(Authority);
     impl Drop for Fence {
@@ -400,8 +400,11 @@ pub async fn run_managed(
         authority.0.validation.clone(),
         Arc::new(transparent_shared::runtime::memory::WorkMemory::default()),
         {
-            let slots = authority.0.distribution_slots.clone();
-            Box::new(move || slots.available_permits() < DISTRIBUTION_SLOTS)
+            let authority = authority.clone();
+            Box::new(move || {
+                authority.0.distribution_slots.available_permits() < DISTRIBUTION_SLOTS
+                    || authority.0.foreground.load(Ordering::Acquire) > 0
+            })
         },
         {
             let authority = authority.clone();
@@ -593,8 +596,12 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
         });
         if retain.is_none() {
             authority.0.withdrawn.store(true, Ordering::Release);
+            authority.0.validation.cancel();
         }
-        authority.0.epoch.fetch_add(1, Ordering::AcqRel);
+        let epoch = authority.0.epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        if retain.is_some() {
+            authority.0.validation.retain(epoch);
+        }
         authority.0.invalidated_from.store(from, Ordering::Release);
         if config.distribute_prepared {
             authority.0.distribution_revision.store(
@@ -879,6 +886,16 @@ async fn publish_candidate(
         &mut HistoryProgress,
     )
     .await?;
+    struct Foreground<'a>(&'a AtomicU64);
+    impl Drop for Foreground<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+    let _foreground = matches!(input, Input::Work(_)).then(|| {
+        authority.0.foreground.fetch_add(1, Ordering::AcqRel);
+        Foreground(&authority.0.foreground)
+    });
     pir_pipeline::advance(
         input,
         |work| {
@@ -1265,6 +1282,9 @@ async fn activate_history(
             .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         authority.0.integrity_failed.store(false, Ordering::Release);
+        // Preparation verified these bytes; a restored predecessor's
+        // validation is obsolete and releases its directory.
+        authority.0.validation.cancel();
         // Freshly prepared bytes listed as a failed artifact was are verified
         // replacements; other recorded failures remain.
         if let Some(distribution) = &authority.0.active.read().unwrap().distribution {
@@ -1410,10 +1430,11 @@ fn restore_public(
 > {
     use transparent_shared::publication::{Finalized, RestoreExpectation, RESTORE_FILE};
     // Recorded withdrawal or unfinished activation intent is resolved by the
-    // ordinary full path, never bypassed.
+    // ordinary path, which starts withdrawn; it is never bypassed.
     for intent in ["withdrawn.json", "activation.json"] {
         if config.publication_root.join(intent).exists() {
-            return Err(format!("{intent} records unresolved publication intent").into());
+            tracing::warn!(intent, "unresolved publication intent; not restoring cheaply");
+            return Ok(None);
         }
     }
     let directory = &public.publication.directory;
@@ -2730,6 +2751,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
+            foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -3069,6 +3091,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
+            foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
@@ -3433,6 +3456,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 runtime_preparation_failures: AtomicU64::new(0),
                 validation: Default::default(),
                 integrity_failed: AtomicBool::new(false),
+                foreground: AtomicU64::new(0),
             }))
         }
         /// Brings the journal to the node's tip, height four.
