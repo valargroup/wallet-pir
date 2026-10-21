@@ -25,7 +25,7 @@ status = ["dep:status-publisher", "pir-publisher/status"]
 rocksdb-reader = ["transparent-history", "pir-publisher/rocksdb-reader"]
 # In-process Enhance hint and operator checks. Fast feedback uses this graph.
 # The chain node and wallet client stay on enhance-tests for qualification.
-enhance-fast = ["enhance"]
+enhance-fast = ["enhance", "dep:tempfile"]
 # Wallet-client and chain-fixture regressions.
 enhance-tests = [
     "enhance-fast",
