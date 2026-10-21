@@ -1239,8 +1239,18 @@ impl RuntimeCache {
                 .file_name()
                 .ok_or_else(|| CacheError::Failed("unnamed shipped runtime".into()))?
                 .to_owned();
-            let (runtime, checksum) = match std::fs::File::open(&path).and_then(|file| {
-                disk::ShippedRuntimes::load_file_checked(file, &key, &shared, source.sha256())
+            let file = match crate::verification::open(&path) {
+                Ok(file) => file,
+                Err(error) => return Ok(Err(error.to_string())),
+            };
+            let (runtime, checksum) = match file.try_clone().and_then(|handle| {
+                disk::ShippedRuntimes::load_received_file(
+                    &path,
+                    handle,
+                    &key,
+                    &shared,
+                    source.sha256(),
+                )
             }) {
                 Ok(runtime) => runtime,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1256,26 +1266,19 @@ impl RuntimeCache {
             // self-check below is build-pool work under the memory reservation,
             // so release the slot here and let the next shipped file load.
             drop(permit);
-            // Verifies the segment as a restore does, and keeps its rows for
-            // the self-check.
-            let rows = source
-                .load()
-                .map_err(|error| CacheError::Failed(error.to_string()))?;
-            let check_started = std::time::Instant::now();
-            let checked = build_pool().install(|| runtime.self_check(&shared, &rows));
-            let check_micros = check_started.elapsed().as_micros() as u64;
-            Metrics::add(&metrics.shipped_check_micros, check_micros);
-            let row = match checked {
-                Ok(row) => row,
+            let check_micros = match disk::ShippedRuntimes::check_loaded_material(
+                &path, &file, &key, &shared, &source, &runtime,
+            ) {
+                Ok(micros) => micros,
                 Err(error) => return Ok(Err(format!("self-check failed: {error}"))),
             };
+            Metrics::add(&metrics.shipped_check_micros, check_micros);
             let _ = _pin.verified_shipped.set((name, checksum));
             Metrics::incr(&metrics.shipped_loads);
             tracing::info!(
                 key = ?key,
                 load_seconds = loaded.as_secs_f64(),
                 check_seconds = check_micros as f64 / 1e6,
-                row,
                 "loaded shipped runtime"
             );
             Ok(Ok((runtime, check_micros)))

@@ -34,38 +34,9 @@ pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Identity of a read-only cached object at the time its body was hashed.
-/// Any write, truncation, permission change or replacement changes the inode,
-/// size, mtime or ctime, so an equal identity means the checked bytes remain.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct Checked {
-    dev: u64,
-    ino: u64,
-    len: u64,
-    mtime: (i64, i64),
-    ctime: (i64, i64),
-}
-impl Checked {
-    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
-        use std::os::unix::fs::MetadataExt;
-        (metadata.is_file() && metadata.permissions().readonly()).then(|| Self {
-            dev: metadata.dev(),
-            ino: metadata.ino(),
-            len: metadata.len(),
-            mtime: (metadata.mtime(), metadata.mtime_nsec()),
-            ctime: (metadata.ctime(), metadata.ctime_nsec()),
-        })
-    }
-}
-
-/// Make `objects/<sha256>` a complete, verified, read-only object and return
-/// whether its body was downloaded. A reused regular file is made read-only,
-/// hashed and synced before its first stage through this source handle, so a
-/// legacy writable object is never linked writable; later stages skip the
-/// body hash only while the open file keeps the identity recorded after that
-/// hash. Anything else under that name is unlinked and fetched.
-/// Downloads stream into a unique partial name while hashing, so a partial
-/// never has a digest name, and are synced before and after the rename.
+/// Cache objects are renamed to their digest only after the complete network
+/// stream matches its declared SHA-256 and length. Local files are trusted;
+/// later loads check regular-file status and byte size, including after restart.
 pub(crate) async fn ensure_object(
     source: &mut Source,
     objects: &std::path::Path,
@@ -81,12 +52,7 @@ pub(crate) async fn ensure_object(
         Ok(metadata) => {
             if metadata.is_file() {
                 let (path, file) = (object.clone(), artifact.clone());
-                let previous = source.checked.remove(&artifact.sha256);
-                let checked =
-                    tokio::task::spawn_blocking(move || reuse_object(&path, &file, previous))
-                        .await??;
-                if let Some(checked) = checked {
-                    source.checked.insert(artifact.sha256.clone(), checked);
+                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
                     return Ok(false);
                 }
             }
@@ -141,6 +107,7 @@ pub(crate) async fn ensure_object(
         output.sync_all().await?;
         drop(output);
         std::fs::rename(&partial, &object)?;
+        publication::record_received_file(&object, artifact, &object)?;
         std::fs::File::open(objects)?.sync_all()?;
         Ok(())
     }
@@ -152,58 +119,22 @@ pub(crate) async fn ensure_object(
     result.map(|()| true)
 }
 
-/// Make a cached regular file read-only, then verify and sync it. Returns the
-/// checked identity when it may be linked; a digest mismatch leaves it for
-/// replacement. The body hash is skipped only when the opened file still has
-/// the identity `previous` recorded after this handle last hashed it.
-fn reuse_object(
-    path: &std::path::Path,
-    artifact: &publication::Artifact,
-    previous: Option<Checked>,
-) -> Result<Option<Checked>, Error> {
+/// Reuse completed network-checked local bytes after a size check.
+fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
+    if !std::fs::symlink_metadata(path)?.is_file() {
+        return Ok(false);
+    }
     let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() != artifact.bytes {
+        return Ok(false);
+    }
     let mut permissions = file.metadata()?.permissions();
     if !permissions.readonly() {
         permissions.set_readonly(true);
         file.set_permissions(permissions)?;
     }
-    let before = file.metadata()?;
-    if before.len() != artifact.bytes {
-        return Ok(None);
-    }
-    let Some(checked) = Checked::of(&before) else {
-        return Ok(None);
-    };
-    if previous == Some(checked) {
-        return Ok(Some(checked));
-    }
-    if verify_open(&file, artifact).is_err() || Checked::of(&file.metadata()?) != Some(checked) {
-        return Ok(None);
-    }
-    file.sync_all()?;
-    Ok(Some(checked))
-}
-
-/// Hash the already opened file, so the recorded identity names these bytes.
-fn verify_open(file: &std::fs::File, artifact: &publication::Artifact) -> Result<(), Error> {
-    use sha2::Digest;
-    use std::io::Read;
-    let mut hash = sha2::Sha256::new();
-    let mut reader = file;
-    let mut buffer = vec![0; 1 << 20];
-    let mut total = 0u64;
-    loop {
-        let n = reader.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        total += n as u64;
-        hash.update(&buffer[..n]);
-    }
-    if total != artifact.bytes || hex::encode(hash.finalize()) != artifact.sha256 {
-        return Err("artifact digest mismatch".into());
-    }
-    Ok(())
+    publication::record_received_file(path, artifact, path)?;
+    Ok(true)
 }
 
 /// Stage a verified immutable object by hard link: the stage and cache share
@@ -217,13 +148,13 @@ pub(crate) fn link_object(
     link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
 ) -> Result<(), Error> {
     match link(object, target) {
-        Ok(()) => Ok(()),
+        Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
             std::fs::copy(object, target)?;
-            publication::verify_file(target, artifact)
         }
-        Err(e) => Err(e.into()),
+        Err(e) => return Err(e.into()),
     }
+    publication::record_received_file(target, artifact, object)
 }
 
 /// Link a revision directory once, then stage directory symlinks to that stable
@@ -274,7 +205,9 @@ pub(crate) fn stage_object(
             }
             let cached = std::fs::symlink_metadata(object)?;
             if metadata.dev() != cached.dev() || metadata.ino() != cached.ino() {
-                publication::verify_file(&source, artifact)?;
+                if metadata.len() != artifact.bytes {
+                    return Err("catalog source length mismatch".into());
+                }
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -286,6 +219,7 @@ pub(crate) fn stage_object(
         }
         Err(error) => return Err(error.into()),
     }
+    publication::record_received_file(&source, artifact, object)?;
     let staged_revision = stage.join(first);
     match std::fs::symlink_metadata(&staged_revision) {
         Ok(metadata) => {
@@ -367,45 +301,26 @@ mod tests {
     }
 
     #[test]
-    fn reused_objects_are_hashed_once_per_unchanged_identity() {
+    fn cached_objects_use_size_checks_even_after_reopen() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let (object, artifact) = fixture(root.path());
-        // First load through a handle always hashes: wrong bytes fail.
-        let wrong = root.path().join("wrong");
-        std::fs::write(&wrong, b"wrong rows!!").unwrap();
-        assert_eq!(reuse_object(&wrong, &artifact, None).unwrap(), None);
-        let checked = reuse_object(&object, &artifact, None).unwrap().unwrap();
-        // An unchanged identity skips the body hash: a forged record for
-        // unrelated bytes is accepted, proving no rehash happens.
-        std::fs::set_permissions(&wrong, std::fs::Permissions::from_mode(0o444)).unwrap();
-        let forged = Checked::of(&std::fs::metadata(&wrong).unwrap());
-        assert!(forged.is_some());
-        assert_eq!(reuse_object(&wrong, &artifact, forged).unwrap(), forged);
-        assert_eq!(
-            reuse_object(&object, &artifact, Some(checked)).unwrap(),
-            Some(checked)
-        );
-        // In-place rewrite of equal length changes ctime: hashed and refused.
+        assert!(reuse_object(&object, &artifact).unwrap());
+        assert!(reuse_object(&object, &artifact).unwrap());
         std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
-        std::fs::write(&object, b"Checked rows").unwrap();
-        assert_eq!(
-            reuse_object(&object, &artifact, Some(checked)).unwrap(),
-            None
+        std::fs::write(&object, b"same size!!!").unwrap();
+        assert!(
+            reuse_object(&object, &artifact).unwrap(),
+            "local same-size changes are outside the network integrity boundary"
         );
-        // Replacement under the same name is a new inode: hashed again.
-        std::fs::remove_file(&object).unwrap();
-        std::fs::write(&object, b"checked rows").unwrap();
-        let replaced = reuse_object(&object, &artifact, Some(checked))
-            .unwrap()
-            .unwrap();
-        assert_ne!(replaced, checked);
-        // A record for another length is never trusted.
         let short = publication::Artifact {
             bytes: 11,
             ..artifact.clone()
         };
-        assert_eq!(reuse_object(&object, &short, Some(replaced)).unwrap(), None);
+        assert!(!reuse_object(&object, &short).unwrap());
+        std::fs::remove_file(&object).unwrap();
+        std::fs::write(&object, b"short").unwrap();
+        assert!(!reuse_object(&object, &artifact).unwrap());
     }
 
     #[test]
@@ -421,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn replaced_catalog_content_cannot_inherit_verification() {
+    fn a_truncated_catalog_source_is_refused() {
         let root = tempfile::tempdir().unwrap();
         let (object, artifact) = fixture(root.path());
         let stage = root.path().join("staging-first");
@@ -429,7 +344,7 @@ mod tests {
         stage_object(root.path(), &stage, &object, &artifact).unwrap();
         let source = root.path().join(".sources").join(&artifact.path);
         std::fs::remove_file(&source).unwrap();
-        std::fs::write(&source, b"wrong rows!!").unwrap();
+        std::fs::write(&source, b"short").unwrap();
         let mut permissions = std::fs::metadata(&source).unwrap().permissions();
         permissions.set_readonly(true);
         std::fs::set_permissions(&source, permissions).unwrap();
