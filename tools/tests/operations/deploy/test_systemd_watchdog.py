@@ -111,7 +111,11 @@ class SystemdRehearsal(unittest.TestCase):
             for unit in units:
                 systemctl('stop', unit)
             systemctl('disable', name + '-rollback.service')
-            systemctl('reset-failed', *units)
+            loaded = systemctl('list-units', '--all', '--plain', '--no-legend', *units)
+            for line in loaded.splitlines():
+                unit = line.split()[0]
+                if unit in units:
+                    systemctl('reset-failed', unit)
             for unit, text in units.items():
                 self.assertEqual((SYSTEM / unit).read_text(), text)
                 (SYSTEM / unit).unlink()

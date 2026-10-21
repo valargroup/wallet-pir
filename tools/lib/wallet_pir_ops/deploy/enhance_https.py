@@ -193,13 +193,15 @@ class EnhanceServing(Serving):
     def handoff(self, parent, rollback=False):
         owner = self.cutover
         data = owner.request['configuration']['enhance']['settings']['data_dir']
-        argv = [parent['plan']['binary'], 'enhance', 'handoff-https-state', '--data-dir', data]
+        argv = [parent['plan']['binary'], 'enhance', 'handoff-https-state', '--data-dir', data,
+                '--transaction', parent['id']]
         if rollback:
             argv.append('--rollback')
         code, output = owner.ex.run(owner.host, argv, 60)
         require(code == 0, 'Enhance recovery handoff refused: ' + output[-1000:])
         receipt = json.loads(output)
-        require(receipt.get('rollback') is rollback and type(receipt.get('recovery_epoch')) is int,
+        require(receipt.get('transaction') == parent['id'] and receipt.get('rollback') is rollback
+                and type(receipt.get('recovery_epoch')) is int,
                 'Enhance recovery handoff returned an invalid receipt')
         parent['enhance_handoff_rollback' if rollback else 'enhance_handoff'] = receipt
         owner.save(parent)

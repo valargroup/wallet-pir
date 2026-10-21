@@ -17,6 +17,8 @@ enum Command {
     HandoffHttpsState {
         #[arg(long)]
         data_dir: PathBuf,
+        #[arg(long)]
+        transaction: String,
         /// Fence retained sessions before restoring the previous runtime.
         #[arg(long)]
         rollback: bool,
@@ -61,8 +63,15 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse_from(args);
     match cli.command {
-        Command::HandoffHttpsState { data_dir, rollback } => {
-            println!("{}", crate::handoff::transfer(&data_dir, rollback)?);
+        Command::HandoffHttpsState {
+            data_dir,
+            transaction,
+            rollback,
+        } => {
+            println!(
+                "{}",
+                crate::handoff::transfer(&data_dir, rollback, &transaction)?
+            );
         }
         Command::PreparePublication {
             source,

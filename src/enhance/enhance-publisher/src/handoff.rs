@@ -11,11 +11,16 @@ use enhance_query_server::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     path::Path,
 };
+
+// The predecessor retains completed operation receipts. Its offline file can
+// exceed the current HTTPS metadata bound; that network bound stays unchanged.
+const PREVIOUS_STATE_LIMIT: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +83,9 @@ struct DistributionState {
 #[serde(deny_unknown_fields)]
 struct Receipt {
     version: u16,
+    transaction: String,
+    completed: bool,
+    initialized: bool,
     previous_sha256: String,
     rollback_epoch: Option<u64>,
 }
@@ -91,6 +99,18 @@ fn decimal(text: &str) -> Result<u64, String> {
 }
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     crate::publication::read_metadata(path)
+}
+fn previous_state(path: &Path) -> Result<Value, String> {
+    let mut bytes = Vec::new();
+    File::open(path)
+        .map_err(|e| e.to_string())?
+        .take(PREVIOUS_STATE_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > PREVIOUS_STATE_LIMIT {
+        return Err("previous controller state exceeds the offline handoff bound".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 fn save<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<(), String> {
     artifact::write_atomic(root, name, |file| {
@@ -112,10 +132,46 @@ fn lock(root: &Path, name: &str) -> Result<File, String> {
     Ok(file)
 }
 
+/// Refuse startup until every handoff write is durable. A reserved receipt is
+/// not permission to initialize empty publication or recovery state.
+pub fn verify_startup(data: &Path) -> Result<(), String> {
+    if !data.join("control/controller.json").exists() {
+        return Ok(());
+    }
+    let root = data.join("publication");
+    let receipt: Receipt = read(&root.join("handoff.json"))
+        .map_err(|_| "existing Enhance control state requires the offline HTTPS handoff")?;
+    if receipt.version != 1
+        || !receipt.completed
+        || !receipt.initialized
+        || receipt.rollback_epoch.is_some()
+        || !root.join("publisher.json").is_file()
+        || !root.join("https/current.json").is_file()
+    {
+        return Err("Enhance HTTPS handoff is incomplete or has rolled back".into());
+    }
+    let previous = previous_state(&data.join("control/controller.json"))?;
+    let hash = hex::encode(Sha256::digest(
+        serde_json::to_vec(&previous).map_err(|e| e.to_string())?,
+    ));
+    if receipt.previous_sha256 != hash {
+        return Err("previous controller changed after the HTTPS handoff".into());
+    }
+    Ok(())
+}
+
 /// Carry old floors forward, or fence every retained session before restoring
 /// the previous runtime. A rollback reserves one durable epoch before writing
 /// either state format; interrupted retries use that same reservation.
-pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
+pub fn transfer(data: &Path, rollback: bool, transaction: &str) -> Result<Value, String> {
+    if !transaction.starts_with("publisher-")
+        || transaction.len() > 160
+        || !transaction
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err("handoff requires the owning publisher transaction".into());
+    }
     let previous_path = data.join("control/controller.json");
     if !data.is_absolute() || !previous_path.is_file() {
         return Err(
@@ -130,19 +186,61 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         lock(&root, "publisher.lock")?,
         lock(&https, "distribution.lock")?,
     ];
-    let mut previous: Value = read(&previous_path)?;
+    let mut previous = previous_state(&previous_path)?;
+    if rollback
+        && !root.join("handoff.json").exists()
+        && !root.join("publisher.json").exists()
+        && !https.join("current.json").exists()
+    {
+        // No imported runtime could start without a completed receipt. A failed
+        // forward validation can leave the predecessor's own pending recovery;
+        // return it unchanged so its original runtime can reconcile that work.
+        if !matches!(previous["version"].as_u64(), Some(7 | 8)) {
+            return Err("unsupported previous controller".into());
+        }
+        let epoch = decimal(
+            previous["recovery"]["epoch"]
+                .as_str()
+                .ok_or("missing previous epoch")?,
+        )?;
+        let generation = previous["next_generation"]
+            .as_u64()
+            .filter(|n| *n > 0)
+            .ok_or("missing previous generation")?;
+        return Ok(
+            json!({"transaction":transaction,"rollback":true,"unchanged":true,"recovery_epoch":epoch,
+            "next_generation":generation,"withdrawal_revision":0}),
+        );
+    }
     if !matches!(previous["version"].as_u64(), Some(7 | 8))
         || !previous["operation"].is_null()
         || !previous["recovery"]["rollback_to"].is_null()
-        || ["draining", "pending_commits", "pending_aborts"]
-            .iter()
-            .any(|name| {
-                previous[*name]
-                    .as_array()
-                    .is_none_or(|items| !items.is_empty())
-            })
+        || ["pending_commits", "pending_aborts"].iter().any(|name| {
+            previous[*name]
+                .as_array()
+                .is_none_or(|items| !items.is_empty())
+        })
     {
         return Err("previous controller is unsupported or has unfinished decisions".into());
+    }
+    // These are already committed retention records, not unacknowledged
+    // commit/abort decisions. Keep them for the restored runtime's cleanup.
+    let draining = previous["draining"]
+        .as_array()
+        .ok_or("missing previous retention records")?;
+    for operation in draining {
+        let id = operation["id"]
+            .as_str()
+            .ok_or("invalid retained operation")?;
+        let digest = operation["candidate_digest"]
+            .as_str()
+            .ok_or("missing retained decision")?;
+        if operation["phase"] != "DRAINING"
+            || !protocol::canonical_hash(digest)
+            || previous["completed"][id].as_str() != Some(digest)
+        {
+            return Err("retention record is not a completed decision".into());
+        }
     }
     let previous_bytes = serde_json::to_vec(&previous).map_err(|e| e.to_string())?;
     let previous_sha256 = hex::encode(Sha256::digest(previous_bytes));
@@ -164,28 +262,53 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         .ok_or("missing previous generation reservation")?;
     let old_lifecycle: Lifecycle =
         serde_json::from_value(previous["lifecycle"].clone()).map_err(|e| e.to_string())?;
+    let old_next_id = old_lifecycle.next_id;
     if old_lifecycle.next_id > MAX_QUERY_SHARDS {
         return Err("previous lifecycle exceeds the protocol ceiling".into());
     }
     let mut manifests: Vec<Manifest> =
         serde_json::from_value(previous["published"].clone()).map_err(|e| e.to_string())?;
+    let legacy_https = data.join("control/https/current.json");
+    let legacy_distribution: Option<DistributionState> = if legacy_https.is_file() {
+        Some(read(&legacy_https)?)
+    } else {
+        None
+    };
     let receipt_path = root.join("handoff.json");
-    if rollback
-        && !receipt_path.exists()
-        && !root.join("publisher.json").exists()
-        && !https.join("current.json").exists()
-    {
-        // Validation or receipt creation failed before any new source state
-        // existed. Preserve the untouched predecessor; no new session could
-        // have been served, so there is no new authority to invalidate.
-        return Ok(json!({"rollback":true, "unchanged":true,
-            "recovery_epoch":old_recovery.epoch, "next_generation":old_next,
-            "withdrawal_revision":0}));
-    }
     let mut receipt = if receipt_path.exists() {
-        let receipt: Receipt = read(&receipt_path)?;
-        if receipt.version != 1 || (!rollback && receipt.rollback_epoch.is_some()) {
+        let mut receipt: Receipt = read(&receipt_path)?;
+        if receipt.version != 1 {
             return Err("unsupported or already rolled-back handoff".into());
+        }
+        if receipt.initialized
+            && (!root.join("publisher.json").is_file() || !https.join("current.json").is_file())
+        {
+            return Err(
+                "initialized handoff state is missing; refusing lower recovery floors".into(),
+            );
+        }
+        if receipt.transaction != transaction {
+            if rollback
+                || !receipt.completed
+                || receipt
+                    .rollback_epoch
+                    .is_none_or(|epoch| old_recovery.epoch < epoch)
+            {
+                return Err("handoff belongs to another unfinished transaction".into());
+            }
+            let current: DistributionState = read(&https.join("current.json"))?;
+            if current.current.eligible {
+                return Err("previous HTTPS runtime has not withdrawn".into());
+            }
+            // A new reviewed deployment after completed restoration can reuse
+            // the state. Its generation, recovery and revision floors remain.
+            receipt.transaction = transaction.into();
+            receipt.completed = false;
+            receipt.previous_sha256 = previous_sha256.clone();
+            receipt.rollback_epoch = None;
+            save(&root, "handoff.json", &receipt)?;
+        } else if !rollback && receipt.rollback_epoch.is_some() {
+            return Err("a rolled-back transaction cannot resume forward progress".into());
         }
         receipt
     } else {
@@ -194,6 +317,9 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         }
         let receipt = Receipt {
             version: 1,
+            transaction: transaction.into(),
+            completed: false,
+            initialized: false,
             previous_sha256: previous_sha256.clone(),
             rollback_epoch: None,
         };
@@ -203,6 +329,8 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
     if !rollback && receipt.previous_sha256 != previous_sha256 {
         return Err("previous state changed since handoff began".into());
     }
+    receipt.completed = false;
+    save(&root, "handoff.json", &receipt)?;
     let mut state: PublisherState = if root.join("publisher.json").exists() {
         read(&root.join("publisher.json"))?
     } else {
@@ -238,6 +366,16 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         }
     };
     distribution.current.validate()?;
+    if let Some(legacy) = legacy_distribution {
+        legacy.current.validate()?;
+        state.recovery.epoch = state.recovery.epoch.max(legacy.current.recovery_epoch);
+        state.recovery.revoked.extend(legacy.current.revoked);
+        distribution.current.revision = distribution.current.revision.max(legacy.current.revision);
+        manifests.extend(legacy.retained.into_iter().map(|r| r.manifest));
+        if let Some(manifest) = legacy.current.manifest {
+            manifests.push(manifest);
+        }
+    }
     state.recovery.merge(&old_recovery);
     state.recovery.epoch = state
         .recovery
@@ -252,6 +390,8 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         manifests.push(manifest.clone());
     }
     state.next_generation = state.next_generation.max(old_next);
+    state.lifecycle.next_id = state.lifecycle.next_id.max(old_next_id);
+    state.lifecycle.identities = (0..state.lifecycle.next_id).collect();
     for manifest in &manifests {
         manifest.validate()?;
         state.next_generation = state.next_generation.max(
@@ -320,8 +460,11 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         previous["published"] = json!([]);
         save(&data.join("control"), "controller.json", &previous)?;
     }
+    receipt.completed = true;
+    receipt.initialized = true;
+    save(&root, "handoff.json", &receipt)?;
     Ok(
-        json!({"rollback":rollback, "recovery_epoch":state.recovery.epoch,
+        json!({"transaction":transaction,"rollback":rollback, "recovery_epoch":state.recovery.epoch,
         "next_generation":state.next_generation, "withdrawal_revision":distribution.current.withdrawal_revision}),
     )
 }
@@ -329,6 +472,10 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
+        super::transfer(data, rollback, "publisher-fixture")
+    }
 
     fn previous(root: &Path) {
         fs::create_dir_all(root.join("control")).unwrap();
@@ -400,6 +547,121 @@ mod tests {
         assert_eq!(state.recovery.domain_epochs[&0], "4");
         assert_eq!(state.recovery.sealed[&0].0, 3_428_143);
         assert!(transfer(root.path(), true).unwrap_err().contains("owned"));
+    }
+
+    #[test]
+    fn historical_operation_receipts_do_not_use_the_https_metadata_limit() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        let mut old = previous_state(&root.path().join("control/controller.json")).unwrap();
+        old["retained_operation_history"] = json!("x".repeat(2 * 1024 * 1024));
+        save(&root.path().join("control"), "controller.json", &old).unwrap();
+        transfer(root.path(), false).unwrap();
+        transfer(root.path(), true).unwrap();
+        let restored = previous_state(&root.path().join("control/controller.json")).unwrap();
+        assert_eq!(
+            restored["retained_operation_history"],
+            old["retained_operation_history"]
+        );
+        assert_eq!(restored["recovery"]["epoch"], "5");
+    }
+
+    #[test]
+    fn a_new_reviewed_attempt_after_rollback_keeps_all_prior_floors() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        transfer(root.path(), false).unwrap();
+        assert!(super::transfer(root.path(), false, "publisher-other").is_err());
+        transfer(root.path(), true).unwrap();
+        assert!(transfer(root.path(), false).is_err());
+        let report = super::transfer(root.path(), false, "publisher-other").unwrap();
+        assert_eq!(report["recovery_epoch"], 5);
+        assert_eq!(report["next_generation"], 23);
+        assert!(transfer(root.path(), true).is_err());
+        let report = super::transfer(root.path(), true, "publisher-other").unwrap();
+        assert_eq!(report["recovery_epoch"], 6);
+    }
+
+    #[test]
+    fn reserved_receipts_cannot_start_a_runtime_or_replace_lost_initialized_state() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        assert!(verify_startup(root.path()).is_err());
+        let old = previous_state(&root.path().join("control/controller.json")).unwrap();
+        let publication = root.path().join("publication");
+        fs::create_dir_all(&publication).unwrap();
+        let receipt = Receipt {
+            version: 1,
+            transaction: "publisher-fixture".into(),
+            completed: false,
+            initialized: false,
+            rollback_epoch: None,
+            previous_sha256: hex::encode(Sha256::digest(serde_json::to_vec(&old).unwrap())),
+        };
+        save(&publication, "handoff.json", &receipt).unwrap();
+        assert!(verify_startup(root.path()).is_err());
+        transfer(root.path(), false).unwrap();
+        verify_startup(root.path()).unwrap();
+        fs::remove_file(publication.join("publisher.json")).unwrap();
+        assert!(verify_startup(root.path()).is_err());
+        assert!(transfer(root.path(), true).unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn existing_https_floors_are_merged_without_importing_serving_authority() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        fs::create_dir_all(root.path().join("control/https")).unwrap();
+        save(
+            &root.path().join("control/https"),
+            "current.json",
+            &DistributionState {
+                current: Current {
+                    version: VERSION,
+                    revision: 900,
+                    withdrawal_revision: 899,
+                    recovery_epoch: 7,
+                    revoked: ["cd".repeat(32)].into(),
+                    eligible: false,
+                    manifest: None,
+                    inventory: None,
+                },
+                retained: Vec::new(),
+            },
+        )
+        .unwrap();
+        let result = transfer(root.path(), false).unwrap();
+        assert_eq!(result["recovery_epoch"], 7);
+        assert_eq!(result["withdrawal_revision"], 901);
+        let current: DistributionState =
+            read(&root.path().join("publication/https/current.json")).unwrap();
+        assert_eq!(current.current.revoked.len(), 2);
+        assert!(!current.current.eligible);
+        assert_eq!(transfer(root.path(), true).unwrap()["recovery_epoch"], 8);
+    }
+
+    #[test]
+    fn committed_retention_records_are_preserved_but_uncommitted_records_refuse() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        let mut old = previous_state(&root.path().join("control/controller.json")).unwrap();
+        old["completed"] = json!({"retired":"ef".repeat(32)});
+        old["draining"] = json!([{"id":"retired", "phase":"DRAINING", "candidate_digest":"ef".repeat(32),
+            "attempt":1,"epoch":91,"expected_revision":16,"assignments":{},"affected_groups":[],
+            "source_generations":[21],"require_both":[],"readiness":[],"infrastructure_resources":{}}]);
+        save(&root.path().join("control"), "controller.json", &old).unwrap();
+        transfer(root.path(), false).unwrap();
+        verify_startup(root.path()).unwrap();
+        transfer(root.path(), true).unwrap();
+        assert!(verify_startup(root.path()).is_err());
+        let restored = previous_state(&root.path().join("control/controller.json")).unwrap();
+        assert_eq!(restored["draining"], old["draining"]);
+        let other = tempfile::tempdir().unwrap();
+        previous(other.path());
+        old["draining"][0]["phase"] = json!("READY");
+        save(&other.path().join("control"), "controller.json", &old).unwrap();
+        assert!(transfer(other.path(), false).is_err());
+        assert_eq!(transfer(other.path(), true).unwrap()["unchanged"], true);
     }
 
     #[test]

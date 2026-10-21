@@ -55,7 +55,8 @@ class EnhanceTests(PublisherFixture, unittest.TestCase):
             if 'handoff-https-state' in argv:
                 rollback = '--rollback' in argv
                 self.handoffs.append(rollback)
-                return 0, json.dumps({'rollback': rollback, 'recovery_epoch': 4 if rollback else 3})
+                return 0, json.dumps({'transaction': argv[argv.index('--transaction') + 1],
+                                      'rollback': rollback, 'recovery_epoch': 4 if rollback else 3})
             return original_run(host, argv, timeout)
 
         def http(host, url, timeout=5):

@@ -178,8 +178,12 @@ hour bounds the forward attempt.
 While the publisher is stopped, the Rust `handoff-https-state` command preserves
 generation reservations, domain recovery floors, revoked sessions and sealed
 history. Rollback calls it with `--rollback` before starting the previous runtime.
-It reserves one higher recovery epoch, invalidates retained sessions and keeps
-newer floors on both sides; interrupted retries reuse that reservation. Runtime
+The handoff is bound to the owning transaction, and startup requires its
+completion marker after all state writes. Rollback reserves one higher recovery
+epoch, invalidates retained sessions and keeps newer floors on both sides;
+interrupted retries reuse that reservation. A new reviewed attempt after completed
+restoration can reuse those higher floors; the failed transaction cannot resume
+forward progress. Runtime
 and configuration rollback never restores an older safety-state backup. The
 transaction's `publisher-cutover-rollback` command remains available after a
 successful cutover. Retain its request, operations release, journal, old
