@@ -212,18 +212,21 @@ fn free_port() -> std::net::SocketAddr {
 struct Terminator {
     name: &'static str,
     upstream: String,
+    /// The controller's management listener, which serves service discovery.
+    discovery: String,
     port: u16,
     control: PathBuf,
     root: PathBuf,
     child: Option<tokio::process::Child>,
 }
 impl Terminator {
-    async fn start(root: &Path, name: &'static str, upstream: &str) -> Self {
+    async fn start(root: &Path, name: &'static str, upstream: &str, discovery: &str) -> Self {
         let control = root.join(format!("{name}-control"));
         std::fs::write(&control, "").unwrap();
         let mut terminator = Terminator {
             name,
             upstream: upstream.strip_prefix("http://").unwrap().to_string(),
+            discovery: discovery.to_string(),
             port: 0,
             control,
             root: root.to_path_buf(),
@@ -236,13 +239,14 @@ impl Terminator {
         let mut child = tokio::process::Command::new("python3")
             .arg(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../pir-publisher/tests/support/distribution_tls.py"
+                "/../../src/pir-publisher/tests/support/distribution_tls.py"
             ))
             .arg(&self.upstream)
             .arg(self.root.join("ca.pem"))
             .arg(self.root.join("key.pem"))
             .arg(&self.control)
             .arg(self.port.to_string())
+            .env("DISCOVERY_UPSTREAM", &self.discovery)
             .kill_on_drop(true)
             .stdout(Stdio::piped())
             .spawn()
@@ -856,7 +860,7 @@ async fn archive(
     let mut tls = tokio::process::Command::new("python3")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../transparent/transparent-query-server/tests/support/provider_tls.py"
+            "/../../src/transparent/transparent-query-server/tests/support/provider_tls.py"
         ))
         .arg(addr.to_string())
         .arg(root.join("ca.pem"))
@@ -989,7 +993,8 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
         "listen": listen.to_string(), "source_sha": std::env::var("WALLET_PIR_SOURCE_SHA").unwrap_or_default(),
         "follow_journal": true, "ship_runtimes": true, "distribute_prepared": true,
     });
-    std::fs::write(out.join("controller-config.json"), serde_json::json!({"management_listen":free_port().to_string(),"transparent_history":{"enabled":true,"settings":config}}).to_string()).unwrap();
+    let management = free_port().to_string();
+    std::fs::write(out.join("controller-config.json"), serde_json::json!({"management_listen":management,"transparent_history":{"enabled":true,"settings":config}}).to_string()).unwrap();
     let controller_log = std::fs::File::create(out.join("controller.log")).unwrap();
     let mut controller = tokio::process::Command::new(env!("CARGO_BIN_EXE_pir-publisher-test"))
         .arg("--config")
@@ -1023,7 +1028,7 @@ async fn controller_updates_reach_independent_https_providers_under_queries() {
     let upstream = format!("http://{listen}");
     let mut terminators = Vec::new();
     for name in ["publisher-a", "publisher-b", "publisher-campaign"] {
-        terminators.push(Terminator::start(&root, name, &upstream).await);
+        terminators.push(Terminator::start(&root, name, &upstream, &management).await);
     }
     let ca = reqwest::Certificate::from_pem(&std::fs::read(root.join("ca.pem")).unwrap()).unwrap();
     let https = reqwest::Client::builder()

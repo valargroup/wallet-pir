@@ -331,8 +331,7 @@ class FastBuildTests(unittest.TestCase):
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'rate-query',
             'txid-quality-canary', 'txid-rate'])
         self.assertEqual(tests, [
-            'boundary_recovery_model', 'ci_hint', 'ci_smoke', 'commands', 'lifecycle',
-            'operator', 'record_layout', 'status_routes'])
+            'ci_hint', 'ci_smoke', 'commands', 'lifecycle', 'operator'])
 
     def test_hardware_features_cannot_silently_replace_reference_arithmetic(self):
         self.packages[0]['targets'][1]['required-features'] = ['native-reinspiring']

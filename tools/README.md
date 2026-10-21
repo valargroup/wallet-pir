@@ -9,6 +9,7 @@ tools keep their existing Cargo package names and CLI flags.
 
 | Location | Purpose |
 |---|---|
+| `pir-e2e-tests/` | Cross-product publisher/query-server integration tests |
 | `ci/`, `dev/` | Repository checks and local development helpers |
 | `scripts/` | Shared operator commands, including `wallet-pir-deploy.py` |
 | `lib/wallet_pir_ops/` | Shared deployment, locking, release and recovery implementation |
