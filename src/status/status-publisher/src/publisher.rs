@@ -341,31 +341,6 @@ impl Publisher {
     }
 }
 
-#[cfg(test)]
-mod withdrawal_tests {
-    use super::*;
-
-    #[test]
-    fn repeated_withdrawals_refuse_preparations_even_without_an_eligible_publication() {
-        let root = tempfile::tempdir().unwrap();
-        let publisher = Publisher::new(Config {
-            state_dir: root.path().into(),
-            salt_hex: "01".repeat(32),
-            window_blocks: 1,
-            private_listen: "127.0.0.1:8480".parse().unwrap(),
-        })
-        .unwrap();
-        let before = publisher.published.read().unwrap().fence.clone();
-        publisher.withdraw();
-        let recovery = publisher.published.read().unwrap().fence.clone();
-        publisher.withdraw();
-        let published = publisher.published.read().unwrap();
-        assert!(published.current.is_none());
-        assert!(published.check_fence(&before).is_err());
-        assert!(published.check_fence(&recovery).is_err());
-        assert!(published.check_fence(&published.fence).is_ok());
-    }
-}
 fn durable(root: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
     pir_control::durable::write_atomic(root, name, |f| f.write_all(bytes))?;
     fs::set_permissions(root.join(name), {
@@ -532,3 +507,29 @@ impl pir_pipeline::Task for ObservationTask {
 #[cfg(all(test, feature = "fixtures", feature = "native-reinspiring"))]
 #[path = "../../../pir-publisher/tests/included/status_lifecycle_wallet.rs"]
 mod lifecycle_wallet_tests;
+
+#[cfg(test)]
+mod withdrawal_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_withdrawals_refuse_preparations_even_without_an_eligible_publication() {
+        let root = tempfile::tempdir().unwrap();
+        let publisher = Publisher::new(Config {
+            state_dir: root.path().into(),
+            salt_hex: "01".repeat(32),
+            window_blocks: 1,
+            private_listen: "127.0.0.1:8480".parse().unwrap(),
+        })
+        .unwrap();
+        let before = publisher.published.read().unwrap().fence.clone();
+        publisher.withdraw();
+        let recovery = publisher.published.read().unwrap().fence.clone();
+        publisher.withdraw();
+        let published = publisher.published.read().unwrap();
+        assert!(published.current.is_none());
+        assert!(published.check_fence(&before).is_err());
+        assert!(published.check_fence(&recovery).is_err());
+        assert!(published.check_fence(&published.fence).is_ok());
+    }
+}
