@@ -275,6 +275,13 @@ ingress to change together. The `serving` object pins the matching query-server
 `--serving-binary` to plan, preflight and deploy. Existing workers retain their
 wallet wire protocol. Ordinary publisher updates do not restart Transparent workers.
 
+An ordinary `publisher-cutover/3` request may set `resume_load: false` when the
+continuous checker is already inactive or failed with `MainPID=0` and has no
+critical latch. The update and subsequent restart leave it stopped; rollback
+restores its captured activity. Omitting the option retains the running-checker
+requirement and resumes it after the independent encrypted-answer probes.
+
+
 Run plan and preflight with `--request` and its exact `--request-sha256`;
 preflight also takes the clean `pir-publisher` `--archive`. Review the returned
 `plan_sha256`, then deploy with `--expect-plan-sha256` and the same inputs.
