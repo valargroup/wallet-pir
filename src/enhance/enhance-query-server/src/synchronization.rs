@@ -200,6 +200,92 @@ pub struct Lease {
     deadline: Instant,
 }
 
+/// A response fence keeps the exact manifest's observation through evaluation.
+#[derive(Clone)]
+pub struct Guard {
+    pub manifest: Manifest,
+    lease: Lease,
+    safety: Safety,
+}
+impl Guard {
+    pub fn check(&self) -> Result<(), String> {
+        self.lease.check(&self.manifest, &self.safety)
+    }
+}
+
+/// On-demand authority shares replay floors with the sequential download task.
+#[derive(Clone)]
+pub struct Authority {
+    pub safety: Safety,
+    client: Arc<tokio::sync::Mutex<Client>>,
+    leases: Arc<Mutex<std::collections::BTreeMap<String, Guard>>>,
+}
+impl Authority {
+    pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
+        Ok(Self {
+            client: Arc::new(tokio::sync::Mutex::new(Client::new(
+                root,
+                config,
+                safety.clone(),
+            )?)),
+            safety,
+            leases: Default::default(),
+        })
+    }
+    pub fn install(&self, manifest: Manifest, lease: Lease) -> Result<Guard, Error> {
+        let guard = Guard {
+            manifest,
+            lease,
+            safety: self.safety.clone(),
+        };
+        guard.check()?;
+        let mut leases = self.leases.lock().unwrap();
+        leases.retain(|_, lease| lease.check().is_ok());
+        if leases.len() >= 2 * crate::protocol::RETAINED_GENERATIONS
+            && !leases.contains_key(&digest(&guard.manifest))
+        {
+            return Err("Enhance authority retention capacity reached".into());
+        }
+        leases.insert(digest(&guard.manifest), guard.clone());
+        Ok(guard)
+    }
+    pub async fn fresh(&self, manifest: &Manifest) -> Result<Guard, Error> {
+        let id = digest(manifest);
+        if let Some(guard) = self
+            .leases
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|guard| guard.check().is_ok())
+            .cloned()
+        {
+            return Ok(guard);
+        }
+        let mut client = self.client.lock().await;
+        if let Some(guard) = self
+            .leases
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|guard| guard.check().is_ok())
+            .cloned()
+        {
+            return Ok(guard);
+        }
+        client.begin();
+        let lease = client.authority(manifest).await?;
+        self.install(manifest.clone(), lease)
+    }
+    pub fn check(&self, manifest: &Manifest) -> Result<(), String> {
+        self.leases
+            .lock()
+            .unwrap()
+            .get(&digest(manifest))
+            .ok_or("no fresh Enhance authority")?
+            .check()
+    }
+}
+
 pub fn now_ms() -> Result<u64, Error> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?

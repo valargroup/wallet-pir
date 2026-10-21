@@ -50,6 +50,7 @@ mod query_timing;
 
 pub mod prepared_packing;
 pub mod publication;
+pub mod router_sync;
 pub mod service;
 pub mod synchronization;
 pub mod worker_sync;
