@@ -67,7 +67,7 @@ impl ServingRole {
         match self {
             Self::Worker(c) => c.synchronization.source.discover().await,
             Self::PackingRouter(c) => c.synchronization.source.discover().await,
-            Self::QueryIngress(_) => Ok(()),
+            Self::QueryIngress(c) => c.synchronization.source.discover().await,
         }
     }
     pub fn validate(&self) -> Result<(), Error> {

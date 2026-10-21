@@ -451,6 +451,9 @@ impl SyncTask for Synchronizer {
             tracing::warn!(%error, "Enhance ingress synchronization deferred");
         }
     }
+    fn terminal(&self, error: &Error) -> bool {
+        pir_sync_manager::is_incompatible(error.as_ref())
+    }
 }
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let inner = r.inner.lock().unwrap();

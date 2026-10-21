@@ -65,7 +65,10 @@ fn host_json(root: &Path, origin: &str, role: &str) -> serde_json::Value {
     let assignment = match role {
         "worker" => ("shards", serde_json::json!([0])),
         "packing-router" => ("workers", serde_json::json!({"0": ["http://127.0.0.1:1"]})),
-        "query-ingress" => ("routers", serde_json::json!({"0": [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]})),
+        "query-ingress" => (
+            "routers",
+            serde_json::json!({"0": [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]}),
+        ),
         _ => panic!("unsupported role"),
     };
     synchronization.insert(assignment.0.into(), assignment.1);
@@ -91,15 +94,19 @@ fn ingress_host_configuration_parses_domain_keys_and_rejects_invalid_assignments
     let config = host(root, "https://publisher.example", "query-ingress");
     let role = config.enhance.unwrap().settings.unwrap();
     role.validate().unwrap();
-    let ServingRole::QueryIngress(config) = role
-    else {
+    let ServingRole::QueryIngress(config) = role else {
         panic!("expected autonomous ingress");
     };
-    assert_eq!(config.synchronization.routers[&0][0].control_origin, "http://127.0.0.1:1");
-    assert_eq!(config.synchronization.routers[&0][0].query_origin, "http://127.0.0.1:2");
+    assert_eq!(
+        config.synchronization.routers[&0][0].control_origin,
+        "http://127.0.0.1:1"
+    );
+    assert_eq!(
+        config.synchronization.routers[&0][0].query_origin,
+        "http://127.0.0.1:2"
+    );
     for key in ["invalid", "18446744073709551616"] {
-        json["enhance"]["settings"]["synchronization"]["routers"] =
-            serde_json::json!({key: [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]});
+        json["enhance"]["settings"]["synchronization"]["routers"] = serde_json::json!({key: [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]});
         assert!(
             serde_json::from_str::<pir_query_server::config::Config>(&json.to_string()).is_err()
         );
@@ -220,7 +227,14 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
         &scratch.path().join("ingress"),
         ingress_sync::Config {
             source: source(scratch.path(), &transport.origin),
-            routers: [(0, vec![ingress_sync::RouterPeer { control_origin: "http://127.0.0.1:1".into(), query_origin: "http://127.0.0.1:2".into() }])].into(),
+            routers: [(
+                0,
+                vec![ingress_sync::RouterPeer {
+                    control_origin: "http://127.0.0.1:1".into(),
+                    query_origin: "http://127.0.0.1:2".into(),
+                }],
+            )]
+            .into(),
         },
         1,
         4,
