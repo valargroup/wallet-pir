@@ -1,0 +1,224 @@
+//! Publisher service discovery gates autonomous Enhance workers and routers.
+//!
+//! The publisher stub serves only discovery; every product route is refused, so
+//! no publication is prepared. The TLS terminator logs discovery and product
+//! requests separately and applies `discovery-*` faults.
+use super::{encrypted::serve, publication::tls};
+use enhance_query_server::{router_sync, service::ServingRole, synchronization, worker_sync};
+use pir_sync_manager::{DiscoveryError, SyncTask};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
+const INCOMPATIBLE: &str = r#"{"service":"pir-publisher","version":"2.0.0"}"#;
+
+/// Answer discovery compatibly `compatible` times, then as major version 2.
+fn stub(compatible: usize) -> axum::Router {
+    let answered = Arc::new(AtomicUsize::new(0));
+    axum::Router::new().route(
+        pir_service_discovery::PATH,
+        axum::routing::get(move || {
+            let answered = answered.clone();
+            async move {
+                if answered.fetch_add(1, Ordering::SeqCst) < compatible {
+                    pir_service_discovery::Document::publisher().to_json()
+                } else {
+                    INCOMPATIBLE.as_bytes().to_vec()
+                }
+            }
+        }),
+    )
+}
+
+fn source(root: &Path, origin: &str) -> synchronization::Config {
+    synchronization::Config {
+        publisher_origin: origin.into(),
+        trusted_ca: Some(root.join("ca.pem")),
+        download_budget_bytes: 8 * 1024 * 1024,
+        cache_limit_bytes: 8 * 1024 * 1024,
+    }
+}
+
+fn free() -> std::net::SocketAddr {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+}
+
+fn lines(path: &Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |log| log.lines().count())
+}
+
+/// Host configuration for one autonomous worker or packing router.
+fn host(root: &Path, origin: &str, router: bool) -> pir_query_server::config::Config {
+    let source = serde_json::to_value(source(root, origin)).unwrap();
+    let mut synchronization = source.as_object().unwrap().clone();
+    let role = if router {
+        synchronization.insert(
+            "workers".into(),
+            serde_json::json!({"0": ["http://127.0.0.1:1"]}),
+        );
+        serde_json::json!({"role": "packing-router", "data_dir": root.join("state"), "listen": free(),
+            "control_listen": free(), "max_objects": 1, "requests": 1, "synchronization": synchronization})
+    } else {
+        synchronization.insert("shards".into(), serde_json::json!([0]));
+        serde_json::json!({"role": "worker", "data_dir": root.join("state"), "listen": free(),
+            "synchronization": synchronization})
+    };
+    serde_json::from_value(serde_json::json!({
+        "management_listen": free(),
+        "enhance": {"enabled": true, "settings": role},
+    }))
+    .unwrap()
+}
+
+async fn run_host(config: pir_query_server::config::Config) -> pir_query_server::Result<()> {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        pir_query_server::run(config, Default::default()),
+    )
+    .await
+    .expect("host did not stop on a discovery refusal")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn autonomous_roles_refuse_an_incompatible_or_missing_publisher_before_listening() {
+    for router in [false, true] {
+        for (fault, mismatch) in [
+            (format!("discovery-body:{INCOMPATIBLE}"), true),
+            ("discovery-missing".to_string(), false),
+        ] {
+            let scratch = tempfile::tempdir().unwrap();
+            let upstream = serve(stub(usize::MAX)).await;
+            let transport = tls(scratch.path(), &upstream.url).await;
+            let control = scratch.path().join("fault");
+            std::fs::write(&control, &fault).unwrap();
+            let config = host(scratch.path(), &transport.origin, router);
+            let error = run_host(config).await.unwrap_err();
+            let discovery = error
+                .downcast_ref::<DiscoveryError>()
+                .unwrap_or_else(|| panic!("untyped refusal: {error}"));
+            assert_eq!(discovery.incompatible().is_some(), mismatch, "{error}");
+            assert_eq!(lines(&control.with_extension("discovery")), 1);
+            assert_eq!(
+                lines(&control.with_extension("requests")),
+                0,
+                "no product request"
+            );
+            assert!(!scratch.path().join("state").exists(), "no product state");
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_later_major_mismatch_stops_the_whole_host_with_its_typed_error() {
+    for router in [false, true] {
+        let scratch = tempfile::tempdir().unwrap();
+        // Startup accepts the publisher; the first pass sees major version 2.
+        let upstream = serve(stub(1)).await;
+        let transport = tls(scratch.path(), &upstream.url).await;
+        let control = scratch.path().join("fault");
+        let config = host(scratch.path(), &transport.origin, router);
+        let error = run_host(config).await.unwrap_err();
+        assert!(pir_sync_manager::is_incompatible(error.as_ref()), "{error}");
+        assert!(
+            scratch.path().join("state").exists(),
+            "startup accepted the publisher"
+        );
+        assert_eq!(lines(&control.with_extension("discovery")), 2);
+        assert_eq!(
+            lines(&control.with_extension("requests")),
+            0,
+            "no product request"
+        );
+    }
+}
+
+/// Run one pass and report whether it reached the product endpoints and
+/// whether its failure stops synchronization.
+async fn pass<T: SyncTask<Error = pir_sync_manager::Error>>(
+    task: &mut T,
+    control: &Path,
+) -> (bool, bool) {
+    let before = lines(&control.with_extension("requests"));
+    let error = task
+        .synchronize()
+        .await
+        .err()
+        .expect("refused product routes");
+    (
+        lines(&control.with_extension("requests")) > before,
+        task.terminal(&error),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
+    let scratch = tempfile::tempdir().unwrap();
+    let upstream = serve(stub(usize::MAX)).await;
+    let transport = tls(scratch.path(), &upstream.url).await;
+    let control = scratch.path().join("fault");
+    let worker = worker_sync::Worker::open(
+        &scratch.path().join("worker"),
+        worker_sync::Config {
+            source: source(scratch.path(), &transport.origin),
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    let router = router_sync::PackingRouter::open(
+        &scratch.path().join("router"),
+        router_sync::Config {
+            source: source(scratch.path(), &transport.origin),
+            workers: [(0, vec!["http://127.0.0.1:1".into()])].into(),
+            preferred: Default::default(),
+        },
+        1,
+        1,
+    )
+    .unwrap();
+    let mut worker = worker.synchronizer().unwrap();
+    let mut router = router.synchronizer().unwrap();
+    for (fault, product, terminal) in [
+        ("", true, false),
+        // An unchanged publisher is checked again on the next pass.
+        ("", true, false),
+        ("discovery-unavailable", false, false),
+        ("discovery-missing", false, false),
+        (&*format!("discovery-body:{INCOMPATIBLE}"), false, true),
+    ] {
+        std::fs::write(&control, fault).unwrap();
+        let discovered = lines(&control.with_extension("discovery"));
+        assert_eq!(
+            pass(&mut worker, &control).await,
+            (product, terminal),
+            "worker {fault:?}"
+        );
+        assert_eq!(
+            pass(&mut router, &control).await,
+            (product, terminal),
+            "router {fault:?}"
+        );
+        assert_eq!(lines(&control.with_extension("discovery")), discovered + 2);
+    }
+}
+
+#[test]
+fn legacy_push_roles_do_not_require_discovery() {
+    let role: ServingRole = serde_json::from_value(serde_json::json!({"role": "worker",
+        "listen": "127.0.0.1:1", "data_dir": "/unused"}))
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(role.discover()).unwrap();
+}
