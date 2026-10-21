@@ -14,7 +14,10 @@ It writes nothing else:
   effective `ExecStart` (on the coordinator, the publisher's `zzz…-publisher.conf`
   drop-in) is rewritten, with only the script path changed; the effective unit
   must differ in nothing else. Its arguments, resource limits, controller
-  bindings, pins, permit, incident history and thresholds stay as they are.
+  bindings, permit, incident history and thresholds stay as they are. Pins stay
+  unchanged unless the request explicitly supplies replacement worker hashes;
+  those must match the running workers before the exact-answer check and are
+  journaled for rollback alongside the unit file.
 - Under the production lock: refuse a critical latch, a pinned binary that
   changed, or an unfinished transaction. Stage the script, then run the request's
   independent encrypted-answer check. Only then write the unit and start it, and
@@ -88,12 +91,18 @@ def validate(request):
             and isinstance(script['git_sha'], str) and re.fullmatch('[0-9a-f]{40}', script['git_sha']) is not None,
             'script is {git_sha (40 lowercase hex), sha256}')
     require(script['sha256'] != previous['script_sha256'], 'script.sha256 is the script already installed')
-    require(isinstance(load, dict) and set(load) == {'pins_sha256', 'rate_query_sha256', 'fixture_sha256'}
-            and all(is_sha256(v) for v in load.values()), 'load pins pins_sha256, rate_query_sha256, fixture_sha256')
+    load_keys = {'pins_sha256', 'rate_query_sha256', 'fixture_sha256'}
+    require(isinstance(load, dict) and set(load) in (load_keys, load_keys | {'replacement_pins'})
+            and all(is_sha256(load[k]) for k in load_keys), 'load pins pins_sha256, rate_query_sha256, fixture_sha256')
     workers = request['workers']
     require(isinstance(workers, dict) and workers and all(
         isinstance(w, dict) and set(w) == {'host', 'unit'} and all(isinstance(v, str) and v for v in w.values())
         for w in workers.values()), 'workers maps each pinned worker id to {host, unit}')
+    if 'replacement_pins' in load:
+        pins = load['replacement_pins']
+        require(isinstance(pins, dict) and set(pins) == set(workers)
+                and all(is_sha256(value) for value in pins.values()),
+                'replacement_pins must name the reviewed binary for every worker')
     check = request['exact_check']
     require(isinstance(check, dict) and set(check) == {'host', 'argv', 'timeout'}
             and isinstance(check['host'], str) and check['host'] and isinstance(check['argv'], list) and check['argv']
@@ -175,6 +184,7 @@ class Repair:
                                    % (sorted(pins) if isinstance(pins, dict) else pins, sorted(self.request['workers']))]
         except ValueError as error:
             return problems + ['load pins.json is unreadable: %s' % error]
+        pins = load.get('replacement_pins', pins)
         for worker_id, target in sorted(self.request['workers'].items()):
             state = self.ex.probe_unit(target['host'], target['unit'])
             if state['active_state'] != 'active' or state['exe_sha256'] != pins[worker_id]:
@@ -213,7 +223,8 @@ class Repair:
                 'previous_unit_sha256': previous['unit_sha256'], 'previous_drop_ins': previous['drop_ins'],
                 'path': owner_path, 'previous_sha256': text_sha256(owner_text), 'new_sha256': text_sha256(new_text),
                 'script_path': script_path(script['sha256']), 'script_sha256': script['sha256'],
-                'exact_check': self.request['exact_check']}
+                'exact_check': self.request['exact_check'],
+                'replacement_pins': self.request['load'].get('replacement_pins')}
         return plan, (owner_text, new_text), state, problems
 
     def describe(self, plan, state):
@@ -222,6 +233,9 @@ class Repair:
         self.out('%s %s -> %s; script %s from git %s'
                  % (plan['path'], plan['previous_sha256'], plan['new_sha256'], plan['script_sha256'], self.request['script']['git_sha']))
         self.out('plan_sha256: ' + durable.digest(plan))
+        if plan['replacement_pins'] is not None:
+            self.out('replace stale worker pins with reviewed running binaries: '
+                     + json.dumps(plan['replacement_pins'], sort_keys=True))
 
     def exact_check(self, journal=None):
         check = self.request['exact_check']
@@ -262,6 +276,12 @@ class Repair:
                   'changes': [{'op': 'write', 'path': plan['path'], 'previous': old_text, 'new': new_text,
                                'previous_sha256': plan['previous_sha256'], 'new_sha256': plan['new_sha256']}],
                   'previous_active_state': state['active_state'], 'script': {'path': plan['script_path'], 'sha256': sha}}
+        if 'replacement_pins' in self.request['load']:
+            path = LOAD_ROOT + '/pins.json'
+            previous = self.ex.read(self.host, path)
+            replacement = json.dumps(self.request['load']['replacement_pins'], indent=2) + '\n'
+            record['changes'].append({'op': 'write', 'path': path, 'previous': previous, 'new': replacement,
+                                      'previous_sha256': text_sha256(previous), 'new_sha256': text_sha256(replacement)})
         journal = Journal.create(self.state_dir, SERVICE, sha, {'request_sha256': self.request_sha256,
                                  'git_sha': self.request['script']['git_sha'], 'plan_sha256': expect_plan_sha256}, [record], None)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
@@ -315,13 +335,15 @@ class Repair:
         if not new:
             journal.set_phase(0, 'restoring')
             self.ex.systemctl(self.host, 'stop', UNIT)
-            self.ex.write(self.host, change['path'], change['previous'].encode(), 0o644)
+            for item in reversed(record['changes']):
+                self.ex.write(self.host, item['path'], item['previous'].encode(), 0o644)
             self.ex.systemctl(self.host, 'daemon-reload')
             journal.set_phase(0, 'restored')
             self.out('%s: previous unit restored and left stopped; latch and incidents untouched' % UNIT)
             return
         journal.set_phase(0, 'installing')
-        self.ex.write(self.host, change['path'], change['new'].encode(), 0o644)
+        for item in record['changes']:
+            self.ex.write(self.host, item['path'], item['new'].encode(), 0o644)
         self.ex.systemctl(self.host, 'daemon-reload')
         before = {'invocation_id': self.ex.probe_unit(self.host, UNIT).get('invocation_id'),
                   'status_sha256': self.ex.sha256(self.host, LOAD_ROOT + '/status.json')}
@@ -343,6 +365,8 @@ class Repair:
             return 'unit is %s and has not started with the written unit' % state['active_state']
         if self.ex.sha256(self.host, LOAD_ROOT + '/latched.json') is not None:
             return 'the load latched a critical incident'
+        if any(self.ex.sha256(self.host, item['path']) != item['new_sha256'] for item in record['changes']):
+            return 'a repaired unit file or worker pin changed during verification'
         if self.ex.sha256(self.host, LOAD_ROOT + '/status.json') == before['status_sha256']:
             return 'the load has not written status.json since it started'
         try:
@@ -353,11 +377,11 @@ class Repair:
 
     def restore(self, journal, force=False):
         journal.set_status('rolling-back')
-        change = journal.hosts[0]['changes'][0]
-        current = self.ex.sha256(self.host, change['path'])
-        if current not in (change['previous_sha256'], change['new_sha256']) and not force:
-            journal.set_status('rollback-refused', current_sha256=current)
-            raise DeployError('rollback refused; %s changed outside the transaction (review, then --force)' % change['path'])
+        for change in journal.hosts[0]['changes']:
+            current = self.ex.sha256(self.host, change['path'])
+            if current not in (change['previous_sha256'], change['new_sha256']) and not force:
+                journal.set_status('rollback-refused', current_sha256=current)
+                raise DeployError('rollback refused; %s changed outside the transaction (review, then --force)' % change['path'])
         try:
             self.apply(journal, new=False)
         except BaseException:
@@ -411,9 +435,9 @@ def run(args, executor, out, inventory, lock=None, clock=time.monotonic, sleep=t
         if action == 'status' and latest is not None and latest.status == 'committed' \
                 and latest.data['source']['request_sha256'] == args.request_sha256:
             # After the repair the request's pins describe the earlier unit.
-            change = latest.hosts[0]['changes'][0]
-            if executor.sha256(request['host'], change['path']) != change['new_sha256']:
-                problems.append('%s is no longer the file transaction %s installed' % (change['path'], latest.id))
+            for change in latest.hosts[0]['changes']:
+                if executor.sha256(request['host'], change['path']) != change['new_sha256']:
+                    problems.append('%s is no longer the file transaction %s installed' % (change['path'], latest.id))
         else:
             plan, _, state, found = repair.assess()
             repair.describe(plan, state)
