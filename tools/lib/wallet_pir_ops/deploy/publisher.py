@@ -33,6 +33,7 @@ PRODUCTS = ['transparent_history', 'transaction_details']
 OLD = ('transparent-v12-publish-controller.service', 'transparent-txid-display-k8-controller.service')
 UNIT = 'pir-publisher.service'
 LOAD = 'transparent-v2-5qps-continuous.service'
+LOAD_LATCH = '/srv/transparent-activity/canonical-load/v12/latched.json'
 ROOT_DIR = '/opt/pir-publisher'
 CONFIG = '/etc/wallet-pir/publisher.json'
 INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
@@ -57,9 +58,13 @@ def load_request(path, expected, *, recovery=False):
     request = json.loads(data)
     require(isinstance(request, dict) and set(request) == ({'schema', 'host', 'machine_id', 'release', 'configuration', 'inventory', 'checks'}
                 | ({'serving'} if request.get('schema') in SERVING_SCHEMAS else set())
-                | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())),
+                | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())
+                | ({'resume_load'} if 'resume_load' in request else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
+    if 'resume_load' in request:
+        require(request['schema'] == SERVING_SCHEMA and type(request['resume_load']) is bool,
+                'resume_load must be a boolean for publisher-cutover/3 only')
     require(recovery or request['schema'] in SERVING_SCHEMAS,
             'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
@@ -129,6 +134,7 @@ class Cutover:
     def __init__(self, request, inventory, executor, state_dir, *, clock=time.monotonic, sleep=time.sleep):
         self.request, self.inventory, self.ex = request, inventory, executor
         self.host = request['host']
+        self.resume_load = request.get('resume_load', True)
         self.expanded = request['schema'] in (EXPANDED_SCHEMA, *SERVING_SCHEMAS)
         self.old = (*OLD, *ADOPTED) if self.expanded else OLD
         self.state_dir = Path(state_dir) / 'publisher-cutover'
@@ -206,7 +212,10 @@ class Cutover:
                 path = units.split_exec(command)[1]
                 require(self.ex.sha256(self.host, path) == state['exe_sha256'], 'running executable differs from its rollback path: ' + name)
                 executables[path] = state['exe_sha256']
-        require(states[LOAD]['active_state'] == 'active', 'continuous exact load must be running at capture')
+        if self.resume_load:
+            require(states[LOAD]['active_state'] == 'active', 'continuous exact load must be running at capture')
+        else:
+            self.require_stopped_load(states[LOAD])
         sampler = json.loads(self.read(SAMPLER))
         targets = sampler.get('targets', [])
         sources = {source for target in targets for source in target.get('sources', [])}
@@ -263,6 +272,14 @@ class Cutover:
         journal['completed'].append(name)
         journal['intent'] = None
         self.save(journal)
+
+    def require_stopped_load(self, state=None):
+        """Stopped-checker updates retain its state and cannot bypass a critical incident."""
+        state = state if state is not None else self.ex.probe_unit(self.host, LOAD)
+        require(state['active_state'] in ('inactive', 'failed') and state['main_pid'] == 0,
+                'resume_load:false requires the continuous exact load stopped with MainPID 0')
+        require(self.ex.sha256(self.host, LOAD_LATCH) is None,
+                'continuous load has an unresolved critical latch: ' + LOAD_LATCH)
 
     def stop(self, name):
         self.ex.systemctl(self.host, 'stop', name)
@@ -390,7 +407,10 @@ class Cutover:
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
-            self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
+            if self.resume_load:
+                self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
+            else:
+                self.require_stopped_load()
             self.effect(journal, 'stop ' + UNIT, lambda: self.stop(UNIT))
             self.unlocked()
             if self.serving:
@@ -407,7 +427,10 @@ class Cutover:
                 self.serving.verify(journal)
                 self.serving.route(journal)
             self.exact(journal)
-            self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            if self.resume_load:
+                self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            else:
+                self.require_stopped_load()
             self.save(journal, 'committed')
             return journal
 
@@ -423,14 +446,20 @@ class Cutover:
                 require(sha(self.read(path)) == digest, 'adopted input changed before restart: ' + path)
             require(self.ex.probe_unit(self.host, UNIT)['exe_sha256'] == self.request['release']['binary_sha256'],
                     'running publisher executable changed before restart')
+            if not self.resume_load:
+                self.require_stopped_load()
             self.save(journal, 'restarting')
-            self.effect(journal, 'restart pause load', lambda: self.stop(LOAD))
+            if self.resume_load:
+                self.effect(journal, 'restart pause load', lambda: self.stop(LOAD))
             self.effect(journal, 'restart stop publisher', lambda: self.stop(UNIT))
             self.unlocked()
             self.effect(journal, 'restart start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
             self.ready(True)
             self.exact(journal)
-            self.effect(journal, 'restart resume load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            if self.resume_load:
+                self.effect(journal, 'restart resume load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            else:
+                self.require_stopped_load()
             self.save(journal, 'committed')
             return journal
 
@@ -500,7 +529,8 @@ class Cutover:
             if self.serving:
                 self.serving.verify(journal, restored=True)
             self.exact(journal)
-            self.effect(journal, 'restore continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
+            if plan['units'][LOAD]['active_state'] == 'active':
+                self.effect(journal, 'restore continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
             self.save(journal, 'rolled-back')
             return journal
 
