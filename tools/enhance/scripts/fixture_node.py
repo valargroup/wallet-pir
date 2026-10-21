@@ -14,6 +14,8 @@ import time
 
 ACTIVATION_HEIGHT = 3_428_143
 TRANSACTION_SHA256 = '566aa040e2513afcc1c08818af4ac69b61df32d97a451e6bdad498b3259d5f4c'
+RECORD_SHA256 = ['51a0d990e2b52297907170a1ab57b950d4378c5a2213f00eab8754770fcc3c8b',
+                 '68a35ee80643b901a70a9d8af20a6ac9f72964f5740bc88cdd1d20df0706952d']
 
 
 def fixture_path(name):
@@ -67,6 +69,8 @@ def write_oracle(path):
     records = []
     for index in range(2):
         raw = bytes.fromhex(fixture_path(f'ironwood-canonical-record-{index}.hex').read_text().strip())
+        if hashlib.sha256(raw).hexdigest() != RECORD_SHA256[index]:
+            raise ValueError('frozen independent record fixture checksum changed')
         record = raw[84:]
         if len(record) != 653:
             raise ValueError('frozen schema-11 record has the wrong length')

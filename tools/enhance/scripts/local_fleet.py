@@ -10,6 +10,7 @@ from pathlib import Path
 import select
 import socket
 import subprocess
+import threading
 import time
 import urllib.request
 
@@ -19,6 +20,41 @@ ROOT = Path(__file__).resolve().parents[3]
 def fetch(url):
     with urllib.request.urlopen(url, timeout=5) as response:
         return json.load(response)
+
+
+class Publications:
+    """Retain publications actually observed at ingress during the load window.
+
+    Reserved generation numbers can have gaps. Their difference cannot count
+    completed publications, so the qualification gate uses distinct responses.
+    """
+    def __init__(self, origin, initial):
+        self.origin = origin
+        self.observed = {initial['generation']: initial}
+        self.failures = 0
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self.sample, daemon=True)
+        self.thread.start()
+
+    def sample(self):
+        while not self.stopped.wait(0.2):
+            try:
+                manifest = fetch(self.origin + '/v1/enhance/init')
+                self.observed[manifest['generation']] = manifest
+            except (OSError, ValueError, KeyError):
+                self.failures += 1
+
+    def close(self):
+        self.stopped.set()
+        self.thread.join(timeout=6)
+        if self.thread.is_alive():
+            raise RuntimeError('publication observer failed to stop within its HTTP deadline')
+
+    def report(self):
+        manifests = sorted(self.observed.values(), key=lambda m: m['generation'])
+        return {'observed_publications': max(0, len(manifests) - 1),
+                'distinct_anchors': len({(m['anchor_height'], m['anchor_block_hash']) for m in manifests}),
+                'observation_failures': self.failures, 'manifests': manifests}
 
 
 class Fleet:

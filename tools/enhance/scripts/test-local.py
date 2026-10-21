@@ -41,7 +41,7 @@ def provenance(bin_dir):
 
 
 def main():
-    from local_fleet import Fleet, fetch
+    from local_fleet import Fleet, Publications, fetch
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, default=Path('target/release-fast'))
     parser.add_argument('--out', type=Path, required=True)
@@ -65,12 +65,14 @@ def main():
                 'seconds_per_step': args.seconds, 'results': []}
     with tempfile.TemporaryDirectory(prefix='enhance-pull-') as directory:
         fleet = Fleet(binaries, directory, args.out)
+        publications = None
         try:
             fleet.start_roles()
             fleet.start_publisher()
             manifest['initial_manifest'] = fleet.wait_ready()
             origin, operator = fleet.origin, 'http://' + fleet.operator
             manifest['load_start_manifest'] = fetch(origin + '/v1/enhance/init')
+            publications = Publications(origin, manifest['load_start_manifest'])
             for concurrency in map(int, args.concurrency.split(',')):
                 report = args.out / f'load-c{concurrency}.json'
                 command = [str(load),  '--oracle', str(fleet.oracle), '--server', origin,
@@ -101,8 +103,10 @@ def main():
                     if result.returncode:
                         raise RuntimeError('open-loop driver failed; inspect retained evidence')
             manifest['final_manifest'] = fetch(origin + '/v1/enhance/init')
-            published = (manifest['final_manifest']['generation']
-                         - manifest['load_start_manifest']['generation'])
+            publications.close()
+            observed = publications.report()
+            (args.out / 'publications.json').write_text(json.dumps(observed, indent=2) + '\n')
+            published = observed['observed_publications']
             manifest['publication_gate'] = {'required': args.require_publications,
                                             'observed': published,
                                             'passed': published >= args.require_publications}
@@ -110,6 +114,8 @@ def main():
                 raise RuntimeError('insufficient completed publications during load; inspect retained evidence')
 
         finally:
+            if publications is not None:
+                publications.close()
             fleet.close()
             source = Path(directory) / 'publisher'
             for name in ['source-mode']:
