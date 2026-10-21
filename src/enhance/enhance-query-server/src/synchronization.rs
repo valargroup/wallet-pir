@@ -444,9 +444,17 @@ impl Client {
         object.validate()?;
         let root = self.root.clone();
         let checked = object.clone();
-        if tokio::task::spawn_blocking(move || checked.verify(&root))
-            .await?
-            .is_ok()
+        if tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let path = checked.path(&root)?;
+            if fs::metadata(&path).map_err(|e| e.to_string())?.len() != checked.bytes
+                || crate::prepared_packing::hash_file(&path)? != checked.sha256
+            {
+                return Err("cached publication object checksum or length mismatch".into());
+            }
+            Ok(())
+        })
+        .await?
+        .is_ok()
         {
             return Ok(object.path(&self.root)?);
         }

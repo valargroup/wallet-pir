@@ -61,7 +61,9 @@ impl Published {
         })
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .inventory()
+        .clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -457,7 +459,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
             Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
