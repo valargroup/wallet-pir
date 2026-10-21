@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- HTTPS history startup rebuilds a revoked private snapshot before accepting
+  higher-revision recovery of the same map. Publication collection preserves
+  active, preparing and retained HTTPS source links, and catalog staging defers
+  while collection owns the source lock.
+
 - Publisher revisions continue above the historical maximum even when a reorg
   changes shard numbering. Exhausted revision numbers stop publication with an
   error. Wallet recovery regressions run in the end-to-end consumer package,

@@ -160,6 +160,8 @@ pub(crate) fn link_object(
 /// Link a revision directory once, then stage directory symlinks to that stable
 /// tree. Repeated publications must not change a source file's inode or ctime:
 /// both are part of the proof that previously checked rows are still unchanged.
+/// Hold the collector's lock until the stage references its source; if collection
+/// owns it, refuse this attempt so the next synchronization can retry safely.
 pub(crate) fn stage_object(
     root: &std::path::Path,
     stage: &std::path::Path,
@@ -188,6 +190,19 @@ pub(crate) fn stage_object(
     if !publication::is_digest(first) {
         return Err("revision directory must be a digest".into());
     }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    lock.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "source collection is in progress; retry staging",
+        ),
+        std::fs::TryLockError::Error(error) => error,
+    })?;
     let catalog = root.join(".sources");
     real_directory(&catalog)?;
     let revision = catalog.join(first);
@@ -270,6 +285,27 @@ mod tests {
             kind: publication::Kind::RecentTable,
         };
         (object, artifact)
+    }
+
+    #[test]
+    fn catalog_staging_defers_during_collection() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-1-100");
+        std::fs::create_dir(&stage).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert!(!stage.join(&artifact.path).exists());
+        drop(lock);
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
     }
 
     #[test]
