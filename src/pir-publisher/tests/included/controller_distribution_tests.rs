@@ -39,6 +39,10 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         checked_runtimes: Default::default(),
         runtime_preparations: AtomicU64::new(0),
         runtime_preparation_failures: AtomicU64::new(0),
+        validation: Default::default(),
+        integrity_failed: AtomicBool::new(false),
+        fleet_withdrawal: AtomicBool::new(false),
+        foreground: AtomicU64::new(0),
     }))
 }
 
@@ -198,6 +202,7 @@ fn prepare_recent(directory: &Path, set: &ShardSet) {
 
 struct CanonicalRpc {
     client: NodeClient,
+    url: String,
     // Qualification campaigns mutate the served tip. Fast cases leave it at
     // the publication hash, so this field has no reader in that build.
     #[cfg_attr(not(feature = "qualification-tests"), allow(dead_code))]
@@ -264,6 +269,7 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     CanonicalRpc {
         client: crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap(),
+        url: format!("http://{address}"),
         hash,
         genesis,
         available,
@@ -506,7 +512,14 @@ async fn https_bootstrap_verifies_real_prepared_recent_without_archive_tables() 
     assert_eq!(report.runtime_preparation["shipped_fallbacks"], 0);
     assert_eq!(report.runtime_preparation["built"], 0);
     assert_eq!(report.runtime_preparation["restored"], 0);
-    assert!(report.runtime_preparation["shipped"].as_u64().unwrap() > 0);
+    // Bootstrap checks required prepared runtimes by size and loads them on
+    // first use, so none are loaded yet; the byte comparison below proves the
+    // shipped runtimes themselves arrived intact.
+    assert_eq!(report.runtime_preparation["runtimes_offered"], true);
+    assert!(expected
+        .artifacts
+        .iter()
+        .any(|f| f.kind.local() && f.path.ends_with(".runtime")));
     assert_eq!(report.map_sha256, set.map_digest);
     assert_eq!(report.archive_tables_downloaded, 0);
     assert!(expected
@@ -1393,5 +1406,1149 @@ async fn cold_history_bootstrap_retry(
     assert!(
         consumer_root.join("active.json").exists(),
         "retry must durably activate the initial view"
+    );
+}
+
+/// A completed publication's record and the expectation its restorer derives
+/// from the saved publication.
+fn restore_fixture(
+    directory: &Path,
+) -> (
+    ShardSet,
+    Finalized,
+    transparent_shared::publication::RestoreRecord,
+    transparent_shared::publication::RestoreExpectation,
+) {
+    manager_tests::copy_prepared_publication(2, directory);
+    let set = ShardSet::open(directory, 0).unwrap();
+    let finalized = Finalized::prepare(directory, &set, 2).unwrap();
+    let end = set.map.shards.last().unwrap();
+    let record = finalized
+        .restore_record(false, 2, end.end_height, &end.terminal_block_hash)
+        .unwrap();
+    let expected = transparent_shared::publication::RestoreExpectation {
+        network: set.map.network.clone(),
+        genesis_hash: set.map.genesis_hash.clone(),
+        map_sha256: set.map_digest.clone(),
+        full: false,
+        recent_from_height: 2,
+        anchor_height: end.end_height,
+        anchor_hash: end.terminal_block_hash.clone(),
+    };
+    (set, finalized, record, expected)
+}
+
+fn with_inventory(
+    record: &transparent_shared::publication::RestoreRecord,
+    inventory: &transparent_shared::publication::Inventory,
+) -> Vec<u8> {
+    let mut record = record.clone();
+    record.inventory = serde_json::to_string(inventory).unwrap();
+    record.inventory_sha256 = transparent_shared::publication::digest(record.inventory.as_bytes());
+    serde_json::to_vec(&record).unwrap()
+}
+
+/// A restored fixture publication, its record bytes and expectation.
+struct RestoreCase {
+    root: tempfile::TempDir,
+    directory: PathBuf,
+    finalized: Finalized,
+    record: transparent_shared::publication::RestoreRecord,
+    bytes: Vec<u8>,
+    expected: transparent_shared::publication::RestoreExpectation,
+}
+impl RestoreCase {
+    fn new() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("publication");
+        let (_set, finalized, record, expected) = restore_fixture(&directory);
+        let bytes = serde_json::to_vec(&record).unwrap();
+        Self {
+            root,
+            directory,
+            finalized,
+            record,
+            bytes,
+            expected,
+        }
+    }
+    fn restore(&self) -> transparent_shared::publication::Restored {
+        Finalized::restore_completed(&self.directory, &self.bytes, &self.expected).unwrap()
+    }
+    fn inventory(&self) -> transparent_shared::publication::Inventory {
+        self.finalized.inventory().clone()
+    }
+    fn artifact(&self, kind: Kind) -> transparent_shared::publication::Artifact {
+        self.finalized
+            .inventory()
+            .artifacts
+            .iter()
+            .find(|a| a.kind == kind)
+            .unwrap()
+            .clone()
+    }
+    #[track_caller]
+    fn refuse(
+        &self,
+        bytes: &[u8],
+        expected: &transparent_shared::publication::RestoreExpectation,
+        why: &str,
+    ) {
+        assert!(
+            Finalized::restore_completed(&self.directory, bytes, expected).is_err(),
+            "{why}"
+        );
+    }
+    fn memory() -> Arc<transparent_shared::runtime::memory::WorkMemory> {
+        Arc::new(transparent_shared::runtime::memory::WorkMemory::default())
+    }
+}
+
+/// Replace `path` with a new inode holding the same bytes.
+fn replace_with_same_bytes(path: &Path) {
+    let bytes = std::fs::read(path).unwrap();
+    let next = path.with_extension("replacement");
+    std::fs::write(&next, &bytes).unwrap();
+    std::fs::rename(&next, path).unwrap();
+}
+
+#[test]
+fn restore_offers_the_exact_prepared_inventory_and_its_bodies_validate() {
+    let case = RestoreCase::new();
+    let restored = case.restore();
+    // The exact bytes and digest offered over HTTPS, and only listed local files.
+    assert_eq!(restored.finalized.bytes(), case.finalized.bytes());
+    assert_eq!(restored.finalized.sha256(), case.finalized.sha256());
+    for artifact in &case.finalized.inventory().artifacts {
+        assert_eq!(
+            restored.finalized.file(&artifact.sha256),
+            case.finalized.file(&artifact.sha256),
+            "{}",
+            artifact.path
+        );
+    }
+    let inventory = case.inventory();
+    let verified = restored
+        .validation
+        .integrity(&inventory, None, &|| false)
+        .unwrap();
+    assert!(verified.hashed > 0);
+    let checked = restored
+        .validation
+        .correctness(&inventory, &verified, &RestoreCase::memory(), &|| false)
+        .unwrap();
+    assert!(checked.loaded > 0);
+    // Unchanged files verified by an earlier pass are not read again.
+    let again = restored
+        .validation
+        .integrity(&inventory, Some(&verified), &|| false)
+        .unwrap();
+    assert_eq!(again.hashed, 0);
+    // A stop ends the pass between reads.
+    assert!(matches!(
+        restored.validation.integrity(&inventory, None, &|| true),
+        Err(transparent_shared::publication::IntegrityError::Stopped)
+    ));
+}
+
+#[test]
+fn restore_refuses_unsupported_or_foreign_evidence() {
+    let case = RestoreCase::new();
+    let encode =
+        |r: &transparent_shared::publication::RestoreRecord| serde_json::to_vec(r).unwrap();
+    let mut changed = case.record.clone();
+    changed.schema = "transparent-history-restore-v0".into();
+    case.refuse(&encode(&changed), &case.expected, "unknown schema");
+    let mut changed = case.record.clone();
+    changed.profile = "other".into();
+    case.refuse(&encode(&changed), &case.expected, "unknown profile");
+    let mut changed = case.record.clone();
+    changed.completed.pop();
+    case.refuse(&encode(&changed), &case.expected, "incomplete preparation");
+    let mut changed = case.record.clone();
+    changed.inventory.push(' ');
+    case.refuse(&encode(&changed), &case.expected, "inventory digest");
+    case.refuse(b"{", &case.expected, "malformed record");
+    for field in [
+        "anchor", "height", "cutoff", "full", "network", "genesis", "map",
+    ] {
+        let mut other = case.expected.clone();
+        match field {
+            "anchor" => other.anchor_hash = "00".repeat(32),
+            "height" => other.anchor_height += 1,
+            "cutoff" => other.recent_from_height = 0,
+            "full" => other.full = true,
+            "network" => other.network = "testnet".into(),
+            "genesis" => other.genesis_hash = "00".repeat(32),
+            _ => other.map_sha256 = "00".repeat(32),
+        }
+        case.refuse(&case.bytes, &other, field);
+    }
+}
+
+#[test]
+fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
+    let case = RestoreCase::new();
+    let mut omitted = case.inventory();
+    omitted.artifacts.retain(|a| a.kind != Kind::RecentRuntime);
+    case.refuse(
+        &with_inventory(&case.record, &omitted),
+        &case.expected,
+        "omitted runtime",
+    );
+    let mut longer = case.inventory();
+    longer
+        .artifacts
+        .iter_mut()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap()
+        .bytes += 1;
+    case.refuse(
+        &with_inventory(&case.record, &longer),
+        &case.expected,
+        "wrong length",
+    );
+    let mut wrong = case.inventory();
+    wrong
+        .artifacts
+        .iter_mut()
+        .find(|a| a.kind == Kind::RecentTable)
+        .unwrap()
+        .sha256 = "11".repeat(32);
+    case.refuse(
+        &with_inventory(&case.record, &wrong),
+        &case.expected,
+        "source differs from manifest",
+    );
+    let mut renamed = case.inventory();
+    renamed
+        .artifacts
+        .iter_mut()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap()
+        .path = "../escape.runtime".into();
+    case.refuse(
+        &with_inventory(&case.record, &renamed),
+        &case.expected,
+        "unsafe path",
+    );
+}
+
+#[test]
+fn restore_refuses_missing_truncated_relabelled_or_linked_runtimes() {
+    let case = RestoreCase::new();
+    let path = case.directory.join(case.artifact(Kind::RecentRuntime).path);
+    let good = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    case.refuse(&case.bytes, &case.expected, "missing runtime");
+    std::fs::write(&path, &good[..good.len() - 1]).unwrap();
+    case.refuse(&case.bytes, &case.expected, "truncated runtime");
+    let mut header = good.clone();
+    header[0] ^= 1;
+    std::fs::write(&path, &header).unwrap();
+    case.refuse(&case.bytes, &case.expected, "wrong runtime identity header");
+    std::fs::remove_file(&path).unwrap();
+    let elsewhere = case.root.path().join("elsewhere.runtime");
+    std::fs::write(&elsewhere, &good).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+    case.refuse(&case.bytes, &case.expected, "symbolic link");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    case.refuse(&case.bytes, &case.expected, "not a regular file");
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::write(&path, &good).unwrap();
+    case.restore();
+}
+
+#[test]
+fn integrity_confirms_same_size_body_corruption_the_restore_cannot_see() {
+    use std::os::unix::fs::FileExt;
+    let case = RestoreCase::new();
+    let table = case.artifact(Kind::ArchiveTable);
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(case.directory.join(&table.path))
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    let restored = case.restore();
+    match restored
+        .validation
+        .integrity(&case.inventory(), None, &|| false)
+    {
+        Err(transparent_shared::publication::IntegrityError::Mismatch {
+            path,
+            found_sha256,
+            ..
+        }) => {
+            assert_eq!(path, table.path);
+            assert!(found_sha256.is_some());
+        }
+        other => panic!("expected a mismatch, got {other:?}"),
+    }
+}
+
+#[test]
+fn integrity_never_passes_a_file_replaced_while_it_is_read() {
+    let case = RestoreCase::new();
+    let restored = case.restore();
+    let table = case.directory.join(case.artifact(Kind::ArchiveTable).path);
+    let reads = std::cell::Cell::new(0);
+    // The first read of the first artifact replaces one table: the pass
+    // cannot vouch for either version and reports nothing about its bytes.
+    let pause = || {
+        reads.set(reads.get() + 1);
+        if reads.get() == 1 {
+            replace_with_same_bytes(&table);
+        }
+        false
+    };
+    let mut inventory = case.inventory();
+    let index = inventory
+        .artifacts
+        .iter()
+        .position(|a| case.directory.join(&a.path) == table)
+        .unwrap();
+    inventory.artifacts.swap(0, index);
+    assert!(matches!(
+        restored.validation.integrity(&inventory, None, &pause),
+        Err(transparent_shared::publication::IntegrityError::Unavailable(_))
+    ));
+    // Read again, the replacement's own unchanged bytes pass.
+    restored
+        .validation
+        .integrity(&inventory, None, &|| false)
+        .unwrap();
+}
+
+#[test]
+fn correctness_checks_only_the_inodes_integrity_verified() {
+    use transparent_shared::publication::CorrectnessError;
+    let case = RestoreCase::new();
+    let restored = case.restore();
+    let inventory = case.inventory();
+    let memory = RestoreCase::memory();
+    for kind in [Kind::RecentRuntime, Kind::RecentTable] {
+        let verified = restored
+            .validation
+            .integrity(&inventory, None, &|| false)
+            .unwrap();
+        replace_with_same_bytes(&case.directory.join(case.artifact(kind).path));
+        assert!(
+            matches!(
+                restored
+                    .validation
+                    .correctness(&inventory, &verified, &memory, &|| false),
+                Err(CorrectnessError::Unavailable(_))
+            ),
+            "{kind:?} replaced after integrity"
+        );
+        // Earlier evidence does not cover the new inode: it is hashed again.
+        let again = restored
+            .validation
+            .integrity(&inventory, Some(&verified), &|| false)
+            .unwrap();
+        assert_eq!(again.hashed, case.artifact(kind).bytes, "{kind:?}");
+        restored
+            .validation
+            .correctness(&inventory, &again, &memory, &|| false)
+            .unwrap();
+    }
+    // Nothing integrity did not verify is checked.
+    assert!(matches!(
+        restored
+            .validation
+            .correctness(&inventory, &Default::default(), &memory, &|| false),
+        Err(CorrectnessError::Unavailable(_))
+    ));
+}
+
+#[test]
+fn correctness_fails_a_runtime_whose_listed_digest_names_corrupt_bytes() {
+    let case = RestoreCase::new();
+    let runtime = case.artifact(Kind::RecentRuntime);
+    let path = case.directory.join(&runtime.path);
+    let mut bad = std::fs::read(&path).unwrap();
+    bad[64] ^= 1;
+    publication::write_atomic(&path, &bad).unwrap();
+    let mut corrupt = case.inventory();
+    corrupt
+        .artifacts
+        .iter_mut()
+        .find(|a| a.path == runtime.path)
+        .unwrap()
+        .sha256 = transparent_shared::publication::digest(&bad);
+    let restored = Finalized::restore_completed(
+        &case.directory,
+        &with_inventory(&case.record, &corrupt),
+        &case.expected,
+    )
+    .unwrap();
+    let verified = restored
+        .validation
+        .integrity(&corrupt, None, &|| false)
+        .unwrap();
+    assert!(matches!(
+        restored
+            .validation
+            .correctness(&corrupt, &verified, &RestoreCase::memory(), &|| false),
+        Err(transparent_shared::publication::CorrectnessError::Failed(_))
+    ));
+}
+
+#[test]
+fn a_newer_job_or_cancellation_stops_obsolete_validation_and_releases_its_input() {
+    use crate::history::validator::{Event, Identity, Job, Queue, Validator};
+    let first = RestoreCase::new();
+    let second = RestoreCase::new();
+    let job = |case: &RestoreCase| Job {
+        identity: Identity {
+            directory: case.directory.clone(),
+            map_sha256: case.expected.map_sha256.clone(),
+            inventory_sha256: case.finalized.sha256().to_string(),
+            height: case.expected.anchor_height,
+            hash: case.expected.anchor_hash.clone(),
+            epoch: 0,
+        },
+        inventory: case.inventory(),
+        validation: case.restore().validation,
+    };
+    // Foreground work keeps the validator waiting between reads.
+    let busy = Arc::new(AtomicBool::new(true));
+    let events = Arc::new(std::sync::Mutex::new(Vec::<(PathBuf, String)>::new()));
+    let queue = Queue::default();
+    let validator = Validator::spawn(
+        queue.clone(),
+        RestoreCase::memory(),
+        {
+            let busy = busy.clone();
+            Box::new(move || busy.load(Ordering::Acquire))
+        },
+        {
+            let events = events.clone();
+            Box::new(move |identity: &Identity, event| {
+                let name = match event {
+                    Event::Started(phase) => format!("started {phase}"),
+                    Event::Progress(..) => return,
+                    Event::Integrity(Ok(_)) => "integrity passed".into(),
+                    Event::Integrity(Err(e)) => format!("integrity {e}"),
+                    Event::Correctness(Ok(_)) => "correctness passed".into(),
+                    Event::Correctness(Err(e)) => format!("correctness {e}"),
+                };
+                events
+                    .lock()
+                    .unwrap()
+                    .push((identity.directory.clone(), name));
+            })
+        },
+    )
+    .unwrap();
+    let wait = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    let saw = |directory: &Path, name: &str| {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(d, n)| d == directory && n == name)
+    };
+    queue.submit(job(&first));
+    wait("first started", &|| {
+        saw(&first.directory, "started integrity")
+    });
+    assert_eq!(queue.held(), vec![first.directory.clone()]);
+    // A newer publication stops the running job while it is still blocked;
+    // only the newest one remains held.
+    queue.submit(job(&second));
+    wait("first stopped", &|| {
+        saw(&first.directory, "integrity validation stopped")
+    });
+    wait("second started", &|| {
+        saw(&second.directory, "started integrity")
+    });
+    assert_eq!(queue.held(), vec![second.directory.clone()]);
+    // Withdrawal cancels it too and releases its directory.
+    queue.cancel();
+    wait("second stopped", &|| {
+        saw(&second.directory, "integrity validation stopped")
+    });
+    wait("released", &|| queue.held().is_empty());
+    assert!(!saw(&first.directory, "integrity passed"));
+    // A later job runs to completion once foreground work ends.
+    busy.store(false, Ordering::Release);
+    queue.submit(job(&first));
+    wait("passed", &|| saw(&first.directory, "correctness passed"));
+    drop(validator);
+    assert!(queue.held().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restored_history_serves_before_validation_and_withdraws_on_a_body_mismatch() {
+    use crate::history::validator::{Identity, Job, Queue, Validator};
+    use std::os::unix::fs::FileExt;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    let (set, _finalized, record, expected) = restore_fixture(&directory);
+    let restored =
+        Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
+            .unwrap();
+    let inventory = restored.finalized.inventory().clone();
+    let sha256 = restored.finalized.sha256().to_string();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
+    let failures = root.path().join("state");
+    std::fs::create_dir(&failures).unwrap();
+    // The validator stays blocked, as behind foreground work, until released.
+    let blocked = Arc::new(AtomicBool::new(true));
+    let queue = Queue::default();
+    let validator = Validator::spawn(
+        queue.clone(),
+        Arc::new(transparent_shared::runtime::memory::WorkMemory::default()),
+        {
+            let blocked = blocked.clone();
+            Box::new(move || blocked.load(Ordering::Acquire))
+        },
+        {
+            let owner = owner.clone();
+            let failures = failures.clone();
+            Box::new(move |identity, event| validation_event(&failures, &owner, identity, event))
+        },
+    )
+    .unwrap();
+    queue.submit(Job {
+        identity: Identity {
+            directory: directory.clone(),
+            map_sha256: set.map_digest.clone(),
+            inventory_sha256: sha256.clone(),
+            height: expected.anchor_height,
+            hash: expected.anchor_hash.clone(),
+            epoch: owner.0.epoch.load(Ordering::Acquire),
+        },
+        inventory: inventory.clone(),
+        validation: restored.validation,
+    });
+    let status = |key: &str| owner.0.status.read().unwrap()[key].clone();
+    let wait = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    wait("validation started", &|| {
+        status("integrity_validation")["state"] == "pending"
+    });
+    assert_eq!(
+        queue.held(),
+        vec![directory.clone()],
+        "collection keeps the source"
+    );
+    // Real HTTPS: the restored inventory is retrievable while validation waits.
+    let tls = tls(root.path(), owner.clone()).await;
+    let report = bootstrap::verify(config(&tls, root.path().join("provider")))
+        .await
+        .unwrap();
+    assert_eq!(report.map_sha256, set.map_digest);
+    assert_eq!(status("integrity_validation")["state"], "pending");
+    assert_eq!(status("integrity_validation")["inventory_sha256"], sha256);
+
+    // Same-size corruption found after start withdraws the publication and
+    // is recorded for the next process.
+    let table = inventory
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap();
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(directory.join(&table.path))
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    blocked.store(false, Ordering::Release);
+    wait("integrity failure", &|| {
+        status("integrity_validation")["state"] == "failed"
+    });
+    assert!(owner.0.withdrawn.load(Ordering::Acquire));
+    assert!(owner.0.integrity_failed.load(Ordering::Acquire));
+    assert!(owner.0.fleet_withdrawal.load(Ordering::Acquire));
+    assert_eq!(status("phase"), "integrity_failed");
+    assert_eq!(
+        status("correctness_validation")["state"],
+        serde_json::Value::Null
+    );
+    let recorded = integrity_failures(&failures).unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].path, table.path);
+    // The record survives a restart: the same inventory is not restored.
+    assert!(lists_failed(&recorded, &inventory));
+    let error = bootstrap::verify(config(&tls, root.path().join("provider-2")))
+        .await
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("withdrawn"), "{error}");
+    // Shutdown joins the validator.
+    drop(validator);
+    assert!(queue.held().is_empty());
+    file.write_all_at(&first, 0).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_result_about_a_superseded_publication_changes_nothing() {
+    use crate::history::validator::{Event, Identity};
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("publication");
+    let (set, _finalized, record, expected) = restore_fixture(&directory);
+    let restored =
+        Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
+            .unwrap();
+    let sha256 = restored.finalized.sha256().to_string();
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
+    let state = root.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    let identity = Identity {
+        directory: directory.clone(),
+        map_sha256: set.map_digest.clone(),
+        inventory_sha256: sha256,
+        height: expected.anchor_height,
+        hash: expected.anchor_hash.clone(),
+        epoch: owner.0.epoch.load(Ordering::Acquire),
+    };
+    let before = owner.0.status.read().unwrap().clone();
+    // A reorg or activation advanced the epoch after the job was submitted.
+    owner.0.epoch.fetch_add(1, Ordering::AcqRel);
+    validation_event(&state, &owner, &identity, Event::Started("integrity"));
+    validation_event(&state, &owner, &identity, Event::Integrity(Ok(1)));
+    validation_event(
+        &state,
+        &owner,
+        &identity,
+        Event::Correctness(Err(
+            transparent_shared::publication::CorrectnessError::Failed("stale".into()),
+        )),
+    );
+    assert_eq!(*owner.0.status.read().unwrap(), before);
+    // A different inventory under the current epoch is equally stale.
+    let other = Identity {
+        inventory_sha256: "00".repeat(32),
+        epoch: owner.0.epoch.load(Ordering::Acquire),
+        ..identity
+    };
+    validation_event(&state, &owner, &other, Event::Integrity(Ok(1)));
+    assert_eq!(*owner.0.status.read().unwrap(), before);
+
+    // A confirmed mismatch of bytes the current publication lists withdraws it
+    // even when reported by a stale job, and an unreadable failure record is
+    // kept as is rather than replaced.
+    std::fs::write(state.join(INTEGRITY_FAILURES), b"not json").unwrap();
+    let artifact = owner
+        .0
+        .active
+        .read()
+        .unwrap()
+        .distribution
+        .as_ref()
+        .unwrap()
+        .inventory()
+        .artifacts[0]
+        .clone();
+    validation_event(
+        &state,
+        &owner,
+        &other,
+        Event::Integrity(Err(
+            transparent_shared::publication::IntegrityError::Mismatch {
+                path: artifact.path.clone(),
+                expected_sha256: artifact.sha256.clone(),
+                found_sha256: Some("11".repeat(32)),
+                reason: "changed".into(),
+            },
+        )),
+    );
+    assert!(owner.0.withdrawn.load(Ordering::Acquire));
+    assert!(owner.0.integrity_failed.load(Ordering::Acquire));
+    assert_eq!(
+        std::fs::read(state.join(INTEGRITY_FAILURES)).unwrap(),
+        b"not json"
+    );
+}
+
+/// A controller root whose saved active publication carries completion
+/// evidence, as a previous process left it, and the fixture node and fleet.
+struct Startup {
+    root: tempfile::TempDir,
+    config: Config,
+    directory: PathBuf,
+    record: transparent_shared::publication::RestoreRecord,
+    finalized: Finalized,
+    _rpc: CanonicalRpc,
+}
+impl Startup {
+    async fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let journal = root.path().join("journal");
+        manager_tests::copy_fixture_tree(
+            &manager_tests::prepared_fixture(2).join("journal"),
+            &journal,
+        );
+        let publications = root.path().join("publications");
+        std::fs::create_dir(&publications).unwrap();
+        let directory = publications.join("candidate-restored");
+        let (set, finalized, record, _) = restore_fixture(&directory);
+        let rpc = canonical_rpc(root.path(), &set).await;
+        let hook = root.path().join("fleet.py");
+        std::fs::write(&hook, r#"#!/usr/bin/env python3
+import json,sys
+from pathlib import Path
+r=json.load(sys.stdin)
+with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
+print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
+"#).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = Config {
+            data_dir: journal,
+            publication_root: publications.clone(),
+            initial_publication: directory.clone(),
+            recent_from: 2,
+            recent_geometry: "decoupled-2k-8k".into(),
+            archive_geometry: "decoupled-32k-32k".into(),
+            rpc_url: rpc.url.clone(),
+            rpc_cookie: root.path().join("node-cookie"),
+            fleet_command: hook,
+            fleet_config: root.path().join("unused"),
+            listen: "127.0.0.1:0".parse().unwrap(),
+            source_sha: "fixture".into(),
+            shadow: false,
+            directory_choice: publication::DirectoryChoice::Off,
+            range_profile: transparent_filter::RANGE_PROFILE.to_string(),
+            // The fixture node answers block hashes only; the saved journal
+            // already covers the publication.
+            follow_journal: true,
+            snapshot_dir: None,
+            ship_runtimes: true,
+            distribute_prepared: true,
+            http_only: false,
+        };
+        let saved = read_public(directory.clone(), Vec::new())
+            .unwrap()
+            .publication;
+        publication::write_atomic(
+            &publications.join("active.json"),
+            &serde_json::to_vec(&saved).unwrap(),
+        )
+        .unwrap();
+        let startup = Self {
+            root,
+            config,
+            directory,
+            record,
+            finalized,
+            _rpc: rpc,
+        };
+        startup.write_record(&serde_json::to_vec(&startup.record).unwrap());
+        startup
+    }
+    fn write_record(&self, bytes: &[u8]) {
+        publication::write_atomic(
+            &self
+                .directory
+                .join(transparent_shared::publication::RESTORE_FILE),
+            bytes,
+        )
+        .unwrap();
+    }
+    /// Start the controller with its validator held; returns its HTTPS front,
+    /// task and stop handle once its router exists.
+    async fn start(
+        &self,
+        name: &str,
+    ) -> (
+        Tls,
+        tokio::task::JoinHandle<Result<(), BoxError>>,
+        pir_pipeline::service::Shutdown,
+    ) {
+        crate::history::validator::HOLD
+            .lock()
+            .unwrap()
+            .insert(self.config.publication_root.clone());
+        let (send, routed) = tokio::sync::oneshot::channel();
+        let send = Arc::new(std::sync::Mutex::new(Some(send)));
+        let http = pir_pipeline::service::Http::new(move |_, router: Router| {
+            let send = send.clone();
+            async move {
+                if let Some(send) = send.lock().unwrap().take() {
+                    let _ = send.send(router);
+                }
+                std::future::pending::<std::io::Result<()>>().await
+            }
+        });
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let task = tokio::spawn(run_managed(self.config.clone(), http, shutdown.clone()));
+        let router = tokio::time::timeout(std::time::Duration::from_secs(20), routed)
+            .await
+            .expect("router")
+            .expect("controller started");
+        let front = self.root.path().join(name);
+        std::fs::create_dir_all(&front).unwrap();
+        (tls_router(&front, router).await, task, shutdown)
+    }
+    fn release(&self) {
+        crate::history::validator::HOLD
+            .lock()
+            .unwrap()
+            .remove(&self.config.publication_root);
+    }
+    /// The fleet operations requested so far, in order.
+    fn fleet_operations(&self) -> Vec<String> {
+        std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+    async fn wait_fleet(&self, what: &str, done: impl Fn(&[String]) -> bool) -> Vec<String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let operations = self.fleet_operations();
+            if done(&operations) {
+                return operations;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what}: {operations:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+}
+
+async fn status_of(tls: &Tls) -> serde_json::Value {
+    reqwest::Client::builder()
+        .add_root_certificate(tls.cert.clone())
+        .build()
+        .unwrap()
+        .get(format!("{}/v1/status", tls.origin))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+async fn wait_status(
+    tls: &Tls,
+    what: &str,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let status = status_of(tls).await;
+        if done(&status) {
+            return status;
+        }
+        assert!(std::time::Instant::now() < deadline, "{what}: {status}");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Flip one byte of `path` in place, keeping its length.
+fn flip_first_byte(path: &Path) {
+    use std::os::unix::fs::FileExt;
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let mut first = [0u8; 1];
+    file.read_exact_at(&mut first, 0).unwrap();
+    file.write_all_at(&[first[0] ^ 1], 0).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_serves_before_validation_and_keeps_serving_a_correctness_failure() {
+    let startup = Startup::new().await;
+    // The previous process listed a runtime whose body is corrupt under its
+    // own digest: integrity passes and only the runtime check can fail it.
+    let runtime = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::RecentRuntime)
+        .unwrap()
+        .clone();
+    let path = startup.directory.join(&runtime.path);
+    let mut bad = std::fs::read(&path).unwrap();
+    bad[64] ^= 1;
+    publication::write_atomic(&path, &bad).unwrap();
+    let mut inventory = startup.finalized.inventory().clone();
+    inventory
+        .artifacts
+        .iter_mut()
+        .find(|a| a.path == runtime.path)
+        .unwrap()
+        .sha256 = transparent_shared::publication::digest(&bad);
+    startup.write_record(&with_inventory(&startup.record, &inventory));
+    let (tls, task, shutdown) = startup.start("front").await;
+    // Serving, eligible and retrievable while validation is held: nothing
+    // loaded that runtime, or the restore would have failed.
+    let status = wait_status(&tls, "restored serving", |s| s["phase"] == "serving").await;
+    assert_eq!(status["restored"], true);
+    assert_eq!(status["integrity_validation"]["state"], "pending");
+    assert_eq!(status["correctness_validation"]["state"], "pending");
+    let report = bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+        .await
+        .unwrap();
+    assert_eq!(report.map_sha256, startup.record.map_sha256);
+    let requests =
+        std::fs::read_to_string(startup.config.fleet_command.with_extension("requests")).unwrap();
+    assert!(
+        requests.contains("\"prepare\"") && requests.contains("\"activate\""),
+        "{requests}"
+    );
+    startup.release();
+    let status = wait_status(&tls, "correctness failed", |s| {
+        s["correctness_validation"]["state"] == "failed"
+    })
+    .await;
+    assert_eq!(status["integrity_validation"]["state"], "passed");
+    assert_eq!(status["phase"], "serving");
+    assert_eq!(
+        status["correctness_validation"]["inventory_sha256"],
+        transparent_shared::publication::digest(&serde_json::to_vec(&inventory).unwrap())
+    );
+    // Still the same process, still serving the same inventory.
+    bootstrap::verify(config(&tls, startup.root.path().join("provider-2")))
+        .await
+        .unwrap();
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_after_restart() {
+    let startup = Startup::new().await;
+    let table = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap()
+        .clone();
+    // Same-size corruption the restore cannot see without hashing bodies.
+    flip_first_byte(&startup.directory.join(&table.path));
+    let (tls, task, shutdown) = startup.start("front").await;
+    wait_status(&tls, "restored serving", |s| s["phase"] == "serving").await;
+    bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+        .await
+        .unwrap();
+    startup.release();
+    let status = wait_status(&tls, "integrity failed", |s| {
+        s["integrity_validation"]["state"] == "failed"
+    })
+    .await;
+    assert_eq!(status["phase"], "integrity_failed");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider-2")))
+            .await
+            .is_err()
+    );
+    // The router would still proxy queries to the workers this process
+    // activated, so the fleet withdraws them too.
+    let operations = startup
+        .wait_fleet("fleet withdrawal", |ops| {
+            ops.iter().any(|op| op == "withdraw")
+        })
+        .await;
+    assert_eq!(operations, ["prepare", "activate", "withdraw"]);
+    // Shutdown joins the validator and releases the controller lock.
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    // A new process with the same evidence stays withdrawn and alive;
+    // deleting the completion record would not clear the failure either.
+    let (tls, task, shutdown) = startup.start("front-2").await;
+    let status = wait_status(&tls, "restart withdrawn", |s| {
+        s["phase"] == "integrity_failed"
+    })
+    .await;
+    assert_eq!(
+        status["integrity_validation"]["artifact"]["path"],
+        table.path
+    );
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider-3")))
+            .await
+            .is_err()
+    );
+    // Workers may still serve what the previous process activated; the new
+    // process withdraws them and activates nothing.
+    let operations = startup
+        .wait_fleet("restart fleet withdrawal", |ops| ops.len() > 3)
+        .await;
+    assert_eq!(operations[3..], ["withdraw"]);
+    assert!(!task.is_finished());
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+    assert!(integrity_failures(&startup.config.publication_root)
+        .unwrap()
+        .iter()
+        .any(|f| f.path == table.path));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn integrity_withdrawal_reaches_the_fleet_only_when_it_routes_workers_and_retries() {
+    let startup = Startup::new().await;
+    let owner = authority(&startup.directory, None, startup._rpc.client.clone());
+    let pending = || owner.0.fleet_withdrawal.load(Ordering::Acquire);
+    // Shadow and HTTP-only controllers route no workers: the request clears.
+    for (shadow, http_only) in [(true, false), (false, true)] {
+        let config = Config {
+            shadow,
+            http_only,
+            ..startup.config.clone()
+        };
+        owner.0.fleet_withdrawal.store(true, Ordering::Release);
+        withdraw_fleet(&config, &owner).await.unwrap();
+        assert!(!pending());
+    }
+    assert!(startup.fleet_operations().is_empty());
+    // An unavailable fleet leaves the withdrawal pending for the next pass.
+    owner.0.fleet_withdrawal.store(true, Ordering::Release);
+    let unavailable = Config {
+        fleet_command: startup.root.path().join("missing-fleet"),
+        ..startup.config.clone()
+    };
+    assert!(withdraw_fleet(&unavailable, &owner).await.is_err());
+    assert!(pending());
+    withdraw_fleet(&startup.config, &owner).await.unwrap();
+    assert!(!pending());
+    assert_eq!(startup.fleet_operations(), ["withdraw"]);
+    // Nothing pending sends nothing.
+    withdraw_fleet(&startup.config, &owner).await.unwrap();
+    assert_eq!(startup.fleet_operations(), ["withdraw"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_refuses_unusable_evidence_without_suggesting_its_deletion() {
+    let startup = Startup::new().await;
+    startup.write_record(b"{");
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        run_managed(
+            startup.config.clone(),
+            pir_pipeline::service::Http::new(|_, _: Router| std::future::pending()),
+            Default::default(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("cannot be restored"), "{error}");
+    assert!(error.contains("does not clear"), "{error}");
+    assert!(!error.contains("remove "), "{error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restarted_controller_does_not_serve_a_restored_anchor_the_node_replaced() {
+    let startup = Startup::new().await;
+    *startup._rpc.hash.write().unwrap() = Some("00".repeat(32));
+    let (tls, task, shutdown) = startup.start("front").await;
+    let status = wait_status(&tls, "publication refused", |s| {
+        !s["publication_error"].is_null() || s["phase"] != "starting"
+    })
+    .await;
+    assert_ne!(status["phase"], "serving", "{status}");
+    assert!(status["restored"].is_null(), "{status}");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+            .await
+            .is_err()
+    );
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_completion_evidence_corrupt_bytes_are_prepared_in_full_and_never_served() {
+    let startup = Startup::new().await;
+    let table = startup
+        .finalized
+        .inventory()
+        .artifacts
+        .iter()
+        .find(|a| a.kind == Kind::ArchiveTable)
+        .unwrap()
+        .clone();
+    flip_first_byte(&startup.directory.join(&table.path));
+    std::fs::remove_file(
+        startup
+            .directory
+            .join(transparent_shared::publication::RESTORE_FILE),
+    )
+    .unwrap();
+    let failures = startup.config.publication_root.join(INTEGRITY_FAILURES);
+    let recorded = serde_json::json!([{"path":table.path,"expected_sha256":table.sha256,
+        "found_sha256":null,"inventory_sha256":"00".repeat(32),
+        "map_sha256":startup.record.map_sha256,"reason":"recorded by an earlier process"}]);
+    std::fs::write(&failures, serde_json::to_vec(&recorded).unwrap()).unwrap();
+    let (tls, task, shutdown) = startup.start("front").await;
+    let status = wait_status(&tls, "full preparation refused", |s| {
+        !s["publication_error"].is_null()
+    })
+    .await;
+    assert_ne!(status["phase"], "serving", "{status}");
+    assert!(
+        bootstrap::verify(config(&tls, startup.root.path().join("provider")))
+            .await
+            .is_err()
+    );
+    shutdown.request();
+    tokio::time::timeout(std::time::Duration::from_secs(20), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    startup.release();
+    // The cold path neither served nor discarded the durable failure.
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&failures).unwrap()).unwrap(),
+        recorded
     );
 }

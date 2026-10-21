@@ -1,5 +1,6 @@
 """Snapshot reuse preserves public inputs without loading another server."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -51,6 +52,26 @@ class SnapshotFilesTests(unittest.TestCase):
             self.assertEqual(record.read_bytes(), before)
             self.assertFalse((active / 'shards.json').exists())
             self.assertEqual([p.name for p in active.iterdir()], [name])
+
+    def test_comparison_requires_each_pinned_inode_and_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, pinned = root / 'source', root / 'pin'
+            (source / 'nested').mkdir(parents=True)
+            (source / 'shards.json').write_text('{"public":true}')
+            (source / 'nested' / 'table.bin').write_bytes(b'immutable table')
+            warmer.pin(source, pinned)
+            # Files the pin does not hold, such as a later restore record, are not compared.
+            (source / 'history-restore.json').write_text('{}')
+            self.assertEqual(warmer.same(source, pinned), {'compared': 2, 'same': True, 'differs': []})
+            replacement = root / 'replacement'
+            replacement.write_bytes(b'immutable table')
+            os.replace(replacement, source / 'nested' / 'table.bin')
+            (source / 'shards.json').unlink()
+            self.assertEqual(warmer.same(source, pinned),
+                             {'compared': 2, 'same': False, 'differs': ['nested/table.bin', 'shards.json']})
+            with self.assertRaisesRegex(ValueError, 'regular directories'):
+                warmer.same(source, root / 'missing')
 
     def test_refuses_links_and_recursive_pins(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -29,7 +29,7 @@ extern "C" fn cleanup_prepared_fixtures() {
         .clear();
 }
 
-fn copy_fixture_tree(source: &Path, target: &Path) {
+pub(super) fn copy_fixture_tree(source: &Path, target: &Path) {
     std::fs::create_dir(target).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
@@ -66,7 +66,7 @@ fn owned_fixture(build: impl FnOnce(&Path)) -> PathBuf {
     path
 }
 
-fn prepared_fixture(through: u64) -> &'static Path {
+pub(super) fn prepared_fixture(through: u64) -> &'static Path {
     fn build(through: u64) -> PathBuf {
         owned_fixture(|root| {
             let (directory, set) =
