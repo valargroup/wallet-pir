@@ -13,3 +13,4 @@ pub mod journal;
 pub mod publication;
 pub mod runtime;
 pub mod tx_detail;
+mod verification;

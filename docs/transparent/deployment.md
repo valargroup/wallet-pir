@@ -426,8 +426,27 @@ open rollout gates and [evidence](../../evidence/transparent/README.md) for reco
 
 ### Verification carried across revisions
 
-Workers and the publisher each verify the tables they hold; a restart
-verifies everything again. Within a running process, a candidate publication
+HTTPS consumers compute SHA-256 while receiving each artifact and check it
+against the publisher inventory before renaming the completed object to its
+digest. Reusing a completed cache object checks its byte size and regular-file
+status. Local storage is trusted: same-size corruption, including local edits,
+is outside this integrity boundary. No filesystem-specific integrity feature
+is required; macOS and Linux use the same policy.
+
+Local sidecar receipts carry the download identity to hard-linked or copied
+staged files. A successful source or native-runtime consistency check records
+its context against that download identity. Unchanged files reuse those checks
+across publications and restarts. Runtime format, shape, setup parameters and
+source identity remain part of the check context; different downloaded bytes
+cannot inherit an earlier runtime check. Missing or malformed receipts repeat
+the semantic check. Files used directly by the publisher or developer, without
+network receipts, retain their full verification path.
+
+Receipts establish checked content, not serving authority. Fresh publisher
+information, canonical anchors, withdrawal records and activation fences still
+apply. Changes to semantic verification must bump the local receipt version.
+
+For local source files without a network receipt, a candidate publication within a running process
 inherits verification from the publication it replaces, per table segment:
 only when the candidate's segment is the same committed segment (runtime
 identity — the revision digest for a directory, the chained child identity
@@ -448,6 +467,24 @@ thread CPU time; `prepare` replies and the control `status` (`last_preparation`)
 carry it, with the refusal kind (`invalid_source`, `runtime`, `admission`,
 `superseded`) when a prepare fails. The on-disk runtime and publication formats
 are unchanged.
+
+Required history and transaction-detail runtime checks also accept
+process-local byte-checksum evidence from an earlier successful self-check.
+For received files the saved network digest supplies the byte identity;
+standalone local runtimes still require a full checksum scan.
+
+Measure baseline and candidate on the same isolated Linux host with the same
+publication sequence, data size, query load, build flags and initial page-cache
+condition. Use at least three alternating runs each. Record median and min/max
+for first load, staging, preparation, warming, activation and public
+advertisement; include CPU seconds, source verification counters, runtime
+checked/reused counts, peak memory and disk overhead. Keep first load and
+restart separate from steady updates. Capture CPU and off-CPU profiles separately
+from unprofiled timings and identify the top three paths before and after.
+The improvement target is under 30 seconds for each representative update with
+one of 96 source segments changed; the existing 60-second readiness budget is
+unchanged. Retain raw runs under ignored `.local-pir/` and report exact commits
+and host identity. Production catch-up remains a separate deployment check.
 
 ## Ingest, infrastructure and aging
 

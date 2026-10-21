@@ -15,6 +15,7 @@ use crate::{
     source::Source,
 };
 use serde::Serialize;
+use sha2::Digest;
 use std::{path::PathBuf, sync::Arc};
 use tokio::io::AsyncWriteExt;
 use transparent_shared::publication::{self, Current, Error, Inventory};
@@ -205,24 +206,26 @@ pub(crate) async fn stage_holdings(
                     .get(&format!("artifacts/{}", artifact.sha256))
                     .await?;
                 let mut remaining = artifact.bytes;
+                let mut hash = sha2::Sha256::new();
                 while let Some(chunk) = response.chunk().await? {
                     if chunk.len() as u64 > remaining {
                         return Err("artifact exceeds declared length".into());
                     }
+                    hash.update(&chunk);
                     output.write_all(&chunk).await?;
                     remaining -= chunk.len() as u64;
                 }
                 if remaining != 0 {
                     return Err("artifact incomplete".into());
                 }
+                if hex::encode(hash.finalize()) != artifact.sha256 {
+                    return Err("artifact digest mismatch".into());
+                }
                 transfer += fetching.elapsed();
                 output.sync_all().await?;
                 drop(output);
                 downloaded_files += 1;
-                let file = artifact.clone();
-                let path = target.clone();
-                tokio::task::spawn_blocking(move || publication::verify_file(&path, &file))
-                    .await??;
+                publication::record_received_file(&target, artifact, &target)?;
             }
             if artifact.path == "shards.json" {
                 let map: transparent_filter::ShardMap =
@@ -361,7 +364,7 @@ mod object_tests {
     }
 
     #[test]
-    fn only_unsupported_links_fall_back_to_a_verified_copy() {
+    fn only_unsupported_links_fall_back_to_a_size_checked_copy() {
         let root = tempfile::tempdir().unwrap();
         let (path, artifact) = object(root.path(), b"immutable");
         let unsupported = || std::io::Error::from(std::io::ErrorKind::Unsupported);
@@ -373,7 +376,7 @@ mod object_tests {
             std::fs::metadata(&path).unwrap().ino()
         );
         let mut wrong = artifact.clone();
-        wrong.sha256 = "00".repeat(32);
+        wrong.bytes += 1;
         assert!(
             link_object(&path, &root.path().join("bad"), &wrong, |_, _| Err(
                 unsupported()
