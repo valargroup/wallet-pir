@@ -61,7 +61,9 @@ impl Published {
         })
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .inventory()
+        .clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -457,7 +459,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
             Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap();
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -694,11 +696,12 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(!before.current.eligible);
         assert_eq!(before.observed_unix_ms, 0);
         let prepare_root = root.clone();
-        let inventory = tokio::task::spawn_blocking(move || {
+        let prepared = tokio::task::spawn_blocking(move || {
             enhance_publisher::publication::prepare(&prepare_root,
                 Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
                 |start, count| Ok((start..start + count as u64).flat_map(record).collect()))
         }).await.unwrap().unwrap();
+        let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -707,7 +710,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
             anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
             sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
         };
-        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        distribution.publish_prepared(manifest.clone(), prepared).await.unwrap();
         let current: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
@@ -807,7 +810,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         let initial = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(
             &prepare_root, Lifecycle::default().coverage(1, Geometry::default()).unwrap(),
             &[(0, "0".into())].into(), |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-        )).await.unwrap().unwrap();
+        )).await.unwrap().unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
@@ -843,7 +846,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         pinned.read_to_string(&mut bytes).unwrap();
         assert_eq!(bytes, "interrupted candidate", "already-open streams survive collection");
         assert!(root.join("objects/operator-note").exists());
-        initial.verify(&root).unwrap();
+        enhance_publisher::publication::verify(&root, initial).unwrap();
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());

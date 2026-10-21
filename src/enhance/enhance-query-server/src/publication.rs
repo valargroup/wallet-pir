@@ -123,16 +123,6 @@ impl Object {
         self.validate()?;
         Ok(root.join("objects").join(&self.sha256))
     }
-
-    pub fn verify(&self, root: &Path) -> Result<(), String> {
-        let path = self.path(root)?;
-        if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() != self.bytes
-            || prepared_packing::hash_file(&path)? != self.sha256
-        {
-            return Err("publication object checksum or length mismatch".into());
-        }
-        Ok(())
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -248,17 +238,5 @@ impl Inventory {
             }
         }
         Ok(true)
-    }
-
-    /// Verify every referenced file before a publisher makes the inventory current.
-    pub fn verify(&self, root: &Path) -> Result<(), String> {
-        self.validate()?;
-        for domain in &self.domains {
-            for object in domain.rows.iter().chain([&domain.hint, &domain.public]) {
-                object.verify(root)?;
-            }
-            domain.packing_object().verify(root)?;
-        }
-        Ok(())
     }
 }

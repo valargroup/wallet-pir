@@ -122,6 +122,7 @@ links when removing superseded documents. Production protocol defaults, rollout
 floors, qualification durations, and rollback gates are not iteration shortcuts.
 
 - Commit only code, tests, configuration and concise documentation needed for the requested change; keep generated run output, AI task reports and exploratory scripts out of Git, and promote only essential evidence or tested reusable tools.
+- Never add, modify, rename or delete specification files under docs/spec/ as part of a PR unless a human explicitly instructs that specification change; implementation, refactoring and documentation requests alone do not authorize changing specifications.
 
 ## Dependency and release boundary
 

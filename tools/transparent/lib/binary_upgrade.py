@@ -751,15 +751,28 @@ class UpgradeDeployer(Deployer):
             _, problems = self.upgrade.authority_problems(self.ex)
             if problems:
                 return False, '; '.join(problems)
-        if (ok and record['role'] == 'worker' and (self.upgrade.request.get('previous_maps') or self.upgrade.request.get('repair'))
-                and expected == self.upgrade.request['release']['binary_sha256']):
-            # A recovered provider can briefly restore its old active record.
-            # Wait for current publication readiness within the existing budget.
-            problems = self.upgrade.ready_problems(
-                self.ex, record['key'], record['host'],
-                record['verify'].get('ready_url') or record['verify']['health'])
-            if problems:
-                return False, '; '.join(problems)
+        if ok and record['role'] == 'worker' and expected == self.upgrade.request['release']['binary_sha256']:
+            # The process can serve on demand before its background warmup
+            # finishes. Keep the existing full-warm acceptance gate in the
+            # bounded wait instead of failing the immediate post-start check.
+            status, body = self.ex.http_get(record['host'],
+                                            record['verify'].get('ready_url') or record['verify']['health'])
+            try:
+                document = json.loads(body) if status == 200 else {}
+            except ValueError:
+                document = {}
+            if isinstance(document, dict):
+                warm, target = document.get('warm_runtimes'), document.get('target_runtimes')
+                if ((type(warm) is int and type(target) is int and 0 <= warm < target)
+                        or (self.upgrade.request['service'] == 'transparent-display'
+                            and document.get('warm') is False)):
+                    return False, 'background warming has not reached the acceptance target'
+            if self.upgrade.request.get('previous_maps') or self.upgrade.request.get('repair'):
+                problems = self.upgrade.ready_problems(
+                    self.ex, record['key'], record['host'],
+                    record['verify'].get('ready_url') or record['verify']['health'])
+                if problems:
+                    return False, '; '.join(problems)
         return ok, reason
 
     def wait_verified(self, record, expected):

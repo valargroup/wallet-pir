@@ -9,6 +9,53 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def interrupted_stop(self):
+        self.request['resume_load'] = False
+        self.ex.systemctl('coordinator', 'stop', publisher.LOAD)
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        original = self.ex.systemctl
+        def systemctl(host, *args):
+            result = original(host, *args)
+            if args == ('stop', publisher.UNIT):
+                raise RemoteError('connection lost after stop')
+            return result
+        self.ex.systemctl = systemctl
+        with self.assertRaises(RemoteError):
+            self.deploy()
+        self.ex.systemctl = original
+        self.ex.effects.clear()
+
+    def test_interrupted_stop_installs_staged_candidate_without_restarting_predecessor(self):
+        self.interrupted_stop()
+        self.assertEqual(self.target.continue_installation()['phase'], 'committed')
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'],
+                         self.request['release']['binary_sha256'])
+        self.assertFalse(any(args[:2] == ('stop', publisher.UNIT) for args in self.ex.effects))
+
+    def test_installation_recovery_refuses_changed_configuration(self):
+        self.interrupted_stop()
+        self.ex.put('coordinator', publisher.CONFIG, 'changed')
+        with self.assertRaisesRegex(DeployError, 'managed file changed'):
+            self.target.continue_installation()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_installation_recovery_refuses_changed_staged_binary(self):
+        self.interrupted_stop()
+        journal = self.target.latest()
+        self.ex.put('coordinator', journal['plan']['binary'], 'foreign binary')
+        with self.assertRaisesRegex(DeployError, 'staged publisher changed'):
+            self.target.continue_installation()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_installation_recovery_refuses_a_running_publisher(self):
+        self.interrupted_stop()
+        self.ex.systemctl('coordinator', 'start', publisher.UNIT)
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'predecessor is not stopped'):
+            self.target.continue_installation()
+        self.assertEqual(self.ex.effects, [])
+
     def test_interrupted_verification_resumes_without_restarting_publisher(self):
         self.ex.fail_probe = True
         with self.assertRaises(DeployError):

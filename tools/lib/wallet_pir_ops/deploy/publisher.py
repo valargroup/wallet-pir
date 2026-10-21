@@ -458,6 +458,50 @@ class Cutover:
             self.save(journal, 'committed')
             return journal
 
+    def continue_installation(self):
+        """Resume only a lost connection after the recorded predecessor stop."""
+        require(self.request['schema'] == SERVING_SCHEMA and not self.resume_load,
+                'installation recovery requires publisher-cutover/3 with its checker stopped')
+        with production_lock(self.inventory, self.ex) as self.lock:
+            journal = self.latest()
+            require(journal is not None and journal['request'] == self.request
+                    and journal['phase'] == 'installing'
+                    and journal['intent'] == 'stop ' + UNIT
+                    and journal['completed'] == ['stage executable', 'stage configuration'],
+                    'installation recovery requires the interrupted predecessor stop')
+            plan = journal['plan']
+            self.resources()
+            require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
+                    'managed file changed before installation recovery')
+            require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
+                    'publisher input changed before installation recovery')
+            require(self.ex.sha256(self.host, plan['binary']) == self.request['release']['binary_sha256'],
+                    'staged publisher changed before installation recovery')
+            for name, before in plan['units'].items():
+                observed = stable_unit(self.ex.probe_unit(self.host, name))
+                if name == UNIT:
+                    require(not observed['main_pid'] and observed['active_state'] in ('inactive', 'failed')
+                            and all(observed[k] == before[k] for k in
+                                    ('fragment_text', 'drop_ins', 'fragment_path', 'unit_file_state')),
+                            'predecessor is not stopped on its recorded configuration')
+                else:
+                    require(observed == before, 'publisher fleet changed before installation recovery')
+            if not self.resume_load:
+                self.require_stopped_load()
+            if self.serving:
+                self.serving.unchanged_during_staging(plan['serving'])
+            self.unlocked()
+            if self.serving:
+                self.serving.activate(journal)
+            for path, text in plan['desired'].items():
+                mode = 0o644 if path.startswith('/etc/systemd/') else 0o600
+                self.effect(journal, 'install ' + path, lambda path=path, text=text, mode=mode: self.write(path, text, mode))
+            self.effect(journal, 'reload services', lambda: self.ex.systemctl(self.host, 'daemon-reload'))
+            self.effect(journal, 'enable publisher', lambda: self.ex.systemctl(self.host, 'enable', UNIT))
+            self.effect(journal, 'start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
+            self.save(journal, 'verifying')
+        return self.verify()
+
     def verify(self):
         """Finish checks after a lost connection, without restarting a running candidate."""
         require(self.request['schema'] == SERVING_SCHEMA, 'verification recovery requires publisher-cutover/3')
@@ -603,7 +647,7 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -618,13 +662,15 @@ def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
     request, inventory = load_request(args.request, args.request_sha256,
-                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify'))
+                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify', 'continue'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
         target.serving.binary = getattr(args, 'serving_binary', None)
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
+    if operation == 'continue':
+        return target.continue_installation()
     if operation == 'restart':
         return target.restart()
     if operation == 'verify':

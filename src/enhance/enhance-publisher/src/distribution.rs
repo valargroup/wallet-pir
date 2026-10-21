@@ -1,7 +1,10 @@
 //! Read-only HTTPS distribution backed by immutable material and fresh node checks.
 //! Publication and revocation changes are durable before any HTTP observer can
 //! see them. Restart never restores authority from cached metadata alone.
-use crate::{publication::read_metadata, zakura::ZakuraClient};
+use crate::{
+    publication::{self, read_metadata, Prepared},
+    zakura::ZakuraClient,
+};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path as HttpPath, State},
@@ -129,9 +132,36 @@ impl Distribution {
             && disk.current.manifest.as_ref() == Some(manifest)
     }
 
-    /// Install a completed publication. No consumer address or acknowledgment
-    /// participates; the only remote dependency is the canonical chain source.
+    /// Install a completed publication after hashing every object it names.
+    /// No consumer address or acknowledgment participates; the only remote
+    /// dependency is the canonical chain source.
     pub async fn publish(&self, manifest: Manifest, inventory: Inventory) -> Result<(), String> {
+        if !inventory.supports(&manifest)? {
+            return Err("inventory differs from wallet manifest".into());
+        }
+        self.install(manifest, move |root| publication::verify(root, inventory))
+            .await
+    }
+
+    /// Install material this process prepared, rehashing only objects whose
+    /// file changed since preparation hashed it.
+    pub async fn publish_prepared(
+        &self,
+        manifest: Manifest,
+        prepared: Prepared,
+    ) -> Result<(), String> {
+        if !prepared.inventory().supports(&manifest)? {
+            return Err("inventory differs from wallet manifest".into());
+        }
+        self.install(manifest, move |root| prepared.recheck(root))
+            .await
+    }
+
+    async fn install(
+        &self,
+        manifest: Manifest,
+        verify: impl FnOnce(&Path) -> Result<Prepared, String> + Send + 'static,
+    ) -> Result<(), String> {
         // Use the producer's lock too: collection must not race a candidate
         // writer, another commit, or verification of a not-yet-current object.
         let preparation = OpenOptions::new()
@@ -144,18 +174,15 @@ impl Distribution {
             .try_lock()
             .map_err(|_| "Enhance publication preparation already owned")?;
         let predecessor = self.disk.lock().unwrap().current.clone();
-        if !inventory.supports(&manifest)? {
-            return Err("inventory differs from wallet manifest".into());
-        }
         let root = self.root.clone();
-        let checked = inventory.clone();
-        tokio::task::spawn_blocking(move || checked.verify(&root))
+        let prepared = tokio::task::spawn_blocking(move || verify(&root))
             .await
             .map_err(|e| e.to_string())??;
+        let inventory = prepared.inventory();
         self.canonical(&manifest).await?;
-        let bytes = serde_json::to_vec(&inventory).map_err(|e| e.to_string())?;
+        let bytes = serde_json::to_vec(inventory).map_err(|e| e.to_string())?;
         let object = Object {
-            sha256: digest(&inventory),
+            sha256: digest(inventory),
             bytes: bytes.len() as u64,
         };
         if object.bytes > METADATA_LIMIT {

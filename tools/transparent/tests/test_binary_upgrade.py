@@ -164,6 +164,26 @@ class HistoryUpgrade(Harness):
     def load_active(self):
         return self.fake.probe_unit('coordinator', LOAD_UNIT)['active_state'] == 'active'
 
+    def test_ready_worker_finishes_background_warming_before_acceptance(self):
+        self.run_cli('baseline')
+        original = self.fake.http_get
+        polls = [0]
+        def warming(host, url, timeout=5):
+            status, body = original(host, url, timeout)
+            if host == 'v12' and ':8093/' in url and url.endswith('/v1/ready'):
+                current = self.fake.probe_unit(host, 'transparent-v12-archive.service')['exe_sha256']
+                if current == sha256(NEW) and polls[0] < 3:
+                    polls[0] += 1
+                    document = json.loads(body)
+                    document.update(ready=True, warm_runtimes=1)
+                    return status, json.dumps(document)
+            return status, body
+        self.fake.http_get = warming
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(polls[0], 3)
+        self.assertEqual(set(self.running().values()), {sha256(NEW)})
+
     def test_archive_restore_uses_the_product_warmup_budget(self):
         self.run_cli('baseline')
         http_get = self.fake.http_get
