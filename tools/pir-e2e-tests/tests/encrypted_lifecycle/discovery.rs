@@ -259,13 +259,10 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
 }
 
 #[test]
-fn legacy_push_roles_do_not_require_discovery() {
-    let role: ServingRole = serde_json::from_value(serde_json::json!({"role": "worker",
+fn worker_configuration_requires_its_publisher_source() {
+    assert!(
+        serde_json::from_value::<ServingRole>(serde_json::json!({"role": "worker",
         "listen": "127.0.0.1:1", "data_dir": "/unused"}))
-    .unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(role.discover()).unwrap();
+        .is_err()
+    );
 }

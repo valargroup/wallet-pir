@@ -150,7 +150,7 @@ pub async fn run_worker_on(
     let manager = pir_sync_manager::SyncManager::new(worker.synchronizer()?);
     tokio::select! {
         result = crate::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
-        error = manager.run() => return Err(format!("Enhance worker synchronization stopped: {error}").into()),
+        error = manager.run() => return Err(error),
     }
     Ok(())
 }
@@ -189,7 +189,7 @@ pub async fn run_ingress_on(
         )
         .map(|_| ())
     };
-    tokio::select! { result = serving => result?, error = manager.run() => return Err(format!("Enhance ingress synchronization stopped: {error}").into()), }
+    tokio::select! { result = serving => result?, error = manager.run() => return Err(error), }
     Ok(())
 }
 pub async fn run_router(config: RouterConfig) -> Result<(), Error> {
@@ -219,7 +219,7 @@ pub async fn run_router_on(
         )
         .map(|_| ())
     };
-    tokio::select! { result = serving => result?, error = manager.run() => return Err(format!("Enhance router synchronization stopped: {error}").into()), }
+    tokio::select! { result = serving => result?, error = manager.run() => return Err(error), }
     Ok(())
 }
 fn stop_pair(
