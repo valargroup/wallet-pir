@@ -139,7 +139,7 @@ extern "C" fn cleanup_hint_fixtures() {
         .take();
 }
 
-fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
+pub(super) fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
     std::fs::create_dir_all(target).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
@@ -170,7 +170,10 @@ fn fixture_plan(
     fixture
 }
 
-fn seed_hint_fixture(root: &std::path::Path, plan: &enhance_query_server::runtime::DomainPlan) {
+pub(super) fn seed_hint_fixture(
+    root: &std::path::Path,
+    plan: &enhance_query_server::runtime::DomainPlan,
+) {
     let prepared = shared_hint_fixture(plan);
     let cache = prepared.parent().unwrap();
     std::fs::create_dir_all(cache).unwrap();

@@ -1,5 +1,5 @@
 //! The real publisher distribution router, node RPC and TLS transport.
-use super::encrypted::{record, serve};
+use super::encrypted::{copy_hint_fixture, record, seed_hint_fixture, serve, shared_hint_fixture};
 use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
@@ -49,21 +49,11 @@ impl Published {
         .unwrap();
         let publisher = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(
-                &root,
-                Lifecycle::default()
-                    .coverage(67, Geometry::default())
-                    .unwrap(),
-                &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap()
-        .inventory()
-        .clone();
+        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&root, 67))
+            .await
+            .unwrap()
+            .inventory()
+            .clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -111,6 +101,7 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         client::QuerySession, ingress_sync, protocol::ShardSession, router_sync, worker_sync,
         RECORD_BYTES,
     };
+    warm_publication(67);
     tokio::time::timeout(Duration::from_secs(30), async {
         let fixture = Published::new().await;
         let worker = worker_sync::Worker::open(
@@ -480,6 +471,7 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
     use enhance_query_server::{router_sync, worker_sync};
+    warm_publication(67);
     tokio::time::timeout(Duration::from_secs(30), async {
         let fixture = Published::new().await;
         let worker = worker_sync::Worker::open(
@@ -583,6 +575,7 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
     use enhance_query_server::{
         client::QuerySession, protocol::ShardSession, router_sync, worker_sync, RECORD_BYTES,
     };
+    warm_publication(67);
     tokio::time::timeout(Duration::from_secs(30), async {
         let fixture = Published::new().await;
         let worker_root = fixture.scratch.path().join("worker");
@@ -817,6 +810,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         worker_sync::{self, Readiness, ReadinessRequest},
         PackingBudget, RECORD_BYTES,
     };
+    warm_publication(67);
     tokio::time::timeout(Duration::from_secs(30), async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
@@ -829,9 +823,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let upstream = serve(publisher(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
-        let inventory = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(&preparing,
-            Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-            |start, count| Ok((start..start + count as u64).flat_map(record).collect()))).await.unwrap().unwrap().inventory().clone();
+        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&preparing, 67)).await.unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -934,6 +926,84 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     }).await.expect("autonomous worker lifecycle exceeded correctness budget");
 }
 
+fn fixture_records(start: u64, count: usize) -> Result<Vec<u8>, String> {
+    Ok((start..start + count as u64).flat_map(record).collect())
+}
+
+fn fixture_coverage(count: u64) -> protocol::Coverage {
+    Lifecycle::default()
+        .coverage(count, Geometry::default())
+        .unwrap()
+}
+
+/// One complete publisher preparation of `count` fixture records, built once
+/// per process (or per `WALLET_PIR_TEST_RUNTIME_CACHE`) beside the shared hint
+/// fixtures. A cold build is the publisher's whole deployed-geometry
+/// preparation, including packing.
+fn shared_publication(count: u64) -> std::path::PathBuf {
+    let coverage = fixture_coverage(count);
+    let plan =
+        enhance_query_server::runtime::plan(coverage.shards[0].clone(), fixture_records).unwrap();
+    let hints = shared_hint_fixture(&plan);
+    let cache = hints.parent().unwrap();
+    std::fs::create_dir_all(cache).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.join("enhance-publications.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let prepared = cache.join(format!(
+        "enhance-publication-{count}-{}",
+        hints.file_name().unwrap().to_str().unwrap()
+    ));
+    if !prepared.exists() {
+        let temporary = tempfile::tempdir_in(cache).unwrap();
+        seed_hint_fixture(&temporary.path().join("preparation"), &plan);
+        enhance_publisher::publication::prepare(
+            temporary.path(),
+            coverage,
+            &[(0, "0".into())].into(),
+            fixture_records,
+        )
+        .unwrap();
+        std::fs::rename(temporary.path(), &prepared).unwrap();
+    }
+    prepared
+}
+
+/// Builds the shared publication before a case's correctness budget starts and
+/// reports its time, so the budget measures the case rather than one cold
+/// deployed-geometry preparation shared by every case.
+fn warm_publication(count: u64) {
+    let started = std::time::Instant::now();
+    shared_publication(count);
+    eprintln!(
+        "shared {count}-record publication ready in {:?}",
+        started.elapsed()
+    );
+}
+
+/// Prepares a publication of `count` fixture records through the real
+/// publisher. The case's objects and domain records start as copies of the
+/// shared preparation, so the publisher takes its retained-domain path: it
+/// reinstalls the rows, checks the retained domain identity and hashes every
+/// object.
+fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publication::Prepared {
+    let shared = shared_publication(count);
+    for directory in ["objects", "domains"] {
+        copy_hint_fixture(&shared.join(directory), &root.join(directory));
+    }
+    enhance_publisher::publication::prepare(
+        root,
+        fixture_coverage(count),
+        &[(0, "0".into())].into(),
+        fixture_records,
+    )
+    .unwrap()
+}
+
 /// A publisher's distribution routes with the service discovery that a
 /// unified publisher serves beside them.
 fn publisher(distribution: &Distribution) -> axum::Router {
@@ -1032,6 +1102,7 @@ async fn check_object(tls: &Tls, path: &str, object: &Object) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cannot_renew_authority()
 {
+    warm_publication(67);
     tokio::time::timeout(Duration::from_secs(30), async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
@@ -1068,11 +1139,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(!before.current.eligible);
         assert_eq!(before.observed_unix_ms, 0);
         let prepare_root = root.clone();
-        let prepared = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(&prepare_root,
-                Lifecycle::default().coverage(67, Geometry::default()).unwrap(), &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()))
-        }).await.unwrap().unwrap();
+        let prepared = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap();
         let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
@@ -1167,6 +1234,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_keeps_retained_material_and_open_files_and_removes_interrupted_candidates() {
     use std::io::Read;
+    warm_publication(1);
     tokio::time::timeout(Duration::from_secs(30), async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
@@ -1179,10 +1247,8 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
-        let initial = tokio::task::spawn_blocking(move || enhance_publisher::publication::prepare(
-            &prepare_root, Lifecycle::default().coverage(1, Geometry::default()).unwrap(),
-            &[(0, "0".into())].into(), |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-        )).await.unwrap().unwrap().inventory().clone();
+        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 1))
+            .await.unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
