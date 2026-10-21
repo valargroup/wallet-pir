@@ -139,7 +139,7 @@ extern "C" fn cleanup_hint_fixtures() {
         .take();
 }
 
-fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
+pub(super) fn copy_hint_fixture(source: &std::path::Path, target: &std::path::Path) {
     std::fs::create_dir_all(target).unwrap();
     for entry in std::fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
