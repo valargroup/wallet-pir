@@ -224,6 +224,9 @@ throughout and revokes on a confirmed reorg; an outage keeps serving. A revoked
 but still-recorded publication is verified and confirmed again. A restart
 re-reads the record and verifies everything before serving; the
 `serve-publication.json` status file in `state_dir` is a report, never an input.
+`history-revision.json` beside it records the highest history revision accepted,
+written before a correction serves, and a record below it is refused, so a restart
+never serves older, uncorrected history again. Deleting it is an explicit rollback.
 Health's `publication` field reports the assigned, loaded and preparing records
 and the latest refusal, typed as `invalid_source`, `unavailable`,
 `noncanonical` or `superseded`. `--check` runs the same verification of the
