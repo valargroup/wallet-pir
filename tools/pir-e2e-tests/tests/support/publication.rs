@@ -16,6 +16,9 @@ pub(crate) struct Published {
 }
 impl Published {
     pub(crate) async fn new() -> Self {
+        Self::with_records(67).await
+    }
+    pub(crate) async fn with_records(count: u64) -> Self {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
@@ -34,7 +37,7 @@ impl Published {
             enhance_publisher::publication::prepare(
                 &root,
                 Lifecycle::default()
-                    .coverage(67, Geometry::default())
+                    .coverage(count, Geometry::default())
                     .unwrap(),
                 &[(0, "0".into())].into(),
                 |start, count| Ok((start..start + count as u64).flat_map(record).collect()),

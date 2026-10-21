@@ -468,8 +468,8 @@ impl Synchronizer {
         let worker = self.worker.clone();
         let loaded = tokio::task::spawn_blocking(move || worker.load(domains)).await??;
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("Enhance candidate superseded while loading".into());
+        if !lease.continues(&observed) {
+            return Err("Enhance publication withdrawn while loading".into());
         }
         lease.check(&manifest, &self.worker.safety)?;
         let mut inner = self.worker.inner.lock().unwrap();

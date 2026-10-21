@@ -654,8 +654,8 @@ impl Synchronizer {
             return Ok(());
         };
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("router candidate superseded while loading".into());
+        if !lease.continues(&observed) {
+            return Err("router publication withdrawn while loading".into());
         }
         let guard = self.router.authority.install(manifest.clone(), lease)?;
         guard.check()?;

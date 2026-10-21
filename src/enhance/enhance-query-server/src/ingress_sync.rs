@@ -397,7 +397,7 @@ impl Synchronizer {
             .manifest
             .clone()
             .ok_or("no complete Enhance publication")?;
-        let lease =
+        let observed =
             Lease::from_response(response.clone(), &manifest, &self.ingress.authority.safety)?;
         {
             let mut inner = self.ingress.inner.lock().unwrap();
@@ -406,7 +406,7 @@ impl Synchronizer {
                 .as_ref()
                 .is_some_and(|view| view.manifest == manifest)
             {
-                self.ingress.authority.install(manifest, lease)?;
+                self.ingress.authority.install(manifest, observed)?;
                 return Ok(());
             }
             // Make room before asking downstream to retain another generation.
@@ -420,8 +420,8 @@ impl Synchronizer {
             return Ok(());
         };
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("ingress publication superseded during readiness".into());
+        if !lease.continues(&observed) {
+            return Err("ingress publication withdrawn during readiness".into());
         }
         let guard = self.ingress.authority.install(manifest.clone(), lease)?;
         guard.check()?;

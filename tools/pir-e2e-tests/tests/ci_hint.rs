@@ -12,10 +12,12 @@ use enhance_query_server::{
     wire::encode_crs_blocks,
 };
 use pir_e2e_tests::enhance_fixture::record;
-use pir_e2e_tests::enhance_fixture::System;
+#[path = "support/publication.rs"]
+#[allow(dead_code)]
+mod publication_source;
 async fn hint_matches_generic(count: u64) {
-    let system = System::start((0..count).map(record).collect()).await;
-    let source = &system.source;
+    let fixture = publication_source::Published::with_records(count).await;
+    let source = fixture.source();
     let certificate = reqwest::Certificate::from_pem(
         &std::fs::read(source.trusted_ca.as_ref().unwrap()).unwrap(),
     )
