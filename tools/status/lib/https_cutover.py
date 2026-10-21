@@ -71,7 +71,7 @@ def load_request(path, expected):
     for check in request['checks'].values():
         require(set(check) == {'host', 'argv', 'timeout'} and isinstance(check['argv'], list) and check['argv']
                 and all(isinstance(a, str) and a for a in check['argv']) and type(check['timeout']) is int
-                and 1 <= check['timeout'] <= 120, 'invalid exact check')
+                and 1 <= check['timeout'] <= 900, 'invalid exact check')
     return request
 
 
