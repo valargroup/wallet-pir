@@ -132,7 +132,7 @@ pub struct Inner {
 pub struct MaterialVerification {
     /// Files loaded and fully self-checked here.
     pub checked: usize,
-    /// Files the previous snapshot checked whose inode is unchanged.
+    /// Files whose bytes match an earlier successful check.
     pub reused: usize,
 }
 
@@ -553,14 +553,18 @@ impl ServiceState {
                     let path = shipped.path(&key, shared, source.sha256());
                     let name = path.file_name().ok_or("unnamed runtime")?.to_owned();
                     let file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-                    let unchanged = proven.get(&name).filter(|proven| {
+                    let proof = proven
+                        .get(&name)
+                        .copied()
+                        .or_else(|| self.inner.cache.verified_shipped(&key, &name));
+                    let unchanged = proof.filter(|proven| {
                         ShippedRuntimes::checksum_file(&file, &key, shared, source.sha256())
-                            .is_ok_and(|checksum| &checksum == *proven)
+                            .is_ok_and(|checksum| checksum == *proven)
                     });
                     let checksum = match unchanged {
                         Some(checksum) => {
                             done.reused += 1;
-                            *checksum
+                            checksum
                         }
                         None => {
                             let (runtime, checksum) = ShippedRuntimes::load_file_checked(

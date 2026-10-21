@@ -783,3 +783,89 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
         .unwrap_err();
     assert!(transparent_query_server::is_incompatible(&error), "{error}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 4, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let mut layout = fixture::layout(&store, 1, 16);
+    layout.seal.archive_target = 1_000;
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &layout, 3).unwrap();
+    let next = bootstrap(&store, &scratch.path().join("next"), &layout, 4).unwrap();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id": request["id"], "result": hash, "error": null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let node_task = tokio::spawn(async move {
+        axum::serve(listener, node).await.unwrap();
+    });
+    let cookie = scratch.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    distribution
+        .finalize(initial.candidate.clone(), vec![])
+        .await
+        .unwrap();
+    let tls_root = scratch.path().join("tls");
+    std::fs::create_dir(&tls_root).unwrap();
+    let tls = tls_router(&tls_root, distribution.router()).await;
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let consumer_root = scratch.path().join("consumer");
+    let mut consumer = manager(&consumer_root, &tls.origin, tls.cert.clone()).await;
+    let checking = tokio::spawn(async move {
+        let result = consumer.poll_once().await;
+        (consumer, result)
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !tls.control.with_extension("entered").exists() && !checking.is_finished() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    if checking.is_finished() {
+        let (_, result) = checking.await.unwrap();
+        panic!("bootstrap stopped before the final source check: {result:?}");
+    }
+    assert!(tls.control.with_extension("entered").exists());
+    distribution
+        .finalize(next.candidate.clone(), vec![initial.candidate])
+        .await
+        .unwrap();
+    std::fs::write(&tls.control, "").unwrap();
+    let (mut consumer, result) = checking.await.unwrap();
+    assert!(
+        result.is_err(),
+        "a changed source must refuse the first activation"
+    );
+    assert!(
+        !consumer.ready().await,
+        "checked bootstrap data cannot serve before activation"
+    );
+    assert!(!consumer_root.join("active.json").exists());
+    consumer.poll_once().await.unwrap();
+    assert!(
+        consumer.ready().await,
+        "the same manager must recover on the fresh publication"
+    );
+    let active: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(consumer_root.join("active.json")).unwrap()).unwrap();
+    assert_eq!(active["map_sha256"], next.map_sha256);
+    node_task.abort();
+}

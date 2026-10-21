@@ -28,6 +28,7 @@ pub mod config;
 pub mod control;
 #[cfg(feature = "transparent-history")]
 pub mod history;
+mod objects;
 pub mod preparation;
 pub mod request;
 #[cfg(feature = "transparent-history")]
