@@ -113,14 +113,39 @@ fn previous_state(path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| e.to_string())
 }
 fn save<T: Serialize>(root: &Path, name: &str, value: &T) -> Result<(), String> {
+    save_with_sync(root, name, value, |directory| {
+        File::open(directory)?.sync_all()
+    })
+}
+
+// Keep the rename and its durability barrier together. A failed barrier must
+// stop the handoff before the next state file or completion receipt is written.
+fn save_with_sync<T: Serialize>(
+    root: &Path,
+    name: &str,
+    value: &T,
+    sync: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     artifact::write_atomic(root, name, |file| {
         serde_json::to_writer(file, value).map_err(std::io::Error::other)
     })
-    .map(drop)
+    .and_then(|_| sync(root))
     .map_err(|e| e.to_string())
 }
 fn lock(root: &Path, name: &str) -> Result<File, String> {
     fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    // The data directory already exists. Persist new publication/https entries
+    // in their parent before any receipt can refer to files beneath them.
+    File::open(root)
+        .and_then(|directory| directory.sync_all())
+        .and_then(|_| {
+            File::open(
+                root.parent()
+                    .ok_or_else(|| std::io::Error::other("state directory has no parent"))?,
+            )?
+            .sync_all()
+        })
+        .map_err(|e| e.to_string())?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -472,6 +497,36 @@ pub fn transfer(data: &Path, rollback: bool, transaction: &str) -> Result<Value,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_save_syncs_the_renamed_file_directory_and_reports_barrier_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let value = json!({"rollback_epoch": 6});
+        let mut synced = false;
+        save_with_sync(root.path(), "reservation.json", &value, |directory| {
+            assert_eq!(directory, root.path());
+            assert_eq!(
+                read::<Value>(&directory.join("reservation.json")).unwrap(),
+                value
+            );
+            synced = true;
+            File::open(directory)?.sync_all()
+        })
+        .unwrap();
+        assert!(
+            synced,
+            "a successful save must persist the renamed directory entry"
+        );
+
+        let error = save_with_sync(root.path(), "reservation.json", &value, |_| {
+            Err(std::io::Error::other("directory sync failed"))
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("directory sync failed"),
+            "a failed durability barrier must stop the handoff"
+        );
+    }
 
     fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
         super::transfer(data, rollback, "publisher-fixture")
