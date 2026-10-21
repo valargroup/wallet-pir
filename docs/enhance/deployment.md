@@ -80,6 +80,11 @@ the five-second authority window has expired between polls. Neither a successful
 poll nor a cached file renews that window. Restart requires a fresh publisher
 observation before any material is ready. Existing push-controlled roles remain
 until the complete consumer path is implemented and qualified for direct cutover.
+Autonomous workers and routers check publisher service discovery at startup,
+before every pass and before every on-demand authority refresh; see
+[publisher compatibility](../query-server.md#publisher-compatibility). Forward
+the publisher's `/.well-known/pir-service-discovery` path on the same HTTPS
+origin. There is no bypass.
 
 The autonomous packing-router increment accepts `synchronization` settings with
 the same HTTPS source and budgets, plus a `workers` map from domain IDs to one or
