@@ -5,12 +5,10 @@ mod boundary_recovery_model;
 mod record_layout;
 #[path = "status_routes.rs"]
 mod status_routes;
-use enhance_query_server::{
-    protocol::{Geometry, Lifecycle},
-    publication::{AuthorityResponse, Inventory, PREFIX},
-};
+use enhance_query_server::publication::{AuthorityResponse, Inventory, PREFIX};
 #[cfg(feature = "native-reinspiring")]
 use enhance_query_server::{runtime::Engine, wire::encode_crs_blocks};
+#[cfg(feature = "native-reinspiring")]
 use pir_e2e_tests::enhance_fixture::record;
 #[path = "support/publication.rs"]
 #[allow(dead_code)]
@@ -100,22 +98,21 @@ fn published_hint_rejects_damage_before_loading() {
     use enhance_query_server::artifact::PublicationArtifact;
     use sha2::{Digest, Sha256};
     let root = tempfile::tempdir().unwrap();
-    let coverage = Lifecycle::default()
-        .coverage(67, Geometry::default())
-        .unwrap();
-    let inventory = enhance_publisher::publication::prepare(
-        root.path(),
-        coverage,
-        &[(0, "0".into())].into(),
-        |start, n| Ok((start..start + n as u64).flat_map(record).collect()),
-    )
-    .unwrap();
-    let object = &inventory.domains[0].hint;
-    let original = std::fs::read(object.path(root.path()).unwrap()).unwrap();
-    let degree = enhance_query_server::runtime::rlwe().d;
-    let per_block = (degree * 8 + 4) * degree + 4;
-    assert_eq!((original.len() - 8) % per_block, 0);
-    let blocks = (original.len() - 8) / per_block;
+    // Byte validation needs a valid encoding, not an evaluator. The TLS oracle
+    // cases above independently check the publisher's real prepared hint.
+    let degree = 4usize;
+    let blocks = 2usize;
+    let mut original = b"MPH1".to_vec();
+    original.extend_from_slice(&(blocks as u32).to_le_bytes());
+    for block in 0..blocks {
+        original.extend_from_slice(&(degree as u32).to_le_bytes());
+        for row in 0..degree {
+            original.extend_from_slice(&(degree as u32).to_le_bytes());
+            for column in 0..degree {
+                original.extend_from_slice(&((block + row + column) as u64).to_le_bytes());
+            }
+        }
+    }
     let digest = hex::encode(Sha256::digest(&original));
     let path = root.path().join("damaged-hint");
     for fault in ["corrupt", "truncated", "shape", "trailing", "format"] {
