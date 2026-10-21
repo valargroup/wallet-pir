@@ -3949,6 +3949,39 @@ component. `baseline` records both components.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
 
+## Continuous load repair
+
+`transparent-load-repair-{plan,preflight,deploy,status,rollback}` (`tools/transparent/lib/load_repair.py`)
+restores a stopped `transparent-v2-5qps-continuous.service` when its checker script is at fault. It
+installs this operations release's `transparent-quality-load.py` at the immutable
+`/srv/transparent-activity/ops/load-scripts/<sha256>/` and changes only the unit's script path.
+It starts only that unit. The request (`transparent-load-repair/1`) pins:
+
+- the fragment bytes (no drop-ins) and the script it runs now;
+- the load's `pins.json`, `rate-query` and `fixture.json`;
+- each pinned worker's `{host, unit}`;
+- an independent encrypted-answer `exact_check` `{host, argv, timeout}`. Copy it from the
+  inventory's History exact check.
+
+Plan and preflight are read-only; preflight also runs the exact check. Deploy takes the reviewed
+`plan_sha256` and holds the production lock. It refuses a `latched.json`, a worker that is not
+running its pinned binary, changed load inputs, a running unit or an unfinished transaction. It
+then stages the script and runs the exact check, and only after that writes the unit and starts
+it. It waits up to 300 s for `status.json` to report `running`. A failure or `rollback` stops the
+unit and restores the journaled previous fragment. The old script, pins, permit, latch and
+incident logs are never written. Deploy requires the installed operations release to be
+`script.git_sha`.
+
+```sh
+D=tools/scripts/wallet-pir-deploy.py; R=(--request repair.json --request-sha256 "$(sha256sum < repair.json | cut -d' ' -f1)")
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-plan "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-preflight "${R[@]}"
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-deploy "${R[@]}" --expect-plan-sha256 <plan_sha256>
+$D --inventory "$INV" --state-dir "$STATE" transparent-load-repair-status "${R[@]}"
+```
+
+Tests: `tools/transparent/tests/test_load_repair.py`, in `make check-ops-deploy`.
+
 ## Transparent alert activation
 
 `transparent-alerts-{plan,preflight,deploy,status,rollback,test}` (`tools/transparent/lib/alert_activation.py`)

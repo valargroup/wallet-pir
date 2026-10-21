@@ -35,6 +35,15 @@ def worker(w):
  except Exception as e:result['error']=str(e)
  return result
 
+def cache_problem(body):
+ # A worker with no disk cache reports runtime_cache null, and a slow listing
+ # reports only a status; a counter that cannot be read is not a healthy zero.
+ cache=body.get('runtime_cache')
+ if cache is None:return None
+ failures=cache.get('write_failures',0) if isinstance(cache,dict) else None
+ if type(failures) is not int:return 'runtime cache observation unreadable'
+ return 'cache write failures' if failures>0 else None
+
 def persist_latch(reason):
  try:
   with (ROOT/'latched.json').open('x') as f:json.dump({'utc':utc(),'reason':reason},f)
@@ -128,7 +137,8 @@ def main():
      if value is None:reasons.append(name+': missing '+key)
      elif (name,key) not in baseline:baseline[name,key]=value
      elif value>baseline[name,key]:critical.append(name+': '+key+' increased')
-    if body.get('runtime_cache',{}).get('write_failures',0)>0:reasons.append(name+': cache write failures')
+    problem=cache_problem(body)
+    if problem:reasons.append(name+': '+problem)
     if name in EXPECTED_BINARIES or name in {w['id'] for w in roster}:
      if 'binary_sha256' not in body:reasons.append(name+': binary observation unavailable')
      elif name in EXPECTED_BINARIES and body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
