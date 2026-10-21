@@ -898,30 +898,36 @@ fn raise_floor(floor: &mut RevisionFloor, shard_id: u64, revision: u32) {
 /// The floor `dir` records, raised by every manifest retained in it.
 ///
 /// A publication from before the floor was recorded still holds its
-/// superseded tails, so its manifests are the evidence the floor starts from.
+/// superseded tails, so its manifests are the evidence the floor starts from;
+/// a recorded floor is raised by them too, so it never sits below a revision
+/// the directory still holds. A manifest that is present but cannot be read
+/// or parsed is refused rather than skipped: it may be the highest revision.
 pub fn revision_floor(dir: &Path) -> Result<RevisionFloor, BoxError> {
-    let mut floor = match std::fs::read(dir.join(REVISION_FLOOR)) {
+    let recorded = dir.join(REVISION_FLOOR);
+    let mut floor = match std::fs::read(&recorded) {
         Ok(raw) => serde_json::from_slice::<RevisionFloor>(&raw)
-            .map_err(|error| format!("{}: {error}", dir.join(REVISION_FLOOR).display()))?,
+            .map_err(|error| format!("{}: {error}", recorded.display()))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => RevisionFloor::new(),
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(format!("{}: {error}", recorded.display()).into()),
     };
-    if dir.join(REVISION_FLOOR).exists() {
-        return Ok(floor);
-    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(floor),
         Err(error) => return Err(error.into()),
     };
-    for path in entries {
-        let path = path?.path();
-        let Ok(raw) = std::fs::read(path.join("manifest.json")) else {
+    for entry in entries {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
             continue;
+        }
+        let path = entry.path().join("manifest.json");
+        let raw = match std::fs::read(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", path.display()).into()),
         };
-        let Ok(manifest) = serde_json::from_slice::<ShardManifest>(&raw) else {
-            continue;
-        };
+        let manifest = serde_json::from_slice::<ShardManifest>(&raw)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
         raise_floor(&mut floor, manifest.shard_id, manifest.revision);
     }
     Ok(floor)
@@ -1304,6 +1310,51 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("exhausted"), "{error}");
+    }
+
+    /// Retained manifests above a stale recorded floor raise it, and a
+    /// present manifest that cannot be parsed stops the publication.
+    #[test]
+    fn retained_evidence_raises_a_stale_floor_and_corrupt_evidence_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let mut store = EventStore::open(root.path().join("j"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut store, h, h as u8 + 1);
+        }
+        let a = root.path().join("a");
+        let first = publish(&options(&a, None), &store, zero).unwrap();
+        let tail = first.shards.last().unwrap().clone();
+        // A retained tail at revision 7 beside a floor recording only 2.
+        let mut manifest = read_tail(&a, &tail);
+        manifest.revision = 7;
+        let retained = a.join(manifest.digest());
+        std::fs::create_dir(&retained).unwrap();
+        for file in std::fs::read_dir(a.join(&tail.manifest_digest)).unwrap() {
+            let file = file.unwrap();
+            std::fs::copy(file.path(), retained.join(file.file_name())).unwrap();
+        }
+        std::fs::write(
+            retained.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            a.join(REVISION_FLOOR),
+            serde_json::to_vec(&RevisionFloor::from([(tail.shard_id, 2)])).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(revision_floor(&a).unwrap()[&tail.shard_id], 7);
+        block(&mut store, 4, 5);
+        let grown = publish(&options(&root.path().join("b"), Some(&a)), &store, zero).unwrap();
+        assert_eq!(grown.shards.last().unwrap().revision, 8);
+
+        std::fs::write(retained.join("manifest.json"), b"{\"truncated").unwrap();
+        let error = publish(&options(&root.path().join("c"), Some(&a)), &store, zero)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("manifest.json"), "{error}");
+        assert!(!root.path().join("c").join("shards.json").exists());
     }
 
     fn read_tail(dir: &Path, e: &transparent_filter::ShardMapEntry) -> ShardManifest {
