@@ -605,6 +605,9 @@ struct Fake {
     /// staging is lost and the prepare fails.
     restart_after_stages: Option<usize>,
     stages: usize,
+    /// Request this stop when applying this activation (counting from 1),
+    /// before replying.
+    stop_at_activation: Option<(usize, pir_pipeline::service::Shutdown)>,
 }
 
 #[cfg(feature = "qualification-tests")]
@@ -683,6 +686,13 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                     state.staged.retain(|d| !prepared.2.contains(d));
                     state.active = Some(prepared);
                     state.activations += 1;
+                    if let Some((_, stop)) = state
+                        .stop_at_activation
+                        .as_ref()
+                        .filter(|(n, _)| *n == state.activations)
+                    {
+                        stop.request();
+                    }
                     if state.lose_activation == Some(state.activations) {
                         return fail("reply lost".into());
                     }
@@ -2269,4 +2279,154 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
         resumed.active.tip > before.tip,
         "preparation resumed and activated"
     );
+}
+
+/// A stop requested while a candidate's runtime prebuild runs is observed
+/// only after that blocking build returns: until then the controller still
+/// holds its root lock and journal, and `run_until` has not returned. The
+/// unactivated candidate is then abandoned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
+    static ENTERED: std::sync::LazyLock<std::sync::Barrier> =
+        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
+    static RELEASE: std::sync::LazyLock<std::sync::Barrier> =
+        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn held(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
+        if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            ENTERED.wait();
+            RELEASE.wait();
+        }
+        Ok(Vec::new())
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![],
+        Settings {
+            ship_runtimes: Some(held),
+            ..settings()
+        },
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    let running = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let outcome = controller.run_until(shutdown).await;
+            (controller, outcome)
+        }
+    });
+    tokio::task::spawn_blocking(|| ENTERED.wait())
+        .await
+        .unwrap();
+    shutdown.request();
+    let lock = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(root.join("controller.lock"))
+        .unwrap();
+    assert!(lock.try_lock().is_err(), "the root is still owned");
+    assert!(open_writer(&journal).is_err(), "the journal is still owned");
+    assert!(!running.is_finished(), "run_until waits for the prebuild");
+    tokio::task::spawn_blocking(|| RELEASE.wait())
+        .await
+        .unwrap();
+    let (controller, outcome) = running.await.unwrap();
+    assert_eq!(outcome.unwrap(), Outcome::Idle);
+    assert_eq!(CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(controller.active().tip, before.tip, "nothing activated");
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+    lock.try_lock()
+        .expect("dropping the controller releases the root");
+    drop(lock);
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    assert!(resumed.active.tip > before.tip, "a later run activates");
+}
+
+/// A stop requested once worker activation has begun does not interrupt the
+/// cycle: the activation is committed to `active.json`, the worker and the
+/// controller agree on the map, no failure is counted and nothing is retried,
+/// and a controller opened afterwards recovers the same activation.
+#[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_during_worker_activation_still_commits_the_cycle() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    // The first activation brings the new worker to the bootstrapped map;
+    // the second is the cycle's.
+    states["recent"].lock().unwrap().stop_at_activation = Some((2, shutdown.clone()));
+    let settings = settings();
+    let metrics = settings.metrics.clone();
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![socket_worker(
+            temp.path(),
+            "recent",
+            WorkerRole::RecentReplica,
+        )],
+        settings,
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    assert_eq!(
+        controller.run_until(shutdown.clone()).await.unwrap(),
+        Outcome::Idle
+    );
+    assert!(shutdown.requested());
+    let active = controller.active().clone();
+    assert_eq!(active.tip, 118, "the cycle activated");
+    assert_eq!(active.cycle, before.cycle + 1);
+    let stored = ActiveRecord::load(&root).unwrap();
+    assert_eq!(
+        (stored.tip, &stored.map_sha256, &stored.directory),
+        (active.tip, &active.map_sha256, &active.directory)
+    );
+    {
+        let recent = states["recent"].lock().unwrap();
+        assert_eq!(recent.activations, 2, "no activation was retried");
+        assert_eq!(recent.active.as_ref().unwrap().0, active.map_sha256);
+    }
+    let activations = commands(&log, "recent")
+        .iter()
+        .filter(|c| c["operation"] == "activate")
+        .count();
+    assert_eq!(activations, 2);
+    let events = read_timeline(&root).unwrap();
+    assert_eq!(events.iter().filter(|e| e["kind"] == "cycle").count(), 1);
+    assert!(events.iter().all(|e| e["kind"] != "error"), "{events:?}");
+    let text = metrics.render();
+    assert_eq!(series(&text, "txid_display_cycle_failures_total"), 0.);
+    assert_eq!(series(&text, "txid_display_consecutive_failures"), 0.);
+    assert_eq!(series(&text, "txid_display_published_height"), 118.);
+    drop(controller);
+
+    // Recovery re-verifies the sealed revisions and reloads the same record.
+    let reopened = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(vec![])),
+        vec![],
+        verifying(),
+    )
+    .unwrap();
+    assert_eq!(reopened.active().map_sha256, active.map_sha256);
+    assert_eq!(reopened.active().tip, active.tip);
 }

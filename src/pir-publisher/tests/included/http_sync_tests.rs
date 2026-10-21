@@ -870,16 +870,15 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
     node_task.abort();
 }
 
-/// A stop already requested ends a distribution restore before it reads the
-/// set or asks the node, and commits nothing; a later restore completes.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
-    let scratch = tempfile::tempdir().unwrap();
-    let journal = scratch.path().join("journal");
-    fixture::write_journal(&journal, 0, 8, 0);
-    let store = EventStore::open_existing(&journal).unwrap();
-    let root = scratch.path().join("publisher");
-    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+/// A node serving the fixture chain's hashes, counting the requests it
+/// answers, and a client for it.
+async fn counting_node(
+    scratch: &Path,
+) -> (
+    crate::ingest::zakura::NodeClient,
+    Arc<std::sync::atomic::AtomicU32>,
+    tokio::task::JoinHandle<()>,
+) {
     let asked = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let counter = asked.clone();
     let node = axum::Router::new().route(
@@ -903,9 +902,23 @@ async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
     let node_task = tokio::spawn(async move {
         axum::serve(listener, node).await.unwrap();
     });
-    let cookie = scratch.path().join("cookie");
+    let cookie = scratch.join("cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    (rpc, asked, node_task)
+}
+
+/// A stop already requested ends a distribution restore before it reads the
+/// set or asks the node, and commits nothing; a later restore completes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let (rpc, asked, node_task) = counting_node(scratch.path()).await;
     let distribution = Distribution::new(&root, rpc).unwrap();
     let shutdown = pir_pipeline::service::Shutdown::default();
     shutdown.request();
@@ -924,5 +937,118 @@ async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
         .await
         .unwrap());
     assert!(root.join("http-current.json").exists());
+    node_task.abort();
+}
+
+/// A restore stopped at any point of its blocking work, while it loads and
+/// verifies the set, checks its runtimes or finalizes the inventory, commits
+/// nothing, asks the node nothing, and keeps the verified set and runtime
+/// evidence of the last complete restore; the next restore completes and
+/// loads no runtime again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
+    use std::sync::atomic::AtomicU32;
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let (rpc, asked, node_task) = counting_node(scratch.path()).await;
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    // Asks for a stop at the `at`-th check, as a shutdown arriving then would.
+    let stop_at = |at: u32, shutdown: pir_pipeline::service::Shutdown| {
+        let checks = Arc::new(AtomicU32::new(0));
+        let counted = checks.clone();
+        let stop = move || {
+            if counted.fetch_add(1, Ordering::SeqCst) + 1 >= at {
+                shutdown.request();
+            }
+            shutdown.requested()
+        };
+        (checks, stop)
+    };
+    let directory = initial.candidate.clone();
+    // The first restore builds the runtimes and self-checks every one.
+    assert!(distribution
+        .restore(directory.clone(), vec![])
+        .await
+        .unwrap());
+    let (set, loaded, _) = distribution.evidence();
+    assert!(set.is_some() && loaded > 0);
+    // Later restores reuse that evidence. Files hashed right after they were
+    // written are vouched for only by a later hash, so restore until one
+    // makes as many checks as the one before; count them.
+    let (mut total, mut steady) = (0, false);
+    for _ in 0..5 {
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let (checks, stop) = stop_at(u32::MAX, shutdown.clone());
+        assert!(distribution
+            .restore_asking(directory.clone(), vec![], shutdown, stop)
+            .await
+            .unwrap());
+        let made = checks.swap(0, Ordering::SeqCst);
+        steady = made == total;
+        if steady {
+            break;
+        }
+        total = made;
+    }
+    assert!(steady, "restores keep making different numbers of checks");
+    let (set, loaded, reused) = distribution.evidence();
+    assert_eq!(loaded, 0);
+    assert!(reused > 0);
+    assert!(total > 2, "{total} checks");
+    let current = std::fs::read(root.join("http-current.json")).unwrap();
+    let answered = asked.load(Ordering::SeqCst);
+
+    let points: std::collections::BTreeSet<u32> =
+        (0..=32).map(|i| 1 + (total - 1) * i / 32).collect();
+    for at in points {
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let (checks, stop) = stop_at(at, shutdown.clone());
+        let error = match distribution
+            .restore_asking(directory.clone(), vec![], shutdown, stop)
+            .await
+        {
+            Ok(_) => panic!(
+                "a stop at check {at} of {total} completed after {} checks",
+                checks.load(Ordering::SeqCst)
+            ),
+            Err(error) => error,
+        };
+        assert!(
+            error.is::<transparent_shared::publication::Stopped>(),
+            "stopped at check {at} of {total}: {error}"
+        );
+        assert!(checks.load(Ordering::SeqCst) >= at);
+        assert_eq!(
+            std::fs::read(root.join("http-current.json")).unwrap(),
+            current,
+            "stopped at check {at}: nothing committed or withdrawn"
+        );
+        assert_eq!(
+            distribution.evidence().0,
+            set,
+            "stopped at check {at}: the verified set is kept"
+        );
+    }
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        answered,
+        "the node was not asked"
+    );
+
+    assert!(distribution.restore(directory, vec![]).await.unwrap());
+    assert_eq!(
+        distribution.evidence(),
+        (set, 0, reused),
+        "every stop kept the runtime evidence"
+    );
+    assert_ne!(
+        std::fs::read(root.join("http-current.json")).unwrap(),
+        current,
+        "the completed restore commits"
+    );
     node_task.abort();
 }

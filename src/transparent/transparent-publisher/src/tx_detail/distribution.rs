@@ -119,6 +119,19 @@ impl Distribution {
         retained: Vec<PathBuf>,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<bool, BoxError> {
+        let stopping = shutdown.clone();
+        self.restore_asking(directory, retained, shutdown, move || stopping.requested())
+            .await
+    }
+    /// [`Self::restore_until`], with `stop` asked between the units of the
+    /// blocking work in place of `shutdown`, which is still checked around it.
+    pub(super) async fn restore_asking(
+        &self,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+        shutdown: pir_pipeline::service::Shutdown,
+        stop: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Result<bool, BoxError> {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
@@ -126,9 +139,7 @@ impl Distribution {
         let previous = self.0.prepared_set.lock().unwrap().take();
         let mut checked = std::mem::take(&mut *self.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
-        let stopping = shutdown.clone();
         let (kept, checked, finalized) = tokio::task::spawn_blocking(move || {
-            let stop = || stopping.requested();
             let result = (|| -> Result<(DisplaySet, Finalized), BoxError> {
                 let set = DisplaySet::open_reusing_until(
                     &work,
@@ -188,6 +199,18 @@ impl Distribution {
         }
         self.commit(finalized)?;
         Ok(true)
+    }
+    /// The map digest of the kept verified set, and how many runtimes the
+    /// last inventory loaded and self-checked and how many it reused.
+    #[cfg(all(test, feature = "qualification-tests", feature = "fixtures"))]
+    pub(super) fn evidence(&self) -> (Option<String>, usize, usize) {
+        let set = self.0.prepared_set.lock().unwrap();
+        let checked = self.0.checked_runtimes.lock().unwrap();
+        (
+            set.as_ref().map(|s| s.map_digest.clone()),
+            checked.loaded,
+            checked.reused,
+        )
     }
 }
 async fn request(State(authority): State<Distribution>, request: Request) -> Response {
