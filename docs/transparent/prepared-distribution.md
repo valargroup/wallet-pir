@@ -751,6 +751,8 @@ transfer budgets. Replacements are hashed by the same query-prioritized thread;
 affected idle runtime entries are evicted before the repaired shard is re-enabled.
 A shared artifact can withdraw more than one shard. `/v1/ready`, `/metrics` and
 health output report pending, validated and failed artifacts and withdrawals.
+Validation covers every held revision that can answer a request, including
+retained predecessors; their saved failures remain enforced after restart.
 
 Run correctness validation as a separate process after the serving API is ready.
 `quality-canary --all` checks every table in its pinned fixture and each table's
