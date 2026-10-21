@@ -37,6 +37,11 @@ pub trait SyncTask: Send {
     fn terminal(&self, _error: &Self::Error) -> bool {
         false
     }
+    /// Wait between publication passes. Products may maintain peer promises
+    /// during this wait; the next publication pass still starts only at the deadline.
+    fn wait_until(&mut self, deadline: tokio::time::Instant) -> impl Future<Output = ()> + Send {
+        tokio::time::sleep_until(deadline)
+    }
 }
 
 /// Owns one adapter and runs complete, non-overlapping synchronization passes.
@@ -80,7 +85,9 @@ impl<T: SyncTask> SyncManager<T> {
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            tokio::time::sleep(delay(failures, jitter)).await;
+            self.task
+                .wait_until(tokio::time::Instant::now() + delay(failures, jitter))
+                .await;
         }
     }
 }

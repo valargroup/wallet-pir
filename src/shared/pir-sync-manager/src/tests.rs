@@ -338,6 +338,52 @@ struct Probe {
     completed: Vec<(tokio::time::Instant, bool)>,
 }
 struct Task(Arc<Mutex<Probe>>);
+
+#[tokio::test(start_paused = true)]
+async fn peer_maintenance_runs_between_passes_without_shortening_error_backoff() {
+    struct Maintained {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+        waiting: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+    impl SyncTask for Maintained {
+        type Report = ();
+        type Error = ();
+        async fn synchronize(&mut self) -> Result<(), ()> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(())
+        }
+        async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+            self.waiting.notify_one();
+            self.release.notified().await;
+            tokio::time::sleep_until(deadline).await;
+        }
+    }
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let waiting = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let task = Maintained {
+        calls: calls.clone(),
+        waiting: waiting.clone(),
+        release: release.clone(),
+    };
+    let running = tokio::spawn(SyncManager::new(task).run());
+    waiting.notified().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(9)).await;
+    release.notify_one();
+    tokio::task::yield_now().await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "maintenance must not start another publication pass"
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    waiting.notified().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    running.abort();
+    let _ = running.await;
+}
 impl SyncTask for Task {
     type Report = ();
     type Error = ();

@@ -52,13 +52,16 @@ pub struct IngressConfig {
 #[serde(deny_unknown_fields)]
 pub struct RouterConfig {
     pub data_dir: PathBuf,
-    pub artifact_origin: String,
+    #[serde(default)]
+    pub artifact_origin: Option<String>,
     pub listen: SocketAddr,
     pub control_listen: SocketAddr,
     #[serde(default = "default_router_objects")]
     pub max_objects: usize,
     #[serde(default = "default_router_requests")]
     pub requests: usize,
+    #[serde(default)]
+    pub synchronization: Option<crate::router_sync::Config>,
 }
 
 /// Evaluate queries for the domains placed on this worker.
@@ -148,9 +151,38 @@ pub async fn run_router_on(
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
+    if let Some(sync) = config.synchronization {
+        if config.artifact_origin.is_some() {
+            return Err("autonomous router must use only its HTTPS publisher origin".into());
+        }
+        let router = crate::router_sync::PackingRouter::open(
+            &config.data_dir,
+            sync,
+            config.max_objects,
+            config.requests,
+        )?;
+        let manager = pir_sync_manager::SyncManager::new(router.synchronizer()?);
+        let (notify, public_stop, control_stop) = stop_pair(shutdown);
+        let _notify = notify;
+        let serving = async move {
+            tokio::try_join!(
+                crate::shutdown::serve_until(public, router.public_router(), public_stop),
+                crate::shutdown::serve_until(control, router.control_router(), control_stop)
+            )
+            .map(|_| ())
+        };
+        tokio::select! {
+            result = serving => result?,
+            _ = manager.run() => return Err("Enhance router synchronization stopped".into()),
+        }
+        return Ok(());
+    }
     let router = crate::packing_router::PackingRouter::open(
         &config.data_dir,
-        &config.artifact_origin,
+        config
+            .artifact_origin
+            .as_deref()
+            .ok_or("router artifact origin is missing")?,
         config.max_objects,
         config.requests,
     )?;
@@ -214,13 +246,16 @@ pub enum ServingRole {
     },
     PackingRouter {
         data_dir: PathBuf,
-        artifact_origin: String,
+        #[serde(default)]
+        artifact_origin: Option<String>,
         listen: SocketAddr,
         control_listen: SocketAddr,
         #[serde(default = "default_router_objects")]
         max_objects: usize,
         #[serde(default = "default_router_requests")]
         requests: usize,
+        #[serde(default)]
+        synchronization: Option<crate::router_sync::Config>,
     },
 }
 
@@ -236,6 +271,25 @@ impl ServingRole {
             sync.validate(PlacementPolicy {
                 sealed_shards: *sealed_shards,
             })?;
+        }
+        if let Self::PackingRouter {
+            synchronization,
+            artifact_origin,
+            ..
+        } = self
+        {
+            if let Some(sync) = synchronization {
+                sync.validate()?;
+                if artifact_origin.is_some() {
+                    return Err("autonomous router must use only its HTTPS publisher origin".into());
+                }
+            } else {
+                crate::packing_router::valid_origin(
+                    artifact_origin
+                        .as_deref()
+                        .ok_or("router artifact origin is missing")?,
+                )?;
+            }
         }
         Ok(())
     }
@@ -335,6 +389,7 @@ pub async fn run_serving(
             control_listen,
             max_objects,
             requests,
+            synchronization,
         } => {
             listeners.reverse();
             let public = take(&mut listeners)?;
@@ -347,6 +402,7 @@ pub async fn run_serving(
                     control_listen,
                     max_objects,
                     requests,
+                    synchronization,
                 },
                 public,
                 control,

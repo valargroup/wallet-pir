@@ -30,6 +30,11 @@ use std::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
+/// Peer promises span the existing private evaluation deadline. The router
+/// renews them while waiting, loading, and serving; a lost process cannot pin forever.
+pub const PIN_LIFETIME: Duration = Duration::from_secs(30);
+const MAX_PINS: usize = 64;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -90,6 +95,7 @@ struct Inner {
     active: Option<String>,
     views: BTreeMap<String, View>,
     units: BTreeMap<String, Weak<ShardRuntime>>,
+    pins: BTreeMap<(String, String), std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -111,6 +117,16 @@ pub struct Worker {
 #[serde(deny_unknown_fields)]
 pub struct ReadinessRequest {
     pub manifest_sha256: String,
+    #[serde(default)]
+    pub holder: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Release {
+    pub manifest_sha256: String,
+    pub holder: String,
+    pub worker_incarnation: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -181,6 +197,7 @@ impl Worker {
         Router::new()
             .route("/internal/health", get(health))
             .route("/internal/readiness", post(readiness))
+            .route("/internal/release", post(release))
             .route("/internal/evaluate", post(evaluate))
             .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
             .layer(crate::internal_auth::Token::from_env().layer())
@@ -365,12 +382,18 @@ impl Synchronizer {
         {
             let mut inner = self.worker.inner.lock().unwrap();
             let active = inner.active.clone();
+            inner
+                .pins
+                .retain(|_, deadline| *deadline > std::time::Instant::now());
+            let pinned: BTreeSet<_> = inner.pins.keys().map(|(_, id)| id.clone()).collect();
             inner.views.retain(|key, view| {
-                Some(key) == active.as_ref()
-                    || view
-                        .lease
-                        .check(&view.manifest, &self.worker.safety)
-                        .is_ok()
+                self.worker.safety.permits(&view.manifest).is_ok()
+                    && (Some(key) == active.as_ref()
+                        || pinned.contains(key)
+                        || view
+                            .lease
+                            .check(&view.manifest, &self.worker.safety)
+                            .is_ok())
             });
             inner.units.retain(|_, unit| unit.strong_count() > 0);
             if let Some(view) = inner.views.get_mut(&id) {
@@ -398,9 +421,6 @@ impl Synchronizer {
             .into_iter()
             .filter(|d| self.worker.config.shards.contains(&d.plan.shard.id))
             .collect::<Vec<_>>();
-        if domains.len() != self.worker.config.shards.len() {
-            return Err("publication does not contain worker responsibilities".into());
-        }
         self.worker.admit(&domains)?;
         let keep = domains
             .iter()
@@ -457,6 +477,22 @@ async fn health(State(worker): State<Worker>) -> Json<serde_json::Value> {
     )
 }
 
+async fn release(
+    State(worker): State<Worker>,
+    Json(request): Json<Release>,
+) -> ApiResult<StatusCode> {
+    if request.worker_incarnation != worker.incarnation {
+        return Err((StatusCode::CONFLICT, "worker incarnation changed".into()));
+    }
+    worker
+        .inner
+        .lock()
+        .unwrap()
+        .pins
+        .remove(&(request.holder, request.manifest_sha256));
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn readiness(
     State(worker): State<Worker>,
     Json(request): Json<ReadinessRequest>,
@@ -473,21 +509,48 @@ async fn readiness(
     lease
         .check(&manifest, &worker.safety)
         .map_err(unavailable)?;
-    let inner = worker.inner.lock().unwrap();
+    let mut inner = worker.inner.lock().unwrap();
     let view = inner
         .views
         .get(&request.manifest_sha256)
         .ok_or_else(|| unavailable("worker material retired"))?;
+    let shards = view.domains.keys().copied().collect();
+    if let Some(holder) = &request.holder {
+        if holder.len() != 32
+            || !holder
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err((StatusCode::BAD_REQUEST, "invalid peer incarnation".into()));
+        }
+        inner
+            .pins
+            .retain(|_, deadline| *deadline > std::time::Instant::now());
+        let key = (holder.clone(), request.manifest_sha256.clone());
+        if !inner.pins.contains_key(&key) && inner.pins.len() >= MAX_PINS {
+            return Err(unavailable("worker handover pin capacity reached"));
+        }
+        inner
+            .pins
+            .insert(key, std::time::Instant::now() + PIN_LIFETIME);
+    }
     Ok(Json(Readiness {
         incarnation: worker.incarnation.clone(),
         manifest_sha256: request.manifest_sha256,
         manifest,
-        shards: view.domains.keys().copied().collect(),
+        shards,
     }))
 }
 
 async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
     let admitted = async {
+        if request
+            .headers()
+            .get("x-enhance-worker-incarnation")
+            .is_some_and(|header| header != worker.incarnation.as_str())
+        {
+            return Err(unavailable("worker incarnation changed"));
+        }
         let permit = worker
             .evaluation
             .clone()

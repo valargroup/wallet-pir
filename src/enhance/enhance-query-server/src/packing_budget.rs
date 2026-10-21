@@ -77,6 +77,54 @@ impl PackingBudget {
     pub fn charged_bytes(&self) -> u64 {
         self.0.live.load(Ordering::SeqCst)
     }
+
+    /// Check the complete replacement before loading its first mapping. Loading
+    /// is sequential, so all new residents overlap with one mapping workspace.
+    pub(crate) fn admit_mappings(&self, additional: usize) -> Result<(), String> {
+        if additional == 0 {
+            return Ok(());
+        }
+        let required = u64::try_from(additional)
+            .ok()
+            .and_then(|count| count.checked_mul(RESIDENT))
+            .and_then(|resident| resident.checked_add(MAPPED_LOAD))
+            .ok_or("packing reservation overflow")?;
+        if self
+            .charged_bytes()
+            .checked_add(required)
+            .is_none_or(|sum| sum > self.0.limit)
+        {
+            return Err("complete packing replacement exceeds resident budget".into());
+        }
+        if let Some(root) = &self.0.cgroup {
+            let current = std::fs::read_to_string(root.join("memory.current"))
+                .map_err(|e| e.to_string())?
+                .trim()
+                .parse::<u64>()
+                .map_err(|e| e.to_string())?;
+            let stat =
+                std::fs::read_to_string(root.join("memory.stat")).map_err(|e| e.to_string())?;
+            let counter = |name: &str| {
+                stat.lines()
+                    .filter_map(|line| line.split_once(' '))
+                    .find_map(|(key, value)| {
+                        (key == name).then(|| value.parse::<u64>().ok()).flatten()
+                    })
+                    .unwrap_or(0)
+            };
+            let inactive = counter("inactive_file")
+                .saturating_sub(counter("file_dirty"))
+                .saturating_sub(counter("file_writeback"));
+            if current
+                .saturating_sub(inactive)
+                .checked_add(required)
+                .is_none_or(|sum| sum > self.0.limit)
+            {
+                return Err("complete packing replacement exceeds physical memory headroom".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 fn current_cgroup() -> Option<std::path::PathBuf> {
@@ -171,6 +219,35 @@ impl Drop for Charge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn complete_replacement_counts_all_new_residents_and_one_mapping_workspace() {
+        let budget = PackingBudget::new(7 * 1024 * MIB - HOST_AND_REQUEST_RESERVE);
+        let mut residents = Vec::new();
+        for _ in 0..2 {
+            let mut charge = Charge::mapping(&budget).unwrap();
+            charge.resident();
+            residents.push(charge);
+        }
+        budget.admit_mappings(2).unwrap();
+        assert_eq!(
+            budget.charged_bytes(),
+            2 * RESIDENT,
+            "preflight does not reserve or allocate partial candidates"
+        );
+        for _ in 0..4 {
+            let mut charge = Charge::mapping(&budget).unwrap();
+            charge.resident();
+            residents.push(charge);
+        }
+        assert!(
+            budget.admit_mappings(2).is_err(),
+            "reject the full overlap before loading its first replacement"
+        );
+        drop(residents);
+        budget.admit_mappings(2).unwrap();
+        assert!(budget.admit_mappings(usize::MAX).is_err());
+    }
 
     #[test]
     fn mapped_replacement_fits_six_live_objects_without_reducing_request_reserve() {
