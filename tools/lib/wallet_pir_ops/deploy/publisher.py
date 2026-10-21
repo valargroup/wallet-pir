@@ -26,7 +26,8 @@ SCHEMA = 'transparent-publisher-cutover/1'
 EXPANDED_SCHEMA = 'publisher-cutover/2'
 SERVING_SCHEMA = 'publisher-cutover/3'
 HTTPS_SCHEMA = 'publisher-https-cutover/1'
-SERVING_SCHEMAS = (SERVING_SCHEMA, HTTPS_SCHEMA)
+ENHANCE_HTTPS_SCHEMA = 'enhance-https-cutover/1'
+SERVING_SCHEMAS = (SERVING_SCHEMA, HTTPS_SCHEMA, ENHANCE_HTTPS_SCHEMA)
 EXPANDED_PRODUCTS = ['enhance', 'status', 'transparent_history', 'transaction_details']
 ADOPTED = ('enhance-pir-coordinator.service', 'status-controller-qualification.service')
 PRODUCTS = ['transparent_history', 'transaction_details']
@@ -61,7 +62,8 @@ def load_request(path, expected, *, recovery=False):
                 | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())
                 | ({'resume_load'} if 'resume_load' in request else set())
                 | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
-                | ({'preserve_serving'} if 'preserve_serving' in request else set())),
+                | ({'preserve_serving'} if 'preserve_serving' in request else set())
+                | ({'enhance_https'} if request.get('schema') == ENHANCE_HTTPS_SCHEMA else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
     if 'expected_disk_latch_sha256' in request:
@@ -132,6 +134,9 @@ def load_request(path, expected, *, recovery=False):
     if request['schema'] == HTTPS_SCHEMA:
         from .publisher_https import validate
         validate(request, inventory)
+    if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+        from .enhance_https import validate
+        validate(request, inventory)
     return request, inventory
 
 
@@ -151,9 +156,14 @@ class Cutover:
         self.clock, self.sleep = clock, sleep
         self.lock = None
         self.serving = None
+        self.supervision = None
+        self.identifier = None
         if request['schema'] in SERVING_SCHEMAS:
             from .publisher_serving import Serving
-            if request['schema'] == HTTPS_SCHEMA:
+            if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+                from .enhance_https import EnhanceServing
+                self.serving = EnhanceServing(self)
+            elif request['schema'] == HTTPS_SCHEMA:
                 from .publisher_https import HttpsServing
                 self.serving = HttpsServing(self)
             else:
@@ -199,6 +209,10 @@ class Cutover:
         extra = self.request['release']['binary_bytes']
         if self.request['schema'] == HTTPS_SCHEMA:
             extra += self.request['https']['publisher_budget_bytes']
+        if self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            extra += self.request['enhance_https']['publisher_budget_bytes']
+            extra += self.request['serving']['binary_bytes']
+            extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
         resource = self.resources(extra)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
@@ -212,6 +226,9 @@ class Cutover:
         installed = json.loads(self.read(CONFIG))
         if self.request['schema'] == HTTPS_SCHEMA:
             from .publisher_https import validate_settings
+            validate_settings(installed, config)
+        elif self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .enhance_https import validate_settings
             validate_settings(installed, config)
         else:
             require(config == installed, 'publisher updates must preserve every product setting')
@@ -275,6 +292,8 @@ class Cutover:
         self.ex.write(self.host, path + '/journal.json', durable.canonical(journal), 0o600)
 
     def effect(self, journal, name, action):
+        if self.supervision and journal['phase'] not in ('restoring', 'rolled-back'):
+            self.supervision.guard()
         journal['intent'] = name
         self.save(journal)
         self.lock.verify()
@@ -413,10 +432,12 @@ class Cutover:
     def deploy(self, binary, expected_plan, serving_binary=None):
         require(file_sha256(binary) == self.request['release']['binary_sha256'] and
                 Path(binary).stat().st_size == self.request['release']['binary_bytes'], 'publisher executable does not match request')
+        require(self.request['schema'] != ENHANCE_HTTPS_SCHEMA or self.supervision is not None,
+                'Enhance HTTPS deployment requires the independent supervised runner')
         with production_lock(self.inventory, self.ex) as self.lock:
             plan = self.capture()
             require(durable.digest(plan) == expected_plan, 'publisher plan is stale; review a fresh plan')
-            identifier = new_id('publisher', self.request['release']['binary_sha256'])
+            identifier = self.identifier or new_id('publisher', self.request['release']['binary_sha256'])
             journal = {'schema': self.request['schema'], 'id': identifier, 'phase': 'staging', 'request': self.request,
                        'plan': plan, 'completed': [], 'intent': None}
             self.save(journal)
@@ -436,6 +457,8 @@ class Cutover:
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
+            if self.supervision:
+                self.supervision.arm()
             if self.resume_load:
                 self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
             else:
@@ -458,10 +481,17 @@ class Cutover:
                 self.serving.verify(journal)
                 self.serving.route(journal)
             self.exact(journal)
+            if self.supervision:
+                self.serving.verify_advancement(journal)
+                self.exact(journal)
             if self.resume_load:
                 self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
             else:
                 self.require_stopped_load()
+            if self.supervision:
+                self.supervision.accept({'products': {name: {'ready': True, 'advanced': True, 'exact': True}
+                    for name in self.request['checks']}, 'progress': journal['product_progress'],
+                    'request_sha256': durable.digest(self.request)})
             self.save(journal, 'committed')
             return journal
 
@@ -672,21 +702,31 @@ def register(commands):
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
+        command.add_argument('--cuda-binary')
         if operation in ('preflight', 'deploy'):
             command.add_argument('--archive', required=True)
         if operation == 'deploy':
             command.add_argument('--expect-plan-sha256', required=True)
 
+    for operation in ('run', 'watchdog'):
+        command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
+        command.add_argument('--transaction', required=True)
+
 
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
+    if operation in ('run', 'watchdog'):
+        from .cutover_runner import dispatch as supervised
+        return supervised(args)
     request, inventory = load_request(args.request, args.request_sha256,
                                       recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify', 'continue'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
         target.serving.binary = getattr(args, 'serving_binary', None)
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            target.serving.cuda_binary = getattr(args, 'cuda_binary', None)
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
     if operation == 'continue':
@@ -707,6 +747,14 @@ def dispatch(args, executor=None, **_options):
                     stable_unit(executor.probe_unit(c['host'], c['unit'])) for c in request['https']['consumers']}
                 result['history_edge_sha256'] = sha(executor.read(request['https']['history_edge']['host'],
                                                                  '/etc/caddy/Caddyfile'))
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            pointer = target.read(ROOT_DIR + '/supervised-latest.json')
+            if pointer is not None:
+                from .cutover_guard import unit_name
+                pointer = json.loads(pointer)
+                unit_name(pointer['id'])
+                if pointer['request_sha256'] == args.request_sha256:
+                    result['supervision'] = json.loads(target.read(ROOT_DIR + '/transactions/' + pointer['id'] + '/decision.json'))
         return result
     if operation == 'plan':
         return target.plan()
@@ -721,6 +769,9 @@ def dispatch(args, executor=None, **_options):
             return target.plan()
         if target.serving:
             target.serving.binary = args.serving_binary
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .cutover_runner import launch
+            return launch(target, args, binary)
         try:
             return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
         except Exception:

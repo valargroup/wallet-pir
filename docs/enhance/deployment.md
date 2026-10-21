@@ -137,10 +137,53 @@ local test result or successful process restart alone does not meet this gate.
 
 Use the repository deployment CLI for plan, preflight, deploy, status and
 rollback. Preserve its transaction journal and production-lock ownership. Do not
-copy binaries, signal processes or change units by hand. The HTTPS cutover's
-recovery adapter, watchdog rehearsal and complete qualification are required
-before its production operation is enabled. The operator confirms the concrete
-production plan after these artifacts and checks are reviewable.
+copy binaries, signal processes or change units by hand. The operator confirms
+the concrete production plan after exact artifacts, full qualification and a
+watchdog rehearsal are reviewable.
+
+The `enhance-https-cutover/1` request preserves every other enabled product's
+settings and names all existing Enhance consumers. It pins separate CPU and CUDA
+executables, the HTTPS origin, preparation disk allowance and every independent
+answer check. Its `enhance_https.progress` entries observe the actual published
+heights: the Enhance and Status wallet manifests' `anchor_height`, Transparent
+history's `public_height`, and transaction details' `published.tip`. Node tip
+progress alone cannot satisfy acceptance.
+
+Run `publisher-cutover-plan` and `publisher-cutover-preflight` with the checksummed
+request and matching artifacts. `--serving-binary` supplies the CPU query host;
+`--cuda-binary` supplies the matching CUDA query host when the inventory has GPU
+workers. Both must have the publisher's source revision and reviewed executable
+digests. The serving roles' existing configuration, units, executable identities
+and public edge are captured for rollback before any interruption.
+
+Production `publisher-cutover-deploy` runs as root on the existing coordinator
+from its immutable, checksummed operations release. It installs two uniquely
+named, transaction-owned systemd services: a forward runner and an independent
+rollback watchdog enabled for boot. It returns their identities immediately;
+`publisher-cutover-status` reports both the deployment journal and durable
+supervision decision. This is not a completed deployment until that decision is
+accepted and the journal is committed.
+
+The watchdog records one deadline immediately before the first interruption.
+Retries cannot reset it; a boot clock also prevents a backwards wall-clock change
+from extending the hour. Acceptance requires readiness, fresh publication
+advancement and independent encrypted answers for every enabled publisher
+product before the deadline. At the deadline, or after loss of the forward
+process, the watchdog fences further deployment, stops only that transaction's
+verified runner invocation, and invokes the ordinary locked rollback. Failed
+recovery retries use the same decision and retained inputs. They never terminate
+another production-lock owner. Restoration can finish after the deadline; the
+hour bounds the forward attempt.
+
+While the publisher is stopped, the Rust `handoff-https-state` command preserves
+generation reservations, domain recovery floors, revoked sessions and sealed
+history. Rollback calls it with `--rollback` before starting the previous runtime.
+It reserves one higher recovery epoch, invalidates retained sessions and keeps
+newer floors on both sides; interrupted retries reuse that reservation. Runtime
+and configuration rollback never restores an older safety-state backup. The
+transaction's `publisher-cutover-rollback` command remains available after a
+successful cutover. Retain its request, operations release, journal, old
+executables and credential references until qualification is complete.
 
 ## Repairing historical fees
 
@@ -152,7 +195,7 @@ then adopted by the publisher at startup. Neither step touches the publication s
 workers, routers or ingress.
 
 1. Build the server with its source revision recorded in the receipt:
-   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-publisher --bin pir-publisher`.
+   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p pir-publisher --features enhance,native-reinspiring --bin pir-publisher`.
 2. While the publisher keeps serving, rebuild into the staged directory of its
    data directory:
 
@@ -178,11 +221,11 @@ workers, routers or ingress.
    binary SHA-256, `H`, its block hash and tree size, SHA-256 digests of
    `records.bin` and `manifest.json`, the changed-record count and the count still
    without a fee (coinbase outputs). A completed output is never overwritten.
-4. Restart the publisher. Before opening its journal it verifies the receipt
+4. Restart through the locked deployment transaction. Before opening its journal it verifies the receipt
    digests, that the staged blocks (height, hash, first position, action count) are a
    prefix of the live journal, that every staged record differs from the live one
    only in the fee fields, and that no changed position lies in a sealed shard
-   (`recovery.sealed` in the control state). It then renames `enhance` to
+   (`recovery.sealed` in `publication/publisher.json`). It then renames `enhance` to
    `enhance.before-rebuild-<receipt id>`, renames `enhance-staged` to `enhance` and
    syncs the data directory. A crash between the renames completes on the next start.
    It logs `adopted staged Enhance journal rebuild` with the receipt id, `H` and the
@@ -214,24 +257,14 @@ Two operator checks pin exact record bytes: the deploy exact-answer check, which
 whose fee is repaired no longer matches an oracle captured before the repair. For any
 historical record repair:
 
-1. Regenerate both oracles from an independent chain oracle (canonical transactions
-   read from the node and decoded without the publisher's producer), not from the
-   repaired journal or a served answer. Record the new oracle digests.
-2. Put the external monitor in shadow mode (`PIR_MONITOR_ALERT_MODE=shadow`) for the
-   whole window, from the publisher restart until the repaired generation is
-   published and verified.
-3. Deploy with `--skip-exact-check`, because before adoption and the next publication
-   the publisher still serves the old bytes and neither oracle can pass.
-4. After the publisher logs the adoption and publishes the next block's
-   generation, run the exact-answer check by hand with the regenerated oracle. Then
-   install the regenerated, re-pinned monitor oracle and return the monitor to
-   active mode only after its canary passes.
+Regenerate both oracles from canonical transactions decoded independently of the
+publisher and pin their new digests in the reviewed maintenance transaction.
+Do not use a served answer or the repaired journal as its oracle. The transaction
+must verify the adopted journal and new publication before returning monitoring
+to active mode; the HTTPS cutover does not permit skipping its exact checks.
 
-Adoption refuses changes in sealed shards; repairing a sealed shard requires a
-recovery-fenced republication that this procedure does not provide.
-
-To roll back the data, stop the publisher, move `enhance` aside, rename
-`enhance.before-rebuild-<receipt id>` back to `enhance` and start the publisher.
-Its next publication serves the old records again. Keep the preserved directory
-until the repaired publication has been checked; it is the only copy of the
-pre-rebuild journal.
+Adoption refuses changes in sealed shards. A sealed-history repair needs a
+separately reviewed recovery-fenced publication. Keep the preserved
+`enhance.before-rebuild-<receipt id>` directory until verification finishes.
+Runtime rollback retains current journal data and all recovery floors; undoing a
+journal repair is a separate data-recovery operation.

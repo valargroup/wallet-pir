@@ -170,6 +170,18 @@ pub fn transfer(data: &Path, rollback: bool) -> Result<Value, String> {
     let mut manifests: Vec<Manifest> =
         serde_json::from_value(previous["published"].clone()).map_err(|e| e.to_string())?;
     let receipt_path = root.join("handoff.json");
+    if rollback
+        && !receipt_path.exists()
+        && !root.join("publisher.json").exists()
+        && !https.join("current.json").exists()
+    {
+        // Validation or receipt creation failed before any new source state
+        // existed. Preserve the untouched predecessor; no new session could
+        // have been served, so there is no new authority to invalidate.
+        return Ok(json!({"rollback":true, "unchanged":true,
+            "recovery_epoch":old_recovery.epoch, "next_generation":old_next,
+            "withdrawal_revision":0}));
+    }
     let mut receipt = if receipt_path.exists() {
         let receipt: Receipt = read(&receipt_path)?;
         if receipt.version != 1 || (!rollback && receipt.rollback_epoch.is_some()) {
@@ -351,6 +363,43 @@ mod tests {
             fs::read(root.path().join("control/controller.json")).unwrap(),
             old
         );
+    }
+
+    #[test]
+    fn failed_forward_validation_can_restore_the_untouched_predecessor() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        let old = fs::read(root.path().join("control/controller.json")).unwrap();
+        let result = transfer(root.path(), true).unwrap();
+        assert_eq!(result["unchanged"], true);
+        assert_eq!(result["recovery_epoch"], 4);
+        assert_eq!(
+            fs::read(root.path().join("control/controller.json")).unwrap(),
+            old
+        );
+        assert!(!root.path().join("publication/publisher.json").exists());
+    }
+
+    #[test]
+    fn imported_state_opens_in_the_actual_publisher_without_resetting_floors() {
+        let root = tempfile::tempdir().unwrap();
+        previous(root.path());
+        transfer(root.path(), false).unwrap();
+        let cookie = root.path().join("cookie");
+        fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc =
+            crate::zakura::ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
+        let publisher =
+            crate::publisher::Publisher::open(&root.path().join("publication"), rpc).unwrap();
+        let current = publisher.distribution().durable_current();
+        assert_eq!(current.recovery_epoch, 4);
+        assert!(current.revoked.contains(&"ab".repeat(32)));
+        assert!(!current.eligible);
+        let state: PublisherState = read(&root.path().join("publication/publisher.json")).unwrap();
+        assert_eq!(state.next_generation, 23);
+        assert_eq!(state.recovery.domain_epochs[&0], "4");
+        assert_eq!(state.recovery.sealed[&0].0, 3_428_143);
+        assert!(transfer(root.path(), true).unwrap_err().contains("owned"));
     }
 
     #[test]

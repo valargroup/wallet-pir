@@ -90,7 +90,13 @@ def probe_argv(sha):
 
 def worker_settings(listen):
     return {'listen': listen, 'data_dir': '/srv/enhance-pir/worker', 'sealed_shards': 6,
-            'matvec_backend': 'cpu', 'credentials': [TOKEN]}
+            'matvec_backend': 'cpu', 'credentials': [TOKEN],
+            'synchronization': synchronization(shards=[0])}
+
+
+def synchronization(**responsibilities):
+    return {'publisher_origin': 'https://publisher.example', 'download_budget_bytes': 4 << 30,
+            'cache_limit_bytes': 4 << 30, **responsibilities}
 
 
 def status_settings(role):
@@ -115,11 +121,15 @@ INVENTORY = {
                 'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '10.0.0.14:8093'},
                                     'settings': {'listen': '10.0.0.14:8092', 'control_listen': '10.0.0.14:8093',
                                                  'data_dir': '/srv/enhance-pir-router',
-                                                 'artifact_origin': 'http://10.0.0.10:8080',
+                                                 'synchronization': synchronization(workers={
+                                                     '0': ['http://10.0.0.15:8091', 'http://10.0.0.16:8091']}),
                                                  'credentials': [TOKEN]}}],
                 'query-ingress': [{'host': 'coordinator', 'vars': {'control_listen': '127.0.0.1:8083'},
                                    'settings': {'listen': '127.0.0.1:8082', 'control_listen': '127.0.0.1:8083',
-                                                'data_dir': '/srv/enhance-pir-ingress', 'credentials': [TOKEN]}}],
+                                                'data_dir': '/srv/enhance-pir-ingress', 'credentials': [TOKEN],
+                                                'synchronization': synchronization(routers={'0': [{
+                                                    'control_origin': 'http://10.0.0.14:8093',
+                                                    'query_origin': 'http://10.0.0.14:8092'}]})}}],
             },
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}', '{transaction}']},
         },
