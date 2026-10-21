@@ -80,12 +80,7 @@ impl<T: SyncTask> SyncManager<T> {
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
-            pir_pipeline::wait(
-                tokio::time::Instant::now() + delay(failures, jitter),
-                std::future::pending(),
-                std::future::pending(),
-            )
-            .await;
+            tokio::time::sleep(delay(failures, jitter)).await;
         }
     }
 }
