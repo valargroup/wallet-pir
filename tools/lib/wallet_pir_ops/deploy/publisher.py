@@ -59,9 +59,13 @@ def load_request(path, expected, *, recovery=False):
     require(isinstance(request, dict) and set(request) == ({'schema', 'host', 'machine_id', 'release', 'configuration', 'inventory', 'checks'}
                 | ({'serving'} if request.get('schema') in SERVING_SCHEMAS else set())
                 | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())
-                | ({'resume_load'} if 'resume_load' in request else set())),
+                | ({'resume_load'} if 'resume_load' in request else set())
+                | ({'preserve_serving'} if 'preserve_serving' in request else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
+    if 'preserve_serving' in request:
+        require(request['schema'] == SERVING_SCHEMA and type(request['preserve_serving']) is bool,
+                'preserve_serving must be a boolean for publisher-cutover/3 only')
     if 'resume_load' in request:
         require(request['schema'] == SERVING_SCHEMA and type(request['resume_load']) is bool,
                 'resume_load must be a boolean for publisher-cutover/3 only')
