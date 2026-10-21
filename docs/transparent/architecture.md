@@ -182,6 +182,14 @@ Sealed contents remain immutable and manifests chain through parent digests. A t
 boundary must be a shard boundary. Profile names must never be reused with different row
 shapes.
 
+The publisher records revision maxima in `revision-floor.json` beside `shards.json`,
+writing the floor before the map. Changed content takes a revision above the
+maximum across all recorded shard numbers: a reorg can renumber a wallet source
+whose geometry and starting height stay the same. Identical content keeps its
+identity, and revision exhaustion refuses publication. Recovery from publications
+that predate this file must seed it with maxima from all retained evidence,
+including publisher logs when manifests have been pruned.
+
 Revision identity must be preserved through setup, query, response, runtime cache and
 wallet coverage. The server verifies manifests when opening a set. The wallet retrieves and
 verifies revision manifests, their map fields, parent digests and registry geometry before

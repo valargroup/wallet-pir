@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- Publisher revisions continue above the historical maximum even when a reorg
+  changes shard numbering. Exhausted revision numbers stop publication with an
+  error. Wallet recovery regressions run in the end-to-end consumer package,
+  keeping Common address dependencies out of serving libraries.
+
 - Publishers and query workers share one server backend for publication loading,
   native runtime preparation and bounded caches. Query-worker tests no longer
   depend on chain ingestion or RocksDB. Existing executables, wallet routes and

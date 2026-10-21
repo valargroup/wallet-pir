@@ -356,6 +356,7 @@ pub fn publish_with(
     for entry in previous.values() {
         raise_floor(&mut floor, entry.shard_id, entry.revision);
     }
+    let highest_revision = floor.values().copied().max();
     if reorg {
         previous.retain(|id, _| *id < entries.len() as u64);
     }
@@ -420,7 +421,7 @@ pub fn publish_with(
                         cli,
                         store,
                         &previous,
-                        &floor,
+                        highest_revision,
                         previous_dir,
                         &staging,
                         built,
@@ -655,7 +656,7 @@ fn publish_directory(
     cli: &PublishOptions,
     store: &impl Journal,
     previous: &std::collections::BTreeMap<u64, transparent_filter::ShardMapEntry>,
-    floor: &RevisionFloor,
+    highest_revision: Option<u32>,
     previous_dir: &Path,
     staging: &Path,
     built: BuiltDirectory,
@@ -779,14 +780,14 @@ fn publish_directory(
     let (revision, supersedes) = if reproduced {
         PublishedRevision::next(built.shard_id, published.as_ref(), reproduced)?
     } else {
-        // New content takes a revision above every one this shard was ever
-        // published under, not only above the predecessor still on chain.
-        let (_, supersedes) = PublishedRevision::next(built.shard_id, published.as_ref(), false)?;
+        // Wallet sources follow geometry and start height, not shard numbers.
+        // A reorg can change sealing boundaries and renumber a later source,
+        // so new content must exceed the history of every shard number.
         let highest = published
             .as_ref()
             .map(|p| p.revision)
             .into_iter()
-            .chain(floor.get(&built.shard_id).copied())
+            .chain(highest_revision)
             .max();
         let revision = match highest {
             None => 0,
@@ -797,6 +798,8 @@ fn publish_directory(
                 )
             })?,
         };
+        // Check exhaustion before the helper increments the predecessor.
+        let (_, supersedes) = PublishedRevision::next(built.shard_id, published.as_ref(), false)?;
         (revision, supersedes)
     };
     let manifest = make(revision, supersedes, with_choice);
@@ -878,7 +881,10 @@ fn publish_directory(
     })
 }
 
-/// The highest revision each shard has ever been published under.
+/// The highest revision published under each shard number.
+///
+/// Allocation uses the maximum across all numbers because reorgs can renumber
+/// the geometry/start-height sources whose revisions wallets remember.
 pub type RevisionFloor = std::collections::BTreeMap<u64, u32>;
 
 /// The file beside a publication's map that records its [`RevisionFloor`].
@@ -1280,6 +1286,93 @@ mod tests {
         let next = publish(&options(&dir("n"), Some(&dir("r"))), &grown, zero).unwrap();
         assert_eq!(next.shards.last().unwrap().revision, 5);
         assert_eq!(revision_floor(&dir("n")).unwrap()[&tail.shard_id], 5);
+    }
+
+    #[test]
+    fn a_reorg_that_renumbers_a_source_exceeds_its_old_revisions() {
+        use transparent_shard::seal::Limit;
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let policy = |geometry: &Geometry| DecoupledPolicy {
+            scripts: Limit::new(2, 2).unwrap(),
+            ..DecoupledPolicy::for_geometry(geometry)
+        };
+        let mut original = EventStore::open(root.path().join("old"), &"00".repeat(32), 0).unwrap();
+        for (height, tag) in [1, 1, 1, 2, 5].into_iter().enumerate() {
+            block(&mut original, height as u64, tag);
+        }
+        let options = |name: &str, previous: Option<&Path>| PublishOptions {
+            archive_geometry: None,
+            recent_from: None,
+            ..options(&root.path().join(name), previous)
+        };
+        let first = root.path().join("first");
+        let initial = publish_with(&options("first", None), &original, zero, &policy).unwrap();
+        block(&mut original, 5, 5);
+        let previous = root.path().join("previous");
+        let grown =
+            publish_with(&options("previous", Some(&first)), &original, zero, &policy).unwrap();
+        let old_tail = grown.shards.last().unwrap();
+        assert_eq!(old_tail.start_height, 4);
+        assert_eq!(old_tail.shard_id, 1);
+        assert!(old_tail.revision > initial.shards.last().unwrap().revision);
+
+        let mut fork = EventStore::open(root.path().join("fork"), &"00".repeat(32), 0).unwrap();
+        for (height, tag) in [1, 2, 3, 4, 5, 5].into_iter().enumerate() {
+            block(&mut fork, height as u64, tag);
+        }
+        let repaired =
+            publish_with(&options("repaired", Some(&previous)), &fork, zero, &policy).unwrap();
+        let new_tail = repaired.shards.last().unwrap();
+        assert_eq!(new_tail.start_height, old_tail.start_height);
+        assert_eq!(new_tail.geometry, old_tail.geometry);
+        assert_eq!(new_tail.shard_id, 2);
+        assert!(new_tail.revision > old_tail.revision);
+    }
+
+    #[test]
+    fn an_exhausted_previous_manifest_returns_an_error_before_incrementing() {
+        let root = tempfile::tempdir().unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let previous = root.path().join("previous");
+        let mut map = publish(&options(&previous, None), &journal, zero).unwrap();
+        let entry = map.shards.last_mut().unwrap();
+        let mut manifest = read_tail(&previous, entry);
+        manifest.revision = u32::MAX;
+        let digest = manifest.digest();
+        link_revision(&previous, &root.path().join("copy"), &entry.manifest_digest).unwrap();
+        std::fs::rename(
+            root.path().join("copy").join(&entry.manifest_digest),
+            previous.join(&digest),
+        )
+        .unwrap();
+        std::fs::write(
+            previous.join(&digest).join("manifest.json"),
+            manifest.canonical_bytes(),
+        )
+        .unwrap();
+        entry.revision = u32::MAX;
+        entry.manifest_digest = digest;
+        std::fs::write(
+            previous.join("shards.json"),
+            serde_json::to_vec(&map).unwrap(),
+        )
+        .unwrap();
+        block(&mut journal, 4, 5);
+        let error = publish(
+            &options(&root.path().join("next"), Some(&previous)),
+            &journal,
+            zero,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("exhausted"), "{error}");
+        assert!(!root.path().join("next/shards.json").exists());
     }
 
     /// An operator-recorded floor from retained evidence is honoured and
