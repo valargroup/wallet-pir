@@ -39,7 +39,10 @@ def validate_request(request, inventory):
     serving = request['serving']
     require(isinstance(serving, dict) and set(serving) == {'git_sha', 'binary_sha256', 'binary_bytes', 'caddy_sha256'},
             'serving release fields must be explicit')
-    require(serving['git_sha'] == request['release']['git_sha'], 'publisher and serving source revisions differ')
+    require(request.get('preserve_serving') or serving['git_sha'] == request['release']['git_sha'],
+            'publisher and serving source revisions differ')
+    require(isinstance(serving['git_sha'], str) and re.fullmatch('[a-f0-9]{40}', serving['git_sha']),
+            'serving source revision must be explicit')
     require(all(isinstance(serving[k], str) and re.fullmatch('[a-f0-9]{64}', serving[k])
                 for k in ('binary_sha256', 'caddy_sha256')), 'invalid serving executable or edge digest')
     require(type(serving['binary_bytes']) is int and serving['binary_bytes'] > 0, 'invalid serving executable size')
@@ -90,6 +93,9 @@ class Serving:
         plans, problems = deployer.assess(self.release['binary_sha256'], binary=self.binary,
                                          allow_drift=True, retire_historical=True, require_baseline=False)
         require(not problems, 'serving preflight refused: ' + '; '.join(problems))
+        if owner.request.get('preserve_serving'):
+            require(all(p.action == 'skip' and not p.changes for p in plans),
+                    'preserve_serving requires every serving role already running the pinned binary and configuration')
         before = owner.read(CADDY)
         require(before is not None and sha(before) == self.release['caddy_sha256'], 'wallet edge differs from request')
         code, output = owner.ex.run(owner.host, ['stat', '-c', '%a:%u:%g', CADDY], 10)

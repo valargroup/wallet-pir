@@ -128,9 +128,10 @@ pub fn prepare(
 /// (timestamps advance in coarse ticks), so a hash taken now is not reused.
 const SETTLED: Duration = Duration::from_secs(1);
 
-/// The exact file a hash was read from. A write, truncation, rename over the
-/// path or metadata restore changes at least one of these fields; the status
-/// change time cannot be set back by a writer.
+/// Filesystem identity of an immutable publisher object. Ordinary writes,
+/// truncation, replacement and metadata restoration change these fields.
+/// This is not an integrity boundary against unrelated writers, such as a
+/// process holding a writable mapping of the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileIdentity {
     dev: u64,
@@ -151,7 +152,7 @@ impl FileIdentity {
         }
     }
 
-    /// Whether any later change to the file must move its status change time.
+    /// Whether the recorded status change predates the timestamp safety window.
     fn settled_before(&self, started: SystemTime) -> bool {
         let (Ok(seconds), Ok(nanos)) = (u64::try_from(self.ctime.0), u32::try_from(self.ctime.1))
         else {
@@ -176,6 +177,7 @@ pub struct Hashed {
 /// An inventory whose objects this process hashed from disk, with the identity
 /// of each file it hashed. The evidence exists only in memory and is never
 /// accepted from another process or a file.
+/// Reuse assumes immutable objects and writers that honor the preparation lock.
 #[derive(Debug)]
 pub struct Prepared {
     inventory: Inventory,
@@ -211,54 +213,52 @@ fn verify_with(
     prior: &BTreeMap<String, FileIdentity>,
 ) -> Result<Prepared, String> {
     inventory.validate()?;
-    let mut objects = Vec::new();
+    let mut pass = VerificationPass::default();
     for domain in &inventory.domains {
-        objects.extend(domain.rows.iter().cloned());
-        objects.extend([
-            domain.hint.clone(),
-            domain.public.clone(),
-            domain.packing_object(),
-        ]);
+        let packing = domain.packing_object();
+        for object in domain
+            .rows
+            .iter()
+            .chain([&domain.hint, &domain.public, &packing])
+        {
+            pass.check(root, object, prior.get(&object.sha256))?;
+        }
     }
-    let (evidence, hashed) = check_all(root, &objects, prior)?;
     Ok(Prepared {
         inventory,
-        evidence,
-        hashed,
+        evidence: pass.evidence,
+        hashed: pass.hashed,
     })
 }
 
-/// Check every reference, hashing each distinct object once. All references
-/// to one digest must declare the same length before any file is read.
-/// Returns the settled identities that a later pass may reuse.
-fn check_all(
-    root: &Path,
-    objects: &[Object],
-    prior: &BTreeMap<String, FileIdentity>,
-) -> Result<(BTreeMap<String, FileIdentity>, Hashed), String> {
-    let mut lengths = BTreeMap::new();
-    let mut distinct = Vec::new();
-    for object in objects {
-        object.validate()?;
-        match lengths.get(&object.sha256) {
-            Some(&bytes) if bytes != object.bytes => {
+/// A fresh object can be checked once in this pass without retaining evidence
+/// that would allow a later pass to skip its contents.
+#[derive(Default)]
+struct VerificationPass {
+    checked: BTreeMap<String, u64>,
+    evidence: BTreeMap<String, FileIdentity>,
+    hashed: Hashed,
+}
+
+impl VerificationPass {
+    fn check(
+        &mut self,
+        root: &Path,
+        object: &Object,
+        prior: Option<&FileIdentity>,
+    ) -> Result<(), String> {
+        if let Some(bytes) = self.checked.get(&object.sha256) {
+            if *bytes != object.bytes {
                 return Err("publication object checksum or length mismatch".into());
             }
-            Some(_) => {}
-            None => {
-                lengths.insert(object.sha256.clone(), object.bytes);
-                distinct.push(object);
-            }
+            return Ok(());
         }
-    }
-    let mut evidence = BTreeMap::new();
-    let mut hashed = Hashed::default();
-    for object in distinct {
-        if let Some(identity) = check(root, object, prior.get(&object.sha256), &mut hashed)? {
-            evidence.insert(object.sha256.clone(), identity);
+        if let Some(identity) = check(root, object, prior, &mut self.hashed)? {
+            self.evidence.insert(object.sha256.clone(), identity);
         }
+        self.checked.insert(object.sha256.clone(), object.bytes);
+        Ok(())
     }
-    Ok((evidence, hashed))
 }
 
 /// Check one object, reusing `prior` while the path still names the same,
@@ -483,57 +483,6 @@ mod tests {
     }
 
     #[test]
-    fn a_duplicate_fresh_object_is_hashed_once_without_evidence() {
-        let root = tempfile::tempdir().unwrap();
-        let root = root.path();
-        let fresh = object(root, b"fresh duplicate");
-        let (evidence, hashed) =
-            check_all(root, &[fresh.clone(), fresh.clone()], &BTreeMap::new()).unwrap();
-        assert!(evidence.is_empty(), "an unsettled file mints no evidence");
-        assert_eq!(
-            hashed,
-            Hashed {
-                files: 1,
-                bytes: fresh.bytes,
-                reused: 0,
-            }
-        );
-        settle();
-        let (evidence, hashed) =
-            check_all(root, &[fresh.clone(), fresh.clone()], &BTreeMap::new()).unwrap();
-        assert_eq!((hashed.files, evidence.len()), (1, 1));
-        let (_, hashed) = check_all(root, &[fresh.clone(), fresh], &evidence).unwrap();
-        assert_eq!((hashed.files, hashed.reused), (0, 1));
-    }
-
-    #[test]
-    fn references_with_conflicting_lengths_are_rejected_before_reading() {
-        let root = tempfile::tempdir().unwrap();
-        let root = root.path();
-        let stored = object(root, b"declared once");
-        settle();
-        let (evidence, _) =
-            check_all(root, std::slice::from_ref(&stored), &BTreeMap::new()).unwrap();
-        let other = Object {
-            bytes: stored.bytes + 1,
-            ..stored.clone()
-        };
-        for prior in [BTreeMap::new(), evidence] {
-            for objects in [
-                [stored.clone(), other.clone()],
-                [other.clone(), stored.clone()],
-            ] {
-                assert!(check_all(root, &objects, &prior).is_err());
-            }
-        }
-        // Reusable evidence never vouches for a length the file does not have.
-        let mut hashed = Hashed::default();
-        let identity = verified(root, &stored);
-        assert!(check(root, &other, Some(&identity), &mut hashed).is_err());
-        assert_eq!(hashed.reused, 0);
-    }
-
-    #[test]
     fn a_recently_changed_file_is_not_reused() {
         let root = tempfile::tempdir().unwrap();
         let object = object(root.path(), b"fresh object");
@@ -542,6 +491,103 @@ mod tests {
         assert!(!identity.settled_before(ctime));
         assert!(!identity.settled_before(ctime + SETTLED - Duration::from_nanos(1)));
         assert!(identity.settled_before(ctime + SETTLED));
+    }
+
+    #[test]
+    fn a_fresh_object_is_hashed_once_per_pass() {
+        let root = tempfile::tempdir().unwrap();
+        let object = object(root.path(), b"fresh object");
+        let mut first = VerificationPass::default();
+        first.check(root.path(), &object, None).unwrap();
+        assert!(first.evidence.is_empty());
+        first.check(root.path(), &object, None).unwrap();
+        let once = Hashed {
+            files: 1,
+            bytes: object.bytes,
+            reused: 0,
+        };
+        assert_eq!(first.hashed, once);
+
+        let mut second = VerificationPass::default();
+        second
+            .check(root.path(), &object, first.evidence.get(&object.sha256))
+            .unwrap();
+        assert_eq!(
+            second.hashed, once,
+            "a later pass must hash fresh files again"
+        );
+
+        let contradictory = Object {
+            bytes: object.bytes + 1,
+            ..object
+        };
+        assert!(first.check(root.path(), &contradictory, None).is_err());
+        assert_eq!(first.hashed, once);
+    }
+
+    #[test]
+    fn repeated_digest_with_a_different_length_is_rejected() {
+        use enhance_query_server::{protocol, RECORD_BYTES};
+
+        let root = tempfile::tempdir().unwrap();
+        let coverage = Lifecycle::default()
+            .coverage(1, Geometry::default())
+            .unwrap();
+        let mut read = |_, count| Ok(vec![0; count * RECORD_BYTES]);
+        let plan = runtime::plan(coverage.shards[0].clone(), &mut read).unwrap();
+        let bytes = runtime::unit_rows(&plan.shard, &plan.shard.units[0], &mut read).unwrap();
+        let rows = object(root.path(), &bytes);
+        let parameters = protocol::parameters(plan.shard.logical_rows).unwrap();
+        #[cfg(feature = "native-reinspiring")]
+        let public_bytes =
+            enhance_query_server::native::public_len(enhance_query_server::native::COLS);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let public_bytes = (parameters.db_cols
+            * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q))
+        .div_ceil(8);
+        let public = Object {
+            sha256: "11".repeat(32),
+            bytes: public_bytes as u64,
+        };
+        let hint = Object {
+            sha256: rows.sha256.clone(),
+            bytes: crate::wire::crs_encoded_len(
+                parameters.db_cols / runtime::rlwe().d,
+                runtime::rlwe().d,
+            )
+            .unwrap(),
+        };
+        assert_ne!(rows.bytes, hint.bytes);
+        let packing = prepared_packing::Artifact {
+            name: prepared_packing::artifact_name(plan.shard.logical_rows, &public.sha256).unwrap(),
+            sha256: "22".repeat(32),
+            #[cfg(feature = "native-reinspiring")]
+            bytes: 192 * 1024 * 1024,
+            #[cfg(not(feature = "native-reinspiring"))]
+            bytes: prepared_packing::expected_len(plan.shard.logical_rows).unwrap(),
+            format: prepared_packing::FORMAT,
+        };
+        let inventory = Inventory {
+            version: VERSION,
+            network: "main".into(),
+            profile: PROTOCOL_REVISION.into(),
+            coverage,
+            domains: vec![Domain {
+                plan,
+                rows: vec![rows],
+                hint,
+                public,
+                packing,
+            }],
+        };
+        inventory.validate().unwrap();
+        settle();
+        // Only the row file exists: verification must reject the contradictory
+        // hint length before attempting to open the later public or packing files.
+        assert_eq!(
+            verify(root.path(), inventory).unwrap_err(),
+            "publication object checksum or length mismatch"
+        );
     }
 
     #[test]

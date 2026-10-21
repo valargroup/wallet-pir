@@ -28,6 +28,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
+#[path = "support/artifact_validation.rs"]
+mod artifact_validation;
 #[path = "support/revision.rs"]
 mod revision;
 use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
@@ -286,6 +288,32 @@ fn a_set_holding_a_superseded_revision_loads() {
     assert_eq!(set.get(0).unwrap().digest, new, "the map names the current");
     assert!(set.revision(&old).is_some(), "the predecessor is reachable");
     assert!(set.revision(&new).is_some());
+}
+
+#[tokio::test]
+async fn retained_history_artifacts_are_checked_and_stay_withdrawn_after_reopening() {
+    let dir = tempfile::tempdir().unwrap();
+    let (old, new) = two_revisions(dir.path());
+    let options = LoadOptions::whole(DEFAULT_RETAIN_REVISIONS);
+    let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
+    artifact_validation::damage_received(
+        set.revision(&old)
+            .unwrap()
+            .segment(TableRef::Directory, 0)
+            .unwrap(),
+    );
+    drop(set);
+    for pending in [true, false] {
+        let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
+        let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
+        artifact_validation::assert_withdrawn(
+            router(state),
+            &format!("/v2/shards/0/revisions/{old}/manifest"),
+            &format!("/v2/shards/0/revisions/{new}/manifest"),
+            pending,
+        )
+        .await;
+    }
 }
 
 /// Retention is bounded. Keeping every revision a growing tail ever had would

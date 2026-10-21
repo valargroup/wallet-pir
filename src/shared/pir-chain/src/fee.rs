@@ -190,14 +190,16 @@ mod tests {
     }
 
     fn reparse(transaction: NodeTransaction) -> Transaction {
-        Transaction::zcash_deserialize(transaction.zcash_serialize_to_vec().unwrap().as_slice())
-            .unwrap()
+        Transaction::zcash_deserialize(
+            &mut transaction.zcash_serialize_to_vec().unwrap().as_slice(),
+        )
+        .unwrap()
     }
 
     fn fixture() -> Transaction {
         let bytes =
             hex::decode(include_str!("../tests/fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
-        Transaction::zcash_deserialize(bytes.as_slice()).unwrap()
+        Transaction::zcash_deserialize(&mut bytes.as_slice()).unwrap()
     }
 
     fn spend(seed: u8, index: u32) -> NodeInput {

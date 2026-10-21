@@ -35,6 +35,10 @@ transparent-detail = [
 native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
+    # Status wallet tests need the client. Leaving it on every test root adds
+    # `status` to the shared client and makes the fast graph miss the warm cache.
+    "zakura-pir-client/native",
+    "zakura-pir-client/status",
 ]
 cuda = ["enhance-query-server?/cuda", "status-query-server?/cuda"]
 
@@ -63,4 +67,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native", "status"] }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false }

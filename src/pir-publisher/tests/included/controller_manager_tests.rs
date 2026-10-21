@@ -1317,6 +1317,77 @@ async fn manager_owner_fence_write_failure_still_fences_http() {
     control_write_failure(None, "active.invalid.tmp").await;
 }
 
+// Different producer contents exercise reclamation through the real TLS manager,
+// rather than calling Collect directly or populating a synthetic object cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_collects_obsolete_objects_after_publication_contents_change() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let first_objects: std::collections::BTreeSet<_> = distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.sha256.clone())
+        .collect();
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state).await;
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let first_tree = PathBuf::from(
+        live.command(Command::Status).await.unwrap()["active"]["directory"]
+            .as_str()
+            .unwrap(),
+    );
+    let downloaded: std::collections::BTreeSet<_> = first_objects
+        .into_iter()
+        .filter(|digest| state.join("objects").join(digest).is_file())
+        .collect();
+    let (next_dir, next_set, next_distribution) = immutable_publication(3);
+    let next_objects: std::collections::BTreeSet<_> = next_distribution
+        .inventory()
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.sha256.clone())
+        .collect();
+    let obsolete: Vec<_> = downloaded.difference(&next_objects).collect();
+    let shared: Vec<_> = downloaded.intersection(&next_objects).collect();
+    assert!(
+        !obsolete.is_empty(),
+        "publications must contain different objects"
+    );
+    assert!(
+        !shared.is_empty(),
+        "publications must also share immutable objects"
+    );
+    advance(&owner, &next_dir, next_distribution);
+    follow.poll_once().await.unwrap();
+    // The first predecessor and its reusable downloads survive early collection.
+    assert!(first_tree.is_dir());
+    assert!(obsolete
+        .iter()
+        .all(|digest| state.join("objects").join(digest).is_file()));
+    // Retire the first tree beyond both predecessor and unused-tree retention.
+    for _ in 0..7 {
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        follow.poll_once().await.unwrap();
+    }
+    assert!(!first_tree.exists());
+    assert!(obsolete
+        .iter()
+        .all(|digest| !state.join("objects").join(digest).exists()));
+    assert!(shared
+        .iter()
+        .all(|digest| state.join("objects").join(digest).is_file()));
+    let active = live.command(Command::Status).await.unwrap();
+    assert_eq!(active["active"]["map_sha256"], next_set.map_digest);
+    let (origin, task) = worker(live).await;
+    query(&origin, &next_set).await;
+    task.stop().await;
+}
+
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {
@@ -1332,6 +1403,11 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     let mut follow = manager(&tls, &state).await;
     follow.poll_once().await.unwrap();
     let live = follow.live().unwrap();
+    let held = PathBuf::from(
+        live.command(Command::Status).await.unwrap()["active"]["directory"]
+            .as_str()
+            .unwrap(),
+    );
     let (origin, task) = worker(live.clone()).await;
     let shard = set.get(1).unwrap();
     let width = shard.geometry.directory_row_bytes;
@@ -1372,7 +1448,8 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     // Same immutable map, new complete owner snapshots: no expensive fixture
     // growth, and no helper-only fake activation or explicit Collect command.
-    for _ in 0..7 {
+    // More activations than disk retention keeps, so trees are collected.
+    for _ in 0..10 {
         owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
         follow.poll_once().await.unwrap();
         let status = live.command(Command::Status).await.unwrap();
@@ -1404,15 +1481,29 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
     );
     query(&origin, &set).await;
     assert!(state.join("objects").is_dir());
+    // Eleven activations leave the active tree, three retained predecessors,
+    // the tree the admitted request held and three unused trees on disk.
+    let trees: Vec<_> = std::fs::read_dir(&state)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path().canonicalize().unwrap())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("staging-")
+        })
+        .collect();
+    assert_eq!(trees.len(), 8, "{trees:?}");
     assert!(
-        std::fs::read_dir(&state)
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
-            .count()
-            >= 8,
-        "memory collection does not delete disk trees"
+        trees.contains(&held),
+        "the admitted request's tree survived"
     );
+    let active = live.command(Command::Status).await.unwrap()["active"]["directory"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap();
+    assert!(trees.contains(&active));
     task.stop().await;
 }
 
