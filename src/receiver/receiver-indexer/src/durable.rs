@@ -55,6 +55,15 @@ struct Name {
 }
 
 impl Name {
+    /// The file holding its rows or filter, which reuse compares with rebuilt data.
+    fn data_file(&self) -> String {
+        let extension = match self.kind {
+            Kind::Payments | Kind::Witnesses => "rows",
+            Kind::Filter => "filter",
+        };
+        format!("{}.{extension}", self.stem())
+    }
+
     /// The file stem `<kind>-<revision>`.
     fn stem(&self) -> String {
         let kind = match self.kind {
@@ -173,7 +182,7 @@ impl Durable {
             revision: snapshot.manifest.revision()?,
         };
         let stored = match self.stored.contains_key(&name) {
-            true => self.reuse(name, |d| d.payment_source(name))?,
+            true => self.reuse(name, &snapshot.data, |d| d.payment_source(name))?,
             false => None,
         };
         let (payments, server) = match stored {
@@ -240,7 +249,11 @@ impl Durable {
             kind: Kind::Filter,
             revision: filter.digest(),
         };
-        if !self.stored.contains_key(&name) {
+        let reused = match self.stored.contains_key(&name) {
+            true => self.reuse(name, filter.bytes(), |_| Ok(()))?,
+            false => None,
+        };
+        if reused.is_none() {
             self.write_file(name, "filter", filter.bytes())?;
             self.stored.insert(name, name.revision);
         }
@@ -268,21 +281,54 @@ impl Durable {
         Ok(())
     }
 
-    /// The source `source` builds over stored table `name`, or `None` after removing
-    /// that table's files when they do not form a valid source, such as a public setup
-    /// that is not the one its manifest binds, so the caller prepares it again.
-    fn reuse(
+    /// The source `source` builds over stored entry `name`, whose rows or filter must be
+    /// exactly `data`, the copy just rebuilt from the index. Every reuse of a stored copy
+    /// goes through this check. If the stored data differs or is missing, or the files do
+    /// not form a valid source, such as a public setup that is not the one its manifest
+    /// binds, the entry's files are removed and `None` returned, so the caller writes
+    /// and prepares it again instead of serving it.
+    fn reuse<T>(
         &mut self,
         name: Name,
-        source: impl FnOnce(&Self) -> Result<Arc<Source>, Error>,
-    ) -> Result<Option<Arc<Source>>, Error> {
-        match source(self) {
+        data: &[u8],
+        source: impl FnOnce(&Self) -> Result<T, Error>,
+    ) -> Result<Option<T>, Error> {
+        let built = match self.holds(name, data) {
+            true => source(self),
+            false => Err(Error::Transport(format!(
+                "{} differs from the rebuilt data",
+                name.data_file()
+            ))),
+        };
+        match built {
             Ok(source) => Ok(Some(source)),
             Err(error) => {
-                tracing::warn!(table = %name.stem(), %error, "stored table invalid; preparing it again");
+                tracing::warn!(table = %name.stem(), %error, "stored copy invalid; writing it again");
                 self.forget(name)
                     .map_err(|e| Error::Transport(format!("table {}: {e}", name.stem())))?;
                 Ok(None)
+            }
+        }
+    }
+
+    /// Whether the stored rows or filter of `name` are exactly `data`, compared in bounded
+    /// chunks without reading the file into memory.
+    fn holds(&self, name: Name, data: &[u8]) -> bool {
+        use std::io::Read;
+        let path = self.dir.join(name.data_file());
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        if file.metadata().map(|m| m.len()).ok() != Some(data.len() as u64) {
+            return false;
+        }
+        let mut chunk = vec![0; 1 << 20];
+        let mut offset = 0;
+        loop {
+            match file.read(&mut chunk) {
+                Ok(0) => return offset == data.len(),
+                Ok(n) if data.get(offset..offset + n) == Some(&chunk[..n]) => offset += n,
+                _ => return false,
             }
         }
     }
@@ -312,7 +358,10 @@ impl Durable {
             revision: witnesses.manifest.revision()?,
         };
         if self.stored.contains_key(&name) {
-            if let Some(source) = self.reuse(name, |d| d.witness_source(name, payments.clone()))? {
+            let reused = self.reuse(name, &witnesses.data, |d| {
+                d.witness_source(name, payments.clone())
+            })?;
+            if let Some(source) = reused {
                 return Ok(source);
             }
         }

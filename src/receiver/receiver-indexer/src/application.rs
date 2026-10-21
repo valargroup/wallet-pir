@@ -1900,6 +1900,61 @@ mod tests {
         );
     }
 
+    /// After a restart a stored table or filter is reused only if it is exactly what the
+    /// index rebuilds: corrupted or missing rows are prepared again and a corrupted filter
+    /// is written again, so wallets read every payment, payload and filter as before.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stored_copies_are_rebuilt_unless_they_match_the_index() {
+        let payee = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[payee], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let tables = paused.dir.path().join(crate::durable::TABLES_DIR);
+        let files = |extension: &str, prefix: &str| -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(&tables)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| {
+                    p.extension().is_some_and(|e| e == extension)
+                        && p.file_name().unwrap().to_str().unwrap().starts_with(prefix)
+                })
+                .collect()
+        };
+        let flip = |path: &std::path::Path| {
+            let mut bytes = std::fs::read(path).unwrap();
+            bytes[0] ^= 1;
+            std::fs::write(path, bytes).unwrap();
+        };
+        let (payments, witnesses, filters) = (
+            files("rows", "p-"),
+            files("rows", "w-"),
+            files("filter", "f-"),
+        );
+        assert_eq!((payments.len(), witnesses.len(), filters.len()), (2, 2, 1));
+        let filter = std::fs::read(&filters[0]).unwrap();
+        payments.iter().for_each(|p| flip(p));
+        witnesses
+            .iter()
+            .for_each(|w| std::fs::remove_file(w).unwrap());
+        flip(&filters[0]);
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.state.durable.as_ref().unwrap().prepared(), 4);
+        assert_eq!(std::fs::read(&filters[0]).unwrap(), filter);
+        let (client, _) = paused.capture(true).await;
+        let found = lookup(&client, payee).await;
+        assert_eq!(found.len(), 1);
+        let (shard, segment, record) = &found[0];
+        let segment = client.segment(*shard, *segment).await.unwrap();
+        let payload = client.witness(&segment, record.ordinal).await.unwrap();
+        assert_eq!(
+            payload,
+            fresh(&paused.store(), &[record.payment.position])[0]
+        );
+    }
+
     /// A cold reload, staged or stored, reads only the rows of the geometry it was
     /// verified under: a longer replacement is refused before it is read, and a
     /// replaced manifest is never used.
