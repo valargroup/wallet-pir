@@ -18,6 +18,12 @@ use std::{
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 
+/// Every deployed-geometry case prepares, copies and hashes about 1 GB, so the
+/// qualification lane runs them one at a time. The bound covers the shared cold
+/// preparation (26-32s on 3 CPUs) plus the longest body measured there (76s).
+pub(super) const QUALIFICATION_BUDGET: Duration = Duration::from_secs(180);
+pub(super) static DEPLOYED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub(super) struct Tls {
     pub(super) origin: String,
     client: reqwest::Client,
@@ -96,13 +102,17 @@ impl Published {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_updates() {
     use enhance_query_server::{
         client::QuerySession, ingress_sync, protocol::ShardSession, router_sync, worker_sync,
         RECORD_BYTES,
     };
-    warm_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = Published::new().await;
         let worker = worker_sync::Worker::open(
             &fixture.scratch.path().join("worker"),
@@ -221,6 +231,17 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
             .await
             .unwrap();
         let session = QuerySession::new(&initial, session).unwrap();
+        // An admitted query keeps an immutable five-second authority guard.
+        // Hash and load the next generation first, so that only the router's
+        // activation happens while the query is in flight.
+        let mut advanced = initial.clone();
+        advanced.generation += 1;
+        fixture
+            .distribution
+            .publish(advanced.clone(), fixture.inventory.clone())
+            .await
+            .unwrap();
+        worker_sync.poll_once().await.unwrap();
         let (query, slot) = session.prepare_position(66).unwrap();
         let running_http = http.clone();
         let running_endpoint = endpoint.clone();
@@ -242,14 +263,6 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
             .await
             .unwrap();
-        let mut advanced = initial.clone();
-        advanced.generation += 1;
-        fixture
-            .distribution
-            .publish(advanced.clone(), fixture.inventory.clone())
-            .await
-            .unwrap();
-        worker_sync.poll_once().await.unwrap();
         router_sync.poll_once().await.unwrap();
         let before: Manifest = http
             .get(&init_url)
@@ -465,14 +478,18 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
             .is_success());
     })
     .await
-    .expect("autonomous ingress wallet flow exceeded correctness budget");
+    .expect("autonomous ingress wallet flow exceeded qualification budget");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
     use enhance_query_server::{router_sync, worker_sync};
-    warm_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = Published::new().await;
         let worker = worker_sync::Worker::open(
             &fixture.scratch.path().join("worker"),
@@ -567,16 +584,20 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
         assert!(after["packing_charged_bytes"].as_u64().unwrap() > 0);
     })
     .await
-    .expect("router recovery exceeded correctness budget");
+    .expect("router recovery exceeded qualification budget");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_during_activation() {
     use enhance_query_server::{
         client::QuerySession, protocol::ShardSession, router_sync, worker_sync, RECORD_BYTES,
     };
-    warm_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = Published::new().await;
         let worker_root = fixture.scratch.path().join("worker");
         let worker_config = worker_sync::Config {
@@ -594,16 +615,36 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
         let pause = Arc::new(AtomicBool::new(false));
         let entered = Arc::new(tokio::sync::Notify::new());
         let released = Arc::new(tokio::sync::Notify::new());
+        // A loaded candidate whose readiness is withheld, as an unloaded one
+        // would answer, so activation can happen at a chosen moment.
+        let withheld = Arc::new(std::sync::Mutex::new(None::<String>));
         let pausing = pause.clone();
         let entering = entered.clone();
         let releasing = released.clone();
+        let withholding = withheld.clone();
         let worker_http = serve(worker.clone().router().layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
                 let should_pause = request.uri().path() == "/internal/evaluate"
                     && pausing.swap(false, Ordering::AcqRel);
+                let withheld = (request.uri().path() == "/internal/readiness")
+                    .then(|| withholding.lock().unwrap().clone())
+                    .flatten();
                 let entering = entering.clone();
                 let releasing = releasing.clone();
                 async move {
+                    use axum::response::IntoResponse;
+                    let request = if let Some(withheld) = withheld {
+                        let (parts, body) = request.into_parts();
+                        let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
+                        let readiness: worker_sync::ReadinessRequest =
+                            serde_json::from_slice(&bytes).unwrap();
+                        if readiness.manifest_sha256 == withheld {
+                            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                        }
+                        axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes))
+                    } else {
+                        request
+                    };
                     let response = next.run(request).await;
                     if should_pause {
                         entering.notify_one();
@@ -664,28 +705,9 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
             .await
             .unwrap();
         let session = QuerySession::new(&fixture.manifest, session).unwrap();
-        let (query, slot) = session.prepare_position(66).unwrap();
-        pause.store(true, Ordering::Release);
-        let endpoint = format!("{}/v1/enhance/query", public.url);
-        let body = query.body().to_vec();
-        let running_http = http.clone();
-        let running_endpoint = endpoint.clone();
-        let in_flight = tokio::spawn(async move {
-            running_http
-                .post(running_endpoint)
-                .body(body)
-                .send()
-                .await
-                .unwrap()
-                .error_for_status()
-                .unwrap()
-                .bytes()
-                .await
-                .unwrap()
-        });
-        tokio::time::timeout(Duration::from_secs(5), entered.notified())
-            .await
-            .unwrap();
+        // An admitted query keeps an immutable five-second authority guard.
+        // Hash and load the next generation first, so that only activation of
+        // the prepared candidate happens while the query is in flight.
         let mut advanced = fixture.manifest.clone();
         advanced.generation += 1;
         fixture
@@ -708,7 +730,46 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
             before.generation, 1,
             "router keeps its old view while the worker loads"
         );
+        *withheld.lock().unwrap() = Some(protocol::digest(&advanced));
         worker_sync.poll_once().await.unwrap();
+        router_sync.poll_once().await.unwrap();
+        let staged: ShardSession = http
+            .get(&session_url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            staged.generation, 1,
+            "router keeps its old view until the worker reports readiness"
+        );
+        let (query, slot) = session.prepare_position(66).unwrap();
+        pause.store(true, Ordering::Release);
+        let endpoint = format!("{}/v1/enhance/query", public.url);
+        let body = query.body().to_vec();
+        let running_http = http.clone();
+        let running_endpoint = endpoint.clone();
+        let in_flight = tokio::spawn(async move {
+            running_http
+                .post(running_endpoint)
+                .body(body)
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+        });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        withheld.lock().unwrap().take();
         router_sync.poll_once().await.unwrap();
         released.notify_one();
         let row = session.decode(query, &in_flight.await.unwrap()).unwrap();
@@ -796,10 +857,14 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
         );
     })
     .await
-    .expect("autonomous router handover exceeded correctness budget");
+    .expect("autonomous router handover exceeded qualification budget");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     use enhance_query_server::{
         client::QuerySession,
@@ -810,8 +875,8 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         worker_sync::{self, Readiness, ReadinessRequest},
         PackingBudget, RECORD_BYTES,
     };
-    warm_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
@@ -923,7 +988,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [hex::encode(manifest.session_id(0).unwrap())].into() }).unwrap();
         assert!(synchronizer.poll_once().await.is_err());
         assert!(!http.post(&readiness).json(&advanced_request).send().await.unwrap().status().is_success(), "revocation closes loaded material");
-    }).await.expect("autonomous worker lifecycle exceeded correctness budget");
+    }).await.expect("autonomous worker lifecycle exceeded qualification budget");
 }
 
 fn fixture_records(start: u64, count: usize) -> Result<Vec<u8>, String> {
@@ -939,7 +1004,7 @@ fn fixture_coverage(count: u64) -> protocol::Coverage {
 /// One complete publisher preparation of `count` fixture records, built once
 /// per process (or per `WALLET_PIR_TEST_RUNTIME_CACHE`) beside the shared hint
 /// fixtures. A cold build is the publisher's whole deployed-geometry
-/// preparation, including packing.
+/// preparation, including packing; its time is reported separately.
 fn shared_publication(count: u64) -> std::path::PathBuf {
     let coverage = fixture_coverage(count);
     let plan =
@@ -959,6 +1024,7 @@ fn shared_publication(count: u64) -> std::path::PathBuf {
         hints.file_name().unwrap().to_str().unwrap()
     ));
     if !prepared.exists() {
+        let started = std::time::Instant::now();
         let temporary = tempfile::tempdir_in(cache).unwrap();
         seed_hint_fixture(&temporary.path().join("preparation"), &plan);
         enhance_publisher::publication::prepare(
@@ -969,20 +1035,12 @@ fn shared_publication(count: u64) -> std::path::PathBuf {
         )
         .unwrap();
         std::fs::rename(temporary.path(), &prepared).unwrap();
+        eprintln!(
+            "cold shared {count}-record publication: {:?}",
+            started.elapsed()
+        );
     }
     prepared
-}
-
-/// Builds the shared publication before a case's correctness budget starts and
-/// reports its time, so the budget measures the case rather than one cold
-/// deployed-geometry preparation shared by every case.
-fn warm_publication(count: u64) {
-    let started = std::time::Instant::now();
-    shared_publication(count);
-    eprintln!(
-        "shared {count}-record publication ready in {:?}",
-        started.elapsed()
-    );
 }
 
 /// Prepares a publication of `count` fixture records through the real
@@ -1100,10 +1158,14 @@ async fn check_object(tls: &Tls, path: &str, object: &Object) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cannot_renew_authority()
 {
-    warm_publication(67);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let canonical = Arc::new(AtomicBool::new(true));
@@ -1228,14 +1290,18 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert_eq!(restored.current.revoked.len(), 1);
         assert_eq!(restored.observed_unix_ms, 0);
         assert!(!current.current.succeeds(&restored.current), "restart fence cannot replay the predecessor");
-    }).await.expect("complete Enhance TLS publication exceeded thirty seconds");
+    }).await.expect("complete Enhance TLS publication exceeded qualification budget");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn collection_keeps_retained_material_and_open_files_and_removes_interrupted_candidates() {
     use std::io::Read;
-    warm_publication(1);
-    tokio::time::timeout(Duration::from_secs(30), async {
+    let _serial = DEPLOYED.lock().await;
+    tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(
@@ -1247,7 +1313,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
-        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 1))
+        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67))
             .await.unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
@@ -1288,5 +1354,59 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());
-    }).await.expect("Enhance retained publication collection exceeded thirty seconds");
+    }).await.expect("Enhance retained publication collection exceeded qualification budget");
+}
+
+/// The ordinary-lane authority boundary needs no prepared material: an empty
+/// distribution grants nothing over TLS, and its withdrawal fence survives a
+/// restart without letting the predecessor replay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_restart() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().join("publication");
+        let node = serve(axum::Router::new().route("/", axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                axum::Json(serde_json::json!({"id": request["id"], "error": null, "result": "01".repeat(32)}))
+            }
+        ))).await;
+        let cookie = scratch.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
+        let distribution = Distribution::open(&root, rpc.clone()).unwrap();
+        let upstream = serve(publisher(&distribution)).await;
+        let transport = tls(scratch.path(), &upstream.url).await;
+        let current_url = format!("{}{PREFIX}current", transport.origin);
+        let authority_url = format!("{}{PREFIX}authority", transport.origin);
+        let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
+        assert!(!before.current.eligible);
+        assert_eq!(before.observed_unix_ms, 0);
+        assert!(before.authorized_manifest_sha256.is_empty());
+        for manifest_sha256 in ["11".repeat(32), "../escape".into()] {
+            let refused = transport.client.post(&authority_url).json(&AuthorityRequest { manifest_sha256 }).send().await.unwrap();
+            assert_eq!(refused.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE, "nothing published grants no authority");
+        }
+        let session = "ab".repeat(32);
+        distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [session.clone()].into() }).unwrap();
+        assert!(distribution.withdraw(&Revocation::default()).is_err(), "a fence cannot move backwards");
+        let withdrawn: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
+        assert!(!withdrawn.current.eligible);
+        assert_eq!(withdrawn.observed_unix_ms, 0);
+        assert!(withdrawn.current.succeeds(&before.current));
+        assert!(withdrawn.current.withdrawal_revision > before.current.withdrawal_revision);
+        assert_eq!(withdrawn.current.recovery_epoch, 1);
+        assert_eq!(withdrawn.current.revoked, [session].into());
+        upstream.stop().await;
+        drop(distribution);
+        let reopened = Distribution::open(&root, rpc).unwrap();
+        let listener = serve(reopened.router()).await;
+        let restored: AuthorityResponse = reqwest::get(format!("{}{PREFIX}current", listener.url)).await.unwrap().json().await.unwrap();
+        assert!(!restored.current.eligible);
+        assert!(restored.current.succeeds(&withdrawn.current));
+        assert!(restored.current.withdrawal_revision > withdrawn.current.withdrawal_revision);
+        assert_eq!(restored.current.recovery_epoch, withdrawn.current.recovery_epoch);
+        assert_eq!(restored.current.revoked, withdrawn.current.revoked);
+        assert_eq!(restored.observed_unix_ms, 0);
+        assert!(!before.current.succeeds(&restored.current), "restart fence cannot replay the predecessor");
+    }).await.expect("Enhance authority refusal exceeded thirty seconds");
 }

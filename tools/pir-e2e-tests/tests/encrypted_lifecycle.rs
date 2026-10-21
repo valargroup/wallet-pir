@@ -205,19 +205,16 @@ fn offline_publication_loads_and_answers_without_consumers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg_attr(
+    not(feature = "qualification-tests"),
+    ignore = "deployed geometry: qualification-tests"
+)]
 async fn encrypted_publication_advances_with_a_pending_commit_and_survives_restart() {
-    // Ordinary correctness uses the small reference profile. The explicit native
-    // qualification builds and transfers hundreds of MiB of public matrices;
-    // its cold publication cost is separate from wallet request latency.
-    let native_qualification = cfg!(all(
-        feature = "native-reinspiring",
-        feature = "qualification-tests"
-    ));
-    assert!(
-        !cfg!(feature = "native-reinspiring") || native_qualification,
-        "native publication recovery requires the qualification-tests feature"
-    );
-    let deadline = Duration::from_secs(if native_qualification { 180 } else { 30 });
+    // Workers build and transfer hundreds of MiB of deployed-geometry public
+    // matrices, so this runs in the explicit qualification lane, one
+    // deployed-geometry case at a time. Its bound includes cold preparation.
+    let _serial = publication::DEPLOYED.lock().await;
+    let deadline = publication::QUALIFICATION_BUDGET;
     let phase = std::cell::Cell::new("starting listeners");
     let started = std::time::Instant::now();
     tokio::time::timeout(deadline, async {
