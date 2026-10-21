@@ -220,7 +220,7 @@ fn validate(
     };
     let pause = || {
         let read = chunks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if read % 256 == 0 {
+        if read.is_multiple_of(256) {
             send(Event::Progress("integrity", read << 20));
         }
         wait()

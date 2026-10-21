@@ -334,9 +334,9 @@ pub async fn run_managed(
     let mut failed = None;
     if config.distribute_prepared && active_path.exists() {
         match restore_public(&config, &public) {
-            Ok(Restore::Restored(finalized, validation)) => {
-                public.distribution = Some(finalized);
-                restored = Some(validation);
+            Ok(Restore::Restored(found)) => {
+                public.distribution = Some(found.finalized);
+                restored = Some(found.validation);
             }
             // Only an installation without completion evidence (a fresh one,
             // or one written before this record existed) is prepared in full.
@@ -1442,10 +1442,7 @@ enum Restore {
     Absent,
     /// The saved inventory lists bytes recorded as failing integrity.
     Failed(IntegrityFailure),
-    Restored(
-        transparent_shared::publication::Finalized,
-        transparent_shared::publication::Validation,
-    ),
+    Restored(Box<transparent_shared::publication::Restored>),
 }
 
 /// The saved publication's completed distribution, without reading its bodies.
@@ -1489,7 +1486,7 @@ fn restore_public(config: &Config, public: &Public) -> Result<Restore, BoxError>
     {
         return Ok(Restore::Failed(failure.clone()));
     }
-    Ok(Restore::Restored(restored.finalized, restored.validation))
+    Ok(Restore::Restored(Box::new(restored)))
 }
 
 /// Make a restored publication public after fresh authority checks: its exact
