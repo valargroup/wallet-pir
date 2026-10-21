@@ -578,6 +578,17 @@ class DeployTests(Fleet):
         self.assertEqual(deployer.deploy(NEW_SHA, self.binary, retire_historical=True, skip_exact_check=True).status,
                          'committed')
 
+    def test_requested_hold_keeps_failed_candidate_for_operator_repair(self):
+        deployer = self.enhance_fleet()
+        deployer.hold_on_failure = True
+        self.fake.exact_result = (1, 'answer mismatch at row 17')
+        self.fake.product_check = lambda host, argv: (0, 'configuration accepted')
+        with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
+            deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertEqual(Journal.load(self.state, 'enhance').status, 'held')
+        self.assertEqual(self.restarts(), ENHANCE)
+        self.assertTrue(all(self.running(h, u) == NEW_SHA for h, u in ENHANCE))
+
 
 class RollbackTests(Fleet):
     def test_rollback_restores_every_touched_target_and_is_idempotent(self):

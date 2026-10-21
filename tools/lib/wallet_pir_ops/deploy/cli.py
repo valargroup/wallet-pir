@@ -350,6 +350,8 @@ def parser():
                                  help='under the lock, upload the release directory and run its self-check')
         if name == 'deploy':
             command.add_argument('--skip-exact-check', action='store_true')
+            command.add_argument('--hold-on-failure', action='store_true',
+                                 help='leave changed targets in place for operator repair instead of rolling back')
     command = commands.add_parser('rollback')
     command.add_argument('service')
     command.add_argument('--transaction')
@@ -543,7 +545,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
                         label = '%s (%s)' % (group.binary_name, group.kind or 'archive')
                     log('== %s: %s' % (label, ', '.join(keys)))
                 deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
-                                    only=keys, **options)
+                                    only=keys, hold_on_failure=getattr(args, 'hold_on_failure', False), **options)
                 code = run_release(args.command, group, service, inventory, executor, deployer, out)
                 if code:
                     return code
