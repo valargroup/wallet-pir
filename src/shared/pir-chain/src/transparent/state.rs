@@ -10,7 +10,7 @@
 //!
 //! Zakura's state crate opens the same RocksDB as a **secondary instance**, so
 //! this reads a running node's database without stopping it and without a copy.
-//! `ZakuraDb::transaction` resolves a previous output through `tx_loc_by_hash`
+//! Raw transaction reads resolve a previous output through `tx_loc_by_hash`
 //! and `tx_by_loc` as two local point lookups, which is the whole of what the
 //! cache was standing in for. A block-local cache now retains validated full
 //! outputs: dense early mining transactions otherwise require repeatedly
@@ -57,10 +57,9 @@ use super::{
     BoxError, ExtractError, FetchedBlock, Output as ChainOutput, PreviousOutputs, TransparentBlock,
 };
 use crate::Network;
+use crate::chain::{Hash, OutPoint, Output, Transaction};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use zakura_chain::serialization::ZcashSerialize;
-use zakura_chain::transparent::{OutPoint, Output};
 use zakura_state::{Config, HashOrHeight, PruningConfig, ReadStateService, StorageMode, ZakuraDb};
 
 /// Why the node's database could not be read. Every field is this crate's own: the
@@ -159,14 +158,8 @@ impl StateReader {
     /// The full finalized block at `height`.
     pub fn fetch_block(&self, height: u64) -> Result<FetchedBlock, StateError> {
         self.db
-            .block(HashOrHeight::Height(to_height(height)?))
-            .map(|block| {
-                let bytes = block
-                    .zcash_serialize_to_vec()
-                    .map_err(|e| StateError::Decode {
-                        height,
-                        reason: e.to_string(),
-                    })?;
+            .raw_block_bytes(HashOrHeight::Height(to_height(height)?))
+            .map(|bytes| {
                 FetchedBlock::from_exact_bytes(&bytes).map_err(|e| StateError::Decode {
                     height,
                     reason: e.to_string(),
@@ -260,8 +253,8 @@ struct StatePreviousOutputs<'a> {
 /// Full outputs of identity-checked parents, scoped to one independently
 /// extracted block. Oversized parents bypass the cache; they are still resolved.
 struct BlockOutputCache {
-    entries: HashMap<zakura_chain::transaction::Hash, (Vec<Output>, usize)>,
-    order: VecDeque<zakura_chain::transaction::Hash>,
+    entries: HashMap<Hash, (Vec<Output>, usize)>,
+    order: VecDeque<Hash>,
     outputs: usize,
     bytes: usize,
     max_outputs: usize,
@@ -288,7 +281,7 @@ impl BlockOutputCache {
             .map(|(outputs, _)| outputs.get(outpoint.index as usize).cloned())
     }
 
-    fn insert(&mut self, hash: zakura_chain::transaction::Hash, outputs: &[Output]) {
+    fn insert(&mut self, hash: Hash, outputs: &[Output]) {
         if outputs.is_empty()
             || outputs.len() > self.max_outputs
             || self.entries.contains_key(&hash)
@@ -336,9 +329,24 @@ impl StatePreviousOutputs<'_> {
             return Ok(output);
         }
         self.lookups += 1;
-        let Some((transaction, _height, _time)) = self.db.transaction(outpoint.hash) else {
+        let Some(location) = self
+            .db
+            .transaction_location(zakura_chain::transaction::Hash(outpoint.hash.0))
+        else {
             return Ok(None);
         };
+        let Some((_, raw)) = self
+            .db
+            .raw_transactions_by_location_range(location..=location)
+            .next()
+        else {
+            return Ok(None);
+        };
+        let mut bytes = raw.raw_bytes().as_slice();
+        let transaction = Transaction::zcash_deserialize(&mut bytes)?;
+        if !bytes.is_empty() {
+            return Err("trailing bytes after previous transaction".into());
+        }
         if transaction.hash() != outpoint.hash {
             return Err("previous transaction identity mismatch".into());
         }
@@ -362,7 +370,7 @@ impl PreviousOutputs for StatePreviousOutputs<'_> {
         index: u32,
     ) -> Result<Option<ChainOutput>, BoxError> {
         let outpoint = OutPoint {
-            hash: zakura_chain::transaction::Hash(txid),
+            hash: Hash(txid),
             index,
         };
         Ok(self.resolve(&outpoint)?.map(|output| ChainOutput {
@@ -377,21 +385,24 @@ mod tests {
     use super::*;
     use zakura_chain::{
         amount::Amount,
-        transaction::{LockTime, Transaction},
+        serialization::ZcashSerialize,
+        transaction::{LockTime, Transaction as NodeTransaction},
         transparent::Script,
     };
 
     fn transaction(tag: u8, count: usize) -> Transaction {
-        Transaction::V1 {
+        let node = NodeTransaction::V1 {
             inputs: vec![],
             outputs: (0..count)
-                .map(|n| Output {
+                .map(|n| zakura_chain::transparent::Output {
                     value: Amount::try_from(n as i64 + 1).unwrap(),
                     lock_script: Script::new(&[0x76, tag, n as u8]),
                 })
                 .collect(),
             lock_time: LockTime::unlocked(),
-        }
+        };
+        Transaction::zcash_deserialize(&mut node.zcash_serialize_to_vec().unwrap().as_slice())
+            .unwrap()
     }
     fn point(tx: &Transaction, index: u32) -> OutPoint {
         OutPoint {

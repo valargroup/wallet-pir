@@ -82,14 +82,15 @@ pub async fn run(
                 {
                     return Err("journal differs from publication anchor or coverage".into());
                 }
-                let inventory = crate::publication::prepare(
+                let prepared = crate::publication::prepare(
                     &output, manifest.coverage.clone(), &manifest.domain_recovery_epochs,
                     |start, count| journal.read_records(start, count).map_err(|e| e.to_string()),
                 )?;
+                let inventory = prepared.inventory();
                 if !inventory.supports(&manifest)? {
                     return Err("prepared material differs from wallet manifest".into());
                 }
-                Ok(serde_json::json!({"inventory_sha256": enhance_query_server::protocol::digest(&inventory), "domains": inventory.domains.len()}))
+                Ok(serde_json::json!({"inventory_sha256": enhance_query_server::protocol::digest(inventory), "domains": inventory.domains.len()}))
             }).await??;
             println!("{}", serde_json::to_string(&report)?);
         }

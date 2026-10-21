@@ -605,6 +605,15 @@ struct Fake {
     /// staging is lost and the prepare fails.
     restart_after_stages: Option<usize>,
     stages: usize,
+    /// Request this stop when applying this activation (counting from 1),
+    /// before replying.
+    stop_at_activation: Option<(usize, pir_pipeline::service::Shutdown)>,
+    /// Hold the next invalidation reply: signal the sender once the request
+    /// arrives, and reply once the receiver is released.
+    hold_invalidation: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 
 #[cfg(feature = "qualification-tests")]
@@ -683,6 +692,13 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                     state.staged.retain(|d| !prepared.2.contains(d));
                     state.active = Some(prepared);
                     state.activations += 1;
+                    if let Some((_, stop)) = state
+                        .stop_at_activation
+                        .as_ref()
+                        .filter(|(n, _)| *n == state.activations)
+                    {
+                        stop.request();
+                    }
                     if state.lose_activation == Some(state.activations) {
                         return fail("reply lost".into());
                     }
@@ -732,14 +748,21 @@ fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
                     .await
                     .unwrap();
                 let mut command: Value = serde_json::from_str(&line).unwrap();
-                let (reply, delay) = {
+                let (reply, delay, hold) = {
                     let mut state = state.lock().unwrap();
                     let reply = fake_reply(&mut state, role, &mut command);
                     let staged = command["operation"] == "stage";
-                    (reply, state.stage_delay * u32::from(staged))
+                    let hold = (command["operation"] == "invalidate")
+                        .then(|| state.hold_invalidation.take())
+                        .flatten();
+                    (reply, state.stage_delay * u32::from(staged), hold)
                 };
                 tokio::time::sleep(delay).await;
                 log.lock().unwrap().push((name.clone(), command));
+                if let Some((started, release)) = hold {
+                    let _ = started.send(());
+                    let _ = release.await;
+                }
                 write
                     .write_all(format!("{reply}\n").as_bytes())
                     .await
@@ -2214,4 +2237,336 @@ async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_rest
         identities(&active.seals)
     );
     wallet.found(&chain_records(0, 112)[0], 112);
+}
+
+/// A stop requested before activation abandons the candidate as a normal
+/// outcome: nothing activates and the active record is unchanged. A later
+/// run without a stop prepares and activates from the same state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![],
+        settings(),
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let candidates = || {
+        listing(&root)
+            .into_iter()
+            .filter(|name| name.starts_with("candidate"))
+            .count()
+    };
+    let existing = candidates();
+    controller.shutdown.request();
+    // The journal holds blocks past the active tip, so a cycle is due.
+    while controller.cache.tip().map(|t| t.0) <= Some(before.tip) {
+        controller.poll_source().await.unwrap();
+    }
+    let prepared = controller.prepare_cycle().await;
+    assert!(
+        matches!(prepared, Ok(Input::Unchanged)),
+        "stopped as a normal outcome"
+    );
+    assert_eq!(controller.active().tip, before.tip, "nothing activated");
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    assert_eq!(candidates(), existing, "no candidate was written");
+    // A requested stop also ends the loop before another cycle starts.
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    shutdown.request();
+    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    assert_eq!(resumed.outcome, Outcome::Idle);
+    assert!(
+        resumed.active.tip > before.tip,
+        "preparation resumed and activated"
+    );
+}
+
+/// A stop requested while a candidate's runtime prebuild runs is observed
+/// only after that blocking build returns: until then the controller still
+/// holds its root lock and journal, and `run_until` has not returned. The
+/// unactivated candidate is then abandoned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
+    static ENTERED: std::sync::LazyLock<std::sync::Barrier> =
+        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
+    static RELEASE: std::sync::LazyLock<std::sync::Barrier> =
+        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn held(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
+        if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            ENTERED.wait();
+            RELEASE.wait();
+        }
+        Ok(Vec::new())
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![],
+        Settings {
+            ship_runtimes: Some(held),
+            ..settings()
+        },
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    let running = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let outcome = controller.run_until(shutdown).await;
+            (controller, outcome)
+        }
+    });
+    tokio::task::spawn_blocking(|| ENTERED.wait())
+        .await
+        .unwrap();
+    shutdown.request();
+    let lock = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(root.join("controller.lock"))
+        .unwrap();
+    assert!(lock.try_lock().is_err(), "the root is still owned");
+    assert!(open_writer(&journal).is_err(), "the journal is still owned");
+    assert!(!running.is_finished(), "run_until waits for the prebuild");
+    tokio::task::spawn_blocking(|| RELEASE.wait())
+        .await
+        .unwrap();
+    let (controller, outcome) = running.await.unwrap();
+    assert_eq!(outcome.unwrap(), Outcome::Idle);
+    assert_eq!(CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(controller.active().tip, before.tip, "nothing activated");
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+    lock.try_lock()
+        .expect("dropping the controller releases the root");
+    drop(lock);
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    assert!(resumed.active.tip > before.tip, "a later run activates");
+}
+
+/// A stop requested once worker activation has begun does not interrupt the
+/// cycle: the activation is committed to `active.json`, the worker and the
+/// controller agree on the map, no failure is counted and nothing is retried,
+/// and a controller opened afterwards recovers the same activation.
+#[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_during_worker_activation_still_commits_the_cycle() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    // The first activation brings the new worker to the bootstrapped map;
+    // the second is the cycle's.
+    states["recent"].lock().unwrap().stop_at_activation = Some((2, shutdown.clone()));
+    let settings = settings();
+    let metrics = settings.metrics.clone();
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        vec![socket_worker(
+            temp.path(),
+            "recent",
+            WorkerRole::RecentReplica,
+        )],
+        settings,
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    assert_eq!(
+        controller.run_until(shutdown.clone()).await.unwrap(),
+        Outcome::Idle
+    );
+    assert!(shutdown.requested());
+    let active = controller.active().clone();
+    assert_eq!(active.tip, 118, "the cycle activated");
+    assert_eq!(active.cycle, before.cycle + 1);
+    let stored = ActiveRecord::load(&root).unwrap();
+    assert_eq!(
+        (stored.tip, &stored.map_sha256, &stored.directory),
+        (active.tip, &active.map_sha256, &active.directory)
+    );
+    {
+        let recent = states["recent"].lock().unwrap();
+        assert_eq!(recent.activations, 2, "no activation was retried");
+        assert_eq!(recent.active.as_ref().unwrap().0, active.map_sha256);
+    }
+    let activations = commands(&log, "recent")
+        .iter()
+        .filter(|c| c["operation"] == "activate")
+        .count();
+    assert_eq!(activations, 2);
+    let events = read_timeline(&root).unwrap();
+    assert_eq!(events.iter().filter(|e| e["kind"] == "cycle").count(), 1);
+    assert!(events.iter().all(|e| e["kind"] != "error"), "{events:?}");
+    let text = metrics.render();
+    assert_eq!(series(&text, "txid_display_cycle_failures_total"), 0.);
+    assert_eq!(series(&text, "txid_display_consecutive_failures"), 0.);
+    assert_eq!(series(&text, "txid_display_published_height"), 118.);
+    drop(controller);
+
+    // Recovery re-verifies the sealed revisions and reloads the same record.
+    let reopened = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(vec![])),
+        vec![],
+        verifying(),
+    )
+    .unwrap();
+    assert_eq!(reopened.active().map_sha256, active.map_sha256);
+    assert_eq!(reopened.active().tip, active.tip);
+}
+
+/// A stop requested while an owed invalidation awaits its worker abandons
+/// the candidate once delivery returns: nothing activates, and the active
+/// record and saved rollback record are unchanged. A later run resumes.
+#[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 118);
+    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    let workers = vec![socket_worker(
+        temp.path(),
+        "recent",
+        WorkerRole::RecentReplica,
+    )];
+
+    // Tip 121 is published; the journal then rolls back to 119 and the next
+    // journal write fails, leaving an owed invalidation and a rollback record.
+    let steps = [ScriptStep::Advance(121), ScriptStep::FailAfterRollback(119)];
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(steps)),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(120), controller.run())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("scripted journal failure"));
+    drop(controller);
+    let saved = || -> Value {
+        serde_json::from_slice(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
+    };
+    let before_record = saved();
+    assert_eq!(before_record["pending"], json!({"recent": 120}));
+    assert!(
+        !before_record["rollback"].is_null(),
+        "a rollback is recorded"
+    );
+
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(vec![ScriptStep::Extend(fork(1, 120, 122))])),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    let served = states["recent"].lock().unwrap().active.clone().unwrap().0;
+    while controller.cache.tip().map(|t| t.0) < Some(122) {
+        controller.poll_source().await.unwrap();
+    }
+    let Ok(Input::Work(candidate)) = controller.prepare_cycle().await else {
+        panic!("a candidate is due");
+    };
+    assert!(
+        invalidated(&log).is_empty(),
+        "the invalidation is still owed"
+    );
+    let (started, held) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    states["recent"].lock().unwrap().hold_invalidation = Some((started, released));
+    let shutdown = controller.shutdown.clone();
+    let (activated, ()) = tokio::join!(controller.activate_cycle(candidate), async move {
+        held.await.unwrap();
+        shutdown.request();
+        release.send(()).unwrap();
+    });
+    assert!(activated.is_ok(), "stopped as a normal outcome");
+    assert_eq!(
+        invalidated(&log),
+        vec![120],
+        "the invalidation was delivered"
+    );
+    assert!(
+        commands(&log, "recent")
+            .iter()
+            .skip_while(|c| c["operation"] != "invalidate")
+            .all(|c| c["operation"] != "prepare" && c["operation"] != "activate"),
+        "no worker activation began"
+    );
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        served
+    );
+    assert_eq!(controller.active().map_sha256, before.map_sha256);
+    let stored = ActiveRecord::load(&root).unwrap();
+    assert_eq!(
+        (stored.tip, stored.map_sha256),
+        (before.tip, before.map_sha256.clone())
+    );
+    let after_record = saved();
+    assert_eq!(after_record["pending"], json!({}));
+    assert_eq!(
+        after_record["rollback"], before_record["rollback"],
+        "the rollback record is kept"
+    );
+    // The stop also ends the loop before another cycle starts.
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    shutdown.request();
+    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
+    drop(controller);
+
+    let run = run_script(
+        &root,
+        &journal,
+        vec![ScriptStep::Advance(122)],
+        workers,
+        settings(),
+    )
+    .await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(run.active.tip, 122, "a later run activates");
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        run.active.map_sha256
+    );
 }

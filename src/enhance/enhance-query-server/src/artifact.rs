@@ -17,7 +17,7 @@ const STREAM_QUEUE_CHUNKS: usize = 2;
 
 /// Best-effort release of clean artifact pages. The file remains durable and
 /// readable; this only avoids charging cold disk copies to the worker cgroup.
-pub(crate) fn release_file_cache(_file: &File) {
+pub fn release_file_cache(_file: &File) {
     #[cfg(target_os = "linux")]
     {
         let result =

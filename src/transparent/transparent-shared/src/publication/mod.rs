@@ -4,7 +4,7 @@ use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use crate::{
-    history::shardset::ShardSet,
+    history::shardset::{FileStamp, ShardSet},
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
 use rayon::prelude::*;
@@ -224,6 +224,18 @@ pub struct Artifact {
     pub bytes: u64,
     pub kind: Kind,
 }
+
+/// Expected publisher identity saved at receipt; this is not proof of a body hash.
+#[derive(Clone, Debug)]
+pub struct ReceivedArtifact {
+    pub sha256: String,
+    pub bytes: u64,
+    pub object: PathBuf,
+}
+
+pub fn received_artifact(path: &Path) -> io::Result<Option<ReceivedArtifact>> {
+    crate::verification::expected(path)
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
@@ -258,6 +270,8 @@ pub fn safe_path(path: &str) -> bool {
                 && c != ".."
                 // Publisher artifacts cannot overwrite private local receipts.
                 && !c.ends_with(".received.json")
+                && !c.contains(".validation.")
+                && !c.starts_with(".validation-")
                 && !c.contains(".checked-")
                 && c.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
@@ -393,6 +407,7 @@ impl Finalized {
             recent_from_height,
             false,
             &mut CheckedRuntimes::default(),
+            &|| false,
         )
     }
     /// Finalize every table and runtime for autonomous full-coverage consumers.
@@ -407,6 +422,7 @@ impl Finalized {
             recent_from_height,
             true,
             &mut CheckedRuntimes::default(),
+            &|| false,
         )
     }
     /// Finalize an inventory, reusing only native runtimes whose exact bytes
@@ -418,14 +434,31 @@ impl Finalized {
         full: bool,
         checked: &mut CheckedRuntimes,
     ) -> Result<Self, Error> {
-        Self::prepare_holdings(root, set, recent_from_height, full, checked)
+        Self::prepare_holdings(root, set, recent_from_height, full, checked, &|| false)
     }
+    /// [`Self::prepare_reusing`], asking `stop` before each file it reads;
+    /// once it answers true the preparation ends with [`Stopped`], nothing is
+    /// finalized and `checked` keeps its earlier evidence.
+    pub fn prepare_reusing_until(
+        root: &Path,
+        set: &ShardSet,
+        recent_from_height: u64,
+        full: bool,
+        checked: &mut CheckedRuntimes,
+        stop: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Self, Error> {
+        Self::prepare_holdings(root, set, recent_from_height, full, checked, stop)
+    }
+    /// A table whose bytes `set` verified in this process, and whose file is
+    /// unchanged since, is listed with that verified digest instead of being
+    /// hashed again; any other file is hashed.
     fn prepare_holdings(
         root: &Path,
         set: &ShardSet,
         recent_from_height: u64,
         full: bool,
         checked: &mut CheckedRuntimes,
+        stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self, Error> {
         let previous = &checked.passed;
         checked.loaded = 0;
@@ -454,7 +487,9 @@ impl Finalized {
         let mut pending = Vec::new();
         let mut sources = BTreeMap::new();
         let mut native = Vec::new();
-        let mut add = |path: PathBuf, kind: Kind| -> Result<bool, Error> {
+        // `known`: a digest and length this process verified for the file
+        // with this stamp, used only while the opened file still has it.
+        let mut add = |path: PathBuf, kind: Kind, known: Option<Known>| -> Result<bool, Error> {
             let relative = path
                 .strip_prefix(root)?
                 .to_str()
@@ -479,25 +514,33 @@ impl Finalized {
             if !std::fs::metadata(&path)?.is_file() {
                 return Err("artifact is not a regular file".into());
             }
-            pending.push((path, kind));
+            pending.push((path, kind, known));
             Ok(true)
         };
-        add(root.join("shards.json"), Kind::Metadata)?;
+        add(root.join("shards.json"), Kind::Metadata, None)?;
         let shipped = ShippedRuntimes::required(root.to_path_buf());
+        // Parameters depend only on geometry and table kind; build each once.
+        let mut built = BTreeMap::new();
         for entry in &set.map.shards {
             let dir = root.join(&entry.manifest_digest);
-            add(dir.join("manifest.json"), Kind::Metadata)?;
-            add(dir.join("filter.bin"), Kind::Metadata)?;
+            add(dir.join("manifest.json"), Kind::Metadata, None)?;
+            add(dir.join("filter.bin"), Kind::Metadata, None)?;
             let shard = set
                 .revision(&entry.manifest_digest)
                 .ok_or("producer needs verified complete set")?;
             let local = entry.shard_id >= recent;
             for table in shard.tables() {
                 let params = if full || local {
-                    Some(std::sync::Arc::new(SharedParams::build(
-                        shard.geometry,
-                        table.kind(),
-                    )?))
+                    let id = (shard.geometry.name, table.kind().as_str());
+                    Some(match built.entry(id) {
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            std::sync::Arc::clone(entry.get())
+                        }
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            let shared = SharedParams::build(shard.geometry, table.kind())?;
+                            std::sync::Arc::clone(entry.insert(std::sync::Arc::new(shared)))
+                        }
+                    })
                 } else {
                     None
                 };
@@ -513,6 +556,7 @@ impl Finalized {
                         } else {
                             Kind::ArchiveTable
                         },
+                        Known::of(source),
                     )?;
                     if let Some(shared) = &params {
                         let key = (
@@ -528,6 +572,7 @@ impl Finalized {
                             } else {
                                 Kind::ArchiveRuntime
                             },
+                            None,
                         )? {
                             native.push((path, key, shared.clone(), source));
                         }
@@ -538,7 +583,7 @@ impl Finalized {
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
-        for (artifact, path, file) in hash_artifacts(root, pending)? {
+        for (artifact, path, file) in hash_listed(root, pending, stop)? {
             if let Some(expected) = sources.get(&path) {
                 if artifact.sha256 != *expected {
                     return Err("source segment differs from its manifest".into());
@@ -565,6 +610,9 @@ impl Finalized {
             if previous.get(&name) == Some(&sha256) {
                 checked.reused += 1;
             } else {
+                if stop() {
+                    return Err(Box::new(Stopped));
+                }
                 ShippedRuntimes::load_file(file, &key, &shared, source.sha256())?
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
@@ -596,14 +644,53 @@ pub struct CheckedRuntimes {
     pub reused: usize,
 }
 
-pub(crate) fn hash_artifacts(
+/// A digest and length this process verified for a file with this stamp.
+pub(crate) struct Known {
+    sha256: String,
+    bytes: u64,
+    stamp: FileStamp,
+}
+impl Known {
+    /// The verification `source` holds for its exact file, if any: only a
+    /// source this process hashed with settled evidence; never a receipt-only,
+    /// received or size-only one.
+    pub(crate) fn of(source: &crate::history::shardset::SegmentSource) -> Option<Self> {
+        source.evidence().map(|stamp| Self {
+            sha256: source.sha256().to_owned(),
+            bytes: source.bytes() as u64,
+            stamp,
+        })
+    }
+}
+
+/// [`hash_listed`] without evidence or a stop: every file is hashed.
+#[cfg(test)]
+fn hash_artifacts(
     root: &Path,
     pending: Vec<(PathBuf, Kind)>,
+) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
+    let pending = pending
+        .into_iter()
+        .map(|(path, kind)| (path, kind, None))
+        .collect();
+    hash_listed(root, pending, &|| false)
+}
+
+/// Hash each pending artifact, listing a file with its `Known` digest when it is
+/// unchanged since verified, and ending with [`Stopped`] once `stop` answers
+/// true before a file or any bounded read of one.
+pub(crate) fn hash_listed(
+    root: &Path,
+    pending: Vec<(PathBuf, Kind, Option<Known>)>,
+    stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
     crate::runtime::build_pool().install(|| {
         pending
             .into_par_iter()
-            .map(|(path, kind)| {
+            .map(|(path, kind, known)| {
+                if stop() {
+                    return Err(Box::new(Stopped) as Error);
+                }
                 let relative = path
                     .strip_prefix(root)?
                     .to_str()
@@ -623,19 +710,17 @@ pub(crate) fn hash_artifacts(
                     }
                 }
                 let mut file = std::fs::File::open(&path)?;
-                let metadata = file.metadata()?;
-                if !metadata.is_file() {
-                    return Err("artifact is not a regular file".into());
-                }
-                let mut hash = Sha256::new();
-                io::copy(&mut file, &mut HashWriter(&mut hash))?;
+                let known = known
+                    .as_ref()
+                    .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
+                let (sha256, bytes) = listed_digest(&path, &mut file, known, stop)?;
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok((
                     Artifact {
                         path: relative,
-                        sha256: hex::encode(hash.finalize()),
-                        bytes: metadata.len(),
+                        sha256,
+                        bytes,
                         kind,
                     },
                     path,
@@ -646,16 +731,68 @@ pub(crate) fn hash_artifacts(
     })
 }
 
-struct HashWriter<'a>(&'a mut Sha256);
-impl io::Write for HashWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0.update(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+/// A finalization ended because its caller asked it to stop: a normal end
+/// of the lifecycle, not a faulty publication.
+#[derive(Debug)]
+pub struct Stopped;
+impl std::fmt::Display for Stopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("publication finalization stopped")
     }
 }
+impl std::error::Error for Stopped {}
+
+/// Inventory files streamed through SHA-256, from any pool thread.
+#[cfg(test)]
+static LISTED_HASHED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// How many inventory files under `dir` were streamed through SHA-256.
+#[cfg(test)]
+pub(crate) fn listed_hashes(dir: &Path) -> usize {
+    let hashed = LISTED_HASHED.lock().unwrap();
+    hashed.iter().filter(|path| path.starts_with(dir)).count()
+}
+
+/// The digest and length to list for `file`, opened at `path`: `known` when
+/// it was verified for this very file and the file is unchanged since, both
+/// as opened and as the path names it now; otherwise those of a full read.
+fn listed_digest(
+    path: &Path,
+    file: &mut std::fs::File,
+    known: Option<(&str, u64, FileStamp)>,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<(String, u64), Error> {
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Err("artifact is not a regular file".into());
+    }
+    if let Some((sha256, bytes, stamp)) = known {
+        let named = std::fs::symlink_metadata(path).ok();
+        if FileStamp::of(&opened) == Some(stamp)
+            && named.as_ref().and_then(FileStamp::of) == Some(stamp)
+            && opened.len() == bytes
+        {
+            return Ok((sha256.to_string(), bytes));
+        }
+    }
+    #[cfg(test)]
+    LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
+    let bytes = opened.len();
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; 1 << 20];
+    loop {
+        if stop() {
+            return Err(Box::new(Stopped));
+        }
+        let read = io::Read::read(file, &mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok((hex::encode(hash.finalize()), bytes))
+}
+
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
     let file = crate::verification::open(path)?;
     if file.metadata()?.len() != expected.bytes {
@@ -768,6 +905,64 @@ mod tests {
         std::os::unix::fs::symlink(root.join("real.bin"), root.join("link.bin")).unwrap();
         assert!(hash_artifacts(root, vec![(root.join("link.bin"), Kind::RecentTable)]).is_err());
     }
+    /// A stop between bounded reads ends the hash of a file mid-stream, and
+    /// one before a file ends the listing before it is opened.
+    #[test]
+    fn a_stop_ends_listing_between_bounded_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.bin");
+        std::fs::write(&path, vec![7u8; (2 << 20) + 1]).unwrap();
+        let asked = std::sync::atomic::AtomicU32::new(0);
+        let stop = || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 1;
+        let mut file = std::fs::File::open(&path).unwrap();
+        let error = listed_digest(&path, &mut file, None, &stop).unwrap_err();
+        assert!(error.is::<Stopped>());
+        assert_eq!(
+            asked.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one chunk was read"
+        );
+        let pending = vec![(path.clone(), Kind::RecentTable, None)];
+        let error = hash_listed(dir.path(), pending, &|| true).unwrap_err();
+        assert!(error.is::<Stopped>());
+        // Resumed without a stop, the same file is hashed whole.
+        let pending = vec![(path.clone(), Kind::RecentTable, None)];
+        let listed = hash_listed(dir.path(), pending, &|| false).unwrap();
+        assert_eq!(listed[0].0.sha256, digest(&vec![7u8; (2 << 20) + 1]));
+    }
+
+    #[test]
+    fn verified_evidence_lists_an_unchanged_file_without_hashing_it() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.bin");
+        std::fs::write(&path, b"verified table").unwrap();
+        let stamp = FileStamp::of(&std::fs::metadata(&path).unwrap()).unwrap();
+        let sha = digest(b"verified table");
+        let open = || std::fs::File::open(&path).unwrap();
+        let before = listed_hashes(dir.path());
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
+        assert_eq!(listed, (sha.clone(), 14));
+        assert_eq!(listed_hashes(dir.path()), before);
+        // Same size, different bytes: the stamp no longer matches, so the
+        // listed digest is that of the bytes now present.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .write_all_at(b"V", 0)
+            .unwrap();
+        let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
+        assert_eq!(listed, (digest(b"Verified table"), 14));
+        assert_eq!(listed_hashes(dir.path()), before + 1);
+        // A replaced path is another inode.
+        std::fs::write(dir.path().join("next"), b"verified table").unwrap();
+        std::fs::rename(dir.path().join("next"), &path).unwrap();
+        listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
+        assert_eq!(listed_hashes(dir.path()), before + 2);
+    }
+
     #[test]
     fn local_files_without_receipts_are_checked_only_for_size() {
         let dir = tempfile::tempdir().unwrap();

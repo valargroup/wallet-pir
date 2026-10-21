@@ -466,6 +466,7 @@ impl LiveService {
             "binary_sha256":pir_control::binary_sha256(),
             "incarnation":pir_control::Identity::process().incarnation,
             "verified_publication":{"map_sha256":active.publication.map_sha256},
+            "artifact_validation":state.artifact_validation(),
             "runtime_readiness":{"warm":state.is_warm(),"invalidated":state.is_invalidated(),
                 "required":state.required_material(),"preparation":state.preparation()},
             "active_coverage":coverage,
@@ -548,7 +549,7 @@ impl LiveService {
             let revisions:std::collections::BTreeMap<_,_>=std::iter::once(&*active).chain(retired.iter()).flat_map(|a|a.state.set().revisions().iter())
                 .map(|s|(s.digest.clone(),serde_json::json!({"digest":s.digest,"end_height":s.manifest.end_height,"terminal_block_hash":s.manifest.terminal_block_hash}))).collect();
             return Ok(
-                serde_json::json!({"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
+                serde_json::json!({"artifact_validation":active.state.artifact_validation(),"active":active.publication,"runtimes":active.state.preparation(),"warm":active.state.is_warm(),"invalidated":active.state.is_invalidated(),"revoked_revisions":self.0.invalid.read().unwrap().len(),"revoked_digests":self.0.invalid.read().unwrap().clone(),"preparing":preparing,"last_preparation":self.0.last_preparation.read().unwrap().clone(),"retired_snapshots":retired.len(),"candidate":candidate,"revisions":revisions.into_values().collect::<Vec<_>>()}),
             );
         }
         let _operation = self.0.operations.clone().lock_owned().await;
@@ -916,6 +917,15 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         })
     };
+    // A recovered record may name its tree through another spelling of the
+    // same directory; compare resolved paths so it is never mistaken as unused.
+    let keep: BTreeSet<PathBuf> = keep
+        .iter()
+        .flat_map(|path| std::iter::once(path.clone()).chain(fs::canonicalize(path).ok()))
+        .collect();
+    let kept = |path: &Path| {
+        keep.contains(path) || fs::canonicalize(path).is_ok_and(|path| keep.contains(&path))
+    };
     let mut publications = Vec::new();
     for entry in fs::read_dir(root)? {
         let entry = entry?;
@@ -935,7 +945,7 @@ fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Resul
     let mut unused = 0;
     let mut referenced = BTreeSet::new();
     for publication in publications {
-        if !keep.contains(&publication.path()) {
+        if !kept(&publication.path()) {
             unused += 1;
             if unused > 3 {
                 fs::remove_dir_all(publication.path())?;
@@ -1009,6 +1019,31 @@ mod collection_tests {
                 .count(),
             keep.len() + 3
         );
+    }
+
+    #[test]
+    fn collection_keeps_a_tree_named_through_another_path() {
+        let real = tempfile::tempdir().unwrap();
+        let alias = tempfile::tempdir().unwrap();
+        let spelled = alias.path().join("provider");
+        std::os::unix::fs::symlink(real.path(), &spelled).unwrap();
+        let epoch = std::time::SystemTime::UNIX_EPOCH;
+        for n in 0..5u64 {
+            let publication = real.path().join(format!("staging-{n}-100"));
+            std::fs::create_dir(&publication).unwrap();
+            std::fs::File::open(&publication)
+                .unwrap()
+                .set_modified(epoch + std::time::Duration::from_secs(1_000 + n))
+                .unwrap();
+        }
+        // The oldest tree would be the first unused one removed.
+        let keep = BTreeSet::from([spelled.join("staging-0-100")]);
+        assert!(collect_publications(real.path(), &keep).unwrap());
+        assert!(real.path().join("staging-0-100").is_dir());
+        assert!(!real.path().join("staging-1-100").exists());
+        for n in 2..5 {
+            assert!(real.path().join(format!("staging-{n}-100")).is_dir());
+        }
     }
 
     #[test]

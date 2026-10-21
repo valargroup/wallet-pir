@@ -5109,7 +5109,7 @@ dependencies = [
 [[package]]
 name = "zakura-transaction-wire"
 version = "0.1.0"
-source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=34508ff68e084848291bc3721e6b2536267a4d1a#34508ff68e084848291bc3721e6b2536267a4d1a"
+source = "git+https://github.com/zakura-core/wallet-libraries.git?rev=9a8e903dc2f6373bcbe178c0d23194c35ff44c68#9a8e903dc2f6373bcbe178c0d23194c35ff44c68"
 dependencies = [
  "blake2b_simd",
  "sha2 0.10.9",
