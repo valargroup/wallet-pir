@@ -98,7 +98,7 @@ class SnapshotPreparation:
             require(prior['id'] == previous, 'previous publisher transaction identity changed')
             record = (prior.get('prepared_snapshots', {}).get(section)
                       or prior.get('warm_snapshots', {}).get(section))
-            if record and record['binary_sha256'] == self.serving.release['binary_sha256']:
+            if record:
                 expected = root + '/.cutover-preparation/' + previous + '/' + section + '/publication'
                 require(record['pin'] == expected, 'previous preparation cache is outside its transaction')
                 source = expected
@@ -110,7 +110,7 @@ class SnapshotPreparation:
         return reused['runtime_bytes']
 
     def stage(self, journal):
-        """Reuse files and check capacity without starting temporary query servers."""
+        """Reuse cache files; the real services load and validate them once."""
         owner = self.owner
         script = self.prepare_script(journal)
         for section, snapshot in journal['production_snapshots'].items():
@@ -124,26 +124,8 @@ class SnapshotPreparation:
                     'pinned production snapshot map changed')
             retained_bytes = self.reuse_previous(journal, section, root, pin, script)
             record = {'pin': pin, 'script': script, 'retained_runtime_bytes': retained_bytes,
-                      'disk_bytes': retained_bytes + owner.request['https']['publisher_budget_bytes'],
                       'binary_sha256': self.serving.release['binary_sha256'],
                       'inputs': {script: sha(SCRIPT)}}
-            if section == 'transparent_history':
-                archive = owner.request['https']['consumers'][0]
-                identity = snapshot['identity']
-                specification = {**record, 'work': work,
-                    'binary': self.serving.deployer.service.release_binary(
-                        self.serving.release['binary_sha256'], 'pir-query-server'),
-                    'verification_cache_bytes': archive['configuration'][section]['settings']['cache_bytes'],
-                    'identity': {'shard_schema': identity['schema'],
-                        **{key: identity[key] for key in ('map_sha256', 'network', 'genesis_hash',
-                                                        'shards', 'start_height', 'covered_through')},
-                        'recent_from_shard': identity['shards']}}
-                path = work + '/capacity-specification.json'
-                self.serving.write(owner.host, path, json.dumps(specification, sort_keys=True) + '\n', 0o600)
-                code, output = owner.ex.run(owner.host, ['python3', script, 'capacity', path], 300)
-                require(code == 0, 'complete history cache does not fit: ' + output[-1000:])
-                record['capacity'] = json.loads(output)
-                record['verification_cache_bytes'] = specification['verification_cache_bytes']
             journal.setdefault('prepared_snapshots', {})[section] = record
             owner.save(journal)
             owner.resources()

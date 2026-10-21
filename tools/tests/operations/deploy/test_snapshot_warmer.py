@@ -1,10 +1,8 @@
-"""Snapshot reuse preserves public inputs and checks the full archive capacity."""
+"""Snapshot reuse preserves public inputs without loading another server."""
 import json
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
 
 import publisher_fixture  # Registers the operations package for direct discovery.
 from wallet_pir_ops.deploy import snapshot_warmer as warmer
@@ -64,45 +62,6 @@ class SnapshotFilesTests(unittest.TestCase):
             (source / 'outside').symlink_to(root)
             with self.assertRaisesRegex(ValueError, 'symbolic link'):
                 warmer.pin(source, root / 'pin')
-
-
-class SnapshotCapacityTests(unittest.TestCase):
-    def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
-        identity = dict.fromkeys(('shard_schema', 'map_sha256', 'network', 'genesis_hash'), 'identity')
-        identity.update(shards=3, start_height=0, covered_through=99, recent_from_shard=3)
-        self.specification = {'work': str(self.root), 'pin': str(self.root),
-                              'section': 'transparent_history', 'identity': identity,
-                              'map_sha256': 'map', 'binary_sha256': 'binary', 'binary': '/query',
-                              'verification_cache_bytes': 44 << 30,
-                              'memory_bytes': 36 << 30, 'disk_bytes': (34 + 32) << 30}
-
-    def test_native_verification_checks_every_shard_with_the_archive_budget(self):
-        sizing = {'used_bytes': 34 << 30, 'missing_bytes': 8 << 30}
-
-        def verify(command, **kwargs):
-            self.assertEqual(command[-1], '--verify-only')
-            config = json.loads(Path(command[command.index('--config') + 1]).read_text())
-            settings = config['transparent_history']['settings']
-            self.assertEqual(settings['cache_bytes'], 44 << 30)
-            self.assertEqual(settings['runtime_cache_max_bytes'], (34 + 32) << 30)
-            assigned = json.loads(Path(settings['assignment']).read_text())
-            self.assertEqual(assigned['workers'][0]['shards'], [0, 1, 2])
-            self.assertEqual(assigned['unassigned'], [])
-            self.assertNotIn('retain_revisions', settings)
-            return subprocess.CompletedProcess(command, 0, json.dumps({'verified': True, 'runtime_cache': sizing}), '')
-
-        with patch.object(warmer.subprocess, 'run', side_effect=verify):
-            self.assertEqual(warmer.verify_history_capacity(self.specification), sizing)
-
-    def test_insufficient_cache_capacity_refuses_without_starting_a_server(self):
-        failure = subprocess.CompletedProcess([], 1, '', 'runtime cache budget exhausted')
-        with patch.object(warmer.subprocess, 'run', return_value=failure):
-            with self.assertRaisesRegex(RuntimeError, 'complete history cache does not fit'):
-                warmer.verify_history_capacity(self.specification)
-        self.assertIn('budget exhausted', (self.root / 'capacity.log').read_text())
 
 
 if __name__ == '__main__':

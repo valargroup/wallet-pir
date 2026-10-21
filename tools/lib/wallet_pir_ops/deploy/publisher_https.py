@@ -18,23 +18,6 @@ from .publisher_serving import Serving
 
 KINDS = ('history-archive', 'history-recent', 'transaction-details')
 
-# The remote command transport retains only its last 4,000 characters. Keep
-# the complete verifier streams beside the staged config, and return the small
-# authority fields rather than the potentially large list of held shard hashes.
-VERIFY_SNAPSHOT = r'''
-import json,os,pathlib,subprocess,sys
-binary,config=sys.argv[1:]
-result=subprocess.run([binary,'--config',config,'--verify-only'],capture_output=True,text=True,timeout=290)
-for name,content in [('stdout',result.stdout),('stderr',result.stderr)]:
-    path=pathlib.Path(config+'.verification.'+name)
-    with open(path,'w',opener=lambda p,flags:os.open(p,flags,0o600)) as stream:stream.write(content)
-if result.returncode:
-    print(result.stderr[-1000:]);sys.exit(result.returncode)
-report=json.loads(result.stdout)
-assert report.get('verified') is True, 'verifier did not confirm the publication'
-print(json.dumps({key:report[key] for key in ('verified','map_sha256','shards','warm_target') if key in report}))
-'''
-
 # The old workers have stopped before this runs. Only immutable bytes are
 # reused: the provider still verifies every object against fresh HTTPS authority.
 SEED_OBJECTS = r'''
@@ -275,7 +258,7 @@ class HttpsServing(Serving):
     def stage(self, parent, binary):
         super().stage(parent, binary)
         owner = self.cutover
-        self.verify_production_snapshots(parent)
+        self.pin_production_snapshots(parent)
         from .publisher_warmup import SnapshotPreparation
         SnapshotPreparation(self).stage(parent)
         for consumer in parent['plan']['serving']['https_consumers']:
@@ -289,17 +272,12 @@ class HttpsServing(Serving):
             code, output = owner.ex.run(host, [target, '--config', config_path, '--check'], 60)
             require(code == 0, 'staged HTTPS consumer rejects its configuration: ' + output[-1000:])
 
-    def verify_production_snapshots(self, parent):
-        """Load both complete immutable publications before stopping any owner.
-
-        These are publication snapshots, not copies of writable journals. The
-        normal loaders check every held revision and the full runtime capacity.
-        Moving or collected inputs refuse the cutover before its service changes.
-        """
+    def pin_production_snapshots(self, parent):
+        """Pin public inputs; the actual services validate their bytes at startup."""
         owner = self.cutover
-        for section, root_key, data_key, map_name, maximum in (
-                ('transparent_history', 'publication_root', 'shard_dir', 'shards.json', 44 << 30),
-                ('transaction_details', 'root', 'publication_dir', 'txid-shards.json', 32 << 30)):
+        for section, root_key, map_name in (
+                ('transparent_history', 'publication_root', 'shards.json'),
+                ('transaction_details', 'root', 'txid-shards.json')):
             root = owner.request['configuration'][section]['settings'][root_key]
             snapshot = json.loads(owner.read(root + '/active.json'))
             source, digest = snapshot['directory'], snapshot['map_sha256']
@@ -321,41 +299,13 @@ class HttpsServing(Serving):
                     canonical = {}
                 require(code == 0 and canonical.get('map_sha256') == digest,
                         'production history snapshot differs from its active record')
-            resources = owner.resources()
-            budget = min(maximum, resources['memory_available'] - (resources['memory_total'] + 4) // 5)
-            require(resources['memory_available'] - budget >= resources['memory_total'] * .2,
-                    'production snapshot verification would leave less than 20 percent memory')
-            settings = {data_key: pin, 'cache_bytes': budget,
-                        'listen': '127.0.0.1:18990'}
-            if section == 'transaction_details':
-                settings['role'] = 'combined'
-            config = {'management_listen': '127.0.0.1:18991',
-                      section: {'enabled': True, 'settings': settings}}
-            path = '/opt/pir-query-server/transactions/' + parent['id'] + '/snapshot-' + section + '.json'
-            owner.effect(parent, 'stage production snapshot check ' + section,
-                         lambda path=path, config=config: self.write(owner.host, path,
-                             json.dumps(config, sort_keys=True) + '\n', 0o600))
-            target = self.deployer.service.release_binary(self.release['binary_sha256'], 'pir-query-server')
-            code, output = owner.ex.run(owner.host, ['python3', '-c', VERIFY_SNAPSHOT, target, path], 300)
-            reports = []
-            for line in output.splitlines():
-                try:
-                    reports.append(json.loads(line))
-                except ValueError:
-                    pass
-            require(code == 0 and any(isinstance(report, dict) and report.get('verified') is True
-                                      for report in reports),
-                    'complete production snapshot failed verification: ' + section + ': ' + output[-1000:])
-            if section == 'transaction_details':
-                require(any(isinstance(report, dict) and report.get('map_sha256') == digest for report in reports),
-                        'production detail snapshot differs from its active record')
-            require(owner.ex.sha256(owner.host, map_path) == raw_digest,
-                    'production snapshot changed during verification')
+            else:
+                require(raw_digest == digest, 'production detail snapshot differs from its active record')
             parent.setdefault('production_snapshots', {})[section] = {
-                'directory': source, 'map_sha256': digest, 'verified': True,
+                'directory': source, 'map_sha256': digest, 'metadata_verified': True,
                 'pin': pin,
                 'raw_map_sha256': raw_digest,
-                'query_binary_sha256': self.release['binary_sha256'], 'cache_bytes': budget}
+                'query_binary_sha256': self.release['binary_sha256']}
             if section == 'transparent_history':
                 parent['production_snapshots'][section]['identity'] = canonical
             owner.save(parent)

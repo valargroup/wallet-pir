@@ -337,19 +337,18 @@ service invocation; changed ownership is refused. It verifies that the process
 has stopped and the writer locks are free before restoring the previous owner.
 Ordinary predecessor stops keep their existing shutdown behavior.
 
-Before stopping the publisher, the HTTPS path pins both complete active public
-snapshots with hard links and runs the new query server's read-only verifier
-against those pins. It checks
-every revision and the runtime capacity while preserving the twenty percent
-memory reserve, and records each source directory, map digest and executable
-digest. This reads immutable publications; it neither copies nor opens a second
+Before stopping the publisher, the HTTPS path checks artifact identities,
+configuration, resource reserves and publication map metadata. It pins both
+active public snapshots with hard links and records their source directories,
+map digests and executable digests. These immutable files do not open another
 writer on the live journals.
 
 Staging reuses completed runtime files from the preceding transaction by hard
-link. The additional staging allowance covers new writes rather than files
-already present. A read-only native capacity check covers the full archive
-against its actual memory budget and remaining disk space. Staging does not
-start temporary query servers or rehearse each shard.
+link, including across builds. Native format, parameter, source and checksum
+checks still validate reused files during actual startup. The additional staging
+allowance covers new writes rather than files already present and preserves the
+twenty percent disk reserve. Staging does not load another full archive or start
+temporary query servers.
 
 The actual publisher and consumers load their state once during startup. The
 cutover waits for their readiness and checks encrypted answers before committing
