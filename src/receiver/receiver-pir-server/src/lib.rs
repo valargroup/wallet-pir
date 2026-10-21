@@ -95,7 +95,13 @@ struct Service {
     clients: ClientSlots,
     metrics: pir_observability::HttpMetrics,
     health_fields: HealthFields,
+    /// Rolling filter batches being encoded or sent; see [`MAX_FILTER_BATCHES`].
+    batches: Arc<tokio::sync::Semaphore>,
 }
+
+/// Most rolling filter batches built or sent at once. Each holds up to twice
+/// `MAX_BATCH_BYTES` (its filters and their encoding); more are refused with 429.
+const MAX_FILTER_BATCHES: usize = 8;
 
 /// The receiver categories `pir_observability` reports.
 const ENDPOINTS: [&str; 6] = [
@@ -120,6 +126,7 @@ pub fn router_with_health(publications: Publications, fields: HealthFields) -> R
         clients: ClientSlots::new(PER_CLIENT),
         metrics: pir_observability::HttpMetrics::default(),
         health_fields: fields,
+        batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
     })
 }
 
@@ -204,8 +211,17 @@ fn router(service: Service) -> Router {
         }))
         .route("/v1/receiver/block-filters/:revision/:from/:limit", get(
             |State(s): State<Service>, Path((revision, from, limit)): Path<(u64, u32, u32)>| async move {
+                // The permit is held until the encoded batch is sent.
+                let Ok(permit) = s.batches.clone().try_acquire_owned() else {
+                    return overloaded();
+                };
                 match s.publications.filters().and_then(|window| window.batch(revision, from, limit)) {
-                    Ok(bytes) => binary(bytes),
+                    Ok(bytes) => {
+                        let mut response = binary(bytes);
+                        let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
+                        *response.body_mut() = pir_control::http::retain(body, permit);
+                        response
+                    }
                     Err(status) => status.into_response(),
                 }
             }
@@ -423,6 +439,7 @@ mod tests {
             clients: clients.clone(),
             metrics: Default::default(),
             health_fields: Arc::new(serde_json::Map::new),
+            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
         };
         let request = client.prepare(common::receiver(), 0).unwrap();
         let response = query(
@@ -497,6 +514,40 @@ mod tests {
         server.abort();
     }
 
+    /// Rolling filter batches past the limit are refused with 429 while the others are
+    /// built or sent, and served again once one finishes.
+    #[tokio::test]
+    async fn rolling_filter_batches_beyond_the_limit_are_refused() {
+        let batches = Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES));
+        let app = router(Service {
+            publications: Publications::default(),
+            queue: Arc::new(Queue::new(1, 1, WAIT, true)),
+            clients: ClientSlots::new(PER_CLIENT),
+            metrics: pir_observability::HttpMetrics::default(),
+            health_fields: Arc::new(serde_json::Map::new),
+            batches: batches.clone(),
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/v1/receiver/block-filters/0/100/1",
+            socket.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let held = batches
+            .clone()
+            .acquire_many_owned(MAX_FILTER_BATCHES as u32)
+            .await
+            .unwrap();
+        let refused = reqwest::get(&url).await.unwrap();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        drop(held);
+        // With a slot free it reaches the window, which is not published yet.
+        let served = reqwest::get(&url).await.unwrap();
+        assert_eq!(served.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(batches.available_permits(), MAX_FILTER_BATCHES);
+        server.abort();
+    }
+
     /// Serves `publications` with `queue`, returning the query URL and the server task.
     async fn serve(
         publications: Publications,
@@ -508,6 +559,7 @@ mod tests {
             clients: ClientSlots::new(PER_CLIENT),
             metrics: pir_observability::HttpMetrics::default(),
             health_fields: Arc::new(serde_json::Map::new),
+            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
         });
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());

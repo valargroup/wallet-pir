@@ -222,6 +222,23 @@ class ReceiverCaddy(StubDroplet):
         self.assertIn(backup.name, run.stderr)
         self.assertEqual((backup.read_text(), self.live.read_text()), (original, original))
 
+    def test_two_runs_in_one_second_keep_both_backups(self):
+        spec = importlib.util.spec_from_file_location('receiver_caddy', SCRIPT)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        path = self.dir / 'Caddyfile.candidate'
+        statuses = []
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, self.env))
+            stack.enter_context(patch.object(helper.time, 'strftime', lambda *args: '20261020T000000Z'))
+            stack.enter_context(patch('sys.stdout', io.StringIO()))
+            for change in ('# first\n', '# second\n'):
+                path.write_text(LIVE + change)
+                statuses.append(helper.main(['apply', str(path)]))
+        self.assertEqual(statuses, [0, 0])
+        self.assertEqual(sorted(b.read_text() for b in self.backups()), sorted([LIVE, LIVE + '# first\n']))
+        self.assertEqual(self.live.read_text(), LIVE + '# second\n')
+
     def test_a_timeout_is_reported_as_an_unknown_outcome(self):
         spec = importlib.util.spec_from_file_location('receiver_caddy', SCRIPT)
         helper = importlib.util.module_from_spec(spec)
@@ -329,12 +346,11 @@ class ReceiverCutover(StubDroplet):
         # The deploy's check, then the inventory's probe, both from the new release.
         probes = [json.loads(line)[0] for line in self.lines('probe')]
         self.assertEqual(probes, [str(self.release / 'receiver-directory')] * 2)
-        # Rolling back restores both, verified with the previous binary. Backups are named
-        # by the second, so this one is moved aside first.
-        previous = backup.read_text()
-        backup.unlink()
-        status, output = self.cutover(previous, ['rollback', 'receiver'], self.deploy())
+        # Rolling back restores both, verified with the previous binary, keeping both
+        # backups even within the same second.
+        status, output = self.cutover(backup.read_text(), ['rollback', 'receiver'], self.deploy())
         self.assertEqual(status, 0, output)
+        self.assertEqual(len(self.backups()), 2)
         self.assertEqual((self.live.read_text(), self.running.read_text()), (PREVIOUS, PREVIOUS))
         self.assertEqual(self.running_release(), self.previous)
 

@@ -93,7 +93,7 @@ bucket would otherwise make lookups of that receiver find nothing.
 
 ## Rolling block filters
 
-`GET /v1/receiver/block-filters/head` advertises the network, history correction revision, first retained height and tip hash. `GET /v1/receiver/block-filters/:revision/:from/:limit` returns a nonempty consecutive batch, including empty blocks, limited to 256 blocks and 4 MiB. The batch may be shorter than requested. Pruned or stale requests return 410, future heights return 503 and invalid limits return 400. Every response is uncached.
+`GET /v1/receiver/block-filters/head` advertises the network, history correction revision, first retained height and tip hash. `GET /v1/receiver/block-filters/:revision/:from/:limit` returns a nonempty consecutive batch, including empty blocks, limited to 256 blocks and 4 MiB. The batch may be shorter than requested. Pruned or stale requests return 410, future heights return 503 and invalid limits return 400. At most 8 batches are built or sent at once, and more return 429 with `Retry-After`. Every response is uncached.
 
 Filters use the shared GCS codec with P = 20 and M = 1,569,792. Their salt binds network, height and hash independently of PIR row layout. The indexer builds them from indexed chain payments before witness or PIR preparation. Inventory retention does not hold back hints. The canonical guard revokes noncanonical hints along with affected sessions. Wallets independently check hashes and linkage, and query PIR after a match. A negative match needs no receiver query.
 
@@ -316,6 +316,9 @@ throughout and revokes on a confirmed reorg; an outage keeps serving. A revoked
 but still-recorded publication is verified and confirmed again. A restart
 re-reads the record and verifies everything before serving; the
 `serve-publication.json` status file in `state_dir` is a report, never an input.
+`history-revision.json` beside it records the highest history revision accepted,
+written before a correction serves, and a record below it is refused, so a restart
+never serves older, uncorrected history again. Deleting it is an explicit rollback.
 Health's `publication` field reports the assigned, loaded and preparing records
 and the latest refusal, typed as `invalid_source`, `unavailable`,
 `noncanonical` or `superseded`. `--check` runs the same verification of the
