@@ -469,8 +469,8 @@ mod tests {
             assert!(first.eligible);
             let inventory: enhance_query_server::publication::Inventory = crate::publication::read_metadata(
                 &publisher.distribution.root().join("inventories").join(format!("{}.json", first.inventory.as_ref().unwrap().sha256))).unwrap();
-            inventory.verify(publisher.distribution.root()).unwrap();
             assert!(inventory.supports(manifest).unwrap());
+            crate::publication::verify(publisher.distribution.root(), inventory).unwrap();
             assert!(publisher.work(&journal).unwrap().is_none());
             let before_restart = publisher.distribution.durable_current();
             let old_work = publisher.work(&journal).unwrap();
