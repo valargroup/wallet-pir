@@ -424,9 +424,19 @@ impl<'a> Collected<'a> {
             active,
             witness_cache,
         } = state;
-        // The optional audit cannot prevent chain publication when its store is unavailable.
-        let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
-        let report = crate::near::capture(provider_store, anchor_time)
+        // The optional audit never prevents chain publication. Off, its empty store needs
+        // no terminal block time; on, a time or store that is unavailable degrades its
+        // report instead.
+        let anchor_time = match args.audit_enabled {
+            true => rpc
+                .block_time(tip.hash)
+                .await
+                .map(|time| time.min(unix_now()))
+                .map_err(Into::into),
+            false => Ok(unix_now()),
+        };
+        let report = anchor_time
+            .and_then(|time| crate::near::capture(provider_store, time))
             .and_then(|capture| capture.report(store))
             .unwrap_or_else(|error| {
                 warn!(%error, "payout audit unavailable");
@@ -733,7 +743,14 @@ mod tests {
                     };
                     json!(zakura_server_chain::hash::display(&hash))
                 }
-                "getblockheader" => json!({"time": *node.time.lock().unwrap()}),
+                "getblockheader" => match *node.time.lock().unwrap() {
+                    // A node that cannot give the header.
+                    i64::MIN => {
+                        return Json(json!({"result": null,
+                        "error": {"code": -8, "message": "header unavailable"}}))
+                    }
+                    time => json!({"time": time}),
+                },
                 "getblock" => {
                     return Json(json!({"result": null,
                     "error": {"code": -8, "message": "temporarily unavailable"}}))
@@ -1031,6 +1048,26 @@ mod tests {
             &window,
             &paused.publications.filter_window().unwrap()
         ));
+    }
+
+    /// The terminal block's time only dates the optional payout audit: a node that
+    /// cannot give it degrades the audit report, and with the audit off it is never
+    /// asked for, so publication goes ahead either way.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unavailable_block_time_never_blocks_publication() {
+        let mut paused = Paused::new(|_| {}).await;
+        *paused.node.time.lock().unwrap() = i64::MIN;
+        paused.refresh().await.unwrap();
+        let health = paused.get("health").await;
+        assert!(health["serving"].is_string());
+        assert!(health["indexer"].is_null(), "{health}");
+        paused.args.audit_enabled = false;
+        paused.publications.revoke();
+        paused.state = State::default();
+        paused.refresh().await.unwrap();
+        let health = paused.get("health").await;
+        assert!(health["serving"].is_string());
+        assert!(health["indexer"].is_object(), "{health}");
     }
 
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.
