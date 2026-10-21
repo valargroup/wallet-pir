@@ -614,6 +614,57 @@ impl CheckedAnswer {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_keeps_warmed_recovery_private_when_the_publisher_advances() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state);
+    follow.poll_once().await.unwrap();
+    drop(follow);
+
+    std::fs::write(&tls.control, "pause-current-2").unwrap();
+    let mut restarted = restart_manager(&tls, &state).await;
+    let work = tokio::spawn(async move {
+        let result = restarted.poll_once().await;
+        (restarted, result)
+    });
+    entered(&tls).await;
+    owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+    std::fs::write(&tls.control, "missing-inventory").unwrap();
+    let (mut restarted, refused) = work.await.unwrap();
+    assert!(refused.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "checked files alone cannot serve"
+    );
+    assert!(restarted.router().is_err());
+
+    rpc.available.store(false, Ordering::Release);
+    assert!(restarted.poll_once().await.is_err());
+    assert!(
+        restarted.live().is_none(),
+        "a source outage cannot activate recovery"
+    );
+    rpc.available.store(true, Ordering::Release);
+    std::fs::write(&tls.control, "").unwrap();
+    let progress = restarted.poll_once().await.unwrap();
+    let stages = progress
+        .stages
+        .expect("activate the privately checked inputs");
+    assert_eq!(stages.loading_seconds, 0.0, "do not reload the saved set");
+    assert_eq!(
+        stages.prewarm_seconds, 0.0,
+        "do not repeat completed warmup"
+    );
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.stop().await;
+}
+
 /// Reusing immutable transfers through a failed update rebuilds the same
 /// publication the lifecycle and interrupted-activation cases already serve.
 #[cfg(feature = "qualification-tests")]

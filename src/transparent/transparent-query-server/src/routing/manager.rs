@@ -215,12 +215,16 @@ impl HistorySync {
             return Ok(Input::Unchanged);
         };
         let mut recovered = false;
-        if self.live.is_none() && self.config.directory.join("active.json").exists() {
+        if self.live.is_none()
+            && self.pending.is_none()
+            && self.config.directory.join("active.json").exists()
+        {
             // A failed update does not discard the complete predecessor across
             // restart. Recovery still requires a fresh source snapshot and exact
             // retained anchors; loading this record alone never opens a listener.
             match self.recover(&current).await {
                 Ok(live) => {
+                    self.pending = None;
                     self.live = Some(live);
                     recovered = true;
                 }
@@ -322,6 +326,10 @@ impl HistorySync {
         live.fence_recovered(
             &combined_floor(&self.config.directory, &mut self.revocations)?.digests,
         )?;
+        // Warming is reusable work, not serving authority. If the publisher
+        // advances during recovery, keep these checked inputs private so the
+        // next fresh update does not warm the saved publication all over again.
+        self.pending = Some(live.clone());
         let checked = live.clone();
         let source = &mut self.source;
         let config = &self.config;
