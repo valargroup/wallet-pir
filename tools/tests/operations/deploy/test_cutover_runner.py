@@ -88,6 +88,17 @@ class WatchdogTests(unittest.TestCase):
         systemctl.assert_not_called()
         self.assertTrue((self.runner.root / 'restored').is_file())
 
+    def test_failed_service_before_runner_start_does_not_leave_a_staging_transaction(self):
+        self.close_child()
+        state = json.loads(self.runner.decision.path.read_text())
+        state.update(phase='staging', runner_started=False, interrupted_unix=None, deadline_unix=None)
+        self.runner.decision.path.write_text(json.dumps(state))
+        with patch.object(cutover_runner, 'observe', return_value={'MainPID': '0', 'ActiveState': 'failed'}), \
+                patch.object(cutover_runner, 'systemctl') as systemctl:
+            self.assertEqual(self.runner.watchdog()['phase'], 'restored')
+        systemctl.assert_not_called()
+        self.assertIsNone(json.loads(self.runner.decision.path.read_text())['interrupted_unix'])
+
 
 if __name__ == '__main__':
     unittest.main()

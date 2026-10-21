@@ -206,6 +206,10 @@ class Runner:
                 return {'transaction': self.target.identifier, 'phase': state['phase']}
             observed = observe(self.target.identifier)
             active = observed.get('MainPID', '0') != '0'
+            if not active and not state['runner_started'] and observed.get('ActiveState') == 'failed':
+                # A unique unit can fail before Python reaches started(). An
+                # unlaunched unit is inactive, so it cannot trigger this path.
+                self.decision.cancel_before_start()
             if self.decision.claim_rollback(runner_active=active):
                 state = json.loads(self.decision.path.read_text())
                 self.verify_units()

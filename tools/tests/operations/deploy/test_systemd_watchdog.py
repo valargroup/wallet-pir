@@ -41,6 +41,9 @@ class IsolatedRollback:
 
 
 def worker(mode, root, identifier, nearly_elapsed):
+    if mode == 'fail':
+        durable.atomic_json(root / 'forward.json', {'failed_before_started': True}, mode=0o600)
+        raise SystemExit(7)
     if mode == 'forward':
         decision = Decision(root, identifier,
                             clock=lambda: time.time() - (3596 if nearly_elapsed else 0))
@@ -63,7 +66,7 @@ def worker(mode, root, identifier, nearly_elapsed):
                      and os.environ.get('WALLET_PIR_SYSTEMD_REHEARSAL') == '1',
                      'explicit root systemd rehearsal on an isolated development host')
 class SystemdRehearsal(unittest.TestCase):
-    def run_case(self, *, nearly_elapsed):
+    def run_case(self, *, nearly_elapsed, failed_start=False):
         root = Path(tempfile.mkdtemp(prefix='wallet-pir-watchdog-rehearsal-'))
         identifier = 'publisher-rehearsal-' + uuid.uuid4().hex
         name = unit_name(identifier)
@@ -71,7 +74,7 @@ class SystemdRehearsal(unittest.TestCase):
         decision.create('a' * 64)
         prefix = [sys.executable, str(Path(__file__).resolve())]
         extra = ['--nearly-elapsed'] if nearly_elapsed else []
-        units = services(identifier, [*prefix, 'forward', str(root), identifier, *extra],
+        units = services(identifier, [*prefix, 'fail' if failed_start else 'forward', str(root), identifier, *extra],
                          [*prefix, 'watchdog', str(root), identifier])
         durable.atomic_json(root / 'units.json', {'units': units}, mode=0o600)
         sibling = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])
@@ -88,7 +91,9 @@ class SystemdRehearsal(unittest.TestCase):
                 self.assertLess(time.monotonic(), deadline, 'forward fixture did not start')
                 time.sleep(0.1)
             before = json.loads(decision.path.read_text())['deadline_unix']
-            if nearly_elapsed:
+            if failed_start:
+                self.assertIsNone(before, 'no serving interruption occurred')
+            elif nearly_elapsed:
                 systemctl('restart', name + '-rollback.service')
                 self.assertEqual(json.loads(decision.path.read_text())['deadline_unix'], before)
             else:
@@ -102,7 +107,7 @@ class SystemdRehearsal(unittest.TestCase):
             self.assertEqual(observe(identifier)['MainPID'], '0')
             self.assertIsNone(sibling.poll(), 'an unrelated process was terminated')
             self.assertEqual(state['deadline_unix'], before)
-            print(json.dumps({'case': 'elapsed-deadline' if nearly_elapsed else 'lost-runner',
+            print(json.dumps({'case': 'failed-start' if failed_start else 'elapsed-deadline' if nearly_elapsed else 'lost-runner',
                               'restored': True, 'unrelated_process_preserved': True,
                               'original_deadline_preserved': True}), flush=True)
         finally:
@@ -129,9 +134,12 @@ class SystemdRehearsal(unittest.TestCase):
     def test_lost_forward_runner_executes_rollback_before_deadline(self):
         self.run_case(nearly_elapsed=False)
 
+    def test_failed_service_before_runner_start_finishes_recovery_without_a_downtime_clock(self):
+        self.run_case(nearly_elapsed=False, failed_start=True)
+
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] in ('forward', 'watchdog'):
+    if len(sys.argv) > 1 and sys.argv[1] in ('forward', 'watchdog', 'fail'):
         worker(sys.argv[1], Path(sys.argv[2]), sys.argv[3], '--nearly-elapsed' in sys.argv)
     else:
         unittest.main()
