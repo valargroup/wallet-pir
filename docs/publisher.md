@@ -88,6 +88,23 @@ product probes. Running a task alone does not establish readiness. Existing
 product health and metrics endpoints retain their response contracts. An empty
 configuration is useful for management diagnostics and has no product work.
 
+### Service discovery
+
+The management listener also serves `GET /.well-known/pir-service-discovery`
+with `{"service":"pir-publisher","version":"1.0.0"}` and `Cache-Control:
+no-store`. The version comes from the
+[`pir-service-discovery`](../src/shared/pir-service-discovery/README.md) crate
+the publisher is built with; there is no configuration override. Query servers
+that synchronize over HTTPS (Transparent history and transaction details) read
+it from the configured publisher origin before they start and before every
+synchronization pass, and refuse to start without it.
+
+This is a cutover: before upgrading those query servers, the publisher's HTTPS
+edge must proxy exactly that path, for `GET` only, to the management listener.
+Do not proxy `/health`, `/ready` or any other management or control route. The
+document is compatibility metadata only; it is not health and grants no
+publication authority.
+
 Status retains a bounded dedicated runtime. Receiver also uses a dedicated
 runtime thread because its SQLite connections belong to their owner thread.
 Other product tasks remain independently scheduled with existing preparation
@@ -292,7 +309,8 @@ its existing `host` and `unit`, a root-owned `config_path`, its root query-serve
 `configuration`, and a disk `budget_bytes`. Consumer configurations use the
 publisher's main-network identity, their existing wallet listeners and separate
 new state directories under `/srv`. The archive holds all shards; recent uses
-the archive's existing TLS origin. Fleet-controlled serving authority cannot be
+the archive's existing TLS origin. The archive's `cache_bytes` memory budget is
+explicit so complete holdings can be checked before cutover. Fleet-controlled serving authority cannot be
 reused. After stopping each predecessor, the tool hashes its immutable tables
 and runtime files into the new private object cache by hard link. The provider
 still checks every reused object against fresh HTTPS authority; no active-state
@@ -316,14 +334,40 @@ service invocation; changed ownership is refused. It verifies that the process
 has stopped and the writer locks are free before restoring the previous owner.
 Ordinary predecessor stops keep their existing shutdown behavior.
 
-Before stopping the publisher, the HTTPS path runs the new query server's
-read-only verifier against both complete active publication snapshots. It checks
+Before stopping the publisher, the HTTPS path pins both complete active public
+snapshots with hard links and runs the new query server's read-only verifier
+against those pins. It checks
 every revision and the runtime capacity while preserving the twenty percent
 memory reserve, and records each source directory, map digest and executable
 digest. This reads immutable publications; it neither copies nor opens a second
-writer on the live journals. Consumer readiness subsequently requires warmed
-HTTPS state. Wallet acceptance still uses the unchanged wallet at its existing
-TLS origin.
+writer on the live journals.
+
+The same staging phase warms every current runtime through the qualified
+query-server executable. A temporary
+service has a memory ceiling that preserves the coordinator's twenty percent
+reserve. History is checked one shard at a time; transaction details use combined
+holdings. Loopback readiness must report the expected map, executable, assignment
+and complete runtime coverage. Pending cache writes must finish without errors.
+The verifier keeps the query server's normal revision retention, so superseded
+revisions in an immutable snapshot are checked without pruning its files.
+Each snapshot has a one-hour staging allowance, with at most fifteen minutes
+for any one history shard or the combined transaction-detail group. These
+preparation limits leave the publisher startup and consumer readiness gates unchanged.
+The service and its children stop before staging can finish. A failed warmup
+leaves the existing publisher, workers and edges running; reconciliation cleans
+up the transaction-owned validator. Completed cache files remain reusable by a
+later attempt, with native validation against its fresh snapshot.
+The staging allowance covers additional disk writes. The cache limit includes
+completed files already present through hard links. Before warming history,
+the native verifier checks the complete archive against its actual memory
+budget and the remaining cache space; its sizing report is retained with the
+warmup results.
+
+After the old publisher stops and releases its writer locks, the cutover links
+those prepared cache files into its current publication. It then starts the new
+publisher and waits for canonical HTTPS metadata before starting consumers.
+Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
+the unchanged wallet at its existing TLS origin.
 
 Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
 and sustained-service qualification.

@@ -1,0 +1,18 @@
+[package]
+name = "pir-service-discovery"
+# The one source of the Publisher-Query Server contract version. Publishers
+# advertise it and Query Servers compare against it; see README.md.
+version = "1.0.0"
+edition = "2021"
+description = "Service discovery document and SemVer compatibility policy between Wallet PIR publishers and query servers"
+license = "MIT"
+repository = "https://github.com/valargroup/wallet-pir"
+readme = "README.md"
+keywords = ["pir", "service-discovery", "semver"]
+categories = ["network-programming"]
+include = ["src/**", "Cargo.toml", "README.md", "CHANGELOG.md"]
+
+[dependencies]
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

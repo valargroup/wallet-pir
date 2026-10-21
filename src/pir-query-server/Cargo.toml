@@ -15,7 +15,6 @@ default = []
 enhance = ["dep:enhance-query-server"]
 status = [
     "dep:status-query-server",
-    "dep:pir-sync-manager",
     "dep:pir-control",
     "dep:ipir-sp",
     "dep:hex",
@@ -41,7 +40,7 @@ cuda = ["enhance-query-server?/cuda", "status-query-server?/cuda"]
 
 [dependencies]
 enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
-pir-sync-manager = { path = "../shared/pir-sync-manager", optional = true }
+pir-sync-manager = { path = "../shared/pir-sync-manager" }
 status-query-server = { path = "../status/status-query-server", optional = true }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, default-features = false }
 pir-pipeline = { path = "../shared/pir-pipeline" }

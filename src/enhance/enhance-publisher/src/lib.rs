@@ -24,6 +24,7 @@ pub mod ingest;
 pub mod local_serving;
 pub mod operator;
 pub mod pool;
+pub mod publication;
 pub mod rebuild;
 mod serving_control;
 pub mod store;

@@ -284,7 +284,17 @@ async fn tls(root: &Path, authority: Authority) -> Tls {
     tls_router(root, authority.router()).await
 }
 
+/// The publisher's service discovery, which the unified host serves on its
+/// management router and an operator proxies at this exact public path.
+pub(crate) fn with_discovery(router: Router) -> Router {
+    router.route(
+        pir_service_discovery::PATH,
+        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
+    )
+}
+
 pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
+    let router = with_discovery(router);
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     static MATERIAL: std::sync::LazyLock<(Vec<u8>, Vec<u8>)> = std::sync::LazyLock::new(|| {
@@ -959,6 +969,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     manager.poll_once().await.unwrap();
@@ -984,6 +995,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = restarted.poll_once().await.unwrap();
@@ -1032,10 +1044,213 @@ async fn full_history_http_holdings_include_archive_runtimes() {
             ..Default::default()
         },
     )
+    .await
     .unwrap()
     .with_full_holdings();
     let progress = damaged.poll_once().await.unwrap();
     assert!(!progress.unchanged, "{progress:?}");
     assert_eq!(progress.downloaded_files, 0, "objects are still reusable");
     assert!(damaged.live().is_some());
+}
+
+/// Publisher service discovery gates one-shot verification and supervises a
+/// running real HTTPS history process. Only a confirmed major version mismatch
+/// stops it, and a recovered predecessor cannot mask that mismatch at restart.
+#[tokio::test(flavor = "multi_thread")]
+async fn history_process_checks_publisher_discovery_and_stops_on_a_major_change() {
+    use transparent_query_server::history::process::{run, run_with, HistoryProcess};
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(finalized), rpc.client.clone());
+    let tls = tls(root.path(), owner).await;
+    let consumer = root.path().join("consumer");
+    let process = |verify_only: bool| -> HistoryProcess {
+        serde_json::from_value(serde_json::json!({
+            "publisher": tls.origin,
+            "publisher_network": "main",
+            "publisher_genesis": transparent_filter::MAINNET_GENESIS_DISPLAY,
+            "publisher_ca": root.path().join("ca.pem"),
+            "shard_dir": consumer,
+            "cache_bytes": 4u64 << 30,
+            "bootstrap_max_bytes": 4u64 << 30,
+            "verify_only": verify_only,
+        }))
+        .unwrap()
+    };
+
+    // Verification refuses a publisher without discovery before any state.
+    std::fs::write(&tls.control, "discovery-missing").unwrap();
+    let error = run(process(true)).await.unwrap_err();
+    assert!(error.to_string().contains("HTTP 404"), "{error}");
+    assert!(!transparent_query_server::is_incompatible(&error));
+    assert!(!consumer.exists(), "verification opened consumer state");
+
+    std::fs::write(&tls.control, "").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let serving = listener.local_addr().unwrap();
+    let running = tokio::spawn(run_with(process(false), Some(listener)));
+    let health = format!("http://{serving}/v1/health");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    while reqwest::get(&health).await.is_err() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "process never served"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    std::fs::write(
+        &tls.control,
+        r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(60), running)
+        .await
+        .expect("an incompatible publisher must stop the history process")
+        .unwrap()
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    assert!(error.to_string().contains("2.0.0"), "{error}");
+    assert!(
+        tokio::net::TcpStream::connect(serving).await.is_err(),
+        "wallet serving outlived an incompatible publisher"
+    );
+
+    // The recovered active view on disk cannot mask the mismatch at restart.
+    assert!(consumer.join("active.json").exists());
+    let error = run_with(process(false), None).await.unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+}
+
+/// A unified query server serving both Transparent products stops entirely,
+/// with the original typed error, when one publisher's contract major changes
+/// at runtime: management and every wallet listener close.
+#[tokio::test(flavor = "multi_thread")]
+async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
+    use crate::tx_detail::{distribution::Distribution, fixture, publisher::bootstrap};
+    use transparent_shared::journal::events::EventStore;
+    let root = tempfile::tempdir().unwrap();
+
+    // History publisher.
+    let (directory, set, finalized) = manager_tests::immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let history_tls_root = root.path().join("history-tls");
+    std::fs::create_dir(&history_tls_root).unwrap();
+    let history = tls(
+        &history_tls_root,
+        authority(&directory, Some(finalized), rpc.client.clone()),
+    )
+    .await;
+
+    // Display publisher.
+    let journal = root.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let display_root = root.path().join("display-publisher");
+    let initial = bootstrap(&store, &display_root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(
+            |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let node_address = listener.local_addr().unwrap();
+    let _node = tokio::spawn(async move { axum::serve(listener, node).await.unwrap() });
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let display_rpc =
+        crate::ingest::zakura::connect(format!("http://{node_address}"), cookie).unwrap();
+    let distribution = Distribution::new(&display_root, display_rpc).unwrap();
+    distribution
+        .finalize(initial.candidate.clone(), vec![])
+        .await
+        .unwrap();
+    let display_tls_root = root.path().join("display-tls");
+    std::fs::create_dir(&display_tls_root).unwrap();
+    let display = tls_router(&display_tls_root, distribution.router()).await;
+
+    let addrs: Vec<std::net::SocketAddr> = (0..3)
+        .map(|_| {
+            let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            held.local_addr().unwrap()
+        })
+        .collect();
+    let config: pir_query_server::config::Config = serde_json::from_value(serde_json::json!({
+        "management_listen": addrs[0],
+        "transparent_history": {"enabled": true, "settings": {
+            "publisher": history.origin,
+            "publisher_ca": history_tls_root.join("ca.pem"),
+            "publisher_network": "main",
+            "publisher_genesis": transparent_filter::MAINNET_GENESIS_DISPLAY,
+            "cache_bytes": 4u64 << 30,
+            "bootstrap_max_bytes": 4u64 << 30,
+            "listen": addrs[1],
+            "shard_dir": root.path().join("history-consumer"),
+        }},
+        "transaction_details": {"enabled": true, "settings": {
+            "publisher": display.origin,
+            "publisher_ca": display_tls_root.join("ca.pem"),
+            "publisher_network": "main",
+            "publisher_genesis": fixture::GENESIS,
+            "cache_bytes": 4u64 << 30,
+            "role": "combined",
+            "listen": addrs[2],
+            "state_dir": root.path().join("display-consumer"),
+        }},
+    }))
+    .unwrap();
+    let running = tokio::spawn(pir_query_server::run(
+        config,
+        pir_pipeline::service::Shutdown::default(),
+    ));
+
+    // Both products serve before the publisher changes.
+    let ready = format!("http://{}/ready", addrs[0]);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        assert!(!running.is_finished(), "host stopped before serving");
+        if reqwest::get(&ready)
+            .await
+            .is_ok_and(|response| response.status().is_success())
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both products never became ready"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    std::fs::write(
+        &display.control,
+        r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#,
+    )
+    .unwrap();
+    let error = tokio::time::timeout(std::time::Duration::from_secs(60), running)
+        .await
+        .expect("an incompatible publisher must stop the unified host")
+        .unwrap()
+        .unwrap_err();
+    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    let text = error.to_string();
+    assert!(
+        text.contains("2.0.0") && text.contains(&display.origin),
+        "{text}"
+    );
+    for addr in addrs {
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "{addr} outlived an incompatible publisher"
+        );
+    }
 }

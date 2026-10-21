@@ -13,6 +13,16 @@ struct Cli {
 enum Command {
     /// Report compiled capabilities without opening state or loading a GPU driver.
     BuildInfo,
+    /// Prepare a complete immutable publication from a stopped canonical journal.
+    /// The wallet manifest pins coverage, recovery identities and expected setup.
+    PreparePublication {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        manifest: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Confirm retained sessions already have router-prepared packing artifacts.
     PreparePackingArtifacts {
         #[arg(long)]
@@ -53,6 +63,36 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse_from(args);
     match cli.command {
+        Command::PreparePublication {
+            source,
+            manifest,
+            output,
+        } => {
+            let report = tokio::task::spawn_blocking(move || -> Result<_, String> {
+                let manifest: enhance_query_server::protocol::Manifest =
+                    crate::publication::read_metadata(&manifest)?;
+                manifest.validate()?;
+                let journal = crate::store::JournalSnapshot::read(
+                    &source, crate::types::DatabaseId::Enhance, crate::types::ENHANCE_LAYOUT,
+                ).map_err(|e| e.to_string())?;
+                if journal.tree_size() != manifest.coverage.records
+                    || journal.blocks().last().is_none_or(|block| {
+                        block.height != manifest.anchor_height || block.hash != manifest.anchor_block_hash
+                    })
+                {
+                    return Err("journal differs from publication anchor or coverage".into());
+                }
+                let inventory = crate::publication::prepare(
+                    &output, manifest.coverage.clone(), &manifest.domain_recovery_epochs,
+                    |start, count| journal.read_records(start, count).map_err(|e| e.to_string()),
+                )?;
+                if !inventory.supports(&manifest)? {
+                    return Err("prepared material differs from wallet manifest".into());
+                }
+                Ok(serde_json::json!({"inventory_sha256": enhance_query_server::protocol::digest(&inventory), "domains": inventory.domains.len()}))
+            }).await??;
+            println!("{}", serde_json::to_string(&report)?);
+        }
         Command::BuildInfo => {
             println!(
                 "{}",

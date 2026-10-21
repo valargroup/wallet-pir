@@ -31,7 +31,10 @@ pub struct Manager {
     sync: pir_sync_manager::SyncManager<HistorySync>,
 }
 impl Manager {
-    pub fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+    /// Check publisher discovery, then open the provider root. An unreachable or
+    /// incompatible publisher opens no state.
+    pub async fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
+        crate::source::discover(&config).await?;
         Ok(Self {
             sync: pir_sync_manager::SyncManager::new(HistorySync::new(config, service)?),
         })
@@ -57,8 +60,10 @@ impl Manager {
     pub async fn poll_once(&mut self) -> Result<Progress, Error> {
         self.sync.poll_once().await
     }
-    pub async fn run(self) {
-        self.sync.run().await;
+    /// Synchronize until a publisher contract version mismatch, which is
+    /// returned unchanged. Every other failure is retried.
+    pub async fn run(self) -> Error {
+        self.sync.run().await
     }
 }
 
@@ -422,7 +427,13 @@ impl pir_sync_manager::SyncTask for HistorySync {
         self.synchronization.write().unwrap()["in_progress"] = true.into();
     }
     async fn synchronize(&mut self) -> Result<Progress, Error> {
+        // Every pass, unchanged ones included, rechecks the publisher's contract
+        // version before any product request.
+        self.source.discover().await?;
         self.reconcile().await
+    }
+    fn terminal(&self, error: &Error) -> bool {
+        crate::source::is_incompatible(error)
     }
     fn finished(
         &mut self,

@@ -14,6 +14,132 @@ use std::sync::{
 };
 use std::time::Duration;
 
+/// No HTTP listeners or consumer processes participate in publication preparation.
+#[test]
+fn offline_publication_loads_and_answers_without_consumers() {
+    use enhance_query_server::{
+        client::QuerySession,
+        prepared_packing,
+        protocol::{self, Geometry, Lifecycle, Manifest, QueryBinding},
+        runtime::Engine,
+        PackingBudget, RECORD_BYTES,
+    };
+    let started = std::time::Instant::now();
+    let root = tempfile::tempdir().unwrap();
+    let coverage = Lifecycle::default()
+        .coverage(67, Geometry::default())
+        .unwrap();
+    let epochs = [(0, "0".into())].into();
+    let source = |start, count| Ok((start..start + count as u64).flat_map(record).collect());
+    let inventory =
+        enhance_publisher::publication::prepare(root.path(), coverage.clone(), &epochs, source)
+            .unwrap();
+    let cold = started.elapsed();
+    inventory.verify(root.path()).unwrap();
+    let domain = &inventory.domains[0];
+    let object_path = domain.packing_object().path(root.path()).unwrap();
+    let installed = std::fs::metadata(&object_path).unwrap().modified().unwrap();
+    let packing = prepared_packing::load(
+        &object_path,
+        &domain.packing,
+        domain.plan.shard.logical_rows,
+        &PackingBudget::coordinator(),
+    )
+    .unwrap();
+    let manifest = Manifest {
+        recovery_epoch: 0,
+        placement_revision: 1,
+        domain_recovery_epochs: epochs.clone(),
+        schema_version: protocol::SCHEMA_VERSION,
+        protocol_revision: protocol::PROTOCOL_REVISION.into(),
+        network: "main".into(),
+        pool: "ironwood".into(),
+        generation: 1,
+        anchor_height: 3428143,
+        anchor_block_hash: "01".repeat(32),
+        geometry: Geometry::default(),
+        coverage: coverage.clone(),
+        sessions: vec![domain.reference().unwrap()],
+        unit_identities: [(0, domain.plan.units.clone())].into(),
+    };
+    assert!(inventory.supports(&manifest).unwrap());
+    let mut later = manifest.clone();
+    later.generation += 1;
+    later.placement_revision += 1;
+    later.anchor_height += 1;
+    later.anchor_block_hash = "02".repeat(32);
+    assert!(
+        domain.supports(&later).unwrap(),
+        "unchanged material survives publication advancement"
+    );
+    later.sessions[0].public_params_sha256 = "03".repeat(32);
+    assert!(
+        !domain.supports(&later).unwrap(),
+        "different setup is incompatible"
+    );
+    let consumer = tempfile::tempdir().unwrap();
+    let (evaluation, _) = Engine::new(consumer.path())
+        .prepare(domain.plan.clone(), |start, count| {
+            let bytes =
+                std::fs::read(domain.rows[0].path(root.path())?).map_err(|e| e.to_string())?;
+            let begin = start as usize * RECORD_BYTES;
+            Ok(bytes[begin..begin + count * RECORD_BYTES].to_vec())
+        })
+        .unwrap();
+    let session = QuerySession::new(&manifest, packing.session(&manifest, 0)).unwrap();
+    for position in [0, 32, 33, 66] {
+        let (query, slot) = session.prepare_position(position).unwrap();
+        let binding = QueryBinding::decode(query.body()).unwrap();
+        let coefficients = packing
+            .query_coefficients(query.body(), binding, session.query_rows())
+            .unwrap();
+        let answer = packing
+            .pack(
+                query.body(),
+                &evaluation.evaluate(&coefficients).unwrap(),
+                session.query_rows(),
+            )
+            .unwrap();
+        let row = session.decode(query, &answer).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(position)
+        );
+    }
+    let began_reuse = std::time::Instant::now();
+    let reused =
+        enhance_publisher::publication::prepare(root.path(), coverage, &epochs, source).unwrap();
+    assert_eq!(protocol::digest(&inventory), protocol::digest(&reused));
+    assert_eq!(
+        installed,
+        std::fs::metadata(&object_path).unwrap().modified().unwrap()
+    );
+    let mut invalid = inventory.clone();
+    invalid.domains[0].packing.format += 1;
+    assert!(invalid.validate().is_err());
+    invalid = inventory.clone();
+    invalid.domains[0].rows[0].bytes -= 1;
+    assert!(invalid.validate().is_err());
+    invalid = inventory.clone();
+    invalid.domains[0].plan.units[0].setup_sha256 = "04".repeat(32);
+    assert!(invalid.validate().is_err());
+    invalid = inventory.clone();
+    invalid.domains[0].rows[0].sha256 = "../escape".into();
+    assert!(invalid.validate().is_err());
+    eprintln!(
+        "offline preparation cold={cold:?} reuse={:?}",
+        began_reuse.elapsed()
+    );
+    let rows_path = domain.rows[0].path(root.path()).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(rows_path)
+        .unwrap()
+        .set_len(1)
+        .unwrap();
+    assert!(inventory.verify(root.path()).is_err());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_publication_advances_with_a_pending_commit_and_survives_restart() {
     // Ordinary correctness uses the small reference profile. The explicit native

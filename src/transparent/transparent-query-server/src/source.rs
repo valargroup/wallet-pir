@@ -22,6 +22,27 @@ pub(crate) struct HighWater {
     current: Current,
 }
 
+/// Check the configured publisher's service discovery before any product state
+/// is opened. Uses the configured origin and trust roots; nothing is cached.
+pub async fn discover(config: &Config) -> Result<(), Error> {
+    discover_publisher(&config.publisher, &config.roots).await
+}
+pub(crate) async fn discover_publisher(
+    publisher: &str,
+    roots: &[reqwest::Certificate],
+) -> Result<(), Error> {
+    pir_sync_manager::HttpsSource::new(publisher, "/", 0, roots)?
+        .discover()
+        .await?;
+    Ok(())
+}
+
+/// Whether `error` is a confirmed publisher contract version mismatch, which
+/// stops the query server instead of being retried.
+pub fn is_incompatible(error: &Error) -> bool {
+    pir_sync_manager::is_incompatible(error.as_ref())
+}
+
 pub(crate) struct Source {
     transport: pir_sync_manager::HttpsSource,
     observed: Option<Current>,
@@ -47,6 +68,11 @@ impl Source {
             observed: None,
             schema,
         })
+    }
+    /// Fresh discovery for one synchronization pass, before any product request.
+    pub(crate) async fn discover(&self) -> Result<(), Error> {
+        self.transport.discover().await?;
+        Ok(())
     }
     pub(crate) fn downloaded(&self) -> u64 {
         self.transport.downloaded()
