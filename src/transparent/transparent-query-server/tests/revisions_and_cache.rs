@@ -1821,3 +1821,139 @@ fn an_invalidated_preparation_stops_between_segments() {
     assert_eq!(prepared.linked(), 1);
     assert_eq!(prepared.built(), targets - 1);
 }
+
+/// A required provider verifies every runtime file of each publication it
+/// prepares. Material an earlier publication fully checked is not loaded or
+/// self-checked again when a new stage offers the same bytes under the same
+/// name, as hard-linked stages do even though each link moves the inode's
+/// change time. A new revision's runtimes are checked in full, and corrupt,
+/// rewritten, misnamed and missing files are refused whatever was proven.
+#[tokio::test(flavor = "multi_thread")]
+async fn repeated_publications_self_check_only_changed_runtime_material() {
+    use std::path::PathBuf;
+    use transparent_query_server::history::service::MaterialVerification;
+    use transparent_shared::runtime::disk::ShippedRuntimes;
+    use transparent_shared::runtime::prebuild::prepare_publication;
+    let prepare = |dir: &Path, retained: &[PathBuf]| {
+        let prepared =
+            prepare_publication(&ShardSet::open(dir, 3).unwrap(), dir, retained, &|| false)
+                .unwrap();
+        assert!(prepared.failures.is_empty(), "{:?}", prepared.failures);
+    };
+    let runtimes = |dir: &Path| -> Vec<PathBuf> {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "runtime"))
+            .collect();
+        files.sort();
+        files
+    };
+    // A fresh stage of a publication's runtimes, hard-linked as staging does.
+    let root = tempfile::tempdir().unwrap();
+    let stage = |name: &str, from: &Path| -> PathBuf {
+        let staged = root.path().join(name);
+        std::fs::create_dir(&staged).unwrap();
+        for file in runtimes(from) {
+            std::fs::hard_link(&file, staged.join(file.file_name().unwrap())).unwrap();
+        }
+        staged
+    };
+    let state = |set: &Path, runtimes: &Path| {
+        ServiceState::build_with_runtimes(
+            ShardSet::open(set, 3).unwrap(),
+            ServiceConfig::default(),
+            None,
+            Some(ShippedRuntimes::required(runtimes.to_path_buf())),
+        )
+        .unwrap()
+    };
+    let counts = |checked, reused| MaterialVerification { checked, reused };
+    let first = root.path().join("first");
+    std::fs::create_dir(&first).unwrap();
+    let (_, current) = two_revisions(&first);
+    prepare(&first, &[]);
+
+    let initial = state(&first, &first);
+    assert_eq!(
+        initial.verify_required_material(None).unwrap(),
+        counts(2, 0)
+    );
+    let restaged = state(&first, &stage("restaged", &first));
+    assert_eq!(
+        restaged.verify_required_material(Some(&initial)).unwrap(),
+        counts(0, 2)
+    );
+    // A new revision changes both runtimes; they are checked in full.
+    let next = root.path().join("next");
+    std::fs::create_dir(&next).unwrap();
+    let (digest, scripts) = write_revision(&next, FIRST + 81, 2, &current);
+    write_map(&next, &digest, FIRST + 81, 2, scripts);
+    prepare(&next, std::slice::from_ref(&first));
+    let advanced = state(&next, &next);
+    assert_eq!(
+        advanced.verify_required_material(Some(&restaged)).unwrap(),
+        counts(2, 0)
+    );
+    let proven = state(&next, &stage("again", &next));
+    assert_eq!(
+        proven.verify_required_material(Some(&advanced)).unwrap(),
+        counts(0, 2)
+    );
+
+    // Evidence binds bytes, not inodes: equal copies are reused, other
+    // bytes are checked and refused, each against the same proven snapshot.
+    let originals: Vec<(PathBuf, Vec<u8>)> = runtimes(&next)
+        .into_iter()
+        .map(|p| {
+            let bytes = std::fs::read(&p).unwrap();
+            (p, bytes)
+        })
+        .collect();
+    let replace = |path: &Path, bytes: &[u8]| {
+        let staged = path.with_extension("staged");
+        std::fs::write(&staged, bytes).unwrap();
+        std::fs::rename(&staged, path).unwrap();
+    };
+    let restore = || {
+        for (path, bytes) in &originals {
+            replace(path, bytes);
+        }
+    };
+    let mut stages = 0;
+    let mut verify = || {
+        stages += 1;
+        state(&next, &stage(&format!("stage-{stages}"), &next))
+            .verify_required_material(Some(&proven))
+    };
+    restore();
+    assert_eq!(verify().unwrap(), counts(0, 2));
+    for (path, bytes) in &originals {
+        let mut corrupt = bytes.clone();
+        let middle = corrupt.len() / 2;
+        corrupt[middle] ^= 0x40;
+        replace(path, &corrupt);
+    }
+    assert!(verify().is_err(), "corrupt runtimes");
+    restore();
+    for (path, bytes) in &originals {
+        use std::io::{Seek, SeekFrom, Write};
+        let middle = bytes.len() / 2;
+        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.seek(SeekFrom::Start(middle as u64)).unwrap();
+        file.write_all(&[bytes[middle] ^ 0x40]).unwrap();
+    }
+    assert!(verify().is_err(), "runtimes rewritten in place");
+    restore();
+    // Another runtime's valid bytes under this runtime's name.
+    for (path, _) in &originals[1..] {
+        replace(path, &originals[0].1);
+    }
+    assert!(verify().is_err(), "misnamed runtimes");
+    restore();
+    assert_eq!(verify().unwrap(), counts(0, 2));
+    for (path, _) in &originals {
+        std::fs::remove_file(path).unwrap();
+    }
+    assert!(verify().is_err(), "missing runtimes");
+}
