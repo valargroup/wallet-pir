@@ -644,8 +644,8 @@ def main(argv=None):
     problems += serving_binary_violations(packages)
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
-    # these are the two workspaces used by the current services and sizing tool.
-    for name in ('Cargo.lock', 'tools/txid/txid-sizing/export/Cargo.lock'):
+    # this is the workspace used by the current services.
+    for name in ('Cargo.lock',):
         packages = tomllib.loads((ROOT / name).read_text())['package']
         problems += [f'{name}: {problem}'
                      for problem in common_family_violations(packages, patches)]

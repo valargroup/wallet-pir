@@ -61,7 +61,6 @@ complete cutover passes its gates.
 ```sh
 cargo build --locked --profile release-fast -p pir-publisher -p pir-query-server -p enhance-pir-client -p enhance-pir-load-test --bins --features pir-publisher/enhance,pir-query-server/enhance
 python3 tools/enhance/scripts/test-local.py --help
-python3 tools/enhance/schema11-interop/run.py /absolute/path/to/pinned/wallet-libraries
 ```
 
 The wallet counterpart must implement the v7/q48 contract described in

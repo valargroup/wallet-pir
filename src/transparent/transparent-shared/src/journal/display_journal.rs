@@ -29,8 +29,6 @@ type IndexedEvents = Vec<(ScriptBytes, TransparentEvent)>;
 
 /// One sidecar family: its directory, envelope magic and block size bound.
 /// v1 is read only for oversized history events; v2x is written and read.
-/// Crate-visible for the excluded txid-sizing exporter, which compiles this
-/// module to read historical v1 records with the same envelope checks.
 pub struct Envelope {
     dir: &'static str,
     magic: &'static [u8; 8],

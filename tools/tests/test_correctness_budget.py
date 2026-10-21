@@ -102,7 +102,7 @@ class CaseBudgetTests(unittest.TestCase):
 
 
 class CorrectnessSelectionTests(unittest.TestCase):
-    def test_complete_native_selection_retains_reference_exporter_docs_and_lint(self):
+    def test_complete_native_selection_retains_reference_docs_and_lint(self):
         import correctness
         import fast_build
         from unittest.mock import patch
@@ -127,8 +127,6 @@ class CorrectnessSelectionTests(unittest.TestCase):
                             for command in calls))
         self.assertTrue(any('status-query-server' in command and '--tests' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
-        self.assertTrue(any('--manifest-path' in command and
-                            'tools/txid/txid-sizing/export/Cargo.toml' in command for command in calls))
         self.assertTrue(any(command[:2] == ['cargo', 'clippy'] and '--all-targets' in command
                             and 'warnings' in command for command in calls))
         self.assertNotIn('qualification-tests', correctness.FEATURES)

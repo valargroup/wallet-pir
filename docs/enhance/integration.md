@@ -84,16 +84,13 @@ network identity, or intersection across intervals. Same-row batching alone does
 not provide cover. Application developers must opt into the extra bandwidth and
 compute cost explicitly.
 
-## CLI and reproducible interoperability
+## CLI
 
 ```sh
 cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
   --server http://127.0.0.1:8281 metadata
 cargo run -p enhance-pir-client --bin enhance-pir-cli -- \
   --server http://127.0.0.1:8281 query 0
-python3 tools/enhance/v7-interop/check_vectors.py
-python3 tools/enhance/schema11-interop/run.py /absolute/path/to/wallet-libraries \
-  --wallet-revision <full-commit> --full
 ```
 
 The CLI returns a suffix record; it does not perform wallet anchor acceptance or

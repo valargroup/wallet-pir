@@ -2,10 +2,6 @@
   "transparent-contracts": {
     "family": "transparent",
     "targets": [
-      "export:txid-sizing-export:bin:txid-sizing-export",
-      "export:txid-sizing-export:test:codec_bounds",
-      "export:txid-sizing-export:test:executing_identity",
-      "export:txid-sizing-export:test:source_identity",
       "transparent:pir-e2e-tests:test:unified_http_sync_campaign",
       "transparent:transparent-query-server:doc:transparent_query_server",
       "transparent:transparent-tools:bin:shard-assign",

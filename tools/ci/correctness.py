@@ -51,7 +51,7 @@ def artifact_summary(path):
     from cargo_cache import artifacts
     if not path.exists():
         return None
-    stages = {'compile:fast', 'compile:all-native', 'compile:reference', 'compile:export', 'doctests', 'lint'}
+    stages = {'compile:fast', 'compile:all-native', 'compile:reference', 'doctests', 'lint'}
     records = [json.loads(line) for line in path.read_text().splitlines()]
     return artifacts([entry for entry in records if entry.get('stage') in stages])
 
@@ -111,15 +111,6 @@ def rust_checks(env, temporary, offline):
         env=reference_env, stage='tests:reference')
     # Doctests are not executable artifacts in Cargo's no-run output.
     run(['cargo', 'test', '--workspace', '--doc', *options, '--features', FEATURES], env=env, stage='doctests')
-    export_manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
-    export_metadata = json.loads(subprocess.check_output(
-        ['cargo', 'metadata', '--locked', '--no-deps', '--format-version=1',
-         '--manifest-path', export_manifest, *offline], cwd=ROOT, env=env))
-    export = run(['cargo', 'test', '--no-run', *options, '--manifest-path', export_manifest],
-                 env=env, stage='compile:export', collect_tests=True, test_details=True)
-    path = temporary / 'export.json'
-    path.write_text(json.dumps(programs(export, export_metadata)))
-    run(['python3', 'tools/ci/unit_tests.py', str(path), '--jobs=1', '--budget'], env=env, stage='tests:export')
     run(['cargo', 'clippy', '--locked', '--workspace', '--all-targets', *offline,
          '--features', FEATURES, '--', '-D', 'warnings'], env=env, stage='lint')
 
@@ -132,7 +123,7 @@ def main():
                         help='per-case deadline, including setup and teardown (default: 30)')
     args = parser.parse_args()
     if sys.platform != 'linux' and not args.record_only:
-        parser.error('complete correctness requires Linux for the exporter executing-image check; '
+        parser.error('complete correctness requires Linux; '
                      'use --record-only for diagnostics or run focused local checks')
     start = time.monotonic()
     install_cancellation()

@@ -1429,23 +1429,13 @@ class CacheWorkflowTests(unittest.TestCase):
         self.assertIn("REFERENCE_LIB_FILTERS = ['ipir::tests',", runner)
         self.assertIn('backend_load_failure_does_not_rebuild_or_replace_published_units', runner)
 
-    def test_transparent_full_checks_include_the_standalone_exporter(self):
+    def test_transparent_full_checks_run_one_workspace_command(self):
         full = load_full()
         groups = {'transparent': ['transparent-publisher'], 'shared': ['pir-control']}
-        manifest = 'tools/txid/txid-sizing/export/Cargo.toml'
-        self.assertEqual(full.commands('transparent', groups)[0], [
-            'bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
-            '--manifest-path', manifest,
-        ])
-        self.assertEqual(full.commands('transparent', groups, compile_only=True)[0], [
-            'cargo', 'test', '--no-run', '--locked', '--profile', 'release-fast',
-            '--manifest-path', manifest,
-        ])
-        self.assertEqual(len(full.commands('transparent', groups)), 2)
-        self.assertIn('transparent-publisher', full.commands('transparent', groups)[1])
+        self.assertEqual(len(full.commands('transparent', groups)), 1)
+        self.assertIn('transparent-publisher', full.commands('transparent', groups)[0])
         self.assertEqual(len(full.commands('shared', groups)), 1)
         self.assertEqual(len(full.commands('transparent', groups, lint=True)), 1)
-
 
 def load_full():
     import sys
