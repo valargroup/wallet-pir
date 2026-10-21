@@ -66,6 +66,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let worker = worker_sync::Worker::open(&worker_root, config.clone(), Default::default(), Default::default()).unwrap();
         assert!(worker_sync::Worker::open(&worker_root, config.clone(), Default::default(), Default::default()).is_err());
         let mut synchronizer = worker.synchronizer().unwrap();
+        assert!(worker.synchronizer().is_err(), "only one synchronization pass owner may open a worker");
         let http = enhance_query_server::internal_auth::client_builder().build().unwrap();
         let listener = serve(worker.clone().router()).await;
         let readiness = format!("{}/internal/readiness", listener.url);
@@ -95,6 +96,11 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
             let request = Evaluate { binding: Some(binding.encode()), session_id: hex::encode(binding.session_id),
                 generation: manifest.generation, shard_id: 0, epoch: hex::encode(binding.epoch),
                 coefficients: packing.query_coefficients(query.body(), binding, session.query_rows()).unwrap() };
+            if position == 0 {
+                let mut malformed = request.clone();
+                malformed.coefficients.clear();
+                assert_eq!(http.post(format!("{}/internal/evaluate", listener.url)).json(&malformed).send().await.unwrap().status(), reqwest::StatusCode::BAD_REQUEST);
+            }
             let intermediate: Intermediate = http.post(format!("{}/internal/evaluate", listener.url)).json(&request).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
             let answer = packing.pack(query.body(), &intermediate.coefficients, session.query_rows()).unwrap();
             let row = session.decode(query, &answer).unwrap();

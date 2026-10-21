@@ -102,6 +102,7 @@ pub struct Worker {
     inner: Arc<Mutex<Inner>>,
     authority: Arc<AsyncMutex<Client>>,
     evaluation: Arc<Semaphore>,
+    synchronization: Arc<Semaphore>,
     pub incarnation: String,
     _ownership: Arc<File>,
 }
@@ -158,6 +159,7 @@ impl Worker {
             inner: Arc::new(Mutex::new(Inner::default())),
             authority: Arc::new(AsyncMutex::new(authority)),
             evaluation: Arc::new(Semaphore::new(2)),
+            synchronization: Arc::new(Semaphore::new(1)),
             incarnation: format!("{:032x}", rand::random::<u128>()),
             _ownership: Arc::new(ownership),
         })
@@ -165,6 +167,11 @@ impl Worker {
 
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
+            _ownership: self
+                .synchronization
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| "worker synchronization already owned")?,
             worker: self.clone(),
             client: Client::new(&self.root, &self.config.source, self.safety.clone())?,
         })
@@ -339,6 +346,7 @@ impl Worker {
 }
 
 pub struct Synchronizer {
+    _ownership: tokio::sync::OwnedSemaphorePermit,
     worker: Worker,
     client: Client,
 }
@@ -535,6 +543,15 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
                     .ok_or_else(|| unavailable("wrong worker shard"))?,
             )
         };
+        let params = protocol::parameters(loaded.plan.shard.logical_rows).map_err(unavailable)?;
+        if query.coefficients.len() != params.db_rows
+            || query
+                .coefficients
+                .iter()
+                .any(|q| *q >= crate::runtime::modulus())
+        {
+            return Err((StatusCode::BAD_REQUEST, "invalid query coefficients".into()));
+        }
         let lease = worker.renew(&manifest).await.map_err(unavailable)?;
         lease
             .check(&manifest, &worker.safety)

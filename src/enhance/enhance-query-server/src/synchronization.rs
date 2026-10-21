@@ -237,6 +237,167 @@ pub struct Client {
     cache_limit: u64,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest() -> Manifest {
+        let geometry = crate::protocol::Geometry::default();
+        let coverage = crate::protocol::Lifecycle::default()
+            .coverage(1, geometry)
+            .unwrap();
+        let plan =
+            crate::runtime::plan(coverage.shards[0].clone(), crate::test_support::records).unwrap();
+        Manifest {
+            recovery_epoch: 0,
+            placement_revision: 1,
+            domain_recovery_epochs: [(0, "0".into())].into(),
+            schema_version: crate::protocol::SCHEMA_VERSION,
+            protocol_revision: crate::protocol::PROTOCOL_REVISION.into(),
+            network: "main".into(),
+            pool: "ironwood".into(),
+            generation: 1,
+            anchor_height: 1,
+            anchor_block_hash: "01".repeat(32),
+            geometry,
+            coverage,
+            sessions: vec![crate::protocol::SessionRef {
+                shard_id: 0,
+                public_params_sha256: "02".repeat(32),
+                parameter_id: crate::protocol::parameter_id(plan.shard.logical_rows).unwrap(),
+            }],
+            unit_identities: [(0, plan.units)].into(),
+        }
+    }
+
+    fn response(manifest: &Manifest) -> AuthorityResponse {
+        AuthorityResponse {
+            current: Current {
+                version: crate::publication::VERSION,
+                revision: 1,
+                recovery_epoch: 0,
+                revoked: Default::default(),
+                eligible: true,
+                manifest: Some(manifest.clone()),
+                inventory: Some(Object {
+                    sha256: "03".repeat(32),
+                    bytes: 1,
+                }),
+            },
+            authorized_manifest_sha256: digest(manifest),
+            observed_unix_ms: now_ms().unwrap(),
+        }
+    }
+
+    #[test]
+    fn recovery_floors_survive_restart_and_cannot_be_replayed_or_rebound() {
+        let root = tempfile::tempdir().unwrap();
+        let safety = Safety::open(root.path(), "https://publisher.example").unwrap();
+        assert!(Safety::open(root.path(), "https://publisher.example").is_err());
+        let manifest = manifest();
+        let initial = response(&manifest);
+        let lease = Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        lease.check(&manifest, &safety).unwrap();
+        let mut revoked = initial.current.clone();
+        revoked.revision += 1;
+        revoked.recovery_epoch += 1;
+        revoked
+            .revoked
+            .insert(hex::encode(manifest.session_id(0).unwrap()));
+        safety.observe(&revoked).unwrap();
+        assert!(
+            lease.check(&manifest, &safety).is_err(),
+            "revocation closes an unexpired lease"
+        );
+        drop(safety);
+        let reopened = Safety::open(root.path(), "https://publisher.example").unwrap();
+        assert!(reopened.observe(&initial.current).is_err());
+        let mut erased = revoked.clone();
+        erased.revision += 1;
+        erased.revoked.clear();
+        assert!(reopened.observe(&erased).is_err());
+        drop(reopened);
+        assert!(Safety::open(root.path(), "https://another.example").is_err());
+    }
+
+    #[test]
+    fn disk_failure_closes_admission_even_if_storage_recovers() {
+        let root = tempfile::tempdir().unwrap();
+        let safety = Safety::open(root.path(), "https://publisher.example").unwrap();
+        let manifest = manifest();
+        let initial = response(&manifest);
+        let lease = Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        fs::rename(
+            root.path().join("sync.json"),
+            root.path().join("saved.json"),
+        )
+        .unwrap();
+        fs::create_dir(root.path().join("sync.json")).unwrap();
+        let mut advanced = initial.current;
+        advanced.revision += 1;
+        assert!(safety.observe(&advanced).is_err());
+        fs::remove_dir(root.path().join("sync.json")).unwrap();
+        fs::rename(
+            root.path().join("saved.json"),
+            root.path().join("sync.json"),
+        )
+        .unwrap();
+        assert!(lease.check(&manifest, &safety).is_err());
+        assert!(safety.observe(&advanced).is_err());
+    }
+
+    #[test]
+    fn authority_cannot_bind_other_material_or_gain_time_from_a_heartbeat() {
+        let root = tempfile::tempdir().unwrap();
+        let safety = Safety::open(root.path(), "https://publisher.example").unwrap();
+        let manifest = manifest();
+        let initial = response(&manifest);
+        let mut wrong = initial.clone();
+        wrong.authorized_manifest_sha256 = "04".repeat(32);
+        assert!(Lease::from_response(wrong, &manifest, &safety).is_err());
+        let mut expired = initial.clone();
+        expired.observed_unix_ms -= 5001;
+        assert!(Lease::from_response(expired, &manifest, &safety).is_err());
+        let mut future = initial.clone();
+        future.observed_unix_ms += 60000;
+        assert!(Lease::from_response(future, &manifest, &safety).is_err());
+        let mut lease = Lease::from_response(initial, &manifest, &safety).unwrap();
+        lease.deadline = Instant::now() - Duration::from_millis(1);
+        assert!(lease.check(&manifest, &safety).is_err());
+    }
+
+    #[test]
+    fn worker_static_configuration_checks_do_not_read_trusted_roots() {
+        let value = serde_json::json!({ "role": "worker", "listen": "127.0.0.1:9000", "data_dir": "/unused/worker",
+            "synchronization": { "publisher_origin": "https://publisher.example", "trusted_ca": "/unused/ca.pem",
+                "download_budget_bytes": 8388608, "cache_limit_bytes": 8388608, "shards": [0] }});
+        let role: crate::service::ServingRole = serde_json::from_value(value.clone()).unwrap();
+        role.validate().unwrap();
+        let mut invalid = value;
+        invalid["synchronization"]["publisher_origin"] =
+            serde_json::json!("http://publisher.example");
+        let role: crate::service::ServingRole = serde_json::from_value(invalid).unwrap();
+        assert!(role.validate().is_err());
+    }
+
+    #[test]
+    fn a_smaller_cache_budget_also_limits_already_cached_objects() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            publisher_origin: "https://publisher.example".into(),
+            trusted_ca: None,
+            download_budget_bytes: METADATA_LIMIT * 3,
+            cache_limit_bytes: 1,
+        };
+        let safety = Safety::open(root.path(), &config.publisher_origin).unwrap();
+        let client = Client::new(root.path(), &config, safety).unwrap();
+        let name = "01".repeat(32);
+        fs::write(root.path().join("objects").join(&name), [1, 2]).unwrap();
+        assert!(client.collect(&[name].into()).is_err());
+        client.collect(&Default::default()).unwrap();
+    }
+}
+
 impl Client {
     pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
         fs::create_dir_all(root.join("objects"))?;
@@ -319,6 +480,13 @@ impl Client {
             {
                 fs::remove_file(entry.path())?;
             }
+        }
+        let occupied = fs::read_dir(self.root.join("objects"))?.try_fold(0u64, |sum, entry| {
+            sum.checked_add(entry?.metadata()?.len())
+                .ok_or_else(|| std::io::Error::other("cache size overflow"))
+        })?;
+        if occupied > self.cache_limit {
+            return Err("Enhance cache capacity reached".into());
         }
         Ok(())
     }
