@@ -437,3 +437,5 @@ services run through the root configuration. Display settings retain `mode`
 bounded rehearsals. HTTP-only distribution requires live canonicality checks.
 No executable aliases or data conversion are needed. Install the matching binary,
 configuration and unit together through the supported deployment tooling.
+
+A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.
