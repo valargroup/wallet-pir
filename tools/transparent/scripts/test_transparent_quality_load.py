@@ -24,6 +24,13 @@ class Tests(unittest.TestCase):
   m.persist_latch('first');m.persist_latch('later');self.assertEqual(json.loads((m.ROOT/'latched.json').read_text())['reason'],'first')
  def test_operator_stop_denies_permit(self):
   (m.ROOT/'permit').write_text('allow');m.stop(None,None);self.assertTrue(m.STOP);self.assertEqual((m.ROOT/'permit').read_text().strip(),'deny')
+ def test_null_runtime_cache_is_healthy_but_write_failures_are_not(self):
+  # Ready bodies of workers without a disk cache carry runtime_cache: null.
+  for body in [{},{'runtime_cache':None},{'runtime_cache':{'status':'unavailable: the cache directory was slow to list'}},{'runtime_cache':{'write_failures':0}}]:
+   self.assertIsNone(m.cache_problem(body),body)
+  self.assertEqual(m.cache_problem({'runtime_cache':{'write_failures':2}}),'cache write failures')
+  for body in [{'runtime_cache':{'write_failures':None}},{'runtime_cache':{'write_failures':'1'}},{'runtime_cache':[]}]:
+   self.assertEqual(m.cache_problem(body),'runtime cache observation unreadable',body)
  def test_probes_actual_worker_and_coordinator_data_filesystems(self):
   m.FLEET={'ssh_key':'fixture-key','known_hosts':'fixture-hosts'}
   output='MemTotal: 1000 kB\nMemAvailable: 200 kB\n/dev/root 100 50 50 50% /\n/dev/data 100 80 20 80% /srv/transparent-pir\n'

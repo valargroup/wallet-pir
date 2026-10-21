@@ -21,6 +21,7 @@ TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 're
 TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
 BINARY_UPGRADE = ('plan', 'preflight', 'baseline', 'deploy', 'status', 'rollback')
 ALERT_ACTIVATION = ('plan', 'preflight', 'deploy', 'status', 'rollback', 'test')
+LOAD_REPAIR = ('plan', 'preflight', 'deploy', 'status', 'rollback')
 
 
 def register(commands):
@@ -221,12 +222,25 @@ def register(commands):
         if name == 'test':
             command.add_argument('--component', choices=('apm', 'monitor'), required=True)
 
+    for name in LOAD_REPAIR:
+        command = commands.add_parser('transparent-load-repair-' + name,
+                                      help='locked reinstall of the stopped History continuous load script')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'deploy':
+            command.add_argument('--expect-plan-sha256', required=True)
+        if name == 'rollback':
+            command.add_argument('--transaction')
+            command.add_argument('--force', action='store_true')
+
 
 def dispatch(args, executor=None, out=print, **options):
     if args.command.startswith('transparent-binary-'):
         return binary_upgrade(args, executor, out, **options)
     if args.command.startswith('transparent-alerts-'):
         return alert_activation(args, executor, out, **options)
+    if args.command.startswith('transparent-load-repair-'):
+        return load_repair(args, executor, out, **options)
     if args.command.startswith('schema-lock-'):
         module = import_module('tools.transparent.lib.activity_lock_qualification')
         if args.command == 'schema-lock-remote':
@@ -483,6 +497,21 @@ def alert_activation(args, executor, out, lock=None, sleep=None, clock=None, **_
     inventory = descriptors.load_inventory(args.inventory)
     timing = {k: v for k, v in (('sleep', sleep), ('clock', clock)) if v is not None}
     return module.run(args, executor or SSHExecutor(inventory), out, inventory, lock=lock, **timing)
+
+
+def load_repair(args, executor, out, **options):
+    """`transparent-load-repair-*`: the locked continuous load script repair."""
+    from wallet_pir_ops.bundle import check_installed
+    from wallet_pir_ops.deploy.remote import SSHExecutor
+    module = import_module('tools.transparent.lib.load_repair')
+    if not args.inventory:
+        raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+    request = module.load_request(args.request, args.request_sha256)
+    if args.command.endswith('-deploy'):
+        # The installed script is this operations release's own copy.
+        check_installed(mutation=True, revision=request['script']['git_sha'])
+    inventory = descriptors.load_inventory(args.inventory)
+    return module.run(args, executor or SSHExecutor(inventory), out, inventory, **options)
 
 
 def binary_upgrade(args, executor, out, **options):
