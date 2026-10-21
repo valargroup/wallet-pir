@@ -247,6 +247,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip32"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0271a2fe2a6f05231419e878b5f50152a5a6dbcc60c18855d924892ecc85a33a"
+dependencies = [
+ "bs58",
+ "hmac",
+ "ripemd 0.2.0",
+ "secp256k1",
+ "sha2 0.11.1",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "bitcoin-consensus-encoding"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -356,7 +371,7 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
 dependencies = [
- "sha2",
+ "sha2 0.10.9",
  "tinyvec",
 ]
 
@@ -711,7 +726,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "curve25519-dalek-derive",
- "digest",
+ "digest 0.10.7",
  "fiat-crypto",
  "rustc_version",
  "subtle",
@@ -762,6 +777,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer 0.12.1",
+ "crypto-common 0.2.2",
+ "ctutils",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -795,7 +821,7 @@ dependencies = [
  "pkcs8",
  "rand_core 0.6.4",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zeroize",
 ]
@@ -853,7 +879,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -892,7 +918,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "simplepir-kernel",
  "tempfile",
  "thiserror 2.0.18",
@@ -1296,6 +1322,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "http"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1620,7 +1655,7 @@ dependencies = [
  "rand 0.9.2",
  "rand_chacha 0.3.1",
  "reinspiring",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1639,7 +1674,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "sha2",
+ "sha2 0.10.9",
  "simplepir-kernel",
  "valar-spiral-rs",
  "zeroize",
@@ -1936,7 +1971,7 @@ dependencies = [
  "rayon",
  "reinspiring",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "zakura-pir-server-core",
 ]
@@ -2133,7 +2168,7 @@ dependencies = [
  "http-body",
  "rand 0.8.5",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -2165,7 +2200,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-publisher",
  "tempfile",
  "tokio",
@@ -2196,7 +2231,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -2259,7 +2294,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "tempfile",
  "tokio",
@@ -2696,7 +2731,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -2718,7 +2753,7 @@ dependencies = [
  "pir-observability",
  "reqwest",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tokio",
  "zakura-receiver-directory",
  "zakura-receiver-pir",
@@ -2732,7 +2767,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "zakura-receiver-directory",
@@ -2787,7 +2822,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "rayon",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "valar-spiral-rs",
  "zeroize",
@@ -2855,7 +2890,16 @@ version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd124222d17ad93a644ed9d011a40f4fb64aa54275c08cc216524a9ea82fb09f"
 dependencies = [
- "digest",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "ripemd"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dd4211456b4172d7e44261920c25acf07367c4f04bb5f5d54fc21b090d9b159"
+dependencies = [
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -2971,6 +3015,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "same-file"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
+dependencies = [
+ "winapi-util",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3076,7 +3129,7 @@ checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -3087,8 +3140,19 @@ checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest",
+ "digest 0.10.7",
  "sha2-asm",
+]
+
+[[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3215,7 +3279,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "tempfile",
  "thiserror 2.0.18",
@@ -3246,7 +3310,7 @@ dependencies = [
  "reinspiring",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "status-query-server",
  "thiserror 2.0.18",
  "tracing",
@@ -3621,7 +3685,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3654,7 +3718,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -3668,6 +3732,7 @@ dependencies = [
  "zakura-pir-protocol",
  "zakura-pir-publisher",
  "zakura-pir-query-server",
+ "zakura-transparent",
 ]
 
 [[package]]
@@ -3685,7 +3750,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
@@ -3722,7 +3787,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "sysinfo",
  "tempfile",
  "tokio",
@@ -3833,7 +3898,7 @@ dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
 ]
 
@@ -4034,6 +4099,15 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys 0.52.0",
+]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"
@@ -4509,10 +4583,10 @@ dependencies = [
  "lazy_static",
  "rand_core 0.6.4",
  "rayon",
- "ripemd",
+ "ripemd 0.1.3",
  "secp256k1",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4606,7 +4680,7 @@ source = "git+https://github.com/zakura-core/zakura.git?rev=dcff84dc42258bb1e4c5
 dependencies = [
  "chrono",
  "rayon",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-chain",
 ]
@@ -4737,9 +4811,11 @@ dependencies = [
  "reinspiring",
  "reqwest",
  "rusqlite",
+ "rustix 1.1.4",
+ "same-file",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-note-encryption",
  "zakura-orchard",
@@ -4748,6 +4824,7 @@ dependencies = [
  "zakura-pir-query-server",
  "zakura-pir-server-core",
  "zakura-protocol",
+ "zakura-transparent",
 ]
 
 [[package]]
@@ -4764,9 +4841,11 @@ dependencies = [
  "reinspiring",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
+ "zakura-protocol",
+ "zakura-transparent",
 ]
 
 [[package]]
@@ -4779,7 +4858,7 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
  "zakura-pir-protocol",
@@ -4819,7 +4898,7 @@ dependencies = [
  "incrementalmerkletree",
  "nonempty",
  "rand_core 0.10.1",
- "sha2",
+ "sha2 0.10.9",
  "zakura-equihash",
  "zakura-jubjub",
  "zakura-note-encryption",
@@ -4862,7 +4941,7 @@ dependencies = [
  "bitcoin_hashes",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-filters",
  "zakura-receiver-crypto",
@@ -4878,7 +4957,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "zakura-pir-client",
  "zakura-pir-query-server",
@@ -4948,7 +5027,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -4993,7 +5072,7 @@ dependencies = [
  "rocksdb",
  "semver",
  "serde",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "tower",
@@ -5033,19 +5112,21 @@ name = "zakura-transparent"
 version = "4.0.0-rc1"
 source = "git+https://github.com/zakura-core/common.git?rev=36c0f2134ee028545d822ac9abdc764cef0f8dcb#36c0f2134ee028545d822ac9abdc764cef0f8dcb"
 dependencies = [
+ "bip32",
  "bs58",
  "corez",
  "getset",
  "hex",
  "nonempty",
- "ripemd",
+ "ripemd 0.1.3",
  "secp256k1",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zakura-address",
  "zakura-protocol",
  "zcash_script",
  "zcash_spec",
+ "zip32",
 ]
 
 [[package]]
@@ -5054,12 +5135,14 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10106859d08a2a4119af8a0fa8db72afe35647768b562f94b7a2124adad41275"
 dependencies = [
+ "bip32",
  "bitflags",
  "bounded-vec",
- "ripemd",
+ "hex",
+ "ripemd 0.1.3",
  "secp256k1",
  "sha1",
- "sha2",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
 ]
 
