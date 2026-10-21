@@ -869,3 +869,60 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
     assert_eq!(active["map_sha256"], next.map_sha256);
     node_task.abort();
 }
+
+/// A stop already requested ends a distribution restore before it reads the
+/// set or asks the node, and commits nothing; a later restore completes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 8, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 7).unwrap();
+    let asked = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let counter = asked.clone();
+    let node = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let asked = counter.clone();
+            async move {
+                asked.fetch_add(1, Ordering::SeqCst);
+                let height = request["params"][0].as_u64().unwrap();
+                let hash = if height == 0 {
+                    fixture::GENESIS.to_string()
+                } else {
+                    fixture::block_hash(0, height).to_display_hex()
+                };
+                axum::Json(serde_json::json!({"id":request["id"],"result":hash,"error":null}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let node_task = tokio::spawn(async move {
+        axum::serve(listener, node).await.unwrap();
+    });
+    let cookie = scratch.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    let shutdown = pir_pipeline::service::Shutdown::default();
+    shutdown.request();
+    let error = distribution
+        .restore_until(initial.candidate.clone(), vec![], shutdown)
+        .await
+        .unwrap_err();
+    assert!(error.is::<transparent_shared::publication::Stopped>());
+    assert_eq!(asked.load(Ordering::SeqCst), 0, "the node was not asked");
+    assert!(
+        !root.join("http-current.json").exists(),
+        "nothing committed"
+    );
+    assert!(distribution
+        .restore_until(initial.candidate.clone(), vec![], Default::default())
+        .await
+        .unwrap());
+    assert!(root.join("http-current.json").exists());
+    node_task.abort();
+}
