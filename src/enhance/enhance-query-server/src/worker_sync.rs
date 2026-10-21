@@ -768,6 +768,10 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
 }
 
 #[cfg(test)]
+#[path = "worker_sync_tests.rs"]
+mod backend_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[tokio::test]

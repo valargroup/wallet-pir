@@ -50,7 +50,7 @@ async fn independent_consumers_answer_updates_and_close_on_withdrawal() {
 #[cfg(feature = "cuda")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires an isolated CUDA qualification host"]
-async fn cuda_distributed_round_trip_retention_failover_and_restart() {
+async fn cuda_independent_consumers_answer_updates_and_close_on_withdrawal() {
     round_trip(MatvecConfig {
         matvec_backend: enhance_query_server::matvec::Backend::Cuda,
         cuda_device: None,
