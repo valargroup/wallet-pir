@@ -239,19 +239,18 @@ Unchanged responses do not fetch inventories/artifacts, update a success-time
 lease, or authorize an activation. Transparent still has no lease.
 
 Completed objects live under `objects/<sha256>`, read-only. Downloads stream into
-a unique `<sha256>.partial-*` name while hashing and enforcing the declared length
-and body budget, and are synced before and after their rename. Every reuse of a
-regular object checks its expected length without hashing it again; anything
-else under that name is unlinked, never followed. Each fresh staging tree hard-links those
-verified inodes, which nothing writes, so staging does not hash them again; only
-a filesystem that reports linking unsupported receives a size-checked copy.
-The serving loader checks metadata and file sizes; it does not scan table
-contents, hash native files or run encrypted self-tests. This applies equally
-to initial startup, restart and publication updates in Recent and Archive. Files,
-child directories and staging parents are synced before publishing an active
-pointer. Interrupted partials are removed before staging and never reused.
-A corrupt object is downloaded again; a bad download never replaces its completed
-object. Successful artifacts from an interrupted attempt are reusable without
+unique partial files, enforce the declared byte count and body budget, and are
+synced before and after atomic promotion. Metadata hashes remain immediate;
+large table and runtime bodies are not hashed during receipt or activation.
+Their `.received.json` records contain the publisher's expected identity, not
+proof of a completed body hash. Local reloads check expected size. Staging uses
+hard links, with size-checked copies only when linking is unsupported. Recorded
+download identities cannot be changed to label existing bytes as another artifact.
+The serving loader checks metadata and sizes, then parses runtimes on demand
+without checksum scans or encrypted self-tests. Interrupted partials are never
+reused. A size mismatch refuses a transfer before promotion; a same-size digest
+mismatch is detected by the background validator after serving starts.
+Successful artifacts from an interrupted attempt are reusable without
 relying on old inventories, deltas or saved proofs. Interrupted staging and old
 objects remain non-authoritative. On activation and every subsequent poll, the
 manager releases unused in-memory views with the owner's existing policy: retain
@@ -727,9 +726,14 @@ review and recovery. No data or resource deletion is part of this procedure.
 
 The publisher owns preparation correctness, including comparing prepared
 material with its sources and testing encrypted answers before publication.
-Query servers trust those prepared bytes. Download streams check exact length
-and SHA-256 once; local reloads check size without rehashing. Same-size local
-content changes are outside this integrity policy. Normal format parsing and
+Query servers trust those prepared bytes. HTTPS downloads check exact length;
+local reloads check expected size. After serving starts, one process-wide OS
+thread validates each new table/runtime body against its recorded SHA-256. It
+pauses before each 1-MiB read/hash chunk while retrieval requests are pending or
+executing. A chunk already running may briefly overlap a new query; sustained
+query traffic can delay validation indefinitely. Successful `.validation.json`
+records are reused across publications and restarts, with separate checks for
+copied files. Same-size local content changes are outside this integrity policy. Normal format parsing and
 publication authority, replay, withdrawal and canonicality checks still apply.
 
 Recent, Archive and transaction detail become ready before background warming
@@ -737,6 +741,23 @@ finishes. A first query can pay the runtime loading cost. Loading remains
 single-flight per runtime and bounded by cache and work-memory budgets. One
 background load at a time shares the cache across snapshots; a separate restore
 slot remains available for foreground requests.
+
+A background hash failure withdraws only dependent shard revisions: their
+requests return 503, including responses whose evaluation was already running.
+Unrelated shards remain available and immutable public maps are not rewritten.
+Failures persist across restart. After a fresh successful publisher reconciliation,
+the synchronization manager refetches failed artifacts under its existing TLS and
+transfer budgets. Replacements are hashed by the same query-prioritized thread;
+affected idle runtime entries and their persisted derivatives are evicted before
+the repaired shard is re-enabled. Validation covers retained revisions as well as
+the current map. A withdrawn shared file can be linked into a newer publication,
+but its dependent revisions remain unavailable; other shards can advance.
+Startup removes interrupted repair files while holding the consumer's exclusive
+directory lock.
+A shared artifact can withdraw more than one shard. `/v1/ready`, `/metrics` and
+health output report pending, validated and failed artifacts and withdrawals.
+Validation covers every held revision that can answer a request, including
+retained predecessors; their saved failures remain enforced after restart.
 
 Run correctness validation as a separate process after the serving API is ready.
 `quality-canary --all` checks every table in its pinned fixture and each table's

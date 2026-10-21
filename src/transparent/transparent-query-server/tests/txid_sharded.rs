@@ -7,6 +7,8 @@ use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 
+#[path = "support/artifact_validation.rs"]
+mod artifact_validation;
 #[path = "support/bytemeter.rs"]
 mod bytemeter;
 
@@ -36,6 +38,37 @@ mod display_world;
 use display_world::*;
 
 const ABSENT: Txid = Txid([0xee; 32]);
+
+#[tokio::test]
+async fn retained_detail_artifacts_are_checked_and_stay_withdrawn_after_reopening() {
+    let root = tempfile::tempdir().unwrap();
+    let records = synth::records(4, 7);
+    let old = synth::write_shard(root.path(), &spec(0, 100, 110, false, ""), &records).unwrap();
+    let mut next = spec(0, 100, 120, false, "");
+    next.revision = 1;
+    next.supersedes = old.digest.clone();
+    let new = synth::write_shard(root.path(), &next, &records).unwrap();
+    let (dir, _) =
+        synth::write_candidate(root.path(), &params(1), &[new.clone()], "retained").unwrap();
+    synth::link_revision(&old.dir, &dir.join(&old.digest)).unwrap();
+    let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
+    let retained = set.held(&old.digest).unwrap();
+    let (table, segment) = retained.targets()[0];
+    artifact_validation::damage_received(retained.segment(table, segment).unwrap());
+    drop(set);
+    for pending in [true, false] {
+        let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
+        let runtime = DisplayRuntime::new(config(), None);
+        let state = DisplayState::build(set, &runtime).unwrap();
+        artifact_validation::assert_withdrawn(
+            router(state),
+            &format!("/v2/txid/shards/0/revisions/{}/manifest", old.digest),
+            &format!("/v2/txid/shards/0/revisions/{}/manifest", new.digest),
+            pending,
+        )
+        .await;
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
