@@ -184,6 +184,26 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_promotion_before_rename_leaves_no_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ObjectCache::open(dir.path().to_path_buf()).unwrap();
+        let object = ObjectReference::for_bytes(b"blocked");
+        // A non-empty directory at the target name makes the rename fail.
+        fs::create_dir(cache.object_path(&object)).unwrap();
+        fs::write(cache.object_path(&object).join("occupant"), b"").unwrap();
+        let mut partial = cache.begin_partial(&object).unwrap();
+        let mut file = partial.take_file().unwrap();
+        file.write_all(b"blocked").unwrap();
+        assert!(partial.promote(file).is_err());
+        let names: Vec<_> = fs::read_dir(cache.directory())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, vec![object.sha256.clone()], "the partial was removed");
+        assert!(cache.verified_cached(&object).is_err());
+    }
+
+    #[test]
     fn collection_keeps_only_retained_objects() {
         let dir = tempfile::tempdir().unwrap();
         let cache = ObjectCache::open(dir.path().to_path_buf()).unwrap();

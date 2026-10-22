@@ -41,8 +41,14 @@ One explicitly configured TLS origin serves these routes:
   epoch, network, salt, latest generation, eligibility and inventory identity.
 - `GET /provider/status/v1/objects/<sha256>`: immutable inventory JSON, fixed-shape
   database units, prepared packing blocks and wallet public parameters.
-- `POST /provider/status/v1/anchors/check`: exact anchors of the candidate and
-  active/retained views, bound to one current publisher snapshot.
+- `POST /provider/status/v1/authority/check`: exact anchors of the candidate and
+  active/retained views, bound to one current publisher pointer.
+
+These paths, the pointer succession rule, the conditional-request tag and the
+authority-check request/response shape are the shared `pir-publication`
+contract; Status supplies the pointer fields, inventory and anchor subject. The
+publisher serves only objects of retained publications and refuses any other
+name before opening a file.
 
 Inventories bind the unchanged wallet manifest to object lengths and hashes.
 Loaders also validate protocol, fixed geometry, prepared format, public-parameter
@@ -51,9 +57,13 @@ after referenced objects and authority state are durable. TLS authenticates the
 configured publisher; these hashes and attestations are not independent proofs
 of canonicality or index completeness.
 
-Consumers use the shared `pir-sync-manager` HTTPS transport, byte accounting and
-sequential polling/backoff without a Status-specific scheduler. They persist
-publisher high-water marks and observed invalidations before allowing service.
+Consumers run the shared `pir-sync-manager` publication lifecycle (observe,
+fence, plan, fetch, load, revalidate, commit, retain) with HTTPS transport, byte
+accounting and sequential polling/backoff; Status hooks only choose, load and
+install material. They persist the publisher floor (newest pointer, publisher
+origin, product namespace, chain and observed invalidations) before allowing
+service; a floor bound to another source is refused, and a floor written before
+source binding keeps its replay protection.
 Withdrawal or a new recovery epoch fences active service. Exact-anchor checks
 also catch invalidated older views after a consumer skips an intermediate update.
 A revoked view cannot prevent loading a verified replacement. Withdrawal during
@@ -64,11 +74,10 @@ immutable objects, but requires fresh HTTPS authority before serving.
 Publisher service discovery is checked before startup opens product state or
 binds listeners, and before each synchronization pass. An incompatible contract
 major version stops the query-server host; ordinary failures during polling use
-the shared retry schedule. Discovery never grants serving authority. Status uses
-the shared `pir-pipeline` acquisition, preparation and publication phases, while
-retaining its own revocation, freshness and worker/router handover checks.
-The shared streaming helper enforces exact lengths and Status object hashes;
-Status still owns durable file promotion and verifies objects before activation.
+the shared retry schedule. Discovery never grants serving authority. Status
+retains its own freshness and worker/router handover checks as lifecycle hooks.
+The shared object cache enforces exact lengths and hashes and owns durable file
+promotion; loading verifies objects again before activation.
 
 Each state directory has one exclusive owner. Downloads use temporary files,
 verify their full length/digest, fsync, then publish read-only immutable inodes.

@@ -293,8 +293,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
         }
         let retained = self.adapter.retained_objects(&loaded);
-        let commit = tokio::spawn(self.adapter.commit(loaded));
-        let report = match commit.await? {
+        let report = match owned_commit(self.adapter.commit(loaded)).await? {
             Ok(report) => report,
             Err(error) => {
                 self.adapter.fence_serving().await;
@@ -327,6 +326,16 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 }
 
+/// Run `commit` as a task the runtime owns. Cancelling the returned future
+/// detaches the waiter only; the durable write and install still finish together.
+async fn owned_commit<F>(commit: F) -> Result<F::Output, tokio::task::JoinError>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tokio::spawn(commit).await
+}
+
 impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
     type Report = PublicationPass<A::Report>;
     type Error = Error;
@@ -344,5 +353,33 @@ impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::is_incompatible(error.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::owned_commit;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn a_cancelled_waiter_never_abandons_an_owned_commit() {
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let (finished, installed) = tokio::sync::oneshot::channel::<()>();
+        let committed = Arc::new(AtomicBool::new(false));
+        let observed = committed.clone();
+        let waiter = tokio::spawn(owned_commit(async move {
+            released.await.unwrap();
+            observed.store(true, Ordering::SeqCst);
+            finished.send(()).unwrap();
+        }));
+        tokio::task::yield_now().await;
+        waiter.abort();
+        assert!(waiter.await.unwrap_err().is_cancelled());
+        release.send(()).unwrap();
+        installed.await.unwrap();
+        assert!(committed.load(Ordering::SeqCst));
     }
 }
