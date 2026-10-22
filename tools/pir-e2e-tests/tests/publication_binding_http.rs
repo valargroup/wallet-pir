@@ -9,13 +9,13 @@ mod publication_source;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn first_publication_preparation_defers_without_transport_backoff_or_serving_authority() {
-    use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
+    use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
     use enhance_query_server::{ingress_sync, router_sync, synchronization, worker_sync};
     use pir_e2e_tests::enhance_fixture::{serve, tls};
     let root = tempfile::tempdir().unwrap();
     let cookie = root.path().join("cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
-    let distribution = Distribution::open(
+    let distribution = PublicationDistribution::open(
         &root.path().join("source"),
         ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap(),
     )

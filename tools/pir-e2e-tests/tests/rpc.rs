@@ -332,10 +332,10 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consumers() {
     use enhance_publisher::{
-        application::{collect, Source},
+        application::{collect, CanonicalSource},
+        chain_source::{Prevouts, ZakuraClient},
         ingest::EnhanceJournal,
-        publisher::Publisher,
-        zakura::{Prevouts, ZakuraClient},
+        publisher::EnhancePublisher,
     };
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
     let state = Rpc {
@@ -357,12 +357,12 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
     let rpc = ZakuraClient::from_cookie_file(&url, root.path().join("cookie")).unwrap();
-    let source = Source {
+    let source = CanonicalSource {
         rpc: rpc.clone(),
         prevouts: Prevouts::new(100),
     };
     let publisher_root = root.path().join("publication");
-    let publisher = Publisher::open(&publisher_root, rpc.clone()).unwrap();
+    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
     let work = collect(&mut journal, &publisher, &source)
         .await
@@ -383,7 +383,7 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     );
     drop(journal);
     drop(publisher);
-    let publisher = Publisher::open(&publisher_root, rpc).unwrap();
+    let publisher = EnhancePublisher::open(&publisher_root, rpc).unwrap();
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
     let work = collect(&mut journal, &publisher, &source)
         .await

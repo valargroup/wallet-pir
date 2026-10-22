@@ -26,7 +26,7 @@ pub struct Product<T> {
 pub struct Config {
     pub management_listen: SocketAddr,
     #[cfg(feature = "enhance")]
-    pub enhance: Option<Product<enhance_publisher::service::Config>>,
+    pub enhance: Option<Product<enhance_publisher::service::EnhancePublisherConfig>>,
     #[cfg(feature = "status")]
     pub status: Option<Product<status_publisher::service::Config>>,
     #[cfg(feature = "transparent-history")]
