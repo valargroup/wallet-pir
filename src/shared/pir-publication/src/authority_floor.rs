@@ -9,6 +9,7 @@ use std::{
     collections::BTreeSet,
     fmt, fs, io,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 /// The publication source a floor is bound to: the publisher's HTTPS origin,
@@ -66,6 +67,18 @@ struct SavedFloor<P> {
     invalid: BTreeSet<MaterialIdentity>,
 }
 
+/// One version of one opened floor. Tokens carry it so a succession check or
+/// a completed write applies only to the floor instance that issued it, never
+/// to another floor that happens to be at the same version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FloorVersion {
+    floor: u64,
+    version: u64,
+}
+
+/// Distinguishes floor instances within this process.
+static NEXT_FLOOR: AtomicU64 = AtomicU64::new(0);
+
 /// The floor as last observed in memory, and which version of it is durable.
 ///
 /// Every change bumps `observed_version`. The floor is *dirty* until a
@@ -73,6 +86,7 @@ struct SavedFloor<P> {
 /// no positive progression (accepting a pointer as fresh, committing a view),
 /// even when the next pointer is unchanged, until a later write succeeds.
 pub struct AuthorityFloor<P> {
+    floor: u64,
     path: PathBuf,
     source: SourceBinding,
     pointer: Option<P>,
@@ -82,12 +96,12 @@ pub struct AuthorityFloor<P> {
 }
 
 /// A pointer [`AuthorityFloor::classify`] accepted as a successor of one exact
-/// floor version. Only this token can raise the floor, so no caller can
+/// version of one floor. Only this token can raise that floor, so no caller can
 /// advance it without the succession check.
 pub struct CheckedSuccession<P> {
     pointer: P,
     succession: PointerSuccession,
-    floor_version: u64,
+    checked_at: FloorVersion,
 }
 impl<P> CheckedSuccession<P> {
     pub fn succession(&self) -> PointerSuccession {
@@ -98,7 +112,8 @@ impl<P> CheckedSuccession<P> {
     }
 }
 
-/// The floor changed after the succession was checked.
+/// The floor changed after the succession was checked, or the check came from
+/// another floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaleSuccessionCheck;
 impl fmt::Display for StaleSuccessionCheck {
@@ -134,6 +149,7 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
             None => None,
         };
         Ok(Self {
+            floor: NEXT_FLOOR.fetch_add(1, Ordering::Relaxed),
             path,
             source,
             pointer: saved.current,
@@ -155,13 +171,19 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
     pub fn is_durable(&self) -> bool {
         self.durable_version == Some(self.observed_version)
     }
+    fn current_version(&self) -> FloorVersion {
+        FloorVersion {
+            floor: self.floor,
+            version: self.observed_version,
+        }
+    }
     /// Check `next` against the floor without changing it.
     pub fn classify(&self, next: P) -> Result<CheckedSuccession<P>, PublicationReplay> {
         let succession = PointerSuccession::classify(&next, self.pointer.as_ref())?;
         Ok(CheckedSuccession {
             pointer: next,
             succession,
-            floor_version: self.observed_version,
+            checked_at: self.current_version(),
         })
     }
     /// Raise the floor to a checked successor and permanently invalidate
@@ -173,7 +195,7 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
         checked: CheckedSuccession<P>,
         fenced_views: impl IntoIterator<Item = MaterialIdentity>,
     ) -> Result<(), StaleSuccessionCheck> {
-        if checked.floor_version != self.observed_version {
+        if checked.checked_at != self.current_version() {
             return Err(StaleSuccessionCheck);
         }
         let newly_invalidated = self.extend_invalidations(fenced_views);
@@ -208,14 +230,15 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
         Ok(PendingFloorWrite {
             path: self.path.clone(),
             bytes,
-            floor_version: self.observed_version,
+            floor_version: self.current_version(),
         })
     }
     /// Record that `write` (from [`Self::pending_write`]) completed. Only the
-    /// latest version makes the floor durable; an older completed write does not.
+    /// latest version of this floor makes it durable; an older completed write,
+    /// or one issued by another floor, does not.
     pub fn confirm_durable(&mut self, written: WrittenFloor) {
-        if written.floor_version == self.observed_version {
-            self.durable_version = Some(written.floor_version);
+        if written.floor_version == self.current_version() {
+            self.durable_version = Some(self.observed_version);
         }
     }
 }
@@ -224,11 +247,11 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
 pub struct PendingFloorWrite {
     path: PathBuf,
     bytes: Vec<u8>,
-    floor_version: u64,
+    floor_version: FloorVersion,
 }
-/// Proof that one floor version was synced.
+/// Proof that one version of one floor was synced.
 pub struct WrittenFloor {
-    floor_version: u64,
+    floor_version: FloorVersion,
 }
 impl PendingFloorWrite {
     /// Atomically replace the floor file and sync its directory.
@@ -405,5 +428,33 @@ mod tests {
         let reopened = AuthorityFloor::<SavedPointer>::open(path, source("https://a")).unwrap();
         assert!(reopened.classify(pointer(4)).is_err());
         assert!(reopened.is_invalidated(&[7; 32]));
+    }
+
+    #[test]
+    fn tokens_apply_only_to_the_floor_that_issued_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = |name: &str| {
+            let mut floor =
+                AuthorityFloor::open(dir.path().join(name), source("https://a")).unwrap();
+            let written = floor.pending_write().unwrap().write().unwrap();
+            floor.confirm_durable(written);
+            floor
+        };
+        let (mut first, mut second) = (open("first.json"), open("second.json"));
+
+        // Both floors are at the same version, but a check of one cannot
+        // raise the other.
+        let checked = first.classify(pointer(9)).unwrap();
+        assert_eq!(second.record(checked, []), Err(StaleSuccessionCheck));
+        assert_eq!(second.pointer(), None);
+
+        // A write of one floor cannot make the other durable.
+        let checked = second.classify(pointer(2)).unwrap();
+        second.record(checked, []).unwrap();
+        let checked = first.classify(pointer(3)).unwrap();
+        first.record(checked, []).unwrap();
+        let written = first.pending_write().unwrap().write().unwrap();
+        second.confirm_durable(written);
+        assert!(!second.is_durable());
     }
 }
