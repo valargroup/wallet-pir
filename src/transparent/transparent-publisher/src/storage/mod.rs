@@ -478,3 +478,42 @@ pub fn page_segment_file(child: u32, segment: usize) -> String {
         zakura_pir_publisher::transparent::manifest::pages_table(child)
     )
 }
+
+/// Reference one immutable revision in another publication, preserving object
+/// aliases. Ordinary metadata may use a hard link or a small copy. Loading the
+/// candidate still verifies every reference before publication.
+pub fn link_revision(from: &Path, to: &Path, digest: &str) -> Result<(), BoxError> {
+    if from == to {
+        return Ok(());
+    }
+    let target = to.join(digest);
+    std::fs::create_dir_all(&target)?;
+    for entry in std::fs::read_dir(from.join(digest))? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if !kind.is_file() && !kind.is_symlink() {
+            return Err("unexpected revision artifact".into());
+        }
+        let dest = target.join(entry.file_name());
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            continue;
+        }
+        if link_file(&entry.path(), &dest).is_err() {
+            if kind.is_symlink() {
+                return Err("could not link a stored revision segment".into());
+            }
+            std::fs::copy(entry.path(), &dest)?;
+        }
+    }
+    Ok(())
+}
+
+/// Gives `to` the file `from` names. A link into the publisher's segment
+/// store is linked again, never followed, so republishing a stored segment
+/// leaves its object untouched; the loader checks the link is exact.
+pub(crate) fn link_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(from)?.file_type().is_symlink() {
+        return std::os::unix::fs::symlink(std::fs::read_link(from)?, to);
+    }
+    std::fs::hard_link(from, to)
+}

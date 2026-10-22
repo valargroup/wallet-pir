@@ -516,6 +516,14 @@ mod tests {
             );
         }
 
+        let before = hashed();
+        Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!(
+            hashed() - before,
+            metadata,
+            "unchanged source and runtime bytes are reused"
+        );
+
         // Same size, changed bytes, modification time restored: the changed
         // ctime voids the evidence, so the source is hashed and refused.
         let file = std::fs::File::options()
@@ -543,7 +551,11 @@ mod tests {
         replace(&sources[1], &original);
         let before = hashed();
         Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
-        assert_eq!(hashed() - before, metadata + runtimes + 2);
+        assert_eq!(
+            hashed() - before,
+            metadata + 2,
+            "only changed source identities and metadata are rehashed; runtime evidence survives"
+        );
         let changed = flip_in_place_keeping_size(&sources[1]);
         assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
         drop(changed);

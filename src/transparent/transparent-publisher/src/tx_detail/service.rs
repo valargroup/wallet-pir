@@ -3,7 +3,7 @@ use super::{
     controller::{self, Controller, Outcome, Settings},
     source::{open_writer, LiveSource, Source},
 };
-use crate::history::publication::BoxError;
+use crate::BoxError;
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};

@@ -28,7 +28,7 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::flatten;
 use super::timeline::{HeightIndex, Timeline};
-use crate::history::publication::link_revision;
+use crate::storage::link_revision;
 use crate::storage::records::{write_atomic, write_immutable};
 use crate::BoxError;
 use serde::{Deserialize, Serialize};

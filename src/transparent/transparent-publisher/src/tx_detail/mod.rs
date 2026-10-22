@@ -28,7 +28,7 @@ pub mod publisher;
 pub mod source;
 pub mod timeline;
 
-pub use crate::history::publication::BoxError;
+pub use crate::BoxError;
 
 /// Wall-clock milliseconds since the Unix epoch.
 pub fn now_ms() -> u64 {

@@ -19,10 +19,10 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::DisplayCache;
 use super::now_ms;
-use crate::history::publication::BoxError;
 use crate::ingest::blocks::build_fetched_block_events;
 use crate::ingest::prevout::OutputCache;
 use crate::ingest::zakura::NodeClient;
+use crate::BoxError;
 use std::collections::BTreeMap;
 #[cfg(feature = "fixtures")]
 use std::collections::VecDeque;
@@ -487,6 +487,7 @@ impl Source {
     }
 
     /// Whether this source will never produce another block.
+    #[cfg(feature = "fixtures")]
     pub fn exhausted(&self, cache: &DisplayCache) -> bool {
         match self {
             Self::Live(_) => false,
