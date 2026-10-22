@@ -1,6 +1,6 @@
 //! Rolling hints rebuilt from the existing chain index. Payment history is never pruned.
 use crate::{Error, Store};
-use receiver_directory::blocks::{BlockFilter, BlockId, MAX_RECEIVERS};
+use zakura_pir_publisher::receiver::blocks::{BlockFilter, BlockId, MAX_RECEIVERS};
 
 /// The most blocks a window may retain: seven days at NU7's 25-second target spacing,
 /// the shortest. The indexer sizes the window by target time, which is fewer blocks
@@ -72,7 +72,7 @@ impl Store {
                 parent,
                 &receivers,
             )?;
-            bytes += receiver_directory::blocks::Batch::new(
+            bytes += zakura_pir_publisher::receiver::blocks::Batch::new(
                 self.config.genesis,
                 revision,
                 vec![filter.clone()],

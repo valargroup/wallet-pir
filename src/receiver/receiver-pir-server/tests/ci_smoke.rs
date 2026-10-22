@@ -9,11 +9,14 @@ mod prepared;
 mod router;
 use common::{manifest, receiver, record};
 use history::{history, Accepted, Session};
-use receiver_directory::snapshot::Snapshot;
-use receiver_pir::{transport::Transport, Error, MIN_ROWS};
 use receiver_pir_server::{Publication, Publications};
 use router::router_with_publications;
 use std::time::Duration;
+use zakura_pir_client::receiver::transport::Transport;
+use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::MIN_ROWS;
+use zakura_pir_query_server::receiver::snapshot::Snapshot;
 
 /// The chain anchor that [`manifest`] ends at.
 fn accepted() -> Accepted {

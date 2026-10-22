@@ -1,14 +1,13 @@
 //! A wallet's walk of one receiver's history, one encrypted PIR query per page, over a
 //! captured inventory.
 #![allow(dead_code)]
-use receiver_directory::{
+use std::sync::Arc;
+use zakura_pir_client::receiver::transport::{Inventories, InventoryClient, Segment, Transport};
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::Manifest;
+use zakura_pir_query_server::receiver::{
     snapshot::check_next, witness::PAYLOAD_BYTES, Hash, Payment, RawRecord, ReceiverBytes,
 };
-use receiver_pir::{
-    transport::{Inventories, InventoryClient, Segment, Transport},
-    Error, Manifest,
-};
-use std::sync::Arc;
 
 /// The chain anchor and required history start a wallet accepts an inventory at.
 #[derive(Clone, Copy, Debug)]

@@ -11,9 +11,12 @@
 mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
-use receiver_directory::witness;
-use receiver_directory::{snapshot::Snapshot, Hash, Payment};
-use receiver_pir::{transport::Transport, Error, MIN_ROWS};
+use zakura_pir_client::receiver::transport::Transport;
+use zakura_pir_publisher::receiver::session::Error;
+use zakura_pir_publisher::receiver::session::MIN_ROWS;
+use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+use zakura_pir_publisher::receiver::witness;
+use zakura_pir_publisher::receiver::{snapshot::Snapshot, Hash, Payment};
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -53,7 +56,7 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
         .collect();
     let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let payloads = zakura_pir_publisher::receiver::witness::payloads(&tree, &[0, 5]).unwrap();
     let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
     (snapshot, table)
 }

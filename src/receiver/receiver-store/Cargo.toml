@@ -6,7 +6,8 @@ license = "MIT"
 description = "The receiver indexer's SQLite coverage store and provider store"
 
 [dependencies]
-receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc2" }
+# Receiver formats and the payment table and block filter builders.
+zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
