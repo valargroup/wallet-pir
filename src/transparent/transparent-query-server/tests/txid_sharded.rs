@@ -247,7 +247,7 @@ async fn a_combined_worker_serves_both_tiers() {
         config(),
         vec![root.path().join("sealed")],
     );
-    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 0);
+    assert_eq!(worker.publish_warm(&p0.0, &p0.1).await["built"], 0);
     let status = worker.command(DisplayCommand::Status).await.unwrap();
     assert_eq!(status["role"], "combined");
     let app = Router::new().fallback(edge).with_state(Edge {
@@ -297,7 +297,7 @@ async fn an_overlapping_recent_shard_is_served_beside_its_archive() {
         config(),
         vec![root.path().join("sealed")],
     );
-    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 0);
+    assert_eq!(worker.publish_warm(&p0.0, &p0.1).await["built"], 0);
     let app = Router::new().fallback(edge).with_state(Edge {
         archive: worker.live.router(),
         recent: worker.live.router(),
@@ -1095,8 +1095,8 @@ async fn the_transcript_depends_on_the_bucket_label_alone() {
         config(),
         Vec::new(),
     );
-    assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 0);
-    assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 0);
+    assert_eq!(archive.publish_warm(&dir, &map_sha256).await["built"], 0);
+    assert_eq!(recent.publish_warm(&dir, &map_sha256).await["built"], 0);
     let app = Router::new().fallback(edge).with_state(Edge {
         archive: archive.live.router(),
         recent: recent.live.router(),
