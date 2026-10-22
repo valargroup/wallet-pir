@@ -204,7 +204,10 @@ impl PublicationAdapter for StatusPublication {
         let (material, required_objects) = if already_serving {
             (CandidateMaterial::AlreadyServing, Vec::new())
         } else if let Some(generation) = reidentified {
-            (CandidateMaterial::Reidentified(Box::new(generation)), Vec::new())
+            (
+                CandidateMaterial::Reidentified(Box::new(generation)),
+                Vec::new(),
+            )
         } else {
             let role_objects = if self.service.role == Role::Worker {
                 &inventory.units
