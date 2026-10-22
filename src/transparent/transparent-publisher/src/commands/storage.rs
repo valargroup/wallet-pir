@@ -283,6 +283,31 @@ fn detail(
     layout.validate()?;
     clone.file(&owner.source.join(ROOT_FILE), &owner.target.join(ROOT_FILE))?;
     let current: ActiveRecord = serde_json::from_slice(active)?;
+    // Carry the derived lookup prefix too: rebuilding it from genesis belongs
+    // in offline preparation, never in the stopped-owner startup interval.
+    // Clone into an owned temporary directory so a failed/resumed attempt can
+    // replace its earlier derived copy without touching immutable objects.
+    {
+        use crate::tx_detail::timeline::{HeightIndex, HEIGHTS_FILE};
+        let temporary = tempfile::Builder::new()
+            .prefix(".index-preparation-")
+            .tempdir_in(&owner.target)?;
+        clone.file(
+            &owner.source.join(HEIGHTS_FILE),
+            &temporary.path().join(HEIGHTS_FILE),
+        )?;
+        let mut index = HeightIndex::open(temporary.path())?;
+        index.truncate_after(current.tip)?;
+        std::fs::File::open(index.path())?.sync_all()?;
+        let destination = owner.target.join(HEIGHTS_FILE);
+        let parent = destination.parent().ok_or("derived index has no parent")?;
+        std::fs::create_dir_all(parent)?;
+        if destination.is_symlink() {
+            return Err("derived index has foreign ownership".into());
+        }
+        std::fs::rename(index.path(), &destination)?;
+        std::fs::File::open(parent)?.sync_all()?;
+    }
     let map = crate::tx_detail::publisher::read_map(target, &current.map_sha256)?;
     for entry in &map.shards {
         let tier = if entry.sealed { "sealed" } else { "recent" };
@@ -350,6 +375,17 @@ mod tests {
         for revision in set.current() {
             build_shipped_verified_until(revision, &done.candidate, &[], &|| false).unwrap();
         }
+        // The old writer can index a block before it publishes that block.
+        let mut source_index = crate::tx_detail::timeline::HeightIndex::open(&source).unwrap();
+        source_index
+            .append(113, &[fixture::record(999, 1)])
+            .unwrap();
+        let expected_index: Vec<_> = source_index
+            .read_all()
+            .unwrap()
+            .into_iter()
+            .filter(|(_, height)| *height <= 112)
+            .collect();
         legacy(&source);
         let before = preparation::fingerprint(&source).unwrap();
         let active = std::fs::read(source.join("active.json")).unwrap();
@@ -396,6 +432,17 @@ mod tests {
             serde_json::from_slice(&std::fs::read(target.join("active.json")).unwrap()).unwrap();
         let next = DisplaySet::open(&saved.directory, 0, DisplayRole::Combined).unwrap();
         assert_eq!(next.map_digest, done.map_sha256);
+        let index_file = crate::tx_detail::timeline::HEIGHTS_FILE;
+        let reader = tempfile::tempdir().unwrap();
+        let reader_path = reader.path().join(index_file);
+        std::fs::create_dir_all(reader_path.parent().unwrap()).unwrap();
+        std::fs::copy(target.join(index_file), &reader_path).unwrap();
+        let copied_index = crate::tx_detail::timeline::HeightIndex::open(reader.path()).unwrap();
+        assert_eq!(copied_index.read_all().unwrap(), expected_index);
+        assert_ne!(
+            std::fs::metadata(target.join(index_file)).unwrap().ino(),
+            std::fs::metadata(source.join(index_file)).unwrap().ino()
+        );
         for revision in next.current() {
             let name = revision.manifest.tables()[0].file_name(0);
             let new = revision.dir.join(&name);

@@ -249,7 +249,9 @@ The deployment CLI separates storage preparation from service activation:
 4. Activation carries each distribution revision high-water mark into the new
    root. Rollback restores the saved binary and configuration, carries revision
    high-water marks back, and starts from the untouched old publication files.
-   The ingestion journals stay in their original locations throughout.
+   The ingestion journals stay in their original locations throughout. Display
+   preparation also clones and trims its derived lookup index, so startup only
+   catches up the recent suffix instead of rebuilding that index from genesis.
 5. After the deployment's qualification gates pass and rollback is no longer
    needed, review `publisher-storage-cleanup-plan` using the deployment request
    and preparation id. `publisher-storage-cleanup --expect-plan-sha256 SHA`
