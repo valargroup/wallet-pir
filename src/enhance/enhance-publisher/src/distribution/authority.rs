@@ -2,9 +2,9 @@
 use super::PublicationDistribution;
 use enhance_shared::{
     protocol::{canonical_hash, digest, Manifest},
-    publication::AuthorityResponse,
+    publication::{AuthorityResponse, SOURCE_AUTHORITY_LIFETIME},
 };
-use pir_publication::{SourceObservation, SOURCE_AUTHORITY_LIFETIME};
+use pir_publication::SourceObservation;
 use std::sync::atomic::Ordering;
 
 impl PublicationDistribution {

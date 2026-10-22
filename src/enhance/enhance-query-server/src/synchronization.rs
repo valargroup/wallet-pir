@@ -6,8 +6,6 @@ use crate::{
     },
 };
 use pir_publication::{ObjectCache, OBJECTS_PATH};
-#[cfg(test)]
-use pir_publication::{SourceObservation, SOURCE_AUTHORITY_LIFETIME};
 use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +15,8 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
+#[cfg(test)]
+use {crate::publication::SOURCE_AUTHORITY_LIFETIME, pir_publication::SourceObservation};
 
 pub type Error = pir_sync_manager::Error;
 

@@ -12,9 +12,9 @@ use axum::{
 };
 use pir_pipeline::Input;
 use pir_publication::{
-    conditional_token, AuthorityCheckRefusal, AuthorityCheckResponse, AuthorityTransition,
-    PublicationAuthority, PublicationReference, PublishedObjectStore, SourceObservation,
-    SubjectAuthority, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
+    conditional_token, AuthorityCheckRefusal, AuthorityTransition, PublicationAuthority,
+    PublicationReference, PublishedObjectStore, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH,
+    OBJECTS_PATH,
 };
 use serde::Deserialize;
 use status_shared::{now_ms, protocol::*, publication::*, telemetry, Generation};
@@ -367,13 +367,13 @@ async fn object(
     let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     Ok(Body::from_stream(stream).into_response())
 }
-/// Answer whether anchors are still canonical, each with the time its node
-/// lookup started, only while the request's authority is current and
-/// eligible before and after the node lookups.
+/// Answer whether each requested anchor is still canonical, naming the anchor
+/// it answers, only while the request's authority is current and eligible
+/// before and after the node lookups. An answer renews no manifest freshness.
 async fn authority_check(
     State(s): State<Publisher>,
     Json(request): Json<AnchorCheckRequest>,
-) -> Result<Json<AuthorityCheckResponse>, StatusCode> {
+) -> Result<Json<AnchorCheckResponse>, StatusCode> {
     let admit = || {
         let published = s.published.read().unwrap();
         let current = published
@@ -394,20 +394,19 @@ async fn authority_check(
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let mut answers = Vec::new();
-    for (height, hash) in &request.subjects {
-        let source = SourceObservation::starting_now();
+    for &(height, hash) in &request.subjects {
         let still_authoritative = rpc
-            .block_hash(u64::from(*height))
+            .block_hash(u64::from(height))
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            == *hash;
-        answers.push(SubjectAuthority {
+            == hash;
+        answers.push(SubjectAnswer {
+            subject: (height, hash),
             still_authoritative,
-            source,
         });
     }
     admit()?;
-    Ok(Json(AuthorityCheckResponse {
+    Ok(Json(AnchorCheckResponse {
         authority: request.authority,
         answers,
     }))

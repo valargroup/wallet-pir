@@ -15,6 +15,11 @@ use std::{
 };
 
 pub const VERSION: u16 = 1;
+
+/// How long one actual chain-node observation lets an Enhance view serve.
+/// Enhance's contract leases serving from the publisher's node check itself,
+/// so a role must renew it through a new check; nothing else extends it.
+pub const SOURCE_AUTHORITY_LIFETIME: Duration = pir_control::CONTROL_WATCHDOG;
 pub const PREFIX: &str = "/provider/enhance/v1/";
 pub const METADATA_LIMIT: u64 = 2 * 1024 * 1024;
 pub const MAX_OBJECT_BYTES: u64 = 32768 * ROW_BYTES as u64;
@@ -86,15 +91,15 @@ pub struct AuthorityResponse {
 }
 
 impl AuthorityResponse {
-    /// Serving authority left at `now` under the shared source-observation
-    /// lifetime. Receiving or caching this response cannot renew it.
+    /// Serving authority left at `now`, [`SOURCE_AUTHORITY_LIFETIME`] after
+    /// the node check. Receiving or caching this response cannot renew it.
     pub fn remaining_at(&self, now: SystemTime) -> Result<Duration, String> {
         self.current.validate()?;
         if !self.current.eligible || !protocol::canonical_hash(&self.authorized_manifest_sha256) {
             return Err("Enhance source authority is absent".into());
         }
         self.source
-            .remaining_at(now)
+            .remaining_at(SOURCE_AUTHORITY_LIFETIME, now)
             .ok_or_else(|| "Enhance source authority is absent or expired".into())
     }
 }
