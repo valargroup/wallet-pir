@@ -36,7 +36,7 @@ impl Published {
         ))
         .await;
         let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || {
+        let prepared = tokio::task::spawn_blocking(move || {
             enhance_publisher::publication::prepare(
                 &root,
                 Lifecycle::default()
@@ -48,9 +48,8 @@ impl Published {
         })
         .await
         .unwrap()
-        .unwrap()
-        .inventory()
-        .clone();
+        .unwrap();
+        let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -69,7 +68,7 @@ impl Published {
             unit_identities: [(0, domain.plan.units.clone())].into(),
         };
         distribution
-            .publish(manifest.clone(), inventory.clone())
+            .publish_prepared(manifest.clone(), prepared)
             .await
             .unwrap();
         Self {
