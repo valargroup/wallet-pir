@@ -9,6 +9,11 @@ Covers the crates a wallet uses to recover transparent history over PIR:
 
 ## Unreleased
 
+- Display sets rehash tables whose stamps changed, for example after relinking
+  into a new candidate, but no longer re-read their rows one at a time when this
+  process already checked the rows of a revision with the same manifest digest.
+  Serving loads never supply that proof, and changed bytes are still refused.
+
 - HTTPS staging refuses conflicting content at an existing catalog path before
   assigning a download receipt. Older receipt generations are discarded so
   checks made with an incorrectly assigned identity cannot be reused.
