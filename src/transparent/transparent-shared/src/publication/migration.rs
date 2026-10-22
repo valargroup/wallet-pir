@@ -79,12 +79,11 @@ pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result
             .ok_or("missing artifacts")?
             .iter()
             .any(|a| a["kind"] == "archive_runtime");
-        let plan = super::plan(&root, &set, height, full)?;
+        let plan = super::plan(&root, &set, height, full, super::RuntimeNames::Previous)?;
         for (path, expected) in plan.sources {
             sources.insert(relative(&path)?, expected.into());
         }
-        for (_, key, shared, source) in plan.native {
-            let path = source_runtimes.previous_path(&key, &shared, source.sha256());
+        for (path, key, shared, source) in plan.native {
             runtimes.insert(relative(&path)?, (key, shared, source.sha256().into()));
         }
     }
