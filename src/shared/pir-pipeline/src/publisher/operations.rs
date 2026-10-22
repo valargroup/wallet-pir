@@ -59,6 +59,16 @@ pub trait Publisher: Send {
     type Publication<'a>: Publication<Error = Self::Error, Report = Self::Report>
     where
         Self: 'a;
+    /// Reconcile or start product background preparation through the root
+    /// executor before acquiring foreground work. Background work must own its
+    /// immutable inputs and be joined by `finish`; acquisition itself never
+    /// starts preparation. Products without background work use this default.
+    fn background<E: PublisherExecutor>(
+        &mut self,
+        _executor: E,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
     fn acquire(
         &mut self,
     ) -> impl Future<Output = Result<Input<Self::Publication<'_>>, Self::Error>> + Send;

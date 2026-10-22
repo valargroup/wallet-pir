@@ -289,6 +289,32 @@ pub use crate::history::shardset::OBJECT_STORE;
 /// non-regular target are refused. Publication paths stay logical; only reads
 /// use the returned handle. A segment link's digest is checked against its
 /// manifest by the loader and by the digest listed for it.
+/// Open one logical publication artifact using the publisher's checked object
+/// references. This grants no verification evidence or distribution authority.
+/// An expected reference binds length and, for stored aliases, the target name.
+pub fn open_artifact(
+    root: &Path,
+    relative: &str,
+    expected: Option<&ObjectReference>,
+) -> Result<(PathBuf, std::fs::File), Error> {
+    let (physical, file) = resolve(root, relative)?;
+    if let Some(expected) = expected {
+        expected.validate(u64::MAX)?;
+        if file.metadata()?.len() != expected.bytes {
+            return Err("publication object length differs from its reference".into());
+        }
+        if physical
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == OBJECT_STORE)
+            && physical.file_name().and_then(|name| name.to_str()) != Some(expected.sha256.as_str())
+        {
+            return Err("publication object target differs from its reference".into());
+        }
+    }
+    Ok((physical, file))
+}
+
 pub(crate) fn resolve(root: &Path, relative: &str) -> Result<(PathBuf, std::fs::File), Error> {
     if !safe_path(relative) {
         return Err("unsafe publisher artifact path".into());
@@ -306,7 +332,14 @@ pub(crate) fn resolve(root: &Path, relative: &str) -> Result<(PathBuf, std::fs::
             continue;
         }
         let target = std::fs::read_link(&physical)?;
-        let prefix = if last && index == 0 && ShippedRuntimes::is_entry(component) {
+        let prefix = if last
+            && index == 0
+            && (ShippedRuntimes::is_entry(component)
+                || component
+                    .strip_prefix("txid-index-")
+                    .and_then(|name| name.strip_suffix(".json"))
+                    .is_some_and(is_digest))
+        {
             Path::new("..").join(OBJECT_STORE)
         } else if last && index == 1 && is_digest(components[0]) && *component != "filter.bin" {
             Path::new("../..").join(OBJECT_STORE)
@@ -1301,6 +1334,13 @@ pub(crate) struct Known {
     stamp: FileIdentity,
 }
 impl Known {
+    pub(crate) fn from_evidence(sha256: String, bytes: u64, stamp: FileIdentity) -> Self {
+        Self {
+            sha256,
+            bytes,
+            stamp,
+        }
+    }
     /// The verification `source` holds for its exact file, if any: only a
     /// source this process hashed with settled evidence; never a receipt-only,
     /// received or size-only one.

@@ -51,7 +51,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 transparent-shared = { path = "../transparent-shared" }
 # Node reads, transparent extraction, compact blocks and the RocksDB state
 # reader, from the shared chain reader. The reader opens the node's RocksDB
@@ -71,5 +70,6 @@ transparent-query-server = { path = "../transparent-query-server", optional = tr
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
+pir-publisher = { path = "../../pir-publisher" }
 # The unified-host regression drives real history and display query roles.
 pir-query-server = { path = "../../pir-query-server", features = ["transparent-history", "transparent-detail"] }

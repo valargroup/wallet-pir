@@ -12,7 +12,7 @@ use transparent_shared::history::shardset::ShardSet;
 use transparent_shared::publication::{Finalized, Kind};
 
 fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient) -> Authority {
-    let mut public = read_public(directory.to_path_buf(), Vec::new()).unwrap();
+    let mut public = read_public(directory.to_path_buf()).unwrap();
     public.distribution = distribution;
     Authority(Arc::new(Inner {
         cycle_duration: Default::default(),
@@ -2231,9 +2231,7 @@ impl Startup {
             follow_journal: true,
             snapshot_dir: None,
         };
-        let saved = read_public(directory.clone(), Vec::new())
-            .unwrap()
-            .publication;
+        let saved = read_public(directory.clone()).unwrap().publication;
         publication::write_atomic(
             &publications.join("active.json"),
             &serde_json::to_vec(&saved).unwrap(),

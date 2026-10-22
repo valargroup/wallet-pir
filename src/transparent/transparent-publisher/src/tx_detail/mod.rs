@@ -1,4 +1,4 @@
-//! Time-tiered txid display publication (proof of concept).
+//! Time-tiered transaction-detail publication for the root publisher.
 //!
 //! A display publication is separate from the history shards: its own map
 //! (`txid-shards.json`), manifests and revisions, built from the display
@@ -11,13 +11,14 @@
 //!   root from the journal and verifies what is on disk.
 //! - [`source`] supplies blocks: live from the node, replayed from an ingested
 //!   journal, or scripted by tests.
-//! - [`controller`] is the loop that seals, rebuilds and publishes.
+//! - [`controller`] supplies source-bound work to the root executor.
 //! - [`distribution`] serves finalized publications to query servers over HTTPS.
 //! - [`offline`] verifies a root against its journal, plans a bootstrap
 //!   start, benches recent shards and writes synthetic journals.
 //! - [`timeline`] records what happened and when, for measurement.
 //! - [`metrics`] is what the controller reports on `/metrics`.
 
+mod activation;
 pub mod cache;
 pub mod controller;
 pub mod distribution;
@@ -40,6 +41,7 @@ pub fn now_ms() -> u64 {
 #[cfg(test)]
 pub(crate) mod fixture;
 
+pub mod runtime_preparation;
 pub mod service;
 
 #[cfg(all(test, feature = "qualification-tests", feature = "fixtures"))]

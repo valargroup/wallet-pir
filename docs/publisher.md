@@ -159,11 +159,11 @@ changing the active publication; the build writes no map, and an interrupted
 hash records no evidence or receipt. Display stops the same way while it
 restores its saved distribution at startup (verification, row checks, runtime
 segments, finalization) and between the recent-shard build, candidate write and
-runtime prebuild of a cycle. Blocking work is awaited before state is released:
+runtime preparation of a cycle. Blocking work is awaited before state is released:
 the unit already running when the stop arrives, one shard's files, one runtime
-build or self-check, or one Display recent-shard build or prebuild, finishes
-first. Activation that has begun still completes, including the Display
-inventory it finalizes.
+build or self-check, or one Display recent-shard build or runtime preparation, finishes
+first. Activation that has begun still completes; inventory preparation is
+already complete at that boundary.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -206,9 +206,21 @@ History and Display finalization list a source table with the digest their
 verified set proved when this process hashed that same file and its device, inode, length,
 modification and change times are unchanged; any other table is hashed again,
 and every listed table must match its manifest digest. A runtime self-check
-reads its source rows under the same rule. Every runtime is hashed; one whose
-name and whole-file digest match a runtime this process already loaded and
-self-checked is not loaded again.
+reads its source rows under the same rule. Runtimes use the same exact-file evidence: unchanged objects are neither
+rehashed nor loaded again after this process has verified and self-checked them.
+
+Both products store large immutable files once in `.objects/`, with checked
+relative references from publication directories. Importing legacy files verifies
+their digests before replacing them with references and requires one filesystem;
+an interrupted import resumes without copying the full dataset. Active views,
+preparation and HTTP readers retain their publication directories while collection
+removes only unowned directories and objects with no remaining references.
+
+Transaction-detail activation first saves a durable intent containing the next
+restart record and HTTP authority, then commits both records before switching the
+in-memory view. Startup completes any intent under the root lock before opening
+state or collecting files. Recovered material still needs preparation and a live
+chain check before serving.
 
 History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
 pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product

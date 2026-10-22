@@ -8,7 +8,7 @@
 //! - `index/<sha256>.json` holds one archive index chunk of the split map
 //!   (`transparent_shard::display::split`), written once when a seal or a
 //!   window drop first produces it.
-//! - `candidate-<tip>-<hash>-<nanos>/` is one publication: a hard link of
+//! - `candidate-<tip>-<hash>-<nanos>/` is one publication: references to
 //!   every revision the map names and of every index chunk
 //!   (`txid-index-<sha256>.json`), the recent map `txid-map.json`, then
 //!   `txid-shards.json`, written last. With `--ship-runtimes` the controller
@@ -27,21 +27,21 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::flatten;
 use super::timeline::{HeightIndex, Timeline};
-use crate::history::publication::{
-    link_revision, write_atomic, write_immutable, BoxError, Journal,
-};
+use crate::history::publication::link_revision;
+use crate::storage::records::{write_atomic, write_immutable};
+use crate::BoxError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::io::Read;
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
+#[cfg(test)]
+use transparent_shard::display::DisplayTable;
 use transparent_shard::display::{
-    build_shard, display_by_name, plan_seals, recent_start, verify, verify_rows, DisplayManifest,
-    DisplayMap, DisplayMapEntry, DisplaySealParams, DisplayTable, ManifestHeader, DISPLAY_SCHEMA,
-    MAX_BUCKETS,
+    build_shard, display_by_name, plan_seals, recent_start, verify, DisplayManifest, DisplayMap,
+    DisplayMapEntry, DisplaySealParams, ManifestHeader, DISPLAY_SCHEMA, MAX_BUCKETS,
 };
 use transparent_shard::layout::Geometry;
 use transparent_shard::manifest::{PublishedRevision, RevisionError};
@@ -174,7 +174,10 @@ impl ActiveRecord {
     }
 
     pub fn store(&self, root: &Path) -> Result<(), BoxError> {
-        write_atomic(&root.join(ACTIVE_FILE), &serde_json::to_vec_pretty(self)?)
+        crate::storage::records::write_durable(
+            &root.join(ACTIVE_FILE),
+            &serde_json::to_vec_pretty(self)?,
+        )
     }
 
     /// SHA-256 over every sealed digest since the start, in order: changes
@@ -278,7 +281,10 @@ pub enum PublishError {
 
 impl From<BoxError> for PublishError {
     fn from(error: BoxError) -> Self {
-        Self::Other(error.to_string())
+        match error.downcast::<Self>() {
+            Ok(error) => *error,
+            Err(error) => Self::Other(error.to_string()),
+        }
     }
 }
 
@@ -384,7 +390,15 @@ pub fn publish_shard(
     };
     for table in built.tables() {
         for (segment, bytes) in built.segments(table).iter().enumerate() {
-            write(&table.file_name(segment), bytes)?;
+            let path = directory.join(table.file_name(segment));
+            let existed = std::fs::symlink_metadata(&path).is_ok();
+            crate::storage::write_object(root, &path, bytes).map_err(|error| {
+                if existed {
+                    PublishError::Immutable(error.to_string())
+                } else {
+                    other(error)
+                }
+            })?;
         }
     }
     // The manifest goes last: its presence means every segment is in place.
@@ -407,7 +421,7 @@ pub fn publish_shard(
     })
 }
 
-/// Writes one candidate: a hard link of every named revision and index
+/// Writes one candidate: references to every named revision and index
 /// chunk, the recent map, then the full map.
 ///
 /// Returns the candidate directory and the map's SHA-256, which is its
@@ -431,8 +445,12 @@ pub fn write_candidate(root: &Path, map: &DisplayMap) -> Result<(PathBuf, String
     std::fs::create_dir_all(&index)?;
     for chunk in &split.chunks {
         let name = format!("{}.json", chunk.sha256);
-        write_immutable(&index, &name, &chunk.bytes)?;
-        std::fs::hard_link(index.join(&name), directory.join(index_file(&chunk.sha256)))?;
+        crate::storage::write_object(root, &index.join(&name), &chunk.bytes)?;
+        crate::storage::write_object(
+            root,
+            &directory.join(index_file(&chunk.sha256)),
+            &chunk.bytes,
+        )?;
     }
     write_atomic(&directory.join(RECENT_MAP_FILE), &split.recent_bytes)?;
     let bytes = map.to_bytes();
@@ -450,6 +468,8 @@ pub fn collect(
     keep: &BTreeSet<PathBuf>,
     newest: usize,
 ) -> Result<Vec<PathBuf>, BoxError> {
+    let pending = super::activation::pending(root)?;
+    let ownership = crate::storage::collecting();
     let mut candidates: Vec<_> = std::fs::read_dir(root)?
         .filter_map(Result::ok)
         .filter(|e| {
@@ -471,7 +491,10 @@ pub fn collect(
     let mut retained = Vec::new();
     let mut unused = 0;
     for (_, path) in candidates {
-        if path.file_name().is_some_and(|name| keep.contains(name)) {
+        if pending.as_ref() == Some(&path)
+            || ownership.holds(&path)
+            || path.file_name().is_some_and(|name| keep.contains(name))
+        {
             retained.push(path);
         } else if unused < newest {
             unused += 1;
@@ -515,46 +538,25 @@ pub fn collect(
             }
         }
     }
+    crate::storage::collect(root)?;
     Ok(removed)
 }
 
-/// Refuses a root where revisions cannot be hard linked into candidates.
-///
-/// `link_revision` falls back to copying when a link fails, which across a
-/// filesystem boundary would copy every archive on every block.
-pub fn probe_hard_links(root: &Path) -> Result<(), BoxError> {
-    let pid = std::process::id();
+/// Require revision tiers and immutable objects on one filesystem so legacy
+/// imports can install verified bytes without copying the dataset.
+pub fn validate_storage_layout(root: &Path) -> Result<(), BoxError> {
+    let store = pir_publication::ObjectInstaller::open(
+        root.join(transparent_shared::history::shardset::OBJECT_STORE),
+    )?;
     for tier in [SEALED_DIR, RECENT_DIR] {
-        let dir = root.join(tier);
-        std::fs::create_dir_all(&dir)?;
-        let source = dir.join(format!(".link-probe-{pid}"));
-        let target = root.join(format!(".link-probe-{pid}-{tier}"));
-        let _ = std::fs::remove_file(&target);
-        std::fs::write(&source, b"probe")?;
-        let linked = std::fs::hard_link(&source, &target).and_then(|()| {
-            let (a, b) = (std::fs::metadata(&source)?, std::fs::metadata(&target)?);
-            Ok(a.dev() == b.dev() && a.ino() == b.ino())
-        });
-        let _ = std::fs::remove_file(&source);
-        let _ = std::fs::remove_file(&target);
-        match linked {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(format!(
-                    "{} does not hard link into {}",
-                    dir.display(),
-                    root.display()
-                )
-                .into())
-            }
-            Err(e) => {
-                return Err(format!(
-                    "{} cannot hard link into {}: {e}; keep the display root on one filesystem",
-                    dir.display(),
-                    root.display()
-                )
-                .into())
-            }
+        let directory = root.join(tier);
+        std::fs::create_dir_all(&directory)?;
+        // Import uses a private link without a second dataset copy.
+        if std::fs::metadata(&directory)?.dev() != std::fs::metadata(store.directory())?.dev() {
+            return Err(
+                "display revisions and object storage must share a filesystem for checked import"
+                    .into(),
+            );
         }
     }
     Ok(())
@@ -579,7 +581,7 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
     if manifest.canonical_bytes() != bytes {
         return Err(format!("{} manifest is not canonical", directory.display()).into());
     }
-    let geometry = manifest.validate()?;
+    manifest.validate()?;
     let mut expected = BTreeSet::from([MANIFEST_FILE.to_string()]);
     for table in manifest.tables() {
         for segment in 0..manifest.segments(table).map_or(0, <[_]>::len) {
@@ -592,52 +594,7 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
     if present != expected {
         return Err(format!("{} files differ from its manifest", directory.display()).into());
     }
-    let width = geometry.directory_row_bytes;
-    let mut files = std::collections::BTreeMap::new();
-    for table in manifest.tables() {
-        for (segment, recorded) in manifest.segments(table).unwrap_or(&[]).iter().enumerate() {
-            let path = directory.join(table.file_name(segment));
-            let mut file = std::fs::File::open(&path)?;
-            if file.metadata()?.len() != recorded.rows * width as u64 {
-                return Err(format!("{} length", path.display()).into());
-            }
-            let mut hasher = Sha256::new();
-            let mut buffer = vec![0u8; 1 << 20];
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
-            if hex::encode(hasher.finalize()) != recorded.sha256 {
-                return Err(format!("{} does not hash to its manifest", path.display()).into());
-            }
-            files.insert((table, segment), file);
-        }
-    }
-    let segments: Vec<usize> = manifest
-        .buckets
-        .iter()
-        .map(|b| b.directory_segments.len())
-        .collect();
-    let records: Vec<u64> = manifest.buckets.iter().map(|b| b.records).collect();
-    verify_rows(
-        manifest.shard_id,
-        geometry,
-        &segments,
-        &records,
-        &manifest.placement_seeds(),
-        |table: DisplayTable, segment, row| {
-            let file = files
-                .get(&(table, segment))
-                .ok_or_else(|| transparent_shard::txid::Error("segment out of range".into()))?;
-            let mut bytes = vec![0u8; width];
-            file.read_exact_at(&mut bytes, (row * width) as u64)
-                .map_err(|e| transparent_shard::txid::Error(e.to_string()))?;
-            Ok(bytes)
-        },
-    )?;
+    transparent_shared::tx_detail::set::DisplayRevision::read(directory)?.verify_tables()?;
     Ok(manifest)
 }
 
@@ -651,7 +608,7 @@ pub struct Bootstrapped {
 }
 
 fn read_range(
-    store: &impl Journal,
+    store: &impl crate::ingest::journal::DisplayJournal,
     from: u64,
     through: u64,
 ) -> Result<Vec<DisplayRecord>, BoxError> {
@@ -662,7 +619,10 @@ fn read_range(
     Ok(records)
 }
 
-fn hash_at(store: &impl Journal, height: u64) -> Result<String, BoxError> {
+fn hash_at(
+    store: &impl crate::ingest::journal::DisplayJournal,
+    height: u64,
+) -> Result<String, BoxError> {
     Ok(store
         .block_at(height)
         .ok_or_else(|| format!("journal has no block at {height}"))?
@@ -677,7 +637,7 @@ fn hash_at(store: &impl Journal, height: u64) -> Result<String, BoxError> {
 /// Seals depend only on the start, the targets and the chain, so this is also
 /// how `verify` reproduces a running root's archives.
 pub fn bootstrap(
-    store: &impl Journal,
+    store: &impl crate::ingest::journal::DisplayJournal,
     root: &Path,
     layout: &DisplayRoot,
     through: u64,
@@ -707,7 +667,7 @@ pub fn bootstrap(
     std::fs::create_dir_all(root)?;
     // Workers are handed absolute candidate paths.
     let root = &std::fs::canonicalize(root)?;
-    probe_hard_links(root)?;
+    validate_storage_layout(root)?;
     layout.store(root)?;
     let timeline = Timeline::open(root)?;
     let mut index = HeightIndex::open(root)?;
@@ -881,7 +841,7 @@ mod tests {
             if entry.sealed {
                 parent = entry.manifest_digest.clone();
             }
-            // The candidate holds hard links, not copies.
+            // The candidate references the same immutable objects.
             let linked = done
                 .candidate
                 .join(&entry.manifest_digest)
@@ -1010,12 +970,12 @@ mod tests {
     }
 
     #[test]
-    fn a_root_that_cannot_hard_link_is_refused() {
+    fn a_root_that_cannot_import_on_one_filesystem_is_refused() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
-        probe_hard_links(&root).unwrap();
-        // Another filesystem under `sealed/` makes every link cross a device.
+        validate_storage_layout(&root).unwrap();
+        // Another filesystem under `sealed/` prevents zero-copy import.
         let Some(other) = ["/dev/shm", "/run", "/var/tmp"].into_iter().find(|p| {
             std::fs::metadata(p).is_ok_and(|m| {
                 m.dev() != std::fs::metadata(temp.path()).unwrap().dev()
@@ -1028,8 +988,8 @@ mod tests {
         let elsewhere = tempfile::tempdir_in(other).unwrap();
         std::fs::remove_dir(root.join(SEALED_DIR)).unwrap();
         std::os::unix::fs::symlink(elsewhere.path(), root.join(SEALED_DIR)).unwrap();
-        let error = probe_hard_links(&root).unwrap_err().to_string();
-        assert!(error.contains("hard link"), "{error}");
+        let error = validate_storage_layout(&root).unwrap_err().to_string();
+        assert!(error.contains("share a filesystem"), "{error}");
         // Bootstrap refuses the same root before writing any revision.
         let journal = temp.path().join("journal");
         fixture::write_journal(&journal, 100, 120, 0);

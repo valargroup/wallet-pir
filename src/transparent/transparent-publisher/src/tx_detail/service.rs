@@ -21,8 +21,6 @@ pub struct Config {
     pub rpc_cookie: PathBuf,
     pub poll_ms: u64,
     pub status_listen: SocketAddr,
-    #[serde(default)]
-    pub trust_sealed: bool,
     pub max_recent_records: Option<u64>,
 }
 impl Config {
@@ -52,7 +50,6 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     let source = Source::Live(LiveSource::new(rpc, Duration::from_millis(config.poll_ms)));
     let settings = Settings {
         distribution: Some(distribution.clone()),
-        trust_sealed: config.trust_sealed,
         max_recent_records: config.max_recent_records,
         ..Settings::default()
     };

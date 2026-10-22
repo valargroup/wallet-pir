@@ -20,7 +20,9 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 use clap::Parser;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use transparent_publisher::history::shard_matches::MatchCounter;
+#[path = "../shard_matches.rs"]
+mod shard_matches;
+use shard_matches::MatchCounter;
 use transparent_shard::layout::{
     by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };

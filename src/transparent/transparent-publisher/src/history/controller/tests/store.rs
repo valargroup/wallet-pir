@@ -58,7 +58,7 @@ impl Follow {
             validation,
         } = *found;
         let publication = authority.0.active.read().unwrap().publication.clone();
-        let mut public = read_public(publication.directory.clone(), Vec::new()).unwrap();
+        let mut public = read_public(publication.directory.clone()).unwrap();
         public.distribution = Some(finalized.clone());
         *authority.0.active.write().unwrap() = Arc::new(public);
         // No validator runs here: the job stays pending, holding its input.

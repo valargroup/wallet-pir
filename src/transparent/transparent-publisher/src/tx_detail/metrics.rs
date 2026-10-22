@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Cycle stages, each observed once per successful cycle.
-pub const STAGES: [&str; 6] = ["build", "verify", "digest", "write", "prebuild", "activate"];
+pub const STAGES: [&str; 6] = ["build", "verify", "digest", "write", "prepare", "activate"];
 
 /// The gauges, replaced together whenever the controller updates its status.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

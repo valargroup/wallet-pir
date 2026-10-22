@@ -9,6 +9,7 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 pub mod blocks;
 pub mod extract;
+pub mod journal;
 pub mod prevout;
 pub mod snapshot;
 #[cfg(feature = "rocksdb-reader")]
@@ -108,6 +109,7 @@ pub async fn run(
     cache_outputs: usize,
     poll_seconds: u64,
     commit_every: u64,
+    shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<(), BoxError> {
     pir_pipeline::publisher::PublisherService::new(FilterIngestion {
         zakura,
@@ -117,8 +119,9 @@ pub async fn run(
         poll_seconds,
         commit_every,
         retrying: false,
+        shutdown: shutdown.clone(),
     })
-    .run(std::future::pending())
+    .run(shutdown.cancelled())
     .await
 }
 
@@ -130,6 +133,7 @@ struct FilterIngestion {
     poll_seconds: u64,
     commit_every: u64,
     retrying: bool,
+    shutdown: pir_pipeline::service::Shutdown,
 }
 impl pir_pipeline::publisher::Workflow for FilterIngestion {
     type Error = BoxError;
@@ -157,7 +161,7 @@ impl pir_pipeline::publisher::Workflow for FilterIngestion {
 
         let mut since_commit = 0u64;
         let mut committed = false;
-        while next <= tip {
+        while next <= tip && !self.shutdown.requested() {
             // Fetch and build outside the lock; take it only to append.
             let state = &self.state;
             let commit_every = self.commit_every;
@@ -221,6 +225,10 @@ impl pir_pipeline::publisher::Workflow for FilterIngestion {
         }
         self.state.set_phase(Phase::Serving).await;
         Ok(pir_pipeline::publisher::Control::Continue)
+    }
+    async fn finish(&mut self) -> Result<(), BoxError> {
+        self.state.inner().write().await.store.commit()?;
+        Ok(())
     }
     fn failed(&mut self, error: &BoxError) -> pir_pipeline::FailurePolicy {
         tracing::error!(%error, "filter ingestion stopped");

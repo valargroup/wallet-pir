@@ -1,6 +1,6 @@
 //! Stable host-facing facade for independently configured Transparent publishers.
 //! Controllers and response schemas remain private to the corresponding adapter.
-pub use crate::history::controller::Config as HistoryConfig;
+pub use crate::history::config::Config as HistoryConfig;
 pub use crate::history::filter_service::Config as FilterConfig;
 pub use crate::tx_detail::service::Config as DetailConfig;
 use pir_pipeline::publisher::{

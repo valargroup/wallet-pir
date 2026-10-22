@@ -291,18 +291,23 @@ The v1 publication has run in production beside history since 2026-10-06
 The code on `main` no longer builds or reads v1. Serving v2 needs a fresh
 journal and lineage; the gates are in [remaining work](../transparent/remaining-work.md).
 
-The display controller composes the shared lifecycle at source acquisition,
-candidate preparation and activation. Its borrowed controller token keeps the
-store and every seal job with their existing owner. Background seal building
-stays ordered; preparation selects only the built contiguous queue prefix,
-checks immutable lineage, writes the recent candidate and prebuilds its recent
-runtimes. Activation finalizes the candidate as the HTTPS publication query
-servers download, then commits the existing active record. A rollback withdraws
-the HTTPS publication before the journal changes and is recorded in
-`invalidate.json` until the next activation. Adaptive source/background/retry
-waits use the shared boundary wait without cancelling these operations or
-coalescing seals.
-Internal phase timing does not change status formats, readiness or authority.
+The root publisher executes source acquisition, archive preparation, candidate
+preparation and activation. The product plans ordered archive work and selects
+only the completed contiguous queue prefix. A borrowed preparation operation
+keeps the journal and build ownership alive through the root's phase checks.
+Preparation checks immutable lineage, writes the recent candidate, verifies its
+source and prepares every required runtime before producing the HTTPS inventory.
+A preparation failure keeps the predecessor; there is no second runtime build
+path during activation.
+
+Activation saves a durable intent containing the successor's restart record and
+HTTP authority, writes both records, and switches the in-memory view only after
+both are durable. Startup finishes interrupted intents before opening saved state
+or collecting files; preparation and live chain checks still precede serving.
+A rollback withdraws the HTTPS publication before the journal changes and is
+recorded in `invalidate.json` until the next activation. Adaptive
+source/background/retry waits use the shared boundary wait without cancelling
+these operations or coalescing seals.
 
 ### Controller status and metrics
 
@@ -317,7 +322,7 @@ Counters: `txid_display_cycles_total` and `_cycle_failures_total`. Histograms:
 `txid_display_cycle_seconds` per successful cycle, `_freshness_seconds` per
 newly published block from first observed to active, and
 `_cycle_stage_seconds{stage}` with `build`, `verify`, `digest`, `write`,
-`prebuild` and `activate` (HTTPS finalization).
+`prepare` and `activate` (durable publication advancement).
 Display workers add `transparent_display_prepare_seconds` per successful
 prepare and `transparent_display_self_check_seconds` per prepare that loaded
 shipped runtimes to their own `/metrics`.
@@ -328,19 +333,17 @@ Every block brings a new recent revision whose tables need encoding, a hint and
 the two-mask preprocessing. The controller does that work once and ships the
 result with every candidate.
 
-- **Controller.** After writing a candidate it builds every table segment of the
-  recent revision on the runtime build pool (`TRANSPARENT_BUILD_THREADS`) and
-  writes each runtime, in the runtime disk-cache entry format, as a plain file
-  at the candidate root: `<sha256(key)>-<identity>.runtime`, beside the revision
-  directories. Never inside one, whose files must be exactly its manifest's, and
-  never as a subdirectory, which a worker would read as a revision. The cycle
-  records `prebuild_ms`, `shipped_bytes`, the files and `prebuild_failures`. A
-  failed build is logged and counted and its files are removed; HTTPS
-  finalization then builds every missing runtime, archives included.
+- **Publisher.** After writing a candidate it prepares every required table
+  segment on the runtime build pool (`TRANSPARENT_BUILD_THREADS`). Each runtime
+  uses the disk-cache entry format, referenced at the candidate root as
+  `<sha256(key)>-<identity>.runtime`. Preparation verifies source tables,
+  reuses unchanged verified objects and already checked runtimes, and completes
+  the inventory before activation. The cycle records `preparation_ms`,
+  `shipped_bytes` and the files. Any required build failure rejects the candidate.
 - **Transport.** The HTTPS publication inventory lists the files beside the
   revisions, and query servers download them unchanged. They are named by
-  revision, so every block's files are new; collection deletes them with their
-  candidate.
+  revision. Immutable bytes live once in `.objects/`; collection removes them
+  only after every retained publication releases its reference.
 - **Worker.** When a publication directory holds any `.runtime` file, the
   prewarm tries the file for each unsealed table segment before restoring or
   building. It is found by the same identity a disk-cache entry is: revision
@@ -391,9 +394,10 @@ the same entries as two kinds of document, derived from the full map
   - An unknown digest is a 409, like an unserved revision.
 
 How the split is produced and served:
-- The controller writes each chunk once into `index/<sha256>.json` under the
-  display root and hard-links it into every candidate beside the recent map.
-  Collection removes chunks no retained candidate links.
+- The publisher stores each chunk once in `.objects/<sha256>` under the display
+  root. `index/<sha256>.json` and candidate `txid-index-<sha256>.json` files are
+  checked relative references. Collection removes chunks no retained publication
+  references; live HTTP readers retain their publication through response completion.
 - A worker derives the split from the full map itself and refuses a candidate
   whose split files differ from that derivation. It serves candidates written
   before the split from the derivation alone.
