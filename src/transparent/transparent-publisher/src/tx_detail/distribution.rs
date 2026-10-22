@@ -308,7 +308,7 @@ async fn serve(authority: Distribution, request: Request) -> Result<Response, Bo
     let Some(hash) = suffix.strip_prefix("artifacts/") else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
-    let Some(path) = finalized.files.get(hash) else {
+    let Some((path, length)) = finalized.files.get(hash) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
     };
     let permit = match authority.0.slots.clone().try_acquire_owned() {
@@ -321,11 +321,10 @@ async fn serve(authority: Distribution, request: Request) -> Result<Response, Bo
                 .into_response())
         }
     };
-    let file = tokio::fs::File::open(path).await?;
-    let length = file.metadata().await?.len();
+    let file = tokio::fs::File::from_std(pir_publication::open_object_file(path, Some(*length))?);
     let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
     Ok(Response::builder()
-        .header(header::CONTENT_LENGTH, length)
+        .header(header::CONTENT_LENGTH, *length)
         .header(header::CACHE_CONTROL, "public, immutable")
         .body(pir_control::http::retain(body, (permit, finalized)))?)
 }

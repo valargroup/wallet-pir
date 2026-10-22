@@ -43,10 +43,7 @@ pub struct PublicationArtifact {
 
 impl PublicationArtifact {
     pub fn open(path: &Path, length: u64, digest: String) -> io::Result<Self> {
-        let file = File::open(path)?;
-        if file.metadata()?.len() != length {
-            return Err(invalid("persisted CRS has the wrong size"));
-        }
+        let file = pir_publication::open_object_file(path, Some(length))?;
         Ok(Self {
             file: Arc::new(file),
             length,

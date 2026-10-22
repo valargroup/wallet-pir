@@ -306,10 +306,15 @@ async fn installation_case(case: Case) {
     );
     for file in &finalized.inventory().artifacts {
         if file.kind.local() {
-            replies.insert(
-                format!("/provider/v1/artifacts/{}", file.sha256),
-                std::fs::read(finalized.file(&file.sha256).unwrap()).unwrap(),
-            );
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            finalized
+                .open_file(&file.sha256)
+                .unwrap()
+                .unwrap()
+                .read_to_end(&mut bytes)
+                .unwrap();
+            replies.insert(format!("/provider/v1/artifacts/{}", file.sha256), bytes);
         }
     }
     for shard in &map.shards {

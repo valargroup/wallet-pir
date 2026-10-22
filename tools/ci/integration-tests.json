@@ -28,6 +28,10 @@
       "store"
     ]
   },
+  "status-publisher": {
+    "fast": ["object_access_http"],
+    "full": []
+  },
   "status-query-server": {
     "fast": [],
     "full": [

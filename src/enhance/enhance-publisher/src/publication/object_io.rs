@@ -1,7 +1,7 @@
 //! Install immutable objects and durably replace bounded publication metadata.
 use crate::{artifact, prepared_packing};
 use enhance_shared::publication::{Object, METADATA_LIMIT};
-use pir_publication::ObjectInstaller;
+use pir_publication::{open_object_file, ObjectFileError, ObjectInstaller};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
@@ -12,7 +12,7 @@ use std::{
 /// Decode one JSON metadata file, refusing files or reads above the HTTPS
 /// metadata bound. This does not validate the decoded value's domain rules.
 pub fn read_metadata<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
+    let file = open_object_file(path, None).map_err(|e| e.to_string())?;
     if file.metadata().map_err(|e| e.to_string())?.len() > METADATA_LIMIT {
         return Err("publication metadata exceeds limit".into());
     }
@@ -51,19 +51,19 @@ pub(super) fn persist_metadata(
 fn object_exists(objects: &ObjectInstaller, object: &Object) -> Result<bool, String> {
     object.validate()?;
     let path = objects.directory().join(&object.sha256);
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if metadata.is_file() && metadata.len() == object.bytes => Ok(true),
-        Ok(_) => Err(format!(
-            "{} is not a regular object of the expected length",
-            path.display()
-        )),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+    match open_object_file(&path, Some(object.bytes)) {
+        Ok(_) => Ok(true),
+        Err(ObjectFileError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.to_string()),
     }
 }
 
 fn release_object_cache(objects: &ObjectInstaller, object: &Object) -> Result<(), String> {
-    let file = File::open(objects.directory().join(&object.sha256)).map_err(|e| e.to_string())?;
+    let file = open_object_file(
+        &objects.directory().join(&object.sha256),
+        Some(object.bytes),
+    )
+    .map_err(|e| e.to_string())?;
     artifact::release_file_cache(&file);
     Ok(())
 }

@@ -6,6 +6,7 @@ pub enum ObjectFileError {
     Io(io::Error),
     Cancelled,
     InvalidDigest,
+    NotDirectory(PathBuf),
     NotRegularFile(PathBuf),
     FileChanged(PathBuf),
     DigestMismatch {
@@ -24,6 +25,7 @@ impl fmt::Display for ObjectFileError {
             Self::Io(error) => error.fmt(f),
             Self::Cancelled => f.write_str("object file operation cancelled"),
             Self::InvalidDigest => f.write_str("object digest is not lowercase SHA-256"),
+            Self::NotDirectory(path) => write!(f, "{} is not a real directory", path.display()),
             Self::NotRegularFile(path) => {
                 write!(f, "{} is not a regular object file", path.display())
             }
@@ -56,5 +58,17 @@ impl std::error::Error for ObjectFileError {
 impl From<io::Error> for ObjectFileError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+impl From<ObjectFileError> for io::Error {
+    fn from(error: ObjectFileError) -> Self {
+        let kind = match error {
+            ObjectFileError::Io(error) => return error,
+            ObjectFileError::InvalidDigest => io::ErrorKind::InvalidInput,
+            ObjectFileError::Cancelled => io::ErrorKind::Interrupted,
+            _ => io::ErrorKind::InvalidData,
+        };
+        Self::new(kind, error)
     }
 }

@@ -1,5 +1,5 @@
 //! A publisher's distributed objects and the retention that authorizes serving them.
-use crate::{is_object_digest, ObjectInstaller, ObjectReference};
+use crate::{is_object_digest, open_object_file, ObjectInstaller, ObjectReference};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -114,7 +114,7 @@ impl PublishedObjectStore {
                 "object not retained",
             ));
         }
-        fs::File::open(self.installer.directory().join(name))
+        open_object_file(&self.installer.directory().join(name), None).map_err(io::Error::from)
     }
 }
 

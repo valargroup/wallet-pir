@@ -1,5 +1,7 @@
 //! File integrity is established against both the open inode and its name.
-use pir_publication::{hash_object_file, FileIdentity, ObjectFileError, ObjectReference};
+use pir_publication::{
+    hash_object_file, open_object_file, FileIdentity, ObjectFileError, ObjectReference,
+};
 use std::{
     cell::Cell,
     fs::{self, File},
@@ -140,4 +142,66 @@ fn settlement_requires_both_timestamps_to_precede_the_safety_window() {
     file.set_modified(time + Duration::from_secs(3600)).unwrap();
     let future = FileIdentity::capture(&path, &file).unwrap();
     assert!(!future.settled_before(time + Duration::from_secs(2)));
+}
+
+#[test]
+fn checked_access_preserves_metadata_and_pins_the_acquired_file() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("object");
+    fs::write(&path, b"first").unwrap();
+    let mut opened = open_object_file(&path, Some(5)).unwrap();
+    let identity = FileIdentity::capture(&path, &opened).unwrap();
+    let links = opened.metadata().unwrap().nlink();
+    for _ in 0..3 {
+        let repeated = open_object_file(&path, Some(5)).unwrap();
+        assert_eq!(FileIdentity::capture(&path, &repeated).unwrap(), identity);
+        assert_eq!(repeated.metadata().unwrap().nlink(), links);
+    }
+    let next = root.path().join("next");
+    fs::write(&next, b"other").unwrap();
+    fs::rename(&next, &path).unwrap();
+    let mut bytes = String::new();
+    opened.read_to_string(&mut bytes).unwrap();
+    assert_eq!(
+        bytes, "first",
+        "an acquired stream keeps the original inode"
+    );
+    assert!(identity.check(&path, &opened).is_err());
+    assert!(hash_object_file(&path, &mut opened, None, &|| false).is_err());
+    let mut replacement = open_object_file(&path, Some(5)).unwrap();
+    bytes.clear();
+    replacement.read_to_string(&mut bytes).unwrap();
+    assert_eq!(bytes, "other");
+}
+
+#[test]
+fn checked_access_refuses_wrong_lengths_types_and_redirected_storage() {
+    let root = tempfile::tempdir().unwrap();
+    let store = root.path().join("objects");
+    fs::create_dir(&store).unwrap();
+    let path = store.join("object");
+    fs::write(&path, b"bytes").unwrap();
+    assert!(matches!(
+        open_object_file(&path, Some(4)),
+        Err(ObjectFileError::LengthMismatch { .. })
+    ));
+    assert!(
+        matches!(open_object_file(&store.join("missing"), None), Err(ObjectFileError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound)
+    );
+    assert!(matches!(
+        open_object_file(&store, None),
+        Err(ObjectFileError::NotRegularFile(_))
+    ));
+    let link = store.join("link");
+    std::os::unix::fs::symlink(&path, &link).unwrap();
+    assert!(matches!(
+        open_object_file(&link, Some(5)),
+        Err(ObjectFileError::NotRegularFile(_))
+    ));
+    let linked_store = root.path().join("linked-store");
+    std::os::unix::fs::symlink(&store, &linked_store).unwrap();
+    assert!(matches!(
+        open_object_file(&linked_store.join("object"), Some(5)),
+        Err(ObjectFileError::NotDirectory(_))
+    ));
 }

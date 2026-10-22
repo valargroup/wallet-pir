@@ -13,7 +13,8 @@
 //! under its final name, which fails rather than replaces an installed one,
 //! and are never written in place. The loader and the artifact resolver
 //! accept only the exact links written here.
-use pir_publication::{InstalledObject, ObjectFileError, ObjectInstaller};
+use pir_publication::is_object_digest as is_digest;
+use pir_publication::{open_object_file, InstalledObject, ObjectFileError, ObjectInstaller};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -41,10 +42,6 @@ pub struct Adopted {
 #[cfg(test)]
 pub(crate) static INTERRUPT_INSTALL: std::sync::Mutex<BTreeSet<PathBuf>> =
     std::sync::Mutex::new(BTreeSet::new());
-
-fn is_digest(name: &str) -> bool {
-    transparent_shared::publication::is_digest(name)
-}
 
 /// The store `name` beside `publication`, created as a real directory.
 fn store(publication: &Path, name: &str) -> Result<PathBuf, BoxError> {
@@ -132,10 +129,11 @@ impl Adopted {
 /// preparation can succeed. In particular, this never changes inode metadata.
 fn can_reference(installer: &ObjectInstaller, digest: &str) -> Result<bool, BoxError> {
     let object = installer.directory().join(digest);
-    match std::fs::symlink_metadata(&object) {
-        Ok(metadata) if metadata.is_file() => Ok(true),
-        Ok(_) => Err(format!("{} is not a regular stored object", object.display()).into()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+    match open_object_file(&object, None) {
+        Ok(_) => Ok(true),
+        Err(ObjectFileError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(false)
+        }
         Err(error) => Err(error.into()),
     }
 }

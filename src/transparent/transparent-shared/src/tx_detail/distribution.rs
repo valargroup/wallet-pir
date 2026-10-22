@@ -91,7 +91,7 @@ pub struct Finalized {
     pub inventory: Inventory,
     pub bytes: Vec<u8>,
     pub sha256: String,
-    pub files: BTreeMap<String, PathBuf>,
+    pub files: BTreeMap<String, (PathBuf, u64)>,
     pub anchor_height: u64,
     pub anchor_hash: String,
 }
@@ -209,7 +209,7 @@ impl Finalized {
             if let Some(file) = file {
                 runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
             }
-            files.insert(artifact.sha256.clone(), physical);
+            files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
@@ -598,7 +598,10 @@ mod tests {
         let linked = Finalized::prepare_reusing(&next, &reused, &mut checked).unwrap();
         assert_eq!((checked.loaded, checked.reused), (0, 2));
         assert_eq!(linked.sha256, first.sha256);
-        assert!(linked.files.values().all(|path| path.starts_with(&next)));
+        assert!(linked
+            .files
+            .values()
+            .all(|(path, _)| path.starts_with(&next)));
 
         // A segment changed after the set took it over no longer matches its
         // manifest, though the runtime built from it is unchanged and proven.

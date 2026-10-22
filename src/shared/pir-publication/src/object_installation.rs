@@ -4,8 +4,8 @@
 //! serve them. Publication references and their lifetimes belong to the caller.
 mod staging;
 
-use crate::object_file::{check_stop, open_regular};
-use crate::{hash_object_file, FileIdentity, ObjectFileError};
+use crate::object_file::check_stop;
+use crate::{hash_object_file, open_object_file, FileIdentity, ObjectFileError};
 use crate::{is_object_digest, ObjectReference};
 use staging::StagedObject;
 use std::{
@@ -53,7 +53,7 @@ impl VerifiedStaging {
 }
 
 fn seal(staging: &StagedObject) -> Result<fs::File, ObjectFileError> {
-    let file = open_regular(staging.path())?;
+    let file = open_object_file(staging.path(), None)?;
     if !file.metadata()?.permissions().readonly() {
         file.set_permissions(fs::Permissions::from_mode(0o444))?;
     }
@@ -172,7 +172,7 @@ impl ObjectInstaller {
         };
         let mut bytes_hashed = reference.bytes;
         if !installed {
-            let mut existing = open_regular(&target)?;
+            let mut existing = open_object_file(&target, Some(reference.bytes))?;
             hash_object_file(&target, &mut existing, Some(reference), stop)?;
             existing.sync_all()?;
             bytes_hashed += reference.bytes;

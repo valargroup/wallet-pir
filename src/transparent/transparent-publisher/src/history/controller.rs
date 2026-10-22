@@ -1914,17 +1914,15 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
     let Some(sha256) = suffix.strip_prefix("artifacts/") else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(path) = finalized.file(sha256) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let file = match finalized.open_file(sha256) {
+        Ok(Some(file)) => tokio::fs::File::from_std(file),
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return unavailable(),
     };
     // Immutable file handles survive ordinary pointer retirement; they never
     // authorize activation. The consumer rechecks current after verification.
     let permit = match authority.0.distribution_slots.clone().try_acquire_owned() {
         Ok(permit) => permit,
-        Err(_) => return unavailable(),
-    };
-    let file = match tokio::fs::File::open(path).await {
-        Ok(file) => file,
         Err(_) => return unavailable(),
     };
     (
