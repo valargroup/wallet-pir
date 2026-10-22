@@ -315,6 +315,14 @@ Transparent settings preserve their installed distribution mode. The inventory u
 all four products, with no standalone publisher roles. Its `exact_check.products`
 matches the request checks. Credentials stay in their existing files.
 
+An installed HTTPS-only Transparent publisher may still have retired settings
+such as `http_only`, `ship_runtimes` or fleet-command fields. Omit these fields
+from the new request. Planning permits their removal only when the installed
+settings explicitly enable HTTPS-only publishing and prepared runtimes, with
+live rather than shadow or replay behavior. Every other product setting must
+match. The transaction retains the original configuration bytes for drift
+checks and rollback; planning does not rewrite the installed file.
+
 Private control changes require the publisher, Enhance packing router and query
 ingress to change together. The `serving` object pins the matching query-server
 `git_sha`, `binary_sha256`, `binary_bytes` and installed `caddy_sha256`. Supply

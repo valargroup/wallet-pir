@@ -1,4 +1,5 @@
 """Publisher updates preserve product settings and recover after interrupted effects."""
+import copy
 import json
 import unittest
 from publisher_fixture import PublisherFixture
@@ -205,6 +206,85 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
         with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
             self.make_target().plan()
+
+    def install_retired_https_settings(self):
+        installed = copy.deepcopy(self.request['configuration'])
+        installed['transparent_history']['settings'].update({
+            'http_only': True, 'distribute_prepared': True, 'ship_runtimes': True,
+            'shadow': False, 'fleet_command': '/opt/history/fleet.py', 'fleet_config': '/etc/retired-fleet.json'})
+        installed['transaction_details']['settings'].update({
+            'http_only': True, 'ship_runtimes': True, 'workers': ['retired-worker'],
+            'mode': 'live', 'blocks_per_step': 10, 'step_interval_ms': 100,
+            'replay_end': 1000, 'exit_when_idle': False})
+        text = json.dumps(installed, indent=3) + '\n'
+        self.ex.put('coordinator', publisher.CONFIG, text)
+        return installed, text
+
+    def test_https_update_removes_retired_settings_and_rollback_restores_exact_bytes(self):
+        _, original = self.install_retired_https_settings()
+        plan = self.target.plan()
+        self.assertEqual(self.ex.mutations(), [])
+        self.assertEqual(plan['plan']['before'][publisher.CONFIG]['text'], original)
+        self.assertEqual(self.target.deploy(self.binary, plan['plan_sha256'], self.serving_binary)['phase'], 'committed')
+        self.assertEqual(json.loads(self.ex.read('coordinator', publisher.CONFIG)), self.request['configuration'])
+        self.target.rollback()
+        self.assertEqual(self.ex.read('coordinator', publisher.CONFIG), original)
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+
+    def test_retired_settings_do_not_allow_other_product_changes(self):
+        self.install_retired_https_settings()
+        original = copy.deepcopy(self.request['configuration'])
+        changes = [('transparent_history', 'recent_from', 2),
+                   ('transparent_history', 'rpc_url', 'http://other-node:8232'),
+                   ('transaction_details', 'poll_ms', 501),
+                   ('enhance', 'poll_seconds', 20),
+                   ('status', 'publisher', {'state_dir': '/srv/other-status'})]
+        for product, field, value in changes:
+            with self.subTest(product=product, field=field):
+                self.request['configuration'] = copy.deepcopy(original)
+                self.request['configuration'][product]['settings'][field] = value
+                with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
+                    self.make_target().plan()
+                self.assertEqual(self.ex.mutations(), [])
+
+    def test_retiring_settings_requires_existing_https_and_prepared_runtimes(self):
+        changes = [('transparent_history', 'http_only', False),
+                   ('transparent_history', 'http_only', 1),
+                   ('transparent_history', 'distribute_prepared', False),
+                   ('transparent_history', 'ship_runtimes', False),
+                   ('transparent_history', 'shadow', True),
+                   ('transparent_history', 'shadow', 0),
+                   ('transaction_details', 'http_only', False),
+                   ('transaction_details', 'ship_runtimes', False),
+                   ('transaction_details', 'mode', 'replay'),
+                   ('transaction_details', 'exit_when_idle', True)]
+        for product, field, value in changes:
+            with self.subTest(product=product, field=field, value=value):
+                installed, _ = self.install_retired_https_settings()
+                installed[product]['settings'][field] = value
+                self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
+                with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
+                    self.target.plan()
+                self.assertEqual(self.ex.mutations(), [])
+
+    def test_retired_field_drift_invalidates_the_reviewed_plan(self):
+        installed, _ = self.install_retired_https_settings()
+        plan = self.target.plan()
+        installed['transparent_history']['settings']['fleet_config'] = '/etc/changed-fleet.json'
+        self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
+        with self.assertRaisesRegex(DeployError, 'stale'):
+            self.target.deploy(self.binary, plan['plan_sha256'], self.serving_binary)
+        self.assertEqual(self.ex.mutations(), [])
+
+    def test_new_update_requests_refuse_retired_settings_but_saved_requests_can_recover(self):
+        original = copy.deepcopy(self.request['configuration'])
+        for product, field in [('transparent_history', 'http_only'), ('transaction_details', 'workers')]:
+            with self.subTest(product=product, field=field):
+                self.request['configuration'] = copy.deepcopy(original)
+                self.request['configuration'][product]['settings'][field] = True
+                with self.assertRaisesRegex(DeployError, 'retired Transparent settings'):
+                    self.make_target()
+                self.make_target(recovery=True)
 
     def test_default_mode_resumes_the_checker_after_deploy_restart_and_rollback(self):
         self.deploy()
