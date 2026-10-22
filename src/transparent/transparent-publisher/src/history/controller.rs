@@ -411,7 +411,7 @@ pub async fn run_managed(
         status["integrity_validation"] = serde_json::json!({"state":"failed",
             "publication":{"height":authority.0.active.read().unwrap().publication.height,
                 "hash":authority.0.active.read().unwrap().publication.hash},
-            "map_sha256":failure.map_sha256,"inventory_sha256":failure.inventory_sha256,
+            "map_sha256":failure.map_sha256,"inventory_checksum":failure.inventory_checksum,
             "reason":format!("{}: {}", failure.path, failure.reason),
             "artifact":serde_json::to_value(&failure).unwrap_or_default()});
     }
@@ -1222,11 +1222,12 @@ async fn activate_history(
     let directory = &candidate.publication.directory;
     if let Some(distribution) = &candidate.distribution {
         let failures = integrity_failures(&config.publication_root)?;
-        if distribution.inventory().artifacts.iter().any(|a| {
-            failures
-                .iter()
-                .any(|f| f.found_sha256.as_deref() == Some(a.sha256.as_str()))
-        }) {
+        if distribution
+            .inventory()
+            .artifacts
+            .iter()
+            .any(|a| failures.iter().any(|f| f.found(&a.checksum)))
+        {
             return Err("candidate lists bytes that failed integrity validation".into());
         }
         // Completion evidence for a cheap restart, written only now that the
@@ -1347,7 +1348,7 @@ async fn activate_history(
             status[phase] = serde_json::json!({"state":"passed","source":"preparation",
                 "publication":{"height":height,"hash":hash},
                 "map_sha256":publication.map_sha256,
-                "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
+                "inventory_checksum":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.checksum().to_string())});
         }
         // What this cycle did, for operators and measurements: when its
         // candidate was published, accepted by a preparation quorum and
@@ -1396,15 +1397,118 @@ const DISTRIBUTION_SLOTS: usize = 4;
 /// Artifacts whose bytes failed integrity validation, kept across restarts.
 const INTEGRITY_FAILURES: &str = "integrity-failures.json";
 
+///
+/// Checksums keep the algorithm they were computed with. One recorded by the
+/// predecessor release (SHA-256) cannot be compared with a current checksum,
+/// so [`lists_failed`] quarantines its whole map instead, and it is written
+/// back in the predecessor's own form so a rolled-back release still reads it.
+/// A failure recorded by this release has no predecessor form; a predecessor
+/// refuses to start with it rather than forget it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RecordedFailure", into = "RecordedFailure")]
 struct IntegrityFailure {
+    path: String,
+    expected_checksum: pir_artifact::Checksum,
+    found_checksum: Option<pir_artifact::Checksum>,
+    inventory_checksum: pir_artifact::Checksum,
+    map_sha256: String,
+    reason: String,
+}
+
+/// The two persisted forms of an [`IntegrityFailure`].
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum RecordedFailure {
+    #[serde(with = "CurrentFailure")]
+    Current(IntegrityFailure),
+    Predecessor(PredecessorFailure),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "IntegrityFailure", deny_unknown_fields)]
+struct CurrentFailure {
+    path: String,
+    expected_checksum: pir_artifact::Checksum,
+    found_checksum: Option<pir_artifact::Checksum>,
+    inventory_checksum: pir_artifact::Checksum,
+    map_sha256: String,
+    reason: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PredecessorFailure {
     path: String,
     expected_sha256: String,
     found_sha256: Option<String>,
     inventory_sha256: String,
     map_sha256: String,
     reason: String,
+}
+
+impl TryFrom<RecordedFailure> for IntegrityFailure {
+    type Error = std::io::Error;
+    fn try_from(recorded: RecordedFailure) -> Result<Self, Self::Error> {
+        use pir_artifact::migration::sha256;
+        match recorded {
+            RecordedFailure::Current(failure) => {
+                for checksum in [&failure.expected_checksum, &failure.inventory_checksum]
+                    .into_iter()
+                    .chain(&failure.found_checksum)
+                {
+                    checksum.require_current()?;
+                }
+                Ok(failure)
+            }
+            RecordedFailure::Predecessor(old) => Ok(Self {
+                path: old.path,
+                expected_checksum: sha256(old.expected_sha256)?,
+                found_checksum: old.found_sha256.map(sha256).transpose()?,
+                inventory_checksum: sha256(old.inventory_sha256)?,
+                map_sha256: old.map_sha256,
+                reason: old.reason,
+            }),
+        }
+    }
+}
+
+impl From<IntegrityFailure> for RecordedFailure {
+    fn from(failure: IntegrityFailure) -> Self {
+        if failure.expected_checksum.algorithm != pir_artifact::Algorithm::Sha256 {
+            return Self::Current(failure);
+        }
+        let digest = |checksum: pir_artifact::Checksum| checksum.digest;
+        Self::Predecessor(PredecessorFailure {
+            path: failure.path,
+            expected_sha256: digest(failure.expected_checksum),
+            found_sha256: failure.found_checksum.map(digest),
+            inventory_sha256: digest(failure.inventory_checksum),
+            map_sha256: failure.map_sha256,
+            reason: failure.reason,
+        })
+    }
+}
+
+impl IntegrityFailure {
+    /// Whether this failure was recorded with the current checksum algorithm.
+    fn current(&self) -> bool {
+        self.expected_checksum.algorithm == pir_artifact::CURRENT
+    }
+
+    /// Whether these are the recorded corrupt bytes. A predecessor digest
+    /// identifies no current-format bytes.
+    fn found(&self, checksum: &str) -> bool {
+        self.found_checksum
+            .as_ref()
+            .is_some_and(|f| f.algorithm == pir_artifact::CURRENT && f.digest == checksum)
+    }
+}
+
+fn current_checksum(digest: &str) -> pir_artifact::Checksum {
+    pir_artifact::Checksum {
+        algorithm: pir_artifact::CURRENT,
+        digest: digest.into(),
+    }
 }
 
 fn integrity_failures(root: &Path) -> Result<Vec<IntegrityFailure>, BoxError> {
@@ -1422,8 +1526,11 @@ fn lists_failed(
 ) -> bool {
     inventory.artifacts.iter().any(|a| {
         failures.iter().any(|f| {
-            (f.path == a.path && f.expected_sha256 == a.sha256)
-                || f.found_sha256.as_deref() == Some(a.sha256.as_str())
+            if !f.current() {
+                // Recorded against this map before the checksum conversion.
+                return f.map_sha256 == inventory.map_sha256;
+            }
+            (f.path == a.path && f.expected_checksum.digest == a.checksum) || f.found(&a.checksum)
         })
     })
 }
@@ -1574,7 +1681,7 @@ async fn serve_restored(
         identity: super::validator::Identity {
             directory: publication.directory.clone(),
             map_sha256: publication.map_sha256.clone(),
-            inventory_sha256: distribution.sha256().to_string(),
+            inventory_checksum: distribution.checksum().to_string(),
             height: publication.height,
             hash: publication.hash.clone(),
             epoch,
@@ -1591,7 +1698,7 @@ fn validation_status(identity: &super::validator::Identity, state: &str) -> serd
         "state": state,
         "publication": {"height": identity.height, "hash": identity.hash},
         "map_sha256": identity.map_sha256,
-        "inventory_sha256": identity.inventory_sha256,
+        "inventory_checksum": identity.inventory_checksum,
     })
 }
 
@@ -1620,7 +1727,7 @@ fn validation_event(
             && active
                 .distribution
                 .as_ref()
-                .is_some_and(|d| d.sha256() == identity.inventory_sha256)
+                .is_some_and(|d| d.checksum() == identity.inventory_checksum)
     };
     let set = |key: &str, value: serde_json::Value| {
         if current() {
@@ -1656,17 +1763,17 @@ fn validation_event(
         }),
         Event::Integrity(Err(IntegrityError::Mismatch {
             path,
-            expected_sha256,
-            found_sha256,
+            expected_checksum,
+            found_checksum,
             reason,
         })) => {
-            tracing::error!(%path, %reason, inventory = %identity.inventory_sha256,
+            tracing::error!(%path, %reason, inventory = %identity.inventory_checksum,
                 "publication artifact failed integrity validation");
             let failure = IntegrityFailure {
                 path,
-                expected_sha256,
-                found_sha256,
-                inventory_sha256: identity.inventory_sha256.clone(),
+                expected_checksum: current_checksum(&expected_checksum),
+                found_checksum: found_checksum.as_deref().map(current_checksum),
+                inventory_checksum: current_checksum(&identity.inventory_checksum),
                 map_sha256: identity.map_sha256.clone(),
                 reason: reason.clone(),
             };
@@ -1735,7 +1842,7 @@ fn validation_event(
             }
         }
         Event::Correctness(Err(CorrectnessError::Failed(reason))) => {
-            tracing::error!(%reason, inventory = %identity.inventory_sha256,
+            tracing::error!(%reason, inventory = %identity.inventory_checksum,
                 "publication failed correctness validation; still serving");
             update("correctness", &|v| {
                 v["state"] = "failed".into();
@@ -1932,8 +2039,8 @@ async fn check_distribution_anchors(
         || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
         || authority.0.withdrawn.load(Ordering::Acquire) != !current.eligible()
         || active.publication.map_sha256 != map_sha256
-        || active.distribution.as_ref().map(|d| d.sha256())
-            != Some(current.inventory_sha256.as_str())
+        || active.distribution.as_ref().map(|d| d.checksum())
+            != Some(current.inventory_checksum.as_str())
     {
         return Err("canonicality snapshot superseded".into());
     }
@@ -1973,7 +2080,7 @@ async fn anchor_batch(
             schema: publication::SCHEMA.into(),
             revision: current.revision,
             recovery_epoch: current.recovery_epoch,
-            inventory_sha256: current.inventory_sha256.clone(),
+            inventory_checksum: current.inventory_checksum.clone(),
             genesis_hash: current.genesis_hash.clone(),
             results: batch
                 .anchors
@@ -2014,7 +2121,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
             schema: publication::SCHEMA.into(),
             revision: authority.0.distribution_revision.load(Ordering::Acquire),
             recovery_epoch: authority.0.epoch.load(Ordering::Acquire),
-            inventory_sha256: finalized.sha256().to_string(),
+            inventory_checksum: finalized.checksum().to_string(),
             network: active.filters.map().network.clone(),
             genesis_hash: active.filters.map().genesis_hash.clone(),
             anchor_height: active.publication.height,
@@ -2122,7 +2229,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         return unavailable();
     }
     let finalized = active.distribution.as_ref().unwrap();
-    if suffix == format!("inventories/{}", finalized.sha256()) {
+    if suffix == format!("inventories/{}", finalized.checksum()) {
         return (
             [
                 ("content-type", "application/json"),
@@ -2449,6 +2556,115 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
         std::fs::remove_dir_all(entry.path())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::*;
+    use transparent_shared::publication::{Artifact, Inventory, Kind};
+
+    fn inventory(map: &str, path: &str, checksum: &str) -> Inventory {
+        Inventory {
+            schema: transparent_shared::publication::SCHEMA.into(),
+            network: "main".into(),
+            genesis_hash: "00".repeat(32),
+            map_sha256: map.into(),
+            shard_schema: "shard".into(),
+            runtime: transparent_shared::publication::RUNTIME.into(),
+            profile: "profile".into(),
+            recent_from_shard: 0,
+            artifacts: vec![Artifact {
+                path: path.into(),
+                checksum: checksum.into(),
+                source_sha256: None,
+                bytes: 1,
+                kind: Kind::ArchiveTable,
+            }],
+        }
+    }
+
+    fn predecessor(map: &str) -> serde_json::Value {
+        serde_json::json!({"path":"a/directory.0.bin","expected_sha256":"11".repeat(32),
+            "found_sha256":"22".repeat(32),"inventory_sha256":"33".repeat(32),
+            "map_sha256":map,"reason":"body checksum differs"})
+    }
+
+    /// A failure recorded by the predecessor release still quarantines the
+    /// converted publication of its map: its restore stays failed, and only a
+    /// freshly activated replacement of that map clears it.
+    #[test]
+    fn a_predecessor_failure_record_quarantines_its_map_after_conversion() {
+        let root = tempfile::tempdir().unwrap();
+        let (map, other) = ("44".repeat(32), "55".repeat(32));
+        let bytes = serde_json::to_vec(&serde_json::json!([predecessor(&map)])).unwrap();
+        std::fs::write(root.path().join(INTEGRITY_FAILURES), &bytes).unwrap();
+        let failures = integrity_failures(root.path()).unwrap();
+        assert_eq!(failures.len(), 1);
+        assert!(!failures[0].current());
+        // Converted bytes carry new checksums and may carry new paths.
+        let converted = inventory(&map, "a/other.runtime", &"66".repeat(32));
+        assert!(lists_failed(&failures, &converted));
+        assert!(!lists_failed(
+            &failures,
+            &inventory(&other, "a/directory.0.bin", &"11".repeat(32))
+        ));
+        // SHA-256 digests never name current-format bytes, even when equal.
+        assert!(!failures[0].found(&"22".repeat(32)));
+        // Written back unchanged, so a rolled-back predecessor still parses it.
+        assert_eq!(
+            serde_json::to_value(&failures).unwrap(),
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        );
+    }
+
+    #[test]
+    fn current_failure_records_compare_only_current_checksums() {
+        let failure: IntegrityFailure =
+            serde_json::from_value(predecessor(&"44".repeat(32))).unwrap();
+        let current = IntegrityFailure {
+            expected_checksum: current_checksum(&"77".repeat(32)),
+            found_checksum: Some(current_checksum(&"88".repeat(32))),
+            inventory_checksum: current_checksum(&"99".repeat(32)),
+            ..failure
+        };
+        let value = serde_json::to_value(&current).unwrap();
+        assert_eq!(value["expected_checksum"]["algorithm"], "blake3");
+        // The predecessor's own record refuses it; deployment rollback keys
+        // on exactly this boundary before stopping a current release.
+        assert!(serde_json::from_value::<PredecessorFailure>(value.clone()).is_err());
+        assert!(
+            serde_json::from_value::<PredecessorFailure>(predecessor(&"44".repeat(32))).is_ok()
+        );
+        assert_eq!(
+            serde_json::from_value::<IntegrityFailure>(value.clone()).unwrap(),
+            current
+        );
+        let failures = [current];
+        let map = "44".repeat(32);
+        assert!(lists_failed(
+            &failures,
+            &inventory(&map, "a/directory.0.bin", &"77".repeat(32))
+        ));
+        assert!(lists_failed(
+            &failures,
+            &inventory(&map, "b", &"88".repeat(32))
+        ));
+        // A verified replacement under the same map is not quarantined.
+        assert!(!lists_failed(
+            &failures,
+            &inventory(&map, "a/directory.0.bin", &"aa".repeat(32))
+        ));
+        // Mislabelled, mixed or malformed records are refused, not reinterpreted.
+        let mut mislabelled = value.clone();
+        mislabelled["found_checksum"]["algorithm"] = "sha256".into();
+        assert!(serde_json::from_value::<IntegrityFailure>(mislabelled).is_err());
+        let mut mixed = value;
+        mixed["expected_sha256"] = "11".repeat(32).into();
+        assert!(serde_json::from_value::<IntegrityFailure>(mixed).is_err());
+        let mut malformed = predecessor(&map);
+        malformed["expected_sha256"] = "not hex".into();
+        assert!(serde_json::from_value::<IntegrityFailure>(malformed).is_err());
+    }
 }
 
 #[cfg(all(test, feature = "fixtures"))]

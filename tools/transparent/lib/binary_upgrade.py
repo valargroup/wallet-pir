@@ -97,7 +97,7 @@ PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 PROVIDER_PIN_KEYS = {'ready_identity', 'limits', 'args', 'config_sha256', 'unit_sha256'}
 # The publisher discovery contract (src/shared/pir-service-discovery) a current
 # query server requires before it synchronizes; same major is compatible.
-DISCOVERY_PATH, DISCOVERY_MAJOR = '/.well-known/pir-service-discovery', '1'
+DISCOVERY_PATH, DISCOVERY_MAJOR = '/.well-known/pir-service-discovery', '2'
 PROVIDER_IDENTITY = {True: {'role': None, 'worker_id': None},
                      False: {'role': 'recent-replica', 'worker_id': 'provider'}}
 

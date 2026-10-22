@@ -274,6 +274,9 @@ pub struct SegmentSource {
     row_bytes: u32,
     /// SHA-256 of the file, in hex, as the manifest publishes it.
     sha256: String,
+    /// Artifact checksum computed alongside the protocol commitment. It is
+    /// reusable only with this source's settled file evidence.
+    artifact_checksum: std::sync::OnceLock<String>,
     /// The first row a query may omit, from which every byte must be zero:
     /// a page shard's [`query_rows`], or `rows` when queries select every
     /// row. Checked wherever the digest is, so no runtime is built or
@@ -424,6 +427,7 @@ impl SegmentSource {
             rows,
             row_bytes,
             sha256,
+            artifact_checksum: std::sync::OnceLock::new(),
             zero_from_row,
             evidence: None,
             size_only: false,
@@ -466,6 +470,10 @@ impl SegmentSource {
     /// SHA-256 of the file, in hex, as the manifest publishes it.
     pub fn sha256(&self) -> &str {
         &self.sha256
+    }
+
+    pub(crate) fn artifact_checksum(&self) -> Option<&str> {
+        self.artifact_checksum.get().map(String::as_str)
     }
 
     /// Bytes this segment occupies on disk, and transiently in memory while a
@@ -533,6 +541,7 @@ impl SegmentSource {
             self.bytes() as u64,
         );
         let mut hasher = Sha256::new();
+        let mut artifact_hasher = pir_artifact::Hasher::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0usize;
         let zero_from = self.zero_from();
@@ -550,6 +559,7 @@ impl SegmentSource {
             if !received {
                 hasher.update(&buffer[..read]);
             }
+            artifact_hasher.update(&buffer[..read]);
             if total + read > zero_from {
                 let skip = zero_from.saturating_sub(total);
                 tail_data |= buffer[skip..read].iter().any(|&byte| byte != 0);
@@ -579,6 +589,9 @@ impl SegmentSource {
         if let Some(receipt) = receipt {
             receipt.record();
         }
+        let _ = self
+            .artifact_checksum
+            .set(hex::encode(artifact_hasher.finalize()));
         Ok(stamp.filter(|stamp| stamp.settled_before(started)))
     }
 

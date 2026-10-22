@@ -37,7 +37,9 @@ async fn withdrawal_rejects_bound_publication_before_a_runtime_exists() {
     );
     assert!(publisher.publish(stale).await.is_err());
     assert!(
-        !publisher_root.join("objects").exists(),
+        !publisher_root
+            .join(pir_artifact::namespace("objects"))
+            .exists(),
         "withdrawn work must not prepare a runtime"
     );
     let again = publisher.work(&journal).unwrap().unwrap();
@@ -56,7 +58,9 @@ async fn withdrawal_rejects_bound_publication_before_a_runtime_exists() {
         publisher.publish(fresh).await.is_err(),
         "restart work must also obey a later withdrawal"
     );
-    assert!(!publisher_root.join("objects").exists());
+    assert!(!publisher_root
+        .join(pir_artifact::namespace("objects"))
+        .exists());
 }
 /// Full publication, including the reference packing artifact, then restart.
 #[cfg(feature = "qualification-tests")]
@@ -95,8 +99,11 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
             &publisher
                 .distribution
                 .root()
-                .join("inventories")
-                .join(format!("{}.json", first.inventory.as_ref().unwrap().sha256)),
+                .join(pir_artifact::namespace("inventories"))
+                .join(format!(
+                    "{}.json",
+                    first.inventory.as_ref().unwrap().checksum
+                )),
         )
         .unwrap();
     assert!(inventory.supports(manifest).unwrap());

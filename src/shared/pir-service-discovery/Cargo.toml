@@ -2,7 +2,7 @@
 name = "pir-service-discovery"
 # The one source of the Publisher-Query Server contract version. Publishers
 # advertise it and Query Servers compare against it; see README.md.
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 description = "Service discovery document and SemVer compatibility policy between Wallet PIR publishers and query servers"
 license = "MIT"

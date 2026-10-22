@@ -35,7 +35,7 @@ class DeployError(RuntimeError):
     pass
 
 
-def mutation_fence(inventory, executor, lock=None):
+def mutation_fence(inventory, executor, lock=None, artifact_transaction=None):
     """Refuse while a Transparent schema transaction is unfinished; read-only.
 
     Under the held production lock (`lock`) before every mutation; without one
@@ -48,6 +48,12 @@ def mutation_fence(inventory, executor, lock=None):
         schema_fence.local_schema_fence()
     elif host:
         schema_fence.schema_mutation_fence(lambda path: executor.read(host, path))
+    if host:
+        raw = executor.read(host, '/var/lib/wallet-pir/artifact-checksum-fence.json')
+        if raw is not None:
+            fence = json.loads(raw)
+            if fence.get('transaction') != artifact_transaction:
+                raise DeployError('artifact checksum cutover is unfinished; use its status and rollback before another deployment')
 
 
 def file_sha256(path):
@@ -406,28 +412,42 @@ class Deployer:
 
     # ---------------------------------------------------------- verification
 
-    def check(self, record, expected):
+    def live(self, record, expected, *, liveness_only=False):
+        """`(ok, reason, health document)`: the exact executable runs and answers health.
+
+        Liveness only; product readiness, which a retained incident may hold
+        false by design, is `check`'s further condition. Recovery can select a
+        dedicated liveness URL without publication acceptance fields.
+        """
         state = self.ex.probe_unit(record['host'], record['unit'])
         if state['active_state'] != 'active':
-            return False, 'unit is %s' % state['active_state']
+            return False, 'unit is %s' % state['active_state'], None
         if state['exe_sha256'] != expected:
-            return False, 'running executable is %s, expected %s' % (state['exe_sha256'], expected)
+            return False, 'running executable is %s, expected %s' % (state['exe_sha256'], expected), None
         verify = record['verify']
-        status, body = self.ex.http_get(record['host'], verify['health'])
+        liveness_url = verify.get('liveness_url') if liveness_only else None
+        status, body = self.ex.http_get(record['host'], liveness_url or verify['health'])
         if status != 200:
-            return False, 'health answered %s' % status
+            return False, 'health answered %s' % status, None
         try:
             document = json.loads(body)
         except ValueError:
             document = None
         if isinstance(document, dict) and 'binary_sha256' in document and document['binary_sha256'] != expected:
-            return False, 'health reports binary_sha256 %s' % document['binary_sha256']
-        for field, expected_value in verify.get('health_equals', {}).items():
+            return False, 'health reports binary_sha256 %s' % document['binary_sha256'], None
+        for field, expected_value in ({} if liveness_url else verify.get('health_equals', {})).items():
             value = document
             for part in field.split('.'):
                 value = value.get(part) if isinstance(value, dict) else None
             if type(value) is not type(expected_value) or value != expected_value:
-                return False, 'health %s is %r, expected %r' % (field, value, expected_value)
+                return False, 'health %s is %r, expected %r' % (field, value, expected_value), None
+        return True, 'live', document
+
+    def check(self, record, expected):
+        ok, reason, document = self.live(record, expected)
+        if not ok:
+            return False, reason
+        verify = record['verify']
         ready = verify.get('ready')
         if ready:
             value = document.get(ready['field']) if isinstance(document, dict) else None
@@ -442,10 +462,11 @@ class Deployer:
             return guard.ready(self, record, expected, document)
         return True, 'ready'
 
-    def wait_verified(self, record, expected):
+    def wait_verified(self, record, expected, *, live_only=False):
         deadline = self.clock() + record['verify']['timeout']
         while True:
-            ok, reason = self.check(record, expected)
+            ok, reason = (self.live(record, expected, liveness_only=True)[:2]
+                          if live_only else self.check(record, expected))
             if ok:
                 return
             if self.clock() >= deadline:
@@ -464,6 +485,7 @@ class Deployer:
             'changes': [{**change, 'previous_sha256': text_sha256(change['previous']),
                          'new_sha256': text_sha256(change['new'])} for change in plan.changes],
             'verify': {'health': target.url(target.role.health), 'ready': target.role.ready,
+                       'liveness_url': target.url(target.role.liveness_url),
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
             'directories': list(plan.directories), 'check': list(plan.check),

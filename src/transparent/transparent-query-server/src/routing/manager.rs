@@ -397,11 +397,11 @@ impl HistorySync {
         let raw = self
             .source
             .small(
-                &format!("inventories/{}", current.inventory_sha256),
+                &format!("inventories/{}", current.inventory_checksum),
                 16 << 20,
             )
             .await?;
-        if publication::digest(&raw) != current.inventory_sha256 {
+        if publication::digest(&raw) != current.inventory_checksum {
             return Err("inventory digest mismatch".into());
         }
         let fresh: Inventory = serde_json::from_slice(&raw)?;

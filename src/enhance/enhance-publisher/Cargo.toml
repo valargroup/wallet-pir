@@ -18,6 +18,7 @@ native-reinspiring = ["enhance-query-server/native-reinspiring", "dep:zakura-pir
 # Exposes the journal's injected I/O failure to the host's Enhance regressions.
 fault-injection = []
 [dependencies]
+pir-artifact = { path = "../../shared/pir-artifact" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 # Query serving, which the publisher composes with chain reading and ingestion.
 enhance-query-server = { path = "../enhance-query-server" }

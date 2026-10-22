@@ -6,7 +6,7 @@
 //! That pass records which file each hash was read from, so publication only
 //! rehashes files that were changed, replaced or truncated since.
 use enhance_query_server::{
-    protocol::{digest, Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
+    protocol::{Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
     publication::{Inventory, VERSION},
 };
 mod object_io;
@@ -21,6 +21,11 @@ use std::{
     path::Path,
 };
 pub use verification::{verify_publication, PreparedPublication, VerificationStats};
+
+/// Root of the preparation engine whose prepared units retention collects.
+pub(crate) fn engine_root(root: &Path) -> std::path::PathBuf {
+    root.join("preparation")
+}
 
 /// Produce material for validated coverage, one domain at a time. The caller
 /// owns chain authority and supplies the recovery epoch of every domain.
@@ -43,7 +48,7 @@ pub fn prepare_publication(
             return Err("noncanonical domain epoch".into());
         }
     }
-    fs::create_dir_all(root.join("objects")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(root.join(pir_artifact::namespace("objects"))).map_err(|e| e.to_string())?;
     let owner = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -62,13 +67,16 @@ pub fn prepare_publication(
         domains,
     };
     let prepared = verify_publication(root, inventory)?;
-    File::open(root.join("objects"))
+    File::open(root.join(pir_artifact::namespace("objects")))
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;
     persist_metadata(
         root,
-        "inventories",
-        &format!("{}.json", digest(prepared.inventory())),
+        &pir_artifact::namespace("inventories"),
+        &format!(
+            "{}.json",
+            enhance_query_server::publication::inventory_digest(prepared.inventory())
+        ),
         prepared.inventory(),
     )?;
     Ok(prepared)

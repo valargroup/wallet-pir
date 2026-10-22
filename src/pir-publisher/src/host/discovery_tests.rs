@@ -18,7 +18,7 @@ async fn discovery_serves_the_shared_contract_version_uncached() {
         .unwrap();
     assert_eq!(
         &body[..],
-        br#"{"service":"pir-publisher","version":"1.0.0"}"#
+        br#"{"service":"pir-publisher","version":"2.0.0"}"#
     );
     assert_eq!(
         pir_service_discovery::check_publisher(&body).unwrap(),

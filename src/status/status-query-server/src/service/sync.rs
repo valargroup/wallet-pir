@@ -55,10 +55,10 @@ impl StatusSynchronization {
         if let Some(current) = &floor.current {
             current.validate(service.network)?;
         }
-        fs::create_dir_all(service.state_dir.join("objects"))?;
+        fs::create_dir_all(service.state_dir.join(pir_artifact::namespace("objects")))?;
         // The exclusive owner can remove interrupted transfer files. Completed
         // objects and every authority/revocation record are preserved.
-        for entry in fs::read_dir(service.state_dir.join("objects"))? {
+        for entry in fs::read_dir(service.state_dir.join(pir_artifact::namespace("objects")))? {
             let entry = entry?;
             if entry.file_type()?.is_file()
                 && entry
@@ -157,8 +157,11 @@ impl StatusSynchronization {
     }
     async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
         object.validate(attempt_limit())?;
-        let root = self.service.state_dir.join("objects");
-        let target = root.join(&object.sha256);
+        let root = self
+            .service
+            .state_dir
+            .join(pir_artifact::namespace("objects"));
+        let target = root.join(&object.checksum);
         if target.exists() {
             let path = target.clone();
             let expected = object.clone();
@@ -172,7 +175,7 @@ impl StatusSynchronization {
         let result = async {
             let mut response = self
                 .source
-                .request(&format!("objects/{}", object.sha256), None)
+                .request(&format!("objects/{}", object.checksum), None)
                 .await?;
             if !response.status().is_success() {
                 response.discard().await?;
@@ -187,7 +190,7 @@ impl StatusSynchronization {
                 .copy_to(
                     &mut file,
                     object.bytes,
-                    pir_sync_manager::Verification::Sha256(&object.sha256),
+                    pir_sync_manager::Verification::Artifact(&object.checksum),
                 )
                 .await?;
             file.sync_all().await?;
@@ -485,7 +488,10 @@ impl<'a> AcquiredPublication<'a> {
         } else if refreshed.is_some() {
             refreshed
         } else {
-            let root = sync.service.state_dir.join("objects");
+            let root = sync
+                .service
+                .state_dir
+                .join(pir_artifact::namespace("objects"));
             let i = inventory.clone();
             let worker = sync.service.role == Role::Worker;
             let backend = sync.backend;
@@ -494,7 +500,7 @@ impl<'a> AcquiredPublication<'a> {
                     Generation::load_prepared(
                         &i,
                         worker,
-                        |o| root.join(&o.sha256),
+                        |o| root.join(&o.checksum),
                         backend,
                         previous.as_deref(),
                     )
@@ -562,7 +568,10 @@ impl PreparedPublication<'_> {
             if sync.retained.len() > 2 {
                 sync.retained.remove(0);
             }
-            let root = sync.service.state_dir.join("objects");
+            let root = sync
+                .service
+                .state_dir
+                .join(pir_artifact::namespace("objects"));
             let retained = sync.retained.clone();
             tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
         }

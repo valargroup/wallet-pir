@@ -1,4 +1,5 @@
 //! Unified application host. Product libraries retain publication authority.
+pub mod artifact_checksum;
 pub mod config;
 mod host;
 mod publisher;

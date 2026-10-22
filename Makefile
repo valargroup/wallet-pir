@@ -139,7 +139,8 @@ check-ops-scaler-fast:
 
 .PHONY: check-reports
 check-reports:
-	python3 -m unittest discover -s tools/transparent/loadtest/tests -p 'test_*.py'
+	CARGO_TARGET_DIR="$${CARGO_TARGET_DIR:-target}/artifact-hash-helper" cargo build --locked --profile release-fast -p pir-publisher --bin pir-publisher
+	PIR_ARTIFACT_HASH_COMMAND="$${CARGO_TARGET_DIR:-target}/artifact-hash-helper/release-fast/pir-publisher" python3 -m unittest discover -s tools/transparent/loadtest/tests -p 'test_*.py'
 	node --test tools/transparent/loadtest/tests/apm.test.cjs
 
 # Every relative Markdown link must resolve. The transparent PIR documentation

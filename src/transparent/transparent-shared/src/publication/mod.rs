@@ -1,5 +1,6 @@
 //! History-only prepared-publication distribution. Verified bytes alone never
 //! grant serving authority. This inventory is not a wallet format.
+pub mod migration;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
@@ -16,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA: &str = "transparent-prepared-distribution-v1";
+pub const SCHEMA: &str = "transparent-prepared-distribution-v2";
 pub const PREFIX: &str = "/provider/v1/";
 pub const MAX_METADATA_BYTES: u64 = 16 << 20;
 // Bound independently by every native loader identity; change with its layout.
@@ -31,7 +32,8 @@ pub struct Current {
     /// Durable monotonic publisher pointer revision, including controller opens.
     pub revision: u64,
     pub recovery_epoch: u64,
-    pub inventory_sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub inventory_checksum: String,
     pub network: String,
     pub genesis_hash: String,
     pub anchor_height: u64,
@@ -107,7 +109,8 @@ pub struct AnchorBatchRequest {
     pub schema: String,
     pub revision: u64,
     pub recovery_epoch: u64,
-    pub inventory_sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub inventory_checksum: String,
     pub anchors: Vec<AnchorPair>,
 }
 impl AnchorBatchRequest {
@@ -118,7 +121,7 @@ impl AnchorBatchRequest {
             schema: current.schema.clone(),
             revision: current.revision,
             recovery_epoch: current.recovery_epoch,
-            inventory_sha256: current.inventory_sha256.clone(),
+            inventory_checksum: current.inventory_checksum.clone(),
             anchors,
         };
         request.validate()?;
@@ -127,7 +130,7 @@ impl AnchorBatchRequest {
     pub fn validate(&self) -> Result<(), Error> {
         let distinct: BTreeSet<_> = self.anchors.iter().collect();
         if self.schema != SCHEMA
-            || !is_digest(&self.inventory_sha256)
+            || !is_digest(&self.inventory_checksum)
             || self.anchors.is_empty()
             || self.anchors.len() > MAX_ANCHOR_BATCH
             || distinct.len() != self.anchors.len()
@@ -142,7 +145,7 @@ impl AnchorBatchRequest {
         self.schema == current.schema
             && self.revision == current.revision
             && self.recovery_epoch == current.recovery_epoch
-            && self.inventory_sha256 == current.inventory_sha256
+            && self.inventory_checksum == current.inventory_checksum
     }
 }
 
@@ -162,7 +165,8 @@ pub struct AnchorBatch {
     pub schema: String,
     pub revision: u64,
     pub recovery_epoch: u64,
-    pub inventory_sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub inventory_checksum: String,
     pub genesis_hash: String,
     pub results: Vec<AnchorResult>,
 }
@@ -177,7 +181,7 @@ impl AnchorBatch {
         if self.schema != request.schema
             || self.revision != request.revision
             || self.recovery_epoch != request.recovery_epoch
-            || self.inventory_sha256 != request.inventory_sha256
+            || self.inventory_checksum != request.inventory_checksum
             || self.genesis_hash != genesis_hash
         {
             return Err("canonicality attestation identity/snapshot superseded".into());
@@ -220,7 +224,12 @@ impl Kind {
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub path: String,
-    pub sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub checksum: String,
+    /// Commitment required by the unchanged source-table protocol, when this
+    /// artifact is a table. It is distinct from the distribution checksum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_sha256: Option<String>,
     pub bytes: u64,
     pub kind: Kind,
 }
@@ -228,7 +237,8 @@ pub struct Artifact {
 /// Expected publisher identity saved at receipt; this is not proof of a body hash.
 #[derive(Clone, Debug)]
 pub struct ReceivedArtifact {
-    pub sha256: String,
+    pub checksum: String,
+    pub source_sha256: Option<String>,
     pub bytes: u64,
     pub object: PathBuf,
 }
@@ -252,8 +262,12 @@ pub struct Inventory {
     pub artifacts: Vec<Artifact>,
 }
 pub fn digest(bytes: &[u8]) -> String {
+    pir_artifact::digest(bytes)
+}
+pub fn protocol_digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
+
 pub fn is_digest(text: &str) -> bool {
     text.len() == 64
         && text
@@ -282,7 +296,7 @@ impl Inventory {
     /// runtime is fetched. A publisher cannot label archive tables as metadata.
     pub fn validate_map(&self, map: &transparent_filter::ShardMap) -> Result<(), Error> {
         map.validate_supported()?;
-        if digest(&serde_json::to_vec(map)?) != self.map_sha256
+        if protocol_digest(&serde_json::to_vec(map)?) != self.map_sha256
             || map.network != self.network
             || map.genesis_hash != self.genesis_hash
             || self.recent_from_shard >= map.shards.len() as u64
@@ -359,7 +373,7 @@ impl Inventory {
         let mut paths = BTreeSet::new();
         for file in &self.artifacts {
             if !safe_path(&file.path)
-                || !is_digest(&file.sha256)
+                || !is_digest(&file.checksum)
                 || !paths.insert(&file.path)
                 || file.bytes == 0
                 || (file.kind == Kind::Metadata && file.bytes > MAX_METADATA_BYTES)
@@ -383,7 +397,7 @@ impl Inventory {
 pub struct Finalized {
     inventory: Inventory,
     bytes: Vec<u8>,
-    sha256: String,
+    checksum: String,
     files: BTreeMap<String, PathBuf>,
 }
 impl Finalized {
@@ -393,8 +407,8 @@ impl Finalized {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
-    pub fn sha256(&self) -> &str {
-        &self.sha256
+    pub fn checksum(&self) -> &str {
+        &self.checksum
     }
 
     pub fn file(&self, digest: &str) -> Option<&Path> {
@@ -470,21 +484,21 @@ impl Finalized {
             pending,
             sources,
             native,
-        } = plan(root, set, recent_from_height, full)?;
+        } = plan(root, set, recent_from_height, full, RuntimeNames::Current)?;
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
         for (artifact, path, file) in hash_listed(root, pending, stop)? {
             if let Some(expected) = sources.get(&path) {
-                if artifact.sha256 != *expected {
+                if artifact.source_sha256.as_deref() != Some(*expected) {
                     return Err("source segment differs from its manifest".into());
                 }
             }
             if let Some(file) = file {
-                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+                runtimes.insert(path.clone(), (artifact.checksum.clone(), file));
             }
             if full || artifact.kind.local() {
-                files.insert(artifact.sha256.clone(), path);
+                files.insert(artifact.checksum.clone(), path);
             }
             inventory.artifacts.push(artifact);
         }
@@ -495,10 +509,10 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            let (checksum, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
-            if previous.get(&name) == Some(&sha256) {
+            if previous.get(&name) == Some(&checksum) {
                 checked.reused += 1;
             } else {
                 if stop() {
@@ -508,18 +522,18 @@ impl Finalized {
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
             }
-            passed.insert(name, sha256);
+            passed.insert(name, checksum);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
         inventory.validate_map(&set.map)?;
         let bytes = serde_json::to_vec(&inventory)?;
-        let sha256 = digest(&bytes);
+        let checksum = digest(&bytes);
         checked.passed = passed;
         Ok(Self {
             inventory,
             bytes,
-            sha256,
+            checksum,
             files,
         })
     }
@@ -540,11 +554,20 @@ type NativeCheck<'a> = (
     std::sync::Arc<SharedParams>,
     &'a crate::history::shardset::SegmentSource,
 );
+/// Which artifact format names the shipped runtimes a plan lists.
+#[derive(Clone, Copy)]
+enum RuntimeNames {
+    Current,
+    /// The immediately preceding format, for offline migration only: its
+    /// source publication holds no current-format runtime file yet.
+    Previous,
+}
 fn plan<'a>(
     root: &Path,
     set: &'a ShardSet,
     recent_from_height: u64,
     full: bool,
+    names: RuntimeNames,
 ) -> Result<Plan<'a>, Error> {
     let recent = set
         .map
@@ -645,7 +668,12 @@ fn plan<'a>(
                         table.kind(),
                         segment,
                     );
-                    let path = shipped.path(&key, shared, source.sha256());
+                    let path = match names {
+                        RuntimeNames::Current => shipped.path(&key, shared, source.sha256()),
+                        RuntimeNames::Previous => {
+                            shipped.previous_path(&key, shared, source.sha256())
+                        }
+                    };
                     if add(
                         path.clone(),
                         if local {
@@ -673,7 +701,7 @@ fn plan<'a>(
 /// publisher offer the exact same inventory without rescanning its bodies;
 /// the bodies are verified again in the background after serving starts.
 /// Completion evidence never grants serving authority.
-pub const RESTORE_SCHEMA: &str = "transparent-history-restore-v1";
+pub const RESTORE_SCHEMA: &str = "transparent-history-restore-v2";
 /// The restore record's file name inside the publication directory.
 pub const RESTORE_FILE: &str = "history-restore.json";
 /// Preparation phases a restore record must name as completed.
@@ -685,7 +713,8 @@ pub struct RestoreRecord {
     pub schema: String,
     /// The exact inventory bytes offered over HTTPS.
     pub inventory: String,
-    pub inventory_sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub inventory_checksum: String,
     pub map_sha256: String,
     pub network: String,
     pub genesis_hash: String,
@@ -731,7 +760,7 @@ impl Finalized {
         Ok(RestoreRecord {
             schema: RESTORE_SCHEMA.into(),
             inventory: String::from_utf8(self.bytes.clone())?,
-            inventory_sha256: self.sha256.clone(),
+            inventory_checksum: self.checksum.clone(),
             map_sha256: self.inventory.map_sha256.clone(),
             network: self.inventory.network.clone(),
             genesis_hash: self.inventory.genesis_hash.clone(),
@@ -770,8 +799,8 @@ impl Finalized {
             return Err("unsupported restore record schema, runtime, profile or evidence".into());
         }
         let bytes = record.inventory.into_bytes();
-        let sha256 = digest(&bytes);
-        if sha256 != record.inventory_sha256 {
+        let checksum = digest(&bytes);
+        if checksum != record.inventory_checksum {
             return Err("restore record inventory digest mismatch".into());
         }
         if record.network != expected.network
@@ -803,7 +832,13 @@ impl Finalized {
             return Err("restored publication map differs from its inventory".into());
         }
         inventory.validate_map(&set.map)?;
-        let plan = plan(root, &set, expected.recent_from_height, expected.full)?;
+        let plan = plan(
+            root,
+            &set,
+            expected.recent_from_height,
+            expected.full,
+            RuntimeNames::Current,
+        )?;
         if plan.inventory.recent_from_shard != inventory.recent_from_shard {
             return Err("restored holdings disagree with the inventory".into());
         }
@@ -831,19 +866,19 @@ impl Finalized {
                 return Err(format!("restored artifact {relative} has the wrong length").into());
             }
             if let Some(manifest) = plan.sources.get(path) {
-                if *manifest != artifact.sha256 {
+                if artifact.source_sha256.as_deref() != Some(*manifest) {
                     return Err("restored source digest differs from its manifest".into());
                 }
             }
             if *kind == Kind::Metadata {
                 let mut file = file;
                 let (found, _) = listed_digest(path, &mut file, None, &|| false)?;
-                if found != artifact.sha256 {
+                if found != artifact.checksum {
                     return Err(format!("restored metadata {relative} digest mismatch").into());
                 }
             }
             if expected.full || kind.local() {
-                files.insert(artifact.sha256.clone(), path.clone());
+                files.insert(artifact.checksum.clone(), path.clone());
             }
         }
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -860,7 +895,7 @@ impl Finalized {
             finalized: Self {
                 inventory,
                 bytes,
-                sha256,
+                checksum,
                 files,
             },
             validation: Validation {
@@ -900,8 +935,8 @@ pub enum IntegrityError {
     /// The bytes on disk are not the listed ones: a confirmed mismatch.
     Mismatch {
         path: String,
-        expected_sha256: String,
-        found_sha256: Option<String>,
+        expected_checksum: String,
+        found_checksum: Option<String>,
         reason: String,
     },
     /// The artifact could not be read; nothing is known about its bytes.
@@ -945,7 +980,7 @@ impl std::error::Error for CorrectnessError {}
 
 /// Body verification owed by a publication's exact inventory, in the two
 /// phases preparation runs: integrity hashes every listed artifact against
-/// its saved SHA-256 (sources were bound to their manifests at restore), and
+/// its saved artifact checksum (sources were bound to their manifests at restore), and
 /// correctness loads each runtime in turn and checks it against its source
 /// rows with a sampled private query.
 pub struct Validation {
@@ -969,7 +1004,7 @@ impl Verified {
     fn stamp(&self, artifact: &Artifact) -> Option<FileStamp> {
         self.files
             .get(&artifact.path)
-            .filter(|(sha256, _)| *sha256 == artifact.sha256)
+            .filter(|(checksum, _)| *checksum == artifact.checksum)
             .map(|(_, stamp)| *stamp)
     }
 }
@@ -1005,7 +1040,7 @@ impl Validation {
                 if safe_path(&artifact.path) && still == Some(stamp) {
                     verified
                         .files
-                        .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
+                        .insert(artifact.path.clone(), (artifact.checksum.clone(), stamp));
                     continue;
                 }
             }
@@ -1013,7 +1048,7 @@ impl Validation {
             verified.hashed += artifact.bytes;
             verified
                 .files
-                .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
+                .insert(artifact.path.clone(), (artifact.checksum.clone(), stamp));
         }
         Ok(verified)
     }
@@ -1029,8 +1064,8 @@ impl Validation {
         };
         let mismatch = |found: Option<String>, reason: &str| IntegrityError::Mismatch {
             path: artifact.path.clone(),
-            expected_sha256: artifact.sha256.clone(),
-            found_sha256: found,
+            expected_checksum: artifact.checksum.clone(),
+            found_checksum: found,
             reason: reason.into(),
         };
         if !safe_path(&artifact.path) {
@@ -1057,7 +1092,7 @@ impl Validation {
         let before = same_file(&checked, &file)
             .map_err(|e| unavailable(&e))?
             .ok_or_else(|| unavailable(&"artifact was replaced while opening"))?;
-        let mut hash = Sha256::new();
+        let mut hash = pir_artifact::Hasher::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0u64;
         loop {
@@ -1081,7 +1116,7 @@ impl Validation {
                 "artifact length changed while reading",
             ));
         }
-        if found != artifact.sha256 {
+        if found != artifact.checksum {
             return Err(mismatch(Some(found), "artifact digest mismatch"));
         }
         Ok(before)
@@ -1101,8 +1136,14 @@ impl Validation {
         memory: &std::sync::Arc<crate::runtime::memory::WorkMemory>,
         pause: &dyn Fn() -> bool,
     ) -> Result<CheckedRuntimes, CorrectnessError> {
-        let plan = plan(&self.root, &self.set, self.recent_from_height, self.full)
-            .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+        let plan = plan(
+            &self.root,
+            &self.set,
+            self.recent_from_height,
+            self.full,
+            RuntimeNames::Current,
+        )
+        .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
         let listed: BTreeMap<PathBuf, &Artifact> = inventory
             .artifacts
             .iter()
@@ -1188,7 +1229,7 @@ impl Validation {
                 .ok_or_else(|| CorrectnessError::Failed("non-UTF8 runtime name".into()))?;
             checked
                 .passed
-                .insert(name.to_owned(), artifact.sha256.clone());
+                .insert(name.to_owned(), artifact.checksum.clone());
             checked.loaded += 1;
         }
         Ok(checked)
@@ -1214,19 +1255,29 @@ impl CheckedRuntimes {
 
 /// A digest and length this process verified for a file with this stamp.
 pub(crate) struct Known {
-    sha256: String,
+    checksum: Option<String>,
+    source_sha256: String,
     bytes: u64,
-    stamp: FileStamp,
+    stamp: Option<FileStamp>,
 }
 impl Known {
+    pub(crate) fn commitment(source_sha256: String) -> Self {
+        Self {
+            checksum: None,
+            source_sha256,
+            bytes: 0,
+            stamp: None,
+        }
+    }
     /// The verification `source` holds for its exact file, if any: only a
     /// source this process hashed with settled evidence; never a receipt-only,
     /// received or size-only one.
     pub(crate) fn of(source: &crate::history::shardset::SegmentSource) -> Option<Self> {
-        source.evidence().map(|stamp| Self {
-            sha256: source.sha256().to_owned(),
+        Some(Self {
+            checksum: source.artifact_checksum().map(str::to_owned),
+            source_sha256: source.sha256().to_owned(),
             bytes: source.bytes() as u64,
-            stamp,
+            stamp: source.evidence(),
         })
     }
 }
@@ -1278,16 +1329,24 @@ pub(crate) fn hash_listed(
                     }
                 }
                 let mut file = std::fs::File::open(&path)?;
+                let source_sha256 = known.as_ref().map(|k| k.source_sha256.clone());
                 let known = known
                     .as_ref()
-                    .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
-                let (sha256, bytes) = listed_digest(&path, &mut file, known, stop)?;
+                    .and_then(|k| Some((k.checksum.as_deref()?, k.bytes, k.stamp?)));
+                let (checksum, bytes) = listed_digest_with_source(
+                    &path,
+                    &mut file,
+                    known,
+                    source_sha256.as_deref(),
+                    stop,
+                )?;
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
                 Ok((
                     Artifact {
                         path: relative,
-                        sha256,
+                        checksum,
+                        source_sha256,
                         bytes,
                         kind,
                     },
@@ -1330,23 +1389,34 @@ fn listed_digest(
     known: Option<(&str, u64, FileStamp)>,
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<(String, u64), Error> {
+    listed_digest_with_source(path, file, known, None, stop)
+}
+
+fn listed_digest_with_source(
+    path: &Path,
+    file: &mut std::fs::File,
+    known: Option<(&str, u64, FileStamp)>,
+    source_sha256: Option<&str>,
+    stop: &(dyn Fn() -> bool + Sync),
+) -> Result<(String, u64), Error> {
     let opened = file.metadata()?;
     if !opened.is_file() {
         return Err("artifact is not a regular file".into());
     }
-    if let Some((sha256, bytes, stamp)) = known {
+    if let Some((checksum, bytes, stamp)) = known {
         let named = std::fs::symlink_metadata(path).ok();
         if FileStamp::of(&opened) == Some(stamp)
             && named.as_ref().and_then(FileStamp::of) == Some(stamp)
             && opened.len() == bytes
         {
-            return Ok((sha256.to_string(), bytes));
+            return Ok((checksum.to_string(), bytes));
         }
     }
     #[cfg(test)]
     LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
     let bytes = opened.len();
-    let mut hash = Sha256::new();
+    let mut hash = pir_artifact::Hasher::new();
+    let mut source_hash = source_sha256.map(|_| Sha256::new());
     let mut buffer = vec![0u8; 1 << 20];
     loop {
         if stop() {
@@ -1357,6 +1427,31 @@ fn listed_digest(
             break;
         }
         hash.update(&buffer[..read]);
+        if let Some(hash) = &mut source_hash {
+            hash.update(&buffer[..read]);
+        }
+    }
+    if let (Some(hash), Some(expected)) = (source_hash, source_sha256) {
+        if hex::encode(hash.finalize()) != expected {
+            return Err("source segment differs from its manifest".into());
+        }
+    }
+    let after = file.metadata()?;
+    let named = std::fs::symlink_metadata(path)?;
+    use std::os::unix::fs::MetadataExt;
+    let unchanged = |m: &std::fs::Metadata| {
+        (
+            m.dev(),
+            m.ino(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        )
+    };
+    if unchanged(&opened) != unchanged(&after) || unchanged(&after) != unchanged(&named) {
+        return Err("artifact changed while hashing".into());
     }
     Ok((hex::encode(hash.finalize()), bytes))
 }
@@ -1372,7 +1467,13 @@ pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
 /// The caller has verified the network stream, or linked/copied its completed
 /// cache object. Persist its download identity after checking the local size.
 pub fn record_received_file(path: &Path, expected: &Artifact, object: &Path) -> Result<(), Error> {
-    crate::verification::received(path, &expected.sha256, expected.bytes, object)?;
+    crate::verification::received(
+        path,
+        &expected.checksum,
+        expected.source_sha256.as_deref(),
+        expected.bytes,
+        object,
+    )?;
     Ok(())
 }
 
@@ -1400,7 +1501,7 @@ mod tests {
             assert_eq!(artifact.path, *name);
             assert_eq!(*path, root.join(name));
             assert_eq!(artifact.bytes, bytes.len() as u64);
-            assert_eq!(artifact.sha256, hex::encode(Sha256::digest(bytes)));
+            assert_eq!(artifact.checksum, pir_artifact::digest(bytes));
             assert_eq!(artifact.kind, Kind::RecentTable);
         }
     }
@@ -1413,8 +1514,9 @@ mod tests {
         let original = b"network bytes";
         std::fs::write(&path, original).unwrap();
         let expected = Artifact {
+            source_sha256: None,
             path: "source.bin".into(),
-            sha256: digest(original),
+            checksum: digest(original),
             bytes: original.len() as u64,
             kind: Kind::RecentTable,
         };
@@ -1422,8 +1524,8 @@ mod tests {
         let changed = b"same size!!!!";
         std::fs::write(&path, changed).unwrap();
         let hashed = hash_artifacts(root, vec![(path, Kind::RecentTable)]).unwrap();
-        assert_eq!(hashed[0].0.sha256, digest(changed));
-        assert_ne!(hashed[0].0.sha256, expected.sha256);
+        assert_eq!(hashed[0].0.checksum, digest(changed));
+        assert_ne!(hashed[0].0.checksum, expected.checksum);
     }
 
     #[test]
@@ -1444,8 +1546,8 @@ mod tests {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, original);
-        assert_eq!(artifact.sha256, digest(&bytes));
-        assert_ne!(artifact.sha256, digest(&std::fs::read(path).unwrap()));
+        assert_eq!(artifact.checksum, digest(&bytes));
+        assert_ne!(artifact.checksum, digest(&std::fs::read(path).unwrap()));
     }
 
     #[test]
@@ -1496,7 +1598,7 @@ mod tests {
         // Resumed without a stop, the same file is hashed whole.
         let pending = vec![(path.clone(), Kind::RecentTable, None)];
         let listed = hash_listed(dir.path(), pending, &|| false).unwrap();
-        assert_eq!(listed[0].0.sha256, digest(&vec![7u8; (2 << 20) + 1]));
+        assert_eq!(listed[0].0.checksum, digest(&vec![7u8; (2 << 20) + 1]));
     }
 
     #[test]
@@ -1538,8 +1640,9 @@ mod tests {
         let bytes = b"correct bytes";
         std::fs::write(&path, bytes).unwrap();
         let expected = Artifact {
+            source_sha256: None,
             path: "object".into(),
-            sha256: digest(bytes),
+            checksum: digest(bytes),
             bytes: bytes.len() as u64,
             kind: Kind::Metadata,
         };
@@ -1557,8 +1660,9 @@ mod tests {
         let bytes = b"network bytes";
         std::fs::write(&path, bytes).unwrap();
         let expected = Artifact {
+            source_sha256: None,
             path: "object".into(),
-            sha256: digest(bytes),
+            checksum: digest(bytes),
             bytes: bytes.len() as u64,
             kind: Kind::Metadata,
         };
@@ -1601,7 +1705,7 @@ mod tests {
             schema: SCHEMA.into(),
             revision: 7,
             recovery_epoch: 2,
-            inventory_sha256: "11".repeat(32),
+            inventory_checksum: "11".repeat(32),
             network: "main".into(),
             genesis_hash: "00".repeat(32),
             anchor_height: 9,
@@ -1629,7 +1733,7 @@ mod tests {
             schema: SCHEMA.into(),
             revision: 7,
             recovery_epoch: 2,
-            inventory_sha256: "11".repeat(32),
+            inventory_checksum: "11".repeat(32),
             genesis_hash: "00".repeat(32),
             results: (0..MAX_ANCHOR_BATCH as u64)
                 .map(|height| AnchorResult {
@@ -1645,7 +1749,7 @@ mod tests {
             AnchorBatchRequest::new(&current, vec![pair(1, "aa"), pair(2, "bb")]).unwrap();
         assert!(request.names(&current));
         let mut other = current.clone();
-        other.inventory_sha256 = "33".repeat(32);
+        other.inventory_checksum = "33".repeat(32);
         assert!(!request.names(&other));
         let result = |height, byte: &str, canonical| AnchorResult {
             height,
@@ -1656,7 +1760,7 @@ mod tests {
             schema: SCHEMA.into(),
             revision: 7,
             recovery_epoch: 2,
-            inventory_sha256: "11".repeat(32),
+            inventory_checksum: "11".repeat(32),
             genesis_hash: "00".repeat(32),
             results: vec![result(2, "bb", false), result(1, "aa", true)],
         };
@@ -1681,7 +1785,7 @@ mod tests {
         for mutate in [
             |b: &mut AnchorBatch| b.revision += 1,
             |b: &mut AnchorBatch| b.recovery_epoch += 1,
-            |b: &mut AnchorBatch| b.inventory_sha256 = "33".repeat(32),
+            |b: &mut AnchorBatch| b.inventory_checksum = "33".repeat(32),
             |b: &mut AnchorBatch| b.schema = "other".into(),
         ] {
             let mut wrong = batch.clone();

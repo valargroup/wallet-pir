@@ -1,0 +1,15 @@
+[package]
+name = "pir-artifact"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Artifact checksums and resumable conversion of immutable PIR material"
+
+[dependencies]
+blake3 = "1.8"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "src/shared/pir-artifact",
     "src/pir-publisher",
     "src/pir-query-server",
     "tools/pir-e2e-tests",

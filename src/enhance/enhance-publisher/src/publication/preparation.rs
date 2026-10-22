@@ -4,10 +4,7 @@ use super::{
     read_metadata,
 };
 use crate::{prepared_packing, runtime, PackingBudget};
-use enhance_query_server::{
-    protocol::{digest, Coverage},
-    publication::Domain,
-};
+use enhance_query_server::{protocol::Coverage, publication::Domain};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
@@ -17,7 +14,7 @@ pub(super) fn prepare_domains(
     epochs: &BTreeMap<u64, String>,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<Domain>, String> {
-    let mut engine = runtime::Engine::new(&root.join("preparation"));
+    let mut engine = runtime::Engine::new(&super::engine_root(root));
     let mut domains = Vec::new();
     for shard in &coverage.shards {
         let mut plan = runtime::plan(shard.clone(), &mut *read)?;
@@ -35,7 +32,7 @@ pub(super) fn prepare_domains(
             rows.push(install_object_bytes(root, &bytes)?);
         }
         // A previously verified domain avoids hint and packing preparation.
-        let key = digest(&plan);
+        let key = enhance_query_server::publication::inventory_digest(&plan);
         let retained = root.join("domains").join(format!("{key}.json"));
         if retained.exists() {
             let domain: Domain = read_metadata(&retained)?;
@@ -64,6 +61,7 @@ pub(super) fn prepare_domains(
             plan,
             rows,
             hint: install_object_bytes(root, &encoded)?,
+            public_params_sha256: hex::encode(Sha256::digest(&packing.public)),
             public: install_object_bytes(root, &packing.public)?,
             packing: prepared,
         };

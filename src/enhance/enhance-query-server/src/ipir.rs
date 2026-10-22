@@ -95,7 +95,8 @@ pub fn add_crs_blocks_assign_mod(
 // Version 8 binds the plaintext profile and changes Enhance to p=2^16 with a
 // 46-bit minimum query width.
 // Version 9 invalidates full-ciphertext artifacts for schema 11 suffix records.
-const ARTIFACT_VERSION: u16 = 9;
+// Version 10 tags artifact checksums independently of the protocol row binding.
+const ARTIFACT_VERSION: u16 = 10;
 
 #[derive(Serialize, Deserialize)]
 struct ArtifactMetadata {
@@ -110,8 +111,10 @@ struct ArtifactMetadata {
     shard_id: u64,
     query_row_start: usize,
     rows_sha256: String,
-    database_sha256: String,
-    crs_sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    database_checksum: String,
+    #[serde(with = "pir_artifact::current")]
+    crs_checksum: String,
 }
 
 impl ArtifactMetadata {
@@ -342,7 +345,7 @@ impl ShardRuntime {
         let cache_handle = file.try_clone().map_err(|e| e.to_string())?;
         let reader = BufReader::with_capacity(
             IO_BUFFER_BYTES,
-            VerifiedReader::new(file, expected_db_bytes, metadata.database_sha256),
+            VerifiedReader::new(file, expected_db_bytes, metadata.database_checksum),
         );
         let server = read_database_with_backend(reader, local_params.clone(), backend)?;
         release_file_cache(&cache_handle);
@@ -350,7 +353,7 @@ impl ShardRuntime {
         let publication = PublicationArtifact::open(
             &directory.join("partial-crs.bin"),
             crs_encoded_len(blocks, rlwe.d).map_err(|e| e.to_string())?,
-            metadata.crs_sha256,
+            metadata.crs_checksum,
         )
         .map_err(|e| e.to_string())?;
         publication
@@ -470,19 +473,19 @@ impl PreparedShard {
     ) -> io::Result<CachedShard> {
         fs::create_dir_all(directory)?;
         let runtime = self.runtime;
-        let database_sha256 = write_atomic_cold(directory, "database.u16le", |writer| {
+        let database_checksum = write_atomic_cold(directory, "database.u16le", |writer| {
             for coefficient in runtime.server.db() {
                 writer.write_all(&coefficient.to_le_bytes())?;
             }
             Ok(())
         })?;
-        let crs_sha256 = write_atomic_cold(directory, "partial-crs.bin", |writer| {
+        let crs_checksum = write_atomic_cold(directory, "partial-crs.bin", |writer| {
             write_crs_blocks(writer, &self.crs_blocks)
         })?;
         let publication = PublicationArtifact::open(
             &directory.join("partial-crs.bin"),
             crs_encoded_len(runtime.server.params().db_cols / rlwe.d, rlwe.d)?,
-            crs_sha256.clone(),
+            crs_checksum.clone(),
         )?;
         drop(self.crs_blocks);
         let metadata = ArtifactMetadata {
@@ -497,8 +500,8 @@ impl PreparedShard {
             shard_id: runtime.shard_id,
             query_row_start: runtime.query_row_start,
             rows_sha256: runtime.rows_sha256.clone(),
-            database_sha256,
-            crs_sha256,
+            database_checksum,
+            crs_checksum,
         };
         write_atomic(directory, "metadata.json", |writer| {
             serde_json::to_writer_pretty(writer, &metadata).map_err(io::Error::other)

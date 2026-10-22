@@ -1032,7 +1032,7 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
             self.fake.health_shapes[('v12', unit)] = lambda ready_, exe, unit=unit: {
                 **self.provider_ready(unit, self.map[0]), 'ready': ready_,
                 **(self.shift.get(unit, {}) if exe == sha256(NEW) else {})}
-        self.discovery = (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))
+        self.discovery = (200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'}))
         http_get = self.fake.http_get
         self.fake.http_get = lambda host, url, timeout=5: (
             self.discovery if url == PUBLISHER_ORIGIN + binary_upgrade.DISCOVERY_PATH else http_get(host, url, timeout))
@@ -1131,7 +1131,7 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     def test_publisher_without_discovery_refuses_before_any_change(self):
         self.run_cli('baseline')
         for name, reply in {'404': (404, 'not found'),
-                            'other major': (200, json.dumps({'service': 'pir-publisher', 'version': '2.0.0'}))}.items():
+                            'other major': (200, json.dumps({'service': 'pir-publisher', 'version': '1.0.0'}))}.items():
             with self.subTest(name):
                 self.discovery = reply
                 self.refuses(message='upgrade the publisher first')

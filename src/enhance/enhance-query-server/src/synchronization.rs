@@ -2,12 +2,12 @@
 use crate::{
     protocol::{digest, Manifest},
     publication::{
-        AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
+        manifest_checksum, AuthorityRequest, AuthorityResponse, Current, Inventory, Object,
+        METADATA_LIMIT, PREFIX,
     },
 };
 use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
@@ -372,7 +372,7 @@ impl Lease {
         safety.observe(&response.current)?;
         let now = now_ms()?;
         response.fresh(now)?;
-        if response.authorized_manifest_sha256 != digest(manifest) {
+        if response.authorized_manifest_checksum != Some(manifest_checksum(manifest)) {
             return Err("publisher authorized another manifest".into());
         }
         safety.permits_observation(manifest, Some(&response.current))?;
@@ -404,7 +404,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
-        fs::create_dir_all(root.join("objects"))?;
+        fs::create_dir_all(root.join(pir_artifact::namespace("objects")))?;
         Ok(Self {
             safety,
             source: config.source(config.download_budget_bytes)?,
@@ -448,7 +448,7 @@ impl Client {
 
     pub async fn authority(&mut self, manifest: &Manifest) -> Result<Lease, Error> {
         let body = serde_json::to_vec(&AuthorityRequest {
-            manifest_sha256: digest(manifest),
+            manifest_checksum: manifest_checksum(manifest),
         })?;
         let response = serde_json::from_slice(&self.metadata("authority", Some(body)).await?)?;
         Lease::from_response(response, manifest, &self.safety)
@@ -464,11 +464,9 @@ impl Client {
             return Err("inventory exceeds metadata limit".into());
         }
         let bytes = self
-            .metadata(&format!("inventories/{}", object.sha256), None)
+            .metadata(&format!("inventories/{}", object.checksum), None)
             .await?;
-        if bytes.len() as u64 != object.bytes
-            || hex::encode(Sha256::digest(&bytes)) != object.sha256
-        {
+        if bytes.len() as u64 != object.bytes || pir_artifact::digest(&bytes) != object.checksum {
             return Err("inventory length or checksum mismatch".into());
         }
         let inventory: Inventory = serde_json::from_slice(&bytes)?;
@@ -480,7 +478,7 @@ impl Client {
 
     /// Remove only owned object names; downloaded bytes confer no authority.
     pub fn collect(&self, keep: &std::collections::BTreeSet<String>) -> Result<(), Error> {
-        for entry in fs::read_dir(self.root.join("objects"))? {
+        for entry in fs::read_dir(self.root.join(pir_artifact::namespace("objects")))? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if entry.file_type()?.is_file()
@@ -490,10 +488,13 @@ impl Client {
                 fs::remove_file(entry.path())?;
             }
         }
-        let occupied = fs::read_dir(self.root.join("objects"))?.try_fold(0u64, |sum, entry| {
-            sum.checked_add(entry?.metadata()?.len())
-                .ok_or_else(|| std::io::Error::other("cache size overflow"))
-        })?;
+        let occupied = fs::read_dir(self.root.join(pir_artifact::namespace("objects")))?.try_fold(
+            0u64,
+            |sum, entry| {
+                sum.checked_add(entry?.metadata()?.len())
+                    .ok_or_else(|| std::io::Error::other("cache size overflow"))
+            },
+        )?;
         if occupied > self.cache_limit {
             return Err("Enhance cache capacity reached".into());
         }
@@ -507,7 +508,7 @@ impl Client {
         if tokio::task::spawn_blocking(move || -> Result<(), String> {
             let path = checked.path(&root)?;
             if fs::metadata(&path).map_err(|e| e.to_string())?.len() != checked.bytes
-                || crate::prepared_packing::hash_file(&path)? != checked.sha256
+                || crate::prepared_packing::hash_file(&path)? != checked.checksum
             {
                 return Err("cached publication object checksum or length mismatch".into());
             }
@@ -522,11 +523,14 @@ impl Client {
         if path.exists() {
             fs::remove_file(&path)?;
         }
-        let occupied = fs::read_dir(self.root.join("objects"))?.try_fold(0u64, |sum, entry| {
-            let size = entry?.metadata()?.len();
-            sum.checked_add(size)
-                .ok_or_else(|| std::io::Error::other("cache size overflow"))
-        })?;
+        let occupied = fs::read_dir(self.root.join(pir_artifact::namespace("objects")))?.try_fold(
+            0u64,
+            |sum, entry| {
+                let size = entry?.metadata()?.len();
+                sum.checked_add(size)
+                    .ok_or_else(|| std::io::Error::other("cache size overflow"))
+            },
+        )?;
         if occupied
             .checked_add(object.bytes)
             .is_none_or(|sum| sum > self.cache_limit)
@@ -535,8 +539,8 @@ impl Client {
         }
         let temporary = self
             .root
-            .join("objects")
-            .join(format!("{}.part", object.sha256));
+            .join(pir_artifact::namespace("objects"))
+            .join(format!("{}.part", object.checksum));
         let result = async {
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)
@@ -545,19 +549,19 @@ impl Client {
                 .await?;
             let response = self
                 .source
-                .request(&format!("objects/{}", object.sha256), None)
+                .request(&format!("objects/{}", object.checksum), None)
                 .await?;
             response
                 .copy_to(
                     &mut file,
                     object.bytes,
-                    pir_sync_manager::Verification::Sha256(&object.sha256),
+                    pir_sync_manager::Verification::Artifact(&object.checksum),
                 )
                 .await?;
             file.sync_all().await?;
             drop(file);
             tokio::fs::rename(&temporary, &path).await?;
-            File::open(self.root.join("objects"))?.sync_all()?;
+            File::open(self.root.join(pir_artifact::namespace("objects")))?.sync_all()?;
             Ok::<(), Error>(())
         }
         .await;
@@ -613,11 +617,11 @@ mod tests {
                 eligible: true,
                 manifest: Some(manifest.clone()),
                 inventory: Some(Object {
-                    sha256: "03".repeat(32),
+                    checksum: "03".repeat(32),
                     bytes: 1,
                 }),
             },
-            authorized_manifest_sha256: digest(manifest),
+            authorized_manifest_checksum: Some(manifest_checksum(manifest)),
             observed_unix_ms: now_ms().unwrap(),
         }
     }
@@ -729,8 +733,14 @@ mod tests {
         let manifest = manifest();
         let initial = response(&manifest);
         let mut wrong = initial.clone();
-        wrong.authorized_manifest_sha256 = "04".repeat(32);
+        wrong.authorized_manifest_checksum = Some(pir_artifact::checksum(b"another manifest"));
         assert!(Lease::from_response(wrong, &manifest, &safety).is_err());
+        let mut legacy = initial.clone();
+        legacy.authorized_manifest_checksum = Some(pir_artifact::Checksum {
+            algorithm: pir_artifact::Algorithm::Sha256,
+            digest: digest(&manifest),
+        });
+        assert!(Lease::from_response(legacy, &manifest, &safety).is_err());
         let mut expired = initial.clone();
         expired.observed_unix_ms -= 5001;
         assert!(Lease::from_response(expired, &manifest, &safety).is_err());
@@ -768,7 +778,13 @@ mod tests {
         let safety = Safety::open(root.path(), &config.publisher_origin).unwrap();
         let client = Client::new(root.path(), &config, safety).unwrap();
         let name = "01".repeat(32);
-        fs::write(root.path().join("objects").join(&name), [1, 2]).unwrap();
+        fs::write(
+            root.path()
+                .join(pir_artifact::namespace("objects"))
+                .join(&name),
+            [1, 2],
+        )
+        .unwrap();
         assert!(client.collect(&[name].into()).is_err());
         client.collect(&Default::default()).unwrap();
     }

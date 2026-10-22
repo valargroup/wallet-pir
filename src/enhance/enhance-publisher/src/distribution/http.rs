@@ -34,7 +34,7 @@ pub(super) async fn authority(
     Json(request): Json<AuthorityRequest>,
 ) -> ApiResult<Response> {
     distribution
-        .authority(Some(&request.manifest_sha256))
+        .authority(Some(&request.manifest_checksum))
         .await
         .map(metadata)
         .map_err(refused)
@@ -57,7 +57,7 @@ pub(super) async fn inventory(
         .unwrap()
         .retained
         .iter()
-        .find(|r| r.inventory.sha256 == id)
+        .find(|r| r.inventory.checksum == id)
         .map(|r| r.inventory.clone())
         .ok_or((
             StatusCode::NOT_FOUND,
@@ -66,7 +66,7 @@ pub(super) async fn inventory(
     stream(
         &distribution
             .root
-            .join("inventories")
+            .join(pir_artifact::namespace("inventories"))
             .join(format!("{id}.json")),
         &descriptor,
     )
@@ -96,7 +96,7 @@ pub(super) async fn object(
 
 fn stream(path: &Path, descriptor: &Object) -> ApiResult<Response> {
     let artifact =
-        artifact::PublicationArtifact::open(path, descriptor.bytes, descriptor.sha256.clone())
+        artifact::PublicationArtifact::open(path, descriptor.bytes, descriptor.checksum.clone())
             .map_err(refused)?;
     Ok((
         [

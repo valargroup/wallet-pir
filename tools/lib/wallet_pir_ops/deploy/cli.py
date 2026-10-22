@@ -284,6 +284,8 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    from . import artifact_cutover
+    artifact_cutover.register(commands)
     command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
     command.add_argument('--complete', action='store_true',
                          help='also require every registered service, role, responsibility and ancillary kind')
@@ -427,7 +429,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-'))
+                                                   'ops-package-', 'publisher-cutover-', 'status-routing-', 'artifact-checksum-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
@@ -450,6 +452,24 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('artifact-checksum-'):
+            from . import artifact_cutover
+            from .transaction import Journal
+            request = artifact_cutover.load_request(args.request, args.request_sha256)
+            check_installed(mutation=mutation, revision=request['source_sha'])
+            inventory = descriptors.load_inventory(args.inventory)
+            operation = args.command.removeprefix('artifact-checksum-')
+            if operation == 'status':
+                journal = Journal.load(args.state_dir, artifact_cutover.NAME, args.transaction)
+                result = journal.data if journal else None
+            else:
+                target = artifact_cutover.Cutover(request, inventory,
+                    descriptors.load_descriptors(args.descriptors), executor or SSHExecutor(inventory),
+                    args.state_dir, **options)
+                result = (getattr(target, operation)(args.expect_plan_sha256) if operation in ('prepare', 'deploy') else
+                          target.rollback(args.transaction) if operation == 'rollback' else getattr(target, operation)())
+            out(json.dumps(result, sort_keys=True))
+            return 0
         if args.command.startswith('status-routing-'):
             from .engine import mutation_fence
             from tools.status.lib.routing import Routing, load_request, digest

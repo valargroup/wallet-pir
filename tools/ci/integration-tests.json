@@ -34,6 +34,7 @@
     "full": [
       "assignment",
       "geometry_costs",
+      "history_migration",
       "operator_payloads",
       "revisions_and_cache",
       "round_trip",

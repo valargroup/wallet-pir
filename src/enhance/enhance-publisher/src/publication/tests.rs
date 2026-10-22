@@ -4,15 +4,14 @@ use crate::{prepared_packing, runtime};
 use enhance_query_server::protocol::Lifecycle;
 use enhance_query_server::publication::Domain;
 use enhance_query_server::publication::Object;
-use sha2::{Digest, Sha256};
 use std::time::{Duration, UNIX_EPOCH};
 
 fn object(root: &Path, bytes: &[u8]) -> Object {
     let object = Object {
-        sha256: hex::encode(Sha256::digest(bytes)),
+        checksum: pir_artifact::digest(bytes),
         bytes: bytes.len() as u64,
     };
-    fs::create_dir_all(root.join("objects")).unwrap();
+    fs::create_dir_all(root.join(pir_artifact::namespace("objects"))).unwrap();
     fs::write(object.path(root).unwrap(), bytes).unwrap();
     object
 }
@@ -140,7 +139,7 @@ fn a_fresh_object_is_hashed_once_per_pass() {
 
     let mut second = VerificationPass::default();
     second
-        .check_object(root.path(), &object, first.evidence.get(&object.sha256))
+        .check_object(root.path(), &object, first.evidence.get(&object.checksum))
         .unwrap();
     assert_eq!(
         second.hashed, once,
@@ -176,11 +175,11 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     let public_bytes =
         (parameters.db_cols * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q)).div_ceil(8);
     let public = Object {
-        sha256: "11".repeat(32),
+        checksum: "11".repeat(32),
         bytes: public_bytes as u64,
     };
     let hint = Object {
-        sha256: rows.sha256.clone(),
+        checksum: rows.checksum.clone(),
         bytes: crate::wire::crs_encoded_len(
             parameters.db_cols / runtime::rlwe().d,
             runtime::rlwe().d,
@@ -189,8 +188,8 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     };
     assert_ne!(rows.bytes, hint.bytes);
     let packing = prepared_packing::Artifact {
-        name: prepared_packing::artifact_name(plan.shard.logical_rows, &public.sha256).unwrap(),
-        sha256: "22".repeat(32),
+        name: prepared_packing::artifact_name(plan.shard.logical_rows, &public.checksum).unwrap(),
+        checksum: "22".repeat(32),
         #[cfg(feature = "native-reinspiring")]
         bytes: 192 * 1024 * 1024,
         #[cfg(not(feature = "native-reinspiring"))]
@@ -206,6 +205,7 @@ fn repeated_digest_with_a_different_length_is_rejected() {
             plan,
             rows: vec![rows],
             hint,
+            public_params_sha256: public.checksum.clone(),
             public,
             packing,
         }],

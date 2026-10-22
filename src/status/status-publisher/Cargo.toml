@@ -21,6 +21,7 @@ cuda = ["status-query-server/cuda"]
 fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 
 [dependencies]
+pir-artifact = { path = "../../shared/pir-artifact" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 thiserror = "2"
 status-query-server = { path = "../status-query-server" }
@@ -44,6 +45,6 @@ zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, featu
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
-pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
+pir-service-discovery = { version = "2.0.0", path = "../../shared/pir-service-discovery" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

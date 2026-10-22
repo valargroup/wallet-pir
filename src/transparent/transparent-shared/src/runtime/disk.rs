@@ -7,7 +7,7 @@
 //! # Layout
 //!
 //! ```text
-//! identity (32) | sha256 of everything after this header (32)
+//! identity (32) | current artifact checksum of everything after this header (32)
 //! database: 16-bit tables: rows u16 per column, column-major, little-endian;
 //!           8-bit tables: the byte kernel's interleaved layout, one byte per entry
 //! published masks: exactly what clients download
@@ -22,7 +22,7 @@
 //! replace paths atomically and collection only unlinks, so a runtime keeps its
 //! mapping valid for as long as it lives.
 //!
-//! Serving trusts publisher preparation. Downloads check length; their SHA-256
+//! Serving trusts publisher preparation. Downloads check length; their artifact checksum
 //! validation follows activation on the query server's background thread;
 //! local restores check size and parse the format without rescanning checksums
 //! or comparing with source rows. The publisher runs the consistency test
@@ -33,6 +33,7 @@ use zakura_pir_client::transparent::native::TableClientExt as _;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use super::{RuntimeKey, SharedParams, TableRuntime};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -40,11 +41,11 @@ use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 // ipir-sp 1f2aec6 is v0.1.0-rc.6, which pins reinspiring 0.1.2.
-const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
+const FORMAT: &[u8] = b"transparent-runtime-v3/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
 // The 8-bit tables' database is stored in the byte kernel's interleaved layout
 // of reinspiring 0.1.3-rc.1 (ipir-sp v0.1.0-rc.7).
 pub const PREPARED_RUNTIME_FORMAT: &str =
-    "transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1";
+    "transparent-runtime-v4/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1";
 const FORMAT_BYTES: &[u8] = PREPARED_RUNTIME_FORMAT.as_bytes();
 
 /// Identity and checksum.
@@ -82,7 +83,7 @@ impl DiskCache {
     }
 
     fn identity(key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> [u8; 32] {
-        let mut hash = Sha256::new();
+        let mut hash = pir_artifact::Hasher::new();
         hash.update(if shared.transport.is_some() {
             FORMAT
         } else {
@@ -107,11 +108,34 @@ impl DiskCache {
         hash.finalize().into()
     }
 
+    fn previous_identity(key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> [u8; 32] {
+        let mut hash = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+        hash.update(if shared.transport.is_some() {
+            b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2".as_slice()
+        } else {
+            b"transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1".as_slice()
+        });
+        hash.update(
+            serde_json::to_vec(&(
+                &key.0,
+                key.1.as_str(),
+                key.2,
+                shared.geometry.name,
+                source_sha,
+                shared.setup_seed,
+                shared.scheme(),
+                &shared.transport,
+            ))
+            .expect("parameters serialize"),
+        );
+        hash.finalize()
+    }
+
     pub fn path(&self, key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> PathBuf {
         // Hash the manifest too rather than interpreting caller text as a path.
         self.directory.join(format!(
             "{}-{}.runtime",
-            hex::encode(Sha256::digest(key.0.as_bytes())),
+            pir_artifact::digest(key.0.as_bytes()),
             hex::encode(Self::identity(key, shared, source_sha))
         ))
     }
@@ -122,7 +146,7 @@ impl DiskCache {
     pub(super) fn invalidate(&self, keys: &[RuntimeKey]) -> io::Result<bool> {
         let prefixes: std::collections::HashSet<_> = keys
             .iter()
-            .map(|key| hex::encode(Sha256::digest(key.0.as_bytes())))
+            .map(|key| pir_artifact::digest(key.0.as_bytes()))
             .collect();
         let lock = OpenOptions::new()
             .create(true)
@@ -354,7 +378,7 @@ impl DiskCache {
                             pending: 0,
                             sync: durable,
                         },
-                        hash: Sha256::new(),
+                        hash: pir_artifact::Hasher::new(),
                     },
                 ),
             };
@@ -523,7 +547,7 @@ impl DiskCache {
         let pruning_started = std::time::Instant::now();
         let prefixes: std::collections::HashSet<_> = keep
             .iter()
-            .map(|digest| hex::encode(Sha256::digest(digest.as_bytes())))
+            .map(|digest| pir_artifact::digest(digest.as_bytes()))
             .collect();
         let mut freed = 0;
         for entry in fs::read_dir(&self.directory)? {
@@ -562,6 +586,223 @@ impl DiskCache {
 pub struct ShippedRuntimes(DiskCache, bool);
 
 impl ShippedRuntimes {
+    /// The immediately preceding artifact format, for explicit offline
+    /// migration only. Normal serving never probes predecessor cache entries.
+    pub fn previous_path(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> PathBuf {
+        let mut hash = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+        hash.update(key.0.as_bytes());
+        self.directory().join(format!(
+            "{}-{}.runtime",
+            hex::encode(hash.finalize()),
+            hex::encode(DiskCache::previous_identity(key, shared, source_sha))
+        ))
+    }
+
+    /// Copy the existing prepared body; no database or PIR matrix is rebuilt.
+    /// Both its predecessor checksum and identity must match before the new
+    /// header is installed in a separate inode.
+    #[allow(clippy::too_many_arguments)]
+    pub fn migrate_previous(
+        &self,
+        destination: &Self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+        previous: &pir_artifact::Checksum,
+        bytes: u64,
+        checkpoints: &Path,
+    ) -> io::Result<(PathBuf, pir_artifact::Checksum)> {
+        if !DiskCache::entry_bytes_range(shared).contains(&bytes) {
+            return Err(invalid("predecessor runtime length differs"));
+        }
+        Self::migrate_file(
+            &self.previous_path(key, shared, source_sha),
+            &destination.path(key, shared, source_sha),
+            DiskCache::previous_identity(key, shared, source_sha),
+            DiskCache::identity(key, shared, source_sha),
+            previous,
+            bytes,
+            checkpoints,
+        )
+    }
+
+    /// Convert a downloaded predecessor using the identity pair in the verified
+    /// publisher migration. The caller also checks the final complete-file
+    /// checksum against that publisher's new inventory.
+    pub fn migrate_file(
+        source: &Path,
+        target: &Path,
+        previous_identity: [u8; 32],
+        current_identity: [u8; 32],
+        previous: &pir_artifact::Checksum,
+        bytes: u64,
+        checkpoints: &Path,
+    ) -> io::Result<(PathBuf, pir_artifact::Checksum)> {
+        use std::os::unix::fs::MetadataExt;
+        if source == target {
+            return Err(invalid(
+                "runtime conversion requires a separate output file",
+            ));
+        }
+        pir_artifact::migration::prepare(checkpoints, source, previous, bytes)?;
+        let directory = target
+            .parent()
+            .ok_or_else(|| invalid("converted runtime has no parent"))?;
+        let proof = target.with_extension("runtime.migration.json");
+        let stamp = |m: &std::fs::Metadata| {
+            serde_json::json!([
+                m.dev(),
+                m.ino(),
+                m.len(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.ctime(),
+                m.ctime_nsec()
+            ])
+        };
+        if let (Ok(raw), Ok(metadata)) = (fs::read(&proof), fs::symlink_metadata(target)) {
+            let saved: serde_json::Value = serde_json::from_slice(&raw)?;
+            if metadata.is_file()
+                && saved["previous"] == serde_json::to_value(previous)?
+                && saved["previous_identity"] == serde_json::to_value(previous_identity)?
+                && saved["current_identity"] == serde_json::to_value(current_identity)?
+                && saved["stamp"] == stamp(&metadata)
+                && metadata.len() == bytes
+            {
+                let checksum: pir_artifact::Checksum =
+                    serde_json::from_value(saved["checksum"].clone())?;
+                checksum.require_current()?;
+                return Ok((target.to_path_buf(), checksum));
+            }
+        }
+        let mut input = File::open(source)?;
+        let before = input.metadata()?;
+        let mut header = [0u8; 64];
+        input.read_exact(&mut header)?;
+        if header[..32] != previous_identity {
+            return Err(invalid("predecessor runtime identity differs"));
+        }
+        fs::create_dir_all(directory)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+        // XFS can share unchanged body extents with the predecessor. Writing
+        // the new header then allocates only its changed blocks. Unsupported
+        // filesystems retain the portable streaming-copy path.
+        #[cfg(target_os = "linux")]
+        let shared_blocks = match rustix::fs::ioctl_ficlone(temporary.as_file(), &input) {
+            Ok(()) => true,
+            Err(error)
+                if [
+                    rustix::io::Errno::OPNOTSUPP,
+                    rustix::io::Errno::XDEV,
+                    rustix::io::Errno::NOTTY,
+                    rustix::io::Errno::INVAL,
+                    rustix::io::Errno::NOSYS,
+                ]
+                .contains(&error) =>
+            {
+                false
+            }
+            Err(error) => return Err(error.into()),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let shared_blocks = false;
+        temporary.write_all(&current_identity)?;
+        temporary.write_all(&[0u8; 32])?;
+        let mut old_body = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+        let mut body = pir_artifact::Hasher::new();
+        let mut buffer = vec![0; 1 << 20];
+        let mut copied = 64u64;
+        loop {
+            let n = input.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            old_body.update(&buffer[..n]);
+            body.update(&buffer[..n]);
+            if !shared_blocks {
+                temporary.write_all(&buffer[..n])?;
+            }
+            copied += n as u64;
+            if copied > bytes {
+                return Err(invalid("predecessor runtime grew"));
+            }
+        }
+        if copied != bytes || old_body.finalize() != header[32..] {
+            return Err(invalid("predecessor runtime body checksum differs"));
+        }
+        if stamp(&before) != stamp(&input.metadata()?)
+            || stamp(&before) != stamp(&fs::symlink_metadata(source)?)
+        {
+            return Err(invalid("predecessor runtime changed during conversion"));
+        }
+        temporary.seek(SeekFrom::Start(32))?;
+        temporary.write_all(&body.finalize())?;
+        use std::os::unix::fs::PermissionsExt;
+        let owner = temporary.as_file().metadata()?;
+        if owner.uid() != before.uid() || owner.gid() != before.gid() {
+            std::os::unix::fs::chown(temporary.path(), Some(before.uid()), Some(before.gid()))?;
+        }
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(before.mode() & 0o7777))?;
+        temporary.as_file().sync_all()?;
+        temporary.seek(SeekFrom::Start(0))?;
+        let (checksum, length) = pir_artifact::hash_reader(temporary.as_file())?;
+        if length != bytes {
+            return Err(invalid("converted runtime length differs"));
+        }
+        temporary.persist(target).map_err(|error| error.error)?;
+        File::open(directory)?.sync_all()?;
+        pir_artifact::migration::persist(
+            &proof,
+            &serde_json::to_vec(&serde_json::json!({
+                "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(target)?),
+                "previous_identity":previous_identity,"current_identity":current_identity,
+                "shared_blocks":shared_blocks
+            }))?,
+        )?;
+        Ok((target.to_path_buf(), checksum))
+    }
+    /// Rebind a conversion receipt after the installer creates verified aliases.
+    /// The exact post-install stamp must come from the completed catalog install,
+    /// so an unrelated change cannot turn into reusable conversion evidence.
+    pub fn refresh_migration_proof(
+        target: &Path,
+        checksum: &pir_artifact::Checksum,
+        installed: &pir_artifact::migration::Stamp,
+    ) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let proof = target.with_extension("runtime.migration.json");
+        let raw = match fs::read(&proof) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let metadata = fs::symlink_metadata(target)?;
+        if &pir_artifact::migration::Stamp::of(&metadata)? != installed {
+            return Err(invalid("converted runtime changed after installation"));
+        }
+        let mut saved: serde_json::Value = serde_json::from_slice(&raw)?;
+        if saved["checksum"] != serde_json::to_value(checksum)? {
+            return Err(invalid("runtime conversion proof names another checksum"));
+        }
+        saved["stamp"] = serde_json::json!([
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ]);
+        pir_artifact::migration::persist(&proof, &serde_json::to_vec(&saved)?)
+    }
+
     /// Check local material without loading it or hashing its body.
     pub fn check_size(
         &self,
@@ -731,7 +972,7 @@ impl Write for IncrementalWriteback<'_> {
 
 struct HashWriter<W> {
     output: W,
-    hash: Sha256,
+    hash: pir_artifact::Hasher,
 }
 impl<W: Write> Write for HashWriter<W> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -808,7 +1049,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let disk = DiskCache::new(dir.path().join("cache"), 1024).unwrap();
         let digest = "ab".repeat(32);
-        let prefix = hex::encode(Sha256::digest(digest.as_bytes()));
+        let prefix = pir_artifact::digest(digest.as_bytes());
         let retained = disk.directory.join(format!("{prefix}-table.runtime"));
         let stale = disk.directory.join("unretained-table.runtime");
         let partial = disk.directory.join("writer.partial");
@@ -854,14 +1095,18 @@ mod tests {
             .collect();
         let mut writer = HashWriter {
             output: IncrementalWriteback::new(&file),
-            hash: Sha256::new(),
+            hash: pir_artifact::Hasher::new(),
         };
         // A single oversized call exercises Write's short-write contract;
         // a trailing write crosses the second barrier without alignment.
         writer.write_all(&bytes[..bytes.len() - 19]).unwrap();
         writer.write_all(&bytes[bytes.len() - 19..]).unwrap();
         writer.flush().unwrap();
-        assert_eq!(writer.hash.finalize(), Sha256::digest(&bytes));
+        assert_eq!(writer.hash.finalize(), {
+            let mut h = pir_artifact::Hasher::new();
+            h.update(&bytes);
+            h.finalize()
+        });
         file.sync_all().unwrap();
         file.rewind().unwrap();
         let mut actual = Vec::new();
@@ -1011,7 +1256,11 @@ mod tests {
         let public_at = (DiskCache::fixed_bytes(&shared) as usize) - 14_848;
         bytes[public_at] ^= 1;
         // Recompute the checksum so only the mask binding can catch it.
-        let checksum = Sha256::digest(&bytes[64..]);
+        let checksum = {
+            let mut hash = pir_artifact::Hasher::new();
+            hash.update(&bytes[64..]);
+            hash.finalize()
+        };
         bytes[32..64].copy_from_slice(&checksum);
         fs::remove_file(&path).unwrap();
         fs::write(&path, &bytes).unwrap();
@@ -1331,6 +1580,57 @@ mod shipped_tests {
         rows: Vec<u8>,
         source: SegmentSource,
         key: RuntimeKey,
+    }
+
+    #[test]
+    fn checksum_migration_reuses_the_prepared_body_and_resumes_without_rewriting_it() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir().unwrap();
+        let s = segment(root.path(), Table::TxDirectory, 2, 3);
+        let runtime = super::super::tests::prepared_fixture(&s.shared, &s.rows).unwrap();
+        let shipped = ShippedRuntimes::required(root.path().into());
+        shipped
+            .write(&s.key, &s.shared, s.source.sha256(), &runtime)
+            .unwrap();
+        let current = shipped.path(&s.key, &s.shared, s.source.sha256());
+        let mut bytes = fs::read(&current).unwrap();
+        bytes[..32].copy_from_slice(&DiskCache::previous_identity(
+            &s.key,
+            &s.shared,
+            s.source.sha256(),
+        ));
+        let mut hash = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+        hash.update(&bytes[64..]);
+        bytes[32..64].copy_from_slice(&hash.finalize());
+        let old_path = shipped.previous_path(&s.key, &s.shared, s.source.sha256());
+        fs::write(&old_path, &bytes).unwrap();
+        let mut hash = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+        hash.update(&bytes);
+        let previous = hash.finish();
+        let target = ShippedRuntimes::required(stage.path().into());
+        let convert = || {
+            shipped.migrate_previous(
+                &target,
+                &s.key,
+                &s.shared,
+                s.source.sha256(),
+                &previous,
+                bytes.len() as u64,
+                &stage.path().join("checkpoints"),
+            )
+        };
+        let (path, checksum) = convert().unwrap();
+        let converted = fs::read(&path).unwrap();
+        assert_eq!(&converted[64..], &bytes[64..]);
+        checksum.verify(&converted).unwrap();
+        target
+            .completed(&s.key, &s.shared, s.source.sha256())
+            .unwrap();
+        let inode = fs::metadata(&path).unwrap().ino();
+        assert_eq!(convert().unwrap().1, checksum);
+        assert_eq!(fs::metadata(&path).unwrap().ino(), inode);
+        assert_eq!(fs::read(old_path).unwrap(), bytes);
     }
 
     /// A `txid-2k8` segment of `table` whose first `filled` rows hold bytes

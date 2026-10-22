@@ -268,7 +268,7 @@ impl Source {
         let current: Current = serde_json::from_slice(&bytes)?;
         if current.schema != self.schema
             || current.revision == 0
-            || !publication::is_digest(&current.inventory_sha256)
+            || !publication::is_digest(&current.inventory_checksum)
             || !publication::is_digest(&current.anchor_hash)
             || current.network != network
             || current.genesis_hash != genesis
@@ -342,7 +342,7 @@ impl Source {
         let current: Current = serde_json::from_slice(&self.small("current", 16 << 10).await?)?;
         if current.schema != self.schema
             || current.revision == 0
-            || !publication::is_digest(&current.inventory_sha256)
+            || !publication::is_digest(&current.inventory_checksum)
             || !publication::is_digest(&current.genesis_hash)
             || !publication::is_digest(&current.anchor_hash)
         {
@@ -391,7 +391,7 @@ mod observation_tests {
                     schema: publication::SCHEMA.into(),
                     revision: 10,
                     recovery_epoch: 0,
-                    inventory_sha256: "11".repeat(32),
+                    inventory_checksum: "11".repeat(32),
                     network: "main".into(),
                     genesis_hash: "00".repeat(32),
                     anchor_height: 2,
@@ -462,7 +462,7 @@ mod observation_tests {
                     "a damaged record must not hide a newer readable companion"
                 );
                 saved.current = next.clone();
-                saved.current.inventory_sha256 = "33".repeat(32);
+                saved.current.inventory_checksum = "33".repeat(32);
                 crate::control::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),

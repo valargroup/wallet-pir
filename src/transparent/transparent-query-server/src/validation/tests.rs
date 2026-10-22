@@ -18,15 +18,16 @@ fn key(revision: &str) -> RuntimeKey {
     (revision.into(), Table::Directory, 0)
 }
 fn artifact(root: &Path, good: &[u8], actual: &[u8]) -> (PathBuf, publication::Artifact) {
-    let objects = root.join("objects");
+    let objects = root.join(pir_artifact::namespace("objects"));
     std::fs::create_dir_all(&objects).unwrap();
     let artifact = publication::Artifact {
+        source_sha256: None,
         path: "rows.bin".into(),
-        sha256: publication::digest(good),
+        checksum: publication::digest(good),
         bytes: good.len() as u64,
         kind: publication::Kind::RecentTable,
     };
-    let path = objects.join(&artifact.sha256);
+    let path = objects.join(&artifact.checksum);
     std::fs::write(&path, actual).unwrap();
     publication::record_received_file(&path, &artifact, &path).unwrap();
     (path, artifact)
@@ -36,8 +37,8 @@ fn artifact(root: &Path, good: &[u8], actual: &[u8]) -> (PathBuf, publication::A
 fn startup_removes_interrupted_repairs_without_following_links() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let objects = root.path().join("objects");
-    std::fs::create_dir(&objects).unwrap();
+    let objects = root.path().join(pir_artifact::namespace("objects"));
+    std::fs::create_dir_all(&objects).unwrap();
     let interrupted = objects.join("digest.validation.repair-1");
     let alias = root.path().join(".validation-link-1");
     let retained = objects.join("digest.validation.json");
@@ -391,7 +392,8 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
     let objects = crate::objects::prepare_objects(&root).unwrap();
     let artifact = publication::Artifact {
         path: "rows.bin".into(),
-        sha256: publication::digest(b"correct!"),
+        source_sha256: None,
+        checksum: publication::digest(b"correct!"),
         bytes: 8,
         kind: publication::Kind::RecentTable,
     };
@@ -406,7 +408,7 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
                 .await
                 .is_err()
         );
-        assert!(!objects.join(&artifact.sha256).exists());
+        assert!(!objects.join(&artifact.checksum).exists());
         assert_eq!(std::fs::read_dir(&objects).unwrap().count(), 0);
     }
     let metadata = publication::Artifact {
@@ -423,7 +425,7 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
             .await
             .unwrap()
     );
-    let object = objects.join(&artifact.sha256);
+    let object = objects.join(&artifact.checksum);
     let alias = root.join("alias");
     crate::objects::link_object(&object, &alias, &artifact, |a, b| std::fs::hard_link(a, b))
         .unwrap();

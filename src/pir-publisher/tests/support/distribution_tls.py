@@ -4,7 +4,6 @@
 No publication construction or consumer logic lives here. Optional transport
 faults exercise authenticated-origin failure behavior through real sockets.
 """
-import hashlib
 import http.client
 import http.server
 import json
@@ -134,17 +133,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             connection = http.client.HTTPConnection(upstream, timeout=10)
             prefix = "/provider/v1/"
             connection.request("GET", prefix + "current")
-            real = json.loads(connection.getresponse().read())["inventory_sha256"]
+            real = json.loads(connection.getresponse().read())["inventory_checksum"]
             request = json.loads(body)
-            forged = request["inventory_sha256"]
-            request["inventory_sha256"] = real
+            forged = request["inventory_checksum"]
+            request["inventory_checksum"] = real
             connection.request("POST", self.path, body=json.dumps(request).encode(), headers={"content-type": "application/json"})
             response = connection.getresponse()
             payload = response.read()
             connection.close()
             if response.status == 200:
                 answer = json.loads(payload)
-                answer["inventory_sha256"] = forged
+                answer["inventory_checksum"] = forged
                 payload = json.dumps(answer, separators=(",", ":")).encode()
             self.send_response(response.status)
             self.send_header("Content-Length", str(len(payload)))
@@ -158,7 +157,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             prefix = "/provider/txid/v1/" if self.path.startswith("/provider/txid/") else "/provider/v1/"
             connection.request("GET", prefix + "current")
             current = json.loads(connection.getresponse().read())
-            connection.request("GET", prefix + "inventories/" + current["inventory_sha256"])
+            connection.request("GET", prefix + "inventories/" + current["inventory_checksum"]["digest"])
             inventory = json.loads(connection.getresponse().read())
             connection.close()
             if fault == "runtime":
@@ -168,7 +167,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 inventory["artifacts"] = [f for f in inventory["artifacts"] if f["kind"] != "recent_runtime"]
             body = json.dumps(inventory, separators=(",", ":")).encode()
-            current["inventory_sha256"] = hashlib.sha256(body).hexdigest()
+            hasher = http.client.HTTPConnection(os.environ["TLS_CHECKSUM_ADDRESS"], timeout=10)
+            hasher.request("POST", "/", body=body)
+            current["inventory_checksum"] = json.loads(hasher.getresponse().read())
+            hasher.close()
             if self.path.endswith("/current"):
                 body = json.dumps(current, separators=(",", ":")).encode()
             self.send_response(200)

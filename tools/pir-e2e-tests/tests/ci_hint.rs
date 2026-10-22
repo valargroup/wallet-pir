@@ -86,7 +86,6 @@ async fn published_hint_matches_independent_oracle_68() {
 #[test]
 fn published_hint_rejects_damage_before_loading() {
     use enhance_query_server::artifact::PublicationArtifact;
-    use sha2::{Digest, Sha256};
     let root = tempfile::tempdir().unwrap();
     // Byte validation needs a valid encoding, not an evaluator. The TLS oracle
     // cases above independently check the publisher's real prepared hint.
@@ -103,7 +102,7 @@ fn published_hint_rejects_damage_before_loading() {
             }
         }
     }
-    let digest = hex::encode(Sha256::digest(&original));
+    let digest = pir_artifact::digest(&original);
     let path = root.path().join("damaged-hint");
     for fault in ["corrupt", "truncated", "shape", "trailing", "format"] {
         let mut bytes = original.clone();

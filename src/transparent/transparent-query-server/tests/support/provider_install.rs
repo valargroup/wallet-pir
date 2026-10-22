@@ -269,7 +269,7 @@ async fn installation_case(case: Case) {
         schema: publication::SCHEMA.into(),
         revision: 1,
         recovery_epoch: 0,
-        inventory_sha256: finalized.sha256().into(),
+        inventory_checksum: finalized.checksum().into(),
         network: map.network.clone(),
         genesis_hash: map.genesis_hash.clone(),
         anchor_height: FIRST + 3,
@@ -301,14 +301,14 @@ async fn installation_case(case: Case) {
         serde_json::to_vec(&current).unwrap(),
     );
     replies.insert(
-        format!("/provider/v1/inventories/{}", finalized.sha256()),
+        format!("/provider/v1/inventories/{}", finalized.checksum()),
         finalized.bytes().to_vec(),
     );
     for file in &finalized.inventory().artifacts {
         if file.kind.local() {
             replies.insert(
-                format!("/provider/v1/artifacts/{}", file.sha256),
-                std::fs::read(finalized.file(&file.sha256).unwrap()).unwrap(),
+                format!("/provider/v1/artifacts/{}", file.checksum),
+                std::fs::read(finalized.file(&file.checksum).unwrap()).unwrap(),
             );
         }
     }
@@ -342,9 +342,9 @@ async fn installation_case(case: Case) {
         }
         let bytes = serde_json::to_vec(&inventory).unwrap();
         let mut pointer = current.clone();
-        pointer.inventory_sha256 = publication::digest(&bytes);
+        pointer.inventory_checksum = publication::digest(&bytes);
         replies.insert(
-            format!("/provider/v1/inventories/{}", pointer.inventory_sha256),
+            format!("/provider/v1/inventories/{}", pointer.inventory_checksum),
             bytes,
         );
         alternate_current.push(serde_json::to_vec(&pointer).unwrap());
@@ -360,7 +360,7 @@ async fn installation_case(case: Case) {
             .iter()
             .find(|f| f.kind == publication::Kind::RecentRuntime)
             .unwrap()
-            .sha256
+            .checksum
     );
     let corrupt_runtime = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let corrupt = corrupt_runtime.clone();
@@ -380,7 +380,7 @@ async fn installation_case(case: Case) {
             schema: publication::SCHEMA.into(),
             revision: request.revision,
             recovery_epoch: request.recovery_epoch,
-            inventory_sha256: request.inventory_sha256.clone(),
+            inventory_checksum: request.inventory_checksum.clone(),
             genesis_hash: genesis.clone(),
             results: request
                 .anchors

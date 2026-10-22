@@ -740,7 +740,7 @@ fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
         .0;
     assert_eq!(plain.plan.units, b_in_tail.plan.units);
     for identity in &b_plan.units {
-        let relative = PathBuf::from("artifacts-9")
+        let relative = PathBuf::from(super::UNIT_DIRECTORY)
             .join(identity.digest())
             .join("enhance")
             .join("shard-00000007");

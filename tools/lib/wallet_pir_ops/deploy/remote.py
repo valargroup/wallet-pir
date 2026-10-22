@@ -321,8 +321,17 @@ class ProductionLock(hostlock.PinnedHostLock):
     PATH = Path(LOCK_PATH)
 
 
-def production_lock(inventory, executor):
+@contextlib.contextmanager
+def production_lock(inventory, executor, *, artifact_transaction=None):
     """The production lock the inventory names, as a context manager yielding an object with `verify()`."""
     if inventory.lock['type'] == 'pinned_host':
-        return ProductionLock({'type': 'pinned_host', 'machine_id': inventory.lock['machine_id']})
-    return executor.hold_lock(inventory.lock['host'], LOCK_PATH)
+        owner = ProductionLock({'type': 'pinned_host', 'machine_id': inventory.lock['machine_id']})
+    else:
+        owner = executor.hold_lock(inventory.lock['host'], LOCK_PATH)
+    with owner as held:
+        path = '/var/lib/wallet-pir/artifact-checksum-fence.json'
+        host = inventory.lock.get('host')
+        raw = executor.read(host, path) if host else Path(path).read_text() if Path(path).exists() else None
+        if raw is not None and json.loads(raw).get('transaction') != artifact_transaction:
+            raise LockHeld('artifact checksum cutover is unfinished; use its recorded rollback first')
+        yield held

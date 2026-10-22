@@ -4,14 +4,21 @@ use transparent_shared::publication::{self, Error};
 
 pub(crate) const PARTIAL: &str = ".partial-";
 
-/// Create or open `<directory>/objects`, refuse anything but a real directory
+/// Create or open the algorithm's object namespace, refuse symlinks at either level
 /// before enumerating it, and remove interrupted partials. This directory has
 /// one owner; an interrupted object is never reused.
 pub(crate) fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
-    let objects = directory.join("objects");
-    std::fs::create_dir_all(&objects)?;
-    if !std::fs::symlink_metadata(&objects)?.is_dir() {
-        return Err("object cache must be a real directory".into());
+    let objects = directory.join(pir_artifact::namespace("objects"));
+    std::fs::create_dir_all(directory)?;
+    for path in [directory.join("objects"), objects.clone()] {
+        match std::fs::create_dir(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        if !std::fs::symlink_metadata(&path)?.is_dir() {
+            return Err("object cache must be a real directory".into());
+        }
     }
     remove_partials(&objects)?;
     Ok(objects)
@@ -25,7 +32,7 @@ pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
     };
     for entry in entries {
         let entry = entry?;
-        // Includes the previous `<sha256>.partial` copy name.
+        // Includes the previous `<checksum>.partial` copy name.
         if entry.file_name().to_string_lossy().contains(".partial") {
             std::fs::remove_file(entry.path())?;
         }
@@ -48,12 +55,14 @@ pub(crate) fn collect_objects(
     linked: &std::path::Path,
 ) -> Result<Option<(usize, u64)>, Error> {
     use std::os::unix::fs::MetadataExt;
-    let objects = root.join("objects");
-    match std::fs::symlink_metadata(&objects) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return Err("object cache must be a real directory".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
+    let objects = root.join(pir_artifact::namespace("objects"));
+    for path in [root.join("objects"), objects.clone()] {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("object cache must be a real directory".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
     }
     if std::fs::symlink_metadata(linked)?.nlink() < 2 {
         return Ok(None);
@@ -106,7 +115,7 @@ pub(crate) async fn ensure_object(
     if !std::fs::symlink_metadata(objects)?.is_dir() {
         return Err("object cache must be a real directory".into());
     }
-    let object = objects.join(&artifact.sha256);
+    let object = objects.join(&artifact.checksum);
     match std::fs::symlink_metadata(&object) {
         Ok(metadata) => {
             if metadata.is_file() {
@@ -128,7 +137,7 @@ pub(crate) async fn ensure_object(
     }
     let partial = objects.join(format!(
         "{}{PARTIAL}{}-{}",
-        artifact.sha256,
+        artifact.checksum,
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -143,10 +152,10 @@ pub(crate) async fn ensure_object(
             .open(&partial)
             .await?;
         let response = source
-            .get(&format!("artifacts/{}", artifact.sha256))
+            .get(&format!("artifacts/{}", artifact.checksum))
             .await?;
         let verification = if check_metadata {
-            pir_sync_manager::Verification::Sha256(&artifact.sha256)
+            pir_sync_manager::Verification::Artifact(&artifact.checksum)
         } else {
             pir_sync_manager::Verification::Length
         };
@@ -348,8 +357,9 @@ mod tests {
         permissions.set_readonly(true);
         std::fs::set_permissions(&object, permissions).unwrap();
         let artifact = publication::Artifact {
+            source_sha256: None,
             path: format!("{}/nested/rows.bin", "ab".repeat(32)),
-            sha256: publication::digest(b"checked rows"),
+            checksum: publication::digest(b"checked rows"),
             bytes: 12,
             kind: publication::Kind::RecentTable,
         };
@@ -536,7 +546,7 @@ mod tests {
         permissions.set_readonly(true);
         std::fs::set_permissions(&replacement, permissions).unwrap();
         let conflicting = publication::Artifact {
-            sha256: publication::digest(b"changed rows"),
+            checksum: publication::digest(b"changed rows"),
             ..artifact.clone()
         };
         for _ in 0..2 {

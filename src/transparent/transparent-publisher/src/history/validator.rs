@@ -15,7 +15,7 @@ use transparent_shared::publication::{
 pub(crate) struct Identity {
     pub directory: PathBuf,
     pub map_sha256: String,
-    pub inventory_sha256: String,
+    pub inventory_checksum: String,
     pub height: u64,
     pub hash: String,
     /// The authority epoch the job runs under; [`Queue::retain`] moves it

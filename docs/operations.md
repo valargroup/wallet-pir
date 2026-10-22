@@ -230,6 +230,97 @@ but their mutation drivers remain product recipes: `schema-*` and
 a publication is more than replacing an executable. Their retained request,
 plan-digest, authority, quiescence and recovery requirements continue to apply.
 
+## Artifact checksum cutover
+
+Enhance, Status and Transparent distribution artifacts use tagged checksums:
+`{"algorithm":"blake3","digest":"<64 lowercase hex characters>"}`.
+The `pir-artifact::CURRENT` constant selects the algorithm for producers,
+consumers and maintenance. Object namespaces include the algorithm. Source
+manifests, wallet commitments, chain identities and executable or operations
+package SHA-256 pins keep their own contracts.
+
+Enhance publisher authorization also uses tagged `manifest_checksum` and
+`authorized_manifest_checksum` values from this policy. These identify the
+distribution metadata only; the wallet-visible manifest and session identities
+retain their existing protocol encodings and commitments.
+
+`pir-publisher artifact-checksum prepare` verifies a predecessor inventory and
+its objects into a separate staging directory. Supply `--product`, the absolute
+publication `--root`, `--inventory`, its operational `--inventory-sha256` pin,
+and `--stage`. Multiple retained inventories can share `--checkpoints`.
+Preparation checks the previous digest and computes the current digest in one
+stream. It pins declared inputs before scanning, so source collection cannot
+remove the rest of a batch, and completed pins survive an interrupted command.
+Unchanged objects use hard links; Transparent runtime headers require
+separate files but reuse the prepared body without rebuilding PIR matrices.
+On Linux filesystems with reflink support, the converter shares unchanged body
+blocks and allocates the new header separately. Other filesystems copy the
+body. Measure free space on each actual publication filesystem before staging;
+directory sizes do not measure space saved by shared blocks.
+Checkpoints bind successful work to the file's device, inode, length and change
+times. Changed or replaced files are verified again.
+
+`prepare-cache --preparation FILE --root DIR --stage DIR` prepares a consumer's
+existing cache against that verified translation. Missing cache objects remain
+ordinary downloads. Converted runtime bytes must match the publisher's new
+complete-file checksum. Preparation never changes live authority records.
+
+`prepare-record` converts saved current, retention, high-water or History
+restore records using one or more `--preparation` files. Its `--kind` selects an
+explicit product adapter. Replay revisions, recovery epochs, withdrawals and
+revocations survive conversion. `--reverse` translates the latest record back;
+an unknown publication refuses instead of restoring an old authority snapshot.
+These are offline tools: the deployment transaction owns writer shutdown and
+atomic installation. Retain both original immutable files and preparation
+records until rollback is retired.
+
+Use `wallet-pir-deploy.py artifact-checksum-plan` and
+`artifact-checksum-prepare --expect-plan-sha256 HASH` for online preparation,
+then review `artifact-checksum-preflight` with the same pinned private request before
+`artifact-checksum-deploy --expect-plan-sha256 HASH`. The request names every
+affected target, separate CPU/CUDA executable groups, prepared trees, mutable
+record conversions and the existing publisher discovery origin. The first
+group is the shared publisher. Preparation and binary staging happen while
+predecessors serve; the final transaction joins all writers, translates their
+latest small records, starts the publisher, verifies discovery contract 2, and
+starts consumers. Each product retains its independent encrypted-answer check.
+An intervening publication without a prepared translation refuses the cutover;
+refresh preparation and retry while the predecessors serve.
+
+A producer preparation may include a `source` with `product`, exact UTF-8
+`inventory` bytes, `inventory_sha256` and a shared absolute `checkpoints` path.
+A consumer preparation instead names `publisher_host` and `publisher_stage` in
+its `source`; it must follow that producer in the request. The tool transfers
+only the three public preparation metadata files, then verifies the consumer's
+own cached bytes. Preparation stages the pinned publisher maintenance binary
+without changing any service unit. Review a fresh activation plan afterward.
+
+`artifact-checksum-status` reports the durable transaction.
+`artifact-checksum-rollback --transaction ID` uses the same request and state
+directory. It translates the latest authority records before restoring
+executables through the normal lifecycle. Before stopping anything it reads
+each publisher unit's `--config` document and checks `integrity-failures.json`
+under every enabled Transparent History `publication_root`; the request names
+none. The plan pins each configuration path and its exact bytes. An unreadable
+or changed configuration refuses rollback before interruption, including a
+pending root move or disabled History section: an edited file does not prove
+what the running publisher loaded. Inspect and restore the pinned configuration
+before retrying. A failure recorded by the
+current release has no predecessor form, so rollback refuses before stopping
+anything. One recorded while writers stop restarts every current executable on
+the latest records, accepting each once the exact executable runs and answers
+health (a retained incident keeps publisher readiness false), and refuses. A
+role whose normal health endpoint reports publication readiness can declare a
+separate `liveness_url`; recovery still checks its executable identity but does
+not apply publication acceptance fields to that endpoint. Ordinary deployment
+continues to require all configured readiness checks. A retry reuses a restart
+only if its recorded process invocation still runs; otherwise it restarts again.
+Either way keep the current release serving, publish verified replacement bytes
+so it clears the failure, then retry. An unfinished transaction fences other
+deployments until recovery completes. Initial conversion reads existing data;
+its elapsed time and temporary space must be measured separately from service
+interruption and from any claimed hashing speedup.
+
 ## Configure a publisher and its sandbox together
 
 `role_config.RenderedRole` holds unit text and the configuration files that unit

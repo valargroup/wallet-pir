@@ -1,16 +1,15 @@
 //! Status-owned HTTPS distribution contract; hashes bind bytes, not chain truth.
 use crate::{profile, protocol::*};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-pub const SCHEMA: &str = "status-prepared-distribution-v1";
+pub const SCHEMA: &str = "status-prepared-distribution-v2";
 pub const PREFIX: &str = "/provider/status/v1/";
 pub const METADATA_LIMIT: usize = 64 << 10;
 pub const MAX_ANCHORS: usize = 256;
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
 
 pub fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+    pir_artifact::digest(bytes)
 }
 pub fn valid_digest(s: &str) -> bool {
     s.len() == 64
@@ -21,24 +20,25 @@ pub fn valid_digest(s: &str) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
-    pub sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub checksum: String,
     pub bytes: u64,
 }
 impl Object {
     pub fn new(bytes: &[u8]) -> Self {
         Self {
-            sha256: digest(bytes),
+            checksum: digest(bytes),
             bytes: bytes.len() as u64,
         }
     }
     pub fn validate(&self, limit: u64) -> Result<(), Failure> {
-        if !valid_digest(&self.sha256) || self.bytes == 0 || self.bytes > limit {
+        if !valid_digest(&self.checksum) || self.bytes == 0 || self.bytes > limit {
             return Err("invalid Status object identity or size".into());
         }
         Ok(())
     }
     pub fn verify(&self, bytes: &[u8]) -> Result<(), Failure> {
-        if bytes.len() as u64 != self.bytes || digest(bytes) != self.sha256 {
+        if bytes.len() as u64 != self.bytes || digest(bytes) != self.checksum {
             return Err("Status object digest or length differs".into());
         }
         Ok(())
@@ -158,9 +158,6 @@ impl Inventory {
             return Err("Status packing exceeds geometry bound".into());
         }
         self.public.validate(2 << 20)?;
-        if self.public.sha256 != hex::encode(self.manifest.public_digest) {
-            return Err("Status public parameters differ".into());
-        }
         Ok(())
     }
 }
@@ -240,7 +237,7 @@ mod tests {
         assert!(object.validate(7).is_err());
         assert!(!valid_digest("../objects"));
         let mut invalid = object;
-        invalid.sha256 = invalid.sha256.to_uppercase();
+        invalid.checksum = invalid.checksum.to_uppercase();
         assert!(invalid.validate(100).is_err());
     }
     #[test]

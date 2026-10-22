@@ -339,7 +339,9 @@ impl Worker {
                     // cleanup only unlinks them. Bind the handle again before loading.
                     let map = unsafe { memmap2::MmapOptions::new().map(&file) }?;
                     use sha2::{Digest, Sha256};
-                    if hex::encode(Sha256::digest(&map)) != object.sha256 {
+                    if pir_artifact::digest(&map) != object.checksum
+                        || hex::encode(Sha256::digest(&map)) != identity.content_sha256
+                    {
                         return Err("cached rows have wrong checksum".into());
                     }
                     let (_, params) = crate::ipir::shard_parameters(&layout)?;
@@ -355,7 +357,7 @@ impl Worker {
                     let unit = Arc::new(ShardRuntime {
                         shard_id: domain.plan.shard.id,
                         query_row_start: identity.local_row_start as usize,
-                        rows_sha256: object.sha256.clone(),
+                        rows_sha256: identity.content_sha256.clone(),
                         server,
                     });
                     crate::artifact::release_file_cache(&file);
@@ -457,7 +459,7 @@ impl Synchronizer {
         let keep = domains
             .iter()
             .flat_map(|d| &d.rows)
-            .map(|object| object.sha256.clone())
+            .map(|object| object.checksum.clone())
             .collect();
         self.client.collect(&keep)?;
         for domain in &domains {
@@ -831,11 +833,13 @@ mod tests {
                     eligible: true,
                     manifest: Some(manifest.clone()),
                     inventory: Some(crate::publication::Object {
-                        sha256: "03".repeat(32),
+                        checksum: "03".repeat(32),
                         bytes: 1,
                     }),
                 },
-                authorized_manifest_sha256: id.clone(),
+                authorized_manifest_checksum: Some(crate::publication::manifest_checksum(
+                    &manifest,
+                )),
                 observed_unix_ms: crate::synchronization::now_ms().unwrap(),
             },
             &manifest,

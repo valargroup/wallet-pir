@@ -218,10 +218,10 @@ mod tests {
 
     #[test]
     fn document_is_generated_from_the_package_version() {
-        assert_eq!(VERSION, "1.0.0");
+        assert_eq!(VERSION, "2.0.0");
         assert_eq!(
             String::from_utf8(Document::publisher().to_json()).unwrap(),
-            r#"{"service":"pir-publisher","version":"1.0.0"}"#
+            r#"{"service":"pir-publisher","version":"2.0.0"}"#
         );
         assert_eq!(
             check_publisher(&Document::publisher().to_json()),
@@ -277,17 +277,17 @@ mod tests {
 
     #[test]
     fn publisher_major_mismatch_is_a_typed_error() {
-        let error = check_publisher(&body(PUBLISHER_SERVICE, "2.0.0")).unwrap_err();
+        let error = check_publisher(&body(PUBLISHER_SERVICE, "1.0.0")).unwrap_err();
         let incompatible = error.incompatible().expect("typed mismatch");
-        assert_eq!(incompatible.publisher, v("2.0.0"));
+        assert_eq!(incompatible.publisher, v("1.0.0"));
         assert_eq!(incompatible.query_server, version());
     }
 
     #[test]
     fn build_metadata_is_ignored() {
         assert_eq!(
-            check_publisher(&body(PUBLISHER_SERVICE, "1.2.3+build.7")).unwrap(),
-            v("1.2.3+build.7")
+            check_publisher(&body(PUBLISHER_SERVICE, "2.2.3+build.7")).unwrap(),
+            v("2.2.3+build.7")
         );
         assert_eq!(compatible(&v("1.0.0+a"), &v("1.0.0+b")), Ok(()));
     }
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn unknown_additive_fields_are_ignored() {
         let raw =
-            br#"{"service":"pir-publisher","version":"1.4.0","features":["x"],"extra":{"a":1}}"#;
-        assert_eq!(check_publisher(raw).unwrap(), v("1.4.0"));
+            br#"{"service":"pir-publisher","version":"2.4.0","features":["x"],"extra":{"a":1}}"#;
+        assert_eq!(check_publisher(raw).unwrap(), v("2.4.0"));
     }
 }

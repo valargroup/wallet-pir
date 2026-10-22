@@ -25,7 +25,7 @@ loader; a header/length match alone is insufficient.
 
 Those checks apply to new publication bytes. Once they pass, and before the
 active pointer moves, the publisher writes `history-restore.json` beside the
-publication: the exact inventory bytes and SHA-256, map, chain and anchor
+publication: the exact inventory bytes and tagged BLAKE3 checksum, map, chain and anchor
 identity, holdings mode and completed phases. `pir-publisher
 prepare-history-restore --config FILE --publication DIR --output RECORD` writes
 the same record for a pinned publication after the full checks, without a
@@ -69,11 +69,11 @@ All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
 | Route | Response |
 |---|---|
-| `current` | `transparent-prepared-distribution-v1`: durable `revision`, process-local `recovery_epoch`, `inventory_sha256`, network/genesis, exact anchor, eligibility and `invalidated_from` |
+| `current` | `transparent-prepared-distribution-v2`: durable `revision`, process-local `recovery_epoch`, `inventory_checksum`, network/genesis, exact anchor, eligibility and `invalidated_from` |
 | `anchors/{height}/{hash}` | Live canonicality attestation for a public anchor, bound to genesis and the publisher revision/recovery snapshot; no serving permission |
-| `POST anchors/check` | The same attestation for at most 256 distinct anchors in one request of at most 64 KiB naming schema, `revision`, `recovery_epoch` and `inventory_sha256`; any other snapshot is 409. One admission and genesis read before and after the hash reads, then one fence against epoch, revision, map, inventory and withdrawal changes; the response repeats the snapshot and genesis with exactly one result per anchor, or answers none (503) |
-| `inventories/{sha256}` | Exact digest-bound inventory JSON for the current publication |
-| `artifacts/{sha256}` | Exact immutable file bytes referenced locally by that inventory |
+| `POST anchors/check` | The same attestation for at most 256 distinct anchors in one request of at most 64 KiB naming schema, `revision`, `recovery_epoch` and `inventory_checksum`; any other snapshot is 409. One admission and genesis read before and after the hash reads, then one fence against epoch, revision, map, inventory and withdrawal changes; the response repeats the snapshot and genesis with exactly one result per anchor, or answers none (503) |
+| `inventories/{digest}` | Exact digest-bound inventory JSON for the current publication |
+| `artifacts/{digest}` | Exact immutable file bytes referenced locally by that inventory |
 
 Current responses use `Cache-Control: no-store` and an ETag of the entire
 serialized current record. `If-None-Match` yields 304 only after the same live
@@ -167,7 +167,7 @@ connect/whole-request deadlines. The map is fetched first; inventory
 classifications must agree with its exact recent/archive boundary before tables
 are downloaded. Paths use a restricted relative alphabet and reject escapes,
 dot components, URL syntax, duplicate paths and symlinks in producer sources.
-Every file is checked for exact length and SHA-256. One attempt-wide streaming
+Every file is checked for exact length and BLAKE3. One attempt-wide streaming
 counter charges all response bodies: initial and final current, inventory, anchor
 attestation and artifacts, including bytes consumed before any refusal or failed
 validation. An exhausted budget prevents the next request; metadata limits do not
@@ -280,7 +280,7 @@ Only an activated snapshot supplies a conditional token.
 Unchanged responses do not fetch inventories/artifacts, update a success-time
 lease, or authorize an activation. Transparent still has no lease.
 
-Completed objects live under `objects/<sha256>`, read-only. Downloads stream into
+Completed objects live under `objects/blake3/<digest>`, read-only. Downloads stream into
 unique partial files, enforce the declared byte count and body budget, and are
 synced before and after atomic promotion. Metadata hashes remain immediate;
 large table and runtime bodies are not hashed during receipt or activation.
@@ -781,7 +781,7 @@ The publisher owns preparation correctness, including comparing prepared
 material with its sources and testing encrypted answers before publication.
 Query servers trust those prepared bytes. HTTPS downloads check exact length;
 local reloads check expected size. After serving starts, one process-wide OS
-thread validates each new table/runtime body against its recorded SHA-256. It
+thread validates each new table/runtime body against its recorded BLAKE3 checksum. It
 pauses before each 1-MiB read/hash chunk while retrieval requests are pending or
 executing. A chunk already running may briefly overlap a new query; sustained
 query traffic can delay validation indefinitely. Successful `.validation.json`

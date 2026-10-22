@@ -2,7 +2,7 @@
 use super::PublicationDistribution;
 use crate::publication::read_metadata;
 use enhance_query_server::{
-    protocol::{canonical_hash, digest},
+    protocol::canonical_hash,
     publication::{Inventory, Object},
 };
 use std::{
@@ -19,10 +19,11 @@ impl PublicationDistribution {
             let inventory: Inventory = read_metadata(
                 &self
                     .root
-                    .join("inventories")
-                    .join(format!("{}.json", retained.inventory.sha256)),
+                    .join(pir_artifact::namespace("inventories"))
+                    .join(format!("{}.json", retained.inventory.checksum)),
             )?;
-            if digest(&inventory) != retained.inventory.sha256
+            if enhance_query_server::publication::inventory_digest(&inventory)
+                != retained.inventory.checksum
                 || !inventory.supports(&retained.manifest)?
             {
                 return Err("retained Enhance inventory differs".into());
@@ -34,7 +35,7 @@ impl PublicationDistribution {
                     .into_iter()
                     .chain([domain.hint, domain.public, packing])
                 {
-                    objects.insert(object.sha256.clone(), object);
+                    objects.insert(object.checksum.clone(), object);
                 }
             }
         }
@@ -52,56 +53,70 @@ impl PublicationDistribution {
         let mut packing = BTreeSet::new();
         let mut objects = BTreeSet::new();
         for retained in retained {
-            let name = format!("{}.json", retained.inventory.sha256);
-            let inventory: Inventory = read_metadata(&self.root.join("inventories").join(&name))?;
-            if digest(&inventory) != retained.inventory.sha256
+            let name = format!("{}.json", retained.inventory.checksum);
+            let inventory: Inventory = read_metadata(
+                &self
+                    .root
+                    .join(pir_artifact::namespace("inventories"))
+                    .join(&name),
+            )?;
+            if enhance_query_server::publication::inventory_digest(&inventory)
+                != retained.inventory.checksum
                 || !inventory.supports(&retained.manifest)?
             {
                 return Err("cannot collect: retained Enhance inventory differs".into());
             }
             inventories.insert(name);
             for domain in inventory.domains {
-                domains.insert(format!("{}.json", digest(&domain.plan)));
+                domains.insert(format!(
+                    "{}.json",
+                    enhance_query_server::publication::inventory_digest(&domain.plan)
+                ));
                 units.extend(domain.plan.units.iter().map(|unit| unit.digest()));
                 packing.insert(domain.packing.name.clone());
                 packing.insert(format!("{}.json", domain.packing.name));
-                objects.insert(domain.packing.sha256);
+                objects.insert(domain.packing.checksum);
                 objects.extend(
                     domain
                         .rows
                         .iter()
                         .chain([&domain.hint, &domain.public])
-                        .map(|o| o.sha256.clone()),
+                        .map(|o| o.checksum.clone()),
                 );
             }
         }
         for (directory, keep) in [
-            ("objects", objects),
-            ("inventories", inventories),
+            (&*pir_artifact::namespace("objects"), objects),
+            (&*pir_artifact::namespace("inventories"), inventories),
             ("domains", domains),
             (enhance_query_server::prepared_packing::DIRECTORY, packing),
         ] {
             collect_files(&self.root.join(directory), &keep)?;
         }
-        let directory = self.root.join("preparation/artifacts-9");
-        if directory.is_dir() {
-            for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                if entry.file_type().map_err(|e| e.to_string())?.is_dir()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .is_some_and(|name| canonical_hash(name) && !units.contains(name))
-                {
-                    fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                }
-            }
-            File::open(directory)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
+        collect_units(&crate::publication::engine_root(&self.root), &units)
     }
+}
+/// Remove prepared units no retained publication uses from the directory the
+/// preparation engine rooted at `engine_root` writes them to.
+pub(super) fn collect_units(engine_root: &Path, keep: &BTreeSet<String>) -> Result<(), String> {
+    let directory = engine_root.join(enhance_query_server::runtime::UNIT_DIRECTORY);
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir()
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| canonical_hash(name) && !keep.contains(name))
+        {
+            fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
+        }
+    }
+    File::open(directory)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())
 }
 pub(super) fn collect_files(directory: &Path, keep: &BTreeSet<String>) -> Result<(), String> {
     if !directory.is_dir() {
