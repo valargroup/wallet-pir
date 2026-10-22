@@ -520,4 +520,86 @@ mod withdrawal_tests {
         assert!(published.check_fence(withdrawn).is_err());
         assert!(published.check_fence(current.sequence).is_ok());
     }
+
+    /// A failed newer publication followed by a failed withdrawal leaves the
+    /// old publication withdrawn: neither `current` nor an authority check
+    /// grants it, and a restart cannot restore it.
+    #[tokio::test]
+    async fn failed_authority_writes_revoke_live_authority_checks() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            state_dir: root.path().into(),
+            salt_hex: "01".repeat(32),
+            window_blocks: 1,
+            private_listen: "127.0.0.1:8480".parse().unwrap(),
+        };
+        let publisher = Publisher::new(config.clone()).unwrap();
+        publisher.open_authority([1; 32], [1; 32]).unwrap();
+        let publication = |generation| {
+            AuthorityTransition::Publish(PublicationReference::new(
+                [generation as u8; 32],
+                pir_publication::ObjectReference::for_bytes(b"inventory"),
+                StatusDescriptor { generation },
+            ))
+        };
+        let published = {
+            let mut state = publisher.published.write().unwrap();
+            let authority = state.authority.as_mut().unwrap();
+            authority.apply(publication(1)).unwrap().clone()
+        };
+        let request = AnchorCheckRequest {
+            authority: published.authority().unwrap(),
+            subjects: vec![(1, [3; 32])],
+        };
+
+        let distribution = root.path().join("distribution");
+        let saved = std::fs::read(distribution.join("publication.json")).unwrap();
+        let objects = root.path().join("objects-moved");
+        std::fs::rename(&distribution, &objects).unwrap();
+        std::fs::write(&distribution, b"not a directory").unwrap();
+        {
+            let mut state = publisher.published.write().unwrap();
+            let authority = state.authority.as_mut().unwrap();
+            assert!(authority.apply(publication(2)).is_err());
+        }
+        publisher.withdraw();
+
+        let current = publisher
+            .published
+            .read()
+            .unwrap()
+            .authority
+            .as_ref()
+            .unwrap()
+            .current()
+            .clone();
+        assert!(!current.eligible && current.sequence > published.sequence);
+        assert_eq!(
+            authority_check(State(publisher.clone()), Json(request.clone()))
+                .await
+                .err(),
+            Some(StatusCode::CONFLICT)
+        );
+
+        drop(publisher);
+        std::fs::remove_file(&distribution).unwrap();
+        std::fs::rename(&objects, &distribution).unwrap();
+        std::fs::write(distribution.join("publication.json"), saved).unwrap();
+        let restarted = Publisher::new(config).unwrap();
+        restarted.open_authority([1; 32], [1; 32]).unwrap();
+        let recovered = restarted
+            .published
+            .read()
+            .unwrap()
+            .authority
+            .as_ref()
+            .unwrap()
+            .current()
+            .clone();
+        assert!(!recovered.eligible && recovered.sequence > current.sequence);
+        assert_eq!(
+            authority_check(State(restarted), Json(request)).await.err(),
+            Some(StatusCode::CONFLICT)
+        );
+    }
 }

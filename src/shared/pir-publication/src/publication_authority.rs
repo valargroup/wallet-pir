@@ -47,23 +47,34 @@ impl fmt::Display for PublicationAuthorityError {
 }
 impl std::error::Error for PublicationAuthorityError {}
 
-/// The current envelope and whether a newer one may have been exposed without
-/// becoming durable.
+/// The current envelope and the bookkeeping that keeps failed writes safe.
+///
+/// The authority assumes a single writer: the caller must hold an exclusive
+/// lock on its state directory for as long as it is open (Status holds the
+/// publisher's service lock). Two writers would reuse sequences.
 pub struct PublicationAuthority<D> {
     path: PathBuf,
     current: PublicationEnvelope<D>,
-    /// A transition's write failed. Its envelope is current in memory (so a
-    /// withdrawal still takes effect) but may be absent from disk, so its
-    /// sequence must never be reused.
+    /// The highest sequence that may be on disk or may have been served. Each
+    /// new envelope takes the next one, so no sequence is reused for a
+    /// different envelope.
+    reserved_sequence: u64,
+    /// A write failed since the last durable transition. While uncertain,
+    /// `current` is ineligible and publication is refused.
     uncertain: bool,
 }
 
+/// Sequences a restart skips above the saved envelope. A failed publication
+/// reserves one sequence and serves an unsynced withdrawal at the next, and an
+/// uncertain authority serves nothing newer; see [`PublicationAuthority::apply`].
+const RESTART_RESERVED_SEQUENCES: u64 = 2;
+
 impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
     /// Open the authority at `path` and recover: a restart starts a new
-    /// recovery epoch and is ineligible until the next publication. The saved
-    /// envelope is treated as possibly followed by one unsynced transition.
+    /// recovery epoch above every sequence the previous process may have
+    /// written or served, and is ineligible until the next publication.
     pub fn open(path: PathBuf, scope: PublicationScope) -> Result<Self, PublicationAuthorityError> {
-        let current = match fs::read(&path) {
+        let saved = match fs::read(&path) {
             Ok(bytes) => {
                 let saved: PublicationEnvelope<D> =
                     serde_json::from_slice(&bytes).map_err(PublicationAuthorityError::Corrupt)?;
@@ -84,12 +95,23 @@ impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
             },
             Err(error) => return Err(PublicationAuthorityError::Io(error)),
         };
+        let reserved_sequence = saved
+            .sequence
+            .checked_add(RESTART_RESERVED_SEQUENCES)
+            .ok_or(PublicationAuthorityError::Exhausted)?;
         let mut authority = Self {
             path,
-            current,
+            current: saved,
+            reserved_sequence,
             uncertain: true,
         };
-        authority.apply(AuthorityTransition::Recover)?;
+        // The previous process may have served a withdrawal newer than the
+        // saved envelope, so the restart records its own withdrawal too.
+        let mut recovery = authority.successor(AuthorityTransition::Recover)?;
+        recovery.fence.latest_withdrawal = recovery.sequence;
+        authority.write(&recovery)?;
+        authority.current = recovery;
+        authority.uncertain = false;
         Ok(authority)
     }
 
@@ -99,13 +121,21 @@ impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
 
     /// Apply `transition`, persist it, and make it current.
     ///
-    /// A failed write leaves the authority *uncertain*: the envelope may be on
-    /// disk without being synced. A negative transition (withdrawal or
-    /// recovery) from a certain state still becomes current, so a disk error
-    /// cannot undo a withdrawal; any other failed envelope is discarded. While
-    /// uncertain, publication is refused, a withdrawal recovers instead, and a
-    /// recovery skips one sequence so it never reuses the sequence of an
-    /// envelope that may have been exposed or written.
+    /// Every attempt reserves a fresh sequence before writing, so an envelope
+    /// that may have reached disk never shares a sequence with another one.
+    ///
+    /// A failed write leaves the authority *uncertain* and its current
+    /// envelope ineligible, so no positive authority outlives a write error:
+    /// - from a certain state, a failed withdrawal or recovery becomes current
+    ///   anyway, and a failed publication is replaced by a withdrawal at the
+    ///   next sequence;
+    /// - once uncertain, the current negative envelope stays as it is until a
+    ///   write succeeds, so repeated failures expose no further unsynced
+    ///   envelopes than a restart skips.
+    ///
+    /// While uncertain, publication is refused with
+    /// [`PublicationAuthorityError::RecoveryRequired`] and a withdrawal
+    /// recovers instead, because earlier answers may no longer be trusted.
     pub fn apply(
         &mut self,
         transition: AuthorityTransition<D>,
@@ -117,11 +147,33 @@ impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
             }
             transition => transition,
         };
-        let step = if self.uncertain { 2 } else { 1 };
+        let next = self.successor(transition)?;
+        let Err(error) = self.write(&next) else {
+            self.current = next;
+            self.uncertain = false;
+            return Ok(&self.current);
+        };
+        if !self.uncertain {
+            self.current = if next.eligible {
+                self.successor(AuthorityTransition::Withdraw)
+                    .expect("publication reserves its withdrawal sequence")
+            } else {
+                next
+            };
+            self.uncertain = true;
+        }
+        Err(error)
+    }
+
+    /// Reserve the next sequence and derive the envelope `transition` makes
+    /// from the current one.
+    fn successor(
+        &mut self,
+        transition: AuthorityTransition<D>,
+    ) -> Result<PublicationEnvelope<D>, PublicationAuthorityError> {
         let sequence = self
-            .current
-            .sequence
-            .checked_add(step)
+            .reserved_sequence
+            .checked_add(1)
             .ok_or(PublicationAuthorityError::Exhausted)?;
         let mut next = PublicationEnvelope {
             sequence,
@@ -129,6 +181,10 @@ impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
         };
         match transition {
             AuthorityTransition::Publish(publication) => {
+                // Keep room for the withdrawal that replaces a failed publication.
+                sequence
+                    .checked_add(1)
+                    .ok_or(PublicationAuthorityError::Exhausted)?;
                 next.eligible = true;
                 next.publication = Some(publication);
             }
@@ -145,20 +201,8 @@ impl<D: Clone + Serialize + DeserializeOwned> PublicationAuthority<D> {
                     .ok_or(PublicationAuthorityError::Exhausted)?;
             }
         }
-        match self.write(&next) {
-            Ok(()) => {
-                self.current = next;
-                self.uncertain = false;
-                Ok(&self.current)
-            }
-            Err(error) => {
-                if !self.uncertain && !next.eligible {
-                    self.current = next;
-                }
-                self.uncertain = true;
-                Err(error)
-            }
-        }
+        self.reserved_sequence = sequence;
+        Ok(next)
     }
 
     fn write(&self, envelope: &PublicationEnvelope<D>) -> Result<(), PublicationAuthorityError> {
@@ -279,10 +323,120 @@ mod tests {
             .apply(AuthorityTransition::Recover)
             .unwrap()
             .clone();
-        assert_eq!(recovered.sequence, exposed.sequence + 2);
+        assert_eq!(recovered.sequence, exposed.sequence + 1);
         assert!(EnvelopeSuccession::classify(&recovered, Some(&exposed)).is_ok());
         assert!(EnvelopeSuccession::classify(&recovered, Some(&published))
             .unwrap()
             .fences_earlier_views());
+    }
+
+    /// Replace `state` with a file so every authority write below it fails.
+    fn break_writes(state: &std::path::Path) {
+        fs::remove_dir_all(state).unwrap();
+        fs::write(state, b"not a directory").unwrap();
+    }
+    fn restore_writes(state: &std::path::Path) {
+        fs::remove_file(state).unwrap();
+        fs::create_dir(state).unwrap();
+    }
+
+    #[test]
+    fn a_failed_publication_revokes_authority_through_repeated_failures_and_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let path = state.join("authority.json");
+        let mut authority = PublicationAuthority::<u64>::open(path.clone(), scope()).unwrap();
+        let published = authority
+            .apply(AuthorityTransition::Publish(publication(1)))
+            .unwrap()
+            .clone();
+        let granted = crate::AuthorityCheckRequest {
+            authority: published.authority().unwrap(),
+            subjects: vec![0_u8],
+        };
+        assert!(granted.admit(authority.current()).is_ok());
+
+        // A newer publication fails: the old one stops being authoritative
+        // at once, behind a withdrawal that fences its views.
+        break_writes(&state);
+        assert!(authority
+            .apply(AuthorityTransition::Publish(publication(2)))
+            .is_err());
+        let revoked = authority.current().clone();
+        assert!(!revoked.eligible && revoked.authority().is_none());
+        assert_eq!(revoked.fence.latest_withdrawal, revoked.sequence);
+        assert!(EnvelopeSuccession::classify(&revoked, Some(&published))
+            .unwrap()
+            .fences_earlier_views());
+        assert_eq!(
+            granted.admit(authority.current()),
+            Err(crate::AuthorityCheckRefusal::AuthorityAdvanced)
+        );
+
+        // Further failed withdrawals and recoveries keep that one negative
+        // envelope instead of exposing more unsynced sequences.
+        for transition in [
+            AuthorityTransition::Withdraw,
+            AuthorityTransition::Recover,
+            AuthorityTransition::Recover,
+        ] {
+            assert!(authority.apply(transition).is_err());
+            assert_eq!(authority.current(), &revoked);
+        }
+        assert!(matches!(
+            authority.apply(AuthorityTransition::Publish(publication(1))),
+            Err(PublicationAuthorityError::RecoveryRequired)
+        ));
+
+        // The disk still holds the old eligible publication; a restart must
+        // neither restore it nor reuse the revoked envelope's sequence.
+        drop(authority);
+        restore_writes(&state);
+        fs::write(&path, serde_json::to_vec(&published).unwrap()).unwrap();
+        let reopened = PublicationAuthority::<u64>::open(path, scope()).unwrap();
+        let recovered = reopened.current();
+        assert!(!recovered.eligible);
+        assert!(granted.admit(recovered).is_err());
+        assert!(recovered.sequence > revoked.sequence);
+        for earlier in [&published, &revoked] {
+            assert!(EnvelopeSuccession::classify(recovered, Some(earlier))
+                .unwrap()
+                .fences_earlier_views());
+        }
+    }
+
+    #[test]
+    fn an_uncertain_authority_recovers_above_every_exposed_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let mut authority =
+            PublicationAuthority::<u64>::open(state.join("authority.json"), scope()).unwrap();
+        authority
+            .apply(AuthorityTransition::Publish(publication(1)))
+            .unwrap();
+        break_writes(&state);
+        assert!(authority
+            .apply(AuthorityTransition::Publish(publication(2)))
+            .is_err());
+        let revoked = authority.current().clone();
+        assert!(authority.apply(AuthorityTransition::Withdraw).is_err());
+        restore_writes(&state);
+
+        // A withdrawal while uncertain recovers, at a sequence no failed
+        // attempt used, and only then may publication resume.
+        let recovered = authority
+            .apply(AuthorityTransition::Withdraw)
+            .unwrap()
+            .clone();
+        assert!(recovered.sequence > revoked.sequence + 1);
+        assert_eq!(
+            recovered.fence.recovery_epoch,
+            revoked.fence.recovery_epoch + 1
+        );
+        assert!(EnvelopeSuccession::classify(&recovered, Some(&revoked)).is_ok());
+        let republished = authority
+            .apply(AuthorityTransition::Publish(publication(2)))
+            .unwrap();
+        assert!(republished.eligible);
     }
 }
