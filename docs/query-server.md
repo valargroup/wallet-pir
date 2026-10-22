@@ -9,6 +9,32 @@ and role validation live in `status-query-server::service` and its product
 configuration; the host delegates to that crate, as it does for Enhance and
 Transparent.
 
+## Public routes
+
+One selected server base serves every product under its own namespace. Wallets
+should use the canonical paths; the deployed paths remain explicit aliases of
+the same handlers and return identical responses. Each product declares its
+public operations once and mounts them at both prefixes through
+`pir_control::public_routes::PublicMount`.
+
+| Product | Canonical | Legacy alias | Operations |
+| --- | --- | --- | --- |
+| Enhance | `/enhance/v1/<op>` | `/v1/enhance/<op>` | `init`, `session/:id`, `sessions/:generation/:shard`, `query` |
+| Status | `/status/v1/<op>` | `/v1/status/<op>` | `init`, `session/:id`, `query` |
+| Transparent | `/transparent/v1/<op>` | `/v2/<op>` | `shards`, `shards/init`, `shards/:id/revisions/...`, `filters/shards[/:id/filter]`, `txid/...` |
+| Transparent filters | `/transparent/v1/filters/<op>` | `/v1/filters/<op>` | `info`, `chain`, `digests`, `range` |
+| Receiver | `/receiver/v1/<op>` | `/v1/receiver/<op>` | see the Receiver docs |
+
+The two Transparent alias groups share the canonical namespace; their suffixes
+are disjoint (`filters/shards...` versus `filters/{info,chain,digests,range}`)
+and route construction panics if they ever overlap. An alias serves only its own
+group, so `/v2/filters/info` and `/v1/filters/shards` stay unrouted. Health,
+readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`, `/v1/provider-*`
+and publisher status are never mounted under a canonical prefix and stay on
+their private paths. Peer-to-peer calls between roles, deploy probes and the
+`pir-apm` quality probes keep the legacy paths that deployed binaries already
+serve.
+
 ## Features
 
 The host compiles a product only when that product's Cargo feature is enabled:
