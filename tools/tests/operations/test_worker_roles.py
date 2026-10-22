@@ -123,6 +123,11 @@ class WorkerRoles(unittest.TestCase):
                     with self.subTest(bad=bad), self.assertRaises(ValueError):
                         role.render({**SETTINGS[(service, 'external-worker')], **bad}, RELEASE)
 
+    def test_status_roles_refuse_the_removed_cuda_setting(self):
+        with self.assertRaisesRegex(ValueError, 'unknown role settings'):
+            REGISTRY['status'].roles['external-worker'].render(
+                {**SETTINGS[('status', 'external-worker')], 'cuda': False}, RELEASE)
+
     def test_two_external_workers_on_one_host_do_not_share_a_config(self):
         role = REGISTRY['enhance'].roles['external-worker']
         base = SETTINGS[('enhance', 'external-worker')]
