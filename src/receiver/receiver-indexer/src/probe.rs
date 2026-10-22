@@ -1496,7 +1496,7 @@ mod tests {
             batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
             concurrency: 8,
             audit_enabled: false,
-            filter_blocks: receiver_store::blocks::MAX_FILTER_BLOCKS,
+            filter_blocks: None,
             history_revision: 0,
         };
         let nodes = [NodeClient::new(url.clone(), None).unwrap()];
