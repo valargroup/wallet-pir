@@ -1,12 +1,17 @@
 //! Open publisher state and hand product operations to the root executor.
 use super::*;
 
-pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
+pub async fn run_managed<E>(
     config: Config,
+    rpc: NodeClient,
+    feed: pir_pipeline::ingestion::ChainFeed,
     executor: E,
     http: pir_pipeline::service::Http<Router>,
     shutdown: pir_pipeline::service::Shutdown,
-) -> Result<(), BoxError> {
+) -> Result<(), BoxError>
+where
+    E: pir_pipeline::publisher::PublisherExecutor + pir_pipeline::ingestion::IngestionExecutor,
+{
     std::fs::create_dir_all(&config.publication_root)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -19,7 +24,6 @@ pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
     // Reserve a revision before exposing any state. A restarted controller
     // cannot replay a former current pointer, even if it reuses its map.
     let distribution_revision = advance_distribution_revision(&config.publication_root)?;
-    let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
     if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
         return Err("journal identity does not match genesis RPC history".into());
@@ -152,28 +156,29 @@ pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
     let server = tokio::spawn(http.serve(config.listen, authority.router()));
     tasks.own(&server);
     let (notify, updates) = tokio::sync::watch::channel(0u64);
-    let ingest_config = config.clone();
-    let ingest_authority = authority.clone();
-    let ingest_store = store.clone();
-    let ingest_rpc = rpc.clone();
+    let current = Arc::new(AtomicBool::new(false));
+    let (start, end) = {
+        let journal = store.lock().await;
+        (journal.start_height(), chain_input::newest(&journal))
+    };
+    let writer = HistoryIngestion {
+        config: config.clone(),
+        rpc: rpc.clone(),
+        store: store.clone(),
+        start,
+        end,
+        authority: authority.clone(),
+        notify,
+        cache: OutputCache::new(crate::ingest::prevout::DEFAULT_CACHE_OUTPUTS),
+        pending_invalidation: None,
+        current: current.clone(),
+        followed_tip: None,
+    };
     let input_stop = shutdown.clone();
     let failed_authority = authority.clone();
+    let scheduler = executor.clone();
     let ingest = tokio::spawn(async move {
-        let mut task = HistoryInputTask {
-            config: ingest_config,
-            rpc: ingest_rpc,
-            store: ingest_store,
-            authority: ingest_authority,
-            notify,
-            cache: OutputCache::new(crate::ingest::prevout::DEFAULT_CACHE_OUTPUTS),
-            pending_invalidation: None,
-        };
-        let result = pir_pipeline::supervise(
-            &mut task,
-            std::time::Duration::from_secs(1),
-            input_stop.cancelled(),
-        )
-        .await;
+        let result = scheduler.ingest(writer, feed, input_stop.clone()).await;
         if result.is_err() {
             let _gate = failed_authority.0.publication_gate.lock().unwrap();
             failed_authority.0.withdrawn.store(true, Ordering::Release);
@@ -216,6 +221,7 @@ pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
                 server,
                 ingest,
                 updates,
+                current,
             },
             shutdown,
         )

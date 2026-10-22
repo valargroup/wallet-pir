@@ -60,7 +60,7 @@ impl Ingestion for EnhanceIngestion {
     fn committed(&self) -> Option<BlockId> {
         self.journal.records().blocks().last().map(identity)
     }
-    fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
+    async fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
         let blocks = self.journal.records().blocks();
         let index = blocks.partition_point(|block| block.height <= height);
         index.checked_sub(1).map(|index| identity(&blocks[index]))
@@ -263,16 +263,17 @@ mod tests {
         assert_eq!(ingestion.start_height(0), first);
         assert_eq!(ingestion.committed(), Some(tip.clone()));
         assert_eq!(
-            ingestion.checkpoint_at_or_below(first + 10),
+            ingestion.checkpoint_at_or_below(first + 10).await,
             Some(tip.clone())
         );
         assert_eq!(
             ingestion
                 .checkpoint_at_or_below(first + 1)
+                .await
                 .map(|b| b.height),
             Some(first + 1)
         );
-        assert_eq!(ingestion.checkpoint_at_or_below(first - 1), None);
+        assert_eq!(ingestion.checkpoint_at_or_below(first - 1).await, None);
         let observation = ChainObservation {
             genesis: String::new(),
             tip,
@@ -282,7 +283,7 @@ mod tests {
         ingestion.caught_up(&observation).await.unwrap();
         assert_eq!(files(&journal_dir), before);
 
-        let keep = ingestion.checkpoint_at_or_below(first + 1);
+        let keep = ingestion.checkpoint_at_or_below(first + 1).await;
         ingestion.withdraw_above(keep.as_ref()).await.unwrap();
         ingestion.rewind(keep.as_ref()).await.unwrap();
         assert_eq!(ingestion.committed(), keep);

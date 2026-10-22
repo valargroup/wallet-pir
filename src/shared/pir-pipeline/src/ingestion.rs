@@ -58,15 +58,20 @@ pub trait Ingestion: Send {
     /// The first height an empty journal covers when the observed tip is
     /// `tip`; a rolling window starts below the tip, a journal at a fixed height.
     fn start_height(&self, tip: u64) -> u64;
-    /// Refuse an observation from a different network than committed state
-    /// records, before any reconciliation can treat it as a reorg.
-    fn check_network(&self, _genesis: &str) -> std::result::Result<(), Self::Error> {
-        Ok(())
+    /// Called with every live observation before reconciliation. Refuse a
+    /// different network than committed state records, before reconciliation
+    /// could treat it as a reorg, and withdraw dependents already known to be
+    /// orphaned before a deep ancestor search.
+    fn observed(
+        &mut self,
+        _observation: &ChainObservation,
+    ) -> impl Future<Output = std::result::Result<(), Self::Error>> + Send {
+        async { Ok(()) }
     }
     /// The newest committed block, or `None` for an empty journal.
     fn committed(&self) -> Option<BlockId>;
     /// The newest committed block at or below `height`, for reconciliation.
-    fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId>;
+    fn checkpoint_at_or_below(&self, height: u64) -> impl Future<Output = Option<BlockId>> + Send;
     /// Durably withdraw or halt anything that depends on blocks above `keep`
     /// using the product's existing rules. Always runs before [`Self::rewind`].
     fn withdraw_above(

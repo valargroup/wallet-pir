@@ -35,11 +35,8 @@ pub(crate) async fn reconcile<I: Ingestion>(
     chain: &dyn CanonicalChain,
     observation: &ChainObservation,
 ) -> Result<Coverage, Outcome<I::Error>> {
-    writer
-        .check_network(&observation.genesis)
-        .map_err(Outcome::Writer)?;
     let tip = &observation.tip;
-    let newest = writer.checkpoint_at_or_below(tip.height);
+    let newest = writer.checkpoint_at_or_below(tip.height).await;
     let mut candidate = newest.clone();
     let keep = loop {
         let Some(block) = candidate else { break None };
@@ -51,10 +48,10 @@ pub(crate) async fn reconcile<I: Ingestion>(
         if canonical == block.hash {
             break Some(block);
         }
-        candidate = block
-            .height
-            .checked_sub(1)
-            .and_then(|below| writer.checkpoint_at_or_below(below));
+        candidate = match block.height.checked_sub(1) {
+            Some(below) => writer.checkpoint_at_or_below(below).await,
+            None => None,
+        };
     };
     if keep != newest {
         writer
@@ -179,6 +176,10 @@ async fn live<I: Ingestion>(
         };
         let mut writer = writer.lock().await;
         let pass = async {
+            writer
+                .observed(&observation)
+                .await
+                .map_err(Outcome::Writer)?;
             match reconcile(&mut *writer, &*feed.chain, &observation).await? {
                 Coverage::Current => writer
                     .caught_up(&observation)

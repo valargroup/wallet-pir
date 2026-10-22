@@ -36,8 +36,8 @@ impl Ingestion for StatusIngestion {
     fn start_height(&self, tip: u64) -> u64 {
         self.source.first_height(tip)
     }
-    fn check_network(&self, genesis: &str) -> Result<(), ObservationError> {
-        let genesis = parse(genesis, SourceError::Genesis)?;
+    async fn observed(&mut self, observation: &ChainObservation) -> Result<(), ObservationError> {
+        let genesis = parse(&observation.genesis, SourceError::Genesis)?;
         if self
             .source
             .network()
@@ -50,7 +50,7 @@ impl Ingestion for StatusIngestion {
     fn committed(&self) -> Option<BlockId> {
         self.source.committed().map(identity)
     }
-    fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
+    async fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
         self.source.checkpoint_at_or_below(height).map(identity)
     }
     /// Withdraw an active manifest anchored above the retained window before

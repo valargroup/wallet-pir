@@ -86,7 +86,7 @@ impl Ingestion for Journal {
     fn committed(&self) -> Option<BlockId> {
         self.blocks.last().cloned()
     }
-    fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
+    async fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
         self.blocks
             .iter()
             .rev()
