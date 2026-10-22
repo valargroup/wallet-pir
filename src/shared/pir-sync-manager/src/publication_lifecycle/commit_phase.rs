@@ -6,7 +6,7 @@ use super::{
 };
 use crate::Error;
 use pir_publication::ViewIdentity;
-use std::{io, time::SystemTime};
+use std::{future::Future, io, time::SystemTime};
 
 /// A commit that installed and has not finished completing: the adapter
 /// still needs the view, or the dependent peer still needs its release.
@@ -22,6 +22,17 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// earlier can install afterwards. Returns the views that were serving.
     pub(super) async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
         self.commit_fence.fence(self.adapter.fence_serving()).await
+    }
+
+    /// Own selective revocation and its floor write together. Recording the
+    /// negative evidence in memory happens before the first await; a cancelled
+    /// caller leaves the entire action outstanding for the next pass to join.
+    pub(super) async fn invalidate_views(&mut self, views: Vec<ViewIdentity>) -> Result<(), Error> {
+        self.floor.invalidate(views.iter().copied());
+        let revoke = self.adapter.invalidate_views(views);
+        let fence = self.commit_fence.clone();
+        self.persist_floor_after(async move { fence.fence(revoke).await })
+            .await
     }
 
     /// Await a durable operation a cancelled pass left behind and apply its
@@ -45,8 +56,10 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             Some(Ok(DurableOutcome::FloorWritten(Ok(written)))) => {
                 self.floor.confirm_durable(written);
             }
-            // The floor stays dirty; nothing may serve until a later write.
-            Some(Ok(DurableOutcome::FloorWritten(Err(_)))) | Some(Err(_)) => {
+            // A failed write already closed admission inside the owned action.
+            // A task panic still needs its fail-closed action here.
+            Some(Ok(DurableOutcome::FloorWritten(Err(_)))) => {}
+            Some(Err(_)) => {
                 self.close_after_failed_floor_write().await;
             }
         }
@@ -64,15 +77,39 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// Make the latest floor durable as an owned operation. On failure the
     /// floor stays dirty, serving is fenced and admission is closed.
     pub(super) async fn persist_floor(&mut self) -> Result<(), Error> {
-        let write = self.floor.pending_write()?;
+        self.persist_floor_after(async {}).await
+    }
+
+    /// Run `before_write` and persistence as one owned operation. Failure also
+    /// revokes serving and closes admission within that operation, so cancelling
+    /// its caller cannot lose either the negative evidence or fail-closed action.
+    async fn persist_floor_after(
+        &mut self,
+        before_write: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), Error> {
+        let write = self.floor.pending_write().map_err(io::Error::other);
+        let revoke = self.adapter.fence_serving();
+        let close = self.adapter.close_admission();
+        let fence = self.commit_fence.clone();
         let outcome = self
             .durable_operation
             .run(async move {
-                DurableOutcome::FloorWritten(
-                    tokio::task::spawn_blocking(move || write.write())
+                before_write.await;
+                let written = match write {
+                    Ok(write) => tokio::task::spawn_blocking(move || write.write())
                         .await
                         .unwrap_or_else(|error| Err(io::Error::other(error))),
-                )
+                    Err(error) => Err(error),
+                };
+                if written.is_err() {
+                    fence
+                        .fence(async move {
+                            revoke.await;
+                            close.await;
+                        })
+                        .await;
+                }
+                DurableOutcome::FloorWritten(written)
             })
             .await?;
         match outcome {
@@ -80,10 +117,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                 self.floor.confirm_durable(written);
                 Ok(())
             }
-            Ok(DurableOutcome::FloorWritten(Err(error))) => {
-                self.close_after_failed_floor_write().await;
-                Err(error.into())
-            }
+            Ok(DurableOutcome::FloorWritten(Err(error))) => Err(error.into()),
             Ok(DurableOutcome::Commit(_)) => unreachable!("a floor write produced a commit"),
             Err(error) => {
                 self.close_after_failed_floor_write().await;

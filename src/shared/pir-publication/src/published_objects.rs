@@ -1,5 +1,5 @@
 //! A publisher's distributed objects and the retention that authorizes serving them.
-use crate::{is_object_digest, ObjectReference};
+use crate::{is_object_digest, ObjectInstaller, ObjectReference};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -24,21 +24,21 @@ struct RetainedPublication {
 /// objects of retained publications are served; everything else is refused
 /// before the file is opened and is removed by the next retention change.
 pub struct PublishedObjectStore {
-    directory: PathBuf,
+    installer: ObjectInstaller,
     retained: RwLock<Vec<RetainedPublication>>,
 }
 
 impl PublishedObjectStore {
     /// Open `directory`, restoring the durable retention record.
     pub fn open(directory: PathBuf) -> io::Result<Self> {
-        fs::create_dir_all(&directory)?;
+        let installer = ObjectInstaller::open(directory.clone()).map_err(io::Error::other)?;
         let retained = match fs::read(directory.join(RETENTION_RECORD)) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error),
         };
         Ok(Self {
-            directory,
+            installer,
             retained: RwLock::new(retained),
         })
     }
@@ -46,14 +46,10 @@ impl PublishedObjectStore {
     /// under that name are verified rather than rewritten. Storing does not
     /// authorize serving.
     pub fn store(&self, bytes: &[u8]) -> io::Result<ObjectReference> {
-        let object = ObjectReference::for_bytes(bytes);
-        let path = self.directory.join(&object.sha256);
-        if path.exists() {
-            object.verify(&fs::read(path)?).map_err(io::Error::other)?;
-        } else {
-            write_immutable(&self.directory, &object.sha256, bytes)?;
-        }
-        Ok(object)
+        self.installer
+            .install_stream(bytes, &|| false)
+            .map(|installed| installed.reference)
+            .map_err(io::Error::other)
     }
     /// Authorize serving `objects` until `activatable_until_ms`, drop
     /// predecessors no consumer can still activate at `now_ms`, persist the
@@ -83,14 +79,14 @@ impl PublishedObjectStore {
             .cloned()
             .collect();
         updated.push(next);
-        write_immutable(
-            &self.directory,
+        write_retention_record(
+            self.installer.directory(),
             RETENTION_RECORD,
             &serde_json::to_vec(&updated).map_err(io::Error::other)?,
         )?;
         *retained = updated;
         let referenced: BTreeSet<&String> = retained.iter().flat_map(|p| &p.objects).collect();
-        for entry in fs::read_dir(&self.directory)? {
+        for entry in fs::read_dir(self.installer.directory())? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if is_object_digest(&name)
@@ -118,12 +114,12 @@ impl PublishedObjectStore {
                 "object not retained",
             ));
         }
-        fs::File::open(self.directory.join(name))
+        fs::File::open(self.installer.directory().join(name))
     }
 }
 
-/// Atomically write `name` read-only and sync the directory.
-fn write_immutable(directory: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+/// Replace the mutable retention record, separately from object installation.
+fn write_retention_record(directory: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
     pir_control::durable::write_atomic(directory, name, |file| file.write_all(bytes))?;
     fs::set_permissions(directory.join(name), fs::Permissions::from_mode(0o444))?;
     pir_control::durable::sync_dir(directory)

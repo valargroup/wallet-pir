@@ -15,11 +15,12 @@ use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    RwLock,
+    Mutex, OnceLock, RwLock,
 };
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
+    noncanonical: RwLock<BTreeSet<AnchorSubject>>,
     advance_during_check: AtomicBool,
     withdraw_during_check: AtomicBool,
     /// An earlier authority answer replayed instead of a live one.
@@ -109,6 +110,7 @@ async fn setup() -> (
     let current = Arc::new(Origin {
         current: RwLock::new(pointer()),
         canonical: AtomicBool::new(true),
+        noncanonical: RwLock::default(),
         advance_during_check: AtomicBool::new(false),
         withdraw_during_check: AtomicBool::new(false),
         replayed_check: RwLock::default(),
@@ -172,8 +174,9 @@ async fn setup() -> (
                             .subjects
                             .into_iter()
                             .map(|subject| SubjectAnswer {
+                                still_authoritative: still_authoritative
+                                    && !shared.noncanonical.read().unwrap().contains(&subject),
                                 subject,
-                                still_authoritative,
                             })
                             .collect(),
                     })
@@ -275,6 +278,80 @@ async fn failure_to_persist_authority_closes_admission() {
     assert!(service.state.lock().await.poisoned);
     assert!(service.serving().await.is_err());
     server.abort();
+}
+
+#[tokio::test]
+async fn a_refuted_anchor_leaves_other_status_sessions_available() {
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    for refute_current in [false, true] {
+        let (_root, service, mut task, source, _tls, server) = setup().await;
+        let controller = service.state.lock().await.controller.clone().unwrap();
+        let predecessor = controller.current().manifest().clone();
+        let mut current = predecessor.clone();
+        current.generation += 1;
+        current.anchor_height += 1;
+        current.anchor_hash = [9; 32];
+        controller
+            .activate(Generation::public_only(current.clone(), Arc::new(vec![])))
+            .unwrap();
+        {
+            let mut envelope = source.current.write().unwrap();
+            envelope.sequence += 1;
+            envelope.publication = Some(publication(current.generation));
+        }
+        let (refuted, unaffected) = if refute_current {
+            (&current, &predecessor)
+        } else {
+            (&predecessor, &current)
+        };
+        source
+            .noncanonical
+            .write()
+            .unwrap()
+            .insert((refuted.anchor_height, refuted.anchor_hash));
+
+        // The fixture has no prepared candidate, but the real HTTPS authority
+        // exchange must apply its negative answer before that download fails.
+        assert!(task.synchronize().await.is_err());
+        assert!(task.floor().is_invalidated(&view(refuted)));
+        assert!(!task.floor().is_invalidated(&view(unaffected)));
+        assert_eq!(
+            controller.check(&controller.resolve(refuted.id()).unwrap()),
+            Err(StatusCode::GONE)
+        );
+        assert!(controller
+            .check(&controller.resolve(unaffected.id()).unwrap())
+            .is_ok());
+
+        // Session requests refer to their own view, even if the newest view
+        // was the one invalidated. The public route keeps its existing 410.
+        let router = Service {
+            role: Role::Router,
+            ..service.clone()
+        };
+        for (manifest, expected) in [(refuted, StatusCode::GONE), (unaffected, StatusCode::OK)] {
+            let response = router
+                .query_routes()
+                .oneshot(
+                    Request::get(format!("/v1/status/session/{}", hex::encode(manifest.id())))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
+            service.state_dir.join(FLOOR_FILE),
+            task.floor().source().clone(),
+        )
+        .unwrap();
+        assert!(reopened.is_invalidated(&view(refuted)));
+        assert!(!reopened.is_invalidated(&view(unaffected)));
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -657,6 +734,34 @@ fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
     }
 }
 
+/// One prepared generation for this snapshot and identity, stamped at `observed_ms`.
+///
+/// The units do not depend on the observation time. Cases in this process share
+/// the prepared material and only restamp freshness.
+fn cached_generation(
+    snapshot: &status_shared::index::Snapshot,
+    generation: u64,
+    recovery_epoch: u64,
+    observed_ms: u64,
+    previous: Option<&Generation>,
+) -> Generation {
+    type Key = ([u8; 32], u64, u64, Option<[u8; 32]>);
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<Key, Generation>>> = OnceLock::new();
+    let key = (
+        snapshot.digest,
+        generation,
+        recovery_epoch,
+        previous.map(|prior| prior.manifest().rows_digest),
+    );
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let prepared = cache.entry(key).or_insert_with(|| {
+        Generation::prepare(snapshot, generation, recovery_epoch, 1, previous)
+            .unwrap()
+            .0
+    });
+    prepared.clone().reobserved(observed_ms)
+}
+
 /// Router A is pinned at its worker, which already serves B, while the
 /// publisher advanced to C with other material. The router commits B through
 /// the real lifecycle and worker routes, its release frees A at the worker,
@@ -668,16 +773,14 @@ async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (b, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
-    let (c, _) = Generation::prepare(
+    let b = cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
+    let c = cached_generation(
         &fixture::snapshot(32, true).unwrap(),
         5,
         2,
         now_ms(),
         Some(&b),
-    )
-    .unwrap();
+    );
     let (mut b_inventory, mut c_inventory) = (export(&source, &b), export(&source, &c));
     assert_ne!(
         b_inventory.material_identity(),
@@ -790,8 +893,8 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let publish = |inventory: &mut Inventory, sequence: u64| {
         let object = publish_inventory(&source, inventory);
@@ -888,8 +991,8 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {
@@ -994,8 +1097,8 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {

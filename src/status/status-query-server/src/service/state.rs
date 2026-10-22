@@ -62,6 +62,13 @@ impl Service {
     }
     /// Return the active authority only while state and freshness permit serving.
     pub(super) async fn serving(&self) -> Result<Controller, StatusCode> {
+        let controller = self.available_controller().await?;
+        controller.check(&controller.current())?;
+        Ok(controller)
+    }
+    /// A controller whose admission is open. Session handlers must check their
+    /// requested generation; another view's invalidation cannot revoke it.
+    pub(super) async fn available_controller(&self) -> Result<Controller, StatusCode> {
         let state = self.state.lock().await;
         if state.poisoned {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -70,7 +77,9 @@ impl Service {
             .controller
             .clone()
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-        controller.check(&controller.current())?;
+        if controller.revoked() {
+            return Err(StatusCode::GONE);
+        }
         Ok(controller)
     }
 }

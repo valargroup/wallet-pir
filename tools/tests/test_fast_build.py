@@ -105,6 +105,17 @@ class FastBuildTests(unittest.TestCase):
         [shard] = fast_build.bounded_programs(program, only_distribution)
         self.assertCountEqual(shard['args'][1:], only_distribution)
 
+    def test_status_preparation_splits_once_and_other_suites_keep_larger_groups(self):
+        names = {f'service::sync::tests::case_{index:02d}' for index in range(37)}
+        status = dict(package='status-query-server', integration=False, exclusive=False,
+                      args=[], case_count=len(names))
+        shards = fast_build.bounded_programs(status, names)
+        self.assertEqual(len(shards), 2)
+        actual = [case for shard in shards for case in shard['args'][1:]]
+        self.assertCountEqual(actual, names)
+        other = dict(status, package='receiver-indexer')
+        self.assertEqual(fast_build.bounded_programs(other, names), [other])
+
     def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
         root = Path(self.directory.name) / 'sources'
         root.mkdir()
@@ -297,7 +308,7 @@ class FastBuildTests(unittest.TestCase):
         # Shared crates keep a feature set that does not name a product host.
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
         self.assertEqual(host_features, ['pir-e2e-tests/enhance-fast'])
-        self.assertEqual(stable_tests, ['ci_smoke'])
+        self.assertEqual(stable_tests, ['ci_smoke', 'immutable_objects'])
         self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
 
     def test_each_product_compiles_only_its_own_host_features(self):

@@ -78,9 +78,18 @@ pub trait PublicationAdapter: Send {
     /// Stop serving every installed view and drop held handover views, and
     /// return the identities of views that were serving so the floor can
     /// invalidate them permanently.
-    fn fence_serving(&mut self) -> impl Future<Output = Vec<ViewIdentity>> + Send;
+    /// The returned action owns its state so the engine can finish it after
+    /// the pass that requested revocation is cancelled.
+    fn fence_serving(&mut self) -> impl Future<Output = Vec<ViewIdentity>> + Send + 'static;
+    /// Stop answering from exactly `views`, including requests already in
+    /// flight, and release their peer holds. Other views remain available.
+    /// The returned action owns its state and changes nothing until polled.
+    fn invalidate_views(
+        &mut self,
+        views: Vec<ViewIdentity>,
+    ) -> impl Future<Output = ()> + Send + 'static;
     /// Close admission after a durable floor write failed.
-    fn close_admission(&mut self) -> impl Future<Output = ()> + Send;
+    fn close_admission(&mut self) -> impl Future<Output = ()> + Send + 'static;
     /// Installed views that must stay authoritative under `envelope`.
     fn serving_subjects(
         &mut self,
