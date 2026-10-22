@@ -484,7 +484,7 @@ impl Finalized {
             pending,
             sources,
             native,
-        } = plan(root, set, recent_from_height, full)?;
+        } = plan(root, set, recent_from_height, full, RuntimeNames::Current)?;
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
@@ -554,11 +554,20 @@ type NativeCheck<'a> = (
     std::sync::Arc<SharedParams>,
     &'a crate::history::shardset::SegmentSource,
 );
+/// Which artifact format names the shipped runtimes a plan lists.
+#[derive(Clone, Copy)]
+enum RuntimeNames {
+    Current,
+    /// The immediately preceding format, for offline migration only: its
+    /// source publication holds no current-format runtime file yet.
+    Previous,
+}
 fn plan<'a>(
     root: &Path,
     set: &'a ShardSet,
     recent_from_height: u64,
     full: bool,
+    names: RuntimeNames,
 ) -> Result<Plan<'a>, Error> {
     let recent = set
         .map
@@ -659,7 +668,12 @@ fn plan<'a>(
                         table.kind(),
                         segment,
                     );
-                    let path = shipped.path(&key, shared, source.sha256());
+                    let path = match names {
+                        RuntimeNames::Current => shipped.path(&key, shared, source.sha256()),
+                        RuntimeNames::Previous => {
+                            shipped.previous_path(&key, shared, source.sha256())
+                        }
+                    };
                     if add(
                         path.clone(),
                         if local {
@@ -818,7 +832,13 @@ impl Finalized {
             return Err("restored publication map differs from its inventory".into());
         }
         inventory.validate_map(&set.map)?;
-        let plan = plan(root, &set, expected.recent_from_height, expected.full)?;
+        let plan = plan(
+            root,
+            &set,
+            expected.recent_from_height,
+            expected.full,
+            RuntimeNames::Current,
+        )?;
         if plan.inventory.recent_from_shard != inventory.recent_from_shard {
             return Err("restored holdings disagree with the inventory".into());
         }
@@ -1116,8 +1136,14 @@ impl Validation {
         memory: &std::sync::Arc<crate::runtime::memory::WorkMemory>,
         pause: &dyn Fn() -> bool,
     ) -> Result<CheckedRuntimes, CorrectnessError> {
-        let plan = plan(&self.root, &self.set, self.recent_from_height, self.full)
-            .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+        let plan = plan(
+            &self.root,
+            &self.set,
+            self.recent_from_height,
+            self.full,
+            RuntimeNames::Current,
+        )
+        .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
         let listed: BTreeMap<PathBuf, &Artifact> = inventory
             .artifacts
             .iter()
