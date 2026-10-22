@@ -8,7 +8,8 @@ use axum::{
     Json, Router,
 };
 use pir_publication::{
-    conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
+    conditional_token, AuthorityCheckResponse, SourceObservation, SubjectAuthority,
+    AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH, SOURCE_AUTHORITY_LIFETIME,
 };
 use pir_sync_manager::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
@@ -17,6 +18,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     RwLock,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
@@ -167,8 +169,11 @@ async fn setup() -> (
                     }
                     Json(AuthorityCheckResponse {
                         authority: shared.current.read().unwrap().authority().unwrap(),
-                        still_authoritative: vec![
-                            shared.canonical.load(Ordering::SeqCst);
+                        answers: vec![
+                            SubjectAuthority {
+                                still_authoritative: shared.canonical.load(Ordering::SeqCst),
+                                source: SourceObservation::starting_now(),
+                            };
                             request.subjects.len()
                         ],
                     })
@@ -909,7 +914,10 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     // for sequence 7 is captured first, to be replayed afterwards.
     let earlier = AuthorityCheckResponse {
         authority: source.current.read().unwrap().authority().unwrap(),
-        still_authoritative: vec![true],
+        answers: vec![SubjectAuthority {
+            still_authoritative: true,
+            source: SourceObservation::starting_now(),
+        }],
     };
     source.advance_during_check.store(true, Ordering::SeqCst);
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
@@ -922,6 +930,29 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     assert_eq!(
         error.downcast_ref::<PublicationLifecycleError>(),
         Some(&PublicationLifecycleError::AuthorityResponseMismatch),
+        "{error}"
+    );
+    assert!(worker.state.lock().await.controller.is_none());
+
+    // A body bound to the live authority confirms nothing once its source
+    // observation is past the lifetime, however recently it arrived.
+    let observed_unix_ms = (SystemTime::now() - SOURCE_AUTHORITY_LIFETIME)
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        - 1;
+    let stale = AuthorityCheckResponse {
+        authority: source.current.read().unwrap().authority().unwrap(),
+        answers: vec![SubjectAuthority {
+            still_authoritative: true,
+            source: SourceObservation { observed_unix_ms },
+        }],
+    };
+    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&stale).unwrap());
+    let error = task.synchronize().await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<PublicationLifecycleError>(),
+        Some(&PublicationLifecycleError::SourceObservationExpired),
         "{error}"
     );
     assert!(worker.state.lock().await.controller.is_none());

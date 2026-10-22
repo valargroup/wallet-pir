@@ -1,7 +1,7 @@
 //! The live authority check a query server asks before committing or retaining
 //! a view: "under this exact publication and fence, are these subjects still
 //! authoritative?"
-use crate::{AuthorityBinding, PublicationEnvelope};
+use crate::{AuthorityBinding, PublicationEnvelope, SourceObservation};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -26,7 +26,25 @@ pub struct AuthorityCheckRequest<S> {
 #[serde(deny_unknown_fields)]
 pub struct AuthorityCheckResponse {
     pub authority: AuthorityBinding,
-    pub still_authoritative: Vec<bool>,
+    pub answers: Vec<SubjectAuthority>,
+}
+
+/// Whether one subject is still authoritative, and when the publisher
+/// actually observed its source to decide so.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SubjectAuthority {
+    pub still_authoritative: bool,
+    pub source: SourceObservation,
+}
+
+impl SubjectAuthority {
+    /// Authority a positive answer still grants: none for a negative answer
+    /// or an observation past [`crate::SOURCE_AUTHORITY_LIFETIME`], so an old
+    /// or replayed response body can never renew a view.
+    pub fn remaining(&self) -> Option<std::time::Duration> {
+        self.source.remaining().filter(|_| self.still_authoritative)
+    }
 }
 
 /// Why a publisher refused to answer an authority check.

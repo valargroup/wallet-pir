@@ -216,6 +216,9 @@ pub enum PublicationLifecycleError {
     AuthorityCheckRefused(u16),
     /// The authority response binds another authority or subject count.
     AuthorityResponseMismatch,
+    /// A positive authority answer whose source observation is absent, in the
+    /// future or past its lifetime: it confirms nothing.
+    SourceObservationExpired,
     /// The candidate was invalidated by the floor.
     CandidateInvalidated,
     /// The envelope was withdrawn between planning and commit.
@@ -238,6 +241,9 @@ impl fmt::Display for PublicationLifecycleError {
                 write!(f, "publisher refused the authority check (HTTP {status})")
             }
             Self::AuthorityResponseMismatch => f.write_str("authority check response differs"),
+            Self::SourceObservationExpired => {
+                f.write_str("authority answer's source observation expired")
+            }
             Self::CandidateInvalidated => f.write_str("publication candidate was invalidated"),
             Self::WithdrawnBeforeCommit => f.write_str("publication withdrawn before commit"),
             Self::MalformedEnvelope => f.write_str("publication envelope is malformed"),
