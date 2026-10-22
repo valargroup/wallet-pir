@@ -8,6 +8,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
+use pir_control::public_routes::PublicMount;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use transparent_filter::digest::filter_hash;
@@ -17,6 +18,7 @@ use transparent_filter::wire::{
     ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo,
 };
 use transparent_filter::{BlockHash, FilterLimits, MAX_RECORDS_PER_BATCH};
+use transparent_shared::http::{CANONICAL_PREFIX, LEGACY_FILTERS_PREFIX, LEGACY_PREFIX};
 
 /// Where ingestion has got to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,17 +136,41 @@ fn bad_request(message: impl std::fmt::Display) -> Response {
     )
 }
 
+/// The compact-filter operations, served under `/transparent/v1` and their
+/// deployed `/v1` alias.
+const COMPACT_FILTER_ROUTES: PublicMount =
+    PublicMount::new(CANONICAL_PREFIX, LEGACY_FILTERS_PREFIX);
+/// The filter-shard operations, served under `/transparent/v1` and their
+/// deployed `/v2` alias. Their suffixes (`/filters/shards...`) are disjoint
+/// from the compact-filter suffixes, so both groups share the canonical
+/// namespace; route construction panics if they ever overlap.
+const FILTER_SHARD_ROUTES: PublicMount = PublicMount::new(CANONICAL_PREFIX, LEGACY_PREFIX);
+
+/// The filter service's routes. Health, readiness and metrics stay at their
+/// private unprefixed paths; only wallet-facing operations are mounted
+/// under the canonical namespace.
 pub fn router(state: ServiceState) -> Router {
-    Router::new()
+    let private = Router::new()
         .route("/v1/health", get(health))
-        .route("/v1/filters/info", get(info))
-        .route("/v1/filters/chain", get(chain))
-        .route("/v1/filters/digests", get(digests))
-        .route("/v1/filters/range", get(range))
-        .route("/v2/filters/shards", get(shard_map))
-        .route("/v2/filters/shards/:shard_id/filter", get(shard_filter))
         .route("/metrics", get(metrics))
-        .route("/ready", get(ready))
+        .route("/ready", get(ready));
+    let compact_filters = COMPACT_FILTER_ROUTES.mount(
+        private,
+        [
+            ("/filters/info", get(info)),
+            ("/filters/chain", get(chain)),
+            ("/filters/digests", get(digests)),
+            ("/filters/range", get(range)),
+        ],
+    );
+    FILTER_SHARD_ROUTES
+        .mount(
+            compact_filters,
+            [
+                ("/filters/shards", get(shard_map)),
+                ("/filters/shards/:shard_id/filter", get(shard_filter)),
+            ],
+        )
         .with_state(state)
 }
 
@@ -482,5 +508,75 @@ impl From<StoreError> for Response {
             StatusCode::INTERNAL_SERVER_ERROR,
             serde_json::json!({"error": error.to_string()}),
         )
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    /// Serves an empty filter store on a loopback listener; returns its origin.
+    async fn serve() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FilterStore::open(dir.path(), "profile", "genesis", 0).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let app = router(ServiceState::new(store));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (dir, origin)
+    }
+
+    async fn answer(origin: &str, path: &str) -> (u16, String) {
+        let response = reqwest::get(format!("{origin}{path}")).await.unwrap();
+        (response.status().as_u16(), response.text().await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn canonical_and_legacy_filter_paths_reach_the_same_handlers() {
+        let (_dir, origin) = serve().await;
+        for (legacy, canonical) in [
+            ("/v1/filters/info", "/transparent/v1/filters/info"),
+            (
+                "/v1/filters/chain?start_height=0&count=1",
+                "/transparent/v1/filters/chain?start_height=0&count=1",
+            ),
+            ("/v1/filters/digests", "/transparent/v1/filters/digests"),
+            ("/v1/filters/range", "/transparent/v1/filters/range"),
+            ("/v2/filters/shards", "/transparent/v1/filters/shards"),
+            (
+                "/v2/filters/shards/0/filter",
+                "/transparent/v1/filters/shards/0/filter",
+            ),
+        ] {
+            let legacy_answer = answer(&origin, legacy).await;
+            assert_eq!(
+                legacy_answer,
+                answer(&origin, canonical).await,
+                "{canonical}"
+            );
+        }
+        let (status, info) = answer(&origin, "/transparent/v1/filters/info").await;
+        assert_eq!(status, 200, "{info}");
+    }
+
+    #[tokio::test]
+    async fn merged_namespace_keeps_aliases_apart_and_control_private() {
+        let (_dir, origin) = serve().await;
+        // Each legacy prefix keeps only its own operations: the merged
+        // canonical namespace does not leak them across aliases.
+        for path in [
+            "/v2/filters/info",
+            "/v1/filters/shards",
+            "/transparent/v1/health",
+            "/transparent/v1/ready",
+            "/transparent/v1/metrics",
+            "/transparent/v1/v1/health",
+            "/transparent/v1/filters/health",
+        ] {
+            assert_eq!(answer(&origin, path).await.0, 404, "{path}");
+        }
+        for private in ["/v1/health", "/ready", "/metrics"] {
+            assert_ne!(answer(&origin, private).await.0, 404, "{private}");
+        }
     }
 }

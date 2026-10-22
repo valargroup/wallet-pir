@@ -17,7 +17,7 @@ transparent.example {
 		max_size 1MB
 	}
 
-	@recent path_regexp ^/v2/shards/(4|5)/revisions/[0-9a-f]{64}/(setup|query)/
+	@recent path_regexp ^(?:/v2|/transparent/v1)/shards/(4|5)/revisions/[0-9a-f]{64}/(setup|query)/
 	handle @recent {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
@@ -30,7 +30,7 @@ transparent.example {
 		}
 	}
 
-	@owner_archive_01 path_regexp ^/v2/shards/(0|1)/revisions/[0-9a-f]{64}/(setup|query)/
+	@owner_archive_01 path_regexp ^(?:/v2|/transparent/v1)/shards/(0|1)/revisions/[0-9a-f]{64}/(setup|query)/
 	handle @owner_archive_01 {
 		reverse_proxy 10.0.1.1:8093 {
 			health_uri /v1/ready
@@ -41,7 +41,7 @@ transparent.example {
 		}
 	}
 
-	@owner_archive_02 path_regexp ^/v2/shards/(2|3)/revisions/[0-9a-f]{64}/(setup|query)/
+	@owner_archive_02 path_regexp ^(?:/v2|/transparent/v1)/shards/(2|3)/revisions/[0-9a-f]{64}/(setup|query)/
 	handle @owner_archive_02 {
 		reverse_proxy 10.0.1.2:8093 {
 			health_uri /v1/ready
@@ -52,7 +52,7 @@ transparent.example {
 		}
 	}
 
-	@manifest path_regexp ^/v2/shards/[0-9]+/revisions/[0-9a-f]{64}/manifest$
+	@manifest path_regexp ^(?:/v2|/transparent/v1)/shards/[0-9]+/revisions/[0-9a-f]{64}/manifest$
 	handle @manifest {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
@@ -64,7 +64,8 @@ transparent.example {
 		}
 	}
 
-	handle /v2/shards/init {
+	@init path /v2/shards/init /transparent/v1/shards/init
+	handle @init {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
@@ -75,7 +76,8 @@ transparent.example {
 		}
 	}
 
-	handle /v2/shards {
+	@map path /v2/shards /transparent/v1/shards
+	handle @map {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready
@@ -86,7 +88,8 @@ transparent.example {
 		}
 	}
 
-	handle /v2/filters/* {
+	@filters path /v2/filters/* /transparent/v1/filters/*
+	handle @filters {
 		reverse_proxy 10.0.2.1:8093 10.0.2.2:8093 {
 			lb_policy round_robin
 			health_uri /v1/ready

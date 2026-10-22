@@ -36,5 +36,15 @@ pub mod routing;
 mod source;
 mod validation;
 pub use source::{discover, is_incompatible};
+
+/// Where the wallet-facing history and transaction-detail operations are
+/// served: the canonical `/transparent/v1` namespace and the deployed `/v2`
+/// alias reach the same handlers. Health, readiness and metrics stay at their
+/// unprefixed private paths and are never mounted under either.
+pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
+    pir_control::public_routes::PublicMount::new(
+        transparent_shared::http::CANONICAL_PREFIX,
+        transparent_shared::http::LEGACY_PREFIX,
+    );
 #[cfg(feature = "transparent-detail")]
 pub mod tx_detail;

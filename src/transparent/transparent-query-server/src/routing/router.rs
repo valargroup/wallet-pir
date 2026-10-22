@@ -400,11 +400,33 @@ pub const HEALTH: &str = "\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n
 /// router refusing. The status is the proxy's own.
 pub const PROXY_ERRORS: &str = "\n\thandle_errors {\n\t\theader Retry-After 1\n\t\trespond \"no worker could take the request; retry shortly\"\n\t}\n";
 
+/// Regular-expression alternation matching either public shard prefix: the
+/// canonical `/transparent/v1` and the deployed `/v2` alias.
+fn public_prefix_pattern() -> String {
+    format!(
+        "(?:{}|{})",
+        transparent_shared::http::LEGACY_PREFIX,
+        transparent_shared::http::CANONICAL_PREFIX
+    )
+}
+
+/// One fixed public operation at both prefixes, as Caddy path matcher
+/// arguments, e.g. `/v2/shards/init /transparent/v1/shards/init`.
+fn public_paths(operation: &str) -> String {
+    format!(
+        "{}{operation} {}{operation}",
+        transparent_shared::http::LEGACY_PREFIX,
+        transparent_shared::http::CANONICAL_PREFIX
+    )
+}
+
 /// The route handlers one site carries, shared by the public and the
-/// internal listener.
+/// internal listener. Each public operation is matched under both the
+/// canonical and the legacy prefix; nothing else is routed.
 fn render_routes(assignment: &Assignment) -> String {
     let mut out = String::new();
     let health = HEALTH;
+    let prefix = public_prefix_pattern();
 
     // Replica groups first, then owners; both keyed by shard id.
     let mut groups: BTreeMap<&str, (Vec<&str>, &[u64])> = BTreeMap::new();
@@ -430,7 +452,7 @@ fn render_routes(assignment: &Assignment) -> String {
             continue;
         }
         out.push_str(&format!(
-            "\t@{group} path_regexp ^/v2/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            "\t@{group} path_regexp ^{prefix}/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
             ids_pattern(shards)
         ));
         out.push_str(&format!(
@@ -444,7 +466,7 @@ fn render_routes(assignment: &Assignment) -> String {
         }
         let name = owner.id.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
         out.push_str(&format!(
-            "\t@owner_{name} path_regexp ^/v2/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            "\t@owner_{name} path_regexp ^{prefix}/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
             ids_pattern(&owner.shards)
         ));
         out.push_str(&format!(
@@ -462,17 +484,20 @@ fn render_routes(assignment: &Assignment) -> String {
         .unwrap_or_else(|| owners.iter().map(|o| o.upstream.as_str()).collect());
     let pool = public_pool.join(" ");
     out.push_str(&format!(
-        "\t@manifest path_regexp ^/v2/shards/[0-9]+/revisions/[0-9a-f]{{64}}/manifest$\n\
+        "\t@manifest path_regexp ^{prefix}/shards/[0-9]+/revisions/[0-9a-f]{{64}}/manifest$\n\
          \thandle @manifest {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
     ));
     out.push_str(&format!(
-        "\thandle /v2/shards/init {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\t@init path {}\n\thandle @init {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n",
+        public_paths("/shards/init")
     ));
     out.push_str(&format!(
-        "\thandle /v2/shards {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\t@map path {}\n\thandle @map {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n",
+        public_paths("/shards")
     ));
     out.push_str(&format!(
-        "\thandle /v2/filters/* {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\t@filters path {}\n\thandle @filters {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n",
+        public_paths("/filters/*")
     ));
     // Everything else, including any shard id no worker holds and every
     // operator route, is a 404 at the edge.
@@ -850,10 +875,31 @@ mod tests {
         let assignment = plan(&map, "ab", &roster(2, 2, 64 << 30), 4, 0.1, generated()).unwrap();
         let rendered = render_caddyfile(&assignment, "transparent.example");
         assert!(rendered.contains("transparent.example {"));
-        assert!(rendered.contains("@recent path_regexp ^/v2/shards/(4|5)/revisions/"));
+        assert!(rendered
+            .contains("@recent path_regexp ^(?:/v2|/transparent/v1)/shards/(4|5)/revisions/"));
+        assert!(rendered.contains("@init path /v2/shards/init /transparent/v1/shards/init\n"));
+        assert!(rendered.contains("@map path /v2/shards /transparent/v1/shards\n"));
+        assert!(rendered.contains("@filters path /v2/filters/* /transparent/v1/filters/*\n"));
+        for private in [
+            "/v1/ready\n",
+            "/v1/health",
+            "/v1/provider",
+            "/control",
+            "/internal",
+        ] {
+            assert!(!rendered.contains(&format!("path {private}")), "{private}");
+            assert!(
+                !rendered.contains(&format!("/transparent/v1{private}")),
+                "{private}"
+            );
+        }
         assert!(rendered.contains("reverse_proxy 10.0.2.0:8093 10.0.2.1:8093 {"));
-        assert!(rendered.contains("@owner_archive_0 path_regexp ^/v2/shards/(0|1)/revisions/"));
-        assert!(rendered.contains("@owner_archive_1 path_regexp ^/v2/shards/(2|3)/revisions/"));
+        assert!(rendered.contains(
+            "@owner_archive_0 path_regexp ^(?:/v2|/transparent/v1)/shards/(0|1)/revisions/"
+        ));
+        assert!(rendered.contains(
+            "@owner_archive_1 path_regexp ^(?:/v2|/transparent/v1)/shards/(2|3)/revisions/"
+        ));
         assert!(rendered.contains("health_uri /v1/ready"));
         assert!(!rendered.contains("/metrics"));
         assert!(rendered.ends_with(&format!(

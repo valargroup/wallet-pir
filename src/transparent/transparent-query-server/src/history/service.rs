@@ -772,27 +772,34 @@ pub fn router(state: ServiceState) -> Router {
         "query_other",
     ]);
     let telemetry = state.inner.metrics.http.clone();
-    Router::new()
+    let private = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
-        .route("/metrics", get(metrics))
-        .route("/v2/shards", get(shard_map))
-        // The same paths the filter service serves on its own host, so a wallet
-        // can point at either origin without changing anything but the base URL.
-        .route("/v2/filters/shards", get(shard_map))
-        .route("/v2/filters/shards/:shard_id/filter", get(shard_filter))
-        .route("/v2/shards/init", get(init))
-        .route(
-            "/v2/shards/:shard_id/revisions/:digest/manifest",
-            get(manifest),
-        )
-        .route(
-            "/v2/shards/:shard_id/revisions/:digest/setup/:table/:segment",
-            get(setup),
-        )
-        .route(
-            "/v2/shards/:shard_id/revisions/:digest/query/:table",
-            post(query),
+        .route("/metrics", get(metrics));
+    crate::PUBLIC_ROUTES
+        .mount(
+            private,
+            [
+                ("/shards", get(shard_map)),
+                // The same operations the filter service serves on its own
+                // host, so a wallet can point at either origin without
+                // changing anything but the base URL.
+                ("/filters/shards", get(shard_map)),
+                ("/filters/shards/:shard_id/filter", get(shard_filter)),
+                ("/shards/init", get(init)),
+                (
+                    "/shards/:shard_id/revisions/:digest/manifest",
+                    get(manifest),
+                ),
+                (
+                    "/shards/:shard_id/revisions/:digest/setup/:table/:segment",
+                    get(setup),
+                ),
+                (
+                    "/shards/:shard_id/revisions/:digest/query/:table",
+                    post(query),
+                ),
+            ],
         )
         .layer(axum::middleware::from_fn_with_state(
             telemetry,
