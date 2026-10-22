@@ -2,7 +2,8 @@
 use crate::{
     protocol::{digest, Manifest},
     publication::{
-        AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
+        manifest_checksum, AuthorityRequest, AuthorityResponse, Current, Inventory, Object,
+        METADATA_LIMIT, PREFIX,
     },
 };
 use pir_sync_manager::HttpsSource;
@@ -371,7 +372,7 @@ impl Lease {
         safety.observe(&response.current)?;
         let now = now_ms()?;
         response.fresh(now)?;
-        if response.authorized_manifest_sha256 != digest(manifest) {
+        if response.authorized_manifest_checksum != Some(manifest_checksum(manifest)) {
             return Err("publisher authorized another manifest".into());
         }
         safety.permits_observation(manifest, Some(&response.current))?;
@@ -447,7 +448,7 @@ impl Client {
 
     pub async fn authority(&mut self, manifest: &Manifest) -> Result<Lease, Error> {
         let body = serde_json::to_vec(&AuthorityRequest {
-            manifest_sha256: digest(manifest),
+            manifest_checksum: manifest_checksum(manifest),
         })?;
         let response = serde_json::from_slice(&self.metadata("authority", Some(body)).await?)?;
         Lease::from_response(response, manifest, &self.safety)
@@ -620,7 +621,7 @@ mod tests {
                     bytes: 1,
                 }),
             },
-            authorized_manifest_sha256: digest(manifest),
+            authorized_manifest_checksum: Some(manifest_checksum(manifest)),
             observed_unix_ms: now_ms().unwrap(),
         }
     }
@@ -732,8 +733,14 @@ mod tests {
         let manifest = manifest();
         let initial = response(&manifest);
         let mut wrong = initial.clone();
-        wrong.authorized_manifest_sha256 = "04".repeat(32);
+        wrong.authorized_manifest_checksum = Some(pir_artifact::checksum(b"another manifest"));
         assert!(Lease::from_response(wrong, &manifest, &safety).is_err());
+        let mut legacy = initial.clone();
+        legacy.authorized_manifest_checksum = Some(pir_artifact::Checksum {
+            algorithm: pir_artifact::Algorithm::Sha256,
+            digest: digest(&manifest),
+        });
+        assert!(Lease::from_response(legacy, &manifest, &safety).is_err());
         let mut expired = initial.clone();
         expired.observed_unix_ms -= 5001;
         assert!(Lease::from_response(expired, &manifest, &safety).is_err());

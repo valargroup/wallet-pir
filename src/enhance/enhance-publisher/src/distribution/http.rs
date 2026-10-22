@@ -34,7 +34,7 @@ pub(super) async fn authority(
     Json(request): Json<AuthorityRequest>,
 ) -> ApiResult<Response> {
     distribution
-        .authority(Some(&request.manifest_sha256))
+        .authority(Some(&request.manifest_checksum))
         .await
         .map(metadata)
         .map_err(refused)

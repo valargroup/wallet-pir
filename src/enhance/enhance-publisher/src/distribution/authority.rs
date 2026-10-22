@@ -1,8 +1,8 @@
 //! Fresh source checks and withdrawal fences govern every authority response.
 use super::PublicationDistribution;
 use enhance_query_server::{
-    protocol::{canonical_hash, digest, Manifest},
-    publication::AuthorityResponse,
+    protocol::Manifest,
+    publication::{manifest_checksum, AuthorityResponse},
 };
 use std::{
     sync::atomic::Ordering,
@@ -30,7 +30,7 @@ impl PublicationDistribution {
 
     pub(crate) async fn authority(
         &self,
-        requested: Option<&str>,
+        requested: Option<&pir_artifact::Checksum>,
     ) -> Result<AuthorityResponse, String> {
         if self.poisoned.load(Ordering::Acquire) {
             return Err("Enhance distribution persistence failed".into());
@@ -39,10 +39,10 @@ impl PublicationDistribution {
             let disk = self.disk.lock().unwrap();
             let current = disk.current.clone();
             let target = match requested {
-                Some(id) if canonical_hash(id) => disk
+                Some(id) if id.require_current().is_ok() => disk
                     .retained
                     .iter()
-                    .find(|r| digest(&r.manifest) == id)
+                    .find(|r| manifest_checksum(&r.manifest) == *id)
                     .map(|r| r.manifest.clone()),
                 Some(_) => return Err("invalid requested manifest identity".into()),
                 None => current.manifest.clone(),
@@ -53,7 +53,7 @@ impl PublicationDistribution {
         if !current.eligible && requested.is_none() {
             return Ok(AuthorityResponse {
                 current,
-                authorized_manifest_sha256: String::new(),
+                authorized_manifest_checksum: None,
                 observed_unix_ms: 0,
             });
         }
@@ -92,7 +92,7 @@ impl PublicationDistribution {
         // Return the latest floors together with this real canonical observation.
         Ok(AuthorityResponse {
             current: latest.clone(),
-            authorized_manifest_sha256: digest(&manifest),
+            authorized_manifest_checksum: Some(manifest_checksum(&manifest)),
             observed_unix_ms,
         })
     }

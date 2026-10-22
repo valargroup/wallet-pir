@@ -895,7 +895,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         safety.observe(&republished.current).unwrap();
         assert!(old_lease.check(&manifest, &safety).is_err());
         let authorized: AuthorityResponse = transport.client.post(format!("{}{PREFIX}authority", transport.origin))
-            .json(&AuthorityRequest { manifest_sha256: digest(&manifest) }).send().await.unwrap().json().await.unwrap();
+            .json(&AuthorityRequest { manifest_checksum: enhance_query_server::publication::manifest_checksum(&manifest) }).send().await.unwrap().json().await.unwrap();
         enhance_query_server::synchronization::Lease::from_response(authorized, &manifest, &safety).unwrap().check(&manifest, &safety).unwrap();
         synchronizer.poll_once().await.unwrap();
         let mut advanced = manifest.clone();
@@ -1044,7 +1044,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         canonical.store(false, Ordering::Release);
         assert_eq!(transport.client.get(&current_url).header("If-None-Match", "unchanged").send().await.unwrap().status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
         canonical.store(true, Ordering::Release);
-        let request = AuthorityRequest { manifest_sha256: protocol::digest(&manifest) };
+        let request = AuthorityRequest { manifest_checksum: enhance_query_server::publication::manifest_checksum(&manifest) };
         let authority_url = format!("{}{PREFIX}authority", transport.origin);
         assert!(transport.client.post(&authority_url).json(&request).send().await.unwrap().status().is_success());
         pause.store(true, Ordering::Release);
@@ -1287,9 +1287,9 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!before.current.eligible);
         assert_eq!(before.observed_unix_ms, 0);
-        assert!(before.authorized_manifest_sha256.is_empty());
-        for manifest_sha256 in ["11".repeat(32), "../escape".into()] {
-            let refused = transport.client.post(&authority_url).json(&AuthorityRequest { manifest_sha256 }).send().await.unwrap();
+        assert!(before.authorized_manifest_checksum.is_none());
+        for digest in ["11".repeat(32), "../escape".into()] {
+            let refused = transport.client.post(&authority_url).json(&AuthorityRequest { manifest_checksum: pir_artifact::Checksum { algorithm: pir_artifact::CURRENT, digest } }).send().await.unwrap();
             assert_eq!(refused.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE, "nothing published grants no authority");
         }
         let session = "ab".repeat(32);

@@ -837,7 +837,9 @@ mod tests {
                         bytes: 1,
                     }),
                 },
-                authorized_manifest_sha256: id.clone(),
+                authorized_manifest_checksum: Some(crate::publication::manifest_checksum(
+                    &manifest,
+                )),
                 observed_unix_ms: crate::synchronization::now_ms().unwrap(),
             },
             &manifest,

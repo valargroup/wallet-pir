@@ -4,10 +4,49 @@ use enhance_query_server::{
     worker_sync::{Config, ReadinessRequest, Worker},
 };
 use pir_e2e_tests::enhance_fixture::{record, serve, System};
-use sha2::{Digest, Sha256};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart_repairs_corrupt_cached_rows_before_readiness() {
     let system = System::start((0..67).map(record).collect()).await;
+    let certificate = reqwest::Certificate::from_pem(
+        &std::fs::read(system.source.trusted_ca.as_ref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let publisher = reqwest::Client::builder()
+        .add_root_certificate(certificate)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = format!(
+        "{}{}authority",
+        system.source.publisher_origin,
+        enhance_query_server::publication::PREFIX
+    );
+    let expected = enhance_query_server::publication::manifest_checksum(&system.manifest);
+    let response = publisher
+        .post(&url)
+        .json(&enhance_query_server::publication::AuthorityRequest {
+            manifest_checksum: expected.clone(),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let response: enhance_query_server::publication::AuthorityResponse =
+        response.json().await.unwrap();
+    assert_eq!(response.authorized_manifest_checksum, Some(expected));
+    // The existing wallet manifest identity cannot authorize this internal API.
+    let response = publisher
+        .post(&url)
+        .json(&enhance_query_server::publication::AuthorityRequest {
+            manifest_checksum: pir_artifact::Checksum {
+                algorithm: pir_artifact::Algorithm::Sha256,
+                digest: digest(&system.manifest),
+            },
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
     let root = system.root.path().join("recovering-worker");
     let config = Config {
         source: system.source.clone(),
@@ -22,7 +61,7 @@ async fn restart_repairs_corrupt_cached_rows_before_readiness() {
     .unwrap();
     let mut sync = worker.synchronizer().unwrap();
     sync.poll_once().await.unwrap();
-    let object = std::fs::read_dir(root.join("objects"))
+    let object = std::fs::read_dir(root.join(pir_artifact::namespace("objects")))
         .unwrap()
         .next()
         .unwrap()
@@ -64,6 +103,6 @@ async fn restart_repairs_corrupt_cached_rows_before_readiness() {
     assert_eq!(repaired, original);
     assert_eq!(
         object.file_name().unwrap().to_str().unwrap(),
-        hex::encode(Sha256::digest(&repaired))
+        pir_artifact::digest(&repaired)
     );
 }
