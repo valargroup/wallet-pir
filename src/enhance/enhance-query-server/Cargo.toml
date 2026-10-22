@@ -22,6 +22,7 @@ enhance-material = { path = "../enhance-material" }
 pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
+pir-publication = { path = "../../shared/pir-publication" }
 pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 axum = "0.7"
 hex = "0.4"

@@ -6,6 +6,7 @@ use crate::{
     runtime::DomainPlan,
     ROW_BYTES,
 };
+use pir_publication::ObjectReference;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -120,6 +121,14 @@ impl Object {
             return Err("invalid publication object".into());
         }
         Ok(())
+    }
+
+    /// The shared content-addressed reference to the same bytes.
+    pub fn reference(&self) -> ObjectReference {
+        ObjectReference {
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
     }
 
     pub fn path(&self, root: &Path) -> Result<PathBuf, String> {

@@ -21,6 +21,7 @@ test-support = ["dep:simplepir-kernel", "dep:tempfile"]
 [dependencies]
 pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 pir-control = { path = "../../shared/pir-control" }
+pir-publication = { path = "../../shared/pir-publication" }
 pir-runtime = { path = "../../shared/pir-runtime" }
 pir-serving = { path = "../../shared/pir-serving" }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }

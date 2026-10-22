@@ -848,7 +848,8 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         for fault in ["corrupt", "truncated", "missing"] {
             std::fs::write(scratch.path().join("fault"), fault).unwrap();
             assert!(synchronizer.poll_once().await.is_err(), "damaged source must not activate");
-            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".part")));
+            // A failed transfer leaves no partial file: only promoted digest names remain.
+            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| protocol::canonical_hash(&entry.unwrap().file_name().to_string_lossy())));
         }
         std::fs::write(scratch.path().join("fault"), "").unwrap();
         synchronizer.poll_once().await.unwrap();

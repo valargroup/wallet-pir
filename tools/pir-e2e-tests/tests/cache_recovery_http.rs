@@ -31,6 +31,9 @@ async fn restart_repairs_corrupt_cached_rows_before_readiness() {
     let original = std::fs::read(&object).unwrap();
     drop(sync);
     drop(worker);
+    // Promoted objects are read-only; corruption comes from outside the cache.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
     std::fs::write(&object, [0u8]).unwrap();
     let worker = Worker::open(&root, config, Default::default(), Default::default()).unwrap();
     let mut sync = worker.synchronizer().unwrap();
