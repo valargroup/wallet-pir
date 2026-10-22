@@ -392,6 +392,7 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
     let objects = crate::objects::prepare_objects(&root).unwrap();
     let artifact = publication::Artifact {
         path: "rows.bin".into(),
+        source_sha256: None,
         checksum: publication::digest(b"correct!"),
         bytes: 8,
         kind: publication::Kind::RecentTable,

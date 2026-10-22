@@ -1,0 +1,348 @@
+"""Coordinate prepared artifact metadata and the existing binary lifecycle.
+
+Large objects are prepared while predecessors serve. One production lock owns
+the final small-record conversion and publisher-first restart. Rollback converts
+the latest records; saved pre-deployment authority snapshots are never restored.
+"""
+import contextlib
+import json
+from pathlib import Path
+
+from .. import durable
+from . import descriptors
+from .engine import Deployer, DeployError, file_sha256, mutation_fence
+from .remote import production_lock
+from .transaction import Journal
+
+NAME = 'artifact-checksum'
+FENCE = '/var/lib/wallet-pir/artifact-checksum-fence.json'
+SERVICES = {'publisher', 'enhance', 'status', 'transparent-history', 'transparent-display'}
+KINDS = {'enhance-state', 'status-state', 'status-retained', 'transparent-state', 'transparent-restore'}
+
+
+def require(condition, message):
+    if not condition:
+        raise DeployError(message)
+
+
+def load_request(path, expected):
+    require(file_sha256(path) == expected, 'artifact cutover request pin differs')
+    request = json.loads(Path(path).read_bytes())
+    require(set(request) == {'schema', 'source_sha', 'groups', 'preparations', 'records', 'discovery'},
+            'artifact cutover request fields differ')
+    require(request['schema'] == 'artifact-checksum-cutover/1', 'unsupported artifact cutover schema')
+    require(isinstance(request['source_sha'], str) and len(request['source_sha']) == 40
+            and all(c in '0123456789abcdef' for c in request['source_sha']), 'invalid source revision')
+    require(isinstance(request['groups'], list) and request['groups'], 'executable groups are required')
+    for group in request['groups']:
+        require(set(group) == {'service', 'targets', 'binary_sha256', 'binary_bytes', 'binary'},
+                'executable group fields differ')
+        require(group['service'] in SERVICES and isinstance(group['targets'], list) and group['targets'],
+                'invalid executable group targets')
+        require(isinstance(group['binary_sha256'], str) and len(group['binary_sha256']) == 64
+                and all(c in '0123456789abcdef' for c in group['binary_sha256'])
+                and type(group['binary_bytes']) is int and group['binary_bytes'] > 0,
+                'invalid executable identity')
+    for preparation in request['preparations']:
+        require(set(preparation) == {'host', 'helper', 'helper_sha256', 'root', 'stage'},
+                'preparation fields differ')
+        for field in ('helper', 'root', 'stage'):
+            require(descriptors.PLAIN_PATH.fullmatch(preparation[field]) is not None,
+                    'preparation paths must be absolute plain paths')
+    for record in request['records']:
+        require(set(record) == {'host', 'helper', 'helper_sha256', 'kind', 'input', 'output', 'preparations'},
+                'record conversion fields differ')
+        require(record['kind'] in KINDS and record['preparations'], 'invalid record conversion')
+        for field in ('helper', 'input', 'output'):
+            require(descriptors.PLAIN_PATH.fullmatch(record[field]) is not None,
+                    'record paths must be absolute plain paths')
+        require(record['input'] != record['output'], 'record output cannot replace its live input')
+        require(all(descriptors.PLAIN_PATH.fullmatch(path) is not None for path in record['preparations']),
+                'record preparations must be absolute plain paths')
+    require(set(request['discovery']) == {'host', 'url'}, 'publisher discovery must be explicit')
+    return request
+
+
+class Cutover:
+    def __init__(self, request, inventory, registry, executor, state_dir, lock=None, **options):
+        self.request, self.inventory, self.ex = request, inventory, executor
+        self.state_dir = Path(state_dir)
+        self.custom_lock = lock
+        self.held = None
+        self.groups = []
+        actual = set()
+        for group in request['groups']:
+            deployer = Deployer(registry[group['service']], inventory, executor, state_dir,
+                                only=group['targets'], out=lambda _: None, **options)
+            selected = {(group['service'], target.key) for target in deployer.targets}
+            require(not actual.intersection(selected), 'cutover repeats a service target')
+            actual.update(selected)
+            self.groups.append((group, deployer))
+        expected = {(name, target.key) for name in SERVICES
+                    for target in descriptors.targets(registry[name], inventory)}
+        require(actual == expected, 'artifact cutover must include every affected publisher and query target')
+        require(request['groups'][0]['service'] == 'publisher'
+                and sum(group['service'] == 'publisher' for group in request['groups']) == 1,
+                'one complete publisher group must precede every query group')
+        for entry in request['preparations'] + request['records'] + [request['discovery']]:
+            require(entry['host'] in inventory.hosts, 'artifact cutover names an unknown host')
+
+    @contextlib.contextmanager
+    def ownership(self, transaction=None):
+        factory = self.custom_lock or (lambda: production_lock(self.inventory, self.ex,
+                                                              artifact_transaction=transaction))
+        with factory() as held:
+            self.held = held
+            for _, deployer in self.groups:
+                deployer.lock = held
+            try:
+                yield held
+            finally:
+                self.held = None
+                for _, deployer in self.groups:
+                    deployer.lock = None
+
+    def command(self, entry, *arguments):
+        require(self.ex.sha256(entry['host'], entry['helper']) == entry['helper_sha256'],
+                'artifact maintenance executable pin differs')
+        if self.held is not None:
+            self.held.verify()
+        code, output = self.ex.run(entry['host'], [entry['helper'], 'artifact-checksum', *arguments], 7200)
+        require(code == 0, 'artifact maintenance refused; inspect its retained output: ' + output[-1500:])
+        return json.loads(output)
+
+    def capture(self):
+        mutation_fence(self.inventory, self.ex)
+        groups = []
+        for group, deployer in self.groups:
+            deployer.check_identities()
+            binary = group['binary']
+            if binary:
+                require(file_sha256(binary) == group['binary_sha256']
+                        and Path(binary).stat().st_size == group['binary_bytes'], 'local candidate differs')
+            plans, problems = deployer.assess(group['binary_sha256'], binary=binary,
+                allow_drift=False, retire_historical=False, require_baseline=True)
+            require(not problems, 'artifact cutover preflight refused: ' + '; '.join(problems))
+            require(all(plan.action == 'restart' for plan in plans),
+                    'artifact cutover requires every predecessor running on a different executable')
+            require(descriptors.exact_check(deployer.service, self.inventory) is not None,
+                    'every product needs its independent exact-answer check')
+            groups.append([deployer.record(plan) for plan in plans])
+        preparations = [self.command(entry, 'verify-prepared', '--stage', entry['stage'])
+                        for entry in self.request['preparations']]
+        return {'request': self.request, 'groups': groups, 'preparations': preparations}
+
+    def plan(self):
+        plan = self.capture()
+        return {'plan': plan, 'plan_sha256': durable.digest(plan)}
+
+    def child(self, journal, index):
+        child = Journal(self.state_dir / (journal.id + '-group-' + str(index) + '.json'),
+                        journal.data['groups'][index])
+        save = child.save
+
+        def persist():
+            save()
+            journal.data['groups'][index] = child.data
+            journal.save()
+        child.save = persist
+        return child
+
+    def convert_record(self, entry, reverse=False):
+        digest = self.ex.sha256(entry['host'], entry['input'])
+        require(digest is not None, 'authority record disappeared')
+        argv = ['prepare-record', '--kind', entry['kind'], '--input', entry['input'],
+                '--input-sha256', digest, '--output', entry['output']]
+        if reverse:
+            argv.append('--reverse')
+        for preparation in entry['preparations']:
+            argv += ['--preparation', preparation]
+        self.command(entry, *argv)
+        output = self.ex.sha256(entry['host'], entry['output'])
+        require(output is not None, 'record converter did not retain its output')
+        return {'previous_sha256': digest, 'prepared_sha256': output}
+
+    def install_record(self, entry, evidence):
+        self.command(entry, 'install-record', '--input', entry['output'],
+            '--input-sha256', evidence['prepared_sha256'], '--destination', entry['input'],
+            '--destination-sha256', evidence['previous_sha256'])
+
+    def stop(self, journal):
+        for index, (_, deployer) in enumerate(self.groups):
+            child = self.child(journal, index)
+            for number, record in enumerate(child.hosts):
+                # Mark touched before stop, including a lost stop reply. The
+                # existing engine's restore then restarts the captured owner.
+                child.set_phase(number, 'installing')
+                deployer.lock.verify()
+                self.ex.systemctl(record['host'], 'stop', record['unit'])
+                state = self.ex.probe_unit(record['host'], record['unit'])
+                require(not state['main_pid'] and state['active_state'] in ('inactive', 'failed'),
+                        'predecessor did not release ownership')
+
+    def deploy(self, expected_plan):
+        with self.ownership() as held:
+            mutation_fence(self.inventory, self.ex, held)
+            prior = Journal.load(self.state_dir, NAME)
+            require(prior is None or prior.status in ('committed', 'rolled-back'),
+                    'an earlier artifact cutover needs recovery first')
+            plan = self.capture()
+            require(durable.digest(plan) == expected_plan, 'artifact cutover plan changed; review a fresh plan')
+            journal = Journal.create(self.state_dir, NAME, durable.digest(self.request),
+                                     self.request['source_sha'], [], None)
+            journal.data.update(request=self.request, groups=[], records=[])
+            for index, (group, deployer) in enumerate(self.groups):
+                journal.data['groups'].append({'id':journal.id + '-' + str(index),
+                    'service':group['service'], 'binary_sha256':group['binary_sha256'],
+                    'source':self.request['source_sha'], 'status':'staging',
+                    'hosts':plan['groups'][index], 'events':[], 'baseline_before':None})
+            journal.save()
+            try:
+                for index, (group, deployer) in enumerate(self.groups):
+                    child = self.child(journal, index)
+                    deployer.stage([record['host'] for record in child.hosts], group['binary_sha256'],
+                                   group['binary'], child)
+                # New names only. No running owner's metadata changes here.
+                for entry in self.request['preparations']:
+                    held.verify()
+                    self.command(entry, 'install-prepared', '--stage', entry['stage'], '--root', entry['root'])
+                journal.set_status('quiescing')
+                held.verify()
+                host = self.inventory.lock.get('host')
+                require(host is not None, 'artifact cutover needs the shared coordinator lock host')
+                self.ex.mkdir(host, str(Path(FENCE).parent), 0o700)
+                held.verify()
+                self.ex.write(host, FENCE, json.dumps({'transaction':journal.id,
+                    'source_sha':self.request['source_sha']}).encode(), 0o600)
+                self.stop(journal)
+                # Read the latest records only after every owner has joined.
+                # A newly advanced unknown inventory refuses before replacement.
+                evidence = [self.convert_record(entry) for entry in self.request['records']]
+                journal.data['records'] = [{**item, 'installed':False} for item in evidence]
+                journal.save()
+                for index, (entry, item) in enumerate(zip(self.request['records'], evidence)):
+                    held.verify()
+                    journal.data['records'][index]['installed'] = True
+                    journal.save()
+                    self.install_record(entry, item)
+                journal.set_status('activating')
+                for index, (group, deployer) in enumerate(self.groups):
+                    child = self.child(journal, index)
+                    deployer.product_checks(child, group['binary_sha256'])
+                    for number in range(len(child.hosts)):
+                        deployer.activate(child, number, group['binary_sha256'], verify=False)
+                    if index == 0:
+                        # Publication availability and discovery precede consumers.
+                        for record in child.hosts:
+                            deployer.wait_verified(record, group['binary_sha256'])
+                        discovery = self.request['discovery']
+                        status, raw = self.ex.http_get(discovery['host'], discovery['url'])
+                        document = json.loads(raw)
+                        require(status == 200 and document.get('service') == 'pir-publisher'
+                                and document.get('version', '').split('.')[0] == '2',
+                                'publisher does not expose the new discovery contract')
+                for index, (group, deployer) in enumerate(self.groups):
+                    child = self.child(journal, index)
+                    for number, record in enumerate(child.hosts):
+                        deployer.wait_verified(record, group['binary_sha256'])
+                        child.set_phase(number, 'verified')
+                    deployer.run_exact_check(descriptors.exact_check(deployer.service, self.inventory),
+                                             child, group['binary_sha256'])
+                journal.set_status('committed')
+                for _, deployer in self.groups:
+                    deployer.refresh_baseline()
+                self.clear_fence(journal)
+                return journal.data
+            except Exception as error:
+                journal.event('forward failed', error=str(error))
+                try:
+                    self.restore(journal)
+                except Exception as rollback_error:
+                    journal.set_status('rollback-failed', error=str(rollback_error))
+                    raise DeployError('artifact cutover failed and needs recovery with its recorded rollback: '
+                                      + str(rollback_error)) from error
+                raise
+
+    def restore(self, journal):
+        require(journal.data['request'] == self.request, 'rollback request differs from journal')
+        if journal.status == 'rolled-back':
+            self.clear_fence(journal)
+            return
+        # Keep every conflict and product-owned recovery gate from the shared
+        # lifecycle before stopping any current process.
+        problems = []
+        for index, (_, deployer) in enumerate(self.groups):
+            child = self.child(journal, index)
+            for number in child.touched():
+                record = child.hosts[number]
+                problems.extend(deployer.restore_conflicts(record))
+                guard = deployer.service.roles[record['role']].product_guard()
+                if guard is not None:
+                    problems.extend(guard.before_restore(deployer, child, record))
+        require(not problems, 'artifact rollback refused before interruption: ' + '; '.join(problems))
+        # Prove reverse translations while the candidate can still serve. A
+        # newer unknown publication is never replaced by a stale snapshot.
+        for entry, item in zip(self.request['records'], journal.data['records']):
+            if item['installed']:
+                current = self.ex.sha256(entry['host'], entry['input'])
+                if current != item['previous_sha256']:
+                    self.convert_record(entry, reverse=True)
+        if any(self.child(journal, index).touched() for index in range(len(self.groups))):
+            self.stop(journal)
+        reverse = []
+        for entry, item in zip(self.request['records'], journal.data['records']):
+            if item['installed'] and self.ex.sha256(entry['host'], entry['input']) != item['previous_sha256']:
+                reverse.append((entry, self.convert_record(entry, reverse=True)))
+        for entry, evidence in reverse:
+            self.install_record(entry, evidence)
+        # Publisher first on restoration too; defer cross-service acceptance.
+        for index, (_, deployer) in enumerate(self.groups):
+            child = self.child(journal, index)
+            for number in child.touched():
+                deployer.restore(child, number, verify=False)
+        for index, (_, deployer) in enumerate(self.groups):
+            child = self.child(journal, index)
+            for number in child.touched():
+                record = child.hosts[number]
+                deployer.wait_verified(record, record['previous']['exe_sha256'])
+                child.set_phase(number, 'restored')
+        for index, (_, deployer) in enumerate(self.groups):
+            child = self.child(journal, index)
+            if child.touched():
+                deployer.run_exact_check(descriptors.exact_check(deployer.service, self.inventory),
+                    child, child.hosts[0]['previous']['exe_sha256'])
+                deployer.refresh_baseline()
+        self.clear_fence(journal)
+        journal.set_status('rolled-back')
+
+    def clear_fence(self, journal):
+        host = self.inventory.lock.get('host')
+        if host is None:
+            return
+        raw = self.ex.read(host, FENCE)
+        if raw is not None:
+            require(json.loads(raw).get('transaction') == journal.id,
+                    'artifact fence belongs to another transaction')
+            self.held.verify()
+            self.ex.remove(host, FENCE)
+
+    def rollback(self, transaction=None):
+        journal = Journal.load(self.state_dir, NAME, transaction)
+        require(journal is not None, 'no artifact cutover transaction')
+        latest = Journal.load(self.state_dir, NAME)
+        require(latest.id == journal.id, 'a newer artifact cutover exists; inspect it first')
+        with self.ownership(journal.id) as held:
+            mutation_fence(self.inventory, self.ex, held, artifact_transaction=journal.id)
+            self.restore(journal)
+        return journal.data
+
+
+def register(commands):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+        parser = commands.add_parser(NAME + '-' + operation, allow_abbrev=False)
+        parser.add_argument('--request', type=Path, required=True)
+        parser.add_argument('--request-sha256', required=True)
+        if operation == 'deploy':
+            parser.add_argument('--expect-plan-sha256', required=True)
+        if operation in ('status', 'rollback'):
+            parser.add_argument('--transaction')

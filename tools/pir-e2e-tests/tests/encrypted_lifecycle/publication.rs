@@ -8,7 +8,6 @@ use enhance_query_server::{
     worker::Revocation,
 };
 use pir_e2e_tests::enhance_fixture::{tls, Tls};
-use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     sync::{
@@ -849,7 +848,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         for fault in ["corrupt", "truncated", "missing"] {
             std::fs::write(scratch.path().join("fault"), fault).unwrap();
             assert!(synchronizer.poll_once().await.is_err(), "damaged source must not activate");
-            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".part")));
+            assert!(std::fs::read_dir(worker_root.join(pir_artifact::namespace("objects"))).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".part")));
         }
         std::fs::write(scratch.path().join("fault"), "").unwrap();
         synchronizer.poll_once().await.unwrap();
@@ -859,7 +858,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         assert!(!worker_root.join("artifacts-9").exists(), "worker must not generate hint artifacts");
         let requests = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
         for object in [&domain.hint, &domain.public, &domain.packing_object()] {
-            assert!(!requests.contains(&object.sha256), "worker must download only its rows");
+            assert!(!requests.contains(&object.checksum), "worker must download only its rows");
         }
         let packing = prepared_packing::load(&domain.packing_object().path(&root).unwrap(), &domain.packing,
             domain.plan.shard.logical_rows, &PackingBudget::coordinator()).unwrap();
@@ -929,21 +928,21 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
 async fn check_object(tls: &Tls, path: &str, object: &Object) {
     let mut response = tls
         .client
-        .get(format!("{}{PREFIX}{path}/{}", tls.origin, object.sha256))
+        .get(format!("{}{PREFIX}{path}/{}", tls.origin, object.checksum))
         .send()
         .await
         .unwrap()
         .error_for_status()
         .unwrap();
     let mut bytes = 0u64;
-    let mut hash = Sha256::new();
+    let mut hash = pir_artifact::Hasher::new();
     while let Some(chunk) = response.chunk().await.unwrap() {
         bytes += chunk.len() as u64;
         assert!(bytes <= object.bytes);
         hash.update(&chunk);
     }
     assert_eq!(bytes, object.bytes);
-    assert_eq!(hex::encode(hash.finalize()), object.sha256);
+    assert_eq!(hex::encode(hash.finalize()), object.checksum);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1028,7 +1027,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(delayed.await.unwrap().observed_unix_ms <= observed_before_delay, "source response delay cannot renew the observation time");
         let descriptor = current.current.inventory.as_ref().unwrap();
         check_object(&transport, "inventories", descriptor).await;
-        let fetched: Inventory = transport.client.get(format!("{}{PREFIX}inventories/{}", transport.origin, descriptor.sha256)).send().await.unwrap().json().await.unwrap();
+        let fetched: Inventory = transport.client.get(format!("{}{PREFIX}inventories/{}", transport.origin, descriptor.checksum)).send().await.unwrap().json().await.unwrap();
         assert!(fetched.supports(&manifest).unwrap());
         for domain in &fetched.domains {
             for object in domain.rows.iter().chain([&domain.hint, &domain.public, &domain.packing_object()]) {
@@ -1102,13 +1101,13 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         let distribution = PublicationDistribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
         let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap().inventory().clone();
-        let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
-        let orphan_path = root.join("objects").join(orphan);
+        let orphan = pir_artifact::digest(b"interrupted candidate");
+        let orphan_path = root.join(pir_artifact::namespace("objects")).join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
-        let partial_path = root.join("objects").join(format!("{}.tmp", "ab".repeat(32)));
+        let partial_path = root.join(pir_artifact::namespace("objects")).join(format!("{}.tmp", "ab".repeat(32)));
         std::fs::write(&partial_path, b"unfinished write").unwrap();
         let mut pinned = std::fs::File::open(&orphan_path).unwrap();
-        std::fs::write(root.join("objects/operator-note"), b"not collector-owned").unwrap();
+        std::fs::write(root.join(pir_artifact::namespace("objects")).join("operator-note"), b"not collector-owned").unwrap();
         for epoch in 0..7 {
             let mut inventory = initial.clone();
             for unit in &mut inventory.domains[0].plan.units { unit.recovery_epoch = epoch; }
@@ -1128,7 +1127,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
             std::fs::write(runtime.join("retention-marker"), b"runtime identity").unwrap();
             distribution.publish(manifest, inventory).await.unwrap();
         }
-        assert_eq!(std::fs::read_dir(root.join("inventories")).unwrap().count(), protocol::RETAINED_GENERATIONS);
+        assert_eq!(std::fs::read_dir(root.join(pir_artifact::namespace("inventories"))).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert_eq!(std::fs::read_dir(root.join("domains")).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert_eq!(std::fs::read_dir(root.join("preparation/artifacts-9")).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert!(!orphan_path.exists());
@@ -1136,7 +1135,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         let mut bytes = String::new();
         pinned.read_to_string(&mut bytes).unwrap();
         assert_eq!(bytes, "interrupted candidate", "already-open streams survive collection");
-        assert!(root.join("objects/operator-note").exists());
+        assert!(root.join(pir_artifact::namespace("objects")).join("operator-note").exists());
         enhance_publisher::publication::verify_publication(&root, initial).unwrap();
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());

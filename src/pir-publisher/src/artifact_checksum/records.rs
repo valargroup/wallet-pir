@@ -21,7 +21,7 @@ fn preparation<'a>(digest: &str, prepared: &'a [Prepared]) -> crate::Result<&'a 
         })
 }
 
-fn object(value: &mut Value, prepared: &[Prepared]) -> crate::Result<()> {
+fn object(value: &mut Value, prepared: &[Prepared], product: &str) -> crate::Result<()> {
     if value.is_null() {
         return Ok(());
     }
@@ -29,6 +29,9 @@ fn object(value: &mut Value, prepared: &[Prepared]) -> crate::Result<()> {
         .as_str()
         .ok_or("invalid predecessor inventory reference")?;
     let p = preparation(digest, prepared)?;
+    if p.product != product || value["bytes"].as_u64().is_none() {
+        return Err("saved inventory reference and preparation products differ".into());
+    }
     *value = serde_json::json!({"checksum": p.inventory.checksum, "bytes": p.inventory.bytes});
     Ok(())
 }
@@ -89,12 +92,15 @@ pub fn convert(kind: Kind, mut value: Value, prepared: &[Prepared]) -> crate::Re
                 &mut value
             };
             if !current.is_null() {
-                object(&mut current["inventory"], prepared)?;
+                if current["version"] != 1 {
+                    return Err("expected predecessor Enhance current".into());
+                }
+                object(&mut current["inventory"], prepared, "enhance")?;
                 current["version"] = 2.into();
             }
             if let Some(retained) = value.get_mut("retained").and_then(Value::as_array_mut) {
                 for entry in retained {
-                    object(&mut entry["inventory"], prepared)?;
+                    object(&mut entry["inventory"], prepared, "enhance")?;
                 }
             }
         }
@@ -105,7 +111,10 @@ pub fn convert(kind: Kind, mut value: Value, prepared: &[Prepared]) -> crate::Re
                 &mut value
             };
             if !current.is_null() {
-                object(&mut current["inventory"], prepared)?;
+                if current["schema"] != "status-prepared-distribution-v1" {
+                    return Err("expected predecessor Status current".into());
+                }
+                object(&mut current["inventory"], prepared, "status")?;
                 current["schema"] = "status-prepared-distribution-v2".into();
             }
         }

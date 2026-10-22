@@ -43,7 +43,7 @@ pub fn artifact_name(rows: u64, public: &str) -> Result<String, String> {
     let parameter = crate::protocol::parameter_id(params.db_rows as u64)?;
     Ok(format!(
         "{}.bin",
-        crate::protocol::digest(&("prepared-packing-v2", parameter, public))
+        crate::publication::inventory_digest(&("prepared-packing-v2", parameter, public))
     ))
 }
 pub fn describe_hint(root: &Path, hint: &str, rows: u64) -> Result<Artifact, String> {

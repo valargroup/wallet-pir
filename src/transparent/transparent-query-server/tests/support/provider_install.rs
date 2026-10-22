@@ -307,8 +307,8 @@ async fn installation_case(case: Case) {
     for file in &finalized.inventory().artifacts {
         if file.kind.local() {
             replies.insert(
-                format!("/provider/v1/artifacts/{}", file.sha256),
-                std::fs::read(finalized.file(&file.sha256).unwrap()).unwrap(),
+                format!("/provider/v1/artifacts/{}", file.checksum),
+                std::fs::read(finalized.file(&file.checksum).unwrap()).unwrap(),
             );
         }
     }
@@ -360,7 +360,7 @@ async fn installation_case(case: Case) {
             .iter()
             .find(|f| f.kind == publication::Kind::RecentRuntime)
             .unwrap()
-            .sha256
+            .checksum
     );
     let corrupt_runtime = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let corrupt = corrupt_runtime.clone();

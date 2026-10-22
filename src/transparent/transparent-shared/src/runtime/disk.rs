@@ -643,6 +643,11 @@ impl ShippedRuntimes {
         checkpoints: &Path,
     ) -> io::Result<(PathBuf, pir_artifact::Checksum)> {
         use std::os::unix::fs::MetadataExt;
+        if source == target {
+            return Err(invalid(
+                "runtime conversion requires a separate output file",
+            ));
+        }
         pir_artifact::migration::prepare(checkpoints, &source, previous, bytes)?;
         let directory = target
             .parent()
@@ -663,6 +668,8 @@ impl ShippedRuntimes {
             let saved: serde_json::Value = serde_json::from_slice(&raw)?;
             if metadata.is_file()
                 && saved["previous"] == serde_json::to_value(previous)?
+                && saved["previous_identity"] == serde_json::to_value(previous_identity)?
+                && saved["current_identity"] == serde_json::to_value(current_identity)?
                 && saved["stamp"] == stamp(&metadata)
                 && metadata.len() == bytes
             {
@@ -729,11 +736,47 @@ impl ShippedRuntimes {
         pir_artifact::migration::persist(
             &proof,
             &serde_json::to_vec(&serde_json::json!({
-                "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(&target)?)
+                "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(&target)?),
+                "previous_identity":previous_identity,"current_identity":current_identity
             }))?,
         )?;
         Ok((target.to_path_buf(), checksum))
     }
+    /// Rebind a conversion receipt after the installer creates verified aliases.
+    /// The exact post-install stamp must come from the completed catalog install,
+    /// so an unrelated change cannot turn into reusable conversion evidence.
+    pub fn refresh_migration_proof(
+        target: &Path,
+        checksum: &pir_artifact::Checksum,
+        installed: &pir_artifact::migration::Stamp,
+    ) -> io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let proof = target.with_extension("runtime.migration.json");
+        let raw = match fs::read(&proof) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let metadata = fs::symlink_metadata(target)?;
+        if &pir_artifact::migration::Stamp::of(&metadata)? != installed {
+            return Err(invalid("converted runtime changed after installation"));
+        }
+        let mut saved: serde_json::Value = serde_json::from_slice(&raw)?;
+        if saved["checksum"] != serde_json::to_value(checksum)? {
+            return Err(invalid("runtime conversion proof names another checksum"));
+        }
+        saved["stamp"] = serde_json::json!([
+            metadata.dev(),
+            metadata.ino(),
+            metadata.len(),
+            metadata.mtime(),
+            metadata.mtime_nsec(),
+            metadata.ctime(),
+            metadata.ctime_nsec()
+        ]);
+        pir_artifact::migration::persist(&proof, &serde_json::to_vec(&saved)?)
+    }
+
     /// Check local material without loading it or hashing its body.
     pub fn check_size(
         &self,

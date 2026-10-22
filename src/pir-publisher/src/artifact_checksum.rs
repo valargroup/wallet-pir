@@ -18,6 +18,11 @@ pub struct Command {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Check retained file identities without changing a preparation or authority.
+    VerifyPrepared {
+        #[arg(long)]
+        stage: PathBuf,
+    },
     /// Prepare locally cached objects against a verified publisher translation.
     PrepareCache {
         #[arg(long)]
@@ -100,6 +105,15 @@ enum Product {
 impl Command {
     pub fn run(self) -> crate::Result<()> {
         let result = match self.operation {
+            Operation::VerifyPrepared { stage } => {
+                let prepared: pir_artifact::catalog::Prepared =
+                    serde_json::from_slice(&std::fs::read(stage.join("prepared.json"))?)?;
+                if prepared.stage != stage {
+                    return Err("preparation stage differs".into());
+                }
+                prepared.verify_files()?;
+                serde_json::json!({"verified_files":prepared.files.len(),"inventory":prepared.inventory})
+            }
             Operation::PrepareCache {
                 preparation,
                 root,
@@ -113,6 +127,14 @@ impl Command {
                 }
                 prepared.refresh_files()?;
                 let installed = prepared.install(&root)?;
+                #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+                for (path, proof) in &prepared.files {
+                    transparent_shared::runtime::disk::ShippedRuntimes::refresh_migration_proof(
+                        path,
+                        &proof.checksum,
+                        &proof.stamp,
+                    )?;
+                }
                 serde_json::json!({"installed_files":installed,"inventory":prepared.inventory})
             }
             Operation::InstallRecord {
