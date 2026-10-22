@@ -157,6 +157,219 @@ class CudaReadiness(unittest.TestCase):
             self.wait()
 
 
+class FeeOracleRepair(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.current, self.replacement = self.root/'oracle.json', self.root/'new.json'
+        self.evidence = self.root/'evidence'
+        self.evidence.mkdir()
+        def row(fee=None):
+            raw = bytearray(653)
+            if fee is not None:
+                raw[640] = 4
+                raw[645:653] = fee.to_bytes(8,'little')
+            return raw.hex()
+        self.old = [{'position':0,'record_hex':row()}, {'position':33,'record_hex':row(15000)}]
+        self.new = [{'position':0,'record_hex':row(20000)}, self.old[1]]
+        self.current.write_text(json.dumps(self.old))
+        self.replacement.write_text(json.dumps(self.new))
+        self.current.chmod(0o600)
+        self.replacement.chmod(0o600)
+        self.writes = []
+        original = Path.lstat
+        self.owner_stat = lambda path: SimpleNamespace(st_uid=0,st_mode=original(path).st_mode)
+
+    def repair(self, expected=None, held=None):
+        def write(path, data, mode):
+            self.writes.append(path)
+            Path(path).write_bytes(data)
+            Path(path).chmod(mode)
+        digest = expected or hashlib.sha256(self.replacement.read_bytes()).hexdigest()
+        with patch.object(Path, 'lstat', self.owner_stat):
+            return deploy.repair_reviewed_fee_oracle(self.current,self.replacement,digest,
+                                                     held or Mock(),self.evidence,write)
+
+    def test_fee_only_repair_preserves_cases_and_retains_prior_bytes(self):
+        original = self.current.read_bytes()
+        expected = self.replacement.read_bytes()
+        result = self.repair()
+        self.assertEqual(self.current.read_bytes(), expected)
+        self.assertEqual((self.evidence/'oracle-before.json').read_bytes(),original)
+        self.assertEqual((self.evidence/'oracle-after.json').read_bytes(),expected)
+        self.assertEqual(result['positions'],2)
+        self.assertEqual(result['fee_metadata_updates'],1)
+        self.assertEqual(self.current.stat().st_mode & 0o777,0o600)
+
+    def test_oracle_repair_refuses_ciphertext_expiry_known_fee_and_coverage_changes(self):
+        original = self.current.read_bytes()
+        for case in ['ciphertext','expiry','known-fee','position','drop-case']:
+            bad = copy.deepcopy(self.new)
+            if case in ['ciphertext','expiry']:
+                raw = bytearray.fromhex(bad[0]['record_hex'])
+                raw[0 if case=='ciphertext' else 641] ^= 1
+                bad[0]['record_hex'] = raw.hex()
+            elif case=='known-fee':
+                raw = bytearray.fromhex(bad[1]['record_hex']);raw[645] ^= 1
+                bad[1]['record_hex'] = raw.hex()
+            elif case=='position':
+                bad[0]['position'] = 1
+            else:
+                bad.pop()
+            self.replacement.write_text(json.dumps(bad))
+            with self.assertRaises(Exception):self.repair()
+            self.assertEqual(self.current.read_bytes(),original)
+            self.assertEqual(self.writes,[])
+
+    def test_oracle_repair_refuses_wrong_digest_and_lost_lock(self):
+        original = self.current.read_bytes()
+        with self.assertRaisesRegex(Exception,'reviewed SHA-256'):self.repair(expected='0'*64)
+        held = Mock();held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError,'lost lock'):self.repair(held=held)
+        self.assertEqual(self.current.read_bytes(),original)
+        self.assertEqual(self.writes,[])
+        self.assertEqual(list(self.evidence.iterdir()),[])
+
+
+class CudaFleet(Fleet):
+    def reviewed_state(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        runner.capture_baseline()
+        target = runner.targets[0]
+        current = copy.deepcopy(self.fake.probe_unit(target.host, target.unit))
+        old_binary = units.split_exec(units.exec_start(units.effective(
+            [current['fragment_text']] + [d['text'] for d in current['drop_ins']])))[1]
+        new_binary = runner.service.release_binary(NEW_SHA)
+        current['exe_sha256'] = NEW_SHA
+        current['fragment_text'] = current['fragment_text'].replace(old_binary, new_binary)
+        for item in current['drop_ins']:
+            item['text'] = item['text'].replace(old_binary, new_binary)
+        evidence = self.dir/'evidence'
+        evidence.mkdir()
+        return runner, current, evidence
+
+    def test_reviewed_baseline_adoption_retains_old_bytes_and_ledger(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        pointer = self.state/'latest-enhance.json'
+        pointer.write_text('retained transaction pointer')
+        with patch.object(runner, 'probe', return_value={runner.targets[0].key: current}):
+            result = deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence)
+        self.assertEqual((evidence/'baseline-before.json').read_bytes(), original)
+        self.assertEqual(result['previous_baseline_sha256'], hashlib.sha256(original).hexdigest())
+        self.assertEqual(pointer.read_text(), 'retained transaction pointer')
+        self.assertEqual(json.loads(runner.baseline_path.read_text())['targets'][runner.targets[0].key]['exe_sha256'], NEW_SHA)
+        self.assertEqual(self.restarts(), [])
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, Mock(), evidence))
+
+    def test_baseline_adoption_requires_the_explicit_matching_running_hash(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        self.assertIsNone(deploy.adopt_reviewed_baseline(runner, current, None, Mock(), evidence))
+        with self.assertRaisesRegex(Exception, 'expected-current-sha256'):
+            deploy.adopt_reviewed_baseline(runner, current, OLD_SHA, Mock(), evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_argument_limit_and_file_drift(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        for change in ['argument', 'limit', 'file']:
+            bad = copy.deepcopy(current)
+            if change == 'argument':
+                binary = runner.service.release_binary(NEW_SHA)
+                bad['fragment_text'] = bad['fragment_text'].replace(binary, binary + ' --unreviewed')
+                for item in bad['drop_ins']:
+                    item['text'] = item['text'].replace(binary, binary + ' --unreviewed')
+            elif change == 'limit':
+                bad['fragment_text'] += 'MemoryMax=4G\n'
+            else:
+                bad['fragment_path'] += '.changed'
+            with self.assertRaisesRegex(Exception, 'executable path|unit file paths'):
+                deploy.adopt_reviewed_baseline(runner, bad, NEW_SHA, Mock(), evidence)
+            self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_reviewed_baseline_adoption_refuses_a_lost_lock(self):
+        runner, current, evidence = self.reviewed_state()
+        original = runner.baseline_path.read_bytes()
+        held = Mock()
+        held.verify.side_effect = RuntimeError('lost lock')
+        with self.assertRaisesRegex(RuntimeError, 'lost lock'):
+            deploy.adopt_reviewed_baseline(runner, current, NEW_SHA, held, evidence)
+        self.assertEqual(runner.baseline_path.read_bytes(), original)
+        self.assertEqual(list(evidence.iterdir()), [])
+
+    def test_gpu_rollback_refuses_paths_outside_its_canonical_ledger(self):
+        runner = self.enhance_fleet()
+        with patch.object(deploy.Journal, 'load') as load:
+            with self.assertRaisesRegex(Exception, 'canonical GPU transaction'):
+                deploy.rollback_verified_gpu(runner, '../other-ledger/transaction', Mock())
+            load.assert_not_called()
+
+    def test_gpu_rollback_refuses_a_transaction_for_other_targets(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        foreign = SimpleNamespace(hosts=[{'host':'unrelated','unit':'other.service'}])
+        with patch.object(deploy.Journal, 'load', return_value=foreign), patch.object(runner, 'rollback') as rollback:
+            with self.assertRaisesRegex(Exception, 'exactly the selected GPU'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+            rollback.assert_not_called()
+
+    def test_gpu_rollback_cannot_pass_when_public_verification_fails(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        target = runner.targets[0]
+        journal = SimpleNamespace(hosts=[{'host':target.host,'unit':target.unit,
+                                        'previous':{'exe_sha256':OLD_SHA}}])
+        runner.inventory.services['enhance']['exact_check'] = {
+            'host':'coordinator','argv':['verifier','--sha256',NEW_SHA],'timeout':60}
+        with patch.object(deploy.Journal, 'load', return_value=journal), \
+                patch.object(runner, 'rollback', return_value=journal), \
+                patch.object(runner, 'run_exact_check', side_effect=ValueError('public oracle failed')):
+            with self.assertRaisesRegex(ValueError, 'public oracle failed'):
+                deploy.rollback_verified_gpu(runner, 'enhance-explicit-transaction', Mock())
+
+    def test_repeat_validation_checks_exact_answers_without_restarting(self):
+        runner = self.enhance_fleet()
+        result = runner.deploy(OLD_SHA, verify_noop=True)
+        self.assertEqual(result.status, 'committed')
+        self.assertEqual(self.restarts(), [])
+        self.assertEqual(len(self.fake.runs), 1)
+
+    def test_nested_health_and_strict_scalar_types(self):
+        runner = self.enhance_fleet()
+        target = runner.targets[0]
+        record = {'host': target.host, 'unit': target.unit, 'role': target.role.name, 'verify': {
+            'health': target.url(target.role.health), 'health_equals': deploy.EXPECTED}}
+        health = {'protocol': deploy.PROTOCOL, 'matvec': {'matvec_backend': 'cuda', 'cuda_device': 0}}
+        with patch.object(self.fake, 'http_get', return_value=(200, json.dumps(health))):
+            self.assertTrue(runner.check(record, OLD_SHA)[0])
+        for bad in [True, 1, None]:
+            health['matvec']['cuda_device'] = bad
+            with patch.object(self.fake, 'http_get', return_value=(200, json.dumps(health))):
+                self.assertFalse(runner.check(record, OLD_SHA)[0])
+
+    def test_backend_mismatch_rolls_back_selected_target(self):
+        runner = self.enhance_fleet()
+        runner.targets = runner.targets[:1]
+        runner.targets[0].health_equals['matvec.matvec_backend'] = 'cuda'
+        original = self.fake.http_get
+        def health(host, url, timeout=5):
+            status, body = original(host, url, timeout)
+            document = json.loads(body)
+            state = self.fake.host(host).units[runner.targets[0].unit]
+            document['matvec'] = {'matvec_backend': 'cpu' if state['exe'] == NEW_SHA else 'cuda'}
+            return status, json.dumps(document)
+        with patch.object(self.fake, 'http_get', side_effect=health):
+            with self.assertRaisesRegex(Exception, 'not verified'):
+                runner.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertEqual(self.fake.probe_unit(*ENHANCE[0])['exe_sha256'], OLD_SHA)
+        self.assertTrue(all(host == ENHANCE[0][0] for host, _ in self.restarts()))
+
+
 class CudaInventory(unittest.TestCase):
     def document(self, known_hosts):
         return {'lock': {'type': 'pinned_host', 'machine_id': 'fake-coordinator'}, 'ssh': {
