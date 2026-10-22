@@ -47,18 +47,19 @@ pub fn prepare(preparation: &Path, root: &Path, stage: &Path) -> crate::Result<P
         }
         let target_relative =
             Path::new(&pir_artifact::namespace("objects")).join(&expected.checksum.digest);
-        let runtime = old
-            .get("artifacts")
-            .and_then(Value::as_array)
-            .zip(new.get("artifacts").and_then(Value::as_array))
-            .and_then(|(old, new)| {
-                old.iter().zip(new).find(|(old, _)| {
-                    old["sha256"].as_str() == Some(digest)
-                        && old["path"]
-                            .as_str()
-                            .is_some_and(|path| path.ends_with(".runtime"))
-                })
-            });
+        let checksum = serde_json::to_value(&expected.checksum)?;
+        // Inventories list artifacts in path order, and a runtime's path
+        // changes with its identity, so the two lists do not align by
+        // position. Pair each runtime by its verified identity in each format.
+        let runtime = match listed(&old).find(|a| a["sha256"].as_str() == Some(digest)) {
+            Some(old) => Some((
+                old,
+                listed(&new)
+                    .find(|a| a["checksum"] == checksum)
+                    .ok_or("converted runtime is not in the prepared inventory")?,
+            )),
+            None => None,
+        };
         if let Some((old, new)) = runtime {
             #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
             {
@@ -107,12 +108,7 @@ pub fn prepare(preparation: &Path, root: &Path, stage: &Path) -> crate::Result<P
         if publisher.product.starts_with("transparent-") {
             let source_sha256 = new["artifacts"]
                 .as_array()
-                .and_then(|artifacts| {
-                    artifacts.iter().find(|a| {
-                        a["checksum"]
-                            == serde_json::to_value(&expected.checksum).unwrap_or(Value::Null)
-                    })
-                })
+                .and_then(|artifacts| artifacts.iter().find(|a| a["checksum"] == checksum))
                 .and_then(|a| a.get("source_sha256"))
                 .cloned();
             let mut receipt = serde_json::json!({"version":3,"checksum":expected.checksum,
@@ -128,6 +124,20 @@ pub fn prepare(preparation: &Path, root: &Path, stage: &Path) -> crate::Result<P
     catalog
         .finish(&publisher.product, publisher.previous_inventory, &new_bytes)
         .map_err(Into::into)
+}
+
+/// The runtime artifacts an inventory lists, by their header-bearing path.
+fn listed(inventory: &Value) -> impl Iterator<Item = &Value> {
+    inventory
+        .get("artifacts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|a| {
+            a["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with(".runtime"))
+        })
 }
 
 #[cfg(test)]
@@ -171,5 +181,93 @@ mod tests {
         assert_eq!(std::fs::read(new).unwrap(), bytes);
         std::fs::write(cache_root.join(relative), b"corrupted artifact").unwrap();
         assert!(prepare(&input, &cache_root, &cache_stage).is_err());
+    }
+
+    /// Runtime names derive from their identities, so the predecessor and
+    /// prepared inventories can list the same runtimes in different orders.
+    #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+    #[test]
+    fn cached_runtimes_pair_by_identity_when_renamed_paths_reorder() {
+        use transparent_shared::runtime::disk::ShippedRuntimes;
+        let directory = tempfile::tempdir().unwrap();
+        let publisher_root = directory.path().join("publisher");
+        let publisher_stage = directory.path().join("publisher-stage");
+        let cache_root = directory.path().join("consumer");
+        let cache_stage = directory.path().join("consumer-stage");
+        for root in [&publisher_root, &cache_root] {
+            std::fs::create_dir_all(root.join("objects")).unwrap();
+            std::fs::create_dir_all(root.join("runtimes")).unwrap();
+        }
+        let sha256 = |bytes: &[u8]| {
+            let mut hash = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+            hash.update(bytes);
+            hash.finish()
+        };
+        let name = |identity: [u8; 32]| format!("runtimes/key-{}.runtime", hex(&identity));
+        let mut catalog = Catalog::new(&publisher_root, &publisher_stage).unwrap();
+        let (mut old_list, mut new_list) = (Vec::new(), Vec::new());
+        // A sorts before B in the predecessor names and after it once renamed.
+        for (old_identity, new_identity, body) in [
+            ([0x01; 32], [0xf0; 32], b"runtime body A".as_slice()),
+            ([0x02; 32], [0x0f; 32], b"runtime body B, longer".as_slice()),
+        ] {
+            let mut file = old_identity.to_vec();
+            let mut header = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
+            header.update(body);
+            file.extend_from_slice(&header.finalize());
+            file.extend_from_slice(body);
+            let previous = sha256(&file);
+            let relative = PathBuf::from(name(old_identity));
+            std::fs::write(publisher_root.join(&relative), &file).unwrap();
+            std::fs::write(cache_root.join("objects").join(&previous.digest), &file).unwrap();
+            let target = publisher_stage.join(name(new_identity));
+            let bytes = file.len() as u64;
+            let (_, checksum) = ShippedRuntimes::migrate_file(
+                &publisher_root.join(&relative),
+                &target,
+                old_identity,
+                new_identity,
+                &previous,
+                bytes,
+                catalog.checkpoints(),
+            )
+            .unwrap();
+            catalog
+                .transformed(&relative, &previous, bytes, &target, checksum.clone())
+                .unwrap();
+            old_list.push(serde_json::json!({"path":name(old_identity),
+                "sha256":previous.digest,"bytes":bytes}));
+            new_list.push(serde_json::json!({"path":name(new_identity),
+                "checksum":checksum,"bytes":bytes}));
+        }
+        new_list.sort_by_key(|a| a["path"].as_str().unwrap().to_owned());
+        assert_ne!(old_list[0]["bytes"], new_list[0]["bytes"]);
+        let predecessor = serde_json::to_vec(&serde_json::json!({"artifacts":old_list})).unwrap();
+        migration::persist(
+            &publisher_stage.join("predecessor-inventory.json"),
+            &predecessor,
+        )
+        .unwrap();
+        let inventory = serde_json::to_vec(&serde_json::json!({"artifacts":new_list})).unwrap();
+        catalog
+            .finish("transparent-history", sha256(&predecessor), &inventory)
+            .unwrap();
+        let input = publisher_stage.join("prepared.json");
+        let mut prepared = prepare(&input, &cache_root, &cache_stage).unwrap();
+        prepared.verify_files().unwrap();
+        prepared.install(&cache_root).unwrap();
+        for artifact in &new_list {
+            let checksum: pir_artifact::Checksum =
+                serde_json::from_value(artifact["checksum"].clone()).unwrap();
+            let path = cache_root
+                .join(pir_artifact::namespace("objects"))
+                .join(&checksum.digest);
+            checksum.verify(&std::fs::read(path).unwrap()).unwrap();
+        }
+    }
+
+    #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 }
