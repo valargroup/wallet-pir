@@ -70,6 +70,5 @@ transparent-query-server = { path = "../transparent-query-server", optional = tr
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
-pir-publisher = { path = "../../pir-publisher" }
 # The unified-host regression drives real history and display query roles.
 pir-query-server = { path = "../../pir-query-server", features = ["transparent-history", "transparent-detail"] }

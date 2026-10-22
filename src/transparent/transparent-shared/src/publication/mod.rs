@@ -281,16 +281,15 @@ pub use crate::history::shardset::OBJECT_STORE;
 /// Open the publication artifact `relative` names under `root`, returning
 /// its checked physical path and the handle acquired at that name.
 ///
-/// Every component must be a real directory or file, with two exceptions,
-/// each one exact link into the real [`OBJECT_STORE`] beside the publication:
-/// a runtime file directly under `root` may link to `../.objects/<sha256>`, and
+/// Every component must be a real directory or file except exact references
+/// into the real [`OBJECT_STORE`] beside the publication: a runtime or split
+/// index file directly under `root` may link to `../.objects/<sha256>`, and
 /// a table segment of a revision directory to `../../.objects/<sha256>`. Traversal, any other
 /// symbolic link, a redirect elsewhere, a linked store and a missing or
 /// non-regular target are refused. Publication paths stay logical; only reads
 /// use the returned handle. A segment link's digest is checked against its
 /// manifest by the loader and by the digest listed for it.
-/// Open one logical publication artifact using the publisher's checked object
-/// references. This grants no verification evidence or distribution authority.
+/// This grants no verification evidence or distribution authority.
 /// An expected reference binds length and, for stored aliases, the target name.
 pub fn open_artifact(
     root: &Path,

@@ -9,11 +9,12 @@
 //!   (`transparent_shard::display::split`), written once when a seal or a
 //!   window drop first produces it.
 //! - `candidate-<tip>-<hash>-<nanos>/` is one publication: references to
-//!   every revision the map names and of every index chunk
+//!   every revision the map names and every index chunk
 //!   (`txid-index-<sha256>.json`), the recent map `txid-map.json`, then
-//!   `txid-shards.json`, written last. With `--ship-runtimes` the controller
-//!   then adds the recent revision's prepared runtimes as plain `.runtime`
-//!   files at the candidate root; collection removes them with it.
+//!   `txid-shards.json`, written last. Required preparation then adds checked
+//!   `.runtime` references at the candidate root before inventory finalization.
+//! - `.objects/<sha256>` stores large immutable bytes once. Publication
+//!   references retain them until collection finds no remaining owners.
 //! - `display-root.json` pins what every shard depends on (geometry, seal
 //!   parameters, chain, start), and `active.json` names the activated
 //!   candidate together with every seal made since the start.
