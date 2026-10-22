@@ -29,11 +29,8 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         canonicality: Some(rpc),
         invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
-        last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({})),
-        http: reqwest::Client::new(),
         observed: RwLock::new(BTreeMap::new()),
-        membership: None,
         prepared_set: std::sync::Mutex::new(None),
         shutdown: Default::default(),
         checked_runtimes: Default::default(),
@@ -41,7 +38,6 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
         integrity_failed: AtomicBool::new(false),
-        fleet_withdrawal: AtomicBool::new(false),
         foreground: AtomicU64::new(0),
     }))
 }
@@ -2042,7 +2038,6 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
     });
     assert!(owner.0.withdrawn.load(Ordering::Acquire));
     assert!(owner.0.integrity_failed.load(Ordering::Acquire));
-    assert!(owner.0.fleet_withdrawal.load(Ordering::Acquire));
     assert_eq!(status("phase"), "integrity_failed");
     assert_eq!(
         status("correctness_validation")["state"],
@@ -2145,8 +2140,8 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
     );
 }
 
-/// A controller root whose saved active publication carries completion
-/// evidence, as a previous process left it, and the fixture node and fleet.
+/// A controller root whose saved active publication carries full completion
+/// evidence, as a previous process left it, and the fixture node.
 struct Startup {
     root: tempfile::TempDir,
     config: Config,
@@ -2157,7 +2152,6 @@ struct Startup {
 }
 impl Startup {
     async fn new() -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let journal = root.path().join("journal");
         manager_tests::copy_fixture_tree(
@@ -2167,17 +2161,14 @@ impl Startup {
         let publications = root.path().join("publications");
         std::fs::create_dir(&publications).unwrap();
         let directory = publications.join("candidate-restored");
-        let (set, finalized, record, _) = restore_fixture(&directory);
+        manager_tests::copy_archive_publication(2, &directory);
+        let set = ShardSet::open(&directory, 0).unwrap();
+        let finalized = Finalized::prepare_full(&directory, &set, 2).unwrap();
+        let end = set.map.shards.last().unwrap();
+        let record = finalized
+            .restore_record(true, 2, end.end_height, &end.terminal_block_hash)
+            .unwrap();
         let rpc = canonical_rpc(root.path(), &set).await;
-        let hook = root.path().join("fleet.py");
-        std::fs::write(&hook, r#"#!/usr/bin/env python3
-import json,sys
-from pathlib import Path
-r=json.load(sys.stdin)
-with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
-print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
-"#).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
         let config = Config {
             data_dir: journal,
             publication_root: publications.clone(),
@@ -2187,20 +2178,14 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: rpc.url.clone(),
             rpc_cookie: root.path().join("node-cookie"),
-            fleet_command: hook,
-            fleet_config: root.path().join("unused"),
             listen: "127.0.0.1:0".parse().unwrap(),
             source_sha: "fixture".into(),
-            shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
             // The fixture node answers block hashes only; the saved journal
             // already covers the publication.
             follow_journal: true,
             snapshot_dir: None,
-            ship_runtimes: true,
-            distribute_prepared: true,
-            http_only: false,
         };
         let saved = read_public(directory.clone(), Vec::new())
             .unwrap()
@@ -2270,33 +2255,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .lock()
             .unwrap()
             .remove(&self.config.publication_root);
-    }
-    /// The fleet operations requested so far, in order.
-    fn fleet_operations(&self) -> Vec<String> {
-        std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
-            .unwrap_or_default()
-            .lines()
-            .map(|line| {
-                serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
-                    .as_str()
-                    .unwrap()
-                    .to_string()
-            })
-            .collect()
-    }
-    async fn wait_fleet(&self, what: &str, done: impl Fn(&[String]) -> bool) -> Vec<String> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            let operations = self.fleet_operations();
-            if done(&operations) {
-                return operations;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{what}: {operations:?}"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
     }
 }
 
@@ -2379,12 +2337,6 @@ async fn restarted_controller_serves_before_validation_and_keeps_serving_a_corre
         .await
         .unwrap();
     assert_eq!(report.map_sha256, startup.record.map_sha256);
-    let requests =
-        std::fs::read_to_string(startup.config.fleet_command.with_extension("requests")).unwrap();
-    assert!(
-        requests.contains("\"prepare\"") && requests.contains("\"activate\""),
-        "{requests}"
-    );
     startup.release();
     let status = wait_status(&tls, "correctness failed", |s| {
         s["correctness_validation"]["state"] == "failed"
@@ -2438,14 +2390,6 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
             .await
             .is_err()
     );
-    // The router would still proxy queries to the workers this process
-    // activated, so the fleet withdraws them too.
-    let operations = startup
-        .wait_fleet("fleet withdrawal", |ops| {
-            ops.iter().any(|op| op == "withdraw")
-        })
-        .await;
-    assert_eq!(operations, ["prepare", "activate", "withdraw"]);
     // Shutdown joins the validator and releases the controller lock.
     shutdown.request();
     tokio::time::timeout(std::time::Duration::from_secs(20), task)
@@ -2469,12 +2413,6 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
             .await
             .is_err()
     );
-    // Workers may still serve what the previous process activated; the new
-    // process withdraws them and activates nothing.
-    let operations = startup
-        .wait_fleet("restart fleet withdrawal", |ops| ops.len() > 3)
-        .await;
-    assert_eq!(operations[3..], ["withdraw"]);
     assert!(!task.is_finished());
     shutdown.request();
     tokio::time::timeout(std::time::Duration::from_secs(20), task)
@@ -2487,39 +2425,6 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
         .unwrap()
         .iter()
         .any(|f| f.path == table.path));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn integrity_withdrawal_reaches_the_fleet_only_when_it_routes_workers_and_retries() {
-    let startup = Startup::new().await;
-    let owner = authority(&startup.directory, None, startup._rpc.client.clone());
-    let pending = || owner.0.fleet_withdrawal.load(Ordering::Acquire);
-    // Shadow and HTTP-only controllers route no workers: the request clears.
-    for (shadow, http_only) in [(true, false), (false, true)] {
-        let config = Config {
-            shadow,
-            http_only,
-            ..startup.config.clone()
-        };
-        owner.0.fleet_withdrawal.store(true, Ordering::Release);
-        withdraw_fleet(&config, &owner).await.unwrap();
-        assert!(!pending());
-    }
-    assert!(startup.fleet_operations().is_empty());
-    // An unavailable fleet leaves the withdrawal pending for the next pass.
-    owner.0.fleet_withdrawal.store(true, Ordering::Release);
-    let unavailable = Config {
-        fleet_command: startup.root.path().join("missing-fleet"),
-        ..startup.config.clone()
-    };
-    assert!(withdraw_fleet(&unavailable, &owner).await.is_err());
-    assert!(pending());
-    withdraw_fleet(&startup.config, &owner).await.unwrap();
-    assert!(!pending());
-    assert_eq!(startup.fleet_operations(), ["withdraw"]);
-    // Nothing pending sends nothing.
-    withdraw_fleet(&startup.config, &owner).await.unwrap();
-    assert_eq!(startup.fleet_operations(), ["withdraw"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -36,13 +36,9 @@
       "archive_geometry": "archive-wide",
       "rpc_url": "http://127.0.0.1:8232",
       "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "fleet_command": "/opt/transparent-publisher/transparent-live-fleet.py",
-      "fleet_config": "/etc/transparent-pir/fleet.json",
       "listen": "10.0.0.1:8096",
       "source_sha": "replace-with-release-revision",
-      "follow_journal": false,
-      "ship_runtimes": false,
-      "distribute_prepared": false
+      "follow_journal": false
     }
   },
   "transaction_details": {
@@ -50,13 +46,11 @@
     "settings": {
       "root": "/srv/pir-publisher/txid/root",
       "journal": "/srv/pir-publisher/txid/journal",
-      "workers": "/etc/txid-pir/workers.json",
       "rpc_url": "http://127.0.0.1:8232",
       "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
       "poll_ms": 1000,
       "status_listen": "127.0.0.1:8098",
       "trust_sealed": false,
-      "ship_runtimes": false,
       "max_recent_records": null
     }
   },

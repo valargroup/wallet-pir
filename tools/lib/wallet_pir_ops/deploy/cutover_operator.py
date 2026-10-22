@@ -1,6 +1,6 @@
 """Supervise an Enhance cutover on the authenticated Mac, without host keys.
 
-The launch command retains immutable inputs and installs two private LaunchAgents.
+New supervised cutovers are retired; this keeps saved transactions recoverable.
 The forward agent uses the ordinary locked deployment; the independent watchdog
 uses its ordinary rollback. The Mac must stay connected until acceptance or
 restoration. Network loss leaves restoration pending and retryable, never accepted.
@@ -8,21 +8,18 @@ restoration. Network loss leaves restoration pending and retryable, never accept
 import json
 import os
 from pathlib import Path
-import plistlib
 import re
 import subprocess
 import sys
 import time
-import uuid
 
 from .. import bundle, durable
 from ..paths import ROOT
 from .cutover_guard import Decision, unit_name
-from .cutover_runner import Runner, copy_executable, write_text
+from .cutover_runner import Runner
 from .engine import file_sha256
 from .publisher import Cutover, ENHANCE_HTTPS_SCHEMA, load_request, require
-from .remote import SSHExecutor, production_lock
-from .transaction import new_id
+from .remote import SSHExecutor
 
 
 def private(path, *, directory=False):
@@ -89,86 +86,6 @@ def status(state_dir, request_sha256):
     return {'decision': json.loads((root / 'decision.json').read_text()),
             'forward': job_state(unit_name(value['id'])),
             'watchdog': job_state(unit_name(value['id']) + '-rollback')}
-
-
-def launch(target, args, publisher_binary):
-    request = target.request
-    require_operator(request)
-    base = home(args.state_dir)
-    base.mkdir(mode=0o700, parents=True, exist_ok=True)
-    private(base, directory=True)
-    agents = Path.home() / 'Library/LaunchAgents'
-    agents.mkdir(parents=True, exist_ok=True)
-    with production_lock(target.inventory, target.ex) as target.lock:
-        pointer = base / 'latest.json'
-        if pointer.exists():
-            private(pointer)
-            previous = json.loads(pointer.read_text())
-            unit_name(previous['id'])
-            previous_root = base / previous['id']
-            private(previous_root, directory=True)
-            private(previous_root / 'decision.json')
-            require(json.loads((previous_root / 'decision.json').read_text())['phase'] in ('accepted', 'restored'),
-                    'another operator cutover is unfinished')
-        require(durable.digest(target.capture()) == args.expect_plan_sha256, 'publisher plan is stale')
-        identifier = new_id('publisher', request['release']['binary_sha256'])
-        root = base / identifier
-        root.mkdir(mode=0o700)
-        decision = operator_decision(root, identifier)
-        decision.create(args.request_sha256)
-        write_text(root / 'request.json', Path(args.request).read_text(), 0o600)
-        metadata = {'id': identifier, 'ops_root': str(ROOT.resolve()),
-                    'state_dir': str(Path(args.state_dir).absolute()),
-                    'request_sha256': args.request_sha256, 'plan_sha256': args.expect_plan_sha256,
-                    'invocation': str(uuid.uuid4()), 'created_unix': time.time(), 'jobs': {}}
-        for name, source, release in [('publisher', publisher_binary, request['release']),
-                                     ('cpu', args.serving_binary, request['serving']),
-                                     ('cuda', args.cuda_binary, request['enhance_https']['cuda_release'])]:
-            if release is not None:
-                path = root / ('executable-' + name)
-                copy_executable(source, path, release)
-                metadata[name] = str(path)
-        prefix = [str(Path(sys.executable).resolve()), '-B', str(ROOT / 'tools/scripts/wallet-pir-deploy.py'),
-                  '--state-dir', metadata['state_dir']]
-        for suffix, operation in [('', 'run'), ('-rollback', 'watchdog')]:
-            label = unit_name(identifier) + suffix
-            path = agents / (label + '.plist')
-            require(not path.exists() and not path.is_symlink(), 'operator LaunchAgent already exists')
-            environment = {'WALLET_PIR_CUTOVER_INVOCATION': metadata['invocation'],
-                           'PYTHONDONTWRITEBYTECODE': '1', 'PATH': os.environ.get('PATH', '/usr/bin:/bin')}
-            if os.environ.get('SSH_AUTH_SOCK'):
-                environment['SSH_AUTH_SOCK'] = os.environ['SSH_AUTH_SOCK']
-            job = {'Label': label, 'ProgramArguments': [*prefix, 'publisher-cutover-' + operation,
-                    '--transaction', identifier, '--supervision', 'operator'],
-                   'EnvironmentVariables': environment, 'WorkingDirectory': str(ROOT),
-                   'RunAtLoad': bool(suffix), 'ThrottleInterval': 15,
-                   'StandardOutPath': str(root / (operation + '.log')),
-                   'StandardErrorPath': str(root / (operation + '.log')),
-                   'Umask': 0o077}
-            if suffix:
-                job['KeepAlive'] = {'SuccessfulExit': False}
-            text = plistlib.dumps(job).decode()
-            write_text(path, text, 0o600)
-            metadata['jobs'][label] = {'path': str(path), 'text': text}
-        durable.atomic_json(root / 'runner.json', metadata, mode=0o600)
-        durable.atomic_json(pointer, {'id': identifier, 'request_sha256': args.request_sha256}, mode=0o600)
-        watchdog = unit_name(identifier) + '-rollback'
-        launchctl('bootstrap', domain(), metadata['jobs'][watchdog]['path'])
-        deadline = time.monotonic() + 20
-        while not (root / 'watchdog-ready.json').exists():
-            require(time.monotonic() < deadline, 'independent operator watchdog did not become ready')
-            time.sleep(.1)
-        ready = json.loads((root / 'watchdog-ready.json').read_text())
-        require(job_state(watchdog)['MainPID'] == str(ready['pid']), 'operator watchdog is not running')
-    try:
-        forward = unit_name(identifier)
-        launchctl('bootstrap', domain(), metadata['jobs'][forward]['path'])
-        launchctl('kickstart', domain() + '/' + forward)
-    except Exception:
-        decision.cancel_before_start()
-        raise
-    return {'transaction': identifier, 'phase': 'supervised', 'supervision': 'operator',
-            'forward_job': forward, 'watchdog_job': watchdog, 'decision': str(decision.path)}
 
 
 class OperatorRunner(Runner):

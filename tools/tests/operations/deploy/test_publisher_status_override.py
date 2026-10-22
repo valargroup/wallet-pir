@@ -103,11 +103,12 @@ class StatusOverrideTests(PublisherFixture, unittest.TestCase):
             self.target.rollback()
         self.assertEqual(self.ex.effects, [])
 
-    def test_other_schemas_still_refuse_the_override(self):
+    def test_retired_schemas_cannot_start_a_transaction(self):
         self.install_override()
-        self.target.request = dict(self.target.request, schema=publisher.HTTPS_SCHEMA, https={'publisher_budget_bytes': 0})
-        with self.assertRaisesRegex(DeployError, 'drop-ins'):
-            self.target.capture()
+        for schema in (publisher.HTTPS_SCHEMA, publisher.ENHANCE_HTTPS_SCHEMA):
+            self.target.request = dict(self.target.request, schema=schema)
+            with self.assertRaisesRegex(DeployError, 'recovery-only'):
+                self.target.capture()
 
 
 if __name__ == '__main__':

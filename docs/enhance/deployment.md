@@ -151,58 +151,11 @@ copy binaries, signal processes or change units by hand. The operator confirms
 the concrete production plan after exact artifacts, full qualification and a
 watchdog rehearsal are reviewable.
 
-The `enhance-https-cutover/1` request preserves every other enabled product's
-settings and names all existing Enhance consumers. It pins separate CPU and CUDA
-executables, the HTTPS origin, preparation disk allowance and every independent
-answer check. Its `enhance_https.progress` entries observe the actual published
-heights: the Enhance and Status wallet manifests' `anchor_height`, Transparent
-history's `public_height`, and transaction details' `published.tip`. Node tip
-progress alone cannot satisfy acceptance.
-
-Run `publisher-cutover-plan` and `publisher-cutover-preflight` with the checksummed
-request and matching artifacts. `--serving-binary` supplies the CPU query host;
-`--cuda-binary` supplies the matching CUDA query host when the inventory has GPU
-workers. Both must have the publisher's source revision and reviewed executable
-digests. The serving roles' existing configuration, units, executable identities
-and public edge are captured for rollback before any interruption.
-Preflight reserves each consumer's declared cache allowance while retaining the
-existing 20 percent disk-headroom floor. Consumers sharing a host are counted
-together; a coordinator consumer's cache is additional to publisher preparation.
-
-Production `publisher-cutover-deploy` runs as root on the existing coordinator
-from its immutable, checksummed operations release. It installs two uniquely
-named, transaction-owned systemd services: a forward runner and an independent
-rollback watchdog enabled for boot. It returns their identities immediately;
-`publisher-cutover-status` reports both the deployment journal and durable
-supervision decision. This is not a completed deployment until that decision is
-accepted and the journal is committed.
-
-Alternatively, `publisher-cutover-deploy --supervision operator` runs from a
-verified matching operations bundle on macOS, using the operator's existing SSH
-inventory. It retains private inputs under `--state-dir` and installs separate
-transaction-owned forward and rollback LaunchAgents. The Mac must remain awake,
-logged in and connected until acceptance or restoration; `caffeinate` prevents
-idle sleep. Network loss delays remote rollback until access returns. No private
-key is copied to a host and SSH agent forwarding remains disabled. Status includes
-the local supervision decision. Keep the same Mac, bundle and state directory
-for recovery; an interrupted forward attempt never starts again automatically.
-
-CPU-only restoration omits GPU workers from both the inventory's serving targets
-and router maps, and sets `enhance_https.cuda_release` to null. The HTTPS cutover
-may preserve an already-stopped continuous checker with `resume_load: false` and
-the exact `expected_disk_latch_sha256`; the same disk-only incident restrictions
-as ordinary publisher updates apply. The checker and latch remain untouched.
-
-The watchdog records one deadline immediately before the first interruption.
-Retries cannot reset it; a boot clock also prevents a backwards wall-clock change
-from extending the hour. Acceptance requires readiness, fresh publication
-advancement and independent encrypted answers for every enabled publisher
-product before the deadline. At the deadline, or after loss of the forward
-process, the watchdog fences further deployment, stops only that transaction's
-verified runner invocation, and invokes the ordinary locked rollback. Failed
-recovery retries use the same decision and retained inputs. They never terminate
-another production-lock owner. Restoration can finish after the deadline; the
-hour bounds the forward attempt.
+The completed `enhance-https-cutover/1` migration cannot start new
+transactions, and its supervised forward runners can no longer be launched. A
+retained transaction still loads for status, repair, restart, rollback and
+reconcile, and an already installed runner or rollback watchdog finishes it
+through the ordinary locked rollback; see [the publisher](../publisher.md).
 
 While the publisher is stopped, the Rust `handoff-https-state` command preserves
 generation reservations, domain recovery floors, revoked sessions and sealed

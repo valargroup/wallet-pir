@@ -17,11 +17,6 @@ impl pir_pipeline::publisher::Workflow for HistoryPublication {
         if self.server.is_finished() || self.ingest.is_finished() {
             return Err("history publisher background service stopped".into());
         }
-        if let Err(error) = withdraw_fleet(&self.config, &self.authority).await {
-            tracing::error!(%error, "fleet withdrawal of corrupt bytes failed; retrying");
-            self.authority.0.status.write().unwrap()["fleet_withdrawal_error"] =
-                error.to_string().into();
-        }
         if let Err(error) =
             publish_once(&self.config, &self.rpc, &self.store, &self.authority).await
         {

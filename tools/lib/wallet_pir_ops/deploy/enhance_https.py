@@ -143,18 +143,6 @@ def validate(request, inventory):
                 product + ' progress must observe the actual published height')
 
 
-def validate_settings(installed, desired):
-    require(set(installed) == set(desired), 'cutover cannot remove enabled publisher products')
-    require(all(installed[name] == desired[name] for name in desired if name != 'enhance'),
-            'Enhance cutover must preserve every other product setting')
-    before, after = (config['enhance']['settings'] for config in (installed, desired))
-    require(installed['enhance']['enabled'] is True and desired['enhance']['enabled'] is True,
-            'Enhance must remain enabled')
-    require(all(before.get(key) == after[key] for key in
-                ('data_dir', 'listen', 'zakura_rpc_url', 'zakura_cookie', 'poll_seconds', 'prevout_cache_outputs')),
-            'Enhance cutover must preserve canonical source, journal and operator settings')
-
-
 class GroupJournal(ServingJournal):
     def __init__(self, cutover, parent, group):
         self.group = group
