@@ -49,7 +49,7 @@ for p in Path('/proc').iterdir():
     try:
         command=(p/'cmdline').read_bytes()
         assert not any(arg==str(root).encode() or arg.startswith(str(root).encode()+b'/')
-                       for arg in command.split(b'\x00')[1:]), 'qualification directory is in a running command'
+                       for arg in command.split(bytes([0]))[1:]), 'qualification directory is in a running command'
         for f in [p/'cwd',*(p/'fd').iterdir()]:
             try: target=os.readlink(f)
             except OSError: continue

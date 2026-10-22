@@ -10,15 +10,31 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
+from contextlib import nullcontext
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'tools/lib'))
 from wallet_pir_ops.deploy import cutover_operator as operator
 from wallet_pir_ops.deploy.cutover_guard import Decision
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy import cli, enhance_https
+from wallet_pir_ops.deploy import descriptors, remote
 
 
 class OperatorTests(unittest.TestCase):
+    def test_cleanup_host_program_is_executable_without_transport_escaping(self):
+        inventory = SimpleNamespace(hosts={'worker-01': {}},
+            services={'enhance': {'roles': {'worker': [{'host': 'worker-01'}]}}})
+        args = SimpleNamespace(inventory='/operator/inventory.json', host=['worker-01'],
+                               confirm_path='/srv/enhance-pir-v7/qualification-worker')
+        def run(host, argv, timeout):
+            compile(argv[2], '<remote-cleanup>', 'exec')
+            return 0, '{"phase":"complete"}'
+        executor = SimpleNamespace(run=run)
+        with patch.object(descriptors, 'load_inventory', return_value=inventory), \
+                patch.object(remote, 'production_lock', return_value=nullcontext(SimpleNamespace(verify=lambda: None))):
+            self.assertEqual(enhance_https.prune_qualification(args, executor)['hosts']['worker-01']['phase'], 'complete')
+
     def test_approved_cleanup_dispatches_without_a_binary_cutover_request(self):
         with patch.object(enhance_https, 'prune_qualification', return_value={'phase': 'complete'}) as cleanup:
             output = []
