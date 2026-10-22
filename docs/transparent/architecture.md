@@ -600,9 +600,10 @@ cannot be built or written is reported in the cycle record and left to the worke
 invalidation is checked before each segment, and a candidate whose preparation it stops
 is never offered.
 
-An HTTP-only publisher (`http_only`) stores each table segment and prepared runtime once,
-named by the SHA-256 of its bytes, in `.objects/<sha256>` beside its publications
-(`transparent_publisher::history::store`). A candidate's revision directories keep their
+The publisher stores each table segment and prepared runtime of a candidate under its
+publication root once, named by the SHA-256 of its bytes, in `.objects/<sha256>` beside its
+publications (`transparent_publisher::history::store`); an operator-supplied initial
+publication outside the root is never rewritten. A candidate's revision directories keep their
 manifest and filter as local files and name every segment by the exact link
 `../../.objects/<sha256>`; its runtimes are `../.objects/<sha256>` links. Republishing an
 unchanged segment or runtime therefore changes no inode, and the process's ctime-bound
@@ -614,7 +615,16 @@ resolver behind inventory preparation, restore, validation and HTTP serving acce
 those exact links into real stores and refuse traversal, any other link and missing
 targets. Inventory paths, URLs and bytes are unchanged. After candidate collection, an
 object or runtime that no remaining publication directory links is removed; an in-flight
-response keeps its open file. Fleet publications keep plain files.
+response keeps its open file. Collection keeps every candidate the active publication,
+pending activation intent (`activation.json`) or background validation names, so their
+objects stay. Verification evidence lives only in the process: after a restart every
+listed table and runtime is read again, whatever the store already holds.
+
+The cycle record (`last_cycle.storage` in the controller status) states what storing the
+candidate hashed (`segments` and `runtimes`: objects installed, already stored or already
+linked, and bytes hashed), what loading its tables verified (`verification`: bytes hashed
+and bytes taken over from evidence), and what its inventory read (`inventory`: runtimes
+loaded and self-checked or reused, bytes hashed and listed from evidence).
 
 The prepare request names the candidate directory as `runtimes`. The fleet adapter lists
 only the runtime files of the worker's assigned shards (`shard-assign files --runtimes`),
