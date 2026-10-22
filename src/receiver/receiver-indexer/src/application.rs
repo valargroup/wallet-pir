@@ -385,6 +385,9 @@ async fn publish_filters(
     // The revision this pass collects under, which `revision::advance` recorded.
     let revision = store.history_revision()?;
     let blocks = crate::blocks::filter_window_blocks(tip.height, args.filter_blocks);
+    if blocks == 0 {
+        return Err("the rolling filter window holds no blocks".into());
+    }
     let first = (tip.height.saturating_sub(blocks - 1)).max(args.start_height);
     let current = serving.filter_window();
     if current.is_some_and(|window| {
@@ -2347,7 +2350,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_one_shot_run_does_not_build_rolling_filters() {
         let mut paused = Paused::new(|_| {}).await;
-        paused.args.filter_blocks = Some(receiver_store::blocks::MAX_FILTER_BLOCKS + 1);
+        paused.args.filter_blocks = Some(0);
         let rpc = std::slice::from_ref(&paused.rpc);
         let genesis = Network::Mainnet.genesis_hash();
         refresh(&paused.args, rpc, genesis, None, &mut State::default())
