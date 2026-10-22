@@ -138,6 +138,7 @@ pub enum PeerHandover {
 }
 
 /// The outcome of one successful pass.
+#[derive(Debug)]
 pub enum PublicationPass<R> {
     /// A candidate committed; `handover` reports the dependent peer.
     Committed { report: R, handover: PeerHandover },
