@@ -41,6 +41,10 @@ INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
 SAMPLER = '/etc/pir-quality/hosts.json'
 LOAD_DROP = '/etc/systemd/system/' + LOAD + '.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf'
 UNIT_PATH = '/etc/systemd/system/' + UNIT
+# The completed Status HTTPS cutover (tools/status/lib/https_cutover.py) leaves
+# this ExecStart-only override on the publisher. An ordinary update owns it only
+# when its bytes are exactly that renderer's output for the running executable.
+STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
 
 
@@ -140,6 +144,38 @@ def load_request(path, expected, *, recovery=False):
     return request, inventory
 
 
+def exec_override(command):
+    return '[Service]\nExecStart=\nExecStart=' + command + '\n'
+
+
+def status_https_override(state, executable_sha256):
+    """Return the installed Status HTTPS override text, or None without drop-ins.
+
+    Refuses any other drop-in, and an override that differs from the Status
+    renderer's output: the fragment command with only its executable replaced by
+    a digest-named publisher release whose digest is the running executable's.
+    The override changes only ExecStart, so the fragment keeps every sandbox,
+    environment and resource setting.
+    """
+    if not state['drop_ins']:
+        return None
+    require([d['path'] for d in state['drop_ins']] == [STATUS_HTTPS_DROP],
+            'unexpected publisher drop-ins; reconcile before changing ownership')
+    text = state['drop_ins'][0]['text']
+    try:
+        fragment = units.exec_start(units.effective([state['fragment_text']]))
+        _, previous, _ = units.split_exec(fragment)
+        _, override, _ = units.split_exec(units.exec_start(units.effective([text])))
+    except units.UnitError as error:
+        raise DeployError('unknown Status HTTPS publisher override: ' + str(error)) from error
+    release = re.fullmatch(re.escape(ROOT_DIR) + '/releases/([a-f0-9]{64})/pir-publisher', override)
+    require(release is not None and release[1] == executable_sha256,
+            'Status HTTPS override does not run the pinned running publisher release')
+    require(fragment.count(previous) == 1 and text == exec_override(fragment.replace(previous, override, 1)),
+            'Status HTTPS publisher override changed; reconcile before changing ownership')
+    return text
+
+
 def stable_unit(state):
     return {key: state.get(key) for key in ('load_state', 'active_state', 'main_pid', 'invocation_id',
             'need_daemon_reload', 'fragment_path', 'fragment_text', 'drop_ins', 'exe_sha256', 'unit_file_state')}
@@ -176,7 +212,7 @@ class Cutover:
         config = self.request['configuration']
         history = config['transparent_history']['settings']
         display = config['transaction_details']['settings']
-        paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, LOAD_DROP, ROOT_DIR + '/latest.json',
+        paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, STATUS_HTTPS_DROP, LOAD_DROP, ROOT_DIR + '/latest.json',
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
         if self.expanded:
@@ -225,7 +261,11 @@ class Cutover:
         require(unified['active_state'] == 'active' and unified['main_pid'], 'unified publisher must already be running')
         require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
                 'standalone and unified publishers both own state')
-        require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
+        override = None
+        if self.request['schema'] == SERVING_SCHEMA:
+            override = status_https_override(unified, unified['exe_sha256'])
+        else:
+            require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
         if self.request['schema'] == HTTPS_SCHEMA:
@@ -271,6 +311,10 @@ class Cutover:
             SAMPLER: json.dumps(sampler, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
+        if override is not None:
+            # Keep the override and point it at the candidate, so rollback
+            # restores the pinned bytes and running executable together.
+            desired[STATUS_HTTPS_DROP] = exec_override(units.exec_start(units.effective([desired[UNIT_PATH]])))
         # Pin consumed inputs without changing their contents or permissions.
         for path in inputs(config):
             require(self.read(path) is not None, 'missing publisher configuration: ' + path)
