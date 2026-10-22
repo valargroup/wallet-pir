@@ -41,14 +41,7 @@ impl Config {
 pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -> Result<()> {
     config.validate()?;
     let _lock = pir_pipeline::service::lock(&config.data_dir)?;
-    if config.data_dir.join("control/controller.json").exists()
-        && !config.data_dir.join("publication/handoff.json").exists()
-    {
-        return Err(
-            "existing Enhance control state requires the offline HTTPS handoff before startup"
-                .into(),
-        );
-    }
+    crate::handoff::verify_startup(&config.data_dir)?;
     let mode = config.data_dir.join("source-mode");
     if mode.exists() && std::fs::read_to_string(&mode)?.trim() != "canonical-archive" {
         return Err(
