@@ -721,7 +721,7 @@ fn stage_child(
         let name = page_segment_file(child.index, segment);
         let target = dir.join(&name);
         if let Some((published, _)) = reusable {
-            if std::fs::hard_link(published.join(&name), &target).is_ok() {
+            if link_file(&published.join(&name), &target).is_ok() {
                 continue;
             }
         }
@@ -1167,18 +1167,32 @@ pub fn link_revision(from: &Path, to: &Path, digest: &str) -> Result<(), BoxErro
     std::fs::create_dir_all(&target)?;
     for entry in std::fs::read_dir(from.join(digest))? {
         let entry = entry?;
-        if !entry.file_type()?.is_file() {
+        let kind = entry.file_type()?;
+        if !kind.is_file() && !kind.is_symlink() {
             return Err("unexpected revision artifact".into());
         }
         let dest = target.join(entry.file_name());
-        if dest.exists() {
+        if std::fs::symlink_metadata(&dest).is_ok() {
             continue;
         }
-        if std::fs::hard_link(entry.path(), &dest).is_err() {
+        if link_file(&entry.path(), &dest).is_err() {
+            if kind.is_symlink() {
+                return Err("could not link a stored revision segment".into());
+            }
             std::fs::copy(entry.path(), &dest)?;
         }
     }
     Ok(())
+}
+
+/// Gives `to` the file `from` names. A link into the publisher's segment
+/// store is linked again, never followed, so republishing a stored segment
+/// leaves its object untouched; the loader checks the link is exact.
+fn link_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(from)?.file_type().is_symlink() {
+        return std::os::unix::fs::symlink(std::fs::read_link(from)?, to);
+    }
+    std::fs::hard_link(from, to)
 }
 
 trait ValidatePrevious {

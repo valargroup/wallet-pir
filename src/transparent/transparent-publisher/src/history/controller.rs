@@ -1052,6 +1052,10 @@ async fn prepare_candidate(
             range_profile: config.range_profile.clone(),
         };
         let stop = stop.clone();
+        // HTTP-only publications store each table segment once beside them;
+        // fleet publications keep plain files for the workers that read them.
+        let stored = config.http_only;
+        let output = directory.clone();
         let published = tokio::task::spawn_blocking(move || {
             publication::publish_until(
                 &options,
@@ -1059,7 +1063,12 @@ async fn prepare_candidate(
                 BlockHash::from_internal_bytes([0; 32]),
                 &seal,
                 &stop,
-            )
+            )?;
+            if stored {
+                let adopted = crate::history::store::adopt_segments(&output, &stop)?;
+                tracing::info!(?adopted, "stored candidate table segments");
+            }
+            Ok::<_, BoxError>(())
         })
         .await?;
         match published {
@@ -1795,6 +1804,7 @@ async fn prepare_runtimes(
         }
     };
     let directory = directory.to_path_buf();
+    let stored = config.http_only;
     let (previous, prepared) = tokio::task::spawn_blocking(move || {
         // Every revision the publisher wrote; it retains them all, and so
         // may a worker.
@@ -1806,8 +1816,17 @@ async fn prepare_runtimes(
             Ok(set) => {
                 let prepared = transparent_shared::runtime::prebuild::prepare_publication(
                     &set, &directory, &retained, &stop,
-                );
-                (Some(set), prepared.map_err(|e| e.to_string()))
+                )
+                .map_err(|e| e.to_string())
+                .and_then(|prepared| {
+                    if stored {
+                        let adopted = crate::history::store::adopt_runtimes(&directory)
+                            .map_err(|e| format!("storing prepared runtimes: {e}"))?;
+                        tracing::info!(?adopted, "stored candidate runtimes");
+                    }
+                    Ok(prepared)
+                });
+                (Some(set), prepared)
             }
             // A stopped scan proved nothing; the earlier set keeps its evidence.
             Err(transparent_shared::history::shardset::LoadError::Stopped) => (
@@ -2447,6 +2466,11 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
     unused.sort_by_key(|e| std::cmp::Reverse(e.metadata().and_then(|m| m.modified()).ok()));
     for entry in unused.into_iter().skip(3) {
         std::fs::remove_dir_all(entry.path())?;
+    }
+    // Stored segments and runtimes no remaining publication links.
+    let collected = crate::history::store::collect(&config.publication_root)?;
+    if collected != Default::default() {
+        tracing::info!(?collected, "collected unreferenced stored objects");
     }
     Ok(())
 }
