@@ -221,9 +221,6 @@ def plan(packages, paths, *, all_checks=False):
                 helpers.add('check-docs'); groups.add('ops')
             if path.startswith(('tools/transparent/loadtest/', 'tools/transparent/src/loadtest/')):
                 helpers.add('check-reports')
-            # Serialized payloads are consumed by jq/deploy scripts.
-            if path.endswith('operator_payloads.rs'):
-                helpers.add('check-ops-contracts'); groups.add('ops')
             reasons.append(f'{path}: package {package} and reverse dependencies')
         elif routed and not (path in ('Cargo.toml', 'Cargo.lock', 'Makefile') or path.startswith(('tools/ci/', '.github/actions/'))):
             targets, full = routed

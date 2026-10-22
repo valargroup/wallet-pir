@@ -56,7 +56,7 @@ FILES = {
         'tools/enhance/deploy/workers.example.json'],
     'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service',
                            'tools/transparent/deploy/transparent-filters.example.json'],
-    'transparent-shard': ['tools/transparent/deploy/transparent-shard-server.service', 'tools/transparent/deploy/transparent-Caddyfile'],
+    'transparent-shard': [],
     'transparent-publisher': [],
     'transparent-txid-display': ['tools/txid/deploy/transparent-txid-display-worker.service.in',
                                  'tools/txid/deploy/transparent-txid-display-controller.service.in',

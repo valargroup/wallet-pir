@@ -260,8 +260,8 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
     `txid-display-genesis/v2` root, `canonical-load/v11*`, `/opt/transparent-publisher/v11*`
     and `/opt/transparent-txid-display`. The retired unit files are kept in
     `/root/v1-destroy-20261014/retired-units/`;
-  - [ ] move the remaining pre-v11 `/v1` paths in `transparent-Caddyfile` and
-    `deploy-transparent-shard.sh` to `/v2`, or delete that single-worker deploy path.
+  - [x] delete the single-worker deploy path that still served pre-v11 `/v1` paths
+    (`transparent-Caddyfile`, `deploy-transparent-shard.sh`; 2026-10-22).
 
 ## Transparent monitoring on /v2
 
