@@ -132,7 +132,7 @@ fn prepare_with(cli: Cli, clone: &preparation::Cloner) -> Result<(), BoxError> {
         if prior.ownership != owner || prior.configuration_sha256 != configuration_sha256 {
             return Err("prepared storage belongs to another request".into());
         }
-        if prior.source_active_sha256 == active_digest && prior.files == current {
+        if prior.files == current {
             prior.verify()?;
             println!(
                 "{}",
@@ -220,10 +220,16 @@ fn require_resolved(source: &Path) -> Result<(), BoxError> {
         ("integrity-failures.json", serde_json::json!([])),
     ] {
         match std::fs::read(source.join(name)) {
-            Ok(raw) if serde_json::from_slice::<serde_json::Value>(&raw)? != empty => {
-                return Err(format!("source has unresolved state: {name}").into())
+            Ok(raw) => {
+                let value = serde_json::from_slice::<serde_json::Value>(&raw)?;
+                // The predecessor also saved an empty worker-acknowledgement
+                // queue. It carries no unresolved work and is not migrated.
+                let retired_empty = name == "invalidate.json"
+                    && value == serde_json::json!({"pending":{},"rollback":null});
+                if value != empty && !retired_empty {
+                    return Err(format!("source has unresolved state: {name}").into());
+                }
             }
-            Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -378,6 +384,14 @@ mod tests {
         let prepared: Prepared =
             serde_json::from_slice(&std::fs::read(target.join(RECORD)).unwrap()).unwrap();
         prepared.verify().unwrap();
+        let saved_files = preparation::fingerprint(&target).unwrap();
+        let mut advanced: publisher::ActiveRecord = serde_json::from_slice(&active).unwrap();
+        advanced.cycle += 1;
+        advanced.store(&source).unwrap();
+        let advanced_source = preparation::fingerprint(&source).unwrap();
+        prepare_with(cli(false), &clone).unwrap();
+        assert_eq!(preparation::fingerprint(&target).unwrap(), saved_files);
+
         let saved: publisher::ActiveRecord =
             serde_json::from_slice(&std::fs::read(target.join("active.json")).unwrap()).unwrap();
         let next = DisplaySet::open(&saved.directory, 0, DisplayRole::Combined).unwrap();
@@ -403,7 +417,7 @@ mod tests {
         std::fs::rename(replacement, object).unwrap();
         assert!(prepare_with(cli(true), &clone).is_err());
         assert!(prepare_with(cli(false), &clone).is_err());
-        assert_eq!(preparation::fingerprint(&source).unwrap(), before);
+        assert_eq!(preparation::fingerprint(&source).unwrap(), advanced_source);
     }
     #[test]
     fn prepared_history_has_restore_evidence_without_changing_legacy_files() {
@@ -479,6 +493,20 @@ mod tests {
         assert!(prepare_with(cli(false), &clone).is_err());
         assert_eq!(preparation::fingerprint(&target).unwrap(), before);
     }
+    #[test]
+    fn empty_retired_acknowledgements_are_resolved_but_pending_work_is_not() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("invalidate.json");
+        std::fs::write(&path, br#"{"pending":{},"rollback":null}"#).unwrap();
+        require_resolved(root.path()).unwrap();
+        std::fs::write(
+            &path,
+            br#"{"pending":{"worker":"unacknowledged"},"rollback":null}"#,
+        )
+        .unwrap();
+        assert!(require_resolved(root.path()).is_err());
+    }
+
     #[tokio::test]
     async fn read_only_handoff_rechecks_the_anchor_with_the_current_node() {
         use axum::{extract::State, routing::post, Json, Router};

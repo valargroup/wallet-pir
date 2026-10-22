@@ -136,7 +136,9 @@ def source_resolved(owner, pair, receipt):
         require(owner.read(pair['source'] + '/' + name) is None, 'source has unresolved publication intent')
     for name, empty in (('invalidate.json', {'rollback': None}), ('integrity-failures.json', [])):
         raw = owner.read(pair['source'] + '/' + name)
-        require(raw is None or json.loads(raw) == empty, 'source has unresolved integrity or rollback state')
+        value = None if raw is None else json.loads(raw)
+        retired_empty = name == 'invalidate.json' and value == {'pending': {}, 'rollback': None}
+        require(raw is None or value == empty or retired_empty, 'source has unresolved integrity or rollback state')
 
 
 class Preparation:

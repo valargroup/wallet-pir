@@ -243,6 +243,16 @@ class StorageTests(PublisherFixture, unittest.TestCase):
             self.ex.remove('coordinator', root + '/' + name)
         self.assertEqual(self.ex.effects, [])
 
+    def test_empty_retired_acknowledgements_do_not_block_live_preparation(self):
+        root = self.roots['transaction_details']['source']
+        self.ex.put('coordinator', root + '/invalidate.json', '{"pending":{},"rollback":null}')
+        self.prepared()
+        self.target.plan()
+        self.ex.put('coordinator', root + '/invalidate.json', '{"pending":{"worker":"waiting"},"rollback":null}')
+        with self.assertRaisesRegex(DeployError, 'unresolved integrity or rollback'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
     def test_reference_and_command_options_are_closed(self):
         import argparse
         parser = argparse.ArgumentParser(allow_abbrev=False)
