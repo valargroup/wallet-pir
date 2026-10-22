@@ -2,7 +2,7 @@
 name = "status-query-server"
 version = "0.0.1"
 edition = "2021"
-description = "Status PIR serving core: generations, serving authority and the private role protocol; no runtime, transport, chain reading or publication"
+description = "Status PIR query serving: generations, authority, HTTP roles and publication synchronization"
 publish = false
 
 # These existing wire-contract regressions exercise the native protocol only.
@@ -21,6 +21,12 @@ cuda = ["dep:pir-cuda", "pir-cuda/cuda"]
 
 client = ["dep:zakura-pir-client"]
 [dependencies]
+axum = "0.7"
+pir-control = { path = "../../shared/pir-control", features = ["admission"] }
+pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-sync-manager = { path = "../../shared/pir-sync-manager" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["full"] }
 pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 # Profile modulus and native hint helpers are shared with Enhance serving.
 pir-serving = { path = "../../shared/pir-serving" }
@@ -44,6 +50,8 @@ zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-librari
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native"], optional = true }
 
 [dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
 hex = "0.4"
 # Independent wallet client exercises the serving wire contract.
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native", "status"] }

@@ -13,16 +13,7 @@ path = "tests/operator.rs"
 [features]
 default = []
 enhance = ["dep:enhance-query-server"]
-status = [
-    "dep:status-query-server",
-    "dep:pir-control",
-    "dep:ipir-sp",
-    "dep:hex",
-    "dep:libc",
-    "dep:rand",
-    "dep:rayon",
-    "dep:sha2",
-]
+status = ["dep:status-query-server"]
 # Transparent history and transaction-detail serving compile independently.
 transparent-history = [
     "dep:transparent-query-server",
@@ -35,29 +26,18 @@ transparent-detail = [
 native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
-    # Status wallet tests need the client. Leaving it on every test root adds
-    # `status` to the shared client and makes the fast graph miss the warm cache.
-    "zakura-pir-client/native",
-    "zakura-pir-client/status",
 ]
 cuda = ["enhance-query-server?/cuda", "status-query-server?/cuda"]
 
 [dependencies]
-enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
 pir-sync-manager = { path = "../shared/pir-sync-manager" }
+enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
 status-query-server = { path = "../status/status-query-server", optional = true }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, default-features = false }
 pir-pipeline = { path = "../shared/pir-pipeline" }
-pir-control = { path = "../shared/pir-control", features = ["admission"], optional = true }
-ipir-sp = { version = "=0.1.0-rc.7", optional = true }
-hex = { version = "0.4", optional = true }
-libc = { version = "0.2", optional = true }
-rand = { version = "0.8", optional = true }
-rayon = { version = "1", optional = true }
-sha2 = { version = "0.10", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -67,4 +47,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false }

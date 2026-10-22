@@ -1,8 +1,8 @@
 //! Wallet-facing and worker query handlers of the Status roles. Each one checks
 //! authority and freshness before and after admission.
 use super::admission;
+use crate::{profile, protocol::*, telemetry, Controller};
 use axum::{body::Bytes, extract::State, http::StatusCode};
-use status_query_server::{profile, protocol::*, telemetry, Controller};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -67,8 +67,8 @@ pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Ve
     }
     Ok(out)
 }
-pub async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    match tokio::time::timeout(admission::REQUEST_BUDGET, evaluate_admitted(s, body)).await {
+pub async fn evaluate(State(state): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+    match tokio::time::timeout(admission::REQUEST_BUDGET, evaluate_admitted(state, body)).await {
         Ok(result) => result,
         Err(_) => {
             telemetry::admission_rejected("worker", "request_deadline");
@@ -76,36 +76,36 @@ pub async fn evaluate(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>
         }
     }
 }
-async fn evaluate_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let g = s.controller.for_body(&body)?;
-    s.controller.check(&g)?;
-    let permit = s.permits.acquire("worker").await?;
-    s.controller.check(&g)?;
+async fn evaluate_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+    let generation = state.controller.for_body(&body)?;
+    state.controller.check(&generation)?;
+    let permit = state.permits.acquire("worker").await?;
+    state.controller.check(&generation)?;
     if body.len() != HEADER_BYTES + ROWS * 8 {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let controller = s.controller.clone();
+    let controller = state.controller.clone();
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let coefficients = body[HEADER_BYTES..]
             .chunks_exact(8)
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
             .collect::<Vec<_>>();
-        let values = g
+        let values = generation
             .evaluate(&coefficients)
             .map_err(|_| StatusCode::BAD_REQUEST)?;
         let mut response = body[..HEADER_BYTES].to_vec();
         for v in values {
             response.extend(v.to_le_bytes());
         }
-        controller.check(&g)?;
+        controller.check(&generation)?;
         Ok(response)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
-pub async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    match tokio::time::timeout(admission::REQUEST_BUDGET, query_admitted(s, body)).await {
+pub async fn query(State(state): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+    match tokio::time::timeout(admission::REQUEST_BUDGET, query_admitted(state, body)).await {
         Ok(result) => result,
         Err(_) => {
             telemetry::admission_rejected("router", "request_deadline");
@@ -113,19 +113,21 @@ pub async fn query(State(s): State<HttpState>, body: Bytes) -> Result<Vec<u8>, S
         }
     }
 }
-async fn query_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    let g = s.controller.for_body(&body)?;
-    s.controller.check(&g)?;
-    let permit = s.permits.acquire("router").await?;
-    s.controller.check(&g)?;
-    let coefficients = g.coefficients(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
+async fn query_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+    let generation = state.controller.for_body(&body)?;
+    state.controller.check(&generation)?;
+    let permit = state.permits.acquire("router").await?;
+    state.controller.check(&generation)?;
+    let coefficients = generation
+        .coefficients(&body)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
     let mut request = body[..HEADER_BYTES].to_vec();
     for value in coefficients {
         request.extend(value.to_le_bytes());
     }
-    let response = s
+    let response = state
         .http
-        .post(format!("{}/evaluate", s.origin))
+        .post(format!("{}/evaluate", state.origin))
         .body(request)
         .send()
         .await
@@ -143,10 +145,10 @@ async fn query_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
             .collect::<Vec<_>>();
         let pack_started = Instant::now();
-        let packed = g.pack(&body, &values);
+        let packed = generation.pack(&body, &values);
         telemetry::stage("router_pack", pack_started.elapsed(), packed.is_ok());
         let packed = packed.map_err(|_| StatusCode::BAD_GATEWAY)?;
-        s.controller.check(&g)?;
+        state.controller.check(&generation)?;
         Ok(packed)
     })
     .await
@@ -156,8 +158,8 @@ async fn query_admitted(s: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{now_ms, Generation};
     use axum::{routing::get, Router};
-    use status_query_server::{now_ms, Generation};
 
     fn generation() -> Generation {
         Generation::public_only(
@@ -247,8 +249,8 @@ mod tests {
 
     #[tokio::test]
     async fn source_freshness_is_rechecked_after_admission_wait() {
-        let g = generation().reobserved(now_ms() - MAX_AGE_MS + 100);
-        let controller = Controller::new(g);
+        let generation = generation().reobserved(now_ms() - MAX_AGE_MS + 100);
+        let controller = Controller::new(generation);
         let state = HttpState::new(controller.clone(), "http://127.0.0.1:1".into());
         let mut held = Vec::new();
         for _ in 0..4 {

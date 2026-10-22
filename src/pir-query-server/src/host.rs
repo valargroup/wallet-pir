@@ -173,7 +173,7 @@ pub async fn verify(config: Config) -> Result<()> {
 async fn discover(config: &Config) -> Result<()> {
     #[cfg(feature = "status")]
     if let Some(role) = active(&config.status)? {
-        crate::status::discover(role).await?;
+        status_query_server::service::discover(role).await?;
     }
     #[cfg(feature = "enhance")]
     if let Some(role) = active(&config.enhance)? {
@@ -275,7 +275,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "status",
             async move {
                 tokio::select! {
-                    result = crate::status::serve_role_on(role, listen, query) => result,
+                    result = status_query_server::service::serve_role_on(role, listen, query) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },
