@@ -1822,7 +1822,7 @@ async fn prepare_runtimes(
                 .map_err(|e| e.to_string())
                 .and_then(|prepared| {
                     if stored {
-                        let adopted = crate::history::store::adopt_runtimes(&directory)
+                        let adopted = crate::history::store::adopt_runtimes(&directory, &stop)
                             .map_err(|e| format!("storing prepared runtimes: {e}"))?;
                         tracing::info!(?adopted, "stored candidate runtimes");
                     }

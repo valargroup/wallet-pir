@@ -277,18 +277,14 @@ pub fn safe_path(path: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         })
 }
-/// The store beside a publisher's publications that holds each prepared
-/// runtime once, linked as `<name>.runtime -> ../.runtimes/<name>.runtime`.
-pub const RUNTIME_CATALOG: &str = ".runtimes";
 pub use crate::history::shardset::OBJECT_STORE;
 
 /// The regular file publication artifact `relative` names under `root`.
 ///
 /// Every component must be a real directory or file, with two exceptions,
-/// each one exact link into a real store beside the publication: a runtime
-/// file directly under `root` may link into [`RUNTIME_CATALOG`] under its own
-/// name, and a table segment of a revision directory may link to
-/// `../../.objects/<sha256>` in [`OBJECT_STORE`]. Traversal, any other
+/// each one exact link into the real [`OBJECT_STORE`] beside the publication:
+/// a runtime file directly under `root` may link to `../.objects/<sha256>`, and
+/// a table segment of a revision directory to `../../.objects/<sha256>`. Traversal, any other
 /// symbolic link, a redirect elsewhere, a linked store and a missing or
 /// non-regular target are refused. Publication paths stay logical; only reads
 /// use the returned path. A segment link's digest is checked against its
@@ -317,23 +313,21 @@ pub(crate) fn resolve(root: &Path, relative: &str) -> Result<PathBuf, Error> {
             continue;
         }
         let target = std::fs::read_link(&physical)?;
-        let (store, name) = if last && index == 0 && ShippedRuntimes::is_entry(component) {
-            if target != Path::new("..").join(RUNTIME_CATALOG).join(component) {
-                return Err("publisher runtime link leaves its store".into());
-            }
-            (base.join(RUNTIME_CATALOG), component.to_string())
+        let prefix = if last && index == 0 && ShippedRuntimes::is_entry(component) {
+            Path::new("..").join(OBJECT_STORE)
         } else if last && index == 1 && is_digest(components[0]) && *component != "filter.bin" {
-            let name = target
-                .strip_prefix(Path::new("../..").join(OBJECT_STORE))
-                .ok()
-                .and_then(|name| name.to_str())
-                .filter(|name| is_digest(name))
-                .ok_or("publisher segment link leaves its store")?
-                .to_string();
-            (base.join(OBJECT_STORE), name)
+            Path::new("../..").join(OBJECT_STORE)
         } else {
             return Err("symlink in publisher artifact".into());
         };
+        let name = target
+            .strip_prefix(prefix)
+            .ok()
+            .and_then(|name| name.to_str())
+            .filter(|name| is_digest(name))
+            .ok_or("publisher artifact link leaves the object store")?
+            .to_string();
+        let store = base.join(OBJECT_STORE);
         real(&store, true)?;
         physical = store.join(name);
     }
@@ -1774,12 +1768,11 @@ mod tests {
         let object = digest(b"rows");
         let runtime = format!("{}-{}.runtime", "cd".repeat(32), "ef".repeat(32));
         let objects = base.path().join(OBJECT_STORE);
-        let runtimes = base.path().join(RUNTIME_CATALOG);
-        for dir in [&root.join(&revision), &objects, &runtimes] {
+        for dir in [&root.join(&revision), &objects] {
             std::fs::create_dir_all(dir).unwrap();
         }
         std::fs::write(objects.join(&object), b"rows").unwrap();
-        std::fs::write(runtimes.join(&runtime), b"runtime").unwrap();
+        std::fs::write(objects.join(digest(b"runtime")), b"runtime").unwrap();
         std::fs::write(root.join(&revision).join("filter.bin"), b"filter").unwrap();
         let link = |target: PathBuf, at: PathBuf| std::os::unix::fs::symlink(target, at).unwrap();
         link(
@@ -1787,7 +1780,7 @@ mod tests {
             root.join(&revision).join("pages.0.bin"),
         );
         link(
-            Path::new("..").join(RUNTIME_CATALOG).join(&runtime),
+            Path::new("..").join(OBJECT_STORE).join(digest(b"runtime")),
             root.join(&runtime),
         );
         (base, root, revision, object, runtime)
@@ -1802,7 +1795,7 @@ mod tests {
         );
         assert_eq!(
             resolve(&root, &runtime).unwrap(),
-            base.path().join(RUNTIME_CATALOG).join(&runtime)
+            base.path().join(OBJECT_STORE).join(digest(b"runtime"))
         );
         // Plain files still resolve to themselves.
         assert_eq!(
@@ -1842,21 +1835,29 @@ mod tests {
             dir.join("pages.3.bin"),
         );
         assert!(refused(&format!("{revision}/pages.3.bin")));
+        // A runtime may not use a segment's depth, nor a segment a runtime's.
         let other = format!("{}-{}.runtime", "11".repeat(32), "22".repeat(32));
         symlink(
-            &Path::new("..").join(RUNTIME_CATALOG).join(&runtime),
+            &Path::new("../..")
+                .join(OBJECT_STORE)
+                .join(digest(b"runtime")),
             root.join(&other),
         );
         assert!(refused(&other));
+        symlink(
+            &Path::new("..").join(OBJECT_STORE).join(&object),
+            dir.join("pages.5.bin"),
+        );
+        assert!(refused(&format!("{revision}/pages.5.bin")));
         // A missing object is refused, as is an object that is itself a link.
         symlink(
             &Path::new("../..").join(OBJECT_STORE).join("33".repeat(32)),
             dir.join("pages.4.bin"),
         );
         assert!(refused(&format!("{revision}/pages.4.bin")));
-        let runtimes = base.path().join(RUNTIME_CATALOG);
-        std::fs::remove_file(runtimes.join(&runtime)).unwrap();
-        symlink(&outside, runtimes.join(&runtime));
+        let objects = base.path().join(OBJECT_STORE);
+        std::fs::remove_file(objects.join(digest(b"runtime"))).unwrap();
+        symlink(&outside, objects.join(digest(b"runtime")));
         assert!(refused(&runtime));
         // A store that is itself a link is refused.
         let moved = base.path().join("moved");

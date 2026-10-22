@@ -346,7 +346,7 @@ thread_local! {
 }
 
 /// The directory beside a publisher's publications that stores each table
-/// segment once, named by its SHA-256; see [`SegmentSource::path`].
+/// segment and prepared runtime once, named by the SHA-256 of its bytes.
 pub const OBJECT_STORE: &str = ".objects";
 
 /// How long before a read a file must last have been modified for its stamp

@@ -1541,6 +1541,71 @@ mod tests {
         assert!(error.to_string().contains("digest"), "{error}");
     }
 
+    /// A tail reorg publishes its replacement into the same stores without
+    /// touching the active publication: every object the active one links
+    /// keeps its inode and bytes, and it still verifies in full. A stop
+    /// during storing proves nothing and a retry completes the candidate.
+    #[test]
+    fn a_stored_reorg_or_stopped_candidate_leaves_active_coverage_intact() {
+        use transparent_shared::history::shardset::ShardSet;
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join("publications");
+        std::fs::create_dir(&base).unwrap();
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let journal = |name: &str, tip: u64, fork: Option<u64>| {
+            let mut store = EventStore::open(root.path().join(name), &"00".repeat(32), 0).unwrap();
+            for h in 0..=tip {
+                let forked = if fork.is_some_and(|f| h >= f) {
+                    0x80
+                } else {
+                    0
+                };
+                block(&mut store, h, forked | (h as u8 + 1));
+            }
+            store
+        };
+        let never = || false;
+        let active = base.join("candidate-active");
+        publish(&options(&active, None), &journal("a", 4, None), zero).unwrap();
+        crate::history::store::adopt_segments(&active, &never).unwrap();
+        let held = ShardSet::open(&active, 3).unwrap();
+        let mut before = std::collections::BTreeMap::new();
+        for shard in held.revisions() {
+            for table in shard.tables() {
+                for segment in 0..shard.segments(table) {
+                    let source = shard.segment(table, segment).unwrap();
+                    before.insert(source.path().to_path_buf(), stored(source.path()));
+                }
+            }
+        }
+        // The tip block replaced.
+        let replacement = base.join("candidate-reorg");
+        publish(
+            &options(&replacement, Some(&active)),
+            &journal("f", 4, Some(4)),
+            zero,
+        )
+        .unwrap();
+        // A stop while storing leaves the candidate unproved.
+        let error = crate::history::store::adopt_segments(&replacement, &|| true).unwrap_err();
+        assert!(
+            error.is::<transparent_shared::publication::Stopped>(),
+            "{error}"
+        );
+        crate::history::store::adopt_segments(&replacement, &never).unwrap();
+        let reorged =
+            ShardSet::open_reusing(&replacement, &stored_load_options(), Some(&held)).unwrap();
+        assert_ne!(reorged.map_digest, held.map_digest);
+        for (path, stamp) in &before {
+            assert_eq!(&stored(path), stamp, "{} changed", path.display());
+        }
+        ShardSet::open(&active, 3).unwrap();
+        // Retiring the replacement collects only what it alone linked.
+        std::fs::remove_dir_all(&replacement).unwrap();
+        crate::history::store::collect(&base).unwrap();
+        ShardSet::open(&active, 3).unwrap();
+    }
+
     /// A candidate carrying a stored publication's runtimes links them, and
     /// its inventory, once they are settled, lists every runtime and table
     /// from the evidence of the same unchanged inodes: no body is hashed and
@@ -1574,7 +1639,7 @@ mod tests {
             let set = ShardSet::open_reusing(dir, &stored_load_options(), previous).unwrap();
             transparent_shared::runtime::prebuild::prepare_publication(&set, dir, retained, &never)
                 .unwrap();
-            crate::history::store::adopt_runtimes(dir).unwrap();
+            crate::history::store::adopt_runtimes(dir, &never).unwrap();
             let finalized = Finalized::prepare_reusing(dir, &set, 0, true, &mut checked);
             (
                 set,

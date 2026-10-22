@@ -1547,6 +1547,72 @@ fn restore_offers_the_exact_prepared_inventory_and_its_bodies_validate() {
     ));
 }
 
+/// Importing a served publication into the publisher stores leaves its
+/// inventory, logical paths and bytes exactly as wallets fetched them: the
+/// saved record restores unchanged, its bodies validate from the stores, and
+/// a response already reading a stored file completes after collection.
+#[test]
+fn an_imported_stored_publication_restores_unchanged_and_serves_in_flight_reads() {
+    use std::io::Read;
+    let case = RestoreCase::new();
+    let base = case.directory.parent().unwrap().to_path_buf();
+    let never = || false;
+    let imported = crate::history::store::adopt_segments(&case.directory, &never).unwrap();
+    assert!(
+        imported.installed > 0 && imported.bytes_hashed > 0,
+        "{imported:?}"
+    );
+    crate::history::store::adopt_runtimes(&case.directory, &never).unwrap();
+    // Imported once: a second adoption links everything already.
+    let again = crate::history::store::adopt_segments(&case.directory, &never).unwrap();
+    assert_eq!((again.installed, again.bytes_hashed), (0, 0));
+    let restored = case.restore();
+    assert_eq!(restored.finalized.bytes(), case.finalized.bytes());
+    assert_eq!(restored.finalized.sha256(), case.finalized.sha256());
+    let inventory = case.inventory();
+    for artifact in &inventory.artifacts {
+        if let Some(path) = restored.finalized.file(&artifact.sha256) {
+            assert_eq!(
+                transparent_shared::publication::digest(&std::fs::read(path).unwrap()),
+                artifact.sha256,
+                "{}",
+                artifact.path
+            );
+        }
+    }
+    let verified = restored
+        .validation
+        .integrity(&inventory, None, &|| false)
+        .unwrap();
+    restored
+        .validation
+        .correctness(&inventory, &verified, &RestoreCase::memory(), &|| false)
+        .unwrap();
+    // Collection keeps everything a remaining publication links.
+    let kept = crate::history::store::collect(&base).unwrap();
+    assert_eq!(kept, Default::default());
+    // A response reading a stored runtime keeps its bytes when the
+    // publication is retired and its objects are collected.
+    let runtime = case.artifact(Kind::RecentRuntime);
+    let path = restored
+        .finalized
+        .file(&runtime.sha256)
+        .unwrap()
+        .to_path_buf();
+    let mut in_flight = std::fs::File::open(&path).unwrap();
+    let mut head = vec![0u8; 64];
+    in_flight.read_exact(&mut head).unwrap();
+    std::fs::remove_dir_all(&case.directory).unwrap();
+    let collected = crate::history::store::collect(&base).unwrap();
+    assert!(collected.objects > 0, "{collected:?}");
+    assert!(!path.exists());
+    in_flight.read_to_end(&mut head).unwrap();
+    assert_eq!(
+        transparent_shared::publication::digest(&head),
+        runtime.sha256
+    );
+}
+
 #[test]
 fn restore_refuses_unsupported_or_foreign_evidence() {
     let case = RestoreCase::new();

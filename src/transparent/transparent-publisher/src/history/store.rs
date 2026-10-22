@@ -4,11 +4,10 @@
 //! the one before it. Hard-linking those files into each candidate changes
 //! their inode change time twice per cycle, once when linked and once when
 //! the old candidate is collected, and the verification evidence bound to
-//! that time never survives a cycle. Instead every segment is stored once in
-//! [`OBJECT_STORE`] under its SHA-256, and every runtime once in
-//! [`RUNTIME_CATALOG`] under its identity name, beside the publications;
-//! candidates link them, so an unchanged object's inode never changes while
-//! any publication still references it.
+//! that time never survives a cycle. Instead every segment and runtime is
+//! stored once in [`OBJECT_STORE`] under the SHA-256 of its bytes, beside the
+//! publications; candidates link them, so an unchanged object's inode never
+//! changes while any publication still references it.
 //!
 //! Objects are installed by linking a complete, synced and verified file
 //! under its final name, which fails rather than replaces an installed one,
@@ -18,7 +17,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use transparent_shared::history::shardset::OBJECT_STORE;
-use transparent_shared::publication::RUNTIME_CATALOG;
 use transparent_shared::runtime::disk::ShippedRuntimes;
 use zakura_pir_publisher::transparent::manifest::ShardManifest;
 
@@ -195,25 +193,33 @@ pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted,
     Ok(adopted)
 }
 
-/// Moves every prepared runtime of `directory` into the runtime store and
-/// links it from there. An installed runtime is never replaced: a fresh file
-/// under an installed name is dropped for the installed one, which the
-/// inventory then hashes and checks like any other.
-pub fn adopt_runtimes(directory: &Path) -> Result<Adopted, BoxError> {
-    let runtimes = store(directory, RUNTIME_CATALOG)?;
+/// Moves every prepared runtime of `directory` into the object store and
+/// links it from there as `../.objects/<sha256>`. A runtime new to the store is
+/// hashed and installed; one whose object is installed is linked to it, and
+/// the inventory hashes or vouches for that object like any other.
+pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
+    let objects = store(directory, OBJECT_STORE)?;
     let mut adopted = Adopted::default();
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str().filter(|name| ShippedRuntimes::is_entry(name)) else {
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(ShippedRuntimes::is_entry)
+        {
             continue;
-        };
+        }
         let path = entry.path();
-        let target = Path::new("..").join(RUNTIME_CATALOG).join(name);
         let kind = entry.file_type()?;
         if kind.is_symlink() {
-            if std::fs::read_link(&path)? != target {
-                return Err(format!("{} links outside its runtime", path.display()).into());
+            let target = std::fs::read_link(&path)?;
+            let stored = target
+                .strip_prefix(Path::new("..").join(OBJECT_STORE))
+                .ok()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_digest);
+            if !stored {
+                return Err(format!("{} links outside the object store", path.display()).into());
             }
             adopted.linked += 1;
             continue;
@@ -221,13 +227,16 @@ pub fn adopt_runtimes(directory: &Path) -> Result<Adopted, BoxError> {
         if !kind.is_file() {
             return Err(format!("{} is not a regular file", path.display()).into());
         }
-        if install(&path, &runtimes.join(name))? {
+        let (sha256, bytes) = sha256_file(&path, stop)?;
+        adopted.bytes_hashed += bytes;
+        let object = objects.join(&sha256);
+        if install(&path, &object)? {
             adopted.installed += 1;
         } else {
-            real(&runtimes.join(name), false)?;
+            real(&object, false)?;
             adopted.shared += 1;
         }
-        replace_with_link(&path, &target)?;
+        replace_with_link(&path, &Path::new("..").join(OBJECT_STORE).join(&sha256))?;
     }
     sync_directory(directory)?;
     Ok(adopted)
@@ -237,17 +246,15 @@ pub fn adopt_runtimes(directory: &Path) -> Result<Adopted, BoxError> {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Collected {
     pub objects: u64,
-    pub runtimes: u64,
 }
 
-/// Removes stored objects and runtimes no publication directory under
+/// Removes stored objects no publication directory under
 /// `root` links. Every directory there counts, whatever its role (active,
 /// candidate, activation intent, held by validation), so the caller removes
 /// unreferenced publications first. A file being read keeps its bytes until
 /// it is closed. Any unreadable publication stops the collection.
 pub fn collect(root: &Path) -> Result<Collected, BoxError> {
     let mut objects = BTreeSet::new();
-    let mut runtimes = BTreeSet::new();
     let name_of = |link: &Path| -> Result<String, BoxError> {
         Ok(std::fs::read_link(link)?
             .file_name()
@@ -266,7 +273,7 @@ pub fn collect(root: &Path) -> Result<Collected, BoxError> {
             let entry = entry?;
             let kind = entry.file_type()?;
             if kind.is_symlink() {
-                runtimes.insert(name_of(&entry.path())?);
+                objects.insert(name_of(&entry.path())?);
             } else if kind.is_dir() {
                 for file in std::fs::read_dir(entry.path())? {
                     let file = file?;
@@ -278,22 +285,17 @@ pub fn collect(root: &Path) -> Result<Collected, BoxError> {
         }
     }
     let mut collected = Collected::default();
-    for (store, held, count) in [
-        (OBJECT_STORE, &objects, &mut collected.objects),
-        (RUNTIME_CATALOG, &runtimes, &mut collected.runtimes),
-    ] {
-        let store = root.join(store);
-        if std::fs::symlink_metadata(&store).is_err() {
-            continue;
-        }
-        real(&store, true)?;
-        for entry in std::fs::read_dir(&store)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !held.contains(&name) {
-                std::fs::remove_file(entry.path())?;
-                *count += 1;
-            }
+    let store = root.join(OBJECT_STORE);
+    if std::fs::symlink_metadata(&store).is_err() {
+        return Ok(collected);
+    }
+    real(&store, true)?;
+    for entry in std::fs::read_dir(&store)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !objects.contains(&name) {
+            std::fs::remove_file(entry.path())?;
+            collected.objects += 1;
         }
     }
     Ok(collected)
