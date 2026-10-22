@@ -68,9 +68,14 @@ def load_request(path, expected, *, recovery=False):
                 | ({'resume_load'} if 'resume_load' in request else set())
                 | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
                 | ({'preserve_serving'} if 'preserve_serving' in request else set())
+                | ({'prepared_storage'} if 'prepared_storage' in request else set())
                 | ({'enhance_https'} if request.get('schema') == ENHANCE_HTTPS_SCHEMA else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
+    if 'prepared_storage' in request:
+        from .publisher_storage import validate_reference
+        require(request['schema'] == SERVING_SCHEMA, 'prepared storage requires the current publisher cutover')
+        validate_reference(request['prepared_storage'])
     if 'expected_disk_latch_sha256' in request:
         require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and request.get('resume_load') is False
                 and isinstance(request['expected_disk_latch_sha256'], str)
@@ -251,8 +256,13 @@ class Cutover:
                 'standalone and unified publishers both own state')
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
-        require(config == publisher_products.configuration_for_update(json.loads(self.read(CONFIG))),
-                'publisher updates must preserve every product setting')
+        installed = json.loads(self.read(CONFIG))
+        if 'prepared_storage' in self.request:
+            from .publisher_storage import Handoff
+            Handoff(self).capture(installed)
+        else:
+            require(config == publisher_products.configuration_for_update(installed),
+                    'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
             if state['active_state'] == 'active':
@@ -403,6 +413,10 @@ class Cutover:
         if self.expanded:
             from .publisher_products import locks
             paths += locks(config)
+        if 'prepared_storage' in self.request:
+            from .publisher_storage import Handoff
+            paths += [pair['source'] + '/controller.lock'
+                      for pair in Handoff(self).manifest()['plan']['roots'].values()]
         self.ex.publisher_unlocked(self.host, paths)
 
     def write(self, path, text, mode=0o600):
@@ -468,7 +482,7 @@ class Cutover:
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
             if self.serving:
                 self.serving.stage(journal, serving_binary)
-            if self.request['schema'] == SERVING_SCHEMA:
+            if self.request['schema'] == SERVING_SCHEMA and 'prepared_storage' not in self.request:
                 # Fully verifies a pin of the active History publication while
                 # the predecessor serves; a refusal never stops it.
                 from .publisher_restore import HistoryRestore
@@ -485,7 +499,11 @@ class Cutover:
             self.effect(journal, 'stop ' + UNIT, lambda: self.stop(UNIT))
             self.unlocked()
             from .publisher_restore import HistoryRestore
-            HistoryRestore(self).install(journal)
+            if 'prepared_storage' in self.request:
+                from .publisher_storage import Handoff
+                Handoff(self).install(journal)
+            else:
+                HistoryRestore(self).install(journal)
             enhance_https = self.request['schema'] == ENHANCE_HTTPS_SCHEMA
             if enhance_https:
                 self.serving.prepare_handoff(journal)
@@ -555,7 +573,11 @@ class Cutover:
                 self.serving.unchanged_during_staging(plan['serving'])
             self.unlocked()
             from .publisher_restore import HistoryRestore
-            HistoryRestore(self).install(journal)
+            if 'prepared_storage' in self.request:
+                from .publisher_storage import Handoff
+                Handoff(self).install(journal)
+            else:
+                HistoryRestore(self).install(journal)
             if self.serving:
                 self.serving.activate(journal)
             for path, text in plan['desired'].items():
@@ -656,6 +678,7 @@ class Cutover:
         require(journal['request'] == self.request, 'request differs from latest publisher cutover')
         if journal['phase'] == 'rolled-back':
             return journal
+        require('storage_cleanup' not in journal, 'storage cleanup retired rollback for this cutover')
         plan = journal['plan']
         for path, digest in plan['executables'].items():
             require(self.ex.sha256(self.host, path) == digest, 'rollback executable changed: ' + path)
@@ -687,6 +710,9 @@ class Cutover:
         if self.serving:
             self.serving.restore(journal)
         history_restore.rollback(journal)
+        if 'prepared_storage' in self.request:
+            from .publisher_storage import Handoff
+            Handoff(self).rollback(journal)
         if self.ex.probe_unit(self.host, UNIT)['load_state'] != 'not-found':
             self.effect(journal, 'disable publisher', lambda: self.ex.systemctl(self.host, 'disable', UNIT))
         for path, previous in plan['before'].items():

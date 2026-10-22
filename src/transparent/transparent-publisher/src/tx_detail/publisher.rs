@@ -524,7 +524,11 @@ pub fn collect(
     if index.is_dir() {
         for entry in std::fs::read_dir(&index)?.filter_map(Result::ok) {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type().is_ok_and(|t| t.is_file()) && !chunks.contains(&name) {
+            if entry
+                .file_type()
+                .is_ok_and(|t| t.is_file() || t.is_symlink())
+                && !chunks.contains(&name)
+            {
                 std::fs::remove_file(entry.path())?;
                 removed.push(entry.path());
             }
@@ -778,6 +782,7 @@ pub fn bootstrap(
         seals: seals.clone(),
     };
     active.store(root)?;
+    crate::storage::layout::complete(root, "transaction_details")?;
     timeline.record(
         "bootstrap",
         serde_json::json!({
@@ -1085,6 +1090,7 @@ mod tests {
         let (next, _) = write_candidate(&root, &dropped).unwrap();
         let moved = dropped.split().unwrap();
         assert_ne!(moved.chunks[0].sha256, split.chunks[0].sha256);
+        assert!(stored(&split.chunks[0].sha256).is_symlink());
         let removed = collect(&root, &BTreeSet::from([next.clone()]), 0).unwrap();
         assert!(removed.contains(&stored(&split.chunks[0].sha256)));
         assert!(!stored(&split.chunks[0].sha256).exists());

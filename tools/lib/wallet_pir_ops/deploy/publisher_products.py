@@ -11,7 +11,7 @@ _RETIRED_TRANSPARENT_SETTINGS = {
                             'shadow': False, 'fleet_command': None, 'fleet_config': None},
     'transaction_details': {'http_only': True, 'ship_runtimes': True, 'workers': None, 'mode': 'live',
                             'blocks_per_step': None, 'step_interval_ms': None, 'replay_end': None,
-                            'exit_when_idle': False},
+                            'exit_when_idle': False, 'trust_sealed': False},
 }
 
 
@@ -44,7 +44,9 @@ def configuration_for_update(installed):
         required = ['http_only', 'ship_runtimes']
         if product == 'transparent_history':
             required.append('distribute_prepared')
-        require(all(settings.get(name) is True for name in required), refusal)
+        transport = settings.keys() & (fields.keys() - {'trust_sealed'})
+        if transport:
+            require(all(settings.get(name) is True for name in required), refusal)
         for name, expected in fields.items():
             if expected is not None:
                 actual = settings.get(name, expected)

@@ -406,21 +406,6 @@ impl Controller {
             .map_err(|e| format!("another display controller owns this root: {e}"))?;
         validate_storage_layout(root)?;
         super::activation::recover(root)?;
-        for entry in std::fs::read_dir(root)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() && !entry.file_name().to_string_lossy().starts_with('.')
-            {
-                crate::storage::adopt_segments(&entry.path(), &|| false)?;
-                crate::storage::adopt_indexes(&entry.path(), &|| false)?;
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(super::publisher::CANDIDATE_PREFIX)
-                {
-                    crate::storage::adopt_runtimes(&entry.path(), &|| false)?;
-                }
-            }
-        }
         if store.genesis_hash() != layout.genesis_hash {
             return Err("journal genesis differs from the display root".into());
         }

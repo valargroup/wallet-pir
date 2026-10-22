@@ -41,6 +41,7 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     stop: Shutdown,
 ) -> Result<(), BoxError> {
     config.validate()?;
+    crate::storage::layout::require(&config.root, "transaction_details")?;
     let store = open_writer(&config.journal)?;
     let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     if rpc.block_hash_display(0).await? != store.genesis_hash() {

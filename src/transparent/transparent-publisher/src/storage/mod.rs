@@ -13,6 +13,8 @@
 //! under its final name, which fails rather than replaces an installed one,
 //! and are never written in place. The loader and the artifact resolver
 //! accept only the exact links written here.
+pub mod layout;
+pub mod preparation;
 pub mod records;
 mod retention;
 pub(crate) use retention::collecting;
