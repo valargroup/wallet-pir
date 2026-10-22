@@ -22,6 +22,8 @@ struct Origin {
     canonical: AtomicBool,
     advance_during_check: AtomicBool,
     withdraw_during_check: AtomicBool,
+    /// An earlier authority answer replayed instead of a live one.
+    replayed_check: RwLock<Option<Vec<u8>>>,
     version: RwLock<String>,
     /// Objects served by digest; any other id serves a non-inventory.
     objects: RwLock<std::collections::HashMap<String, Vec<u8>>>,
@@ -108,6 +110,7 @@ async fn setup() -> (
         canonical: AtomicBool::new(true),
         advance_during_check: AtomicBool::new(false),
         withdraw_during_check: AtomicBool::new(false),
+        replayed_check: RwLock::default(),
         version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
         objects: RwLock::default(),
         requested_objects: RwLock::default(),
@@ -156,6 +159,9 @@ async fn setup() -> (
                             current.sequence += 1;
                         }
                         return StatusCode::CONFLICT.into_response();
+                    }
+                    if let Some(replayed) = shared.replayed_check.read().unwrap().clone() {
+                        return replayed.into_response();
                     }
                     Json(AuthorityCheckResponse {
                         authority: shared.current.read().unwrap().authority().unwrap(),
@@ -859,5 +865,86 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     );
     assert_ne!(serving_manifest_id(&worker).await, withheld.manifest.id());
     assert!(worker.serving().await.is_err());
+    server.abort();
+}
+
+/// The candidate's own pre-commit authority check is bound to the exact
+/// envelope it was revalidated under: an advance, a withdrawal or a replayed
+/// answer for an earlier envelope never activates it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope() {
+    use status_material::fixture::{self, NETWORK, SALT};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let (generation, _) = Generation::prepare(
+        &fixture::snapshot(32, false).unwrap(),
+        4,
+        2,
+        now_ms(),
+        None,
+        MatvecBackend::Cpu,
+    )
+    .unwrap();
+    let mut inventory = export(&source, &generation);
+    let object = publish_inventory(&source, &mut inventory);
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 7,
+        ..fixture::publishing(&inventory, &object)
+    };
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let mut task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+
+    // The publisher advances while checking the candidate.
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
+    assert!(worker.state.lock().await.controller.is_none());
+    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+
+    // An answer replayed from the earlier envelope is not live authority.
+    let replayed = AuthorityCheckResponse {
+        authority: fixture::publishing(&inventory, &object)
+            .authority()
+            .unwrap(),
+        still_authoritative: vec![true],
+    };
+    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&replayed).unwrap());
+    let error = task.synchronize().await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<PublicationLifecycleError>(),
+        Some(&PublicationLifecycleError::AuthorityResponseMismatch),
+        "{error}"
+    );
+    assert!(worker.state.lock().await.controller.is_none());
+    *source.replayed_check.write().unwrap() = None;
+
+    // A withdrawal during the candidate's check leaves nothing serving.
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    source.withdraw_during_check.store(true, Ordering::SeqCst);
+    deferred(task.synchronize().await.unwrap());
+    assert!(!task.floor().envelope().unwrap().eligible);
+    assert!(worker.state.lock().await.controller.is_none());
+
+    // The same material republished under a live answer does activate.
+    inventory.manifest.generation = 5;
+    let object = publish_inventory(&source, &mut inventory);
+    {
+        let mut current = source.current.write().unwrap();
+        current.sequence += 1;
+        current.eligible = true;
+        current.publication = Some(inventory.publication_reference(&object));
+    }
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    assert_eq!(serving_manifest_id(&worker).await, inventory.manifest.id());
     server.abort();
 }
