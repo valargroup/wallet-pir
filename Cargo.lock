@@ -2345,9 +2345,12 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "rustls",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
@@ -3283,6 +3286,7 @@ dependencies = [
  "ipir-sp",
  "pir-control",
  "pir-pipeline",
+ "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "serde",
@@ -3314,6 +3318,7 @@ dependencies = [
  "pir-control",
  "pir-cuda",
  "pir-pipeline",
+ "pir-publication",
  "pir-runtime",
  "pir-serving",
  "pir-sync-manager",

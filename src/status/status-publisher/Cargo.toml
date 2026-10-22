@@ -22,6 +22,7 @@ fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-publication = { path = "../../shared/pir-publication" }
 thiserror = "2"
 status-query-server = { path = "../status-query-server" }
 pir-control = { path = "../../shared/pir-control" }

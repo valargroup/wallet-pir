@@ -1,7 +1,8 @@
 //! Export preparation once and restore immutable serving material without
 //! computing hints or packing matrices on query hosts.
 use super::*;
-use crate::publication::{self, Failure, Inventory, Object};
+use crate::publication::{self, Failure, Inventory};
+use pir_publication::ObjectReference;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -10,7 +11,7 @@ use std::{
 impl Generation {
     pub fn export_prepared(
         &self,
-        mut store: impl FnMut(&[u8]) -> Result<Object, Failure>,
+        mut store: impl FnMut(&[u8]) -> Result<ObjectReference, Failure>,
     ) -> Result<Inventory, Failure> {
         if self.units.len() != ROWS / profile().rlwe().d {
             return Err("Status generation has no complete database".into());
@@ -50,12 +51,12 @@ impl Generation {
     pub fn load_prepared(
         inventory: &Inventory,
         worker: bool,
-        object: impl Fn(&Object) -> std::path::PathBuf,
+        object: impl Fn(&ObjectReference) -> std::path::PathBuf,
         backend: MatvecBackend,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
         inventory.validate_material()?;
-        let read = |o: &Object| -> Result<Vec<u8>, Failure> {
+        let read = |o: &ObjectReference| -> Result<Vec<u8>, Failure> {
             let mut bytes = Vec::new();
             File::open(object(o))?
                 .take(o.bytes + 1)

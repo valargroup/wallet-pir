@@ -18,6 +18,8 @@ const PARTIAL_PREFIX: &str = ".download-";
 
 /// Exclusive owner of one object directory. The caller holds the directory's
 /// service lock, so interrupted partial files are safe to remove on open.
+/// Clones refer to the same directory and owner.
+#[derive(Clone)]
 pub struct ObjectCache {
     directory: PathBuf,
 }

@@ -50,7 +50,7 @@ pub async fn serve_role_on(
         config.state_dir.clone(),
         config.worker_origin.clone(),
     )?;
-    let task = sync::StatusSynchronization::new(service.clone(), &config)?;
+    let task = sync::synchronization(service.clone(), &config)?;
     // The worker and router each poll the publisher. Their combined delay must
     // leave room for preparation inside Status's twenty-second freshness limit.
     let mut manager = pir_sync_manager::SyncManager::new(task)

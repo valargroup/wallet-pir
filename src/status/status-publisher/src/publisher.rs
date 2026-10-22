@@ -14,6 +14,10 @@ use ipir_sp::server::MatvecBackend;
 use pir_pipeline::Input;
 use serde::Deserialize;
 use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
+use pir_publication::{
+    conditional_token, AuthorityCheckRefusal, AuthorityCheckResponse, PublishedObjectStore,
+    AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
+};
 use std::{
     fs,
     net::SocketAddr,
@@ -55,29 +59,40 @@ pub struct Publisher {
     published: Arc<RwLock<Published>>,
     rpc: Arc<RwLock<Option<ZakuraClient>>>,
     exported: Arc<std::sync::Mutex<Option<Inventory>>>,
+    /// Distributed objects; only retained publications are served.
+    objects: Arc<PublishedObjectStore>,
 }
-impl Publisher {
-    pub fn new(config: Config) -> Result<Self, Failure> {
-        let salt: Hash = hex::decode(&config.salt_hex)?
+impl Config {
+    /// Check the configuration without opening state.
+    pub fn validate(&self) -> Result<(), Failure> {
+        let salt: Hash = hex::decode(&self.salt_hex)?
             .try_into()
             .map_err(|_| "salt must be 32 bytes")?;
-        if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 || salt == [0; 32]
-        {
+        if !self.private_listen.ip().is_loopback() || self.window_blocks == 0 || salt == [0; 32] {
             return Err("invalid private Status configuration".into());
         }
+        Ok(())
+    }
+}
+impl Publisher {
+    /// Validate `config` and open its distributed-object store.
+    pub fn new(config: Config) -> Result<Self, Failure> {
+        config.validate()?;
+        let objects = PublishedObjectStore::open(config.state_dir.join("distribution/objects"))?;
         Ok(Self {
             config,
             published: Arc::new(RwLock::new(Published::default())),
             rpc: Arc::new(RwLock::new(None)),
             exported: Arc::new(std::sync::Mutex::new(None)),
+            objects: Arc::new(objects),
         })
     }
     pub fn private_routes(&self) -> Router {
         Router::new()
             .route("/control/active", get(active))
-            .route(&format!("{PREFIX}current"), get(current))
-            .route(&format!("{PREFIX}objects/:id"), get(object))
-            .route(&format!("{PREFIX}anchors/check"), post(anchors))
+            .route(&format!("{PREFIX}{CURRENT_PATH}"), get(current))
+            .route(&format!("{PREFIX}{OBJECTS_PATH}:id"), get(object))
+            .route(&format!("{PREFIX}{AUTHORITY_CHECK_PATH}"), post(authority_check))
             .layer(axum::extract::DefaultBodyLimit::max(METADATA_LIMIT))
             .with_state(self.clone())
             .merge(telemetry_routes())
@@ -105,54 +120,6 @@ impl Publisher {
             current.eligible = false;
         }
         state.manifest = None;
-    }
-    fn store(&self, bytes: &[u8]) -> Result<Object, Failure> {
-        let object = Object::new(bytes);
-        let root = self.root().join("objects");
-        fs::create_dir_all(&root)?;
-        let path = root.join(&object.sha256);
-        if path.exists() {
-            object.verify(&fs::read(path)?)?;
-        } else {
-            durable(&root, &object.sha256, bytes)?;
-        }
-        Ok(object)
-    }
-    /// Keep the current material even after expiry, plus all still-fresh
-    /// predecessors. Query transfers pin open inodes; old observations cannot
-    /// activate after their original freshness deadline.
-    fn collect(&self, inventory: Inventory) -> Result<(), Failure> {
-        let root = self.root();
-        let mut retained: Vec<Inventory> = match fs::read(root.join("retained.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
-        retained.retain(|old| {
-            old.manifest.fresh(now_ms()).is_ok() && old.manifest.id() != inventory.manifest.id()
-        });
-        retained.push(inventory);
-        let mut keep = std::collections::BTreeSet::new();
-        for inventory in &retained {
-            keep.insert(digest(&serde_json::to_vec(inventory)?));
-            for object in inventory
-                .units
-                .iter()
-                .chain(&inventory.packing)
-                .chain(std::iter::once(&inventory.public))
-            {
-                keep.insert(object.sha256.clone());
-            }
-        }
-        durable(&root, "retained.json", &serde_json::to_vec(&retained)?)?;
-        for entry in fs::read_dir(root.join("objects"))? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
-                fs::remove_file(entry.path())?;
-            }
-        }
-        Ok(())
     }
     async fn publish(
         &self,
@@ -195,14 +162,14 @@ impl Publisher {
                             inventory.manifest = candidate.manifest().clone();
                             inventory
                         } else {
-                            candidate.export_prepared(|bytes| publisher.store(bytes))?
+                            candidate.export_prepared(|bytes| Ok(publisher.objects.store(bytes)?))?
                         };
                         *cache = Some(inventory.clone());
                         Ok(inventory)
                     })
                     .await??;
                 let manifest = inventory.manifest.clone();
-                let object = self.store(&serde_json::to_vec(&inventory)?)?;
+                let object = self.objects.store(&serde_json::to_vec(&inventory)?)?;
                 Ok(Input::Work((
                     expected, generation, epoch, prepared, inventory, manifest, object,
                 )))
@@ -221,6 +188,15 @@ impl Publisher {
                     published.check_fence(&expected)?;
                     manifest.fresh(now_ms())?;
                     authority.commit(&manifest)?;
+                    // Authorize the referenced objects before any consumer can
+                    // see the pointer. Still-activatable predecessors stay
+                    // served so peers can finish handover; queries pin inodes.
+                    self.objects.retain_publication(
+                        std::iter::once(object.clone())
+                            .chain(inventory.referenced_objects().cloned()),
+                        manifest.observed_ms.saturating_add(MAX_AGE_MS),
+                        now_ms(),
+                    )?;
                     let current = Current {
                         schema: SCHEMA.into(),
                         revision: self.revision()?,
@@ -247,12 +223,6 @@ impl Publisher {
                     published_ms = now_ms(),
                     "Status prepared publication"
                 );
-                let publisher = self.clone();
-                if let Err(error) =
-                    tokio::task::spawn_blocking(move || publisher.collect(inventory)).await?
-                {
-                    tracing::warn!(%error, "Status artifact collection deferred");
-                }
                 Ok(prepared)
             },
         )
@@ -348,7 +318,7 @@ async fn current(State(s): State<Publisher>, headers: HeaderMap) -> Result<Respo
         .current
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let token = format!("\"{}-{}\"", current.revision, current.eligible);
+    let token = conditional_token(&current);
     let mut response = if headers.get("if-none-match").and_then(|s| s.to_str().ok()) == Some(&token)
     {
         StatusCode::NOT_MODIFIED.into_response()
@@ -370,53 +340,47 @@ async fn object(
     State(s): State<Publisher>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
-    if !valid_digest(&id) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let file = tokio::fs::File::open(s.root().join("objects").join(id))
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let stream = tokio_util::io::ReaderStream::new(file);
+    let file = s.objects.open_retained(&id).map_err(|error| match error.kind() {
+        std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+        _ => StatusCode::NOT_FOUND,
+    })?;
+    let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     Ok(Body::from_stream(stream).into_response())
 }
-async fn anchors(
+/// Answer whether anchors are still canonical, only while the request's
+/// pointer is current and eligible before and after the node lookups.
+async fn authority_check(
     State(s): State<Publisher>,
-    Json(request): Json<AnchorRequest>,
-) -> Result<Json<AnchorResponse>, StatusCode> {
-    if request.anchors.is_empty() || request.anchors.len() > MAX_ANCHORS {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let before = s
-        .published
-        .read()
-        .unwrap()
-        .current
-        .clone()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    if request.current != before || !before.eligible {
-        return Err(StatusCode::CONFLICT);
-    }
+    Json(request): Json<AnchorCheckRequest>,
+) -> Result<Json<AuthorityCheckResponse<Current>>, StatusCode> {
+    let refused = |refusal| match refusal {
+        AuthorityCheckRefusal::MalformedRequest => StatusCode::BAD_REQUEST,
+        AuthorityCheckRefusal::PointerAdvanced => StatusCode::CONFLICT,
+    };
+    request
+        .admit(s.published.read().unwrap().current.as_ref())
+        .map_err(refused)?;
     let rpc = s
         .rpc
         .read()
         .unwrap()
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let mut canonical = Vec::new();
-    for (height, hash) in request.anchors {
-        canonical.push(
-            rpc.block_hash(u64::from(height))
+    let mut still_authoritative = Vec::new();
+    for (height, hash) in &request.subjects {
+        still_authoritative.push(
+            rpc.block_hash(u64::from(*height))
                 .await
                 .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-                == hash,
+                == *hash,
         );
     }
-    if s.published.read().unwrap().current.as_ref() != Some(&before) {
-        return Err(StatusCode::CONFLICT);
-    }
-    Ok(Json(AnchorResponse {
-        current: before,
-        canonical,
+    request
+        .admit(s.published.read().unwrap().current.as_ref())
+        .map_err(refused)?;
+    Ok(Json(AuthorityCheckResponse {
+        pointer: request.pointer,
+        still_authoritative,
     }))
 }
 fn telemetry_routes() -> Router {

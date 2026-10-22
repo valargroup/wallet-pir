@@ -1,8 +1,11 @@
-//! HTTPS transfer and sequential polling shared by PIR publication consumers.
+//! HTTPS transfer, sequential polling and the shared publication lifecycle
+//! used by every PIR query server.
 //!
-//! Products own schemas, replay protection, durable authority, preparation and
-//! activation. A successful transfer or poll confers no permission to serve.
+//! [`publication_lifecycle`] owns pointer succession, durable floors, object
+//! transfer and commit ordering; products supply material hooks. A successful
+//! transfer or poll confers no permission to serve.
 mod discovery;
+pub mod publication_lifecycle;
 mod transfer;
 mod transport;
 pub use discovery::{is_incompatible, DiscoveryError, DISCOVERY_DEADLINE};

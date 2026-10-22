@@ -24,6 +24,7 @@ client = ["dep:zakura-pir-client"]
 axum = "0.7"
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-publication = { path = "../../shared/pir-publication" }
 pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["full"] }

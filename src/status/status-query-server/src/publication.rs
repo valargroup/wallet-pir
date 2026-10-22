@@ -1,49 +1,18 @@
-//! Status-owned HTTPS distribution contract; hashes bind bytes, not chain truth.
+//! Status's typed adapter of the shared publication contract: its pointer,
+//! inventory and authority subject. Hashes bind bytes, not chain truth.
 use crate::{profile, protocol::*};
+use pir_publication::{AuthorityCheckRequest, ObjectReference, PublicationPointer};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = "status-prepared-distribution-v1";
 pub const PREFIX: &str = "/provider/status/v1/";
 pub const METADATA_LIMIT: usize = 64 << 10;
-pub const MAX_ANCHORS: usize = 256;
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
 
-pub fn digest(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-pub fn valid_digest(s: &str) -> bool {
-    s.len() == 64
-        && s.bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Object {
-    pub sha256: String,
-    pub bytes: u64,
-}
-impl Object {
-    pub fn new(bytes: &[u8]) -> Self {
-        Self {
-            sha256: digest(bytes),
-            bytes: bytes.len() as u64,
-        }
-    }
-    pub fn validate(&self, limit: u64) -> Result<(), Failure> {
-        if !valid_digest(&self.sha256) || self.bytes == 0 || self.bytes > limit {
-            return Err("invalid Status object identity or size".into());
-        }
-        Ok(())
-    }
-    pub fn verify(&self, bytes: &[u8]) -> Result<(), Failure> {
-        if bytes.len() as u64 != self.bytes || digest(bytes) != self.sha256 {
-            return Err("Status object digest or length differs".into());
-        }
-        Ok(())
-    }
-}
+/// A serving view's anchor: the publisher confirms the height still has this hash.
+pub type AnchorSubject = (u32, Hash);
+/// Status's authority check: anchors of candidate and serving views.
+pub type AnchorCheckRequest = AuthorityCheckRequest<Current, AnchorSubject>;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -54,7 +23,7 @@ pub struct Current {
     pub network: Hash,
     pub salt: Hash,
     pub generation: u64,
-    pub inventory: Option<Object>,
+    pub inventory: Option<ObjectReference>,
     pub eligible: bool,
 }
 impl Current {
@@ -74,21 +43,31 @@ impl Current {
         }
         Ok(())
     }
-    pub fn succeeds(&self, old: &Self) -> bool {
-        if self.network != old.network
-            || self.salt != old.salt
-            || self.generation < old.generation
-            || self.recovery_epoch < old.recovery_epoch
-            || self.revision < old.revision
-        {
-            return false;
+}
+impl PublicationPointer for Current {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+    fn recovery_epoch(&self) -> u64 {
+        self.recovery_epoch
+    }
+    fn eligible(&self) -> bool {
+        self.eligible
+    }
+    fn inventory(&self) -> Option<&ObjectReference> {
+        self.inventory.as_ref()
+    }
+    fn with_eligibility(&self, eligible: bool) -> Self {
+        Self {
+            eligible,
+            ..self.clone()
         }
-        if self.revision > old.revision {
-            return true;
-        }
-        let mut equal = old.clone();
-        equal.eligible = self.eligible;
-        self == &equal && (!self.eligible || old.eligible)
+    }
+    /// The network and dataset salt never change; generations never go back.
+    fn may_follow(&self, previous: &Self) -> bool {
+        self.network == previous.network
+            && self.salt == previous.salt
+            && self.generation >= previous.generation
     }
 }
 
@@ -97,11 +76,18 @@ impl Current {
 pub struct Inventory {
     pub schema: String,
     pub manifest: Manifest,
-    pub units: Vec<Object>,
-    pub packing: Vec<Object>,
-    pub public: Object,
+    pub units: Vec<ObjectReference>,
+    pub packing: Vec<ObjectReference>,
+    pub public: ObjectReference,
 }
 impl Inventory {
+    /// Every object this inventory references, for retention and collection.
+    pub fn referenced_objects(&self) -> impl Iterator<Item = &ObjectReference> {
+        self.units
+            .iter()
+            .chain(&self.packing)
+            .chain(std::iter::once(&self.public))
+    }
     /// Exact distributed objects and commitments; publication identity may advance.
     pub fn same_prepared_material(&self, next: &Self) -> bool {
         self.schema == next.schema
@@ -175,21 +161,8 @@ pub fn attempt_limit() -> u64 {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AnchorRequest {
-    pub current: Current,
-    pub anchors: Vec<(u32, Hash)>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AnchorResponse {
-    pub current: Current,
-    pub canonical: Vec<bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ProviderStatus {
-    pub inventory: Option<Object>,
+    pub inventory: Option<ObjectReference>,
     pub manifest: Option<Manifest>,
     pub synchronization: String,
 }
@@ -205,43 +178,27 @@ mod tests {
             network: [1; 32],
             salt: [2; 32],
             generation: 7,
-            inventory: Some(Object::new(b"inventory")),
+            inventory: Some(ObjectReference::for_bytes(b"inventory")),
             eligible: true,
         }
     }
     #[test]
-    fn withdrawal_cannot_be_undone_at_the_same_revision() {
+    fn status_identity_changes_are_replays() {
+        use pir_publication::PointerSuccession;
         let old = current();
-        let mut withdrawn = old.clone();
-        withdrawn.eligible = false;
-        assert!(withdrawn.succeeds(&old));
-        assert!(!old.succeeds(&withdrawn));
-        let mut newer = old.clone();
-        newer.revision += 1;
-        assert!(newer.succeeds(&withdrawn));
-        for field in ["revision", "epoch", "generation", "network", "salt"] {
-            let mut replay = newer.clone();
+        for field in ["generation", "network", "salt"] {
+            let mut next = old.clone();
+            next.revision += 1;
             match field {
-                "revision" => replay.revision = 9,
-                "epoch" => replay.recovery_epoch = 1,
-                "generation" => replay.generation = 6,
-                "network" => replay.network = [9; 32],
-                _ => replay.salt = [9; 32],
+                "generation" => next.generation = 6,
+                "network" => next.network = [9; 32],
+                _ => next.salt = [9; 32],
             }
-            assert!(!replay.succeeds(&old), "publisher changed {field}");
+            assert!(
+                PointerSuccession::classify(&next, Some(&old)).is_err(),
+                "publisher changed {field}"
+            );
         }
-    }
-    #[test]
-    fn content_addresses_and_lengths_are_checked_independently() {
-        let object = Object::new(b"material");
-        assert!(object.verify(b"material").is_ok());
-        assert!(object.verify(b"materiaL").is_err());
-        assert!(object.verify(b"materialx").is_err());
-        assert!(object.validate(7).is_err());
-        assert!(!valid_digest("../objects"));
-        let mut invalid = object;
-        invalid.sha256 = invalid.sha256.to_uppercase();
-        assert!(invalid.validate(100).is_err());
     }
     #[test]
     fn malformed_material_is_refused_before_loading_files() {
@@ -264,13 +221,13 @@ mod tests {
             manifest,
             units: vec![],
             packing: vec![],
-            public: Object::new(b"public"),
+            public: ObjectReference::for_bytes(b"public"),
         };
         let mut next = inventory.clone();
         next.manifest.generation += 1;
         next.manifest.observed_ms += 1;
         assert!(inventory.same_prepared_material(&next));
-        next.public = Object::new(b"other");
+        next.public = ObjectReference::for_bytes(b"other");
         assert!(!inventory.same_prepared_material(&next));
         next = inventory.clone();
         next.manifest.salt[0] ^= 1;
