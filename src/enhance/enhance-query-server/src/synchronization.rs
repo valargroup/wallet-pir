@@ -6,6 +6,8 @@ use crate::{
     },
 };
 use pir_publication::{ObjectCache, OBJECTS_PATH};
+#[cfg(test)]
+use pir_publication::{SourceObservation, SOURCE_AUTHORITY_LIFETIME};
 use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +15,7 @@ use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 pub type Error = pir_sync_manager::Error;
@@ -346,13 +348,6 @@ impl Authority {
     }
 }
 
-pub fn now_ms() -> Result<u64, Error> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
-}
-
 impl Lease {
     pub(crate) fn has_release_time(&self) -> bool {
         self.deadline.saturating_duration_since(Instant::now()) >= Duration::from_secs(1)
@@ -371,14 +366,11 @@ impl Lease {
         safety: &Safety,
     ) -> Result<Self, Error> {
         safety.observe(&response.current)?;
-        let now = now_ms()?;
-        response.fresh(now)?;
+        let remaining = response.remaining_at(SystemTime::now())?;
         if response.authorized_manifest_sha256 != digest(manifest) {
             return Err("publisher authorized another manifest".into());
         }
         safety.permits_observation(manifest, Some(&response.current))?;
-        let remaining = pir_control::CONTROL_WATCHDOG
-            .saturating_sub(Duration::from_millis(now - response.observed_unix_ms));
         Ok(Self {
             manifest: digest(manifest),
             observation: response,
@@ -390,8 +382,7 @@ impl Lease {
         if self.manifest != digest(manifest) || Instant::now() > self.deadline {
             return Err("Enhance source authority expired".into());
         }
-        self.observation
-            .fresh(now_ms().map_err(|e| e.to_string())?)?;
+        self.observation.remaining_at(SystemTime::now())?;
         safety.permits_observation(manifest, Some(&self.observation.current))
     }
 }
@@ -611,7 +602,7 @@ mod tests {
                 }),
             },
             authorized_manifest_sha256: digest(manifest),
-            observed_unix_ms: now_ms().unwrap(),
+            source: SourceObservation::starting_now(),
         }
     }
 
@@ -725,10 +716,10 @@ mod tests {
         wrong.authorized_manifest_sha256 = "04".repeat(32);
         assert!(Lease::from_response(wrong, &manifest, &safety).is_err());
         let mut expired = initial.clone();
-        expired.observed_unix_ms -= 5001;
+        expired.source.observed_unix_ms -= SOURCE_AUTHORITY_LIFETIME.as_millis() as u64 + 1;
         assert!(Lease::from_response(expired, &manifest, &safety).is_err());
         let mut future = initial.clone();
-        future.observed_unix_ms += 60000;
+        future.source.observed_unix_ms += 60000;
         assert!(Lease::from_response(future, &manifest, &safety).is_err());
         let mut lease = Lease::from_response(initial, &manifest, &safety).unwrap();
         lease.deadline = Instant::now() - Duration::from_millis(1);

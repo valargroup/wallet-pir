@@ -13,8 +13,8 @@ use axum::{
 use pir_pipeline::Input;
 use pir_publication::{
     conditional_token, AuthorityCheckRefusal, AuthorityCheckResponse, AuthorityTransition,
-    PublicationAuthority, PublicationReference, PublishedObjectStore, AUTHORITY_CHECK_PATH,
-    CURRENT_PATH, OBJECTS_PATH,
+    PublicationAuthority, PublicationReference, PublishedObjectStore, SourceObservation,
+    SubjectAuthority, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
 use serde::Deserialize;
 use status_shared::{now_ms, protocol::*, publication::*, telemetry, Generation};
@@ -367,8 +367,9 @@ async fn object(
     let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     Ok(Body::from_stream(stream).into_response())
 }
-/// Answer whether anchors are still canonical, only while the request's
-/// authority is current and eligible before and after the node lookups.
+/// Answer whether anchors are still canonical, each with the time its node
+/// lookup started, only while the request's authority is current and
+/// eligible before and after the node lookups.
 async fn authority_check(
     State(s): State<Publisher>,
     Json(request): Json<AnchorCheckRequest>,
@@ -392,19 +393,23 @@ async fn authority_check(
         .unwrap()
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let mut still_authoritative = Vec::new();
+    let mut answers = Vec::new();
     for (height, hash) in &request.subjects {
-        still_authoritative.push(
-            rpc.block_hash(u64::from(*height))
-                .await
-                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-                == *hash,
-        );
+        let source = SourceObservation::starting_now();
+        let still_authoritative = rpc
+            .block_hash(u64::from(*height))
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            == *hash;
+        answers.push(SubjectAuthority {
+            still_authoritative,
+            source,
+        });
     }
     admit()?;
     Ok(Json(AuthorityCheckResponse {
         authority: request.authority,
-        still_authoritative,
+        answers,
     }))
 }
 fn telemetry_routes() -> Router {

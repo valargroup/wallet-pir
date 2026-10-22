@@ -836,7 +836,7 @@ mod tests {
                     }),
                 },
                 authorized_manifest_sha256: id.clone(),
-                observed_unix_ms: crate::synchronization::now_ms().unwrap(),
+                source: pir_publication::SourceObservation::starting_now(),
             },
             &manifest,
             &worker.safety,
