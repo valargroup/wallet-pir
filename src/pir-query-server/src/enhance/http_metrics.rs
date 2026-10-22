@@ -178,7 +178,7 @@ pub(crate) async fn measure(
     request: Request,
     next: Next,
 ) -> Response {
-    let operation = crate::PUBLIC_ROUTES.operation(request.uri().path());
+    let operation = crate::enhance::PUBLIC_ROUTES.operation(request.uri().path());
     let endpoint = match (request.method().as_str(), operation) {
         ("GET", Some("/init")) => "init",
         ("POST", Some("/query")) => "query",
@@ -251,7 +251,7 @@ mod tests {
     fn app(metrics: &HttpMetrics) -> Router {
         metrics.endpoint("init");
         metrics.endpoint("query");
-        crate::PUBLIC_ROUTES
+        crate::enhance::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [
@@ -411,7 +411,7 @@ mod tests {
     async fn response_guard_survives_end_of_stream_until_drop() {
         let metrics = HttpMetrics::default();
         let slots = Arc::new(tokio::sync::Semaphore::new(1));
-        let body = crate::response_body::guarded(
+        let body = crate::enhance::response_body::guarded(
             vec![1, 2, 3],
             slots.clone().acquire_owned().await.unwrap(),
             || Ok(()),

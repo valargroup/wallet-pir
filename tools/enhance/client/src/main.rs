@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use enhance_query_server::client::EnhancePirClient;
+use enhance_shared::client::EnhancePirClient;
 
 #[derive(Parser)]
 #[command(

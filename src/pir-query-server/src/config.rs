@@ -31,7 +31,7 @@ impl<T> Product<T> {
 pub struct Config {
     pub management_listen: SocketAddr,
     #[cfg(feature = "enhance")]
-    pub enhance: Option<Product<enhance_query_server::service::ServingRole>>,
+    pub enhance: Option<Product<crate::enhance::service::ServingRole>>,
     #[cfg(feature = "status")]
     pub status: Option<Product<crate::status::RoleConfig>>,
     #[cfg(feature = "transparent-history")]

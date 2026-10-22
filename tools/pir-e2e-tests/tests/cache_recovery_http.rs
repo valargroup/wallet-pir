@@ -1,9 +1,7 @@
 //! Rows lost between worker processes are downloaded and verified again.
-use enhance_query_server::{
-    protocol::digest,
-    worker_sync::{Config, ReadinessRequest, Worker},
-};
+use enhance_shared::protocol::digest;
 use pir_e2e_tests::enhance_fixture::{record, serve, System};
+use pir_query_server::enhance::worker_sync::{Config, ReadinessRequest, Worker};
 use sha2::{Digest, Sha256};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restart_repairs_corrupt_cached_rows_before_readiness() {
@@ -38,7 +36,7 @@ async fn restart_repairs_corrupt_cached_rows_before_readiness() {
     let worker = Worker::open(&root, config, Default::default(), Default::default()).unwrap();
     let mut sync = worker.synchronizer().unwrap();
     let listening = serve(worker.router()).await;
-    let http = enhance_query_server::internal_auth::client_builder()
+    let http = pir_query_server::enhance::internal_auth::client_builder()
         .build()
         .unwrap();
     let request = ReadinessRequest {

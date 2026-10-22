@@ -74,7 +74,7 @@ impl Management {
 fn enhance_token() -> &'static str {
     #[cfg(feature = "enhance")]
     {
-        enhance_query_server::internal_auth::ENV
+        crate::enhance::internal_auth::ENV
     }
     #[cfg(not(feature = "enhance"))]
     {
@@ -249,7 +249,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         state.phases.lock().unwrap().insert("enhance", "running");
         spawn(
             "enhance",
-            enhance_query_server::service::run_serving(
+            crate::enhance::service::run_serving(
                 role,
                 bound,
                 stopped(stop.clone(), shutdown.clone()),

@@ -1,7 +1,7 @@
 //! Authenticated synthetic Ironwood records through real HTTP PIR.
 //! Fixed inputs are public test material, never wallet credentials; the
 //! library-owned fixture holds the Orchard and note-encryption cryptography.
-use enhance_query_server::{
+use enhance_shared::{
     client::EnhancePirClient, EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata,
     RECORD_BYTES,
 };
@@ -66,7 +66,7 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     assert!(decrypt_incoming(NoteDomain::Ironwood, FixtureKey::Other, &output).is_none());
     assert!(ovk(FixtureKey::Other, &output, &returned_cv, &returned).is_none());
     let mut out_corrupt = *record.as_bytes();
-    out_corrupt[enhance_query_server::RECORD_OUT_CIPHERTEXT_OFFSET] ^= 1;
+    out_corrupt[enhance_shared::RECORD_OUT_CIPHERTEXT_OFFSET] ^= 1;
     let out_corrupt = EnhanceRecord::from_bytes(out_corrupt).unwrap();
     let out_corrupt_output =
         compact.with_enc_ciphertext_suffix(out_corrupt.enc_ciphertext_suffix());
@@ -81,7 +81,7 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     // Expiry/fee and transaction-shape flags are indexer metadata, outside note
     // authentication. Do not claim that decrypting the note authenticates them.
     let mut metadata_changed = *record.as_bytes();
-    metadata_changed[enhance_query_server::RECORD_EXPIRY_HEIGHT_OFFSET] ^= 1;
+    metadata_changed[enhance_shared::RECORD_EXPIRY_HEIGHT_OFFSET] ^= 1;
     let metadata_changed = EnhanceRecord::from_bytes(metadata_changed).unwrap();
     assert_eq!(
         own_ivk(&compact.with_enc_ciphertext_suffix(metadata_changed.enc_ciphertext_suffix())),

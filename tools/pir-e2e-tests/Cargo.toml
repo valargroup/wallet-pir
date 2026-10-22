@@ -10,10 +10,10 @@ autobins = false
 [features]
 default = []
 # The copied query-host entrypoint selects its diagnostic subcommands with this feature.
-enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:pir-query-server", "pir-query-server/enhance"]
+enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:enhance-shared", "dep:pir-query-server", "pir-query-server/enhance"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring"]
 # The Enhance hint cache records whether this build includes CUDA.
-cuda = ["enhance-query-server?/cuda"]
+cuda = ["enhance-query-server?/cuda", "enhance-shared?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
@@ -35,7 +35,7 @@ enhance-tests = [
     "query-host",
     "enhance-publisher/fault-injection",
     "dep:enhance-query-server",
-    "enhance-query-server/client",
+    "enhance-shared/client",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
     "zakura-server-chain/testing-node",
@@ -101,6 +101,7 @@ status-publisher = { path = "../../src/status/status-publisher", optional = true
 enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
 enhance-query-server = { path = "../../src/enhance/enhance-query-server", optional = true }
+enhance-shared = { path = "../../src/enhance/enhance-shared", optional = true }
 pir-query-server = { path = "../../src/pir-query-server", optional = true }
 transparent-query-server = { path = "../../src/transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }

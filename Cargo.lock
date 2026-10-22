@@ -843,7 +843,7 @@ name = "enhance-pir-client"
 version = "0.0.1"
 dependencies = [
  "clap",
- "enhance-query-server",
+ "enhance-shared",
  "hex",
  "serde_json",
  "tokio",
@@ -855,7 +855,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "clap",
- "enhance-query-server",
+ "enhance-shared",
  "hdrhistogram",
  "humantime",
  "rand 0.8.5",
@@ -896,29 +896,9 @@ dependencies = [
 name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
- "axum",
- "enhance-query-server",
  "enhance-shared",
- "hdrhistogram",
- "hex",
- "http-body",
- "memmap2",
  "pir-control",
- "pir-observability",
- "pir-publication",
- "pir-runtime",
- "pir-sync-manager",
- "prometheus",
- "rand 0.8.5",
- "reqwest",
  "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
 ]
 
 [[package]]
@@ -1978,7 +1958,7 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 name = "native-certificate"
 version = "0.0.1"
 dependencies = [
- "enhance-query-server",
+ "enhance-shared",
  "ipir-sp",
  "rayon",
  "reinspiring",
@@ -2203,6 +2183,7 @@ dependencies = [
  "clap",
  "enhance-publisher",
  "enhance-query-server",
+ "enhance-shared",
  "hex",
  "libc",
  "pir-pipeline",
@@ -2238,7 +2219,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "enhance-query-server",
+ "enhance-shared",
  "hex",
  "pir-apm",
  "reqwest",
@@ -2310,20 +2291,29 @@ dependencies = [
  "axum",
  "clap",
  "enhance-query-server",
+ "enhance-shared",
+ "hdrhistogram",
  "hex",
  "http",
+ "http-body",
+ "memmap2",
  "pir-control",
+ "pir-observability",
  "pir-pipeline",
  "pir-publication",
+ "pir-runtime",
  "pir-sync-manager",
+ "prometheus",
  "rand 0.8.5",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "status-query-server",
  "status-shared",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tower",
  "tracing",
  "tracing-subscriber",

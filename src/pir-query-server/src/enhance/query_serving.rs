@@ -1,6 +1,6 @@
 //! Shared worker-evaluation contract for remote and compatibility serving.
-use crate::protocol::{Manifest, QueryBinding};
-use crate::worker::{Evaluate, Intermediate};
+use crate::enhance::protocol::{Manifest, QueryBinding};
+use crate::enhance::worker::{Evaluate, Intermediate};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},

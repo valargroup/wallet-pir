@@ -1,5 +1,5 @@
 //! Consumer-owned packing activation and exact worker handover.
-use crate::{
+use crate::enhance::{
     admission::{read_body, BodyError, Queue, Refusal},
     protocol::{self, digest, Manifest, QueryBinding},
     publication::{Object, METADATA_LIMIT},
@@ -35,9 +35,12 @@ pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
     /// Domain responsibilities and private worker replicas are local configuration.
-    #[serde(deserialize_with = "crate::synchronization::domain_map")]
+    #[serde(deserialize_with = "crate::enhance::synchronization::domain_map")]
     pub workers: BTreeMap<u64, Vec<String>>,
-    #[serde(default, deserialize_with = "crate::synchronization::domain_map")]
+    #[serde(
+        default,
+        deserialize_with = "crate::enhance::synchronization::domain_map"
+    )]
     pub preferred: BTreeMap<u64, BTreeSet<String>>,
 }
 impl Config {
@@ -57,7 +60,7 @@ impl Config {
                 return Err("router needs one or two distinct replicas per domain".into());
             }
             for url in urls {
-                crate::synchronization::peer_origin(url)?;
+                crate::enhance::synchronization::peer_origin(url)?;
             }
             if self
                 .preferred
@@ -116,10 +119,10 @@ pub struct PackingRouter {
     admission: Arc<Semaphore>,
     waiters: Arc<Semaphore>,
     synchronization: Arc<Semaphore>,
-    budget: crate::PackingBudget,
+    budget: crate::enhance::PackingBudget,
     loader: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
     max_objects: usize,
-    timing: crate::query_timing::QueryTiming,
+    timing: crate::enhance::query_timing::QueryTiming,
     pub incarnation: String,
     _ownership: Arc<File>,
 }
@@ -170,13 +173,13 @@ impl PackingRouter {
             config,
             authority,
             inner: Default::default(),
-            http: crate::internal_auth::client_builder()
+            http: crate::enhance::internal_auth::client_builder()
                 .timeout(Duration::from_secs(30))
                 .build()?,
             admission: Arc::new(Semaphore::new(requests)),
             waiters: Arc::new(Semaphore::new(16)),
             synchronization: Arc::new(Semaphore::new(1)),
-            budget: crate::PackingBudget::router(),
+            budget: crate::enhance::PackingBudget::router(),
             loader,
             max_objects,
             timing: Default::default(),
@@ -200,7 +203,7 @@ impl PackingRouter {
         })
     }
     pub fn public_router(&self) -> Router {
-        crate::PUBLIC_ROUTES
+        crate::enhance::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [
@@ -219,7 +222,7 @@ impl PackingRouter {
             .layer(axum::extract::DefaultBodyLimit::max(
                 METADATA_LIMIT as usize,
             ))
-            .layer(crate::internal_auth::Token::from_env().layer())
+            .layer(crate::enhance::internal_auth::Token::from_env().layer())
             .with_state(self.clone())
     }
 
@@ -252,9 +255,11 @@ impl PackingRouter {
                         .await;
                     let result = async {
                         let response = response?.error_for_status()?;
-                        let bytes =
-                            crate::query_serving::bounded(response, METADATA_LIMIT as usize)
-                                .await?;
+                        let bytes = crate::enhance::query_serving::bounded(
+                            response,
+                            METADATA_LIMIT as usize,
+                        )
+                        .await?;
                         let ready: Readiness = serde_json::from_slice(&bytes)?;
                         if ready.manifest != manifest
                             || ready.manifest_sha256 != digest(&manifest)
@@ -386,7 +391,7 @@ impl PackingRouter {
                 .cloned()
                 .ok_or((StatusCode::CONFLICT, "stale_routing".into()))?
         };
-        crate::query_serving::validate_binding(&loaded.manifest, binding)?;
+        crate::enhance::query_serving::validate_binding(&loaded.manifest, binding)?;
         let guard = self
             .authority
             .fresh(&loaded.manifest)
@@ -628,16 +633,18 @@ impl Synchronizer {
                 self.router
                     .loader
                     .send(Box::new(move || {
-                        let result =
-                            crate::prepared_packing::load(&path, &descriptor, rows, &budget)
-                                .and_then(|packing| {
-                                    if packing.reference(reference.shard_id)? != reference {
-                                        return Err(
-                                            "published packing does not match session".into()
-                                        );
-                                    }
-                                    Ok(Arc::new(packing))
-                                });
+                        let result = crate::enhance::prepared_packing::load(
+                            &path,
+                            &descriptor,
+                            rows,
+                            &budget,
+                        )
+                        .and_then(|packing| {
+                            if packing.reference(reference.shard_id)? != reference {
+                                return Err("published packing does not match session".into());
+                            }
+                            Ok(Arc::new(packing))
+                        });
                         let _ = sender.send(result);
                     }))
                     .map_err(|_| "packing loader stopped")?;
@@ -741,7 +748,7 @@ async fn metrics(State(router): State<PackingRouter>) -> impl IntoResponse {
             "{}enhance_packing_router_charged_bytes {}\n{}",
             router.timing.render(),
             router.budget.charged_bytes(),
-            crate::memory_observation::observe().render("enhance_packing_router_")
+            crate::enhance::memory_observation::observe().render("enhance_packing_router_")
         ),
     )
 }
@@ -863,13 +870,15 @@ async fn session(
         Ok::<_, ApiError>(
             (
                 [("content-type", "application/json")],
-                crate::response_body::guarded(bytes, (loaded, packing), move || guard.check()),
+                crate::enhance::response_body::guarded(bytes, (loaded, packing), move || {
+                    guard.check()
+                }),
             )
                 .into_response(),
         )
     }
     .await;
-    result.unwrap_or_else(crate::query_serving::public_error)
+    result.unwrap_or_else(crate::enhance::query_serving::public_error)
 }
 async fn query(State(router): State<PackingRouter>, request: Request) -> Response {
     let started = Instant::now();
@@ -877,13 +886,13 @@ async fn query(State(router): State<PackingRouter>, request: Request) -> Respons
         Ok(mut response) => {
             if let Some(stages) = response
                 .extensions_mut()
-                .remove::<crate::query_timing::CompletedStages>()
+                .remove::<crate::enhance::query_timing::CompletedStages>()
             {
                 router.timing.observe(stages, started.elapsed());
             }
             response
         }
-        Err(error) => crate::query_serving::public_error(error),
+        Err(error) => crate::enhance::query_serving::public_error(error),
     }
 }
 async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiError> {
@@ -916,8 +925,8 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
         .get(&binding.shard_id)
         .cloned()
         .ok_or((StatusCode::GONE, "session_unavailable".into()))?;
-    let query_rows = crate::query_serving::validate_binding(&loaded.manifest, binding)?;
-    crate::query_serving::admitted(async move {
+    let query_rows = crate::enhance::query_serving::validate_binding(&loaded.manifest, binding)?;
+    crate::enhance::query_serving::admitted(async move {
         let guard = guard
             .fresh_for_release(&router.authority)
             .await
@@ -939,11 +948,13 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
             .unwrap()
             .get(&binding.shard_id)
             .map_or(0, Vec::len);
-        let answer =
-            crate::query_serving::evaluate_exact(&router.http, &request, count, |excluded| {
-                router.select(&loaded, binding.shard_id, excluded)
-            })
-            .await?;
+        let answer = crate::enhance::query_serving::evaluate_exact(
+            &router.http,
+            &request,
+            count,
+            |excluded| router.select(&loaded, binding.shard_id, excluded),
+        )
+        .await?;
         let guard = guard
             .fresh_for_release(&router.authority)
             .await
@@ -963,11 +974,13 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
             .await
             .map_err(unavailable)?;
         let mut response =
-            crate::response_body::guarded(bytes, (permit, loaded, packing), move || guard.check())
-                .into_response();
+            crate::enhance::response_body::guarded(bytes, (permit, loaded, packing), move || {
+                guard.check()
+            })
+            .into_response();
         response
             .extensions_mut()
-            .insert(crate::query_timing::CompletedStages {
+            .insert(crate::enhance::query_timing::CompletedStages {
                 body_read,
                 worker: worker_time,
                 packing: packing_time,

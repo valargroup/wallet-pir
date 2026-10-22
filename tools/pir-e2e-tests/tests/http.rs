@@ -1,5 +1,5 @@
 //! Encrypted answers through autonomous serving roles and real publisher TLS.
-use enhance_query_server::{client::EnhancePirClient, matvec::MatvecConfig};
+use enhance_shared::{client::EnhancePirClient, matvec::MatvecConfig};
 use pir_e2e_tests::enhance_fixture::{record, System};
 async fn round_trip(backend: MatvecConfig) {
     let mut system = System::with_backend((0..67).map(record).collect(), backend, 1, 2).await;
@@ -52,7 +52,7 @@ async fn independent_consumers_answer_updates_and_close_on_withdrawal() {
 #[ignore = "requires an isolated CUDA qualification host"]
 async fn cuda_independent_consumers_answer_updates_and_close_on_withdrawal() {
     round_trip(MatvecConfig {
-        matvec_backend: enhance_query_server::matvec::Backend::Cuda,
+        matvec_backend: enhance_shared::matvec::Backend::Cuda,
         cuda_device: None,
     })
     .await;

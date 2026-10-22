@@ -177,8 +177,10 @@ work by the number of queried domains. See [wallet integration](integration.md).
 ## Package boundaries
 
 `enhance-publisher` owns chain reading, ingestion, journals, local preparation,
-publication and recovery. `enhance-query-server` owns synchronization and all
-serving roles and has no publisher or chain-reader dependency. Shared transport
+publication and recovery. `pir-query-server` owns synchronization and all
+Enhance serving roles in its `enhance` module; `enhance-query-server` keeps the
+private evaluation messages and public route mounts. Neither has a publisher or
+chain-reader dependency. Shared transport
 and scheduling live in `pir-sync-manager`; Enhance policy stays in Enhance.
 The root hosts are `pir-publisher` and `pir-query-server`; product crates are
 libraries. Test/workload composition belongs under `tools/`.

@@ -2,6 +2,8 @@
 //! synchronization and supervision; product libraries supply typed material,
 //! evaluation and peer-message primitives.
 pub mod config;
+#[cfg(feature = "enhance")]
+pub mod enhance;
 mod host;
 #[cfg(feature = "status")]
 pub mod status;

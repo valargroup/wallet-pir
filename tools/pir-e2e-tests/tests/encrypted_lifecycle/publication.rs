@@ -2,7 +2,7 @@
 use super::encrypted::{record, serve};
 use crate::publication_source::Published;
 use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
-use enhance_query_server::{
+use enhance_shared::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, Revocation, PREFIX},
 };
@@ -39,10 +39,8 @@ static DEPLOYED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     ignore = "deployed geometry: qualification-tests"
 )]
 async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_updates() {
-    use enhance_query_server::{
-        client::QuerySession, ingress_sync, protocol::ShardSession, router_sync, worker_sync,
-        RECORD_BYTES,
-    };
+    use enhance_shared::{client::QuerySession, protocol::ShardSession, RECORD_BYTES};
+    use pir_query_server::enhance::{ingress_sync, router_sync, worker_sync};
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = published().await;
@@ -439,7 +437,7 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
     ignore = "deployed geometry: qualification-tests"
 )]
 async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() {
-    use enhance_query_server::{router_sync, worker_sync};
+    use pir_query_server::enhance::{router_sync, worker_sync};
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = published().await;
@@ -469,7 +467,7 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
         .unwrap();
         let mut router_sync = router.synchronizer().unwrap();
         let control = serve(router.control_router()).await;
-        let http = enhance_query_server::internal_auth::client_builder()
+        let http = pir_query_server::enhance::internal_auth::client_builder()
             .build()
             .unwrap();
         let health = format!("{}/internal/health", control.url);
@@ -549,9 +547,8 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
     ignore = "deployed geometry: qualification-tests"
 )]
 async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_during_activation() {
-    use enhance_query_server::{
-        client::QuerySession, protocol::ShardSession, router_sync, worker_sync, RECORD_BYTES,
-    };
+    use enhance_shared::{client::QuerySession, protocol::ShardSession, RECORD_BYTES};
+    use pir_query_server::enhance::{router_sync, worker_sync};
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
         let fixture = published().await;
@@ -826,14 +823,16 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
     ignore = "deployed geometry: qualification-tests"
 )]
 async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
-    use enhance_query_server::{
+    use enhance_query_server::worker::{Evaluate, Intermediate};
+    use enhance_shared::{
         client::QuerySession,
         prepared_packing,
         protocol::{digest, QueryBinding},
-        synchronization::Config as SourceConfig,
-        worker::{Evaluate, Intermediate},
-        worker_sync::{self, Readiness, ReadinessRequest},
         PackingBudget, RECORD_BYTES,
+    };
+    use pir_query_server::enhance::{
+        synchronization::Config as SourceConfig,
+        worker_sync::{self, Readiness, ReadinessRequest},
     };
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
@@ -866,7 +865,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         assert!(worker_sync::Worker::open(&worker_root, config.clone(), Default::default(), Default::default()).is_err());
         let mut synchronizer = worker.synchronizer().unwrap();
         assert!(worker.synchronizer().is_err(), "only one synchronization pass owner may open a worker");
-        let http = enhance_query_server::internal_auth::client_builder().build().unwrap();
+        let http = pir_query_server::enhance::internal_auth::client_builder().build().unwrap();
         let listener = serve(worker.clone().router()).await;
         let readiness = format!("{}/internal/readiness", listener.url);
         let request = ReadinessRequest { manifest_sha256: digest(&manifest), holder: None };
@@ -909,10 +908,10 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         // A shallow withdrawal does not revoke unchanged material, but it does
         // invalidate authorization observed before that withdrawal.
         let safety_root = scratch.path().join("independent-consumer");
-        let safety = enhance_query_server::synchronization::Safety::open(&safety_root, &transport.origin).unwrap();
+        let safety = pir_query_server::enhance::synchronization::Safety::open(&safety_root, &transport.origin).unwrap();
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let initial: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
-        let old_lease = enhance_query_server::synchronization::Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
+        let old_lease = pir_query_server::enhance::synchronization::Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
         distribution.withdraw(&Revocation::default()).unwrap();
         distribution.publish(manifest.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         let republished: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
@@ -923,7 +922,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         assert!(old_lease.check(&manifest, &safety).is_err());
         let authorized: AuthorityResponse = transport.client.post(format!("{}{PREFIX}authority", transport.origin))
             .json(&AuthorityRequest { manifest_sha256: digest(&manifest) }).send().await.unwrap().json().await.unwrap();
-        enhance_query_server::synchronization::Lease::from_response(authorized, &manifest, &safety).unwrap().check(&manifest, &safety).unwrap();
+        pir_query_server::enhance::synchronization::Lease::from_response(authorized, &manifest, &safety).unwrap().check(&manifest, &safety).unwrap();
         synchronizer.poll_once().await.unwrap();
         let mut advanced = manifest.clone();
         advanced.generation += 1;
@@ -1225,8 +1224,7 @@ fn copy_tree(source: &Path, target: &Path) {
 /// preparation, including packing; its time is reported separately.
 fn shared_publication(count: u64) -> std::path::PathBuf {
     let coverage = fixture_coverage(count);
-    let plan =
-        enhance_query_server::runtime::plan(coverage.shards[0].clone(), fixture_records).unwrap();
+    let plan = enhance_shared::runtime::plan(coverage.shards[0].clone(), fixture_records).unwrap();
     let cache = cache();
     std::fs::create_dir_all(&cache).unwrap();
     let lock = std::fs::OpenOptions::new()

@@ -10,10 +10,10 @@ name = "enhance-pir-cli"
 path = "src/main.rs"
 
 [features]
-native-reinspiring = ["enhance-query-server/native-reinspiring"]
+native-reinspiring = ["enhance-shared/native-reinspiring"]
 
 [dependencies]
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
+enhance-shared = { path = "../../../src/enhance/enhance-shared" , features = ["client"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 hex = "0.4"

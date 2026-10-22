@@ -5,6 +5,7 @@
         {
           "any-glob-to-any-file": [
             "src/enhance/**",
+            "src/pir-query-server/src/enhance/**",
             "tools/enhance/**",
             "docs/enhance/**",
             "evidence/enhance/**",

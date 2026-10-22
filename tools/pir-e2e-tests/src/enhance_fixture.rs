@@ -3,14 +3,14 @@
 use enhance_publisher::{
     chain_source::ZakuraClient, journal::RecordJournal, publisher::EnhancePublisher,
 };
-use enhance_query_server::{
-    ingress_sync,
+use enhance_shared::{
     protocol::Manifest,
     publication::{AuthorityResponse, PREFIX},
-    router_sync,
-    synchronization::Config as SourceConfig,
     types::{DatabaseId, ENHANCE_LAYOUT},
-    worker_sync, EnhanceRecord, EnhanceRecordParts,
+    EnhanceRecord, EnhanceRecordParts,
+};
+use pir_query_server::enhance::{
+    ingress_sync, router_sync, synchronization::Config as SourceConfig, worker_sync,
 };
 use std::{
     path::Path,
@@ -76,11 +76,8 @@ pub fn record(position: u64) -> Vec<u8> {
         out_ciphertext: [position.wrapping_add(2) as u8; 80],
         has_transparent_inputs: true,
         has_transparent_outputs: false,
-        metadata: enhance_query_server::EnhanceTransactionMetadata::new(
-            position as u32,
-            Some(position),
-        )
-        .unwrap(),
+        metadata: enhance_shared::EnhanceTransactionMetadata::new(position as u32, Some(position))
+            .unwrap(),
     })
     .as_bytes()
     .to_vec()
@@ -188,7 +185,7 @@ impl System {
     }
     pub async fn with_backend(
         records: Vec<Vec<u8>>,
-        backend: enhance_query_server::matvec::MatvecConfig,
+        backend: enhance_shared::matvec::MatvecConfig,
         maximum_domains: u64,
         replicas: usize,
     ) -> Self {
@@ -197,20 +194,20 @@ impl System {
             backend,
             maximum_domains,
             replicas,
-            enhance_query_server::ACTIVATION_HEIGHT,
+            enhance_shared::ACTIVATION_HEIGHT,
             "01".repeat(32),
         )
         .await
     }
     pub async fn at_anchor(
         records: Vec<Vec<u8>>,
-        backend: enhance_query_server::matvec::MatvecConfig,
+        backend: enhance_shared::matvec::MatvecConfig,
         maximum_domains: u64,
         replicas: usize,
         height: u64,
         hash: String,
     ) -> Self {
-        assert!((1..=enhance_query_server::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
+        assert!((1..=enhance_shared::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
         assert!((1..=2).contains(&replicas));
         let root = tempfile::tempdir().unwrap();
         let canonical = Arc::new(Mutex::new(

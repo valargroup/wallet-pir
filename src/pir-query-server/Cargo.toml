@@ -12,7 +12,22 @@ path = "tests/operator.rs"
 
 [features]
 default = []
-enhance = ["dep:enhance-query-server"]
+enhance = [
+    "dep:enhance-query-server",
+    "dep:enhance-shared",
+    "dep:pir-control",
+    "dep:pir-observability",
+    "dep:pir-runtime",
+    "dep:pir-publication",
+    "dep:hex",
+    "dep:memmap2",
+    "dep:hdrhistogram",
+    "dep:http-body",
+    "dep:prometheus",
+    "dep:rand",
+    "dep:sha2",
+    "dep:tokio-stream",
+]
 status = [
     "dep:status-query-server",
     "dep:status-shared",
@@ -36,8 +51,9 @@ native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
     "status-shared?/native-reinspiring",
+    "enhance-shared?/native-reinspiring",
 ]
-cuda = ["enhance-query-server?/cuda"]
+cuda = ["enhance-query-server?/cuda", "enhance-shared?/cuda"]
 
 [dependencies]
 pir-sync-manager = { path = "../shared/pir-sync-manager" }
@@ -45,6 +61,17 @@ enhance-query-server = { path = "../enhance/enhance-query-server", optional = tr
 status-query-server = { path = "../status/status-query-server", optional = true }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, default-features = false }
 pir-pipeline = { path = "../shared/pir-pipeline" }
+# Enhance roles: records, protocol and prepared runtimes come from
+# enhance-shared, evaluation messages from enhance-query-server.
+enhance-shared = { path = "../enhance/enhance-shared", optional = true }
+pir-observability = { path = "../shared/pir-observability", features = ["http"], optional = true }
+pir-runtime = { path = "../shared/pir-runtime", optional = true }
+memmap2 = { version = "0.9", optional = true }
+hdrhistogram = { version = "7", optional = true }
+http-body = { version = "1", optional = true }
+prometheus = { version = "0.13", default-features = false, features = ["process"], optional = true }
+sha2 = { version = "0.10", optional = true }
+tokio-stream = { version = "0.1", optional = true }
 # Status roles: product material comes from status-shared, peer messages from
 # status-query-server; the host owns their HTTP, admission and synchronization.
 status-shared = { path = "../status/status-shared", optional = true }
@@ -65,6 +92,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+# Injected kernel faults and synthetic records drive the Enhance role regressions.
+enhance-shared = { path = "../enhance/enhance-shared", features = ["test-support", "client"] }
 status-shared = { path = "../status/status-shared", features = ["client"] }
 # Independent wallet client exercises the Status serving wire contract.
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native", "status"] }

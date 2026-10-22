@@ -15,7 +15,7 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use enhance_query_server::{client::EnhancePirClient, protocol::Manifest, ACTIVATION_HEIGHT};
+use enhance_shared::{client::EnhancePirClient, protocol::Manifest, ACTIVATION_HEIGHT};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -120,14 +120,13 @@ async fn assert_answers(client: &mut EnhancePirClient, expected: &[Vec<u8>]) {
     for position in 2..6u64 {
         let answer = client.query_position_with_timing(position).await.unwrap().0;
         let record =
-            enhance_query_server::EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap())
-                .unwrap();
+            enhance_shared::EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap()).unwrap();
         support::assert_fixture_action(&record, position as usize % 2);
         assert_eq!(record.metadata().fee_zatoshis(), Some(20_000), "{position}");
-        let flags = record.as_bytes()[enhance_query_server::RECORD_FLAGS_OFFSET];
-        assert_eq!(flags & enhance_query_server::FLAG_HAS_TRANSPARENT_INPUTS, 1);
+        let flags = record.as_bytes()[enhance_shared::RECORD_FLAGS_OFFSET];
+        assert_eq!(flags & enhance_shared::FLAG_HAS_TRANSPARENT_INPUTS, 1);
         assert_eq!(
-            flags & enhance_query_server::FLAG_HAS_TRANSPARENT_OUTPUTS != 0,
+            flags & enhance_shared::FLAG_HAS_TRANSPARENT_OUTPUTS != 0,
             position >= 4,
             "{position}"
         );

@@ -19,6 +19,7 @@ CONTRACTS = (
     'src/enhance/enhance-shared/src/matvec',
     'src/enhance/enhance-shared/src/runtime',
     'src/enhance/enhance-query-server/src/worker',
+    'src/pir-query-server/src/enhance/worker',
     'src/shared/pir-runtime/src/evaluation.rs',
     'src/pir-query-server/tests/operator.rs',
     'src/pir-query-server/src/main.rs',

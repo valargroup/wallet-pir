@@ -14,7 +14,7 @@ use encrypted::record;
 #[test]
 fn offline_publication_loads_and_answers_without_consumers() {
     use enhance_publisher::publication::VerificationStats;
-    use enhance_query_server::{
+    use enhance_shared::{
         client::QuerySession,
         prepared_packing,
         protocol::{self, Geometry, Lifecycle, Manifest, QueryBinding},

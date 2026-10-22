@@ -8,8 +8,10 @@ directly: role configuration, HTTP routes, admission, telemetry, the generation
 controller and publisher synchronization live in `pir_query_server::status`.
 `status-shared` supplies generation material and the wire protocol, and
 `status-query-server` supplies only the private router-worker messages and the
-public route mounts. Enhance and Transparent libraries still own their roles;
-the host delegates to them.
+public route mounts. Enhance roles, synchronization and HTTP surfaces live in
+`pir_query_server::enhance` in the same way, over `enhance-shared` material and
+`enhance-query-server` evaluation messages. Transparent libraries still own
+their roles; the host delegates to them.
 
 ## Public routes
 

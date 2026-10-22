@@ -1,5 +1,5 @@
 //! Frozen public transaction byte slices checked through parser and HTTPS-fed PIR.
-use enhance_query_server::{client::EnhancePirClient, RECORD_BYTES};
+use enhance_shared::{client::EnhancePirClient, RECORD_BYTES};
 use pir_e2e_tests::enhance_fixture::System;
 use sha2::{Digest, Sha256};
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

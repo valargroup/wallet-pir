@@ -1,5 +1,5 @@
 //! One independently synchronizing Enhance serving role per process.
-use crate::{matvec::MatvecConfig, placement::PlacementPolicy};
+use crate::enhance::{matvec::MatvecConfig, placement::PlacementPolicy};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -27,7 +27,7 @@ pub struct WorkerConfig {
     pub sealed_shards: usize,
     #[serde(default)]
     pub matvec: MatvecConfig,
-    pub synchronization: crate::worker_sync::Config,
+    pub synchronization: crate::enhance::worker_sync::Config,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,7 +39,7 @@ pub struct IngressConfig {
     pub requests: usize,
     #[serde(default = "default_uploads")]
     pub uploads: usize,
-    pub synchronization: crate::ingress_sync::Config,
+    pub synchronization: crate::enhance::ingress_sync::Config,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +51,7 @@ pub struct RouterConfig {
     pub max_objects: usize,
     #[serde(default = "default_router_requests")]
     pub requests: usize,
-    pub synchronization: crate::router_sync::Config,
+    pub synchronization: crate::enhance::router_sync::Config,
 }
 /// Configuration checks do not read trusted roots, open state or load a driver.
 #[derive(Clone, Debug, Deserialize)]
@@ -76,13 +76,13 @@ impl ServingRole {
                 c.synchronization.validate(PlacementPolicy {
                     sealed_shards: c.sealed_shards,
                 })?;
-                if c.matvec.matvec_backend == crate::matvec::Backend::Cpu
+                if c.matvec.matvec_backend == crate::enhance::matvec::Backend::Cpu
                     && c.matvec.cuda_device.is_some()
                 {
                     return Err("CUDA device requires CUDA evaluator".into());
                 }
-                if c.matvec.matvec_backend == crate::matvec::Backend::Cuda
-                    && !crate::matvec::CUDA_COMPILED
+                if c.matvec.matvec_backend == crate::enhance::matvec::Backend::Cuda
+                    && !crate::enhance::matvec::CUDA_COMPILED
                 {
                     return Err("CUDA evaluator is not compiled".into());
                 }
@@ -132,14 +132,14 @@ impl ServingRole {
 }
 pub async fn run_worker(config: WorkerConfig) -> Result<(), Error> {
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    run_worker_on(config, listener, crate::shutdown::signal()).await
+    run_worker_on(config, listener, crate::enhance::shutdown::signal()).await
 }
 pub async fn run_worker_on(
     config: WorkerConfig,
     listener: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
-    let worker = crate::worker_sync::Worker::open(
+    let worker = crate::enhance::worker_sync::Worker::open(
         &config.data_dir,
         config.synchronization,
         PlacementPolicy {
@@ -149,7 +149,7 @@ pub async fn run_worker_on(
     )?;
     let manager = pir_sync_manager::SyncManager::new(worker.synchronizer()?);
     tokio::select! {
-        result = crate::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
+        result = crate::enhance::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
         error = manager.run() => return Err(error),
     }
     Ok(())
@@ -157,7 +157,7 @@ pub async fn run_worker_on(
 pub async fn run_ingress(config: IngressConfig) -> Result<(), Error> {
     let public = tokio::net::TcpListener::bind(config.listen).await?;
     let control = tokio::net::TcpListener::bind(config.control_listen).await?;
-    run_ingress_on(config, public, control, crate::shutdown::signal()).await
+    run_ingress_on(config, public, control, crate::enhance::shutdown::signal()).await
 }
 pub async fn run_ingress_on(
     config: IngressConfig,
@@ -165,7 +165,7 @@ pub async fn run_ingress_on(
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
-    let ingress = crate::ingress_sync::QueryIngress::open(
+    let ingress = crate::enhance::ingress_sync::QueryIngress::open(
         &config.data_dir,
         config.synchronization,
         config.requests,
@@ -185,7 +185,7 @@ pub async fn run_ingress_on(
                     .with_graceful_shutdown(public_stop)
                     .await
             },
-            crate::shutdown::serve_until(control, control_app, control_stop)
+            crate::enhance::shutdown::serve_until(control, control_app, control_stop)
         )
         .map(|_| ())
     };
@@ -195,7 +195,7 @@ pub async fn run_ingress_on(
 pub async fn run_router(config: RouterConfig) -> Result<(), Error> {
     let public = tokio::net::TcpListener::bind(config.listen).await?;
     let control = tokio::net::TcpListener::bind(config.control_listen).await?;
-    run_router_on(config, public, control, crate::shutdown::signal()).await
+    run_router_on(config, public, control, crate::enhance::shutdown::signal()).await
 }
 pub async fn run_router_on(
     config: RouterConfig,
@@ -203,7 +203,7 @@ pub async fn run_router_on(
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
-    let router = crate::router_sync::PackingRouter::open(
+    let router = crate::enhance::router_sync::PackingRouter::open(
         &config.data_dir,
         config.synchronization,
         config.max_objects,
@@ -214,8 +214,8 @@ pub async fn run_router_on(
     let _notify = notify;
     let serving = async move {
         tokio::try_join!(
-            crate::shutdown::serve_until(public, router.public_router(), public_stop),
-            crate::shutdown::serve_until(control, router.control_router(), control_stop)
+            crate::enhance::shutdown::serve_until(public, router.public_router(), public_stop),
+            crate::enhance::shutdown::serve_until(control, router.control_router(), control_stop)
         )
         .map(|_| ())
     };

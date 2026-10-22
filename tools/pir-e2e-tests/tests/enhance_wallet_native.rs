@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use enhance_query_server::RECORD_BYTES;
+use enhance_shared::RECORD_BYTES;
 use pir_e2e_tests::enhance_fixture::System;
 use tokio_stream::StreamExt;
 use wallet::transport::{Method, Request as WalletRequest, ResponseBody, Transport};
@@ -65,16 +65,16 @@ fn record(n: u64) -> Vec<u8> {
 async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_path() {
     assert_eq!(
         wallet::PROTOCOL_REVISION,
-        enhance_query_server::protocol::PROTOCOL_REVISION
+        enhance_shared::protocol::PROTOCOL_REVISION
     );
     assert_eq!(
         wallet::parameter_id(32768).unwrap(),
-        enhance_query_server::protocol::parameter_id(32768).unwrap()
+        enhance_shared::protocol::parameter_id(32768).unwrap()
     );
     for rows in [2048, 4096, 8192] {
         assert_eq!(
             wallet::unit_parameter_id(rows).unwrap(),
-            enhance_query_server::protocol::unit_parameter_id(rows).unwrap()
+            enhance_shared::protocol::unit_parameter_id(rows).unwrap()
         );
     }
     let records: u64 = 67;

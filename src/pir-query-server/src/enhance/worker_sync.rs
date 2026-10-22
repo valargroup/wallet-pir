@@ -1,5 +1,5 @@
 //! Autonomous workers load published rows; they never prepare public hints.
-use crate::{
+use crate::enhance::{
     ipir::{RowPlaintextIter, ShardRuntime},
     matvec::MatvecConfig,
     placement::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT},
@@ -70,7 +70,9 @@ impl Loaded {
     fn evaluate(&self, coefficients: &[u64]) -> Result<Vec<u64>, String> {
         let params = protocol::parameters(self.plan.shard.logical_rows)?;
         if coefficients.len() != params.db_rows
-            || coefficients.iter().any(|q| *q >= crate::runtime::modulus())
+            || coefficients
+                .iter()
+                .any(|q| *q >= crate::enhance::runtime::modulus())
         {
             return Err("invalid query coefficients".into());
         }
@@ -83,7 +85,7 @@ impl Loaded {
                     &coefficients[start..start + identity.allocated_rows as usize],
                 )
                 .map_err(|e| e.to_string())?;
-            add_intermediate_assign_mod(&mut output, &answer, crate::runtime::modulus())
+            add_intermediate_assign_mod(&mut output, &answer, crate::enhance::runtime::modulus())
                 .map_err(|e| e.to_string())?;
         }
         Ok(output)
@@ -214,7 +216,7 @@ impl Worker {
             .route("/internal/release", post(release))
             .route("/internal/evaluate", post(evaluate))
             .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
-            .layer(crate::internal_auth::Token::from_env().layer())
+            .layer(crate::enhance::internal_auth::Token::from_env().layer())
             .with_state(self)
     }
 
@@ -289,7 +291,7 @@ impl Worker {
             for unit in &plan.units {
                 let bytes = unit
                     .allocated_rows
-                    .checked_mul(crate::ROW_BYTES as u64)
+                    .checked_mul(crate::enhance::ROW_BYTES as u64)
                     .ok_or("unit size overflow")?;
                 sizes.insert(unit.digest(), bytes);
                 current = current.checked_add(bytes).ok_or("worker size overflow")?;
@@ -327,9 +329,9 @@ impl Worker {
                 let unit = if let Some(unit) = existing {
                     unit
                 } else {
-                    let layout = crate::types::DatabaseLayout {
+                    let layout = crate::enhance::types::DatabaseLayout {
                         shard_rows: identity.allocated_rows as usize,
-                        ..crate::types::ENHANCE_LAYOUT
+                        ..crate::enhance::types::ENHANCE_LAYOUT
                     };
                     let file = File::open(object.path(&self.root)?)?;
                     if file.metadata()?.len() != object.bytes {
@@ -342,7 +344,7 @@ impl Worker {
                     if hex::encode(Sha256::digest(&map)) != object.sha256 {
                         return Err("cached rows have wrong checksum".into());
                     }
-                    let (_, params) = crate::ipir::shard_parameters(&layout)?;
+                    let (_, params) = crate::enhance::ipir::shard_parameters(&layout)?;
                     let coefficients = RowPlaintextIter::new(
                         &map,
                         layout.row_bytes(),
@@ -358,7 +360,7 @@ impl Worker {
                         rows_sha256: object.sha256.clone(),
                         server,
                     });
-                    crate::artifact::release_file_cache(&file);
+                    crate::enhance::artifact::release_file_cache(&file);
                     self.inner
                         .lock()
                         .unwrap()
@@ -530,7 +532,7 @@ async fn metrics(State(worker): State<Worker>) -> impl IntoResponse {
             active.is_some_and(|view| view.lease.check(&view.manifest, &worker.safety).is_ok());
         (plans, inner.views.len(), ready)
     };
-    let mut metrics = crate::telemetry::Metrics::default();
+    let mut metrics = crate::enhance::telemetry::Metrics::default();
     metrics.number("enhance_worker_up", 1);
     metrics.number("enhance_worker_ready", u64::from(ready));
     metrics.number("enhance_worker_retained_generations", retained as u64);
@@ -562,7 +564,7 @@ async fn metrics(State(worker): State<Worker>) -> impl IntoResponse {
         [("content-type", "text/plain; version=0.0.4")],
         metrics.finish()
             + &String::from_utf8(histogram).unwrap()
-            + &crate::memory_observation::observe().render("enhance_worker_"),
+            + &crate::enhance::memory_observation::observe().render("enhance_worker_"),
     )
 }
 
@@ -645,10 +647,13 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             .clone()
             .try_acquire_owned()
             .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-        let bytes =
-            crate::admission::read_body(request.into_body(), 1024 * 1024, Duration::from_secs(30))
-                .await
-                .map_err(unavailable)?;
+        let bytes = crate::enhance::admission::read_body(
+            request.into_body(),
+            1024 * 1024,
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(unavailable)?;
         let query: Evaluate =
             serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
         let binding = QueryBinding::decode(
@@ -700,7 +705,7 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             || query
                 .coefficients
                 .iter()
-                .any(|q| *q >= crate::runtime::modulus())
+                .any(|q| *q >= crate::enhance::runtime::modulus())
         {
             return Err((StatusCode::BAD_REQUEST, "invalid query coefficients".into()));
         }
@@ -753,7 +758,7 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
                     ("content-type", "application/json".to_string()),
                     ("x-enhance-matvec-microseconds", micros.to_string()),
                 ],
-                crate::response_body::guarded(bytes, (loaded, permit), move || {
+                crate::enhance::response_body::guarded(bytes, (loaded, permit), move || {
                     lease.check(&manifest, &safety)
                 }),
             )
@@ -797,8 +802,11 @@ mod tests {
         let coverage = protocol::Lifecycle::default()
             .coverage(1, geometry)
             .unwrap();
-        let plan =
-            crate::runtime::plan(coverage.shards[0].clone(), crate::test_support::records).unwrap();
+        let plan = crate::enhance::runtime::plan(
+            coverage.shards[0].clone(),
+            crate::enhance::test_support::records,
+        )
+        .unwrap();
         let manifest = Manifest {
             recovery_epoch: 0,
             placement_revision: 1,
@@ -821,16 +829,16 @@ mod tests {
         };
         let id = digest(&manifest);
         let lease = Lease::from_response(
-            crate::publication::AuthorityResponse {
-                current: crate::publication::Current {
-                    version: crate::publication::VERSION,
+            crate::enhance::publication::AuthorityResponse {
+                current: crate::enhance::publication::Current {
+                    version: crate::enhance::publication::VERSION,
                     revision: 1,
                     withdrawal_revision: 1,
                     recovery_epoch: 0,
                     revoked: Default::default(),
                     eligible: true,
                     manifest: Some(manifest.clone()),
-                    inventory: Some(crate::publication::Object {
+                    inventory: Some(crate::enhance::publication::Object {
                         sha256: "03".repeat(32),
                         bytes: 1,
                     }),
