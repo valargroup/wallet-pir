@@ -20,7 +20,6 @@ ADVANCED = json.dumps({'directory': ROOT + '/candidate-8', 'map_sha256': 'e' * 6
 class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
     def setUp(self):
         super().setUp()
-        self.request['configuration']['transparent_history']['settings']['distribute_prepared'] = True
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(self.request['configuration']))
         self.target = self.make_target()
         self.target.serving.binary = self.serving_binary

@@ -21,10 +21,6 @@ fn details_published(bytes: &[u8]) -> bool {
 }
 /// Static declaration only; the startup factory retains publication authority.
 pub fn history(config: HistoryConfig) -> Result<PublisherDefinition<axum::Router>> {
-    config.validate()?;
-    if config.distribute_prepared && !config.ship_runtimes {
-        return Err("prepared distribution requires ship_runtimes".into());
-    }
     let mut writable_paths = vec![config.publication_root.clone()];
     if !config.follow_journal {
         writable_paths.push(config.data_dir.clone());
@@ -32,18 +28,11 @@ pub fn history(config: HistoryConfig) -> Result<PublisherDefinition<axum::Router
     if let Some(path) = &config.snapshot_dir {
         writable_paths.push(path.clone());
     }
-    let mut probes = vec![ReadinessProbe {
+    let probes = vec![ReadinessProbe {
         address: config.listen,
         path: "/v1/status",
         rule: ReadinessRule::Body(serving),
     }];
-    if !config.http_only {
-        probes.push(ReadinessProbe {
-            address: config.listen,
-            path: "/v2/shards/init",
-            rule: ReadinessRule::HttpSuccess,
-        });
-    }
     let resources = PublisherResources {
         listeners: vec![config.listen],
         writable_paths,

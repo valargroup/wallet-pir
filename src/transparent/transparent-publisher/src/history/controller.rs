@@ -1,5 +1,6 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
-//! copied suffix snapshots and activation is delegated to the private fleet tool.
+//! copied suffix snapshots, and query servers pull each finalized full
+//! publication over HTTPS.
 mod workflow;
 use workflow::HistoryPublication;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
@@ -31,7 +32,6 @@ use std::{
         Arc, RwLock,
     },
 };
-use tokio::io::AsyncWriteExt;
 use transparent_filter::BlockHash;
 use transparent_shared::journal::events::{EventStore, EventStoreError, Refreshed};
 
@@ -46,15 +46,8 @@ pub struct Config {
     pub archive_geometry: String,
     pub rpc_url: String,
     pub rpc_cookie: PathBuf,
-    /// Executable implementing prepare/activate/invalidate with JSON on stdin.
-    #[serde(default)]
-    pub fleet_command: PathBuf,
-    #[serde(default)]
-    pub fleet_config: PathBuf,
     pub listen: std::net::SocketAddr,
     pub source_sha: String,
-    #[serde(default)]
-    pub shadow: bool,
     /// Which newly built shards publish a directory choice table. Absent means
     /// `off`, which is what every configuration before this field publishes.
     #[serde(default)]
@@ -75,33 +68,9 @@ pub struct Config {
     /// root; never the journal's directory when following.
     #[serde(default)]
     pub snapshot_dir: Option<PathBuf>,
-    /// Prepare every runtime of each candidate beside its revisions, and
-    /// offer them to the fleet, so workers load them instead of building.
-    /// Off unless set: workers then build every runtime themselves.
-    #[serde(default)]
-    pub ship_runtimes: bool,
-    /// Offer the opt-in prepared-publication distribution API. Requires shipped
-    /// runtimes; existing deployments keep their existing preparation policy.
-    #[serde(default)]
-    pub distribute_prepared: bool,
-    /// Finalize full prepared publications without managing query servers.
-    #[serde(default)]
-    pub http_only: bool,
 }
 
 impl Config {
-    pub fn validate(&self) -> Result<(), BoxError> {
-        if self.http_only && (!self.distribute_prepared || !self.ship_runtimes || self.shadow) {
-            return Err("HTTP-only publishing requires prepared distribution, shipped runtimes and no shadow mode".into());
-        }
-        if !self.http_only
-            && (self.fleet_command.as_os_str().is_empty()
-                || self.fleet_config.as_os_str().is_empty())
-        {
-            return Err("fleet publishing requires fleet_command and fleet_config".into());
-        }
-        Ok(())
-    }
     fn snapshot_dir(&self) -> &Path {
         self.snapshot_dir
             .as_deref()
@@ -119,6 +88,7 @@ pub struct ActivePublication {
     pub height: u64,
     pub hash: String,
     #[serde(default)]
+    /// Retired worker addresses; kept so existing records still parse.
     pub upstreams: Vec<String>,
 }
 struct Public {
@@ -142,18 +112,8 @@ struct Inner {
     canonicality: Option<NodeClient>,
     invalidated_from: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
-    /// The last `/v2/shards/init` answer assembled from the workers, with the
-    /// map it describes. Activation switches the workers to the next map a
-    /// moment before the public pointer moves; in that window no worker
-    /// answers for the active map, and this answer, built for that same map,
-    /// is served instead of a 503.
-    last_init: std::sync::Mutex<Option<(String, serde_json::Value)>>,
     status: RwLock<serde_json::Value>,
-    http: reqwest::Client,
     observed: RwLock<BTreeMap<u64, std::time::Instant>>,
-    /// The fleet reconciler's membership record, when the fleet config names
-    /// a state directory.
-    membership: Option<PathBuf>,
     /// The last candidate whose runtimes were prepared, as verified then: the
     /// next one's unchanged tables are its hard links and are not read again.
     prepared_set: std::sync::Mutex<Option<transparent_shared::history::shardset::ShardSet>>,
@@ -170,11 +130,6 @@ struct Inner {
     validation: super::validator::Queue,
     /// The active publication lists bytes that failed integrity validation.
     integrity_failed: AtomicBool,
-    /// Integrity withdrawal the fleet has not yet confirmed. Withdrawing this
-    /// process's routes leaves the router proxying setup and query requests
-    /// to workers that still serve the publication; the publication loop,
-    /// which also owns activation, sends the fleet `withdraw` until it succeeds.
-    fleet_withdrawal: AtomicBool,
     /// Candidate preparation and activation in progress; background
     /// validation waits while any runs.
     foreground: AtomicU64,
@@ -182,30 +137,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct Authority(Arc<Inner>);
 
-/// The fleet's membership record: `<state_dir>/membership.json` from the
-/// fleet adapter's config, if it names one.
-fn membership_path(fleet_config: &Path) -> Option<PathBuf> {
-    let config: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(fleet_config).ok()?).ok()?;
-    Some(PathBuf::from(config.get("state_dir")?.as_str()?).join("membership.json"))
-}
-
-/// Recent replicas routed right now, from a membership record written in the
-/// last ten seconds. The count reported at activation goes stale as soon as
-/// the reconciler routes a replica that finished preparing after quorum.
-fn routed_recent_replicas(membership: Option<&Path>) -> Option<u64> {
-    let record: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(membership?).ok()?).ok()?;
-    let age = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs_f64()
-        - record.get("updated_unix")?.as_f64()?;
-    if !(0.0..=10.0).contains(&age) {
-        return None;
-    }
-    record.get("routed_recent")?.as_u64()
-}
 impl Authority {
     pub fn router(&self) -> Router {
         self.0
@@ -219,36 +150,6 @@ impl Authority {
             ))
             .with_state(self.clone())
     }
-}
-
-pub async fn fleet(
-    config: &Config,
-    request: serde_json::Value,
-) -> Result<serde_json::Value, BoxError> {
-    use std::process::Stdio;
-    let mut child = tokio::process::Command::new(&config.fleet_command)
-        .arg(&config.fleet_config)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .spawn()?;
-    child
-        .stdin
-        .take()
-        .ok_or("missing fleet stdin")?
-        .write_all(&serde_json::to_vec(&request)?)
-        .await?;
-    let output = tokio::time::timeout(std::time::Duration::from_secs(90), child.wait_with_output())
-        .await??;
-    if !output.status.success() {
-        return Err(format!("fleet operation failed: {}", output.status).into());
-    }
-    let body: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    if body["ok"] != true {
-        return Err(format!("fleet refused operation: {body}").into());
-    }
-    Ok(body)
 }
 
 fn read_public(directory: PathBuf, upstreams: Vec<String>) -> Result<Public, BoxError> {
@@ -285,10 +186,6 @@ pub async fn run_managed(
     http: pir_pipeline::service::Http<Router>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<(), BoxError> {
-    config.validate()?;
-    if config.distribute_prepared && !config.ship_runtimes {
-        return Err("prepared distribution requires ship_runtimes".into());
-    }
     std::fs::create_dir_all(&config.publication_root)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -300,11 +197,7 @@ pub async fn run_managed(
         .map_err(|e| format!("another publication controller owns this root: {e}"))?;
     // Reserve a revision before exposing any state. A restarted controller
     // cannot replay a former current pointer, even if it reuses its map.
-    let distribution_revision = if config.distribute_prepared {
-        advance_distribution_revision(&config.publication_root)?
-    } else {
-        0
-    };
+    let distribution_revision = advance_distribution_revision(&config.publication_root)?;
     let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     let existing = EventStore::open_existing(&config.data_dir)?;
     if existing.start_height() != 0 || existing.genesis_hash() != rpc.block_hash_display(0).await? {
@@ -339,7 +232,7 @@ pub async fn run_managed(
     let mut public = public;
     let mut restored = None;
     let mut failed = None;
-    if config.distribute_prepared && active_path.exists() {
+    if active_path.exists() {
         match restore_public(&config, &public) {
             Ok(Restore::Restored(found)) => {
                 public.distribution = Some(found.finalized);
@@ -385,15 +278,10 @@ pub async fn run_managed(
         canonicality: Some(rpc.clone()),
         invalidated_from: AtomicU64::new(u64::MAX),
         publication_gate: std::sync::Mutex::new(()),
-        last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({"phase":"starting",
             "integrity_validation":{"state":"pending"},
             "correctness_validation":{"state":"pending"}})),
         observed: RwLock::new(BTreeMap::new()),
-        http: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()?,
-        membership: membership_path(&config.fleet_config),
         prepared_set: std::sync::Mutex::new(None),
         shutdown: shutdown.clone(),
         checked_runtimes: Default::default(),
@@ -401,8 +289,6 @@ pub async fn run_managed(
         runtime_preparation_failures: AtomicU64::new(0),
         validation: Default::default(),
         integrity_failed: AtomicBool::new(failed.is_some()),
-        // Workers may still serve what the previous process activated.
-        fleet_withdrawal: AtomicBool::new(failed.is_some()),
         foreground: AtomicU64::new(0),
     }));
     if let Some(failure) = failed {
@@ -512,7 +398,7 @@ pub async fn run_managed(
     .await
 }
 
-// Independent from publication: backpressure or slow fleet preparation cannot
+// Independent from publication: backpressure or slow candidate preparation cannot
 // delay canonical observation, revocation or journal commits.
 struct HistoryInputTask {
     config: Config,
@@ -567,55 +453,30 @@ impl pir_pipeline::Task for HistoryInputTask {
 }
 
 async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result<(), BoxError> {
-    let retain = {
+    {
         let _gate = authority.0.publication_gate.lock().unwrap();
         let active = authority.0.active.read().unwrap();
         // A journal-only fork cancels candidates, but does not orphan this
-        // older endpoint. The fleet independently checks this exact identity
-        // under its routing lock before agreeing to preserve public service.
-        let retain = (from > active.publication.height
-            && !authority.0.withdrawn.load(Ordering::Acquire))
-        .then(|| {
-            serde_json::json!({
-                "map_sha256":active.publication.map_sha256,
-                "height":active.publication.height,
-                "hash":active.publication.hash,
-            })
-        });
-        if retain.is_none() {
+        // older endpoint, which keeps serving.
+        let retain =
+            from > active.publication.height && !authority.0.withdrawn.load(Ordering::Acquire);
+        if !retain {
             authority.0.withdrawn.store(true, Ordering::Release);
             authority.0.validation.cancel();
         }
         let epoch = authority.0.epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        if retain.is_some() {
+        if retain {
             authority.0.validation.retain(epoch);
         }
         authority.0.invalidated_from.store(from, Ordering::Release);
-        if config.distribute_prepared {
-            authority.0.distribution_revision.store(
-                advance_distribution_revision(&config.publication_root)?,
-                Ordering::Release,
-            );
-        }
+        authority.0.distribution_revision.store(
+            advance_distribution_revision(&config.publication_root)?,
+            Ordering::Release,
+        );
         publication::write_atomic(
             &config.publication_root.join("withdrawn.json"),
             &serde_json::to_vec(&serde_json::json!({"from_height":from,"acknowledged":false}))?,
         )?;
-        retain
-    };
-    if !config.shadow && !config.http_only {
-        let result = fleet(
-            config,
-            serde_json::json!({"operation":"invalidate","from_height":from,
-                "retain_publication":retain}),
-        )
-        .await;
-        // An unavailable/older fleet adapter cannot implicitly acknowledge
-        // retention. A retry must revalidate and revoke before publication.
-        if !matches!(&result, Ok(value) if value["retained_publication"] == true) {
-            authority.0.withdrawn.store(true, Ordering::Release);
-        }
-        result?;
     }
     publication::write_atomic(
         &config.publication_root.join("withdrawn.json"),
@@ -624,32 +485,12 @@ async fn invalidate(config: &Config, authority: &Authority, from: u64) -> Result
     Ok(())
 }
 
-/// Send a pending integrity withdrawal to the fleet. Shadow and HTTP-only
-/// controllers own no worker routing and only clear the request.
-async fn withdraw_fleet(config: &Config, authority: &Authority) -> Result<(), BoxError> {
-    if !authority.0.fleet_withdrawal.swap(false, Ordering::AcqRel)
-        || config.shadow
-        || config.http_only
-    {
-        return Ok(());
-    }
-    if let Err(error) = fleet(config, serde_json::json!({"operation":"withdraw"})).await {
-        authority.0.fleet_withdrawal.store(true, Ordering::Release);
-        return Err(error);
-    }
-    tracing::warn!("fleet routing withdrawn for a publication listing corrupt bytes");
-    if let Some(status) = authority.0.status.write().unwrap().as_object_mut() {
-        status.remove("fleet_withdrawal_error");
-    }
-    Ok(())
-}
-
 /// One pass of following a journal another process writes: observe the
 /// node's tip for freshness, re-read the journal's checkpoint, and treat a
 /// rollback its writer committed exactly as ingest treats one it performs.
 ///
 /// A rollback whose invalidation fails is retried on the next pass, from the
-/// lowest height seen, until the fleet acknowledges it.
+/// lowest height seen, until it is recorded.
 async fn follow_once(
     config: &Config,
     rpc: &NodeClient,
@@ -738,7 +579,6 @@ async fn ingest_once(
     };
     // A deep ancestor search can take many RPC calls. Once the advertised
     // endpoint is known to be orphaned, withdraw before doing that search.
-    // The fleet independently keeps canonical revisions when given height 0.
     let withdrew_early =
         public_changed && (!authority.0.withdrawn.load(Ordering::Acquire) || !acknowledged());
     if withdrew_early {
@@ -856,8 +696,7 @@ struct HistoryCandidate {
     started: std::time::Instant,
     published_unix: f64,
     prepared_unix: f64,
-    runtimes: Option<serde_json::Value>,
-    prepared: serde_json::Value,
+    runtimes: serde_json::Value,
 }
 
 type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
@@ -969,17 +808,6 @@ async fn acquire_history(
         // preparation of the same ones.
         return Ok(Input::Unchanged);
     }
-    if config.shadow
-        && authority
-            .0
-            .status
-            .read()
-            .unwrap()
-            .get("shadow_hash")
-            .is_some_and(|h| h == &hash)
-    {
-        return Ok(Input::Unchanged);
-    }
     Ok(Input::Work(HistoryWork {
         old,
         epoch,
@@ -1052,9 +880,7 @@ async fn prepare_candidate(
             range_profile: config.range_profile.clone(),
         };
         let stop = stop.clone();
-        // HTTP-only publications store each table segment once beside them;
-        // fleet publications keep plain files for the workers that read them.
-        let stored = config.http_only;
+        // Publications store each table segment once beside them.
         let output = directory.clone();
         let published = tokio::task::spawn_blocking(move || {
             publication::publish_until(
@@ -1064,10 +890,8 @@ async fn prepare_candidate(
                 &seal,
                 &stop,
             )?;
-            if stored {
-                let adopted = crate::history::store::adopt_segments(&output, &stop)?;
-                tracing::info!(?adopted, "stored candidate table segments");
-            }
+            let adopted = crate::history::store::adopt_segments(&output, &stop)?;
+            tracing::info!(?adopted, "stored candidate table segments");
             Ok::<_, BoxError>(())
         })
         .await?;
@@ -1085,17 +909,12 @@ async fn prepare_candidate(
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let published_unix = unix_now();
-    let runtimes = if config.ship_runtimes {
-        match prepare_runtimes(config, authority, &directory, epoch).await {
-            Err(_) if authority.0.shutdown.requested() => return stopped(),
-            result => Some(result?),
-        }
-    } else {
-        None
+    let runtimes = match prepare_runtimes(config, authority, &directory, epoch).await {
+        Err(_) if authority.0.shutdown.requested() => return stopped(),
+        result => result?,
     };
-    if config.distribute_prepared {
+    {
         // Reuse the exact verified set just used to prepare the candidate.
-        // This does not turn optional fleet fallback into a distribution promise.
         let set = authority
             .0
             .prepared_set
@@ -1105,7 +924,6 @@ async fn prepare_candidate(
             .ok_or("prepared distribution has no verified candidate")?;
         let root = directory.clone();
         let cutoff = config.recent_from;
-        let full = config.http_only;
         let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
         let stop = stop.clone();
@@ -1114,7 +932,7 @@ async fn prepare_candidate(
                 &root,
                 &set,
                 cutoff,
-                full,
+                true,
                 &mut checked,
                 &stop,
             );
@@ -1139,32 +957,6 @@ async fn prepare_candidate(
             result => result?,
         });
     }
-    let mut request = serde_json::json!({"operation":"prepare","directory":directory,"map_sha256":candidate.publication.map_sha256,"recent_from":config.recent_from,"source_sha":config.source_sha});
-    if runtimes.is_some() {
-        // The runtimes are plain files of the candidate directory itself.
-        request["runtimes"] = serde_json::json!(directory);
-    }
-    // Ingestion may invalidate this candidate while the fleet is still waiting
-    // for a preparation quorum. Stop that wait promptly: finishing an orphan's
-    // preparation only delays the replacement. Dropping fleet() kills its local
-    // child; independently owned worker preparation remains fenced by its epoch.
-    // Activation is deliberately outside this cancellation path because it can
-    // change routing and must complete the existing post-activation checks.
-    let invalidated = async {
-        while authority.0.epoch.load(Ordering::Acquire) == epoch {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    };
-    let prepared = if config.http_only {
-        serde_json::json!({"workers": []})
-    } else {
-        tokio::select! {
-            biased;
-            _ = authority.0.shutdown.cancelled() => return stopped(),
-            _ = invalidated => return Err("candidate invalidated while preparing".into()),
-            result = fleet(config, request) => result?,
-        }
-    };
     if authority.0.shutdown.requested() {
         return stopped();
     }
@@ -1178,13 +970,6 @@ async fn prepare_candidate(
         return stopped();
     }
     let prepared_unix = unix_now();
-    if config.shadow {
-        authority.0.status.write().unwrap()["phase"] = "shadow_verified".into();
-        authority.0.status.write().unwrap()["shadow_hash"] = hash.into();
-        authority.0.status.write().unwrap()["build_seconds"] =
-            started.elapsed().as_secs_f64().into();
-        return Ok(Input::Unchanged);
-    }
     Ok(Input::Work(HistoryCandidate {
         candidate,
         epoch,
@@ -1194,7 +979,6 @@ async fn prepare_candidate(
         published_unix,
         prepared_unix,
         runtimes,
-        prepared,
     }))
 }
 
@@ -1213,10 +997,9 @@ async fn activate_history(
         published_unix,
         prepared_unix,
         runtimes,
-        prepared,
     } = ready;
     // The candidate is only evidence. Recheck at the owner boundary before
-    // writing activation intent or changing any fleet authority.
+    // writing activation intent.
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
         // Ingest can invalidate while the canonicality RPC is awaiting its reply.
@@ -1231,7 +1014,11 @@ async fn activate_history(
         return Ok(());
     }
     let directory = &candidate.publication.directory;
-    if let Some(distribution) = &candidate.distribution {
+    {
+        let distribution = candidate
+            .distribution
+            .as_ref()
+            .ok_or("candidate has no prepared distribution")?;
         let failures = integrity_failures(&config.publication_root)?;
         if distribution.inventory().artifacts.iter().any(|a| {
             failures
@@ -1242,8 +1029,7 @@ async fn activate_history(
         }
         // Completion evidence for a cheap restart, written only now that the
         // required preparation passed and before the active pointer moves.
-        let record =
-            distribution.restore_record(config.http_only, config.recent_from, height, &hash)?;
+        let record = distribution.restore_record(true, config.recent_from, height, &hash)?;
         publication::write_durable(
             &directory.join(transparent_shared::publication::RESTORE_FILE),
             &serde_json::to_vec(&record)?,
@@ -1253,23 +1039,14 @@ async fn activate_history(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
     )?;
-    let activated = if config.http_only {
-        serde_json::json!({"upstreams": [], "recent_replicas": []})
-    } else {
-        fleet(config,serde_json::json!({"operation":"activate","directory":directory,"map_sha256":candidate.publication.map_sha256,"prepared":prepared})).await?
-    };
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
+        // The ingest loop invalidates the exact changed suffix.
         authority.0.withdrawn.store(true, Ordering::Release);
-        // The ingest loop invalidates the exact changed suffix; until then the
-        // fleet hook withdraws routing entirely.
-        if !config.http_only {
-            fleet(config, serde_json::json!({"operation":"withdraw"})).await?;
-        }
-        return Err("candidate invalidated during fleet activation".into());
+        return Err("candidate invalidated during activation".into());
     }
-    candidate.publication.upstreams = serde_json::from_value(activated["upstreams"].clone())?;
+    candidate.publication.upstreams = Vec::new();
     let publication = candidate.publication.clone();
     let freshness = authority
         .0
@@ -1288,12 +1065,10 @@ async fn activate_history(
             &config.publication_root.join("active.json"),
             &serde_json::to_vec(&candidate.publication)?,
         )?;
-        if config.distribute_prepared {
-            authority.0.distribution_revision.store(
-                advance_distribution_revision(&config.publication_root)?,
-                Ordering::Release,
-            );
-        }
+        authority.0.distribution_revision.store(
+            advance_distribution_revision(&config.publication_root)?,
+            Ordering::Release,
+        );
         *authority.0.active.write().unwrap() = Arc::new(candidate);
         authority
             .0
@@ -1301,9 +1076,6 @@ async fn activate_history(
             .store(u64::MAX, Ordering::Release);
         authority.0.withdrawn.store(false, Ordering::Release);
         authority.0.integrity_failed.store(false, Ordering::Release);
-        // The fleet activated these verified bytes; a withdrawal still
-        // pending for the replaced publication is obsolete.
-        authority.0.fleet_withdrawal.store(false, Ordering::Release);
         // Preparation verified these bytes; a restored predecessor's
         // validation is obsolete and releases its directory.
         authority.0.validation.cancel();
@@ -1350,7 +1122,6 @@ async fn activate_history(
             Ordering::Relaxed,
         );
         status["freshness_seconds"] = freshness.into();
-        status["ready_replicas"] = activated["recent_replicas"].clone();
         status.as_object_mut().unwrap().remove("publication_error");
         status.as_object_mut().unwrap().remove("restored");
         // Preparation ran both phases over these exact bytes before activation.
@@ -1361,9 +1132,8 @@ async fn activate_history(
                 "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
         }
         // What this cycle did, for operators and measurements: when its
-        // candidate was published, accepted by a preparation quorum and
-        // activated, what its runtimes cost here, and what each worker
-        // that prepared it reported.
+        // candidate was published, prepared and activated, and what its
+        // runtimes cost here.
         let cycle = serde_json::json!({
             "height": height,
             "hash": hash,
@@ -1374,7 +1144,6 @@ async fn activate_history(
             "activated_unix": unix_now(),
             "cycle_seconds": started.elapsed().as_secs_f64(),
             "runtime_preparation": runtimes,
-            "workers": prepared["workers"],
         });
         tracing::info!(%cycle, "publication cycle");
         status["last_cycle"] = cycle;
@@ -1475,7 +1244,7 @@ fn restore_public(config: &Config, public: &Public) -> Result<Restore, BoxError>
             network: map.network.clone(),
             genesis_hash: map.genesis_hash.clone(),
             map_sha256: public.publication.map_sha256.clone(),
-            full: config.http_only,
+            full: true,
             recent_from_height: config.recent_from,
             anchor_height: public.publication.height,
             anchor_hash: public.publication.hash.clone(),
@@ -1493,7 +1262,7 @@ fn restore_public(config: &Config, public: &Public) -> Result<Restore, BoxError>
 
 /// Make a restored publication public after fresh authority checks: its exact
 /// anchor is still the journal's and the node's, no invalidation intervened,
-/// and the fleet (unless HTTP-only) prepared and activated it.
+/// and no invalidation intervened.
 async fn serve_restored(
     config: &Config,
     rpc: &NodeClient,
@@ -1517,35 +1286,6 @@ async fn serve_restored(
     if !anchored().await || rpc.block_hash_display(publication.height).await? != publication.hash {
         return Err("restored anchor is not canonical".into());
     }
-    let mut upstreams = publication.upstreams.clone();
-    if !config.http_only {
-        let request = serde_json::json!({"operation":"prepare","directory":publication.directory,
-            "map_sha256":publication.map_sha256,"recent_from":config.recent_from,
-            "source_sha":config.source_sha,"runtimes":publication.directory});
-        let prepared = fleet(config, request).await?;
-        if authority.0.epoch.load(Ordering::Acquire) != epoch {
-            return Err("restored publication invalidated while preparing".into());
-        }
-        publication::write_atomic(
-            &config.publication_root.join("activation.json"),
-            &serde_json::to_vec(&publication)?,
-        )?;
-        let activated = fleet(
-            config,
-            serde_json::json!({"operation":"activate",
-            "directory":publication.directory,"map_sha256":publication.map_sha256,
-            "prepared":prepared}),
-        )
-        .await?;
-        upstreams = serde_json::from_value(activated["upstreams"].clone())?;
-    }
-    if !anchored().await || rpc.block_hash_display(publication.height).await? != publication.hash {
-        authority.0.withdrawn.store(true, Ordering::Release);
-        if !config.http_only {
-            fleet(config, serde_json::json!({"operation":"withdraw"})).await?;
-        }
-        return Err("restored anchor is not canonical".into());
-    }
     {
         let _gate = authority.0.publication_gate.lock().unwrap();
         if authority.0.epoch.load(Ordering::Acquire) != epoch
@@ -1553,15 +1293,6 @@ async fn serve_restored(
             || authority.0.integrity_failed.load(Ordering::Acquire)
         {
             return Err("restored publication invalidated before serving".into());
-        }
-        if upstreams != publication.upstreams {
-            let mut next = read_public(publication.directory.clone(), upstreams)?;
-            next.distribution = Some(distribution.clone());
-            publication::write_atomic(
-                &config.publication_root.join("active.json"),
-                &serde_json::to_vec(&next.publication)?,
-            )?;
-            *authority.0.active.write().unwrap() = Arc::new(next);
         }
         authority
             .0
@@ -1714,7 +1445,6 @@ fn validation_event(
                 if lists_failed(std::slice::from_ref(&failure), distribution.inventory()) {
                     authority.0.integrity_failed.store(true, Ordering::Release);
                     authority.0.withdrawn.store(true, Ordering::Release);
-                    authority.0.fleet_withdrawal.store(true, Ordering::Release);
                     let mut status = authority.0.status.write().unwrap();
                     status["phase"] = "integrity_failed".into();
                     let mut value = validation_status(identity, "failed");
@@ -1808,7 +1538,7 @@ async fn prepare_runtimes(
     let directory = directory.to_path_buf();
     // Only the publisher's own candidates use its store; an operator-supplied
     // initial publication outside the publication root is never rewritten.
-    let stored = config.http_only && directory.parent() == Some(config.publication_root.as_path());
+    let stored = directory.parent() == Some(config.publication_root.as_path());
     let (previous, prepared) = tokio::task::spawn_blocking(move || {
         // Every revision the publisher wrote; it retains them all, and so
         // may a worker.
@@ -1867,16 +1597,6 @@ fn unavailable() -> Response {
         [("retry-after", "1"), ("cache-control", "no-store")],
     )
         .into_response()
-}
-
-/// The last assembled `/v2/shards/init` answer, if it describes `map`.
-fn init_for_map(
-    last: &Option<(String, serde_json::Value)>,
-    map: &str,
-) -> Option<serde_json::Value> {
-    last.as_ref()
-        .filter(|(last_map, _)| last_map == map)
-        .map(|(_, value)| value.clone())
 }
 
 /// Use the existing owner canonicality input, not prepared-file parsing. A
@@ -2190,19 +1910,12 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
         return distribution_request(authority, request).await;
     }
     let epoch = authority.0.epoch.load(Ordering::Acquire);
-    let routed = routed_recent_replicas(authority.0.membership.as_deref());
     if path == "/v1/status" {
-        let mut status = authority.0.status.read().unwrap().clone();
-        if let Some(routed) = routed {
-            status["ready_replicas"] = routed.into();
-        }
+        let status = authority.0.status.read().unwrap().clone();
         return axum::Json(status).into_response();
     }
     if path == "/metrics" {
-        let mut status = authority.0.status.read().unwrap().clone();
-        if let Some(routed) = routed {
-            status["ready_replicas"] = routed.into();
-        }
+        let status = authority.0.status.read().unwrap().clone();
         let public = authority.0.active.read().unwrap().publication.height;
         let node = status["node_height"].as_u64().unwrap_or(public);
         let oldest = authority
@@ -2323,62 +2036,9 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
     let body = if path == "/v2/shards" || path == "/v2/filters/shards" {
         Some(("application/json", active.filters.map_json().to_vec()))
     } else if path == "/v2/shards/init" {
-        let expected: std::collections::BTreeSet<_> = active
-            .filters
-            .map()
-            .shards
-            .iter()
-            .map(|e| e.geometry.clone())
-            .collect();
-        let mut geometries = std::collections::BTreeMap::new();
-        let mut init = None;
-        for upstream in &active.publication.upstreams {
-            if let Ok(response) = authority
-                .0
-                .http
-                .get(format!("http://{upstream}/v2/shards/init"))
-                .send()
-                .await
-            {
-                if let Ok(value) = response.json::<serde_json::Value>().await {
-                    if value["map_sha256"] != active.publication.map_sha256 {
-                        continue;
-                    }
-                    if let Some(entries) = value["geometries"].as_array() {
-                        for geometry in entries {
-                            if let Some(name) = geometry["name"].as_str() {
-                                if geometries.get(name).is_some_and(|old| old != geometry) {
-                                    return unavailable();
-                                }
-                                geometries.insert(name.to_string(), geometry.clone());
-                            }
-                        }
-                    }
-                    init = Some(value);
-                    if expected.iter().all(|name| geometries.contains_key(name)) {
-                        break;
-                    }
-                }
-            }
-        }
-        if authority.0.withdrawn.load(Ordering::Acquire)
-            || authority.0.epoch.load(Ordering::Acquire) != epoch
-        {
-            return unavailable();
-        }
-        let map = active.publication.map_sha256.as_str();
-        let value = match init {
-            Some(mut value) if expected.iter().all(|name| geometries.contains_key(name)) => {
-                value["geometries"] = serde_json::Value::Array(geometries.into_values().collect());
-                *authority.0.last_init.lock().unwrap() = Some((map.to_owned(), value.clone()));
-                value
-            }
-            _ => match init_for_map(&authority.0.last_init.lock().unwrap(), map) {
-                Some(value) => value,
-                None => return unavailable(),
-            },
-        };
-        return ([("cache-control", "no-cache")], axum::Json(value)).into_response();
+        // Query servers answer setup themselves; this publisher has no
+        // workers to assemble it from.
+        return unavailable();
     } else {
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
         match parts.as_slice() {
@@ -2483,23 +2143,6 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
 mod tests {
 
     #[test]
-    fn init_is_served_from_the_last_answer_only_for_the_same_map() {
-        let last = Some((
-            "old-map".to_owned(),
-            serde_json::json!({"map_sha256":"old-map"}),
-        ));
-        // Mid-activation the public pointer still names the old map, so the
-        // answer built for it stands in for the workers that moved on.
-        assert_eq!(
-            super::init_for_map(&last, "old-map"),
-            Some(serde_json::json!({"map_sha256":"old-map"}))
-        );
-        // Once the pointer moves, an answer for another map is never served.
-        assert_eq!(super::init_for_map(&last, "new-map"), None);
-        assert_eq!(super::init_for_map(&None, "old-map"), None);
-    }
-
-    #[test]
     fn unavailable_asks_wallets_to_retry() {
         let response = super::unavailable();
         assert_eq!(
@@ -2507,45 +2150,6 @@ mod tests {
             axum::http::StatusCode::SERVICE_UNAVAILABLE
         );
         assert_eq!(response.headers()["retry-after"], "1");
-    }
-
-    #[test]
-    fn ready_replicas_follow_a_fresh_membership_record_only() {
-        let root = tempfile::tempdir().unwrap();
-        let state = root.path().join("state");
-        std::fs::create_dir(&state).unwrap();
-        let fleet = root.path().join("fleet.json");
-        std::fs::write(
-            &fleet,
-            serde_json::to_vec(&serde_json::json!({"state_dir": state})).unwrap(),
-        )
-        .unwrap();
-        let membership = membership_path(&fleet).unwrap();
-        assert_eq!(membership, state.join("membership.json"));
-        assert_eq!(routed_recent_replicas(Some(&membership)), None);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
-        let write = |updated: f64| {
-            std::fs::write(
-                &membership,
-                serde_json::to_vec(
-                    &serde_json::json!({"updated_unix": updated, "routed_recent": 4}),
-                )
-                .unwrap(),
-            )
-            .unwrap()
-        };
-        write(now);
-        assert_eq!(routed_recent_replicas(Some(&membership)), Some(4));
-        write(now - 60.0);
-        assert_eq!(
-            routed_recent_replicas(Some(&membership)),
-            None,
-            "a stale record falls back to the activation count"
-        );
-        assert_eq!(membership_path(&root.path().join("absent.json")), None);
     }
 
     use super::*;
@@ -2734,47 +2338,28 @@ mod tests {
             &two_script_seal,
         )
         .unwrap();
-        let hook = root.path().join("fleet.py");
-        std::fs::write(&hook, r#"#!/usr/bin/env python3
-import json,sys,time
-from pathlib import Path
-r=json.load(sys.stdin)
-with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
-if r['operation']=='prepare' and Path(__file__).with_suffix('.fail').exists():
-    print(json.dumps({'ok':False,'error':'fixture preparation failed'})); sys.exit(0)
-pause=Path(__file__).with_suffix('.pause')
-if r['operation']=='prepare' and pause.exists():
-    pause.with_suffix('.entered').touch()
-    deadline=time.monotonic()+10
-    while pause.exists():
-        if time.monotonic()>deadline: raise RuntimeError('fixture preparation pause expired')
-        time.sleep(.01)
-print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
-"#).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
         let publications = root.path().join("publications");
         std::fs::create_dir(&publications).unwrap();
         let config = Config {
             data_dir: journal_dir,
             publication_root: publications,
             initial_publication: initial.clone(),
-            recent_from: 2,
+            // Without an archive tier every shard is recent.
+            recent_from: if cfg!(feature = "qualification-tests") {
+                2
+            } else {
+                0
+            },
             recent_geometry: "decoupled-2k-8k".into(),
             archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
-            fleet_command: hook,
-            fleet_config: root.path().join("unused"),
             listen: address,
             source_sha: "fixture".into(),
-            shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
             follow_journal: false,
             snapshot_dir: None,
-            ship_runtimes: false,
-            distribute_prepared: false,
-            http_only: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -2791,11 +2376,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             canonicality: None,
             invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
-            last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
             observed: RwLock::new(BTreeMap::new()),
-            http: reqwest::Client::new(),
-            membership: None,
             prepared_set: std::sync::Mutex::new(None),
             shutdown: Default::default(),
             checked_runtimes: Default::default(),
@@ -2803,7 +2385,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
-            fleet_withdrawal: AtomicBool::new(false),
             foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
@@ -2820,11 +2401,20 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         pir_pipeline::Task::run(&mut input).await.unwrap();
         let mut cache = input.cache;
         assert_eq!(store.lock().await.covered_through(), Some(4));
-        let fail = config.fleet_command.with_extension("fail");
-        std::fs::write(&fail, []).unwrap();
+        // A candidate that cannot be written fails preparation.
+        std::fs::set_permissions(
+            &config.publication_root,
+            std::fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
         assert!(publish_follow(&config, &client, &store, &authority)
             .await
             .is_err());
+        std::fs::set_permissions(
+            &config.publication_root,
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         assert!(!config.publication_root.join("activation.json").exists());
         // Preparation failure cannot undo the independent source commit; a
@@ -2835,7 +2425,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 .covered_through(),
             Some(4)
         );
-        std::fs::remove_file(fail).unwrap();
         // A candidate observed by shared progress has no activation authority.
         let Input::Work(work) = acquire_history(&config, &client, &store, &authority)
             .await
@@ -2856,14 +2445,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .to_string()
             .contains("invalidated before activation"));
         assert!(!config.publication_root.join("activation.json").exists());
-        let requests =
-            std::fs::read_to_string(config.fleet_command.with_extension("requests")).unwrap();
-        assert!(requests
-            .lines()
-            .all(
-                |line| serde_json::from_str::<serde_json::Value>(line).unwrap()["operation"]
-                    != "activate"
-            ));
+        assert!(!config.publication_root.join("active.json").exists());
         // Replacing journal-only blocks must cancel preparation without
         // withdrawing the still-canonical publication through height two.
         {
@@ -2880,55 +2462,39 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             "a journal-only fork must preserve canonical public coverage"
         );
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
-        // Hold the fleet preparation reply while ingestion discovers another
-        // journal-only fork. Old public coverage stays available; the orphaned
-        // candidate must fail its epoch check before any activation request.
-        let pause = config.fleet_command.with_extension("pause");
-        let entered = config.fleet_command.with_extension("entered");
-        std::fs::write(&pause, []).unwrap();
+        // A candidate whose work predates another journal-only fork stops
+        // preparing on its epoch check and never activates; old public
+        // coverage stays available.
+        let Input::Work(work) = acquire_history(&config, &client, &store, &authority)
+            .await
+            .unwrap()
+        else {
+            panic!("new durable work expected");
+        };
         {
-            let publication = publish_follow(&config, &client, &store, &authority);
-            tokio::pin!(publication);
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                loop {
-                    tokio::select! {
-                        result = &mut publication => panic!("preparation did not pause: {result:?}"),
-                        _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                            if entered.exists() { break; }
-                        }
-                    }
-                }
-            }).await.unwrap();
-            {
-                let mut blocks = chain.write().unwrap();
-                blocks.truncate(3);
-                extend(&mut blocks, 2, 18);
-            }
-            ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
-                .await
-                .unwrap();
-            let response = public_request(
-                State(authority.clone()),
-                Request::builder()
-                    .uri("/v2/shards")
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await;
-            assert_eq!(response.status(), StatusCode::OK);
-            // The orphaned preparation never replies. Cancellation must finish
-            // before releasing the hook, while canonical old coverage survives.
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_secs(2), &mut publication)
-                    .await
-                    .expect("invalidated preparation must not wait for the fleet reply")
-                    .unwrap_err()
-                    .to_string()
-                    .contains("candidate invalidated while preparing")
-            );
-            std::fs::remove_file(&pause).unwrap();
-            assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
+            let mut blocks = chain.write().unwrap();
+            blocks.truncate(3);
+            extend(&mut blocks, 2, 18);
         }
+        ingest_once(&config, &client, &store, &authority, &mut cache, &notify)
+            .await
+            .unwrap();
+        let response = public_request(
+            State(authority.clone()),
+            Request::builder()
+                .uri("/v2/shards")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(prepare_follow(&config, &client, &authority, work)
+            .await
+            .err()
+            .expect("an invalidated candidate must not prepare")
+            .to_string()
+            .contains("candidate invalidated while preparing"));
+        assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         publish_follow(&config, &client, &store, &authority)
             .await
             .unwrap();
@@ -3004,10 +2570,9 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         server.abort();
     }
 
-    /// With `ship_runtimes`, the real publication path prepares every
-    /// runtime of each candidate beside its revisions and offers them in the
-    /// fleet's prepare request; the next candidate links the unchanged ones
-    /// from the active publication and builds only what changed.
+    /// The real publication path prepares every runtime of each candidate
+    /// beside its revisions and distributes them; the next candidate links the
+    /// unchanged ones from the active publication and builds only what changed.
     #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
     async fn shipped_runtimes_are_prepared_linked_and_offered_with_the_candidate() {
@@ -3076,23 +2641,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
-        // The fleet records every request it is sent.
-        let hook = root.path().join("fleet.py");
-        std::fs::write(&hook, r#"#!/usr/bin/env python3
-import json,sys
-from pathlib import Path
-r=json.load(sys.stdin)
-with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
-print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':bool(r.get('retain_publication'))}))
-"#).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let requests = || -> Vec<serde_json::Value> {
-            std::fs::read_to_string(hook.with_extension("requests"))
-                .unwrap_or_default()
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect()
-        };
         let publications = root.path().join("publications");
         std::fs::create_dir(&publications).unwrap();
         let config = Config {
@@ -3104,18 +2652,12 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
-            fleet_command: hook.clone(),
-            fleet_config: root.path().join("unused"),
             listen: address,
             source_sha: "fixture".into(),
-            shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
             follow_journal: false,
             snapshot_dir: None,
-            ship_runtimes: true,
-            distribute_prepared: false,
-            http_only: false,
         };
         let authority = Authority(Arc::new(Inner {
             cycle_duration: Default::default(),
@@ -3132,11 +2674,8 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             canonicality: None,
             invalidated_from: AtomicU64::new(u64::MAX),
             publication_gate: std::sync::Mutex::new(()),
-            last_init: std::sync::Mutex::new(None),
             status: RwLock::new(serde_json::json!({})),
             observed: RwLock::new(BTreeMap::new()),
-            http: reqwest::Client::new(),
-            membership: None,
             prepared_set: std::sync::Mutex::new(None),
             shutdown: Default::default(),
             checked_runtimes: Default::default(),
@@ -3144,7 +2683,6 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             runtime_preparation_failures: AtomicU64::new(0),
             validation: Default::default(),
             integrity_failed: AtomicBool::new(false),
-            fleet_withdrawal: AtomicBool::new(false),
             foreground: AtomicU64::new(0),
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
@@ -3176,12 +2714,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
                 .unwrap();
             let first = authority.0.active.read().unwrap().publication.clone();
             assert_eq!(first.height, 4);
-            let offered = requests();
-            let prepare = offered
-                .iter()
-                .find(|r| r["operation"] == "prepare")
-                .expect("a prepare request");
-            assert_eq!(prepare["runtimes"], serde_json::json!(first.directory));
+            assert!(authority.0.active.read().unwrap().distribution.is_some());
             let set =
                 transparent_shared::history::shardset::ShardSet::open(&first.directory, 3).unwrap();
             let files = runtime_files(&first.directory);
@@ -3251,14 +2784,12 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         for name in runtime_files(&candidate).keys() {
             std::fs::remove_file(candidate.join(name)).unwrap();
         }
-        let sent = requests().len();
         let stale = authority.0.epoch.load(Ordering::Acquire) + 1;
         let error = prepare_runtimes(&config, &authority, &candidate, stale)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("invalidated"), "{error}");
         assert!(runtime_files(&candidate).is_empty());
-        assert_eq!(requests().len(), sent);
         assert!(authority.0.prepared_set.lock().unwrap().is_some());
 
         // A candidate whose table does not verify is not published.
@@ -3296,8 +2827,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             .unwrap_err();
         assert!(error.to_string().contains("did not verify"), "{error}");
 
-        // A runtime that cannot be written is reported, not fatal: the
-        // candidate is still offered and workers build it.
+        // A runtime that cannot be written is reported, not fatal.
         let unwritable = config.publication_root.join("candidate-unwritable");
         // Permission failure is independent of archive size. Publish a real
         // recent-only candidate so this negative case does not rebuild the
@@ -3341,9 +2871,7 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         server.abort();
     }
 
-    /// A five-block node whose journal and publication end at height two, and
-    /// a fleet hook that logs every request and, while `fleet.pause` exists,
-    /// holds an activation after touching `fleet.entered`.
+    /// A five-block node whose journal and publication end at height two.
     struct Follow {
         _root: tempfile::TempDir,
         server: tokio::task::JoinHandle<()>,
@@ -3352,7 +2880,6 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
         store: Arc<tokio::sync::Mutex<EventStore>>,
     }
     async fn follow_fixture() -> Follow {
-        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 5, 1);
@@ -3408,45 +2935,23 @@ print(json.dumps({'ok':True,'upstreams':[],'workers':{},'retained_publication':b
             &follow_seal,
         )
         .unwrap();
-        let hook = root.path().join("fleet.py");
-        std::fs::write(&hook, r#"#!/usr/bin/env python3
-import json,sys,time
-from pathlib import Path
-r=json.load(sys.stdin)
-with Path(__file__).with_suffix('.requests').open('a') as log: log.write(json.dumps(r)+'\n')
-pause=Path(__file__).with_suffix('.pause')
-if r['operation']=='activate' and pause.exists():
-    pause.with_suffix('.entered').touch()
-    deadline=time.monotonic()+60
-    while pause.exists():
-        if time.monotonic()>deadline: raise RuntimeError('fixture activation pause expired')
-        time.sleep(.01)
-print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('retain_publication'))}))
-"#).unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
         let publications = root.path().join("publications");
         std::fs::create_dir(&publications).unwrap();
         let config = Config {
             data_dir: journal_dir,
             publication_root: publications,
             initial_publication: initial,
-            recent_from: 2,
+            recent_from: if qualification { 2 } else { 0 },
             recent_geometry: "decoupled-2k-8k".into(),
             archive_geometry: "decoupled-32k-32k".into(),
             rpc_url: format!("http://{address}"),
             rpc_cookie: cookie,
-            fleet_command: hook,
-            fleet_config: root.path().join("unused"),
             listen: address,
             source_sha: "fixture".into(),
-            shadow: false,
             directory_choice: publication::DirectoryChoice::Off,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
             follow_journal: false,
             snapshot_dir: None,
-            ship_runtimes: false,
-            distribute_prepared: false,
-            http_only: false,
         };
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         Follow {
@@ -3498,11 +3003,8 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 canonicality: None,
                 invalidated_from: AtomicU64::new(u64::MAX),
                 publication_gate: std::sync::Mutex::new(()),
-                last_init: std::sync::Mutex::new(None),
                 status: RwLock::new(serde_json::json!({})),
                 observed: RwLock::new(BTreeMap::new()),
-                http: reqwest::Client::new(),
-                membership: None,
                 prepared_set: std::sync::Mutex::new(None),
                 shutdown,
                 checked_runtimes: Default::default(),
@@ -3510,7 +3012,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
                 runtime_preparation_failures: AtomicU64::new(0),
                 validation: Default::default(),
                 integrity_failed: AtomicBool::new(false),
-                fleet_withdrawal: AtomicBool::new(false),
                 foreground: AtomicU64::new(0),
             }))
         }
@@ -3529,22 +3030,11 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .unwrap();
             assert_eq!(self.store.lock().await.covered_through(), Some(4));
         }
-        /// The operations of every fleet request so far.
-        fn operations(&self) -> Vec<String> {
-            std::fs::read_to_string(self.config.fleet_command.with_extension("requests"))
-                .unwrap_or_default()
-                .lines()
-                .map(|line| {
-                    let request: serde_json::Value = serde_json::from_str(line).unwrap();
-                    request["operation"].as_str().unwrap().to_string()
-                })
-                .collect()
-        }
     }
 
     /// A stop requested while the candidate is being published ends its
-    /// preparation as a normal outcome: the build writes no map, the fleet is
-    /// not asked, nothing is activated and no failure is counted. A
+    /// preparation as a normal outcome: the build writes no map, nothing is
+    /// activated and no failure is counted. A
     /// publisher started afterwards prepares and activates the same height.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_stop_during_the_candidate_build_is_unchanged_and_a_restart_resumes() {
@@ -3584,7 +3074,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
         );
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
-        assert!(follow.operations().is_empty(), "the fleet was not asked");
         for name in ["active.json", "activation.json"] {
             assert!(!config.publication_root.join(name).exists(), "{name}");
         }
@@ -3604,68 +3093,6 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             .await
             .unwrap();
         assert_eq!(restarted.0.active.read().unwrap().publication.height, 4);
-        assert_eq!(follow.operations(), ["prepare", "activate"]);
-        follow.server.abort();
-    }
-
-    /// A stop requested once fleet activation has begun does not abandon the
-    /// cycle: it completes the post-activation canonicality check and the
-    /// pointer commit, counts no failure, sends no further fleet request,
-    /// and a publisher started afterwards loads the same active record.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_stop_during_fleet_activation_still_commits_the_publication() {
-        let follow = follow_fixture().await;
-        let config = &follow.config;
-        let shutdown = pir_pipeline::service::Shutdown::default();
-        let authority = follow.authority(shutdown.clone());
-        follow.ingest(&authority).await;
-        let pause = config.fleet_command.with_extension("pause");
-        let entered = config.fleet_command.with_extension("entered");
-        std::fs::write(&pause, []).unwrap();
-        let publication = publish_follow(config, &follow.client, &follow.store, &authority);
-        tokio::pin!(publication);
-        loop {
-            tokio::select! {
-                result = &mut publication => panic!("activation did not pause: {result:?}"),
-                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
-                    if entered.exists() { break; }
-                }
-            }
-        }
-        shutdown.request();
-        std::fs::remove_file(&pause).unwrap();
-        publication.await.unwrap();
-
-        let active = authority.0.active.read().unwrap().publication.clone();
-        assert_eq!(active.height, 4);
-        let saved: ActivePublication = serde_json::from_slice(
-            &std::fs::read(config.publication_root.join("active.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            (&saved.directory, &saved.map_sha256, saved.height),
-            (&active.directory, &active.map_sha256, active.height)
-        );
-        assert!(!config.publication_root.join("activation.json").exists());
-        assert!(!authority.0.withdrawn.load(Ordering::Acquire));
-        assert_eq!(authority.0.publication_failures.load(Ordering::Relaxed), 0);
-        {
-            let status = authority.0.status.read().unwrap();
-            assert_eq!(status["phase"], "serving");
-            assert_eq!(status["public_height"], 4);
-            assert!(status.get("publication_error").is_none());
-        }
-        // Nothing is left to retry.
-        publish_follow(config, &follow.client, &follow.store, &authority)
-            .await
-            .unwrap();
-        assert_eq!(follow.operations(), ["prepare", "activate"]);
-
-        let restarted = follow.authority(Default::default());
-        assert_eq!(
-            restarted.0.active.read().unwrap().publication.map_sha256,
-            active.map_sha256
-        );
         follow.server.abort();
     }
 }

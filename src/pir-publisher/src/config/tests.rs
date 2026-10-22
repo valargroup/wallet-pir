@@ -127,19 +127,62 @@ fn uncompiled_sections_are_rejected_even_when_disabled() {
 }
 #[cfg(feature = "transparent-detail")]
 #[test]
-fn replay_does_not_require_live_credentials_and_cannot_offer_http_authority() {
-    let mut settings = serde_json::json!({
-        "root":"/srv/display", "journal":"/srv/journal", "workers":"/etc/workers.json",
-        "mode":"replay", "poll_ms":500, "status_listen":"127.0.0.1:8099"
-    });
+fn detail_publication_is_live_https_only_and_rejects_retired_modes() {
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let settings = example["transaction_details"]["settings"].clone();
     let config: transparent_publisher::tx_detail::service::Config =
         serde_json::from_value(settings.clone()).unwrap();
     config.validate().unwrap();
-    settings["http_only"] = serde_json::json!(true);
-    settings["ship_runtimes"] = serde_json::json!(true);
+    for (key, value) in [
+        ("http_only", serde_json::json!(true)),
+        ("ship_runtimes", serde_json::json!(true)),
+        ("workers", serde_json::json!("/etc/workers.json")),
+        ("mode", serde_json::json!("replay")),
+        ("exit_when_idle", serde_json::json!(true)),
+    ] {
+        let mut retired = settings.clone();
+        retired[key] = value;
+        assert!(
+            serde_json::from_value::<transparent_publisher::tx_detail::service::Config>(retired)
+                .is_err(),
+            "{key}"
+        );
+    }
+    let mut uncredentialed = settings;
+    uncredentialed["rpc_cookie"] = serde_json::json!("");
     let config: transparent_publisher::tx_detail::service::Config =
-        serde_json::from_value(settings).unwrap();
+        serde_json::from_value(uncredentialed).unwrap();
     assert!(config.validate().is_err());
+}
+#[cfg(feature = "transparent-history")]
+#[test]
+fn history_publication_rejects_retired_fleet_and_mode_keys() {
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let settings = example["transparent_history"]["settings"].clone();
+    serde_json::from_value::<transparent_publisher::service::HistoryConfig>(settings.clone())
+        .unwrap();
+    for (key, value) in [
+        ("http_only", serde_json::json!(true)),
+        ("distribute_prepared", serde_json::json!(true)),
+        ("ship_runtimes", serde_json::json!(true)),
+        ("shadow", serde_json::json!(false)),
+        ("fleet_command", serde_json::json!("/opt/fleet.py")),
+        ("fleet_config", serde_json::json!("/etc/fleet.json")),
+    ] {
+        let mut retired = settings.clone();
+        retired[key] = value;
+        assert!(
+            serde_json::from_value::<transparent_publisher::service::HistoryConfig>(retired)
+                .is_err(),
+            "{key}"
+        );
+    }
 }
 #[cfg(feature = "transparent-history")]
 #[test]

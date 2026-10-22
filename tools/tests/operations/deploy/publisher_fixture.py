@@ -20,13 +20,11 @@ HISTORY = {'data_dir': '/srv/transparent-activity/full-v3/journal',
            'initial_publication': '/srv/transparent-activity/full-v12/publications/initial',
            'recent_from': 1, 'recent_geometry': 'decoupled-2k-8k', 'archive_geometry': 'decoupled-32k-32k',
            'rpc_url': 'http://127.0.0.1:8232', 'rpc_cookie': '/root/.cache/zakura/.cookie',
-           'fleet_command': '/opt/history/fleet.py', 'fleet_config': '/opt/history/fleet.json',
-           'listen': '10.0.0.1:8096', 'source_sha': 'retained-source', 'follow_journal': False,
-           'ship_runtimes': False, 'distribute_prepared': False, 'http_only': False}
+           'listen': '10.0.0.1:8096', 'source_sha': 'retained-source', 'follow_journal': False}
 DISPLAY = {'root': '/srv/txid-display-genesis/v4/root', 'journal': '/srv/txid-display-genesis/journal-v3',
-           'workers': '/opt/display/workers.json', 'rpc_url': 'http://127.0.0.1:8232',
+           'rpc_url': 'http://127.0.0.1:8232',
            'rpc_cookie': '/root/.cache/zakura/.cookie', 'poll_ms': 500, 'status_listen': '127.0.0.1:8098',
-           'trust_sealed': False, 'ship_runtimes': False, 'http_only': False, 'max_recent_records': None}
+           'trust_sealed': False, 'max_recent_records': None}
 
 
 class Coordinator(FakeFleet):
