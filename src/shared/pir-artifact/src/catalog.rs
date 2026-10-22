@@ -93,6 +93,7 @@ pub struct Prepared {
     pub inventory_file: PathBuf,
     pub objects: BTreeMap<String, Object>,
     pub files: BTreeMap<PathBuf, FileProof>,
+    pub install_objects: bool,
     pub root: PathBuf,
     pub stage: PathBuf,
     pub checkpoints: PathBuf,
@@ -112,6 +113,7 @@ pub struct Catalog {
     checkpoints: PathBuf,
     originals: Vec<Original>,
     root_owner: DirectoryOwner,
+    install_objects: bool,
 }
 
 impl Catalog {
@@ -144,11 +146,18 @@ impl Catalog {
             checkpoints: stage.join("checkpoints"),
             originals: Vec::new(),
             root_owner: retained_root.retain(stage)?,
+            install_objects: true,
         })
     }
 
     pub fn root(&self) -> &Path {
         &self.source_root
+    }
+
+    /// Publication readers enumerate revision directories. Keep the common
+    /// cache aliases in private staging and install only product-relative files.
+    pub fn publication_layout(&mut self) {
+        self.install_objects = false;
     }
 
     /// Read an immutable pin while retaining the original installation root.
@@ -352,6 +361,7 @@ impl Catalog {
             previous_inventory: previous,
             inventory,
             inventory_file,
+            install_objects: self.install_objects,
             objects: self.objects,
             records: self.records,
             originals: self.originals,
@@ -556,6 +566,9 @@ impl Prepared {
         let mut installed = 0;
         for source in self.files.keys() {
             let relative = source.strip_prefix(&self.stage).map_err(io::Error::other)?;
+            if !self.install_objects && relative.starts_with(crate::namespace("objects")) {
+                continue;
+            }
             let before = migration::Stamp::of(&fs::symlink_metadata(source)?)?;
             if stamps.get(&before.identity()) != Some(&before) {
                 return Err(io::Error::other(

@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 type Runtime = (crate::runtime::RuntimeKey, Arc<SharedParams>, String);
 
+#[cfg(test)]
+mod tests;
+
 pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result<Vec<u8>, Error> {
     let old_schema = if display {
         "transparent-display-prepared-distribution-v1"
@@ -17,6 +20,7 @@ pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result
     if value["schema"] != old_schema {
         return Err("expected predecessor Transparent inventory".into());
     }
+    catalog.publication_layout();
     let root = catalog.root().to_path_buf();
     let source_runtimes = ShippedRuntimes::required(root.clone());
     let target_runtimes = ShippedRuntimes::required(catalog.stage().to_path_buf());
@@ -39,6 +43,10 @@ pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result
         if value["map_sha256"] != set.map_digest {
             return Err("display migration map differs".into());
         }
+        sources.insert(
+            crate::tx_detail::set::MAP_FILE.into(),
+            set.map_digest.clone(),
+        );
         for revision in set.current() {
             for (table, segment) in revision.targets() {
                 let source = revision
@@ -151,11 +159,14 @@ pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result
         SCHEMA.into()
     };
     if display {
-        let inventory: crate::tx_detail::distribution::Inventory = serde_json::from_value(value)?;
+        let mut inventory: crate::tx_detail::distribution::Inventory =
+            serde_json::from_value(value)?;
+        inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
         Ok(serde_json::to_vec(&inventory)?)
     } else {
-        let inventory: Inventory = serde_json::from_value(value)?;
+        let mut inventory: Inventory = serde_json::from_value(value)?;
+        inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
         Ok(serde_json::to_vec(&inventory)?)
     }

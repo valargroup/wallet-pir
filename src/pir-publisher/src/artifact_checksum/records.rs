@@ -195,13 +195,16 @@ pub fn reverse(kind: Kind, mut value: Value, prepared: &[Prepared]) -> crate::Re
                 .as_array_mut()
                 .ok_or("retained inventories must be an array")?
             {
-                let bytes = serde_json::to_vec(inventory)?;
-                let checksum = pir_artifact::checksum(&bytes);
-                let p = prepared
-                    .iter()
-                    .find(|p| p.product == "status" && p.inventory.checksum == checksum)
-                    .ok_or("retained inventory has no reverse translation")?;
-                *inventory = serde_json::from_slice(&previous(p)?)?;
+                let mut replacement = None;
+                for p in prepared.iter().filter(|p| p.product == "status") {
+                    let bytes = std::fs::read(&p.inventory_file)?;
+                    p.inventory.checksum.verify(&bytes)?;
+                    if serde_json::from_slice::<Value>(&bytes)? == *inventory {
+                        replacement = Some(serde_json::from_slice(&previous(p)?)?);
+                        break;
+                    }
+                }
+                *inventory = replacement.ok_or("retained inventory has no reverse translation")?;
             }
         }
         Kind::EnhanceState | Kind::StatusState => {
@@ -283,6 +286,7 @@ mod tests {
             inventory_file: "/unused/inventory.json".into(),
             objects: BTreeMap::new(),
             files: BTreeMap::new(),
+            install_objects: true,
             root: "/unused/root".into(),
             stage: "/unused/stage".into(),
             checkpoints: "/unused/checkpoints".into(),
@@ -324,6 +328,44 @@ mod tests {
             .remove("schema");
         result["current"].as_object_mut().unwrap().remove("schema");
         assert_eq!(original, result);
+    }
+
+    #[test]
+    fn retained_status_round_trip_preserves_canonical_inventory_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut p = prepared("status");
+        p.stage = directory.path().into();
+        p.inventory_file = p.stage.join("inventory.json");
+        // Typed inventory serialization need not use Value's sorted key order.
+        let old = br#"{"version":1,"manifest":{"z":9,"a":2}}"#;
+        let new = br#"{"version":2,"manifest":{"z":9,"a":2}}"#;
+        let mut hash = pir_artifact::Hasher::for_algorithm(Algorithm::Sha256);
+        hash.update(old);
+        p.previous_inventory = hash.finish();
+        p.inventory = Object {
+            checksum: pir_artifact::checksum(new),
+            bytes: new.len() as u64,
+        };
+        std::fs::write(p.stage.join("predecessor-inventory.json"), old).unwrap();
+        std::fs::write(&p.inventory_file, new).unwrap();
+        let original = serde_json::json!([serde_json::from_slice::<Value>(old).unwrap()]);
+        let converted = convert(
+            Kind::StatusRetained,
+            original.clone(),
+            std::slice::from_ref(&p),
+        )
+        .unwrap();
+        assert_eq!(
+            reverse(
+                Kind::StatusRetained,
+                converted.clone(),
+                std::slice::from_ref(&p)
+            )
+            .unwrap(),
+            original
+        );
+        std::fs::write(&p.inventory_file, b"damaged").unwrap();
+        assert!(reverse(Kind::StatusRetained, converted, &[p]).is_err());
     }
 
     #[test]
