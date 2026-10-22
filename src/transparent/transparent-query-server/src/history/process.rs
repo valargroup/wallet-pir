@@ -1,10 +1,8 @@
 //! History worker process. The `transparent-query-server` binary parses arguments
 //! and calls [`run`]; the query-server host uses the same function.
-use super::service::{router, ServiceConfig, ServiceState};
+use super::service::{ServiceConfig, ServiceState};
 use serde::Deserialize;
-use std::{future::IntoFuture, net::SocketAddr, path::PathBuf, sync::Arc};
-use tower_http::limit::RequestBodyLimitLayer;
-use transparent_shared::history::assignment::Assignment;
+use std::{future::IntoFuture, net::SocketAddr, path::PathBuf};
 use transparent_shared::history::shardset::{
     LoadOptions, LoadScope, ShardSet, DEFAULT_RETAIN_REVISIONS,
 };
@@ -16,9 +14,6 @@ fn default_bootstrap_max_bytes() -> u64 {
 }
 fn default_cache_bytes() -> u64 {
     8 << 30
-}
-fn default_restore_slots() -> u16 {
-    4
 }
 fn default_build_slots() -> usize {
     1
@@ -73,14 +68,6 @@ pub struct HistoryProcess {
     pub shard_dir: PathBuf,
     #[serde(default = "default_cache_bytes")]
     pub cache_bytes: u64,
-    #[serde(default)]
-    pub runtime_cache_dir: Option<PathBuf>,
-    #[serde(default)]
-    pub runtime_cache_max_bytes: Option<u64>,
-    #[serde(default = "default_restore_slots")]
-    pub runtime_restore_slots: u16,
-    #[serde(default)]
-    pub runtime_cache_prune_set: Vec<PathBuf>,
     #[serde(default = "default_build_slots")]
     pub build_slots: usize,
     #[serde(default = "default_query_slots")]
@@ -96,19 +83,11 @@ pub struct HistoryProcess {
     #[serde(default = "default_query_deadline")]
     pub query_deadline_secs: u64,
     #[serde(default)]
-    pub assignment: Option<PathBuf>,
-    #[serde(default)]
-    pub worker_id: Option<String>,
-    #[serde(default)]
     pub retain_bytes: Option<u64>,
     #[serde(default)]
     pub prune_excess: bool,
     #[serde(default)]
     pub verify_only: bool,
-    #[serde(default)]
-    pub control_socket: Option<PathBuf>,
-    #[serde(default)]
-    pub active_record: Option<PathBuf>,
 }
 
 fn certificates(path: Option<PathBuf>) -> Result<Vec<reqwest::Certificate>, Error> {
@@ -119,8 +98,8 @@ fn certificates(path: Option<PathBuf>) -> Result<Vec<reqwest::Certificate>, Erro
 }
 
 impl HistoryProcess {
-    /// For an HTTPS consumer, check the publisher's service discovery using
-    /// the configured origin and CA. Opens no state; a legacy role is a no-op.
+    /// Check the publisher's service discovery using the configured origin
+    /// and CA. Opens no state; local verification without a publisher is a no-op.
     pub async fn discover(&self) -> Result<(), Error> {
         match &self.publisher {
             Some(publisher) => {
@@ -140,16 +119,10 @@ pub async fn run(config: HistoryProcess) -> Result<(), Error> {
 }
 
 pub async fn run_with(
-    mut config: HistoryProcess,
+    config: HistoryProcess,
     mut reserved: Option<tokio::net::TcpListener>,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
-        if config.control_socket.is_some()
-            || config.assignment.is_some()
-            || config.runtime_cache_dir.is_some()
-        {
-            return Err("HTTPS bootstrap verification requires its own directory and no fleet/cache configuration".into());
-        }
         let provider = crate::routing::bootstrap::Config {
             publisher,
             network: config
@@ -236,67 +209,24 @@ pub async fn run_with(
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }
-    let active_record = config
-        .active_record
-        .clone()
-        .unwrap_or_else(|| config.shard_dir.with_extension("active.json"));
-    let mut runtimes = None;
-    if config.control_socket.is_some() && active_record.exists() {
-        let active: crate::history::live::Publication =
-            serde_json::from_slice(&std::fs::read(&active_record)?)?;
-        config.shard_dir = active.directory;
-        config.assignment = active.assignment;
-        runtimes = active.runtimes;
+    // Serving always synchronizes from an HTTPS publisher; without one, only
+    // a local shard directory is verified.
+    if !config.verify_only {
+        return Err("history serving requires an HTTPS publisher".into());
     }
-    let disk = config
-        .runtime_cache_dir
-        .clone()
-        .map(|dir| {
-            let mut disk = transparent_shared::runtime::disk::DiskCache::new(
-                dir,
-                config
-                    .runtime_cache_max_bytes
-                    .unwrap_or(config.cache_bytes.saturating_mul(2)),
-            )?;
-            disk.restore_slots = usize::from(config.runtime_restore_slots);
-            Ok::<_, std::io::Error>(disk)
-        })
-        .transpose()?;
-    if !config.runtime_cache_prune_set.is_empty() {
-        let mut keep = std::collections::HashSet::new();
-        for set in &config.runtime_cache_prune_set {
-            keep.extend(transparent_shared::runtime::disk::retained_digests(set)?);
-        }
-        let freed = disk
-            .as_ref()
-            .ok_or("runtime cache prune requires a cache directory")?
-            .prune(&keep)?;
-        println!("runtime cache pruned: {freed} bytes freed");
-        return Ok(());
-    }
-    let scope = match (&config.assignment, &config.worker_id) {
-        (Some(path), Some(worker_id)) => LoadScope::Assigned {
-            assignment: Arc::new(Assignment::load(path)?),
-            worker_id: worker_id.clone(),
-        },
-        _ => LoadScope::Whole,
-    };
     let options = LoadOptions {
         retain_revisions: config.retain_revisions,
         retain_bytes: config.retain_bytes,
         prune_excess: config.prune_excess,
-        scope,
+        scope: LoadScope::Whole,
     };
     let set = ShardSet::open_for_serving(&config.shard_dir, &options)?;
     tracing::info!(
         shards = set.len(),
-        assigned = set.assigned_len(),
         revisions = set.revisions().len(),
         prunable = set.prunable().len(),
         geometries = ?set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
         map_sha256 = set.map_digest,
-        worker_id = set.scope().map(|scope| scope.worker_id.as_str()),
-        assignment_sha256 = set.scope().map(|scope| scope.assignment_sha256.as_str()),
         start = set.map.start_height,
         covered_through = set.map.shards.last().map(|s| s.end_height),
         "loaded shard set"
@@ -319,57 +249,7 @@ pub async fn run_with(
         upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
         query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
     };
-    if config.verify_only {
-        let report = disk.as_ref().map(|disk| disk.check_set(&set)).transpose()?;
-        ServiceState::build(set, service)?;
-        println!(
-            "{}",
-            serde_json::json!({"verified":true,"runtime_cache":report})
-        );
-        return Ok(());
-    }
-    let map_sha256 = set.map_digest.clone();
-    let state = ServiceState::build_with_runtimes(
-        set,
-        service,
-        disk,
-        runtimes
-            .clone()
-            .map(transparent_shared::runtime::disk::ShippedRuntimes::new),
-    )?;
-    let limit = state.max_query_bytes();
-    let app = if let Some(socket) = config.control_socket.clone() {
-        let live = crate::history::live::LiveService::new(
-            state.clone(),
-            crate::history::live::Publication {
-                directory: config.shard_dir.clone(),
-                assignment: config.assignment.clone(),
-                map_sha256,
-                runtimes,
-            },
-            service,
-            options,
-            active_record,
-        )?;
-        let app = live.router();
-        tokio::spawn(async move {
-            if let Err(error) = live.listen(&socket).await {
-                tracing::error!(%error, "control socket failed");
-                std::process::exit(1);
-            }
-        });
-        app
-    } else {
-        router(state.clone())
-    }
-    .layer(RequestBodyLimitLayer::new(limit));
-    let listener = match reserved.take() {
-        Some(listener) => listener,
-        None => tokio::net::TcpListener::bind(config.listen).await?,
-    };
-    tracing::info!(listen = %config.listen, max_query_bytes = limit, "serving");
-    let _prewarm = state.spawn_prewarm();
-    drop(state);
-    axum::serve(listener, app).await?;
+    ServiceState::build(set, service)?;
+    println!("{}", serde_json::json!({"verified":true}));
     Ok(())
 }

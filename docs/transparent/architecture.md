@@ -575,13 +575,9 @@ artifact origin; map discovery has refreshable cache semantics.
 
 ### Prepared history runtimes
 
-Source only, off by default (`ship_runtimes` in the publication controller's JSON config);
-measured on the shared development hub and not accepted, not deployed. See
-[status](status.md#prepared-history-runtimes) and
-[remaining work](remaining-work.md#prepared-history-runtimes).
-
-With `ship_runtimes` on, the controller prepares every runtime of each candidate on the
-publisher, after the candidate is written and before the fleet is asked to prepare it. It
+The controller always prepares every runtime of each candidate on the publisher, after
+the candidate is written and before its distribution is finalized. See
+[status](status.md#prepared-history-runtimes). It
 reads the candidate as a worker would (`ShardSet::open_reusing`, reusing only tables that
 are the same files as the last verified candidate's), takes every revision it holds and
 every table with rows, each runtime once by its key (the revision digest for a directory,
@@ -596,11 +592,10 @@ written through a `.partial` and a rename (`runtime::prepare`, shared with Displ
 recent prebuild). A sealed directory shard and a sealed page shard keep their identity
 across publications, so their files carry over; the open directory shard and changed page
 shards are built. A table that fails verification fails the publication; a runtime that
-cannot be built or written is reported in the cycle record and left to the workers. An
-invalidation is checked before each segment, and a candidate whose preparation it stops
-is never offered.
+cannot be built or written is reported in the cycle record. An invalidation is checked
+before each segment, and a candidate whose preparation it stops is never offered.
 
-An HTTP-only publisher (`http_only`) stores each table segment and prepared runtime once,
+The publisher stores each table segment and prepared runtime once,
 named by the SHA-256 of its bytes, in `.objects/<sha256>` beside its publications
 (`transparent_publisher::history::store`). A candidate's revision directories keep their
 manifest and filter as local files and name every segment by the exact link
