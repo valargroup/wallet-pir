@@ -1152,7 +1152,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
     use crate::tx_detail::{distribution::Distribution, fixture, publisher::bootstrap};
-    use transparent_query_server::history::process::{run, run_with, HistoryProcess};
+    use pir_query_server::transparent::history::{run, run_with, HistoryProcess};
     use transparent_shared::journal::events::EventStore;
     let root = tempfile::tempdir().unwrap();
 
@@ -1269,7 +1269,7 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         .clone()
         .unwrap();
     details.verify_only = true;
-    transparent_query_server::tx_detail::process::run(details)
+    pir_query_server::transparent::detail::run(details)
         .await
         .unwrap();
     let running = tokio::spawn(pir_query_server::run(

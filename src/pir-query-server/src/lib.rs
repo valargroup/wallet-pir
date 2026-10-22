@@ -7,5 +7,7 @@ pub mod enhance;
 mod host;
 #[cfg(feature = "status")]
 pub mod status;
+#[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+pub mod transparent;
 pub use host::{run, verify};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;

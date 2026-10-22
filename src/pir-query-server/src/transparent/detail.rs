@@ -1,11 +1,13 @@
-//! Transaction-detail worker process. `transparent-txid-server` parses arguments
-//! and calls [`run`]; the query-server host uses the same function.
-use super::service::{DisplayRuntime, DisplayState};
-use crate::config::ServiceConfig;
+//! Transparent transaction-detail role: operator settings, publisher
+//! discovery, initial synchronization with its retry rules, listener ownership
+//! and supervision, and the local verification command. Display tables,
+//! runtimes and handlers come from `transparent_query_server`.
 use serde::Deserialize;
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use transparent_query_server::config::ServiceConfig;
+use transparent_query_server::tx_detail::service::{DisplayRuntime, DisplayState};
 use transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
 use transparent_shared::tx_detail::serves;
 use transparent_shared::tx_detail::set::DisplaySet;
@@ -97,7 +99,7 @@ impl DetailProcess {
     pub async fn discover(&self) -> Result<(), Error> {
         match &self.publisher {
             Some(publisher) => {
-                crate::source::discover_publisher(
+                transparent_query_server::discover_publisher(
                     publisher,
                     &certificates(self.publisher_ca.clone())?,
                 )
@@ -120,7 +122,7 @@ pub async fn run_with(
         if config.role != DisplayRole::Combined {
             return Err("managed display prototype requires combined holdings".into());
         }
-        let bootstrap = crate::source::Config {
+        let bootstrap = transparent_query_server::SourceConfig {
             publisher,
             network: config
                 .publisher_network
@@ -147,11 +149,14 @@ pub async fn run_with(
             upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
             query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
         };
-        let mut manager = crate::tx_detail::manager::Manager::new(bootstrap, service).await?;
+        let mut manager =
+            transparent_query_server::tx_detail::manager::Manager::new(bootstrap, service).await?;
         loop {
             match manager.poll_once().await {
                 Ok(_) => break,
-                Err(error) if crate::source::is_incompatible(&error) => return Err(error),
+                Err(error) if transparent_query_server::is_incompatible(&error) => {
+                    return Err(error)
+                }
                 Err(error) if manager.ready().await => {
                     tracing::warn!(%error, "new display publication refused; recovered checked predecessor");
                     break;

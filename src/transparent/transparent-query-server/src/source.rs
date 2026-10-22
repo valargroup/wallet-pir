@@ -27,7 +27,8 @@ pub(crate) struct HighWater {
 pub async fn discover(config: &Config) -> Result<(), Error> {
     discover_publisher(&config.publisher, &config.roots).await
 }
-pub(crate) async fn discover_publisher(
+/// Check one publisher origin's service discovery with the given trust roots.
+pub async fn discover_publisher(
     publisher: &str,
     roots: &[reqwest::Certificate],
 ) -> Result<(), Error> {

@@ -35,11 +35,9 @@ pub struct Config {
     #[cfg(feature = "status")]
     pub status: Option<Product<crate::status::RoleConfig>>,
     #[cfg(feature = "transparent-history")]
-    pub transparent_history:
-        Option<Product<transparent_query_server::history::process::HistoryProcess>>,
+    pub transparent_history: Option<Product<crate::transparent::history::HistoryProcess>>,
     #[cfg(feature = "transparent-detail")]
-    pub transaction_details:
-        Option<Product<transparent_query_server::tx_detail::process::DetailProcess>>,
+    pub transaction_details: Option<Product<crate::transparent::detail::DetailProcess>>,
 }
 
 #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
@@ -52,9 +50,9 @@ const SERVING_PUBLISHER: &str =
 /// The one Transparent section a `--verify-only` run checks.
 pub enum Verification<'a> {
     #[cfg(feature = "transparent-history")]
-    History(&'a transparent_query_server::history::process::HistoryProcess),
+    History(&'a crate::transparent::history::HistoryProcess),
     #[cfg(feature = "transparent-detail")]
-    Detail(&'a transparent_query_server::tx_detail::process::DetailProcess),
+    Detail(&'a crate::transparent::detail::DetailProcess),
     #[doc(hidden)]
     _Unused(std::marker::PhantomData<&'a ()>),
 }

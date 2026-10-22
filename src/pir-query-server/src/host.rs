@@ -175,13 +175,13 @@ pub async fn verify(config: Config) -> Result<()> {
         crate::config::Verification::History(worker) => {
             let mut worker = worker.clone();
             worker.verify_only = true;
-            transparent_query_server::history::process::run(worker).await
+            crate::transparent::history::run(worker).await
         }
         #[cfg(feature = "transparent-detail")]
         crate::config::Verification::Detail(worker) => {
             let mut worker = worker.clone();
             worker.verify_only = true;
-            transparent_query_server::tx_detail::process::run(worker).await
+            crate::transparent::detail::run(worker).await
         }
         crate::config::Verification::_Unused(_) => unreachable!(),
     }
@@ -320,7 +320,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transparent_history",
             async move {
                 tokio::select! {
-                    result = transparent_query_server::history::process::run_with(worker, Some(listen)) => result,
+                    result = crate::transparent::history::run_with(worker, Some(listen)) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },
@@ -345,7 +345,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transaction_details",
             async move {
                 tokio::select! {
-                    result = transparent_query_server::tx_detail::process::run_with(worker, Some(listen)) => result,
+                    result = crate::transparent::detail::run_with(worker, Some(listen)) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },

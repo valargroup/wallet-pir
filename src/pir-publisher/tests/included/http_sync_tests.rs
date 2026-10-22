@@ -737,7 +737,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
 
     // A live process stops wallet serving and returns the original typed error
     // when the publisher's major version changes.
-    let process: transparent_query_server::tx_detail::process::DetailProcess =
+    let process: pir_query_server::transparent::detail::DetailProcess =
         serde_json::from_value(serde_json::json!({
             "publisher": tls.origin,
             "state_dir": directory,
@@ -749,7 +749,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
         .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let serving = listener.local_addr().unwrap();
-    let running = tokio::spawn(transparent_query_server::tx_detail::process::run_with(
+    let running = tokio::spawn(pir_query_server::transparent::detail::run_with(
         process.clone(),
         Some(listener),
     ));
@@ -776,7 +776,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     );
 
     // The recovered predecessor on disk cannot mask the mismatch at restart.
-    let error = transparent_query_server::tx_detail::process::run_with(process, None)
+    let error = pir_query_server::transparent::detail::run_with(process, None)
         .await
         .unwrap_err();
     assert!(transparent_query_server::is_incompatible(&error), "{error}");

@@ -1,8 +1,10 @@
-//! History worker process. The `transparent-query-server` binary parses arguments
-//! and calls [`run`]; the query-server host uses the same function.
-use super::service::{ServiceConfig, ServiceState};
+//! Transparent history role: operator settings, publisher discovery, initial
+//! synchronization with its retry rules, listener ownership and supervision,
+//! and the local verification command. Shard tables, runtimes and handlers
+//! come from `transparent_query_server`.
 use serde::Deserialize;
 use std::{future::IntoFuture, net::SocketAddr, path::PathBuf};
+use transparent_query_server::history::service::{ServiceConfig, ServiceState};
 use transparent_shared::history::shardset::{
     LoadOptions, LoadScope, ShardSet, DEFAULT_RETAIN_REVISIONS,
 };
@@ -103,7 +105,7 @@ impl HistoryProcess {
     pub async fn discover(&self) -> Result<(), Error> {
         match &self.publisher {
             Some(publisher) => {
-                crate::source::discover_publisher(
+                transparent_query_server::discover_publisher(
                     publisher,
                     &certificates(self.publisher_ca.clone())?,
                 )
@@ -123,7 +125,7 @@ pub async fn run_with(
     mut reserved: Option<tokio::net::TcpListener>,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
-        let provider = crate::routing::bootstrap::Config {
+        let provider = transparent_query_server::routing::bootstrap::Config {
             publisher,
             network: config
                 .publisher_network
@@ -148,20 +150,24 @@ pub async fn run_with(
                 upload_deadline: std::time::Duration::from_secs(config.upload_deadline_secs),
                 query_deadline: std::time::Duration::from_secs(config.query_deadline_secs),
             };
-            let mut manager = crate::routing::manager::Manager::new(provider, service).await?;
+            let mut manager =
+                transparent_query_server::routing::manager::Manager::new(provider, service).await?;
             if config.full_holdings {
                 manager = manager.with_full_holdings();
             }
             if let Some(origin) = config.archive_upstream.clone() {
-                manager = manager.with_archive(crate::routing::archive::Archive::new(
-                    &origin,
-                    certificates(config.archive_ca.clone())?,
-                )?);
+                manager =
+                    manager.with_archive(transparent_query_server::routing::archive::Archive::new(
+                        &origin,
+                        certificates(config.archive_ca.clone())?,
+                    )?);
             }
             loop {
                 match manager.poll_once().await {
                     Ok(_) => break,
-                    Err(error) if crate::source::is_incompatible(&error) => return Err(error),
+                    Err(error) if transparent_query_server::is_incompatible(&error) => {
+                        return Err(error)
+                    }
                     Err(error) if manager.live().is_some() => {
                         tracing::warn!(%error, "initial synchronization refused; recovered checked predecessor");
                         break;
@@ -178,7 +184,9 @@ pub async fn run_with(
                 println!(
                     "{}",
                     serde_json::to_string(
-                        &live.command(crate::history::live::Command::Status).await?
+                        &live
+                            .command(transparent_query_server::history::live::Command::Status)
+                            .await?
                     )?
                 );
                 return Ok(());
@@ -205,7 +213,7 @@ pub async fn run_with(
             }
             return Ok(());
         }
-        let report = crate::routing::bootstrap::verify(provider).await?;
+        let report = transparent_query_server::routing::bootstrap::verify(provider).await?;
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }

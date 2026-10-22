@@ -35,7 +35,7 @@ pub mod request;
 pub mod routing;
 mod source;
 mod validation;
-pub use source::{discover, is_incompatible};
+pub use source::{discover, discover_publisher, is_incompatible, Config as SourceConfig};
 
 /// Where the wallet-facing history and transaction-detail operations are
 /// served: the canonical `/transparent/v1` namespace and the deployed `/v2`
