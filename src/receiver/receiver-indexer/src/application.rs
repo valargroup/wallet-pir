@@ -1895,16 +1895,14 @@ mod tests {
 
     /// A staged check verifies every segment of a one-shot inventory but keeps none
     /// prepared: every table and filter it lists reloads from the staged files. Staged
-    /// serving keeps its prepared tables within the budget.
+    /// serving keeps its prepared tables within the budget: a sealed shard and the recent
+    /// tier are four tables against a budget of two.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_staged_check_keeps_no_prepared_segment() {
-        use super::common::{receiver, seeded_receiver};
         use crate::serve_publication::{load, PublicationRecord};
         let mut paused = Paused::new(|_| {}).await;
         paused.args.shard_target = Some(1);
-        for payee in [receiver(), seeded_receiver(1), seeded_receiver(2)] {
-            paused.extend(&[payee], 0, 0);
-        }
+        paused.extend(&[super::common::receiver()], 0, 0);
         paused.extend(&[], 1, 0);
         let rpc = std::slice::from_ref(&paused.rpc);
         let genesis = Network::Mainnet.genesis_hash();
@@ -1929,8 +1927,8 @@ mod tests {
         let record = PublicationRecord::read(&path).unwrap();
         let checked = load(&record, &config, None).unwrap();
         let shards = checked.publication().inventory().shards();
-        assert_eq!(shards.iter().filter(|s| s.filter.is_some()).count(), 3);
-        assert_eq!(checked.publication().segments().len(), 4);
+        assert_eq!(shards.iter().filter(|s| s.filter.is_some()).count(), 1);
+        assert_eq!(checked.publication().segments().len(), 2);
         assert_eq!(checked.publication().held_bytes(), 0);
         let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
         let publications = Publications::new(DEFAULT_RETENTION, budget);
