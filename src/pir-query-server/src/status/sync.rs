@@ -269,6 +269,8 @@ impl StatusSync {
             .await?;
         if response.status() == reqwest::StatusCode::CONFLICT {
             response.discard().await?;
+            // Observe withdrawal or epoch changes before retaining any old view.
+            self.current().await?;
             return Err(Box::new(PublicationAdvanced));
         }
         if !response.status().is_success() {

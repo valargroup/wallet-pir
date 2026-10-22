@@ -449,6 +449,10 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
         &before
     );
     assert!(task.floor.invalid.is_empty());
+    assert_eq!(
+        task.floor.current.as_ref().unwrap(),
+        &*source.current.read().unwrap()
+    );
     // The next attempt really runs; its invalid fixture must still be refused.
     assert!(task.synchronize().await.is_err());
     server.abort();
