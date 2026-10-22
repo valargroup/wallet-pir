@@ -32,8 +32,6 @@
       "transparent:transparent-tools:bin:txid-quality-canary",
       "transparent:transparent-tools:doc:transparent_tools",
       "transparent:transparent-tools:example:activity-reopen",
-      "transparent:transparent-tools:example:layout_replay",
-      "transparent:transparent-tools:example:sample_recovery",
       "transparent:transparent-tools:lib:transparent_tools",
       "transparent:transparent-tools:test:compact_recovery",
       "transparent:transparent-tools:test:parent_filters",

@@ -21,7 +21,7 @@ records; its serving library is `src/status/status-query-server`, composed by
 the Enhance application package ([package boundaries](architecture.md#package-boundaries)). Its [architecture](../status/architecture_status.md),
 [distributed runbook](../status/status_distributed.md), [qualification gate](../status/status_qualification.md)
 and [APM rollout](../status/status_apm_rollout.md) separate implementation, observations and
-remaining qualification. The [synthetic backend](../status/status_backend.md) is a test mode.
+remaining qualification. The [historical backend guide](../status/status_backend.md) links retired experiments.
 Start shared operations with the [fleet guide](../operations.md).
 
 The transparent script-history product has its own [documentation](../transparent/README.md).

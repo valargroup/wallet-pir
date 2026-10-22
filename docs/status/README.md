@@ -2,7 +2,9 @@
 
 Status PIR serves note-status records using CPU evaluation only. CUDA support
 is limited to Enhance; enabling the query host's `cuda` feature does not change
-Status evaluation. Status role configuration has no `cuda` field. Its Cargo packages live under
+Status evaluation. Status role configuration has no `cuda` field.
+
+Its Cargo packages live under
 `src/status/`; operations under `tools/status/`, scripts under `tools/status/` and
 retained evidence alongside Enhance under [Enhance evidence](../../evidence/enhance/README.md).
 
@@ -27,5 +29,5 @@ protocol, saved state, configuration or deployed binary name.
 - [Distributed runbook](status_distributed.md): HTTPS publication, autonomous consumers and operating guidance.
 - [Qualification gate](status_qualification.md): release qualification and its tooling.
 - [APM rollout](status_apm_rollout.md): dashboard and alert coverage.
-- [Synthetic backend](status_backend.md): test-only serving mode.
+- [Historical backend experiments](status_backend.md): retired modes and retained evidence.
 - [Changelog](../enhance/CHANGELOG.md): Status releases are recorded with Enhance.

@@ -164,16 +164,8 @@ path = "src/bin/publication_bench.rs"
 required-features = ["benchmarks", "publisher-tools"]
 
 [[example]]
-name = "layout_replay"
-path = "examples/layout_replay.rs"
-
-[[example]]
 name = "activity-reopen"
 path = "examples/activity-reopen.rs"
-
-[[example]]
-name = "sample_recovery"
-path = "examples/sample_recovery.rs"
 
 [[example]]
 name = "transparent-txid-demo"

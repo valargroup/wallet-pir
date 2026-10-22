@@ -57,9 +57,8 @@ unavailable rather than zero. Active/waiting gauges and fixed rejection-reason
 counters are displayed separately. Rejection counters count refused checks and
 must not be summed as unique failed client lookups.
 
-Role resources show process RSS and host memory/GPU observations. Router and
-worker share the Status host, so their host readings must not be summed. GPU
-utilization is shown only when a role reports it; the CPU host reports none.
+Role resources show process RSS and host memory observations. Router and
+worker share the Status host, so their host readings must not be summed.
 Counter resets clear aggregate chart history. Restarts reset sidecar history;
 latencies remain blank until requests occur across successful scrapes.
 
