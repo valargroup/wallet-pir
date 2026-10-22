@@ -125,9 +125,10 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.target.plan()
         self.assertEqual(self.ex.mutations(), [])
 
-    def test_stale_input_refuses_before_staging(self):
+    def test_stale_managed_file_refuses_before_staging(self):
         plan = self.target.plan()
-        self.ex.put('coordinator', '/etc/enhance/workers.json', '{"changed":true}')
+        sampler = json.loads(self.ex.read('coordinator', publisher.SAMPLER))
+        self.ex.put('coordinator', publisher.SAMPLER, json.dumps({**sampler, 'changed': True}))
         with self.assertRaisesRegex(DeployError, 'stale'):
             self.target.deploy(self.binary, plan['plan_sha256'], self.serving_binary)
         self.assertEqual(self.ex.effects, [])

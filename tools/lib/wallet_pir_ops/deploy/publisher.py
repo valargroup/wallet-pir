@@ -207,8 +207,8 @@ class Cutover:
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
         if self.expanded:
-            from .publisher_products import inputs, locks
-            paths += [*inputs(config), *locks(config)]
+            from .publisher_products import locks
+            paths += locks(config)
         paths += list(allocations or {})
         result = self.ex.publisher_resources(self.host, paths)
         require(result['machine_id'] == self.request['machine_id'], 'coordinator machine identity differs')
@@ -277,7 +277,7 @@ class Cutover:
         require(position < len(load_arguments) and load_arguments[position] in
                 ('pir-publisher', UNIT),
                 'unknown load controller binding')
-        from .publisher_products import render, inputs
+        from .publisher_products import render
         binary = ROOT_DIR + '/releases/' + self.request['release']['binary_sha256'] + '/pir-publisher'
         desired = {
             CONFIG: json.dumps(config, indent=2) + '\n',
@@ -290,15 +290,11 @@ class Cutover:
             # Keep the override and point it at the candidate, so rollback
             # restores the pinned bytes and running executable together.
             desired[STATUS_HTTPS_DROP] = exec_override(units.exec_start(units.effective([desired[UNIT_PATH]])))
-        # Pin consumed inputs without changing their contents or permissions.
-        for path in inputs(config):
-            require(self.read(path) is not None, 'missing publisher configuration: ' + path)
         before = {path: {'text': self.read(path), 'mode': (resource['files'][path] or {}).get('mode', 0o600)} for path in desired}
         serving = self.serving.capture() if self.serving else None
         return {'serving': serving, 'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
                 'desired': desired, 'binary': binary, 'executables': executables,
-                'previous_transaction': previous and previous['id'],
-                'inputs': {path: sha(self.read(path)) for path in inputs(config)}}
+                'previous_transaction': previous and previous['id']}
 
     def plan(self):
         plan = self.capture()
@@ -447,8 +443,6 @@ class Cutover:
                 'managed files changed during staging')
         require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
                     for name, before in plan['units'].items()), 'publisher fleet changed during staging')
-        require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                'publisher input changed during staging')
         if self.serving:
             self.serving.unchanged_during_staging(plan['serving'])
 
@@ -542,8 +536,6 @@ class Cutover:
             self.resources()
             require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
                     'managed file changed before installation recovery')
-            require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                    'publisher input changed before installation recovery')
             require(self.ex.sha256(self.host, plan['binary']) == self.request['release']['binary_sha256'],
                     'staged publisher changed before installation recovery')
             for name, before in plan['units'].items():
@@ -586,8 +578,6 @@ class Cutover:
             def unchanged():
                 require(all(self.read(path) == text for path, text in plan['desired'].items()),
                         'managed file changed before verification recovery')
-                require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                        'publisher input changed before verification recovery')
                 state = self.ex.probe_unit(self.host, UNIT)
                 require(state['active_state'] == 'active' and not state['need_daemon_reload']
                         and state['exe_sha256'] == self.request['release']['binary_sha256'],
@@ -624,8 +614,6 @@ class Cutover:
                     'restart requires this committed publisher transaction')
             for path, text in journal['plan']['desired'].items():
                 require(self.read(path) == text, 'managed file changed before restart: ' + path)
-            for path, digest in journal['plan'].get('inputs', {}).items():
-                require(sha(self.read(path)) == digest, 'adopted input changed before restart: ' + path)
             require(self.ex.probe_unit(self.host, UNIT)['exe_sha256'] == self.request['release']['binary_sha256'],
                     'running publisher executable changed before restart')
             if not self.resume_load:
