@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from publisher_fixture import PublisherFixture
 from wallet_pir_ops import durable
-from wallet_pir_ops.deploy import publisher, publisher_products, publisher_storage as storage
+from wallet_pir_ops.deploy import host_helper, publisher, publisher_products, publisher_storage as storage
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import RemoteError
 
@@ -117,6 +117,28 @@ class StorageTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(self.ex.effects, [])
         self.assertEqual(json.loads(self.ex.read('coordinator', publisher.CONFIG)), self.installed)
         self.assertIsNone(self.ex.read('coordinator', self.preparation.manifest_path))
+
+    def test_same_predecessor_can_revalidate_preparation_after_restart(self):
+        self.preparation.prepare(self.binary, self.preparation.plan()['plan_sha256'])
+        unit = self.ex.host('coordinator').units[publisher.UNIT]
+        unit['pid'] += 1000
+        unit['invocation_id'] = 'f' * 32
+        plan = self.preparation.plan()
+        self.preparation.prepare(self.binary, plan['plan_sha256'])
+        manifest = json.loads(self.ex.read('coordinator', self.preparation.manifest_path))
+        self.assertEqual(manifest['plan']['unit'], plan['plan']['unit'])
+        unit['exe'] = 'e' * 64
+        with self.assertRaisesRegex(DeployError, 'another request'):
+            self.preparation.prepare(self.binary, self.preparation.plan()['plan_sha256'])
+
+    def test_restart_does_not_skip_prepared_storage_verification(self):
+        self.preparation.prepare(self.binary, self.preparation.plan()['plan_sha256'])
+        before = self.ex.read('coordinator', self.preparation.manifest_path)
+        self.ex.host('coordinator').units[publisher.UNIT]['pid'] += 1000
+        self.rust_fail = True
+        with self.assertRaisesRegex(DeployError, 'storage preparation refused'):
+            self.preparation.prepare(self.binary, self.preparation.plan()['plan_sha256'])
+        self.assertEqual(self.ex.read('coordinator', self.preparation.manifest_path), before)
 
     def test_changed_or_foreign_manifest_is_refused_before_stop(self):
         handoff = self.prepared()
@@ -277,6 +299,24 @@ class StorageTests(PublisherFixture, unittest.TestCase):
 
 
 class NativeTreeTests(unittest.TestCase):
+    def test_large_tree_survives_the_remote_output_limit_and_detects_changes(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / 'retained'
+            root.mkdir()
+            for index in range(100):
+                (root / f'publication-artifact-{index:04d}').write_bytes(b'unchanged')
+            argv = [sys.executable, '-c', storage.TREE_PROGRAM, 'snapshot', json.dumps({'root': str(root)})]
+            reply = host_helper.run(argv, 10)
+            self.assertEqual(reply['returncode'], 0, reply['output'])
+            expected = json.loads(reply['output'])
+            self.assertEqual(expected['entry_count'], 100)
+            (root / 'publication-artifact-0000').write_bytes(b'replaced')
+            self.assertNotEqual(self.run_helper(root, expected=expected).returncode, 0)
+            self.assertTrue(root.exists())
+            expected = json.loads(host_helper.run(argv, 10)['output'])
+            self.assertEqual(self.run_helper(root, expected=expected).returncode, 0)
+            self.assertFalse(root.exists())
+
     def run_helper(self, root, *, expected=None):
         args = {'root': str(root)}
         if expected is not None:

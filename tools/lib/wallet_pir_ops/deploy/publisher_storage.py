@@ -46,7 +46,11 @@ def snapshot():
                 walk(entry)
     s=root.lstat()
     walk(root)
-    return {'root':[s.st_dev,s.st_ino], 'entries':result}
+    # The remote command transport retains only 4 KiB of output. Bind every
+    # entry with one digest instead of returning a potentially truncated tree.
+    encoded=json.dumps(result,sort_keys=True,separators=(',',':')).encode()
+    return {'root':[s.st_dev,s.st_ino], 'entries_sha256':hashlib.sha256(encoded).hexdigest(),
+            'entry_count':len(result)}
 if operation=='remove' and not root.exists():
     print(json.dumps({'absent':True})); sys.exit(0)
 observed=snapshot()
@@ -174,7 +178,14 @@ class Preparation:
             ownership = durable.canonical(plan)
             owner_path = self.work + '/owner.json'
             previous = o.read(owner_path)
-            require(previous is None or previous.encode() == ownership, 'preparation id belongs to another request')
+            if previous is not None:
+                recorded = json.loads(previous)
+                # A completed rollback may restart the exact same predecessor.
+                # Reverify its prepared bytes and canonical anchors below; only
+                # the process identity may differ from the original preparation.
+                for field in ('main_pid', 'invocation_id'):
+                    recorded['unit'][field] = plan['unit'][field]
+                require(recorded == plan, 'preparation id belongs to another request')
             o.ex.write(o.host, owner_path, ownership, 0o600)
             binary_path = publisher.ROOT_DIR + '/releases/' + o.request['release']['binary_sha256'] + '/pir-publisher'
             o.stage(binary, binary_path)
