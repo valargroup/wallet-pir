@@ -8,7 +8,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use status_material::telemetry;
+use status_shared::telemetry;
 use std::time::Instant;
 
 pub async fn observe(role: &'static str, request: Request, next: Next) -> Response {

@@ -23,7 +23,7 @@ class CudaSelectionTests(unittest.TestCase):
     def test_implementation_and_contract_changes_select_cuda(self):
         for path in ('src/shared/pir-cuda/src/lib.rs',
                      'src/enhance/enhance-shared/src/matvec.rs',
-                     'src/status/status-material/src/backend.rs',
+                     'src/status/status-shared/src/backend.rs',
                      'src/shared/pir-runtime/src/evaluation.rs',
                      'src/pir-query-server/tests/operator.rs',
                      'tools/pir-e2e-tests/tests/http.rs',

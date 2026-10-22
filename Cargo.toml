@@ -21,7 +21,7 @@ members = [
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-shared",
     "src/enhance/enhance-query-server",
-    "src/status/status-material",
+    "src/status/status-shared",
     "src/status/status-query-server",
     "src/status/status-publisher",
     "src/transparent/transparent-shared",

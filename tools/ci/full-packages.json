@@ -14,7 +14,7 @@
   "enhance": [
     "enhance-shared",
     "enhance-query-server",
-    "status-material",
+    "status-shared",
     "status-query-server",
     "status-publisher",
     "enhance-pir-client",

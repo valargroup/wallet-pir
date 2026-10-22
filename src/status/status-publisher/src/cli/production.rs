@@ -2,7 +2,7 @@
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
 use serde_json::json;
-use status_material::protocol::*;
+use status_shared::protocol::*;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},

@@ -12,13 +12,13 @@ default = []
 # Enhance and Status serving libraries onto native arithmetic.
 native-reinspiring = [
     "dep:enhance-query-server",
-    "dep:status-material",
+    "dep:status-shared",
     "dep:ipir-sp",
     "dep:rayon",
     "dep:reinspiring",
     "dep:zakura-pir-server-core",
     "enhance-query-server/native-reinspiring",
-    "status-material/native-reinspiring",
+    "status-shared/native-reinspiring",
 ]
 
 [[bin]]
@@ -28,7 +28,7 @@ required-features = ["native-reinspiring"]
 
 [dependencies]
 enhance-query-server = { path = "../../../src/enhance/enhance-query-server", optional = true }
-status-material = { path = "../../../src/status/status-material", optional = true }
+status-shared = { path = "../../../src/status/status-shared", optional = true }
 ipir-sp = { version = "=0.1.0-rc.7", optional = true }
 rayon = { version = "1", optional = true }
 reinspiring = { version = "=0.1.3-rc.1", optional = true }

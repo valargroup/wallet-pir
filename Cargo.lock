@@ -1983,7 +1983,7 @@ dependencies = [
  "reinspiring",
  "serde_json",
  "sha2 0.10.9",
- "status-material",
+ "status-shared",
  "zakura-pir-server-core",
 ]
 
@@ -3280,30 +3280,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
-name = "status-material"
-version = "0.0.1"
-dependencies = [
- "hex",
- "inspiring",
- "ipir-sp",
- "memmap2",
- "pir-cuda",
- "pir-publication",
- "pir-runtime",
- "pir-serving",
- "rand 0.8.5",
- "rayon",
- "reinspiring",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tracing",
- "zakura-pir-client",
- "zakura-pir-query-server",
-]
-
-[[package]]
 name = "status-publisher"
 version = "0.0.1"
 dependencies = [
@@ -3319,8 +3295,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "status-material",
  "status-query-server",
+ "status-shared",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3349,13 +3325,37 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "status-material",
  "status-query-server",
+ "status-shared",
  "tempfile",
  "tokio",
  "tower",
  "tracing",
  "url",
+ "zakura-pir-client",
+ "zakura-pir-query-server",
+]
+
+[[package]]
+name = "status-shared"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "memmap2",
+ "pir-cuda",
+ "pir-publication",
+ "pir-runtime",
+ "pir-serving",
+ "rand 0.8.5",
+ "rayon",
+ "reinspiring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tracing",
  "zakura-pir-client",
  "zakura-pir-query-server",
 ]

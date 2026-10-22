@@ -11,7 +11,7 @@ use pir_publication::{
     conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
 use pir_sync_manager::{publication_lifecycle::PublicationLifecycleError, SyncTask};
-use status_material::protocol::{MAX_AGE_MS, PROTOCOL};
+use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -661,7 +661,7 @@ fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
 /// material is requested.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker() {
-    use status_material::fixture::{self, NETWORK, SALT};
+    use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
     let (b, _) = Generation::prepare(
@@ -791,7 +791,7 @@ async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker
 /// downloading or loading the material again, but still needs live authority.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
-    use status_material::fixture::{self, NETWORK, SALT};
+    use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
     let (generation, _) = Generation::prepare(
@@ -896,7 +896,7 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
 /// answer for an earlier envelope never activates it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope() {
-    use status_material::fixture::{self, NETWORK, SALT};
+    use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
     let (generation, _) = Generation::prepare(
@@ -976,7 +976,7 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
 /// the latest metadata, after its live check, instead of failing as stale.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_latest() {
-    use status_material::fixture::{self, NETWORK, SALT};
+    use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
     let (generation, _) = Generation::prepare(

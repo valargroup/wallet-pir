@@ -3,7 +3,7 @@
 use super::admission;
 use crate::Controller;
 use axum::{body::Bytes, extract::State, http::StatusCode};
-use status_material::{profile, protocol::*, telemetry};
+use status_shared::{profile, protocol::*, telemetry};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -160,7 +160,7 @@ async fn query_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, Status
 mod tests {
     use super::*;
     use axum::{routing::get, Router};
-    use status_material::{now_ms, Generation};
+    use status_shared::{now_ms, Generation};
 
     fn generation() -> Generation {
         Generation::public_only(

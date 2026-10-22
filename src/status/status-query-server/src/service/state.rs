@@ -7,7 +7,7 @@ use crate::{
 use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
 use pir_publication::ObjectReference;
-use status_material::{protocol::Hash, publication::Failure, Generation};
+use status_shared::{protocol::Hash, publication::Failure, Generation};
 use std::{fs::File, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 

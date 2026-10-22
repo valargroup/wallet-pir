@@ -2,8 +2,8 @@
 use super::Service;
 use crate::{distributed::Role, Controller};
 use ipir_sp::server::MatvecBackend;
-use status_material::fixture;
-use status_material::{
+use status_shared::fixture;
+use status_shared::{
     now_ms,
     protocol::{Observation, HEADER_BYTES, QUERY_MAGIC},
     Generation,

@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use status_material::{
+use status_shared::{
     now_ms,
     protocol::{Hash, Manifest},
     telemetry as counters,

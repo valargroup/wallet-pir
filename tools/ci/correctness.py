@@ -93,7 +93,7 @@ def rust_checks(env, temporary, offline):
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'pir-e2e-tests',
                      '--features', 'enhance-tests', '--test', 'ci_hint'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
-    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-material', '--lib'],
+    reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-shared', '--lib'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'status-query-server', '--lib', '--tests'],
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)

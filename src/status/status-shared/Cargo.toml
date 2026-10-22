@@ -1,5 +1,5 @@
 [package]
-name = "status-material"
+name = "status-shared"
 version = "0.0.1"
 edition = "2021"
 description = "Status PIR material and contracts shared by the Status publisher and query server"

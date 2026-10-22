@@ -166,8 +166,8 @@ async fn checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source() {
 async fn live_rpc_candidate_revalidates_before_durable_publication() {
     use crate::authority::Authority;
     use ipir_sp::server::MatvecBackend;
-    use status_material::Generation;
     use status_query_server::Controller;
+    use status_shared::Generation;
 
     let dir = tempfile::tempdir().unwrap();
     let (client, job) = fixture(false, false).await;

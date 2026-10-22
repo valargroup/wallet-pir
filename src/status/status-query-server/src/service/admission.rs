@@ -1,7 +1,7 @@
 //! Bounded, cancellation-safe admission. CPU jobs own their execution permit.
 use axum::http::StatusCode;
 use pir_control::admission::{Queue, Refusal};
-use status_material::telemetry;
+use status_shared::telemetry;
 use std::time::{Duration, Instant};
 use tokio::sync::OwnedSemaphorePermit;
 

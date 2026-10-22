@@ -7,7 +7,7 @@ use pir_sync_manager::{
     publication_lifecycle::{PeerHandover, PeerReservation},
     Error,
 };
-use status_material::{now_ms, protocol::Manifest, publication::METADATA_LIMIT};
+use status_shared::{now_ms, protocol::Manifest, publication::METADATA_LIMIT};
 
 /// The inventory the worker serves, or `None` while it is still loading. A
 /// loading worker is ordinary coordination, not a transport failure.

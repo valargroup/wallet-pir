@@ -1,7 +1,7 @@
 //! Private Status role protocol. Transport authentication is supplied by restricted
 //! SSH forwarding; every listener and configured peer must be loopback-only.
 use serde::{Deserialize, Serialize};
-use status_material::protocol::*;
+use status_shared::protocol::*;
 use std::{net::SocketAddr, path::PathBuf};
 
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;

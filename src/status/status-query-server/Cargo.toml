@@ -14,19 +14,19 @@ required-features = ["native-reinspiring"]
 
 [features]
 # Full deployed-generation arithmetic campaign; fast tests use a small independent oracle.
-qualification-tests = ["status-material/qualification-tests"]
+qualification-tests = ["status-shared/qualification-tests"]
 default = []
-native-reinspiring = ["status-material/native-reinspiring", "ipir-sp/native-reinspiring"]
-cuda = ["status-material/cuda"]
+native-reinspiring = ["status-shared/native-reinspiring", "ipir-sp/native-reinspiring"]
+cuda = ["status-shared/cuda"]
 
-client = ["status-material/client"]
+client = ["status-shared/client"]
 [dependencies]
 axum = "0.7"
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 pir-publication = { path = "../../shared/pir-publication" }
 pir-sync-manager = { path = "../../shared/pir-sync-manager" }
-status-material = { path = "../status-material" }
+status-shared = { path = "../status-shared" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["full"] }
 serde_json = "1"

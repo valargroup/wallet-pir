@@ -21,7 +21,7 @@ use pir_sync_manager::{
     },
     Error,
 };
-use status_material::{
+use status_shared::{
     now_ms,
     protocol::{Manifest, MAX_AGE_MS},
     publication::*,
