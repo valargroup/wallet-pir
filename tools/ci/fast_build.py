@@ -40,6 +40,9 @@ def publisher_runs_alone(name, kinds):
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
 # packages define the fast closure. Their feature set does not follow the diff.
+# Receiver and Status libraries stay named here: adding them only on a diff
+# that touches them changes feature unification and rebuilds wallet-libraries
+# crates, which leaves the fast job on the plain three-minute budget.
 # Only affected packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
@@ -51,7 +54,10 @@ FAST_FEATURE_ROOTS = frozenset({
     'pir-monitor',
     'pir-publisher',
     'pir-query-server',
+    'receiver-indexer',
+    'receiver-pir-server',
     'status-publisher',
+    'status-query-server',
     'transparent-publisher',
     'transparent-query-server',
     'transparent-shared',
