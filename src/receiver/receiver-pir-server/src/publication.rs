@@ -797,15 +797,14 @@ mod tests {
     #[test]
     fn a_full_retained_set_holds_back_the_next_publication() {
         let publications = Publications::default();
+        // Prepare before arming retention. A unique manifest built afterward can
+        // outlast the deadline, and `publish` then expires the set it should refuse.
+        let newer = publication_at(2, 2);
         assert!(publications.publish(publication_at(1, 1), 0));
         let held = publications.current().unwrap();
         let until = Instant::now() + Duration::from_secs(5);
         publications.0.write().unwrap().retained = vec![(held, until); MAX_RETAINED];
         assert_eq!(publications.ready_at(), Some(until));
-        let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
-        (newer.end_height, newer.end_hash) = (102, [2; 32]);
-        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[]).unwrap();
-        let newer = crate::prepared::prepare_payments(snapshot).unwrap();
         assert!(!publications.publish(newer, 0));
         publications.0.write().unwrap().retained[0].1 = Instant::now();
         assert!(publications.ready_at().is_none());
@@ -914,7 +913,10 @@ mod tests {
         let middle = publications.current().unwrap().segments()[0].payments.id();
         let (held, _) = publications.select(&middle).unwrap();
         assert!(publications.update_report((101, [2; 32]), serde_json::json!(1), 0));
-        assert!(publications.publish(publication_at(4, 4), 0));
+        // Same prepared inventory as the first publication: a different id from the
+        // current one, so it displaces rather than replacing in place, and the
+        // payment table is the one already cached.
+        assert!(publications.publish(publication_at(1, 1), 0));
         publications
             .0
             .write()

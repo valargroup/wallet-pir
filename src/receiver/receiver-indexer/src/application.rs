@@ -1764,6 +1764,7 @@ mod tests {
         assert_eq!(lookup(&client, two).await.len(), 1);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Two one-shot runs a block apart keep a sealed payment table whose provisional
     /// companion changed: each table is written under its own revision, so the second run
     /// writes the new companion beside the old instead of colliding with it.
@@ -2040,6 +2041,7 @@ mod tests {
         assert_eq!(tables.resident(), 0);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A stored manifest over the manifest size bound does not stop a restart: its table
     /// is discarded as a leftover and prepared again, and a wallet reads it as usual.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2067,6 +2069,7 @@ mod tests {
         assert_eq!(lookup(&client, payee).await.len(), 1);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A stored table whose public setup is not the one its manifest binds is not
     /// served after a restart: it is prepared again, and a wallet reads it as usual.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2102,6 +2105,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// After a restart a stored table or filter is reused only if it is exactly what the
     /// index rebuilds: corrupted or missing rows are prepared again and a corrupted filter
     /// is written again, so wallets read every payment, payload and filter as before.
@@ -2157,6 +2161,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A cold reload, staged or stored, reads only the rows of the geometry it was
     /// verified under: a longer replacement is refused before it is read, and a
     /// replaced manifest is never used.
@@ -2534,6 +2539,7 @@ mod tests {
         assert!(!dir.path().join(receiver_store::STORE_FILE).exists());
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A correction is refused while the service holds the data directory, and once
     /// applied offline the restarted service publishes the store's higher revision under
     /// its unchanged configuration, revoking older sessions before serving.
@@ -2583,6 +2589,7 @@ mod tests {
         assert_eq!(gone.status(), reqwest::StatusCode::GONE);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// An outage proves nothing about canonicality; a restarted application recovers
     /// its committed index and serves the same session through the real HTTP router.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2604,6 +2611,7 @@ mod tests {
         assert_eq!(paused.get("inventory").await, first);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A raised correction revision is durable before the backfill it needs: when that
     /// backfill fails, a restart that rolls the configured revision back still uses it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2631,6 +2639,7 @@ mod tests {
         assert_eq!(paused.publications.epoch(), epoch, "nothing moved back");
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A one-shot run writes no rolling filters, so it neither builds them nor fails on
     /// them: a filter window that cannot be built leaves its publication unaffected,
     /// while a serving run, which does build it, refuses.
@@ -2648,6 +2657,7 @@ mod tests {
         assert!(paused.refresh().await.is_err());
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A caught-up service keeps the rolling window it serves while the tip and
     /// correction revision stay put, rather than rebuilding it every poll, and builds a
     /// new one once the tip moves.
@@ -2690,6 +2700,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A window the byte bound shortened starts after the block count's first block, and
     /// is still kept while the tip and correction revision stay put.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2736,6 +2747,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// The terminal block's time only dates the optional payout audit: a node that
     /// cannot give it degrades the audit report, and with the audit off it is never
     /// asked for, so publication goes ahead either way.
@@ -2756,6 +2768,7 @@ mod tests {
         assert!(health["indexer"].is_object(), "{health}");
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Restoring hints after revocation cannot masquerade as a live PIR publication.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn unchanged_anchor_rebuilds_revoked_pir() {
@@ -2769,6 +2782,7 @@ mod tests {
         assert!(paused.publications.current_anchor().is_some());
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Revocation and durable rewind precede collection: a source that cannot supply
     /// replacement blocks must not leave the orphaned session available over HTTP.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2793,6 +2807,7 @@ mod tests {
         assert_eq!(store.counts().unwrap(), (0, 0));
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Invalid persisted cryptographic input fails in actual PIR preparation, after
     /// collection, preserving both committed progress and the prior HTTP publication.
     /// A restart retries the committed candidate once the stored input is repaired.
@@ -2845,6 +2860,7 @@ mod tests {
         assert_ne!(next, first);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Invalidation after real preparation must fence activation without discarding
     /// the independently committed input. A new pass recovers through the same API.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2885,6 +2901,7 @@ mod tests {
         assert_eq!(paused.get("inventory").await["end_height"], height);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A response admitted under the old revision retains its immutable bytes
     /// while the shared lifecycle activates different rows at the next anchor.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2993,6 +3010,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A refresh with nothing new keeps the publication, and a changed audit report
     /// replaces only its health without rebuilding it: a completed payout stays pending
     /// until the terminal block's time passes its grace, however long the chain pauses.
@@ -3027,6 +3045,7 @@ mod tests {
         assert!(paused.publications.ready_at().is_none());
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A node on another network with a higher tip is left out of a refresh, so its
     /// chain cannot revoke the served publication.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3057,6 +3076,7 @@ mod tests {
         assert_eq!(paused.publications.anchors(), anchors);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A node that leaves mainnet, or stops giving its genesis, after ranking publishes
     /// nothing, one-shot or serving, though its chain still matches the index; one
     /// still on mainnet publishes both ways.
@@ -3080,6 +3100,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A node that leaves mainnet, or stops giving its genesis, after ranking cannot
     /// revoke the served publication with its other chain; one still on mainnet does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3101,6 +3122,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_future_block_time_reports_no_payout_missing_early() {
@@ -3120,6 +3142,7 @@ mod tests {
         assert_eq!(paused.get("health").await["indexer"]["payouts_missing"], 0);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A stored tip above the requested depth, as after a restart with a larger
     /// `--depth`, is published rather than waited past.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

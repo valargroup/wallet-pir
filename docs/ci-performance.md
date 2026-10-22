@@ -195,8 +195,9 @@ and recovery checks. The non-default `qualification-tests` feature adds fault
 combinations, their original larger geometries and longer histories, including
 repeated campaigns over the same runtime. Receiver fast keeps one stale-anchor
 revocation, one encrypted query, one full-shard witness build with its restart
-and rewind, and the written sealing passes above. Further publication sequences
-and completed-shard correction campaigns stay behind that feature. Binary unit tests run as well as library targets. Affected
+and rewind, and the written sealing passes above. Further publication sequences,
+repeated single-chain serving refreshes, and completed-shard correction campaigns
+stay behind that feature. Binary unit tests run as well as library targets. Affected
 packages also run integrations classified as `fast` in
 [`tools/ci/integration-tests.json`](../tools/ci/integration-tests.json). Complete
 correctness includes independent reference oracles, doctests and CPU lint. Larger

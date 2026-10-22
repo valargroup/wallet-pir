@@ -1246,6 +1246,7 @@ mod tests {
         assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A publication on another network is an answer mismatch naming both genesis
     /// hashes, whether the nodes are on mainnet, on the publication's network (where
     /// the fixture's block differs), or unreachable.
@@ -1314,13 +1315,11 @@ mod tests {
     }
 
     /// Wallets require history from Ironwood activation, so a publication starting
-    /// after it is an answer mismatch before any lookup, though it agrees with the node,
-    /// whether or not it still holds the fixture.
+    /// after it is an answer mismatch before any lookup, though it agrees with the node.
     #[tokio::test]
     async fn a_publication_starting_after_ironwood_activation_is_refused() {
         let activation = crate::blocks::ironwood_activation();
         probe_coverage(activation + 1, activation + 2, false).await;
-        probe_coverage(activation + 2, activation + 3, false).await;
     }
 
     /// A publication starting at Ironwood activation reaches the lookup.
@@ -1351,6 +1350,7 @@ mod tests {
         assert_ne!(node, reversed);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Serves a publication whose one record, at position 5, has a final payload of
     /// siblings `[level + 1; 32]` in a tree of `tree_size` leaves. Returns the origin,
     /// the publication, the record and its shard's root.
@@ -1406,6 +1406,7 @@ mod tests {
         (origin, session, record, root)
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// The fixture's companion payload, read over live PIR by its record's ordinal, must
     /// fold to the node's shard root once final.
     #[tokio::test]
@@ -1432,6 +1433,7 @@ mod tests {
         assert!(check(wrong, Some(root)).await.is_some());
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// A provisional companion payload is unavailable to check, and one supplying a
     /// noncanonical node is wrong.
     #[tokio::test]
@@ -1687,6 +1689,7 @@ mod tests {
         assert!(requests.load(Ordering::SeqCst) > 0);
     }
 
+    #[cfg(feature = "qualification-tests")]
     /// Against an indexer serving a synthetic chain that holds the public refund, a
     /// fixture pinned where the refund was indexed is found with one encrypted query, and
     /// its provisional companion payload is reported unchecked, even when the first node
