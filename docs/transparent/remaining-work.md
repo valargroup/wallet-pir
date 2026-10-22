@@ -141,9 +141,9 @@ the last two were found during the redeploy.
   `transparent-shard-server` `6ab86d6a…`, `shard-control` `ff3c0264…` and
   `transparent-publish-controller` `6041ea47…`, with `controller.json` `source_sha`
   `9d2cbda0`. The pinned `a317455e` bytes would install older executables.
-- [ ] Re-pin or retire the changed-native candidate `c3c66b9b`. It predates `a317455e`,
-  so version-2 inputs would install older workers and an older controller than
-  production runs, and its 13 supplemental tools have no `a317455e` build.
+- [x] Retire the changed-native candidate `c3c66b9b` (2026-10-22). Its v11
+  qualification path was removed with the candidate tooling; historical
+  identities, retained evidence and the 12ce publication stay unchanged.
 - [ ] Port the standard deploy paths to v11; the v11 fleet lives under
   `/opt/transparent-publisher/v11/`.
   - `deploy-transparent-publisher.py` `shadow` and `activate` write
@@ -496,43 +496,17 @@ Vizor, sending and distribution remain excluded. [Starting observations](https:/
   Earlier full CI found stale operator fixtures and three reference-wallet lint
   findings; the fixture refresh and equivalent lint corrections passed focused
   operator, deployed-jq contract and Clippy checks. Repaired full CI remains open.
-- [ ] Qualify and prepare the changed-native candidate `c3c66b9b` through the [candidate path](deployment.md#changed-native-activity-candidate-c3c66b9b).
-  Source guards and focused fixture checks are [retained](../../evidence/transparent/activity-metadata-2026-10-04/README.md).
-  The following remain open:
-  - Stage the reviewed operations source.
-  - Transfer the three retained archives with `schema-candidate-upload-*`. The
-    path exists in source; no archive has been transferred.
-  - Run candidate bundle plan, preflight and stage from the retained CI 37173250956
-    bundles and supplemental archive.
-  - Take an immutable journal snapshot with `schema-snapshot-*` for the gates
-    that read the journal. The path exists in source; no snapshot has been
-    taken. Before it, root must:
-    - bind the live controller identity and accept the controller downtime;
-    - choose all six bounds, the sidecar policy and the coverage heights;
-    - check the live sidecar count and bytes against the disk floor.
-  - Produce the four candidate-bound artifact-verification, native-certificate,
-    chain-oracle and CI reports from actual runs and retained raw results.
-  - Stage and natively verify the candidate worker pair on every worker.
-  - Run version-2 product preflight, including installed setups on both recent
-    replicas, warm serving proof and the unchanged rollback to captured
-    predecessor executables.
+- [x] Qualify and prepare the changed-native candidate `c3c66b9b` (retired
+  2026-10-22). The candidate bundle, upload, snapshot, oracle and qualification
+  tooling, and its `schema-candidate-*`/`schema-snapshot-*`/`schema-qualify-*`
+  commands, were removed. Source guards and focused fixture checks are
+  [retained](../../evidence/transparent/activity-metadata-2026-10-04/README.md).
   The historical 12ce publication, assignment, samples and receipts stay
   unchanged; no floor or deadline changes.
-- [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
-  The closed [deployed qualification](deployment.md#deployed-candidate-qualification)
-  interface exists in source with focused fixture tests; nothing has run. The
-  following remain open:
-  - Review the eight-wallet composition, the owner memory budgets and the
-    fixed timing bounds.
-  - After the candidate transaction commits, run staged load, then freshness,
-    then 3+ trials per level, then the six faults, one request at a time.
-  - Close the missing-assurance gaps the interface records: quality-alert
-    shadow state, cache-corruption injection, and an owner-run probe of the
-    rolled-back v10 service. Heavy and interrupted-store continuation use the
-    existing `--scenario-worker` protocol, but stay unqualified until real runs
-    are reviewed.
-  - An owner killed during a fault effect leaves the unit stopped and fenced
-    until `schema-qualify-reconcile` restores it.
+- [x] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
+  Retired with the v11 candidate path (2026-10-22); its deployed qualification
+  interface and `schema-qualify-*` recovery commands were removed. A v12
+  capacity and lifecycle gate must be opened separately if still required.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 
 ## Server txid display stage (2026-10-01)

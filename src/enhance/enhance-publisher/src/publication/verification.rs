@@ -1,56 +1,8 @@
 //! Hash evidence is process-local and only reusable for unchanged, settled files.
 use crate::artifact;
 use enhance_shared::publication::{Inventory, Object};
-use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    fs::{self, File},
-    io::Read,
-    os::unix::fs::MetadataExt,
-    path::Path,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
-
-/// A file status change this recent may share its timestamp with a later write
-/// (timestamps advance in coarse ticks), so a hash taken now is not reused.
-pub(super) const SETTLED: Duration = Duration::from_secs(1);
-
-/// Filesystem identity of an immutable publisher object. Ordinary writes,
-/// truncation, replacement and metadata restoration change these fields.
-/// This is not an integrity boundary against unrelated writers, such as a
-/// process holding a writable mapping of the file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct FileIdentity {
-    dev: u64,
-    ino: u64,
-    len: u64,
-    mtime: (i64, i64),
-    pub(super) ctime: (i64, i64),
-}
-
-impl FileIdentity {
-    pub(super) fn of(metadata: &fs::Metadata) -> Self {
-        Self {
-            dev: metadata.dev(),
-            ino: metadata.ino(),
-            len: metadata.len(),
-            mtime: (metadata.mtime(), metadata.mtime_nsec()),
-            ctime: (metadata.ctime(), metadata.ctime_nsec()),
-        }
-    }
-
-    /// Whether the recorded status change predates the timestamp safety window.
-    pub(super) fn settled_before(&self, started: SystemTime) -> bool {
-        let (Ok(seconds), Ok(nanos)) = (u64::try_from(self.ctime.0), u32::try_from(self.ctime.1))
-        else {
-            return false;
-        };
-        UNIX_EPOCH
-            .checked_add(Duration::new(seconds, nanos))
-            .and_then(|ctime| ctime.checked_add(SETTLED))
-            .is_some_and(|settled| settled <= started)
-    }
-}
+use pir_publication::{hash_object_file, FileIdentity};
+use std::{collections::BTreeMap, fs::File, path::Path, time::SystemTime};
 
 /// Work done by one verification pass: files hashed, bytes read to hash them,
 /// and files accepted from earlier evidence without reading.
@@ -160,36 +112,19 @@ pub(super) fn check_object(
     hashed: &mut VerificationStats,
 ) -> Result<Option<FileIdentity>, String> {
     let path = object.path(root)?;
-    if let Some(prior) = prior {
-        let current = FileIdentity::of(&fs::metadata(&path).map_err(|e| e.to_string())?);
-        if current == *prior && current.len == object.bytes {
-            hashed.reused += 1;
-            return Ok(Some(current));
-        }
-    }
     let started = SystemTime::now();
     let mut file = File::open(&path).map_err(|e| e.to_string())?;
-    let before = FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?);
-    if before.len != object.bytes {
-        return Err("publication object checksum or length mismatch".into());
+    let identity = FileIdentity::capture(&path, &file).map_err(|e| e.to_string())?;
+    if prior == Some(&identity) && file.metadata().map_err(|e| e.to_string())?.len() == object.bytes
+    {
+        hashed.reused += 1;
+        return Ok(Some(identity));
     }
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0; 1 << 16];
-    loop {
-        let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hashed.bytes += n as u64;
-        hash.update(&buffer[..n]);
-    }
+    let (reference, identity) =
+        hash_object_file(&path, &mut file, Some(&object.reference()), &|| false)
+            .map_err(|e| e.to_string())?;
     hashed.files += 1;
+    hashed.bytes += reference.bytes;
     artifact::release_file_cache(&file);
-    if hex::encode(hash.finalize()) != object.sha256 {
-        return Err("publication object checksum or length mismatch".into());
-    }
-    if FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?) != before {
-        return Err("publication object changed while it was verified".into());
-    }
-    Ok(before.settled_before(started).then_some(before))
+    Ok(identity.settled_before(started).then_some(identity))
 }

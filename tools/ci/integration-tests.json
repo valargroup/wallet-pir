@@ -1,7 +1,8 @@
 {
   "pir-publication": {
     "fast": [
-      "object_installation"
+      "object_installation",
+      "object_files"
     ],
     "full": []
   },

@@ -13,7 +13,7 @@
 //! under its final name, which fails rather than replaces an installed one,
 //! and are never written in place. The loader and the artifact resolver
 //! accept only the exact links written here.
-use pir_publication::{InstalledObject, ObjectInstallError, ObjectInstaller};
+use pir_publication::{InstalledObject, ObjectFileError, ObjectInstaller};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -82,10 +82,10 @@ fn replace_with_link(path: &Path, target: &Path) -> Result<(), BoxError> {
 }
 
 fn installed(
-    result: Result<InstalledObject, ObjectInstallError>,
+    result: Result<InstalledObject, ObjectFileError>,
 ) -> Result<InstalledObject, BoxError> {
     result.map_err(|error| match error {
-        ObjectInstallError::Cancelled => {
+        ObjectFileError::Cancelled => {
             Box::new(transparent_shared::publication::Stopped) as BoxError
         }
         error => Box::new(error),
