@@ -1,28 +1,31 @@
 """Worker or controller binary upgrade for the current v12 history and 4k8 display fleets.
 
-One transaction changes one component's executable: the workers, or the
-controller (staged under `<service root>/controller`, so a worker binary can
-never be selected as the controller). An explicit History staging_adapter request
-may also change only its controller's fleet_command. The release identity is the request's Git
-revision and binary digest; the publication identity is everything the
-controller owns (configuration, fleet bytes, source revision, journal, roots)
-plus each worker's ready identity, and it must be identical before, after each
-restart and after rollback. Staging, journals, rollback and the production lock
-are the shared engine's; this module adds only the product refusals. Anything
-outside the supported topology refuses rather than being adapted.
+New transactions change the workers' executable under the unified publisher:
+when the inventory's `publisher.managed_products` names the product,
+`pir-publisher.service` is the controller authority, its product settings in
+the installed publisher configuration are the controller settings, and the
+product's own status listener reports authority. The publisher's executable
+changes through `publisher-cutover-*`. History workers are autonomous HTTPS
+providers there.
 
-When the inventory's unified publisher manages the product, `pir-publisher.service`
-is the controller authority: its product settings in the installed publisher
-configuration replace the standalone controller's, and the product's own status
-listener reports authority. Only worker transactions run here then; the
-publisher's executable changes through `publisher-cutover-*`.
+The release identity is the request's Git revision and binary digest; the
+publication identity is everything the controller owns (configuration, source
+revision, journal, roots) plus each worker's ready identity, and it must be
+identical before, after each restart and after rollback. Staging, journals,
+rollback and the production lock are the shared engine's; this module adds only
+the product refusals. Anything outside the supported topology refuses rather
+than being adapted.
+
+Standalone product controllers, which drove their workers directly, are
+retired: a request against one supports only `status` and `rollback` of a
+transaction it already recorded (worker or controller component). Rollback
+keeps the pinned unit and file checks and re-pins a History continuous load.
 """
 import dataclasses
 import hashlib
 import json
 import os
 import re
-from pathlib import Path
 
 from wallet_pir_ops import durable
 from wallet_pir_ops.deploy import descriptors, units
@@ -45,11 +48,9 @@ PRODUCTS = {
         'publisher_product': 'transparent_history',
         'status_listen': 'listen',
         # Values the controller configuration must hold: a single journal
-        # writer (follow_journal false), and for the standalone fleet
-        # controller no shipped runtimes.
+        # writer (follow_journal false).
         'config_equals': {'follow_journal': False, 'data_dir': '/srv/transparent-activity/full-v3/journal',
                           'publication_root': '/srv/transparent-activity/full-v12/publications'},
-        'config_absent_or': {'ship_runtimes': False},
         'publication_keys': ('source_sha',),
         # Ownership a restart must not change. The map, assignment digests,
         # replica group and shard count follow the controller's current
@@ -125,8 +126,8 @@ def validate(request):
         if not condition:
             raise DeployError('invalid upgrade request: ' + message)
     require(isinstance(request, dict) and REQUEST_KEYS <= set(request)
-            and set(request) <= REQUEST_KEYS | {'staging_adapter', 'previous_maps', 'repair'},
-            'keys must be %s with optional staging_adapter, previous_maps and repair' % sorted(REQUEST_KEYS))
+            and set(request) <= REQUEST_KEYS | {'previous_maps', 'repair'},
+            'keys must be %s with optional previous_maps and repair' % sorted(REQUEST_KEYS))
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
@@ -193,34 +194,7 @@ def validate(request):
                     '%s.ready_identity pins exactly %s' % (key, list(product['ready_keys'])))
             require(ready['role'] in product['roles'], '%s.ready_identity.role must be one of %s' % (key, list(product['roles'])))
         require(isinstance(pinned['limits'], dict) and isinstance(pinned['args'], list), '%s limits/args' % key)
-    adapter = request.get('staging_adapter')
-    if 'staging_adapter' in request:
-        require(request['service'] == 'transparent-history' and request['component'] == 'controller',
-                'a staging adapter belongs only to the History controller')
-        require(isinstance(adapter, dict) and set(adapter) == {'sha256', 'configuration', 'previous_configuration'},
-                'staging_adapter is {sha256, configuration, previous_configuration}')
-        require(isinstance(adapter['sha256'], str) and bool(SHA256.fullmatch(adapter['sha256'])), 'invalid staging adapter digest')
-        require(isinstance(adapter['configuration'], str), 'adapter configuration must be JSON text')
-        try:
-            configuration = json.loads(adapter['configuration'])
-        except ValueError as error:
-            raise DeployError('invalid adapter configuration JSON') from error
-        require(isinstance(configuration, dict) and configuration.get('fleet_command') == adapter_path(adapter),
-                'adapter configuration must select its immutable digest path')
-        previous = adapter['previous_configuration']
-        require(isinstance(previous, str) and hashlib.sha256(previous.encode()).hexdigest() == files[product['config']],
-                'previous adapter configuration must match the pinned controller file')
-        try:
-            old = json.loads(previous)
-        except ValueError as error:
-            raise DeployError('invalid previous adapter configuration JSON') from error
-        require(isinstance(old, dict) and {**old, 'fleet_command': adapter_path(adapter)} == configuration,
-                'staging adapter update may change only controller fleet_command')
     return request
-
-
-def adapter_path(adapter):
-    return '/opt/transparent-publisher/v12/adapters/%s/transparent-live-fleet.py' % adapter['sha256']
 
 
 def notification_state(ex, host, product_service):
@@ -340,6 +314,16 @@ class Upgrade:
             raise DeployError('controller runs %s, the worker executable; refusing to select it as the controller' % binary)
         return [self.controller], dataclasses.replace(self.service, root=self.service.root + '/controller', binary=name)
 
+    def require_current(self, action):
+        """Refuse a new transaction against a retired standalone controller.
+
+        Only `status` and `rollback` of an already recorded transaction remain
+        for a topology without the unified publisher.
+        """
+        if not self.unified and action not in ('status', 'rollback'):
+            raise DeployError('standalone %s is retired; only status and rollback of a recorded transaction '
+                              'remain. Upgrade workers under %s' % (self.product['controller'], PUBLISHER_UNIT))
+
     def settings_path(self):
         return PUBLISHER_CONFIG if self.unified else self.product.get('config')
 
@@ -375,12 +359,7 @@ class Upgrade:
         elif 'config' in self.product:
             problem_if(self.product['config'] not in controller['files'],
                        'controller.files must pin ' + self.product['config'], problems)
-        files = dict(controller['files'])
-        adapter = self.request.get('staging_adapter')
-        if adapter and ex.sha256(host, self.product['config']) == hashlib.sha256(adapter['configuration'].encode()).hexdigest():
-            files[self.product['config']] = hashlib.sha256(adapter['configuration'].encode()).hexdigest()
-            files[adapter_path(adapter)] = adapter['sha256']
-        for path, digest in sorted(files.items()):
+        for path, digest in sorted(controller['files'].items()):
             problem_if(ex.sha256(host, path) != digest, 'controller file %s differs from its pinned digest' % path, problems)
         try:
             config = self.controller_settings(ex) if self.settings_path() else {}
@@ -397,12 +376,6 @@ class Upgrade:
             elif self.unified:
                 problems.append('%s publishes History over HTTPS only; pin each provider worker configuration '
                                 'instead' % PUBLISHER_UNIT)
-            else:
-                # The standalone fleet controller's own configuration file.
-                for key, value in self.product['config_absent_or'].items():
-                    problem_if(config.get(key, value) != value, 'controller %s must stay %r' % (key, value), problems)
-                for key in ('fleet_config', 'fleet_command'):
-                    problem_if(config.get(key) not in files, 'controller %s is not a pinned file' % key, problems)
         else:
             root = self.request['publication']['root']
             if self.unified:
@@ -530,7 +503,8 @@ class Upgrade:
                        '%s is not ready and warm' % key, problems)
             problem_if(type(document.get('covered_through')) is not int, '%s has no covered_through' % key, problems)
         else:
-            problems += self.provider_problems(ex, key, document) if self.providers else self.assignment_problems(ex, key, document)
+            if self.providers:
+                problems += self.provider_problems(ex, key, document)
             problem_if(document.get('ready') is not True, '%s is not ready' % key, problems)
             problem_if(type(document.get('target_runtimes')) is not int or document.get('target_runtimes', 0) <= 0
                        or type(document.get('warm_runtimes')) is not int,
@@ -541,27 +515,6 @@ class Upgrade:
             problem_if(type(document.get('prewarm_failed')) is not int or document.get('prewarm_failed') != 0, '%s prewarm_failed %r' % (key, document.get('prewarm_failed')),
                        problems)
         return problems
-
-    def assignment_problems(self, ex, key, document):
-        """History ownership against the controller's assignment for the map the worker serves."""
-        from tools.transparent.lib import activity_schema_routing as routing
-        host, map_sha256 = self.request['controller']['host'], document.get('map_sha256')
-        try:
-            config = self.controller_settings(ex)
-            fleet = json.loads(ex.read(host, config['fleet_config']) or 'null')
-            path = '%s/%s.assignment.json' % (fleet['state_dir'], map_sha256)
-            assignment = json.loads(ex.read(host, path) or 'null')
-            require_ = assignment['set']['map_sha256'] == map_sha256
-            entry = [w for w in assignment['workers'] if w['id'] == document.get('worker_id')]
-            expected = {'assignment_sha256': routing.assignment_digest(assignment),
-                        'worker_assignment_sha256': routing.worker_assignment_digest(assignment, document.get('worker_id')),
-                        'role': entry[0]['role'], 'replica_group': entry[0]['replica_group'],
-                        'assigned_shards': len(entry[0]['shards'])}
-        except (TypeError, KeyError, IndexError, ValueError) as error:
-            return ['%s: no valid controller assignment for map %r (%s)' % (key, map_sha256, error)]
-        problems = [] if require_ else ['%s: assignment for %s names another map' % (key, map_sha256)]
-        return problems + ['%s ready %s is %r, the controller assignment says %r' % (key, field, document.get(field), value)
-                           for field, value in sorted(expected.items()) if document.get(field) != value]
 
     def provider_config(self, ex, target):
         """The `--config FILE` path of a provider unit and its parsed settings."""
@@ -679,10 +632,10 @@ class Upgrade:
 class UpgradeDeployer(Deployer):
     """The shared engine with the product refusals under its lock and after each restart.
 
-    A worker transaction with a continuous load stops the load before the first
-    restart, and after commit writes pins naming the new binary and starts it
-    again. A failed transaction or a rollback leaves the load stopped, its latch
-    and incidents untouched, with pins naming the binaries that run.
+    Explicit rollback of a recorded History worker transaction with a
+    continuous load stops the load, restores the workers and writes pins naming
+    the binaries that run; the load stays stopped and its latch and incidents
+    are untouched.
     """
 
     def __init__(self, upgrade, operation, *args, **kwargs):
@@ -701,44 +654,6 @@ class UpgradeDeployer(Deployer):
             and repair['predecessors'][r['key']] == r['previous']['exe_sha256']
             and self.restored_process_running(journal, r, repair['predecessors'][r['key']])
             for r in touched)
-
-    def assess(self, *args, **kwargs):
-        plans, problems = super().assess(*args, **kwargs)
-        adapter = self.upgrade.request.get('staging_adapter')
-        if not adapter:
-            return plans, problems
-        host = self.upgrade.controller.host
-        path = self.upgrade.product['config']
-        previous = self.ex.read(host, path)
-        desired = adapter['configuration']
-        if previous != desired:
-            if self.ex.sha256(host, path) != self.upgrade.request['controller']['files'][path]:
-                problems.append('controller configuration differs from the reviewed prior digest')
-            plans[0].changes.append({'op': 'write', 'path': path, 'previous': previous, 'new': desired})
-            plans[0].action = 'restart'
-        source = getattr(self, 'staging_adapter', None)
-        staged = self.ex.sha256(host, adapter_path(adapter))
-        if staged not in (None, adapter['sha256']):
-            problems.append('immutable staging adapter path holds different bytes')
-        if staged is None and (not source or hashlib.sha256(Path(source).read_bytes()).hexdigest() != adapter['sha256']):
-            problems.append('provide the checksum-bound --staging-adapter before deployment')
-        return plans, problems
-
-    def stage(self, *args, **kwargs):
-        super().stage(*args, **kwargs)
-        adapter = self.upgrade.request.get('staging_adapter')
-        if adapter:
-            self.lock.verify()
-            host, path = self.upgrade.controller.host, adapter_path(adapter)
-            if self.ex.sha256(host, path) is None:
-                self.ex.mkdir(host, os.path.dirname(path), 0o755)
-                partial = path + '.next'
-                self.ex.upload(host, self.staging_adapter, partial, 0o755)
-                if self.ex.sha256(host, partial) != adapter['sha256']:
-                    raise DeployError('uploaded staging adapter checksum differs from the reviewed request')
-                self.ex.rename(host, partial, path)
-            if self.ex.sha256(host, path) != adapter['sha256']:
-                raise DeployError('staged adapter checksum differs from the reviewed request')
 
     def check(self, record, expected):
         # Worker /health is diagnostic; /ready owns the readiness fields.
@@ -793,6 +708,7 @@ class UpgradeDeployer(Deployer):
             # journal independently checks ownership of every restored change.
             problems = self.upgrade.controller_problems(self.ex, check_authority=False)
         else:
+            self.upgrade.require_current(self.operation)
             if self.upgrade.request.get('repair'):
                 previous = Journal.load(self.state_dir, self.service.name)
                 if previous is None or not self.can_replace_incomplete(previous):
@@ -802,7 +718,8 @@ class UpgradeDeployer(Deployer):
         if problems:
             raise DeployError('product state refused under the lock; nothing was changed:\n  ' + '\n  '.join(problems))
 
-    def pause_load(self, journal, *, refuse_latch=True):
+    def pause_load(self, journal):
+        """Stop the continuous load before restoring workers, recording whether it ran."""
         load = self.upgrade.request['load']
         if load is None or self.load_was_active is not None:
             return
@@ -810,8 +727,6 @@ class UpgradeDeployer(Deployer):
         self.load_was_active = self.ex.probe_unit(load['host'], unit)['active_state'] == 'active'
         journal.event('load paused', host=load['host'], unit=unit, was_active=self.load_was_active)
         self.ex.systemctl(load['host'], 'stop', unit)
-        if refuse_latch and self.ex.sha256(load['host'], self.upgrade.product['load']['root'] + '/latched.json') is not None:
-            raise DeployError('a critical load latch appeared while pausing load')
         self.out('exact-answer load: %s stopped for the restarts' % unit)
 
     def repin_load(self, journal):
@@ -844,13 +759,8 @@ class UpgradeDeployer(Deployer):
             self.sleep(self.poll_seconds)
 
     def activate(self, journal, index, sha):
-        if self.upgrade.request['component'] == 'workers':
-            self.pause_load(journal)
         super().activate(journal, index, sha)
         record = journal.hosts[index]
-        adapter = self.upgrade.request.get('staging_adapter')
-        if adapter and self.ex.read(record['host'], self.upgrade.product['config']) != adapter['configuration']:
-            raise DeployError('controller did not select the reviewed staging adapter configuration')
         if self.upgrade.request['component'] == 'workers':
             self.wait_for_controller()
             # A restarted worker must come back owning the controller's current assignment.
@@ -863,39 +773,6 @@ class UpgradeDeployer(Deployer):
         if problems:
             raise DeployError('publication identity changed after restarting %s: %s' % (record['key'], '; '.join(problems)))
 
-    def _deploy(self, *args, **kwargs):
-        try:
-            journal = super()._deploy(*args, **kwargs)
-        except BaseException:
-            if self.load_was_active is not None:
-                self.out('exact-answer load: %s left stopped for investigation; pins still name the restored binaries'
-                         % self.upgrade.product['load']['unit'])
-            raise
-        if journal is not None and self.load_was_active is not None:
-            journal.set_status('verifying')
-            unit = self.upgrade.product['load']['unit']
-            host = self.upgrade.request['load']['host']
-            try:
-                pins = self.repin_load(journal)
-                if self.upgrade.request['load']['resume_after_upgrade']:
-                    # restart starts the stopped unit; it re-reads the new pins.
-                    self.ex.systemctl(host, 'restart', unit)
-                    self.out('exact-answer load: %s started with pins %s' % (unit, json.dumps(pins, sort_keys=True)))
-                else:
-                    self.out('exact-answer load: %s stays stopped as requested; pins %s' % (unit, json.dumps(pins, sort_keys=True)))
-            except BaseException as error:
-                # The worker checks passed, but monitoring is part of this rollout.
-                # Keep the lock while restoring workers and their pins. Preserve
-                # the stopped observer and its incident history for investigation.
-                journal.event('monitoring failed', error=str(error))
-                self.ex.systemctl(host, 'stop', unit)
-                self.rollback_journal(journal)
-                self.repin_load(journal)
-                self.refresh_baseline()
-                raise DeployError('monitoring recovery failed; workers rolled back and load left stopped: %s' % error) from error
-            journal.set_status('committed')
-        return journal
-
     def rollback_journal(self, journal, force=False):
         component = {(t.host, t.unit) for t in self.targets}
         if any((r['host'], r['unit']) not in component for r in journal.hosts):
@@ -903,7 +780,7 @@ class UpgradeDeployer(Deployer):
                               % (journal.id, self.upgrade.request['component']))
         explicit = self.operation == 'rollback' and self.upgrade.request['component'] == 'workers'
         if explicit:
-            self.pause_load(journal, refuse_latch=False)
+            self.pause_load(journal)
         super().rollback_journal(journal, force)
         if explicit and self.load_was_active is not None:
             pins = self.repin_load(journal)

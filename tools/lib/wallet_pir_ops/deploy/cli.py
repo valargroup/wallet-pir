@@ -70,11 +70,13 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   transparent-binary-{plan,preflight,baseline,status} --request F --request-sha256 H
   transparent-binary-deploy --request F --request-sha256 H [--binary F] [--skip-exact-check]
   transparent-binary-rollback --request F --request-sha256 H [--transaction ID]
-      Worker or controller binary upgrade (the request's component) of the current
-      v12 history or 4k8 display fleet (tools/transparent/lib/binary_upgrade.py).
-      Publication identity is pinned, current map and assignment come from the
-      controller, all re-checked under the lock, after every restart and after
-      rollback; history's continuous load is paused and re-pinned.
+      Worker binary upgrade of the v12 history providers or 4k8 display workers
+      under the unified publisher (tools/transparent/lib/binary_upgrade.py).
+      Publication identity is pinned and the current map comes from the
+      publisher, all re-checked under the lock, after every restart and after
+      rollback. Against a retired standalone controller only status and
+      rollback of a recorded transaction run; that rollback re-pins history's
+      continuous load and leaves it stopped.
 
   transparent-load-repair-{plan,preflight,status} --request F --request-sha256 H
   transparent-load-repair-deploy --request F --request-sha256 H --expect-plan-sha256 H

@@ -2076,72 +2076,59 @@ change.
 ## Binary upgrades of the current v12 history and 4k8 display fleets
 
 `tools/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
---request F --request-sha256 H` (`tools/transparent/lib/binary_upgrade.py`) changes one component's
-executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging,
-the managed ExecStart drop-in, the production lock, the service's journal sequence and touched-target
-rollback. The request's `component` is `workers` (staged under the service root, for example
-`/opt/transparent-publisher`) or `controller` (staged under `<service root>/controller` with the
-controller's current executable name; a controller running the worker executable refuses). Worker
-and controller transactions are separate artifacts; a rollback refuses a transaction of the other
-component. `baseline` records both components.
+--request F --request-sha256 H` (`tools/transparent/lib/binary_upgrade.py`) changes the workers'
+executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging
+under the service root (for example `/opt/transparent-publisher`), the managed ExecStart drop-in,
+the production lock, the service's journal sequence and touched-target rollback.
 
+- **Unified owner.** New transactions run only when the inventory's `publisher.managed_products`
+  names the product: the one `pir-publisher.service` server on `controller.host` is the controller
+  authority; pass `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins
+  that unit and `/etc/wallet-pir/publisher.json`; the enabled product section holds the settings
+  checked below, and its `listen` (history) or `status_listen` (display) serves the product's
+  `/v1/status`. Only `workers` transactions run, never restarting the publisher, and `baseline`
+  records only the workers; a `controller` request refuses and the publisher executable changes
+  through `publisher-cutover-*` ([publisher](../publisher.md)). A standalone controller still
+  running or still in the inventory beside it refuses.
+- **History providers.** The publisher distributes History only over HTTPS, so its History workers
+  are autonomous providers: each pins its `--config` file (`config_sha256`) and unit (`unit_sha256`),
+  the request has `load: null`, and fleet-controlled worker pins refuse. Every provider's publisher
+  must serve a compatible discovery document.
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
-- An explicit History controller request may include `staging_adapter: {sha256, configuration, previous_configuration}`.
-  The adapter is staged once at `/opt/transparent-publisher/v12/adapters/<sha256>/transparent-live-fleet.py`
-  from `--staging-adapter`; its bytes must match the request. The prior configuration must match its pinned digest; the new configuration may differ only in
-  `fleet_command`. The locked transaction retains and restores the prior controller configuration
-  with its binary. It never overwrites the old immutable source or enables runtime shipping.
-- **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
-  `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
-  `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
-  normalized effective unit (every setting and argument, ExecStart binary abstracted, so it holds
-  across a controller upgrade) and the digests of its configuration, `fleet.json` and fleet script;
-  each worker's `worker_id` and `role` (display: `role` `combined`), cache/limit unit properties and
-  argument pairs.
-- **Current authority.** The controller's map advances during a rollout, so nothing map-dependent is
-  pinned. A worker's `map_sha256` must equal the controller's current map (history `/v1/status`
-  `map_sha256` with phase `serving`; display `published.map_sha256` with phase `running`, `halted`
-  null and `stalled` false), read before and after the worker. For history, the worker's
-  `assignment_sha256`, `worker_assignment_sha256`, `replica_group`, `role` and `assigned_shards`
-  must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
-  `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
-  equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
-  report `covered_through`. After a worker becomes HTTP-ready, the operator waits within the
-  controller's existing readiness budget for publication to recover from failed control calls
-  during the restart. It then repeats the publication and ownership checks. A controller that
-  remains stalled causes rollback; worker HTTP readiness alone cannot commit the upgrade.
-- History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
-  full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
-  `--root <root>` without `--geometry`.
-- **Unified owner.** When the inventory's `publisher.managed_products` names the product, the one
-  `pir-publisher.service` server on `controller.host` is the controller authority; pass
-  `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins that unit and
-  `/etc/wallet-pir/publisher.json`; the enabled product section holds the settings checked above
-  (display: `root` instead of `--root`), and its `listen` (history) or `status_listen` (display)
-  serves the product's `/v1/status`. Only `workers` transactions run, never restarting the
-  publisher, and `baseline` records only the workers; a `controller` request refuses and the
-  publisher executable changes through `publisher-cutover-*` ([publisher](../publisher.md)). A
-  standalone controller still running or still in the inventory beside it refuses. The unified
-  publisher distributes History only over HTTPS, so its History workers must be autonomous
-  providers: each pins its `--config` file (`config_sha256`) and unit (`unit_sha256`), the request
-  has `load: null`, and fleet-controlled worker pins refuse.
-- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
-  (the former fleet upgrader's) and 7,200 seconds for the 4k8 Display request. Full warm
-  readiness remains required; the generic binary engine's 180-second default is insufficient
-  for the documented archive restore times.
-- **Continuous load.** History requests pin `load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
-  `/srv/transparent-activity/canonical-load/v12`, whose `transparent-v2-5qps-continuous.service`
-  latches on any worker hash other than its pins (it reads them once at start). Under the lock, a
-  `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
-  they run. A worker transaction stops the load before the first restart; after commit it writes
-  pins naming the new binary atomically (journaled with both digests) and starts the load when
-  `resume_after_upgrade` is true. This preserves the requested running state across a failed
-  attempt and a successful retry; use false to keep an intentionally paused observer stopped. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
-  load stopped with pins naming the restored binaries; an explicit rollback re-pins to the restored binaries and leaves the load stopped
-  until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
-  is not ready while the pins name a binary the workers no longer run. Display has no load
-  (`load: null`); a controller transaction does not touch the load.
+- **Publication identity** is pinned separately: v12 `publication.source_sha` (the History
+  section's `source_sha`, for example `fb90519b`), or the 4k8 display `root`
+  (`<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the publisher's
+  normalized effective unit and the digests of its configuration; each worker's ready identity
+  (display: `role` `combined`), cache/limit unit properties and argument pairs.
+- **Current authority.** The publisher's map advances during a rollout, so nothing map-dependent is
+  pinned. A worker's `map_sha256` must equal the current map (history `/v1/status` `map_sha256` with
+  phase `serving`; display `published.map_sha256` with phase `running`, `halted` null and `stalled`
+  false), read before and after the worker. A recent History provider's assignment fields must match
+  the `assignment.json` its own active publication records; `warm_runtimes` must equal
+  `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and report
+  `covered_through`. After a worker becomes HTTP-ready, the operator waits within the authority's
+  readiness budget for publication to recover, then repeats the publication and ownership checks.
+  An authority that remains stalled causes rollback; worker HTTP readiness alone cannot commit the
+  upgrade.
+- History refuses unless its section holds `follow_journal: false`, the full-v3 journal and the
+  full-v12 publication root. Display refuses unless its section names the pinned `root`.
+- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history and 7,200
+  seconds for the 4k8 Display request. Full warm readiness remains required; the generic binary
+  engine's 180-second default is insufficient for the documented archive restore times.
+- **Retired standalone controllers.** `transparent-v12-publish-controller.service` and
+  `transparent-txid-display-k8-controller.service` drove their workers directly; neither executable
+  exists in this repository any more. Against such a topology only `status` and `rollback` of a
+  transaction it already recorded run (`plan`, `preflight`, `baseline` and `deploy` refuse before
+  any host change). The rollback keeps the pinned unit, file and settings checks and allows an
+  unhealthy process to be restored. A recorded History worker transaction carries its continuous
+  load pins (`load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
+  `/srv/transparent-activity/canonical-load/v12`): its explicit rollback stops
+  `transparent-v2-5qps-continuous.service`, restores the workers, writes pins naming the restored
+  binaries (journaled with both digests) and leaves the load stopped until the exact-answer gate
+  passes. The latch and incident records are never removed. The former `staging_adapter` request
+  field, which changed only a standalone History controller's `fleet_command`, is no longer
+  accepted.
 - **Alert delivery is reported, not inferred.** `plan`, `preflight` and `status` print `notifications:` lines
   for this service:
   - the `alert_mode` configured in `/etc/pir-quality/transparent-production.json`, labelled as read only at
@@ -2151,20 +2138,16 @@ component. `baseline` records both components.
   - delivery health from APM's `monitor-status`.
 
   Anything unreadable is `unknown`. When the running mode is not `active`, the output says that incidents
-  during the upgrade are recorded only. The continuous load (`exact-answer load:` lines) is an exact-answer
-  observer, not alert delivery. pir-apm keeps running through a worker upgrade. Once a service is active, the
-  unavailability a restart causes fires and recovers real incidents (archive warm-up takes minutes). The tool
-  sends no deployment notification of its own.
+  during the upgrade are recorded only. pir-apm keeps running through a worker upgrade. Once a service is
+  active, the unavailability a restart causes fires and recovers real incidents (archive warm-up takes
+  minutes). The tool sends no deployment notification of its own.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
-  `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
-  display worker exactly `transparent-txid-display-worker.service` with
-  `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
+  `transparent-v12-recent.service`; display worker exactly `transparent-txid-display-worker.service`.
+  External workers or other units refuse.
 - The checks run in preflight, under the lock before any change, after every restart (a changed
-  identity or an unhealthy controller fails the transaction and rolls back every touched target) and
-  after rollback. Explicit rollback keeps the configuration and unit-contract checks while allowing
-  an unhealthy process to be restored; existing incident latches are preserved and keep the load stopped.
-  Publications, assignments, journals and routing are never written; unit drift
-  beyond the binary refuses. Shipping stays disabled for history.
+  identity or an unhealthy authority fails the transaction and rolls back every touched target) and
+  after rollback. Publications, assignments, journals and routing are never written; unit drift
+  beyond the binary refuses.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
 

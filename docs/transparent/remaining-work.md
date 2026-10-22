@@ -124,17 +124,19 @@ the last two were found during the redeploy.
 - [ ] Make the `4c85b6c2` operations source verify again, or record that the 2026-10-03
   cutover's rollback is no longer available.
   - **The change.** On 2026-10-06 the txid display router hook rewrote
-    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The live
-    controller's `fleet_command` and the replica reconciler both run that file.
+    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The
+    standalone controller's `fleet_command` and the replica reconciler both ran that file.
   - **Why it refuses.** The receipt still records the original bytes, so every phase of
     the committed 2026-10-03 schema transaction refuses at receipt verification, its
     rollback included.
   - **Why source cannot fix it.** Those phases run `4c85b6c2`'s own code. Only the
     bootstrap survey, which runs from the staging client, accepts the one replacement.
-  - **One fix.** Stage a new source and point the controller's `fleet_command` and the
-    reconciler and control-sessions units at its adapter, then restart them. Next,
-    restore the original bytes kept by the router-hook transaction. After that, the
-    attribution pins move to the new source.
+  - **One fix.** Stage a new source and point the reconciler and control-sessions units
+    at its adapter, then restart them. Next, restore the original bytes kept by the
+    router-hook transaction. After that, the attribution pins move to the new source.
+    The binary upgrade tool no longer changes a standalone controller's
+    `fleet_command` (its `staging_adapter` request was removed on 2026-10-22), so a
+    standalone controller cannot be repointed through it.
 - [ ] Re-pin the version-1 portable executables to full CI 38011976059 at `9d2cbda0`,
   which production runs since the
   [`9d2cbda0` redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/fleet-redeploy-9d2cbda0-2026-10-10/README.md):
