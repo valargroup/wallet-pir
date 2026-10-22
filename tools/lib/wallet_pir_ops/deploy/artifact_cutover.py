@@ -329,10 +329,8 @@ class Cutover:
         # Prove reverse translations while the candidate can still serve. A
         # newer unknown publication is never replaced by a stale snapshot.
         for entry, item in zip(self.request['records'], journal.data['records']):
-            if item['installed']:
-                current = self.ex.sha256(entry['host'], entry['input'])
-                if current != item['previous_sha256']:
-                    self.convert_record(entry, reverse=True)
+            if self.reverse_pending(journal, entry, item):
+                self.convert_record(entry, reverse=True)
         if any(self.child(journal, index).touched() for index in range(len(self.groups))):
             for entry in self.request['preparations']:
                 self.command(entry, 'verify-predecessors', '--stage', entry['stage'])
@@ -341,10 +339,16 @@ class Cutover:
                 self.command(entry, 'restore-predecessors', '--stage', entry['stage'])
         reverse = []
         for entry, item in zip(self.request['records'], journal.data['records']):
-            if item['installed'] and self.ex.sha256(entry['host'], entry['input']) != item['previous_sha256']:
-                reverse.append((entry, self.convert_record(entry, reverse=True)))
-        for entry, evidence in reverse:
+            if self.reverse_pending(journal, entry, item):
+                reverse.append((entry, item, self.convert_record(entry, reverse=True)))
+        for entry, item, evidence in reverse:
+            # Journal the exact reverse output before its side effect so a
+            # retry after a lost runner or reply recognizes the installed record.
+            item['reverse'] = {**evidence, 'installed':False}
+            journal.save()
             self.install_record(entry, evidence)
+            item['reverse']['installed'] = True
+            journal.save()
         # Publisher first on restoration too; defer cross-service acceptance.
         for index, (_, deployer) in enumerate(self.groups):
             child = self.child(journal, index)
@@ -364,6 +368,27 @@ class Cutover:
                 deployer.refresh_baseline()
         self.clear_fence(journal)
         journal.set_status('rolled-back')
+
+    def reverse_pending(self, journal, entry, item):
+        """Whether the live record still needs its reverse translation.
+
+        Only digest identity proves completion: the untouched forward input, or
+        the journaled reverse output. A record merely in predecessor format is
+        neither, so the reverse converter refuses it rather than guessing.
+        """
+        if not item['installed']:
+            return False
+        reverse = item.get('reverse')
+        if reverse is not None and reverse['installed']:
+            return False
+        current = self.ex.sha256(entry['host'], entry['input'])
+        if current == item['previous_sha256']:
+            return False
+        if reverse is not None and current == reverse['prepared_sha256']:
+            reverse['installed'] = True
+            journal.save()
+            return False
+        return True
 
     def clear_fence(self, journal):
         host = self.inventory.lock.get('host')
