@@ -102,13 +102,7 @@ pub(crate) fn check_received_size(path: &Path, file: &File) -> io::Result<()> {
 }
 
 pub(crate) fn open(path: &Path) -> io::Result<File> {
-    if !std::fs::symlink_metadata(path)?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "artifact is not a regular file",
-        ));
-    }
-    File::open(path)
+    pir_publication::open_object_file(path, None).map_err(io::Error::from)
 }
 
 fn persist(path: &Path, bytes: &[u8]) -> io::Result<()> {

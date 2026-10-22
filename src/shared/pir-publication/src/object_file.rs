@@ -28,12 +28,7 @@ pub fn hash_object_file(
     let identity = FileIdentity::capture(path, file)?;
     let bytes = file.metadata()?.len();
     if let Some(expected) = expected {
-        if expected.bytes != bytes {
-            return Err(ObjectFileError::LengthMismatch {
-                expected: expected.bytes,
-                actual: bytes,
-            });
-        }
+        check_length(expected.bytes, bytes)?;
     }
     file.rewind()?;
     let reference = copy_and_hash(
@@ -42,12 +37,7 @@ pub fn hash_object_file(
         stop,
     )?;
     identity.check(path, file)?;
-    if reference.bytes != bytes {
-        return Err(ObjectFileError::LengthMismatch {
-            expected: bytes,
-            actual: reference.bytes,
-        });
-    }
+    check_length(bytes, reference.bytes)?;
     if let Some(expected) = expected {
         if expected.sha256 != reference.sha256 {
             return Err(ObjectFileError::DigestMismatch {
@@ -60,13 +50,39 @@ pub fn hash_object_file(
     Ok((reference, identity))
 }
 
-pub(crate) fn open_regular(path: &Path) -> Result<File, ObjectFileError> {
+/// Open a physical regular file without reading its contents or changing its
+/// metadata. Its parent must be a real directory, and the opened file must
+/// still match the named entry. `expected_bytes`, when known, checks exact
+/// length, not the body's integrity or serving authority.
+/// Callers resolve logical paths and enforce publication membership first;
+/// publisher-owned ancestors and cooperative immutable writers are assumed.
+pub fn open_object_file(path: &Path, expected_bytes: Option<u64>) -> Result<File, ObjectFileError> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if !fs::symlink_metadata(parent)?.is_dir() {
+        return Err(ObjectFileError::NotDirectory(parent.to_path_buf()));
+    }
     let named = fs::symlink_metadata(path)?;
     let identity = FileIdentity::from_metadata(&named)
         .ok_or_else(|| ObjectFileError::NotRegularFile(path.to_path_buf()))?;
+    if let Some(expected) = expected_bytes {
+        check_length(expected, named.len())?;
+    }
     let file = File::open(path)?;
     identity.check(path, &file)?;
+    if !fs::symlink_metadata(parent)?.is_dir() {
+        return Err(ObjectFileError::NotDirectory(parent.to_path_buf()));
+    }
     Ok(file)
+}
+
+fn check_length(expected: u64, actual: u64) -> Result<(), ObjectFileError> {
+    if expected != actual {
+        return Err(ObjectFileError::LengthMismatch { expected, actual });
+    }
+    Ok(())
 }
 
 /// The same bounded loop identifies newly written streams and existing files.

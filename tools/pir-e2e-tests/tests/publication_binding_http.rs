@@ -91,6 +91,29 @@ async fn shared_object_installation_preserves_enhance_publication_and_reuse() {
         .await
         .unwrap();
 
+    // Installed bytes outside retained inventories are not public objects.
+    use sha2::{Digest, Sha256};
+    let unpublished = hex::encode(Sha256::digest(b"unpublished object"));
+    fs::write(
+        root.join("objects").join(&unpublished),
+        b"unpublished object",
+    )
+    .unwrap();
+    assert_eq!(
+        source
+            .transport
+            .client
+            .get(format!(
+                "{}/provider/enhance/v1/objects/{unpublished}",
+                source.transport.origin
+            ))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+
     let rows = &domain.rows[0];
     let downloaded = source
         .transport

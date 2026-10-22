@@ -7,7 +7,9 @@ use crate::{
     history::shardset::ShardSet,
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
-use pir_publication::{hash_object_file, FileIdentity, ObjectFileError, ObjectReference};
+use pir_publication::{
+    hash_object_file, open_object_file, FileIdentity, ObjectFileError, ObjectReference,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -255,12 +257,7 @@ pub struct Inventory {
 pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-pub fn is_digest(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
+pub use pir_publication::is_object_digest as is_digest;
 /// No escaping, queries, fragments, absolute paths or dot components.
 pub fn safe_path(path: &str) -> bool {
     !path.is_empty()
@@ -280,7 +277,8 @@ pub fn safe_path(path: &str) -> bool {
 }
 pub use crate::history::shardset::OBJECT_STORE;
 
-/// The regular file publication artifact `relative` names under `root`.
+/// Open the publication artifact `relative` names under `root`, returning
+/// its checked physical path and the handle acquired at that name.
 ///
 /// Every component must be a real directory or file, with two exceptions,
 /// each one exact link into the real [`OBJECT_STORE`] beside the publication:
@@ -288,21 +286,14 @@ pub use crate::history::shardset::OBJECT_STORE;
 /// a table segment of a revision directory to `../../.objects/<sha256>`. Traversal, any other
 /// symbolic link, a redirect elsewhere, a linked store and a missing or
 /// non-regular target are refused. Publication paths stay logical; only reads
-/// use the returned path. A segment link's digest is checked against its
+/// use the returned handle. A segment link's digest is checked against its
 /// manifest by the loader and by the digest listed for it.
-pub(crate) fn resolve(root: &Path, relative: &str) -> Result<PathBuf, Error> {
+pub(crate) fn resolve(root: &Path, relative: &str) -> Result<(PathBuf, std::fs::File), Error> {
     if !safe_path(relative) {
         return Err("unsafe publisher artifact path".into());
     }
     let components: Vec<&str> = relative.split('/').collect();
     let base = root.parent().ok_or("publication has no parent")?;
-    let real = |path: &Path, dir: bool| -> Result<(), Error> {
-        let meta = std::fs::symlink_metadata(path)?;
-        if meta.file_type().is_symlink() || (if dir { !meta.is_dir() } else { !meta.is_file() }) {
-            return Err("publisher store entry has the wrong type".into());
-        }
-        Ok(())
-    };
     let mut physical = root.to_path_buf();
     for (index, component) in components.iter().enumerate() {
         physical.push(component);
@@ -329,15 +320,14 @@ pub(crate) fn resolve(root: &Path, relative: &str) -> Result<PathBuf, Error> {
             .ok_or("publisher artifact link leaves the object store")?
             .to_string();
         let store = base.join(OBJECT_STORE);
-        real(&store, true)?;
         physical = store.join(name);
     }
-    real(&physical, false)?;
-    Ok(physical)
+    let file = open_object_file(&physical, None)?;
+    Ok((physical, file))
 }
 
 /// [`resolve`] for an artifact given by its logical path under `root`.
-fn resolve_path(root: &Path, logical: &Path) -> Result<PathBuf, Error> {
+fn resolve_path(root: &Path, logical: &Path) -> Result<(PathBuf, std::fs::File), Error> {
     let relative = logical
         .strip_prefix(root)?
         .to_str()
@@ -452,7 +442,7 @@ pub struct Finalized {
     inventory: Inventory,
     bytes: Vec<u8>,
     sha256: String,
-    files: BTreeMap<String, PathBuf>,
+    files: BTreeMap<String, (PathBuf, u64)>,
 }
 impl Finalized {
     pub fn inventory(&self) -> &Inventory {
@@ -465,8 +455,12 @@ impl Finalized {
         &self.sha256
     }
 
-    pub fn file(&self, digest: &str) -> Option<&Path> {
-        self.files.get(digest).map(PathBuf::as_path)
+    /// Acquire only a listed artifact, checking the size finalized for it.
+    pub fn open_file(&self, digest: &str) -> Result<Option<std::fs::File>, Error> {
+        self.files
+            .get(digest)
+            .map(|(path, bytes)| open_object_file(path, Some(*bytes)).map_err(Into::into))
+            .transpose()
     }
     pub fn prepare(root: &Path, set: &ShardSet, recent_from_height: u64) -> Result<Self, Error> {
         Self::prepare_holdings(
@@ -591,7 +585,7 @@ impl Finalized {
                 runtimes.insert(path.clone(), runtime);
             }
             if full || artifact.kind.local() {
-                files.insert(artifact.sha256.clone(), physical);
+                files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
             }
             inventory.artifacts.push(artifact);
         }
@@ -929,10 +923,9 @@ impl Finalized {
                 .get(relative)
                 .filter(|a| a.kind == *kind)
                 .ok_or("restored inventory does not list exactly the publication")?;
-            let physical = resolve_path(root, path)?;
-            let file = crate::verification::open(&physical)?;
+            let (physical, file) = resolve_path(root, path)?;
             let metadata = file.metadata()?;
-            if !metadata.is_file() || metadata.len() != artifact.bytes {
+            if metadata.len() != artifact.bytes {
                 return Err(format!("restored artifact {relative} has the wrong length").into());
             }
             if let Some(manifest) = plan.sources.get(path) {
@@ -948,7 +941,7 @@ impl Finalized {
                 }
             }
             if expected.full || kind.local() {
-                files.insert(artifact.sha256.clone(), physical);
+                files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
             }
         }
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -1107,11 +1100,12 @@ impl Validation {
                         .is_some_and(|started| stamp.settled_before(started))
                 })
             }) {
-                let still = resolve(&self.root, &artifact.path).ok().and_then(|path| {
-                    let file = std::fs::File::open(&path).ok()?;
-                    let identity = FileIdentity::capture(&path, &file).ok()?;
-                    (file.metadata().ok()?.len() == artifact.bytes).then_some(identity)
-                });
+                let still = resolve(&self.root, &artifact.path)
+                    .ok()
+                    .and_then(|(path, file)| {
+                        let identity = FileIdentity::capture(&path, &file).ok()?;
+                        (file.metadata().ok()?.len() == artifact.bytes).then_some(identity)
+                    });
                 if still == Some(stamp) {
                     verified
                         .files
@@ -1145,13 +1139,12 @@ impl Validation {
         if !safe_path(&artifact.path) {
             return Err(mismatch(None, "unsafe artifact path"));
         }
-        let physical = resolve(&self.root, &artifact.path).map_err(|error| {
+        let (physical, mut file) = resolve(&self.root, &artifact.path).map_err(|error| {
             match error.downcast_ref::<io::Error>() {
                 Some(error) => unavailable(error),
                 None => mismatch(None, &error.to_string()),
             }
         })?;
-        let mut file = std::fs::File::open(&physical).map_err(|e| unavailable(&e))?;
         let expected = ObjectReference {
             sha256: artifact.sha256.clone(),
             bytes: artifact.bytes,
@@ -1206,29 +1199,21 @@ impl Validation {
                     artifact.path
                 ))
             })?;
-            let path = resolve_path(&self.root, path)
+            let (path, file) = resolve_path(&self.root, path)
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
-            let file = crate::verification::open(&path)
+            stamp
+                .check(&path, &file)
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
-            match FileIdentity::capture(&path, &file) {
-                Ok(found) if found == stamp => Ok((file, stamp)),
-                Ok(_) => Err(CorrectnessError::Unavailable(format!(
-                    "{} changed since integrity validation",
-                    artifact.path
-                ))),
-                Err(e) => Err(CorrectnessError::Unavailable(e.to_string())),
-            }
+            Ok((file, stamp))
         };
         let unchanged = |path: &Path, file: &std::fs::File, stamp: FileIdentity, name: &str| {
-            match resolve_path(&self.root, path)
-                .ok()
-                .map(|path| FileIdentity::capture(&path, file))
-            {
-                Some(Ok(found)) if found == stamp => Ok(()),
-                _ => Err(CorrectnessError::Unavailable(format!(
-                    "{name} changed during correctness validation"
-                ))),
-            }
+            let (physical, _) = resolve_path(&self.root, path)
+                .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+            stamp.check(&physical, file).map_err(|e| {
+                CorrectnessError::Unavailable(format!(
+                    "{name} changed during correctness validation: {e}"
+                ))
+            })
         };
         let mut checked = CheckedRuntimes::default();
         for (path, key, shared, source) in plan.native {
@@ -1381,8 +1366,7 @@ pub(crate) fn hash_listed(
                     .to_str()
                     .ok_or("non-UTF8 artifact")?
                     .to_string();
-                let physical = resolve(root, &relative)?;
-                let mut file = std::fs::File::open(&physical)?;
+                let (physical, mut file) = resolve(root, &relative)?;
                 let known = known
                     .as_ref()
                     .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
@@ -1484,10 +1468,7 @@ struct Listing {
 }
 
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
-    let file = crate::verification::open(path)?;
-    if file.metadata()?.len() != expected.bytes {
-        return Err("artifact length mismatch".into());
-    }
+    open_object_file(path, Some(expected.bytes))?;
     Ok(())
 }
 
@@ -1726,16 +1707,18 @@ mod tests {
     fn exact_store_links_resolve_to_their_stored_file() {
         let (base, root, revision, object, runtime) = stored_publication();
         assert_eq!(
-            resolve(&root, &format!("{revision}/pages.0.bin")).unwrap(),
+            resolve(&root, &format!("{revision}/pages.0.bin"))
+                .unwrap()
+                .0,
             base.path().join(OBJECT_STORE).join(&object)
         );
         assert_eq!(
-            resolve(&root, &runtime).unwrap(),
+            resolve(&root, &runtime).unwrap().0,
             base.path().join(OBJECT_STORE).join(digest(b"runtime"))
         );
         // Plain files still resolve to themselves.
         assert_eq!(
-            resolve(&root, &format!("{revision}/filter.bin")).unwrap(),
+            resolve(&root, &format!("{revision}/filter.bin")).unwrap().0,
             root.join(&revision).join("filter.bin")
         );
     }
