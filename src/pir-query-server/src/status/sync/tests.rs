@@ -11,6 +11,7 @@ struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
     advance_during_check: AtomicBool,
+    withdraw_during_check: AtomicBool,
     version: RwLock<String>,
 }
 #[path = "../../../tests/support/status_tls.rs"]
@@ -57,6 +58,7 @@ async fn setup() -> (
         current: RwLock::new(pointer()),
         canonical: AtomicBool::new(true),
         advance_during_check: AtomicBool::new(false),
+        withdraw_during_check: AtomicBool::new(false),
         version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
     });
     let shared = current.clone();
@@ -95,7 +97,11 @@ async fn setup() -> (
                 let shared = anchors.clone();
                 async move {
                     if shared.advance_during_check.swap(false, Ordering::SeqCst) {
-                        shared.current.write().unwrap().revision += 1;
+                        let mut current = shared.current.write().unwrap();
+                        current.revision += 1;
+                        if shared.withdraw_during_check.load(Ordering::SeqCst) {
+                            current.eligible = false;
+                        }
                         return StatusCode::CONFLICT.into_response();
                     }
                     Json(AnchorResponse {
@@ -455,5 +461,17 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
     );
     // The next attempt really runs; its invalid fixture must still be refused.
     assert!(task.synchronize().await.is_err());
+    server.abort();
+}
+
+#[tokio::test]
+async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    source.withdraw_during_check.store(true, Ordering::SeqCst);
+    task.synchronize().await.unwrap();
+    assert!(task.deferred);
+    assert!(!task.floor.current.as_ref().unwrap().eligible);
+    assert!(service.serving().await.is_err());
     server.abort();
 }
