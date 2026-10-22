@@ -120,12 +120,14 @@ impl Durable {
                     stored.insert(name, name.revision);
                 }
             } else if let Some(name) = file.strip_suffix(".json").and_then(Name::parse) {
-                // A manifest that does not parse is dropped with its table on the next
-                // retain, and its revision is prepared afresh.
-                let bytes = crate::serve_publication::read_bounded(
+                // A manifest that is oversized or does not parse is dropped with its
+                // table below as a leftover, and its revision is prepared afresh.
+                let Ok(bytes) = crate::serve_publication::read_bounded(
                     &path,
                     receiver_pir::MAX_MANIFEST_BYTES as u64,
-                )?;
+                ) else {
+                    continue;
+                };
                 let session = match name.kind {
                     Kind::Payments => serde_json::from_slice::<Manifest>(&bytes)
                         .ok()

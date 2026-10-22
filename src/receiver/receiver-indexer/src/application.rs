@@ -1916,6 +1916,33 @@ mod tests {
         assert_eq!(tables.resident(), 0);
     }
 
+    /// A stored manifest over the manifest size bound does not stop a restart: its table
+    /// is discarded as a leftover and prepared again, and a wallet reads it as usual.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_oversized_stored_manifest_is_prepared_again_after_a_restart() {
+        let payee = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.extend(&[payee], 0, 0);
+        paused.refresh().await.unwrap();
+        let tables = paused.dir.path().join(crate::durable::TABLES_DIR);
+        let manifest = std::fs::read_dir(&tables)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                let name = p.file_name().unwrap().to_str().unwrap();
+                name.starts_with("p-") && name.ends_with(".json")
+            })
+            .unwrap();
+        let mut bytes = std::fs::read(&manifest).unwrap();
+        bytes.resize(receiver_pir::MAX_MANIFEST_BYTES + 1, b' ');
+        std::fs::write(&manifest, bytes).unwrap();
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert!(paused.state.durable.as_ref().unwrap().prepared() >= 1);
+        let (client, _) = paused.capture(false).await;
+        assert_eq!(lookup(&client, payee).await.len(), 1);
+    }
+
     /// A stored table whose public setup is not the one its manifest binds is not
     /// served after a restart: it is prepared again, and a wallet reads it as usual.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
