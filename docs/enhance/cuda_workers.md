@@ -2,7 +2,7 @@
 
 CUDA is an opt-in build and a per-worker runtime choice. The default build and
 normal release bundles remain CPU-only. The CUDA worker is `pir-query-server`,
-not the publisher. GPU hosts do not run `enhance-pir-server` as the worker.
+not the publisher. GPU hosts do not run the publisher as the worker.
 Build it with:
 
 ```sh
@@ -202,10 +202,11 @@ Deployment swaps the CUDA `pir-query-server` transactionally, verifies native v9
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
 GPU evaluation counter growth, router availability, and no worker restart or OOM.
-The verifier shares one existing 60-second publication recovery budget between
-initial eligibility and final current-generation membership. A generation that
-advances during the measured queries must converge before commit. Router readiness
-loss after measurement and any process, restart or OOM drift still fail immediately.
+Before measurement the verifier gives the restarted worker one 60-second budget
+to report a ready active publication on CUDA device 0 beside a ready packing
+router; after measurement both must still be ready.
+Readiness loss after measurement and any process, restart or OOM drift fail
+immediately.
 Repeat deploys rerun validation without restarting an unchanged unit. No deliberate
 production failover or throughput qualification is part of this workflow.
 
