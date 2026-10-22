@@ -32,6 +32,26 @@ struct State {
     last_manifest: Option<Hash>,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedState {
+    Current(State),
+    BeforePublicationAuthority(PreviousState),
+}
+
+/// The counter saved before recovery epochs moved to the shared authority.
+/// Only the generation counter and its last manifest survive the rewrite.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviousState {
+    version: u32,
+    network: Hash,
+    salt: Hash,
+    generation: u64,
+    recovery_epoch: u64,
+    last_manifest: Option<Hash>,
+}
+
 pub struct Authority {
     dir: PathBuf,
     _lock: File,
@@ -54,8 +74,22 @@ impl Authority {
         lock.try_lock()
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let state_path = path.as_ref().join("authority.json");
-        let state: State = if state_path.exists() {
-            serde_json::from_slice(&fs::read(state_path)?)?
+        let state = if state_path.exists() {
+            match serde_json::from_slice::<SavedState>(&fs::read(state_path)?)? {
+                SavedState::Current(state) => state,
+                SavedState::BeforePublicationAuthority(previous)
+                    if previous.version == 1 && previous.recovery_epoch > 0 =>
+                {
+                    State {
+                        version: VERSION,
+                        network: previous.network,
+                        salt: previous.salt,
+                        generation: previous.generation,
+                        last_manifest: previous.last_manifest,
+                    }
+                }
+                SavedState::BeforePublicationAuthority(_) => return Err(AuthorityError::State),
+            }
         } else {
             State {
                 version: VERSION,
@@ -72,6 +106,8 @@ impl Authority {
         {
             return Err(AuthorityError::State);
         }
+        // Rewrite the previous format under the state lock before any new
+        // publication can use its counter. A failed sync refuses the open.
         persist(path.as_ref(), &state)?;
         Ok(Self {
             dir: path.as_ref().to_path_buf(),
@@ -166,6 +202,94 @@ mod tests {
         ));
         recovered.commit(&manifest(2, 2)).unwrap();
         assert_eq!(recovered.next_generation().unwrap(), 3);
+    }
+
+    fn previous_counter() -> serde_json::Value {
+        serde_json::json!({
+            "version": 1,
+            "network": vec![1; 32],
+            "salt": vec![2; 32],
+            "generation": 7,
+            "recovery_epoch": 12,
+            "last_manifest": vec![9; 32],
+        })
+    }
+
+    #[test]
+    fn previous_counter_is_rewritten_without_reusing_a_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("authority.json");
+        let previous = previous_counter();
+        fs::write(&path, serde_json::to_vec(&previous).unwrap()).unwrap();
+        {
+            let mut authority = Authority::open(dir.path(), [1; 32], [2; 32]).unwrap();
+            assert_eq!(authority.next_generation().unwrap(), 8);
+            let saved: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved["version"], VERSION);
+            assert_eq!(saved["generation"], previous["generation"]);
+            assert_eq!(saved["last_manifest"], previous["last_manifest"]);
+            assert!(saved.get("recovery_epoch").is_none());
+            authority.commit(&manifest(8, 1)).unwrap();
+        }
+        let reopened = Authority::open(dir.path(), [1; 32], [2; 32]).unwrap();
+        assert_eq!(reopened.next_generation().unwrap(), 9);
+    }
+
+    #[test]
+    fn previous_empty_and_exhausted_counters_keep_their_bounds() {
+        for generation in [0, u64::MAX] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut previous = previous_counter();
+            previous["generation"] = serde_json::json!(generation);
+            if generation == 0 {
+                previous["last_manifest"] = serde_json::Value::Null;
+            }
+            fs::write(
+                dir.path().join("authority.json"),
+                serde_json::to_vec(&previous).unwrap(),
+            )
+            .unwrap();
+            let authority = Authority::open(dir.path(), [1; 32], [2; 32]).unwrap();
+            assert_eq!(authority.next_generation().ok(), generation.checked_add(1));
+        }
+    }
+
+    #[test]
+    fn incompatible_previous_counters_are_refused_without_rewriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("authority.json");
+        let mut malformed = Vec::new();
+        for (field, value) in [
+            ("version", serde_json::json!(3)),
+            ("recovery_epoch", serde_json::json!(0)),
+            ("network", serde_json::json!(vec![3; 32])),
+            ("salt", serde_json::json!(vec![3; 32])),
+            ("generation", serde_json::json!(0)),
+            ("last_manifest", serde_json::Value::Null),
+        ] {
+            let mut previous = previous_counter();
+            previous[field] = value;
+            malformed.push(previous);
+        }
+        let mut missing_epoch = previous_counter();
+        missing_epoch
+            .as_object_mut()
+            .unwrap()
+            .remove("recovery_epoch");
+        malformed.push(missing_epoch);
+        let mut unknown_field = previous_counter();
+        unknown_field["unexpected"] = serde_json::json!(1);
+        malformed.push(unknown_field);
+        for previous in malformed {
+            let bytes = serde_json::to_vec(&previous).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            assert!(
+                Authority::open(dir.path(), [1; 32], [2; 32]).is_err(),
+                "{previous}"
+            );
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
     }
 
     #[test]

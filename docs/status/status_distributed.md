@@ -124,6 +124,14 @@ and rollback procedures. The one-time push-to-HTTPS cutover commands are retired
 new deployments use the HTTPS role configurations directly. Retained transaction
 records and predecessor state are historical evidence, not configuration inputs.
 
+The shared publication format requires a coordinated publisher and query-server
+cutover. On first open, the publisher rewrites its earlier generation-counter
+file in place, preserving the last committed generation and manifest. This
+rewrite is locked and synced before publication; it does not restore serving
+permission. The shared authority starts withdrawn in its new file, and query
+servers use the new publication-floor file. Keep the matching older binaries
+and state together for rollback.
+
 Publication no longer needs an SSH artifact reverse forward. The shared session
 supervisor still carries private worker/router monitoring and the wallet query
 connection. The publisher's private listener remains the upstream for the HTTPS
