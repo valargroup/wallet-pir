@@ -47,16 +47,6 @@ UNIT_PATH = '/etc/systemd/system/' + UNIT
 # running executable.
 STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
-# Publisher settings removed with fleet-controlled Transparent publication, and
-# the value each had to hold for its product to already publish over HTTPS only.
-# None accepts any value of a setting that HTTPS-only publication ignored.
-RETIRED_SETTINGS = {
-    'transparent_history': {'http_only': True, 'distribute_prepared': True, 'ship_runtimes': True,
-                            'shadow': False, 'fleet_command': None, 'fleet_config': None},
-    'transaction_details': {'http_only': True, 'ship_runtimes': True, 'workers': None, 'mode': 'live',
-                            'blocks_per_step': None, 'step_interval_ms': None, 'replay_end': None,
-                            'exit_when_idle': False},
-}
 
 
 def require(condition, message):
@@ -111,13 +101,6 @@ def load_request(path, expected, *, recovery=False):
         require(isinstance(product, dict) and set(product) == {'enabled', 'settings'} and product['enabled'] is True
                 and isinstance(product['settings'], dict),
                 'every cutover product must be enabled')
-        if name not in PRODUCTS:
-            continue
-        settings = product['settings']
-        # Saved transactions keep the settings their publisher ran with.
-        require(recovery or not set(settings) & set(RETIRED_SETTINGS[name]),
-                'Transparent publishing is HTTPS-only; remove retired settings: '
-                + ', '.join(sorted(set(settings) & set(RETIRED_SETTINGS[name]))))
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
@@ -150,23 +133,6 @@ def load_request(path, expected, *, recovery=False):
         from .enhance_https import validate
         validate(request, inventory)
     return request, inventory
-
-
-def without_retired_settings(installed):
-    """The installed configuration with retired settings removed.
-
-    Removal is accepted only where the installed value already selected
-    HTTPS-only publication, so an update never changes what is published.
-    """
-    current = json.loads(json.dumps(installed))
-    for name, retired in RETIRED_SETTINGS.items():
-        settings = current.get(name, {}).get('settings', {})
-        for key, required in retired.items():
-            if key in settings:
-                value = settings.pop(key)
-                require(required is None or value == required,
-                        f'{name}.{key}={value!r} is not HTTPS-only publication; reconcile before updating')
-    return current
 
 
 def exec_override(command):
@@ -283,8 +249,7 @@ class Cutover:
                 'standalone and unified publishers both own state')
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
-        installed = json.loads(self.read(CONFIG))
-        require(config == without_retired_settings(installed),
+        require(config == json.loads(self.read(CONFIG)),
                 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
