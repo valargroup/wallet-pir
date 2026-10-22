@@ -578,16 +578,9 @@ mod tests {
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);
-        let mut input = HistoryInputTask {
-            config: config.clone(),
-            rpc: client.clone(),
-            store: store.clone(),
-            authority: authority.clone(),
-            notify: notify.clone(),
-            cache: OutputCache::new(100),
-            pending_invalidation: None,
-        };
-        pir_pipeline::Task::run(&mut input).await.unwrap();
+        let mut input =
+            HistoryIngestion::fixture(&config, &client, &store, &authority, &notify).await;
+        input.pass().await.unwrap();
         let mut cache = input.cache;
         assert_eq!(store.lock().await.covered_through(), Some(4));
         // A candidate that cannot be written fails preparation.

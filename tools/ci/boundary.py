@@ -109,7 +109,8 @@ PURE = {
 SERVING = {'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'transparent-shared',
            'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
-    'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
+    'pir-publisher', 'pir-pipeline', 'pir-node-rpc', 'zakura-server-chain', 'enhance-publisher',
+    'receiver-indexer',
     'transparent-publisher', 'status-publisher',
     # Optional publisher diagnostics make the tools package node-capable.
     'transparent-tools',
@@ -140,7 +141,20 @@ SYNC_DIRECT = {'bytes', 'pir-pipeline', 'pir-publication', 'reqwest', 'serde', '
                'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
-PIPELINE_DIRECT = {'tokio'}
+PIPELINE_DIRECT = {'tokio', 'tracing'}
+# Node JSON-RPC transport: authentication, framing, bounds and deadlines only.
+NODE_RPC = 'pir-node-rpc'
+NODE_RPC_DIRECT = {'reqwest', 'serde', 'serde_json', 'thiserror', 'tokio'}
+# Reusable engines and the transport stay free of the publisher host, chain
+# decoding, node state, product cryptography and node databases, in their normal,
+# build and dev graphs. The root publisher's RPC-only selection is held to the
+# same rule for its normal/build graph.
+ENGINE_GRAPHS = {PIPELINE: None, NODE_RPC: None, 'pir-publisher': ['chain']}
+ENGINE_FORBIDDEN = NODE | COMMON | {
+    'pir-publisher', 'zakura-server-chain', 'zakura-transaction-wire', 'zakura-receiver-crypto',
+    'rocksdb', 'librocksdb-sys', 'ipir-sp', 'reinspiring',
+    'enhance-publisher', 'status-publisher', 'transparent-publisher', 'receiver-indexer',
+}
 # The internal publisher-query publication contract: content-addressed objects,
 # pointer succession, durable floors and object caches. It performs no network
 # I/O and has no runtime, product, chain or PIR-engine dependency.
@@ -363,6 +377,11 @@ def violations(packages, allowed):
                     or dependency['git']):
                 problems.append(f"{package['manifest']}: pipeline has a "
                                 f"{dependency['kind']} outside its utility boundary: {name}")
+            if package['name'] == NODE_RPC and (
+                    name not in NODE_RPC_DIRECT or dependency.get('path')
+                    or dependency['git']):
+                problems.append(f"{package['manifest']}: node transport has a "
+                                f"{dependency['kind']} outside its boundary: {name}")
             if reader and name in CHAIN_READER_EDGES:
                 reader_edges.add(name)
                 if name in NODE:
@@ -601,6 +620,43 @@ def database_reader_violations(metadata):
     return sorted(problems)
 
 
+def reached_names(metadata, name, kinds):
+    """Package names reachable from repository package `name`: its own edges of
+    `kinds` (None is normal), then normal and build edges transitively."""
+    packages = {p['id']: p for p in metadata['packages']}
+    nodes = {n['id']: n for n in metadata['resolve']['nodes']}
+    root = next(i for i, p in packages.items() if p['name'] == name and p['source'] is None)
+    reached, seen = set(), set()
+    pending = [(root, kinds)]
+    while pending:
+        current, allowed = pending.pop()
+        if (current, allowed) in seen:
+            continue
+        seen.add((current, allowed))
+        for dep in nodes[current]['deps']:
+            if any(k['kind'] in allowed for k in dep['dep_kinds']):
+                reached.add(packages[dep['pkg']]['name'])
+                pending.append((dep['pkg'], (None, 'build')))
+    return reached
+
+
+def engine_graph_violations(workspace):
+    """Resolve the shared engines, the node transport and the root publisher's
+    RPC-only selection alone, and the engines' development graphs in `workspace`
+    metadata; report any heavy package they reach."""
+    problems = []
+    for name, features in sorted(ENGINE_GRAPHS.items()):
+        graphs = [('production', standalone_metadata({name}, {name: features or []}), (None, 'build'))]
+        if features is None:
+            graphs.append(('development', workspace, (None, 'build', 'dev')))
+        for label, metadata, kinds in graphs:
+            heavy = sorted(reached_names(metadata, name, kinds) & ENGINE_FORBIDDEN)
+            if heavy:
+                selection = f" with features {','.join(features)}" if features else ''
+                problems.append(f"{name}{selection}: {label} graph reaches {', '.join(heavy)}")
+    return problems
+
+
 def standalone_metadata(names, features=None):
     """Resolve a fresh consumer of the named repository packages alone, without
     features other workspace members unify into them (such as the indexer's
@@ -720,6 +776,7 @@ def main(argv=None):
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER, PUBLICATION}):
             problems += resolved_violations(standalone_metadata({name}))
         problems += runtime_graph_violations()
+        problems += engine_graph_violations(metadata)
     for problem in problems:
         print(problem, file=sys.stderr)
     return 1 if problems else 0

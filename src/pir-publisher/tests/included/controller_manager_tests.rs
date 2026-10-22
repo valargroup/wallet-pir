@@ -1840,15 +1840,7 @@ async fn http_consumers_answer_from_successive_stored_publications() {
     )
     .unwrap();
     let (notify, _) = tokio::sync::watch::channel(0);
-    let mut input = HistoryInputTask {
-        config: config.clone(),
-        rpc: rpc.clone(),
-        store: reader.clone(),
-        authority: owner.clone(),
-        notify,
-        cache: OutputCache::new(100),
-        pending_invalidation: None,
-    };
+    let mut input = HistoryIngestion::fixture(&config, &rpc, &reader, &owner, &notify).await;
     let mut consumer = manager(&tls, &root.path().join("consumer"))
         .await
         .with_full_holdings();
@@ -1889,7 +1881,7 @@ async fn http_consumers_answer_from_successive_stored_publications() {
             .unwrap();
         writer.commit().unwrap();
         tip.store(height, Ordering::Release);
-        pir_pipeline::Task::run(&mut input).await.unwrap();
+        input.pass().await.unwrap();
         publish_candidate(
             &config,
             &rpc,

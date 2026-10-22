@@ -77,11 +77,51 @@ pub(crate) async fn reconcile<I: Ingestion>(
 }
 
 /// Why one scheduled operation did not complete.
-pub(crate) enum Outcome<E> {
+#[derive(Debug)]
+pub enum Outcome<E> {
     /// The follower's source failed; nothing advanced, retry on the next pass.
     Source(crate::ingestion::Error),
     /// A writer operation failed; the product's failure policy applies.
     Writer(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for Outcome<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Source(error) => write!(f, "chain source: {error}"),
+            Outcome::Writer(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+/// Bring one writer to `observation` in the caller's task, with the same
+/// observation, reconciliation and bounded anchored batches the schedulers use.
+/// For maintenance entrypoints and in-process tests; services use
+/// [`IngestionExecutor`](crate::ingestion::IngestionExecutor). Returns once
+/// coverage reaches the observed tip (calling [`Ingestion::caught_up`]) or the
+/// node is behind committed coverage.
+pub async fn catch_up<I: Ingestion>(
+    writer: &mut I,
+    chain: &dyn CanonicalChain,
+    observation: &ChainObservation,
+) -> Result<(), Outcome<I::Error>> {
+    writer
+        .observed(observation)
+        .await
+        .map_err(Outcome::Writer)?;
+    loop {
+        match reconcile(writer, chain, observation).await? {
+            Coverage::Current => {
+                return writer.caught_up(observation).await.map_err(Outcome::Writer);
+            }
+            Coverage::Ahead => return Ok(()),
+            Coverage::Missing { from } => {
+                let through = observation.tip.height.min(from + BACKFILL_BLOCKS - 1);
+                // A noncanonical batch is rewound by the next reconciliation.
+                anchored(writer, chain, from, through).await?;
+            }
+        }
+    }
 }
 
 /// Accept a batch only when its newest committed block is canonical; otherwise

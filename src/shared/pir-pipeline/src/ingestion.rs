@@ -11,6 +11,7 @@ mod schedule;
 mod tests;
 
 pub use follower::{ChainFollower, ChainSource};
+pub use schedule::{catch_up, Outcome};
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

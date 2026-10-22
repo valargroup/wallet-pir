@@ -119,3 +119,25 @@ impl CanonicalChain for NodeChain {
         Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
     }
 }
+
+#[cfg(all(test, feature = "fixtures", feature = "native-reinspiring"))]
+impl pir_pipeline::ingestion::ChainSource for NodeChain {
+    fn tip_height(&self) -> ChainFuture<'_, u64> {
+        Box::pin(async move { Ok(self.0.tip_height().await?) })
+    }
+}
+
+/// A root follower over `rpc`, as the host injects it; it stops with `shutdown`.
+#[cfg(all(test, feature = "fixtures", feature = "native-reinspiring"))]
+pub(super) fn chain_fixture(
+    rpc: ZakuraClient,
+    shutdown: &pir_pipeline::service::Shutdown,
+) -> pir_pipeline::ingestion::ChainFeed {
+    let follower = pir_pipeline::ingestion::ChainFollower::new(
+        Arc::new(NodeChain(rpc)),
+        std::time::Duration::from_millis(50),
+    );
+    let feed = follower.feed();
+    tokio::spawn(follower.run(shutdown.clone()));
+    feed
+}

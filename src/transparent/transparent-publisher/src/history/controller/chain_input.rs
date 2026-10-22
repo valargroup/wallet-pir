@@ -259,3 +259,108 @@ pub(super) async fn invalidate(
     )?;
     Ok(())
 }
+
+/// Canonical hash lookups through History's node client.
+#[cfg(test)]
+struct NodeChain<'a>(&'a NodeClient);
+#[cfg(test)]
+impl pir_pipeline::ingestion::CanonicalChain for NodeChain<'_> {
+    fn hash_at(&self, height: u64) -> pir_pipeline::ingestion::ChainFuture<'_, String> {
+        Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+    }
+}
+
+#[cfg(test)]
+impl HistoryIngestion {
+    /// The writer (or follower) startup builds, over an already open store.
+    pub(super) async fn fixture(
+        config: &Config,
+        rpc: &NodeClient,
+        store: &Arc<tokio::sync::Mutex<EventStore>>,
+        authority: &Authority,
+        notify: &tokio::sync::watch::Sender<u64>,
+    ) -> Self {
+        let (start, end) = {
+            let store = store.lock().await;
+            (store.start_height(), newest(&store))
+        };
+        Self {
+            config: config.clone(),
+            rpc: rpc.clone(),
+            store: store.clone(),
+            start,
+            end,
+            authority: authority.clone(),
+            notify: notify.clone(),
+            cache: OutputCache::new(100),
+            pending_invalidation: None,
+            current: Default::default(),
+            followed_tip: None,
+        }
+    }
+
+    /// One root-scheduled pass to the node's current tip, run in this task.
+    pub(super) async fn pass(&mut self) -> Result<(), BoxError> {
+        let height = self.rpc.tip_height().await?;
+        let observation = ChainObservation {
+            genesis: self.rpc.block_hash_display(0).await?,
+            tip: BlockId {
+                height,
+                hash: self.rpc.block_hash_display(height).await?,
+            },
+            pass: 0,
+        };
+        let rpc = self.rpc.clone();
+        pir_pipeline::ingestion::catch_up(self, &NodeChain(&rpc), &observation)
+            .await
+            .map_err(|outcome| match outcome {
+                pir_pipeline::ingestion::Outcome::Source(error) => error,
+                pir_pipeline::ingestion::Outcome::Writer(error) => error,
+            })
+    }
+}
+
+/// Bring the journal to the node's tip through the root ingestion contract.
+#[cfg(test)]
+pub(super) async fn ingest_once(
+    config: &Config,
+    rpc: &NodeClient,
+    store: &Arc<tokio::sync::Mutex<EventStore>>,
+    authority: &Authority,
+    cache: &mut OutputCache,
+    notify: &tokio::sync::watch::Sender<u64>,
+) -> Result<(), BoxError> {
+    let mut writer = HistoryIngestion::fixture(config, rpc, store, authority, notify).await;
+    std::mem::swap(&mut writer.cache, cache);
+    let result = writer.pass().await;
+    std::mem::swap(&mut writer.cache, cache);
+    result
+}
+
+/// The configured node client and a root follower over it, as the host injects
+/// them; the follower stops with `shutdown`.
+#[cfg(test)]
+pub(super) fn chain_fixture(
+    config: &Config,
+    shutdown: &pir_pipeline::service::Shutdown,
+) -> (NodeClient, pir_pipeline::ingestion::ChainFeed) {
+    struct Source(NodeClient);
+    impl pir_pipeline::ingestion::CanonicalChain for Source {
+        fn hash_at(&self, height: u64) -> pir_pipeline::ingestion::ChainFuture<'_, String> {
+            Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+        }
+    }
+    impl pir_pipeline::ingestion::ChainSource for Source {
+        fn tip_height(&self) -> pir_pipeline::ingestion::ChainFuture<'_, u64> {
+            Box::pin(async move { Ok(self.0.tip_height().await?) })
+        }
+    }
+    let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie).unwrap();
+    let follower = pir_pipeline::ingestion::ChainFollower::new(
+        Arc::new(Source(rpc.clone())),
+        std::time::Duration::from_millis(50),
+    );
+    let feed = follower.feed();
+    tokio::spawn(follower.run(shutdown.clone()));
+    (rpc, feed)
+}
