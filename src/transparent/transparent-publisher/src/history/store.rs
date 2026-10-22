@@ -71,7 +71,10 @@ fn sync_directory(dir: &Path) -> Result<(), BoxError> {
 
 /// Replaces `path` with a link to `target`, atomically.
 fn replace_with_link(path: &Path, target: &Path) -> Result<(), BoxError> {
-    let name = path.file_name().ok_or("link has no name")?.to_string_lossy();
+    let name = path
+        .file_name()
+        .ok_or("link has no name")?
+        .to_string_lossy();
     let temporary = path.with_file_name(format!(".{name}.link"));
     let _ = std::fs::remove_file(&temporary);
     std::os::unix::fs::symlink(target, &temporary)?;
@@ -117,14 +120,18 @@ fn sha256_file(path: &Path, stop: &dyn Fn() -> bool) -> Result<(String, u64), Bo
 
 /// Every table segment file of a revision directory, with its digest.
 fn segments(dir: &Path) -> Result<Vec<(String, String)>, BoxError> {
-    let manifest: ShardManifest = serde_json::from_slice(&std::fs::read(dir.join("manifest.json"))?)?;
+    let manifest: ShardManifest =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json"))?)?;
     let mut files = Vec::new();
     for (index, segment) in manifest.directory_segments.iter().enumerate() {
         files.push((format!("directory.{index}.bin"), segment.sha256.clone()));
     }
     for child in &manifest.page_children {
         for (segment, published) in child.page_segments.iter().enumerate() {
-            files.push((page_segment_file(child.index, segment), published.sha256.clone()));
+            files.push((
+                page_segment_file(child.index, segment),
+                published.sha256.clone(),
+            ));
         }
     }
     Ok(files)

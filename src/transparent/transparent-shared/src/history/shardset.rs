@@ -1476,6 +1476,16 @@ impl ShardSet {
                 source,
             })?;
             let path = entry.path();
+            if path.is_symlink()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(crate::runtime::disk::ShippedRuntimes::is_entry)
+            {
+                // A publisher's stored runtime; the artifact resolver checks
+                // its link, and no runtime is a revision.
+                continue;
+            }
             if path.is_symlink() {
                 // Fleet publications may reference a revision stored once in
                 // this worker's sibling catalog. Do not accept redirects out

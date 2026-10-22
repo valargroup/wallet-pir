@@ -536,6 +536,8 @@ impl Finalized {
         let previous = &checked.passed;
         checked.loaded = 0;
         checked.reused = 0;
+        checked.bytes_hashed = 0;
+        checked.bytes_reused = 0;
         let mut passed = BTreeMap::new();
         let mut evidence = BTreeMap::new();
         let mut files = BTreeMap::new();
@@ -571,7 +573,13 @@ impl Finalized {
                 opened,
                 stamp,
                 settled,
+                read,
             } = listed;
+            if read {
+                checked.bytes_hashed += artifact.bytes;
+            } else {
+                checked.bytes_reused += artifact.bytes;
+            }
             if let Some(expected) = sources.get(&path) {
                 if artifact.sha256 != *expected {
                     return Err("source segment differs from its manifest".into());
@@ -1315,6 +1323,10 @@ pub struct CheckedRuntimes {
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
+    /// Listed bytes the last attempt hashed, and those it listed from
+    /// evidence of the same unchanged files without reading them.
+    pub bytes_hashed: u64,
+    pub bytes_reused: u64,
 }
 
 impl CheckedRuntimes {
@@ -1357,6 +1369,8 @@ pub(crate) struct Listed {
     pub(crate) stamp: FileStamp,
     /// Whether `stamp` predates the listing enough to vouch for it later.
     pub(crate) settled: bool,
+    /// Whether the bytes were read and hashed.
+    pub(crate) read: bool,
 }
 
 /// [`hash_listed`] without evidence or a stop: every file is hashed.
@@ -1415,6 +1429,7 @@ pub(crate) fn hash_listed(
                     opened,
                     stamp: listing.stamp,
                     settled: listing.settled,
+                    read: listing.read,
                 })
             })
             .collect()
@@ -1480,6 +1495,7 @@ fn listed_digest(
                 bytes,
                 stamp,
                 settled: true,
+                read: false,
             });
         }
     }
@@ -1515,6 +1531,7 @@ fn listed_digest(
         bytes,
         stamp,
         settled: stamp.settled_before(started),
+        read: true,
     })
 }
 
@@ -1525,6 +1542,8 @@ struct Listing {
     bytes: u64,
     stamp: FileStamp,
     settled: bool,
+    /// Whether the bytes were read, rather than vouched for by `known`.
+    read: bool,
 }
 
 #[cfg(test)]

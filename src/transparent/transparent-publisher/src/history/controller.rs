@@ -1124,6 +1124,8 @@ async fn prepare_candidate(
         tracing::info!(
             loaded = checked.loaded,
             reused = checked.reused,
+            bytes_hashed = checked.bytes_hashed,
+            bytes_reused = checked.bytes_reused,
             seconds = started.elapsed().as_secs_f64(),
             "prepared distribution inventory"
         );
