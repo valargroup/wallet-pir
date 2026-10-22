@@ -30,6 +30,9 @@ enum Command {
     /// Publish a history shard set once.
     PublishHistory(Maintenance),
     #[cfg(feature = "transparent-history")]
+    /// Verify a completed History publication and write its restore record.
+    PrepareHistoryRestore(Maintenance),
+    #[cfg(feature = "transparent-history")]
     /// Verify a staged filter publication without opening node state.
     VerifyFilters(Maintenance),
     #[cfg(feature = "transparent-detail")]
@@ -52,6 +55,14 @@ impl Command {
             Self::VerifyFilters(args) => {
                 transparent_publisher::commands::filters::run(arguments("verify-filters", args))
                     .await
+            }
+            #[cfg(feature = "transparent-history")]
+            Self::PrepareHistoryRestore(args) => {
+                transparent_publisher::commands::history_restore::run(arguments(
+                    "prepare-history-restore",
+                    args,
+                ))
+                .await
             }
             #[cfg(feature = "transparent-history")]
             Self::PublishHistory(args) => {
@@ -88,8 +99,8 @@ async fn main() -> pir_publisher::Result<()> {
     let config_path = args.config.ok_or("publisher requires --config FILE")?;
     let config: pir_publisher::config::Config =
         serde_json::from_slice(&std::fs::read(config_path)?)?;
-    config.validate()?;
     if args.check {
+        config.validate()?;
         println!("Publisher configuration is valid; runtime readiness was not checked");
         return Ok(());
     }

@@ -73,26 +73,6 @@ pub fn cases(entries: usize, advanced: bool) -> Vec<(Hash, Observation)> {
     ]
 }
 
-/// Sample different mined txids throughout the retained window, plus all non-mined states.
-pub fn case_at(
-    entries: usize,
-    advanced: bool,
-    coverage_start: u32,
-    ordinal: usize,
-) -> (Hash, Observation) {
-    if ordinal % 8 < 3 {
-        return cases(entries, advanced)[1 + ordinal % 8];
-    }
-    let mined = entries - 2;
-    let first = ((coverage_start - START) as usize * mined).div_ceil(BLOCKS);
-    let offset = (ordinal as u64).wrapping_mul(6364136223846793005) as usize % (mined - first);
-    let i = first + offset;
-    (
-        txid(i as u64),
-        Observation::Mined(START + (i * BLOCKS / mined) as u32),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

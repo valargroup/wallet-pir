@@ -1,105 +1,28 @@
 //! The real publisher distribution router, node RPC and TLS transport.
-use super::encrypted::{copy_hint_fixture, record, seed_hint_fixture, serve, shared_hint_fixture};
+use super::encrypted::{record, serve};
+use crate::publication_source::Published;
 use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, PREFIX},
     worker::Revocation,
 };
+use pir_e2e_tests::enhance_fixture::{tls, Tls};
 use sha2::{Digest, Sha256};
 use std::{
     path::Path,
-    process::Stdio,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::Duration,
 };
-use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// Every deployed-geometry case prepares, copies and hashes about 1 GB, so the
 /// qualification lane runs them one at a time. The bound covers the shared cold
-/// preparation (26-32s on 3 CPUs) plus the longest body measured there (76s).
-pub(super) const QUALIFICATION_BUDGET: Duration = Duration::from_secs(180);
-pub(super) static DEPLOYED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-pub(super) struct Tls {
-    pub(super) origin: String,
-    client: reqwest::Client,
-    _child: tokio::process::Child,
-}
-
-struct Published {
-    scratch: tempfile::TempDir,
-    distribution: Distribution,
-    inventory: Inventory,
-    manifest: Manifest,
-    transport: Tls,
-    _node: super::encrypted::Listening,
-    _publisher: super::encrypted::Listening,
-}
-impl Published {
-    async fn new() -> Self {
-        let scratch = tempfile::tempdir().unwrap();
-        let root = scratch.path().join("publication");
-        let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
-            axum::Json(serde_json::json!({"id": request["id"], "error": null, "result": "01".repeat(32)}))
-        }))).await;
-        let cookie = scratch.path().join("cookie");
-        std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let distribution = Distribution::open(
-            &root,
-            ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
-        )
-        .unwrap();
-        let publisher = serve(publisher(&distribution)).await;
-        let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&root, 67))
-            .await
-            .unwrap()
-            .inventory()
-            .clone();
-        let domain = &inventory.domains[0];
-        let manifest = Manifest {
-            recovery_epoch: 0,
-            placement_revision: 1,
-            domain_recovery_epochs: [(0, "0".into())].into(),
-            schema_version: protocol::SCHEMA_VERSION,
-            protocol_revision: protocol::PROTOCOL_REVISION.into(),
-            network: "main".into(),
-            pool: "ironwood".into(),
-            generation: 1,
-            anchor_height: 3428143,
-            anchor_block_hash: "01".repeat(32),
-            geometry: Geometry::default(),
-            coverage: inventory.coverage.clone(),
-            sessions: vec![domain.reference().unwrap()],
-            unit_identities: [(0, domain.plan.units.clone())].into(),
-        };
-        distribution
-            .publish(manifest.clone(), inventory.clone())
-            .await
-            .unwrap();
-        Self {
-            scratch,
-            distribution,
-            inventory,
-            manifest,
-            transport,
-            _node: node,
-            _publisher: publisher,
-        }
-    }
-    fn source(&self) -> enhance_query_server::synchronization::Config {
-        enhance_query_server::synchronization::Config {
-            publisher_origin: self.transport.origin.clone(),
-            trusted_ca: Some(self.scratch.path().join("ca.pem")),
-            download_budget_bytes: 2 * 1024 * 1024 * 1024,
-            cache_limit_bytes: 2 * 1024 * 1024 * 1024,
-        }
-    }
-}
+/// preparation (24-34s on 3 CPUs) plus the longest body measured there (60s).
+const QUALIFICATION_BUDGET: Duration = Duration::from_secs(180);
+static DEPLOYED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg_attr(
@@ -113,7 +36,7 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
     };
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
-        let fixture = Published::new().await;
+        let fixture = published().await;
         let worker = worker_sync::Worker::open(
             &fixture.scratch.path().join("worker"),
             worker_sync::Config {
@@ -167,8 +90,20 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         let ingress_config = ingress_sync::Config {
             source: fixture.source(),
             routers: [
-                (0, vec![router_http.url.clone()]),
-                (1, vec![router_http.url.clone()]),
+                (
+                    0,
+                    vec![ingress_sync::RouterPeer {
+                        control_origin: router_http.url.clone(),
+                        query_origin: router_http.url.clone(),
+                    }],
+                ),
+                (
+                    1,
+                    vec![ingress_sync::RouterPeer {
+                        control_origin: router_http.url.clone(),
+                        query_origin: router_http.url.clone(),
+                    }],
+                ),
             ]
             .into(),
         };
@@ -490,7 +425,7 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
     use enhance_query_server::{router_sync, worker_sync};
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
-        let fixture = Published::new().await;
+        let fixture = published().await;
         let worker = worker_sync::Worker::open(
             &fixture.scratch.path().join("worker"),
             worker_sync::Config {
@@ -598,7 +533,7 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
     };
     let _serial = DEPLOYED.lock().await;
     tokio::time::timeout(QUALIFICATION_BUDGET, async {
-        let fixture = Published::new().await;
+        let fixture = published().await;
         let worker_root = fixture.scratch.path().join("worker");
         let worker_config = worker_sync::Config {
             source: fixture.source(),
@@ -885,7 +820,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
-        let upstream = serve(publisher(&distribution)).await;
+        let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
         let inventory = tokio::task::spawn_blocking(move || prepare_publication(&preparing, 67)).await.unwrap().inventory().clone();
@@ -991,152 +926,6 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
     }).await.expect("autonomous worker lifecycle exceeded qualification budget");
 }
 
-fn fixture_records(start: u64, count: usize) -> Result<Vec<u8>, String> {
-    Ok((start..start + count as u64).flat_map(record).collect())
-}
-
-fn fixture_coverage(count: u64) -> protocol::Coverage {
-    Lifecycle::default()
-        .coverage(count, Geometry::default())
-        .unwrap()
-}
-
-/// One complete publisher preparation of `count` fixture records, built once
-/// per process (or per `WALLET_PIR_TEST_RUNTIME_CACHE`) beside the shared hint
-/// fixtures. A cold build is the publisher's whole deployed-geometry
-/// preparation, including packing; its time is reported separately.
-fn shared_publication(count: u64) -> std::path::PathBuf {
-    let coverage = fixture_coverage(count);
-    let plan =
-        enhance_query_server::runtime::plan(coverage.shards[0].clone(), fixture_records).unwrap();
-    let hints = shared_hint_fixture(&plan);
-    let cache = hints.parent().unwrap();
-    std::fs::create_dir_all(cache).unwrap();
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(cache.join("enhance-publications.lock"))
-        .unwrap();
-    lock.lock().unwrap();
-    let prepared = cache.join(format!(
-        "enhance-publication-{count}-{}",
-        hints.file_name().unwrap().to_str().unwrap()
-    ));
-    if !prepared.exists() {
-        let started = std::time::Instant::now();
-        let temporary = tempfile::tempdir_in(cache).unwrap();
-        seed_hint_fixture(&temporary.path().join("preparation"), &plan);
-        enhance_publisher::publication::prepare(
-            temporary.path(),
-            coverage,
-            &[(0, "0".into())].into(),
-            fixture_records,
-        )
-        .unwrap();
-        std::fs::rename(temporary.path(), &prepared).unwrap();
-        eprintln!(
-            "cold shared {count}-record publication: {:?}",
-            started.elapsed()
-        );
-    }
-    prepared
-}
-
-/// Prepares a publication of `count` fixture records through the real
-/// publisher. The case's objects and domain records start as copies of the
-/// shared preparation, so the publisher takes its retained-domain path: it
-/// reinstalls the rows, checks the retained domain identity and hashes every
-/// object.
-fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publication::Prepared {
-    let shared = shared_publication(count);
-    for directory in ["objects", "domains"] {
-        copy_hint_fixture(&shared.join(directory), &root.join(directory));
-    }
-    enhance_publisher::publication::prepare(
-        root,
-        fixture_coverage(count),
-        &[(0, "0".into())].into(),
-        fixture_records,
-    )
-    .unwrap()
-}
-
-/// A publisher's distribution routes with the service discovery that a
-/// unified publisher serves beside them.
-fn publisher(distribution: &Distribution) -> axum::Router {
-    distribution.router().route(
-        pir_service_discovery::PATH,
-        axum::routing::get(|| async { pir_service_discovery::Document::publisher().to_json() }),
-    )
-}
-
-pub(super) async fn tls(root: &Path, upstream: &str) -> Tls {
-    let cert = root.join("ca.pem");
-    let key = root.join("key.pem");
-    assert!(tokio::process::Command::new("openssl")
-        .args([
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-days",
-            "1",
-            "-subj",
-            "/CN=localhost",
-            "-addext",
-            "subjectAltName=DNS:localhost",
-            "-addext",
-            "basicConstraints=critical,CA:FALSE",
-            "-keyout",
-        ])
-        .arg(&key)
-        .arg("-out")
-        .arg(&cert)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await
-        .unwrap()
-        .success());
-    let control = root.join("fault");
-    std::fs::write(&control, "").unwrap();
-    let mut child = tokio::process::Command::new("python3")
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../src/pir-publisher/tests/support/distribution_tls.py"
-        ))
-        .arg(upstream.strip_prefix("http://").unwrap())
-        .arg(&cert)
-        .arg(key)
-        .arg(control)
-        .kill_on_drop(true)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut port = String::new();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        BufReader::new(child.stdout.take().unwrap()).read_line(&mut port),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let certificate = reqwest::Certificate::from_pem(&std::fs::read(cert).unwrap()).unwrap();
-    let client = reqwest::Client::builder()
-        .add_root_certificate(certificate)
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(10))
-        .build()
-        .unwrap();
-    Tls {
-        origin: format!("https://localhost:{}", port.trim()),
-        client,
-        _child: child,
-    }
-}
-
 async fn check_object(tls: &Tls, path: &str, object: &Object) {
     let mut response = tls
         .client
@@ -1194,15 +983,14 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(publisher(&distribution)).await;
+        let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!before.current.eligible);
         assert_eq!(before.observed_unix_ms, 0);
         let prepare_root = root.clone();
-        let prepared = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap();
-        let inventory = prepared.inventory().clone();
+        let inventory = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap().inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0, placement_revision: 1, domain_recovery_epochs: [(0, "0".into())].into(),
@@ -1211,7 +999,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
             anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
             sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
         };
-        distribution.publish_prepared(manifest.clone(), prepared).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
         let current: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
@@ -1313,8 +1101,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
-        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67))
-            .await.unwrap().inventory().clone();
+        let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
         let orphan_path = root.join("objects").join(orphan);
         std::fs::write(&orphan_path, b"interrupted candidate").unwrap();
@@ -1357,6 +1144,121 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
     }).await.expect("Enhance retained publication collection exceeded qualification budget");
 }
 
+fn fixture_records(start: u64, count: usize) -> Result<Vec<u8>, String> {
+    Ok((start..start + count as u64).flat_map(record).collect())
+}
+
+fn fixture_coverage(count: u64) -> protocol::Coverage {
+    Lifecycle::default()
+        .coverage(count, Geometry::default())
+        .unwrap()
+}
+
+// Without WALLET_PIR_TEST_RUNTIME_CACHE the shared preparation lives in a
+// process-owned directory that is removed after the test threads exit.
+static LOCAL_CACHE: std::sync::Mutex<Option<tempfile::TempDir>> = std::sync::Mutex::new(None);
+
+extern "C" fn remove_local_cache() {
+    LOCAL_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+}
+
+fn cache() -> std::path::PathBuf {
+    if let Some(root) = std::env::var_os("WALLET_PIR_TEST_RUNTIME_CACHE") {
+        return root.into();
+    }
+    let mut local = LOCAL_CACHE.lock().unwrap();
+    local
+        .get_or_insert_with(|| {
+            // SAFETY: only an owned test directory is dropped after test threads exit.
+            assert_eq!(unsafe { libc::atexit(remove_local_cache) }, 0);
+            tempfile::tempdir().unwrap()
+        })
+        .path()
+        .to_path_buf()
+}
+
+fn copy_tree(source: &Path, target: &Path) {
+    std::fs::create_dir_all(target).unwrap();
+    for entry in std::fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            std::fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+/// One complete publisher preparation of `count` fixture records, built once
+/// per process (or per `WALLET_PIR_TEST_RUNTIME_CACHE`) and keyed by its unit
+/// identities. A cold build is the publisher's whole deployed-geometry
+/// preparation, including packing; its time is reported separately.
+fn shared_publication(count: u64) -> std::path::PathBuf {
+    let coverage = fixture_coverage(count);
+    let plan =
+        enhance_query_server::runtime::plan(coverage.shards[0].clone(), fixture_records).unwrap();
+    let cache = cache();
+    std::fs::create_dir_all(&cache).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.join("enhance-publications.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let prepared = cache.join(format!(
+        "enhance-publication-{count}-{}-{}-{}",
+        cfg!(feature = "native-reinspiring"),
+        cfg!(feature = "cuda"),
+        hex::encode(Sha256::digest(serde_json::to_vec(&plan.units).unwrap()))
+    ));
+    if !prepared.exists() {
+        let started = std::time::Instant::now();
+        let temporary = tempfile::tempdir_in(&cache).unwrap();
+        enhance_publisher::publication::prepare(
+            temporary.path(),
+            coverage,
+            &[(0, "0".into())].into(),
+            fixture_records,
+        )
+        .unwrap();
+        std::fs::rename(temporary.path(), &prepared).unwrap();
+        eprintln!(
+            "cold shared {count}-record publication: {:?}",
+            started.elapsed()
+        );
+    }
+    prepared
+}
+
+/// Prepares a publication of `count` fixture records through the real
+/// publisher. The case's objects and domain records start as copies of the
+/// shared preparation, so the publisher takes its retained-domain path: it
+/// reinstalls the rows, checks the retained domain identity and hashes every
+/// object.
+fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publication::Prepared {
+    let shared = shared_publication(count);
+    for directory in ["objects", "domains"] {
+        copy_tree(&shared.join(directory), &root.join(directory));
+    }
+    enhance_publisher::publication::prepare(
+        root,
+        fixture_coverage(count),
+        &[(0, "0".into())].into(),
+        fixture_records,
+    )
+    .unwrap()
+}
+
+/// The shared 67-record publication, published through the real distribution.
+async fn published() -> Published {
+    Published::prepared_by(|root| prepare_publication(root, 67)).await
+}
+
 /// The ordinary-lane authority boundary needs no prepared material: an empty
 /// distribution grants nothing over TLS, and its withdrawal fence survives a
 /// restart without letting the predecessor replay.
@@ -1374,7 +1276,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
         let distribution = Distribution::open(&root, rpc.clone()).unwrap();
-        let upstream = serve(publisher(&distribution)).await;
+        let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let authority_url = format!("{}{PREFIX}authority", transport.origin);

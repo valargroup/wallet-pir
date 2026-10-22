@@ -85,7 +85,7 @@ class WorkerRoles(unittest.TestCase):
         self.assertEqual(check('receiver', 'serve-publication')[:2], ('serve-publication', '--check'))
         self.assertEqual(check('transparent-history', 'external-worker')[-1], '--verify-only')
         # No staged inputs, so no check is manufactured.
-        self.assertEqual(check('enhance', 'external-worker'), ())
+        self.assertEqual(check('enhance', 'external-worker'), ('--config', '/etc/enhance-pir/external-worker.json', '--check'))
         self.assertEqual(check('status', 'external-worker'), ('--config', '/etc/status-pir/external-worker.json', '--check'))
         self.assertEqual(check('transparent-display', 'external-worker'), ())
         initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}

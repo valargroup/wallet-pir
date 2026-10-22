@@ -80,20 +80,6 @@ fn environment_cuda_selection_fails_explicitly_for_invalid_device_or_build() {
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 0);
 }
 
-#[cfg(feature = "enhance")]
-#[test]
-fn repair_rows_keeps_the_offline_flags() {
-    let output = binary().args(["repair-rows", "--help"]).output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let help = String::from_utf8_lossy(&output.stdout);
-    assert!(help.contains("--data-dir"));
-    assert!(help.contains("--source-rows"));
-}
-
 fn write(dir: &std::path::Path, config: serde_json::Value) -> std::path::PathBuf {
     let path = dir.join("query-server.json");
     std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
@@ -207,4 +193,50 @@ fn transparent_verification_refuses_other_enabled_products() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains(other));
+}
+
+#[cfg(feature = "enhance")]
+#[test]
+fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = serde_json::json!({"publisher_origin":"https://publisher.example", "trusted_ca":temp.path().join("missing.pem"),
+        "download_budget_bytes": 8u64 << 30, "cache_limit_bytes": 8u64 << 30});
+    for (role, responsibility) in [
+        ("worker", serde_json::json!({"shards":[0,1]})),
+        (
+            "packing-router",
+            serde_json::json!({"workers":{"0":["http://127.0.0.1:8091"]},"preferred":{"0":["http://127.0.0.1:8091"]}}),
+        ),
+        (
+            "query-ingress",
+            serde_json::json!({"routers":{"0":[{"control_origin":"http://127.0.0.1:8094", "query_origin":"http://127.0.0.1:8093"}]}}),
+        ),
+    ] {
+        let mut synchronization = source.clone();
+        synchronization
+            .as_object_mut()
+            .unwrap()
+            .extend(responsibility.as_object().unwrap().clone());
+        let mut settings = serde_json::json!({"role":role,"listen":"127.0.0.1:8091", "data_dir":temp.path().join(role), "synchronization":synchronization});
+        if role != "worker" {
+            settings["control_listen"] = serde_json::json!("127.0.0.1:8094");
+        }
+        let path = write(
+            temp.path(),
+            serde_json::json!({"management_listen":"127.0.0.1:18081", "enhance":{"enabled":true,"settings":settings}}),
+        );
+        let output = binary()
+            .arg("--config")
+            .arg(path)
+            .arg("--check")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{role}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!temp.path().join(role).exists());
+    }
+    assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
 }

@@ -1,7 +1,6 @@
 //! Prepared public packing artifacts and bounded verified loading.
-//! The packing router builds an artifact from a worker hint. The coordinator
-//! installs those bytes when a router is configured, and still builds packing
-//! itself only when no router is configured.
+//! The publisher prepares complete packing artifacts. Routers verify and map
+//! those immutable bytes without asking workers to compute public hints.
 use crate::runtime::{self, Packing};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

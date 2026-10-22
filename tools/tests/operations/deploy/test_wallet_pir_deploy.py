@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import subprocess
 from pathlib import Path
 import sys
@@ -24,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
-from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor  # noqa: E402
+from wallet_pir_ops.deploy.remote import HELPER, LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
 class ImmutableWrapperSource(unittest.TestCase):
@@ -89,7 +90,13 @@ def probe_argv(sha):
 
 def worker_settings(listen):
     return {'listen': listen, 'data_dir': '/srv/enhance-pir/worker', 'sealed_shards': 6,
-            'matvec_backend': 'cpu', 'credentials': [TOKEN]}
+            'matvec_backend': 'cpu', 'credentials': [TOKEN],
+            'synchronization': synchronization(shards=[0])}
+
+
+def synchronization(**responsibilities):
+    return {'publisher_origin': 'https://publisher.example', 'download_budget_bytes': 4 << 30,
+            'cache_limit_bytes': 4 << 30, **responsibilities}
 
 
 def status_settings(role):
@@ -114,11 +121,15 @@ INVENTORY = {
                 'packing-router': [{'host': 'router-01', 'vars': {'control_listen': '10.0.0.14:8093'},
                                     'settings': {'listen': '10.0.0.14:8092', 'control_listen': '10.0.0.14:8093',
                                                  'data_dir': '/srv/enhance-pir-router',
-                                                 'artifact_origin': 'http://10.0.0.10:8080',
+                                                 'synchronization': synchronization(workers={
+                                                     '0': ['http://10.0.0.15:8091', 'http://10.0.0.16:8091']}),
                                                  'credentials': [TOKEN]}}],
                 'query-ingress': [{'host': 'coordinator', 'vars': {'control_listen': '127.0.0.1:8083'},
                                    'settings': {'listen': '127.0.0.1:8082', 'control_listen': '127.0.0.1:8083',
-                                                'data_dir': '/srv/enhance-pir-ingress', 'credentials': [TOKEN]}}],
+                                                'data_dir': '/srv/enhance-pir-ingress', 'credentials': [TOKEN],
+                                                'synchronization': synchronization(routers={'0': [{
+                                                    'control_origin': 'http://10.0.0.14:8093',
+                                                    'query_origin': 'http://10.0.0.14:8092'}]})}}],
             },
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}', '{transaction}']},
         },
@@ -576,6 +587,17 @@ class DeployTests(Fleet):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(deployer.deploy(NEW_SHA, self.binary, retire_historical=True, skip_exact_check=True).status,
                          'committed')
+
+    def test_requested_hold_keeps_failed_candidate_for_operator_repair(self):
+        deployer = self.enhance_fleet()
+        deployer.hold_on_failure = True
+        self.fake.exact_result = (1, 'answer mismatch at row 17')
+        self.fake.product_check = lambda host, argv: (0, 'configuration accepted')
+        with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
+            deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
+        self.assertEqual(Journal.load(self.state, 'enhance').status, 'held')
+        self.assertEqual(self.restarts(), ENHANCE)
+        self.assertTrue(all(self.running(h, u) == NEW_SHA for h, u in ENHANCE))
 
 
 class RollbackTests(Fleet):
@@ -1189,6 +1211,11 @@ class MultiplexTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
+    def test_configuration_check_fits_in_a_multiplexed_command(self):
+        request = json.dumps({'op': 'run', 'argv': ['binary', '--config', 'x' * 8192], 'timeout': 60})
+        command = shlex.join(['python3', '-c', HELPER, request])
+        self.assertLess(len(command.encode()), 32768)
+
     def test_helper_file_operations_round_trip(self):
         executor = LocalExecutor(None)
         with tempfile.TemporaryDirectory() as tmp:

@@ -40,8 +40,7 @@ async fn bind_failure_cannot_start_a_publisher_or_create_its_state() {
     }
     value["enhance"]["settings"]["data_dir"] = json!(temp.path().join("enhance"));
     value["enhance"]["settings"]["listen"] = json!(port().to_string());
-    value["enhance"]["settings"]["packing_router_config"] = Value::Null;
-    value["enhance"]["settings"]["artifact_listen"] = Value::Null;
+    value["enhance"]["settings"]["artifact_listen"] = json!(port().to_string());
     value["transaction_details"]["settings"]["status_listen"] =
         json!(occupied.local_addr().unwrap().to_string());
     let config = serde_json::from_value(value).unwrap();
@@ -49,7 +48,10 @@ async fn bind_failure_cannot_start_a_publisher_or_create_its_state() {
     assert!(!temp.path().join("enhance").exists());
 }
 async fn report(url: &str) -> Value {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
     for _ in 0..100 {
         if let Ok(response) = client.get(url).send().await {
             return response.json().await.unwrap();
@@ -58,21 +60,24 @@ async fn report(url: &str) -> Value {
     }
     panic!("management listener did not start");
 }
-#[cfg(all(
-    feature = "enhance",
-    feature = "status",
-    feature = "transparent-history",
-    feature = "transparent-detail",
-    feature = "receiver"
-))]
 #[tokio::test]
 async fn disabled_products_start_no_work_and_shutdown_releases_the_listener() {
     let address = port();
     let stop = Shutdown::default();
-    let config = serde_json::from_value(
-        json!({"management_listen":address.to_string(),"receiver":{"enabled":false}}),
-    )
-    .unwrap();
+    let mut value = json!({"management_listen":address.to_string()});
+    for (name, compiled) in [
+        ("enhance", cfg!(feature = "enhance")),
+        ("status", cfg!(feature = "status")),
+        ("transparent_history", cfg!(feature = "transparent-history")),
+        ("transparent_filters", cfg!(feature = "transparent-history")),
+        ("transaction_details", cfg!(feature = "transparent-detail")),
+        ("receiver", cfg!(feature = "receiver")),
+    ] {
+        if compiled {
+            value[name] = json!({"enabled":false});
+        }
+    }
+    let config = serde_json::from_value(value).unwrap();
     let task = tokio::spawn(run(config, stop.clone()));
     let value = report(&format!("http://{address}/ready")).await;
     assert_eq!(value["ready"], true);

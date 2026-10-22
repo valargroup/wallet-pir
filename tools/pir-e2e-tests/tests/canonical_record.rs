@@ -1,25 +1,7 @@
-//! Frozen public transaction byte slices checked through parser and HTTP PIR.
-use enhance_publisher::local_serving as serving;
-use enhance_publisher::{
-    control::{Group, Ledger, Replica},
-    store::RecordJournal,
-};
+//! Frozen public transaction byte slices checked through parser and HTTPS-fed PIR.
 use enhance_query_server::{client::EnhancePirClient, RECORD_BYTES};
-use enhance_query_server::{
-    types::{DatabaseId, ENHANCE_LAYOUT},
-    worker::Worker,
-};
+use pir_e2e_tests::enhance_fixture::System;
 use sha2::{Digest, Sha256};
-async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    (
-        url,
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        }),
-    )
-}
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn canonical_transaction_records_match_frozen_oracle_across_publication() {
     let raw = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
@@ -84,64 +66,16 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
         assert_eq!(record.metadata().expiry_height(), 3483371);
         assert_eq!(record.metadata().fee_zatoshis(), Some(10000));
     }
-    let root = tempfile::tempdir().unwrap();
-    let mut tasks = Vec::new();
-    let mut replicas = Vec::new();
-    for i in 0..2 {
-        let (url, task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router(),
-        )
-        .await;
-        tasks.push(task);
-        replicas.push(Replica {
-            name: format!("r{i}"),
-            url,
-            incarnation: String::new(),
-            ledger: Ledger::default(),
-        });
-    }
-    let serving = serving::Serving::start(
-        root.path(),
-        &root.path().join("control"),
-        vec![Group {
-            placement_policy: Default::default(),
-            id: "g0".into(),
-            sequence: 0,
-            replicas,
-        }],
-    )
-    .await
-    .unwrap();
-    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
-    let mut journal = RecordJournal::open(
-        root.path().join("journal"),
-        DatabaseId::Enhance,
-        ENHANCE_LAYOUT,
-    )
-    .unwrap();
     // Synthetic positions straddle a PIR row; they are not the actions' chain positions.
     let mut rows = vec![vec![0; RECORD_BYTES]; 67];
     for i in 0..2 {
         rows[32 + i] = records[i].as_bytes().to_vec();
     }
-    journal
-        .append_block(3483367, "01".repeat(32), &rows)
-        .unwrap();
-    coordinator
-        .publish(&journal, 3483367, "01".repeat(32))
-        .await
-        .unwrap();
+    let mut system = System::start(rows).await;
+    let origin = system.origin.clone();
     let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
     let old = retained.manifest().generation;
-    journal
-        .append_block(3483368, "02".repeat(32), &[vec![0; RECORD_BYTES]])
-        .unwrap();
-    coordinator
-        .publish(&journal, 3483368, "02".repeat(32))
-        .await
-        .unwrap();
+    system.append(vec![vec![0; RECORD_BYTES]]).await;
     let mut current = EnhancePirClient::connect(&origin).await.unwrap();
     for (i, bytes) in expected.iter().enumerate() {
         assert_eq!(
@@ -169,7 +103,4 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
         current.manifest().generation
     );
     assert!(current.manifest().generation > old);
-    for task in tasks {
-        task.abort();
-    }
 }

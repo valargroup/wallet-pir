@@ -160,15 +160,17 @@ an error, not a skipped success):
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
 cargo test --locked --profile release-fast -p pir-e2e-tests --features enhance-tests,cuda \
-  --test http cuda_distributed_round_trip_retention_failover_and_restart -- --ignored
+  --test http cuda_independent_consumers_answer_updates_and_close_on_withdrawal -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
 cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
   --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
 ```
 
-The HTTP test covers encrypted requests through real coordinator/worker listeners,
-retention, failover, and restart. Sample `nvidia-smi` during the run to record
+The HTTP test covers encrypted requests through independently synchronizing
+workers, a packing router and ingress, then an update and withdrawal. It does
+not establish GPU retention, failover, restart or capacity qualification.
+Sample `nvidia-smi` during the run to record
 total device memory, and record CPU limits and thread count.
 
 Failure regressions also run with CPU kernels in ordinary library tests. The GPU

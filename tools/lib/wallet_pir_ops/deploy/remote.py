@@ -5,6 +5,7 @@ call of `host_helper.py` over SSH; tests substitute a fake that models files
 and systemd. Nothing else in the package opens a connection.
 """
 import atexit
+import base64
 import contextlib
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import zlib
 
 from .. import hostlock, inherited_lock, pinned_ssh, ancillary_baseline
 from . import host_helper
@@ -23,7 +25,12 @@ KEEPALIVE = ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4']
 # How long a reused connection outlives its last helper call.
 PERSIST_SECONDS = 30
 
-HELPER = "import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("+repr(Path(ancillary_baseline.__file__).read_text())+",_ANCILLARY.__dict__)\n"+Path(host_helper.__file__).read_text()
+# Keep the command small enough for SSH's local multiplexing socket, including
+# configuration-validation arguments. The helper still receives stdin intact
+# for uploads, and executes exactly the checked-in source on the remote host.
+_HELPER_SOURCE = "import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("+repr(Path(ancillary_baseline.__file__).read_text())+",_ANCILLARY.__dict__)\n"+Path(host_helper.__file__).read_text()
+_HELPER_PACKED = base64.b64encode(zlib.compress(_HELPER_SOURCE.encode())).decode('ascii')
+HELPER = 'import base64,zlib;exec(zlib.decompress(base64.b64decode(' + repr(_HELPER_PACKED) + ')))'
 
 
 class RemoteError(RuntimeError):

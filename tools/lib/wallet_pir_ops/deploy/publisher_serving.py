@@ -105,9 +105,12 @@ class Serving:
                 and '--config /etc/caddy/Caddyfile' in edge['fragment_text'], 'Caddy is not active on the installed configuration')
         after = candidate(before)
         self.validate_edge(after)
+        # Snapshot pinning (History restore preparation, HTTPS staging) runs
+        # only this reviewed helper.
+        from .publisher_warmup import SCRIPT
         return {'roles': [deployer.record(p) for p in plans],
                 'units': [stable_unit(p.state) for p in plans], 'edge': edge,
-                'edge_before': before, 'edge_after': after}
+                'edge_before': before, 'edge_after': after, 'snapshot_warmer_sha256': sha(SCRIPT)}
 
     def journal(self, parent):
         return ServingJournal(self.cutover, parent)

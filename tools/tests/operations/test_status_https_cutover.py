@@ -112,7 +112,7 @@ class CutoverTests(unittest.TestCase):
         self.host.put('coordinator', CADDY, 'wallet.example {\n handle /v1/status/* {\n reverse_proxy 127.0.0.1:8492\n }\n handle /v1/enhance/* { reverse_proxy 127.0.0.1:8080 }\n}\n')
         self.host.install('coordinator', 'caddy.service', '[Service]\nExecStart=/usr/bin/caddy\n', files={'/usr/bin/caddy': b'caddy'})
         installed = {'services': {'publisher': self.inventory.services['publisher'], 'status': {'roles': {
-            name: [{'host': 'status', 'vars': {'artifact_origin': 'http://127.0.0.1:8495'}}] for name in ('worker', 'router')}}}}
+            name: [{'host': 'status', 'settings': {'artifact_origin': 'http://127.0.0.1:8495'}}] for name in ('worker', 'router')}}}}
         self.host.put('coordinator', INVENTORY, json.dumps(installed))
         self.before = {(host, path): data for host, h in self.host.hosts.items() for path, data in h.files.items()}
         self.cutover = Cutover(self.inventory, self.host, Path(self.root.name), self.request, lock=self.lock,
@@ -142,6 +142,12 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(len(self.host.log), mark)
         result = self.cutover.deploy(plan['plan_sha256'])
         self.assertEqual(result['phase'], 'committed')
+        installed = json.loads(self.host.read('coordinator', INVENTORY))
+        for role in ('worker', 'router'):
+            placement = installed['services']['status']['roles'][role][0]
+            self.assertEqual(placement['settings']['publisher'], self.request['public_origin'])
+            self.assertNotIn('artifact_origin', placement['settings'])
+            self.assertNotIn('vars', placement)
         text = self.host.read('coordinator', CADDY)
         self.assertIn('handle /provider/status/v1/*', text)
         self.assertIn('handle /v1/enhance/* { reverse_proxy 127.0.0.1:8080 }', text)
@@ -157,6 +163,43 @@ class CutoverTests(unittest.TestCase):
         for name, role in self.request['roles'].items():
             self.assertEqual(self.host.read(role['host'], role['config_path']).encode(), self.before[(role['host'], role['config_path'])])
             self.assertNotEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
+
+    def interrupted_stopped_candidate(self):
+        plan = self.cutover.plan()
+        self.host.fail_new_checks = True
+        with patch.object(self.cutover, 'restore', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.cutover.deploy(plan['plan_sha256'])
+        for role in self.request['roles'].values():
+            self.host.systemctl(role['host'], 'stop', role['unit'])
+        return plan
+
+    def test_resume_reapplies_partial_restoration_and_starts_candidate(self):
+        plan = self.interrupted_stopped_candidate()
+        journal = Journal.load(Path(self.root.name), 'status-https')
+        item = journal.data['plan']['files'][0]
+        self.host.write(item['host'], item['path'], item['before'].encode(), item['mode'])
+        self.host.fail_new_checks = False
+        self.assertEqual(self.cutover.resume(plan['plan_sha256'])['phase'], 'committed')
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
+
+    def test_resume_failure_holds_candidate_without_restoring_it(self):
+        plan = self.interrupted_stopped_candidate()
+        with self.assertRaisesRegex(DeployError, 'wrong encrypted answer'):
+            self.cutover.resume(plan['plan_sha256'])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'held')
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
+
+    def test_resume_refuses_foreign_file_before_starting_services(self):
+        plan = self.interrupted_stopped_candidate()
+        role = self.request['roles']['worker']
+        self.host.write(role['host'], role['config_path'], b'foreign configuration', 0o644)
+        with self.assertRaisesRegex(DeployError, 'foreign managed-file'):
+            self.cutover.resume(plan['plan_sha256'])
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['active_state'], 'inactive')
 
     def test_twenty_minute_failure_starts_rollback_without_erasing_new_state(self):
         role = self.request['roles']['worker']

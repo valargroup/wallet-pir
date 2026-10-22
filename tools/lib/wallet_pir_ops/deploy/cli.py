@@ -295,11 +295,11 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+    for operation in ('plan', 'preflight', 'deploy', 'resume', 'status', 'rollback'):
         command = commands.add_parser('status-https-' + operation, help='Status autonomous HTTPS cutover')
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
+        if operation in ('deploy', 'resume'):
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
@@ -350,6 +350,8 @@ def parser():
                                  help='under the lock, upload the release directory and run its self-check')
         if name == 'deploy':
             command.add_argument('--skip-exact-check', action='store_true')
+            command.add_argument('--hold-on-failure', action='store_true',
+                                 help='leave changed targets in place for operator repair instead of rolling back')
     command = commands.add_parser('rollback')
     command.add_argument('service')
     command.add_argument('--transaction')
@@ -442,9 +444,10 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
-            request, _inventory = publisher.load_request(args.request, args.request_sha256,
-                recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
-            check_installed(mutation=mutation, revision=request['release']['git_sha'])
+            if not args.command.endswith(('-run', '-watchdog')):
+                request, _inventory = publisher.load_request(args.request, args.request_sha256,
+                    recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
+                check_installed(mutation=mutation, revision=request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))
             return 0
@@ -462,7 +465,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             check_installed(mutation=mutation, revision=request['source_sha'])
             cutover = Cutover(inventory, executor or SSHExecutor(inventory), args.state_dir, request, lock=options.get('lock'))
             operation = args.command.removeprefix('status-https-')
-            arguments = [args.expect_plan_sha256] if operation == 'deploy' else [args.transaction] if operation in ('status', 'rollback') else []
+            arguments = [args.expect_plan_sha256] if operation in ('deploy', 'resume') else [args.transaction] if operation in ('status', 'rollback') else []
             out(json.dumps(getattr(cutover, operation)(*arguments), sort_keys=True))
             return 0
         if args.command.startswith('status-routing-'):
@@ -543,7 +546,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
                         label = '%s (%s)' % (group.binary_name, group.kind or 'archive')
                     log('== %s: %s' % (label, ', '.join(keys)))
                 deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
-                                    only=keys, **options)
+                                    only=keys, hold_on_failure=getattr(args, 'hold_on_failure', False), **options)
                 code = run_release(args.command, group, service, inventory, executor, deployer, out)
                 if code:
                     return code

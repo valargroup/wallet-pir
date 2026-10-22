@@ -6,7 +6,16 @@
       "role": "worker",
       "listen": "127.0.0.1:8091",
       "data_dir": "/srv/pir-query-server/enhance",
-      "sealed_shards": 6
+      "sealed_shards": 6,
+      "synchronization": {
+        "publisher_origin": "https://enhance-pir.valargroup.dev",
+        "trusted_ca": null,
+        "download_budget_bytes": 8589934592,
+        "cache_limit_bytes": 8589934592,
+        "shards": [
+          0
+        ]
+      }
     }
   },
   "status": {
