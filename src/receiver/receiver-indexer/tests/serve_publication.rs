@@ -547,17 +547,17 @@ async fn a_failed_correction_is_loaded_once() {
 /// state directory takes the floor again, the next poll activates it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_unrecordable_floor_defers_the_correction() {
-    let world = World::new().await;
+    let mut world = World::new().await;
     let root = world.root.path().join("publications");
     let mut served = Vec::new();
     let (a, a_witness) = publication(1, [0xa1; 32]);
     world.node.set(activation() + 1, [0xa1; 32]);
     let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
     world.assign(&a_dir, &a_rev);
-    let _worker = world.start();
+    let _worker = world.start().await;
     world
         .until("first publication", &mut served, |h| {
-            h["serving"] == session(&a)
+            serving(h) == Some(a_rev.as_str())
         })
         .await;
     // A directory where the floor file goes makes recording it fail.
@@ -580,7 +580,7 @@ async fn an_unrecordable_floor_defers_the_correction() {
     std::fs::remove_dir(&floor).unwrap();
     world
         .until("corrected publication", &mut served, |h| {
-            h["serving"] == session(&b)
+            serving(h) == Some(b_rev.as_str())
         })
         .await;
 }
