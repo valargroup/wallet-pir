@@ -20,8 +20,8 @@ pir-pipeline = { path = "../../shared/pir-pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
-receiver-directory = { package = "zakura-receiver-directory", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2" }
-receiver-pir = { package = "zakura-receiver-pir", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", features = ["server"] }
+receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc2" }
+receiver-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc2", features = ["server"] }
 receiver-store = { path = "../receiver-store" }
 receiver-pir-server = { path = "../receiver-pir-server" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Receiver address, record, recovery and proof checks from one exact
 # wallet-libraries revision; node reads and block interpretation from the shared
 # chain reader, which uses the same revision.
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["crypto"] }
+zakura-receiver-crypto = { version = "=0.0.1-rc2", default-features = false, features = ["crypto"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "rpc"] }
 
 
