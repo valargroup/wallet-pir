@@ -1525,6 +1525,8 @@ mod tests {
             .join(&map.shards[0].manifest_digest)
             .join("directory.0.bin");
         let (object, _) = stored(&link);
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
         let file = std::fs::File::options()
             .read(true)
             .write(true)
@@ -1604,121 +1606,6 @@ mod tests {
         std::fs::remove_dir_all(&replacement).unwrap();
         crate::history::store::collect(&base).unwrap();
         ShardSet::open(&active, 3).unwrap();
-    }
-
-    /// A candidate carrying a stored publication's runtimes links them, and
-    /// its inventory, once they are settled, lists every runtime and table
-    /// from the evidence of the same unchanged inodes: no body is hashed and
-    /// no runtime is loaded again. A same-size change with the modification
-    /// time restored is hashed again and refused.
-    #[test]
-    fn a_stored_runtime_is_listed_and_checked_once_while_unchanged() {
-        use std::os::unix::fs::FileExt;
-        use transparent_shared::history::shardset::ShardSet;
-        use transparent_shared::publication::{CheckedRuntimes, Finalized, Kind};
-        let root = tempfile::tempdir().unwrap();
-        let base = root.path().join("publications");
-        std::fs::create_dir(&base).unwrap();
-        let mut journal =
-            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
-        for h in 0..2 {
-            block(&mut journal, h, h as u8 + 1);
-        }
-        let zero = BlockHash::from_internal_bytes([0; 32]);
-        let first = base.join("candidate-0");
-        let options = PublishOptions {
-            archive_geometry: None,
-            recent_from: None,
-            ..options(&first, None)
-        };
-        let map = publish(&options, &journal, zero).unwrap();
-        let never = || false;
-        crate::history::store::adopt_segments(&first, &never).unwrap();
-        let mut checked = CheckedRuntimes::default();
-        let mut prepare = |dir: &Path, retained: &[PathBuf], previous: Option<&ShardSet>| {
-            let set = ShardSet::open_reusing(dir, &stored_load_options(), previous).unwrap();
-            transparent_shared::runtime::prebuild::prepare_publication(&set, dir, retained, &never)
-                .unwrap();
-            crate::history::store::adopt_runtimes(dir, &never).unwrap();
-            let finalized = Finalized::prepare_reusing(dir, &set, 0, true, &mut checked);
-            (
-                set,
-                finalized,
-                (checked.loaded, checked.reused, checked.bytes_hashed),
-            )
-        };
-        let (set, finalized, (loaded, _, _)) = prepare(&first, &[], None);
-        let finalized = finalized.unwrap();
-        assert!(loaded > 0);
-        let runtimes: Vec<_> = finalized
-            .inventory()
-            .artifacts
-            .iter()
-            .filter(|a| a.kind == Kind::RecentRuntime)
-            .map(|a| stored(&first.join(&a.path)))
-            .collect();
-        assert!(!runtimes.is_empty());
-        let metadata: u64 = finalized
-            .inventory()
-            .artifacts
-            .iter()
-            .filter(|a| a.kind == Kind::Metadata)
-            .map(|a| a.bytes)
-            .sum();
-        // Hashed once more after settling: the first listing was too recent
-        // to vouch for later.
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let carry = |to: &Path| {
-            std::fs::create_dir(to).unwrap();
-            for entry in &map.shards {
-                link_revision(&first, to, &entry.manifest_digest).unwrap();
-            }
-            std::fs::copy(first.join("shards.json"), to.join("shards.json")).unwrap();
-        };
-        let second = base.join("candidate-1");
-        carry(&second);
-        let (set, finalized, _) = prepare(&second, &[first.clone()], Some(&set));
-        finalized.unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let third = base.join("candidate-2");
-        carry(&third);
-        let (set, finalized, (loaded, reused, hashed)) =
-            prepare(&third, &[second.clone()], Some(&set));
-        let finalized = finalized.unwrap();
-        assert_eq!((loaded, reused), (0, runtimes.len()));
-        assert_eq!(hashed, metadata, "only local metadata is read again");
-        for (artifact, (physical, stamp)) in finalized
-            .inventory()
-            .artifacts
-            .iter()
-            .filter(|a| a.kind == Kind::RecentRuntime)
-            .zip(&runtimes)
-        {
-            assert!(std::fs::symlink_metadata(third.join(&artifact.path))
-                .unwrap()
-                .file_type()
-                .is_symlink());
-            assert_eq!(
-                &stored(&third.join(&artifact.path)),
-                &(physical.clone(), *stamp)
-            );
-        }
-        // A same-size change with the modification time restored.
-        let (object, _) = &runtimes[0];
-        let file = std::fs::File::options()
-            .read(true)
-            .write(true)
-            .open(object)
-            .unwrap();
-        let modified = file.metadata().unwrap().modified().unwrap();
-        let mut byte = [0u8; 1];
-        file.read_exact_at(&mut byte, 100).unwrap();
-        file.write_all_at(&[byte[0] ^ 1], 100).unwrap();
-        file.set_modified(modified).unwrap();
-        let fourth = base.join("candidate-3");
-        carry(&fourth);
-        let (_, finalized, _) = prepare(&fourth, &[third.clone()], Some(&set));
-        assert!(finalized.is_err(), "a changed runtime was listed");
     }
 
     /// A stop during a build ends it between units of work, before the map

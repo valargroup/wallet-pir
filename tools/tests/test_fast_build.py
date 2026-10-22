@@ -297,7 +297,7 @@ class FastBuildTests(unittest.TestCase):
         # Shared crates keep a feature set that does not name a product host.
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
         self.assertEqual(host_features, ['pir-e2e-tests/enhance-fast'])
-        self.assertEqual(stable_tests, ['ci_smoke'])
+        self.assertEqual(stable_tests, ['ci_smoke', 'immutable_objects'])
         self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
 
     def test_each_product_compiles_only_its_own_host_features(self):

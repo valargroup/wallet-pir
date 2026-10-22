@@ -46,6 +46,7 @@
       "transparent:transparent-publisher:doc:transparent_publisher",
       "transparent:transparent-tools:bin:publication_bench",
       "transparent:transparent-publisher:lib:transparent_publisher",
+      "transparent:transparent-publisher:test:immutable_objects",
       "transparent:pir-publisher:bin:pir-publisher",
       "transparent:pir-publisher:doc:pir_publisher",
       "transparent:pir-publisher:lib:pir_publisher",
