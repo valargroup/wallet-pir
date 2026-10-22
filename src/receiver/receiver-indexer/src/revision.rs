@@ -122,8 +122,12 @@ impl Floor for StateFile {
     }
 
     /// Syncs the state directory, since a rename is durable only once the directory
-    /// holding it is.
+    /// holding it is. Without a floor file nothing was recorded, so nothing needs syncing.
     fn confirm(&mut self) -> Result<(), Self::Error> {
+        match std::fs::symlink_metadata(&self.0) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            result => result?,
+        };
         let parent = self.0.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
         std::fs::File::open(parent)?.sync_all()
     }
@@ -224,13 +228,16 @@ mod tests {
         assert!(!restarted.advance_history_revision(1));
     }
 
-    /// The state file reads back what it recorded, is zero when absent, and refuses an
-    /// unreadable record rather than guess.
+    /// The state file reads back what it recorded, is zero and confirmed when absent, even
+    /// without its directory, and refuses an unreadable record rather than guess.
     #[test]
     fn the_state_file_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let mut file = StateFile::new(dir.path(), "floor.json");
         assert_eq!(file.floor().unwrap(), 0);
+        // A check before any state directory exists confirms the absent floor.
+        let mut absent = StateFile::new(&dir.path().join("missing"), "floor.json");
+        restore(&mut absent, &Publications::default()).unwrap();
         file.record(3).unwrap();
         assert_eq!(StateFile::new(dir.path(), "floor.json").floor().unwrap(), 3);
         std::fs::write(dir.path().join("floor.json"), "x").unwrap();
