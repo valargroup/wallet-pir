@@ -13,6 +13,16 @@ struct Cli {
 enum Command {
     /// Report compiled capabilities without opening state or loading a GPU driver.
     BuildInfo,
+    /// Offline transfer of recovery floors for the locked HTTPS cutover.
+    HandoffHttpsState {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        transaction: String,
+        /// Fence retained sessions before restoring the previous runtime.
+        #[arg(long)]
+        rollback: bool,
+    },
     /// Prepare a complete immutable publication from a stopped canonical journal.
     /// The wallet manifest pins coverage, recovery identities and expected setup.
     PreparePublication {
@@ -53,6 +63,16 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse_from(args);
     match cli.command {
+        Command::HandoffHttpsState {
+            data_dir,
+            transaction,
+            rollback,
+        } => {
+            println!(
+                "{}",
+                crate::handoff::transfer(&data_dir, rollback, &transaction)?
+            );
+        }
         Command::PreparePublication {
             source,
             manifest,

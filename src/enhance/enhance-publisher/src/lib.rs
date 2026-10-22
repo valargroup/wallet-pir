@@ -7,6 +7,7 @@ use enhance_query_server::{artifact, prepared_packing, runtime, types, wire, Pac
 
 pub mod application;
 pub mod distribution;
+pub mod handoff;
 pub mod ingest;
 pub mod publication;
 pub mod publisher;

@@ -32,8 +32,8 @@ impl Published {
         })
         .await
     }
-    /// Publishes what `prepare` prepares under the publication root, on a
-    /// blocking thread.
+    /// Publishes the verified preparation that `prepare` produces under the publication
+    /// root, on a blocking thread.
     pub(crate) async fn prepared_by(
         prepare: impl FnOnce(&std::path::Path) -> enhance_publisher::publication::Prepared
             + Send

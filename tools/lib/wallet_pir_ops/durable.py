@@ -28,12 +28,21 @@ def atomic_json(path, value, prefix='.tmp-', mode=None):
     widens it before the rename when a non-root reader needs it. The directory
     is fsynced so the rename itself survives a crash.
     """
+    text = json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + '\n'
+    atomic_text(path, text, prefix=prefix, mode=mode)
+
+
+def atomic_text(path, text, prefix='.tmp-', mode=None):
+    """Replace a text file, preserving private staging and strict file/directory sync.
+
+    A failure is propagated, including one after rename; in that case the new
+    file may already be visible and the caller must not assume durable success.
+    """
     path = Path(path)
     descriptor, temporary = tempfile.mkstemp(prefix=prefix, dir=path.parent)
     try:
         with os.fdopen(descriptor, 'w') as handle:
-            json.dump(value, handle, sort_keys=True, indent=2, allow_nan=False)
-            handle.write('\n')
+            handle.write(text)
             handle.flush()
             if mode is not None:
                 os.fchmod(handle.fileno(), mode)
