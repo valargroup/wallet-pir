@@ -1,6 +1,6 @@
 use super::persistence::save_with_sync;
 use super::*;
-use enhance_query_server::protocol::Lifecycle;
+use enhance_material::protocol::Lifecycle;
 use std::{
     collections::BTreeMap,
     fs::{self, File},

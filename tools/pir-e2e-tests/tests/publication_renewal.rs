@@ -1,7 +1,7 @@
 //! Real source observations for responses longer than one authority lifetime.
 #[path = "support/publication.rs"]
 mod publication_source;
-use enhance_query_server::worker::Revocation;
+use enhance_query_server::publication::Revocation;
 use publication_source::Published;
 use std::time::Duration;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

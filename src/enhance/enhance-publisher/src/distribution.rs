@@ -15,11 +15,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use enhance_query_server::{
+use enhance_material::{
     artifact,
     protocol::{digest, Manifest, RETAINED_GENERATIONS},
-    publication::{Current, Inventory, Object, METADATA_LIMIT, PREFIX, VERSION},
-    worker::Revocation,
+    publication::{Current, Inventory, Object, Revocation, METADATA_LIMIT, PREFIX, VERSION},
 };
 use std::{
     collections::BTreeSet,

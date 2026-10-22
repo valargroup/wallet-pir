@@ -4,8 +4,7 @@ use crate::publication_source::Published;
 use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
-    publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, PREFIX},
-    worker::Revocation,
+    publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, Revocation, PREFIX},
 };
 use pir_e2e_tests::enhance_fixture::{tls, Tls};
 use sha2::{Digest, Sha256};

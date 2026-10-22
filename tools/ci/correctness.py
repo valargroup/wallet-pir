@@ -88,7 +88,7 @@ def rust_checks(env, temporary, offline):
             enforce_budget=env['WALLET_PIR_ENFORCE_BUDGET'] == '1')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib'],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-material', '--lib'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'pir-e2e-tests',
                      '--features', 'enhance-tests', '--test', 'ci_hint'],
@@ -99,9 +99,9 @@ def rust_checks(env, temporary, offline):
                      env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference_plan = programs(reference, metadata)
     for program in reference_plan:
-        # The IPIR units plus the protocol, client and record units the query
-        # server absorbed from the former protocol library.
-        if program['package'] == 'enhance-query-server' and not program['integration']:
+        # The IPIR units plus the protocol, client and record units of the
+        # neutral Enhance material.
+        if program['package'] == 'enhance-material' and not program['integration']:
             program['args'] = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::']
     path = temporary / 'reference.json'
     path.write_text(json.dumps(reference_plan))

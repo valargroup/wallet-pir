@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 /// Whether this evaluator was compiled with the CUDA implementation.
 pub const CUDA_COMPILED: bool = cfg!(feature = "cuda");
 
-#[cfg(test)]
+/// Faults injected around real kernels for evaluation-failure regressions.
+#[cfg(any(test, feature = "test-support"))]
 #[path = "matvec_test.rs"]
-pub(crate) mod testing;
+pub mod testing;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -59,13 +60,14 @@ impl MatvecConfig {
         pir_cuda::kernel(self.cuda_device.unwrap_or(0))
     }
 
-    pub(crate) fn server(
+    /// Prepare one shard evaluator on the configured backend.
+    pub fn server(
         self,
         params: YpirSchemeParams,
         coefficients: impl Iterator<Item = u16>,
         transposed: bool,
     ) -> Result<IPIRServer<u16>, KernelError> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-support"))]
         if let Some(faults) = testing::current() {
             return testing::server(self, params, coefficients, transposed, faults);
         }
@@ -136,30 +138,5 @@ mod tests {
         .unwrap()
         .config;
         assert!(gpu.validate().is_err());
-    }
-    #[cfg(not(feature = "cuda"))]
-    #[test]
-    fn cuda_without_feature_fails_before_creating_worker_state() {
-        let root = tempfile::tempdir().unwrap();
-        let config = MatvecConfig {
-            matvec_backend: Backend::Cuda,
-            cuda_device: None,
-        };
-        let result = crate::worker_sync::Worker::open(
-            root.path(),
-            crate::worker_sync::Config {
-                source: crate::synchronization::Config {
-                    publisher_origin: "https://publisher.example".into(),
-                    trusted_ca: None,
-                    download_budget_bytes: 8 * 1024 * 1024,
-                    cache_limit_bytes: 8 * 1024 * 1024,
-                },
-                shards: [0].into(),
-            },
-            Default::default(),
-            config,
-        );
-        assert!(matches!(result, Err(e) if e.to_string().contains("--features cuda")));
-        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }

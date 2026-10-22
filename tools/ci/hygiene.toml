@@ -29,7 +29,7 @@ pattern = "tools/transparent/deploy/*.example.json"
 reason = "Public fleet-scaler configuration example."
 
 [[allow_data]]
-pattern = "src/enhance/enhance-query-server/tests/fixtures/*.json"
+pattern = "src/enhance/enhance-material/tests/fixtures/*.json"
 reason = "Protocol regression inputs consumed by Rust tests."
 
 [[allow_data]]

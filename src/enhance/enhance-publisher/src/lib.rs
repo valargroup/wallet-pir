@@ -3,7 +3,7 @@
 
 // Query-server modules the publication code builds on, named at the crate root
 // so publisher modules refer to them alongside their own.
-use enhance_query_server::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
+use enhance_material::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
 
 mod durable_state;
 

@@ -1,6 +1,6 @@
 //! Fresh source checks and withdrawal fences govern every authority response.
 use super::PublicationDistribution;
-use enhance_query_server::{
+use enhance_material::{
     protocol::{canonical_hash, digest, Manifest},
     publication::AuthorityResponse,
 };

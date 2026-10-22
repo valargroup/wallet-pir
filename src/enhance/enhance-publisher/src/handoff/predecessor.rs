@@ -1,7 +1,7 @@
 //! Bounded decoding of the stopped predecessor's historical controller format.
 use super::recovery::{decimal, validate_recovery_floors};
 use crate::durable_state::RecoveryState;
-use enhance_query_server::protocol::{self, Lifecycle, Manifest, MAX_QUERY_SHARDS};
+use enhance_material::protocol::{self, Lifecycle, Manifest, MAX_QUERY_SHARDS};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};

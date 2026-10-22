@@ -38,9 +38,9 @@ def variants(groups):
     return {
         'transparent': dict(family='transparent', packages=[*groups['transparent'], *TRANSPARENT_HOSTS], features=TRANSPARENT + qualification_features([*groups['transparent'], *TRANSPARENT_HOSTS])),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'],
-                          features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'])),
-        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-query-server', 'status-material', 'status-query-server',
+        'reference': dict(family='enhance', packages=['enhance-material', 'enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'],
+                          features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-material', 'enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'])),
+        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-material', 'enhance-query-server', 'status-material', 'status-query-server',
                                              'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=qualification_features(groups['receiver'])),
     }
@@ -82,7 +82,7 @@ def target_inventory(contexts, packages):
                             kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
                         continue
                     if name.startswith('enhance-') and not (
-                            kind == 'lib' and name == 'enhance-query-server'
+                            kind == 'lib' and name == 'enhance-material'
                             or kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
                         continue
                     if kind not in ('lib', 'bin', 'test') or not target.get('test', True):
@@ -92,7 +92,7 @@ def target_inventory(contexts, packages):
                     # Preserve the existing all-targets check and the two runtime tests.
                     kinds = ['check'] if kind == 'lib' else []
                     if (name, kind, target['name']) in {
-                        ('enhance-query-server', 'lib', 'enhance_query_server'),
+                        ('enhance-material', 'lib', 'enhance_material'),
                         ('pir-query-server', 'test', 'operator'),
                     }:
                         kinds.append('example-test' if kind == 'example' and target.get('test') else kind)
@@ -228,9 +228,9 @@ def test_programs(artifacts, variant, packages, env):
             raise ValueError(f'duplicate executable: {identity}')
         actual.add(identity)
         args = []
-        if variant == 'reference' and identity == ('enhance-query-server', 'enhance_query_server'):
+        if variant == 'reference' and identity == ('enhance-material', 'enhance_material'):
             args = list(REFERENCE_LIB_FILTERS)
-        if variant == 'cuda' and identity == ('enhance-query-server', 'enhance_query_server'):
+        if variant == 'cuda' and identity == ('enhance-material', 'enhance_material'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],
                        version=package['version'], directory=str(Path(package['manifest_path']).parent),
@@ -337,14 +337,14 @@ def baseline_commands(family, include_cuda=False):
     if family == 'enhance':
         options = ['--locked', '--profile', 'release-fast']
         result += [
-            ('reference', [*options, '-p', 'enhance-query-server', '--features', 'qualification-tests',
+            ('reference', [*options, '-p', 'enhance-material', '--features', 'qualification-tests',
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
             ('reference', [*options, '-p', 'pir-e2e-tests', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-material', '--features', 'qualification-tests', '--lib']),
             ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
-            ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',
+            ('cuda', [*options, '-p', 'enhance-material', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
         ]
     return [(variant, options) for variant, options in result if include_cuda or variant != "cuda"]
@@ -357,7 +357,7 @@ def run_baseline(family, plan, output, include_cuda=False):
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance' and include_cuda:
-        run(['cargo', 'check', '--locked', '-p', 'enhance-query-server', '-p', 'status-query-server',
+        run(['cargo', 'check', '--locked', '-p', 'enhance-material', '-p', 'enhance-query-server', '-p', 'status-query-server',
              '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
              '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family, include_cuda):

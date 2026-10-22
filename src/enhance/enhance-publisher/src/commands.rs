@@ -79,7 +79,7 @@ pub async fn run(
             output,
         } => {
             let report = tokio::task::spawn_blocking(move || -> Result<_, String> {
-                let manifest: enhance_query_server::protocol::Manifest =
+                let manifest: enhance_material::protocol::Manifest =
                     crate::publication::read_metadata(&manifest)?;
                 manifest.validate()?;
                 let journal = crate::journal::CommittedJournalSnapshot::read(
@@ -100,7 +100,7 @@ pub async fn run(
                 if !inventory.supports(&manifest)? {
                     return Err("prepared material differs from wallet manifest".into());
                 }
-                Ok(serde_json::json!({"inventory_sha256": enhance_query_server::protocol::digest(inventory), "domains": inventory.domains.len()}))
+                Ok(serde_json::json!({"inventory_sha256": enhance_material::protocol::digest(inventory), "domains": inventory.domains.len()}))
             }).await??;
             println!("{}", serde_json::to_string(&report)?);
         }

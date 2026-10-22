@@ -4,7 +4,7 @@ use super::{
     read_metadata,
 };
 use crate::{prepared_packing, runtime, PackingBudget};
-use enhance_query_server::{
+use enhance_material::{
     protocol::{digest, Coverage},
     publication::Domain,
 };

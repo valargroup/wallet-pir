@@ -839,6 +839,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
+name = "enhance-material"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "bytes",
+ "clap",
+ "enhance-material",
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "libc",
+ "memmap2",
+ "pir-control",
+ "pir-cuda",
+ "pir-runtime",
+ "pir-serving",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "reinspiring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "simplepir-kernel",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "zakura-pir-client",
+ "zakura-pir-query-server",
+]
+
+[[package]]
 name = "enhance-pir-client"
 version = "0.0.1"
 dependencies = [
@@ -870,7 +904,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
- "enhance-query-server",
+ "enhance-material",
  "hex",
  "ipir-sp",
  "pir-control",
@@ -896,39 +930,27 @@ name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
- "base64",
- "clap",
+ "enhance-material",
  "enhance-query-server",
  "hdrhistogram",
  "hex",
  "http-body",
- "inspiring",
- "ipir-sp",
- "libc",
  "memmap2",
  "pir-control",
- "pir-cuda",
  "pir-observability",
  "pir-runtime",
- "pir-serving",
  "pir-sync-manager",
  "prometheus",
  "rand 0.8.5",
- "rand_chacha 0.3.1",
- "reinspiring",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "simplepir-kernel",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tower",
  "tracing",
- "zakura-pir-client",
- "zakura-pir-query-server",
 ]
 
 [[package]]

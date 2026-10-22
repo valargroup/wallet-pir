@@ -1,7 +1,7 @@
 //! Retained inventories own immutable files; collection runs after durable commit.
 use super::PublicationDistribution;
 use crate::publication::read_metadata;
-use enhance_query_server::{
+use enhance_material::{
     protocol::{canonical_hash, digest},
     publication::{Inventory, Object},
 };
@@ -79,7 +79,7 @@ impl PublicationDistribution {
             ("objects", objects),
             ("inventories", inventories),
             ("domains", domains),
-            (enhance_query_server::prepared_packing::DIRECTORY, packing),
+            (enhance_material::prepared_packing::DIRECTORY, packing),
         ] {
             collect_files(&self.root.join(directory), &keep)?;
         }

@@ -1,9 +1,9 @@
 use super::verification::{check_object, FileIdentity, VerificationPass, SETTLED};
 use super::*;
 use crate::{prepared_packing, runtime};
-use enhance_query_server::protocol::Lifecycle;
-use enhance_query_server::publication::Domain;
-use enhance_query_server::publication::Object;
+use enhance_material::protocol::Lifecycle;
+use enhance_material::publication::Domain;
+use enhance_material::publication::Object;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -159,7 +159,7 @@ fn a_fresh_object_is_hashed_once_per_pass() {
 
 #[test]
 fn repeated_digest_with_a_different_length_is_rejected() {
-    use enhance_query_server::{protocol, RECORD_BYTES};
+    use enhance_material::{protocol, RECORD_BYTES};
 
     let root = tempfile::tempdir().unwrap();
     let coverage = Lifecycle::default()
@@ -171,7 +171,7 @@ fn repeated_digest_with_a_different_length_is_rejected() {
     let rows = object(root.path(), &bytes);
     let parameters = protocol::parameters(plan.shard.logical_rows).unwrap();
     #[cfg(feature = "native-reinspiring")]
-    let public_bytes = enhance_query_server::native::public_len(enhance_query_server::native::COLS);
+    let public_bytes = enhance_material::native::public_len(enhance_material::native::COLS);
     #[cfg(not(feature = "native-reinspiring"))]
     let public_bytes =
         (parameters.db_cols * ipir_sp::modulus_switch::modulus_bits(runtime::rlwe().q)).div_ceil(8);

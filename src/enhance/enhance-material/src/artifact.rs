@@ -1,5 +1,5 @@
 //! Bounded artifact I/O. Open handles pin immutable, atomically replaced files.
-use axum::body::Bytes;
+use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};

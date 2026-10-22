@@ -1,6 +1,6 @@
 //! Stored publisher and distribution identities, shared with offline handoff.
 //! These types describe bytes on disk; they do not grant serving authority.
-use enhance_query_server::{
+use enhance_material::{
     protocol::{Lifecycle, Manifest},
     publication::{Current, Object},
 };

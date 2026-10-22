@@ -8,7 +8,7 @@ mod predecessor;
 mod recovery;
 
 use crate::durable_state::{DistributionState, PublisherState, RecoveryState};
-use enhance_query_server::{
+use enhance_material::{
     protocol::MAX_QUERY_SHARDS,
     publication::{Current, VERSION},
 };

@@ -1,6 +1,6 @@
 //! Hash evidence is process-local and only reusable for unchanged, settled files.
 use crate::artifact;
-use enhance_query_server::publication::{Inventory, Object};
+use enhance_material::publication::{Inventory, Object};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,

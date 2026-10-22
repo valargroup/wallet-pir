@@ -7,7 +7,10 @@ use crate::{
     ROW_BYTES,
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 pub const VERSION: u16 = 1;
 pub const PREFIX: &str = "/provider/enhance/v1/";
@@ -239,4 +242,13 @@ impl Inventory {
         }
         Ok(true)
     }
+}
+
+/// The publisher's durable invalidation: the recovery fence and the sessions
+/// it withdraws from every serving role.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Revocation {
+    #[serde(with = "crate::protocol::decimal_u64")]
+    pub recovery_epoch: u64,
+    pub sessions: BTreeSet<String>,
 }

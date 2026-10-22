@@ -12,6 +12,7 @@
     "zakura-server-chain"
   ],
   "enhance": [
+    "enhance-material",
     "enhance-query-server",
     "status-material",
     "status-query-server",
