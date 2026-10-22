@@ -106,7 +106,7 @@ impl EnhanceJournal {
         self.records.ensure_healthy()?;
         let height = self
             .committed_height()
-            .map_or(enhance_material::ACTIVATION_HEIGHT, |h| h + 1);
+            .map_or(enhance_shared::ACTIVATION_HEIGHT, |h| h + 1);
         self.records
             .append_block(height, format!("{height:064x}"), records)?;
         Ok(height)
@@ -123,7 +123,7 @@ impl EnhanceJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use enhance_material::EnhanceRecord;
+    use enhance_shared::EnhanceRecord;
 
     #[test]
     fn ingest_cannot_acknowledge_a_duplicate_after_io_failure() {
@@ -134,8 +134,8 @@ mod tests {
             hash: "aa".into(),
             tree_size: 1,
             records: vec![{
-                let mut bytes = [1; enhance_material::RECORD_BYTES];
-                bytes[enhance_material::RECORD_FLAGS_OFFSET..].fill(0);
+                let mut bytes = [1; enhance_shared::RECORD_BYTES];
+                bytes[enhance_shared::RECORD_FLAGS_OFFSET..].fill(0);
                 EnhanceRecord::from_bytes(bytes).unwrap()
             }],
         };
@@ -152,7 +152,7 @@ mod tests {
         let block = CanonicalBlock {
             height: 3_428_143,
             hash: "01".repeat(32),
-            records: vec![EnhanceRecord::from_bytes([0; enhance_material::RECORD_BYTES]).unwrap()],
+            records: vec![EnhanceRecord::from_bytes([0; enhance_shared::RECORD_BYTES]).unwrap()],
             tree_size: 1,
         };
         journal.append_block(&block).unwrap();
@@ -166,14 +166,14 @@ mod tests {
     fn fixture_blocks_advance_height_through_the_journal() {
         let directory = tempfile::tempdir().unwrap();
         let mut journal = EnhanceJournal::open(directory.path()).unwrap();
-        let records = vec![vec![0u8; enhance_material::RECORD_BYTES]; 2];
+        let records = vec![vec![0u8; enhance_shared::RECORD_BYTES]; 2];
         assert_eq!(
             journal.append_fixture_block(&records).unwrap(),
-            enhance_material::ACTIVATION_HEIGHT
+            enhance_shared::ACTIVATION_HEIGHT
         );
         assert_eq!(
             journal.append_fixture_block(&records[..1]).unwrap(),
-            enhance_material::ACTIVATION_HEIGHT + 1
+            enhance_shared::ACTIVATION_HEIGHT + 1
         );
         assert_eq!(journal.tree_size(), 3);
         let (height, hash) = journal.highest_committed().unwrap();

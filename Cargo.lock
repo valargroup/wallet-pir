@@ -839,13 +839,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
-name = "enhance-material"
+name = "enhance-shared"
 version = "0.0.1"
 dependencies = [
  "base64",
  "bytes",
  "clap",
- "enhance-material",
+ "enhance-shared",
  "hex",
  "inspiring",
  "ipir-sp",
@@ -905,7 +905,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
- "enhance-material",
+ "enhance-shared",
  "hex",
  "ipir-sp",
  "pir-control",
@@ -931,7 +931,7 @@ name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
- "enhance-material",
+ "enhance-shared",
  "enhance-query-server",
  "hdrhistogram",
  "hex",

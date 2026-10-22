@@ -9,7 +9,7 @@ use crate::{
     durable_state::PublisherState,
     journal::{CommittedJournalSnapshot, RecordJournal},
 };
-use enhance_material::{
+use enhance_shared::{
     protocol::{Manifest, MAX_QUERY_SHARDS},
     publication::Revocation,
 };
@@ -72,7 +72,7 @@ impl EnhancePublisher {
     pub fn revoke_after(&self, records: u64) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
         let mut next = state.durable.clone();
-        let first_affected_shard = records / (32768 * enhance_material::RECORDS_PER_ROW as u64);
+        let first_affected_shard = records / (32768 * enhance_shared::RECORDS_PER_ROW as u64);
         let rewinds_sealed_history = next
             .recovery
             .sealed

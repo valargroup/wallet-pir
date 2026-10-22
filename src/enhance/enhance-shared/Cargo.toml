@@ -1,5 +1,5 @@
 [package]
-name = "enhance-material"
+name = "enhance-shared"
 version = "0.0.1"
 edition = "2021"
 rust-version = "1.97"
@@ -54,6 +54,6 @@ simplepir-kernel = "=0.1.0-rc.4"
 tempfile = "3"
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native"] }
 
-[dev-dependencies.enhance-material]
+[dev-dependencies.enhance-shared]
 path = "."
 features = ["client"]

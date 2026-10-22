@@ -15,7 +15,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use enhance_material::{
+use enhance_shared::{
     artifact,
     protocol::{digest, Manifest, RETAINED_GENERATIONS},
     publication::{Current, Inventory, Object, Revocation, METADATA_LIMIT, PREFIX, VERSION},

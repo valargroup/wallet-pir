@@ -5,7 +5,7 @@
 //! Every referenced object is hashed from disk once, when preparation finishes.
 //! That pass records which file each hash was read from, so publication only
 //! rehashes files that were changed, replaced or truncated since.
-use enhance_material::{
+use enhance_shared::{
     protocol::{digest, Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
     publication::{Inventory, VERSION},
 };

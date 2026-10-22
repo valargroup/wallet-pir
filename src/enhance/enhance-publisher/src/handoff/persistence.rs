@@ -1,6 +1,6 @@
 //! Lock the stopped owners and make each state write durable before proceeding.
 use crate::durable_state::DistributionState;
-use enhance_material::artifact;
+use enhance_shared::artifact;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},

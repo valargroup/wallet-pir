@@ -135,8 +135,8 @@
   "enhance-query-server-units": {
     "family": "enhance",
     "targets": [
-      "native:enhance-material:doc:enhance_material",
-      "native:enhance-material:lib:enhance_material",
+      "native:enhance-shared:doc:enhance_shared",
+      "native:enhance-shared:lib:enhance_shared",
       "native:enhance-query-server:doc:enhance_query_server",
       "native:enhance-query-server:lib:enhance_query_server"
     ]
@@ -186,7 +186,7 @@
     "targets": [
       "reference:pir-e2e-tests:test:ci_hint",
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
-      "reference:enhance-material:lib:enhance_material",
+      "reference:enhance-shared:lib:enhance_shared",
       "reference:status-material:lib:status_material",
       "reference:status-query-server:lib:status_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
@@ -196,7 +196,7 @@
     "family": "enhance",
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
-      "cuda:enhance-material:check:enhance_material",
+      "cuda:enhance-shared:check:enhance_shared",
       "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
       "cuda:status-material:check:status_material",
@@ -209,7 +209,7 @@
     "family": "enhance",
     "targets": [
       "cuda:pir-query-server:test:operator",
-      "cuda:enhance-material:lib:enhance_material"
+      "cuda:enhance-shared:lib:enhance_shared"
     ]
   },
   "receiver-indexer-store": {

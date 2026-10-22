@@ -1,6 +1,6 @@
 //! Observe publisher progress; readiness requires a fresh chain check.
 use super::EnhancePublisher;
-use enhance_material::protocol;
+use enhance_shared::protocol;
 
 pub(super) async fn health(
     axum::extract::State(p): axum::extract::State<EnhancePublisher>,

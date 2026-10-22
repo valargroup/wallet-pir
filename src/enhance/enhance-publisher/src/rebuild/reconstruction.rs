@@ -9,7 +9,7 @@ use crate::{
     journal::{CommittedJournalSnapshot, JournalBlock, RecordJournal},
     types::{DatabaseId, ENHANCE_LAYOUT},
 };
-use enhance_material::RECORD_BYTES;
+use enhance_shared::RECORD_BYTES;
 use pir_control::durable::sync_dir;
 use sha2::{Digest, Sha256};
 use std::{

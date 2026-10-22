@@ -4,7 +4,7 @@ use crate::types::{EnhanceRecord, ENHANCE_LAYOUT, RECORD_BYTES};
 fn record(byte: u8) -> EnhanceRecord {
     {
         let mut bytes = [byte; RECORD_BYTES];
-        bytes[enhance_material::RECORD_FLAGS_OFFSET..].fill(0);
+        bytes[enhance_shared::RECORD_FLAGS_OFFSET..].fill(0);
         EnhanceRecord::from_bytes(bytes).unwrap()
     }
 }
