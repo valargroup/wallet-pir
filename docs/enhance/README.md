@@ -16,8 +16,8 @@ validates the answer against its own chain context.
 - [Changelog](CHANGELOG.md): Enhance PIR release history.
 - [Evidence](../../evidence/enhance/README.md): key decision records, proofs and historical provenance.
 
-Status PIR has its own controller, router and worker roles in production deployment
-records; its serving library is `src/status/status-query-server`, composed by
+Status PIR is published by the unified `pir-publisher` and served by its own
+router and worker query-server roles; its serving library is `src/status/status-query-server`, composed by
 the Enhance application package ([package boundaries](architecture.md#package-boundaries)). Its [architecture](../status/architecture_status.md),
 [distributed runbook](../status/status_distributed.md), [qualification gate](../status/status_qualification.md)
 and [APM rollout](../status/status_apm_rollout.md) separate implementation, observations and
