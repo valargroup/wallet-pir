@@ -2,10 +2,10 @@ use super::*;
 use enhance_query_server::protocol::{Coverage, Geometry};
 use serde_json::{json, Value};
 
-// Handwritten examples of the pre-refactor disk formats. Keep field order and
+// Handwritten examples of the saved-state formats. Keep field order and
 // numeric-versus-string encoding visible, independently of the Rust type names.
 const PUBLISHER: &str = r#"{"version":1,"next_generation":23,"lifecycle":{"identities":[0],"next_id":1},"recovery":{"epoch":4,"domain_epochs":{"0":"4"},"revoked":["abababababababababababababababababababababababababababababababab"],"sealed":{"0":[3428143,"1212121212121212121212121212121212121212121212121212121212121212"]}}}"#;
-const DISTRIBUTION: &str = r#"{"current":{"version":1,"revision":9,"withdrawal_revision":7,"recovery_epoch":4,"revoked":["abababababababababababababababababababababababababababababababab"],"eligible":false,"manifest":null,"inventory":null},"retained":[]}"#;
+const DISTRIBUTION: &str = r#"{"current":{"version":2,"revision":9,"withdrawal_revision":7,"recovery_epoch":4,"revoked":["abababababababababababababababababababababababababababababababab"],"eligible":false,"manifest":null,"inventory":null},"retained":[]}"#;
 
 #[test]
 fn publisher_and_distribution_keep_the_existing_disk_encoding() {
@@ -44,7 +44,7 @@ fn retained_publication() -> Value {
             "coverage": Coverage { records: 0, shards: vec![], routes: vec![] },
             "sessions": [], "unit_identities": {}
         },
-        "inventory": {"sha256": "34".repeat(32), "bytes": 128}
+        "inventory": {"checksum": {"algorithm": pir_artifact::CURRENT, "digest": "34".repeat(32)}, "bytes": 128}
     })
 }
 

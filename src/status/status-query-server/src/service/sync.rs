@@ -157,7 +157,10 @@ impl StatusSynchronization {
     }
     async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
         object.validate(attempt_limit())?;
-        let root = self.service.state_dir.join(pir_artifact::namespace("objects"));
+        let root = self
+            .service
+            .state_dir
+            .join(pir_artifact::namespace("objects"));
         let target = root.join(&object.checksum);
         if target.exists() {
             let path = target.clone();
@@ -485,7 +488,10 @@ impl<'a> AcquiredPublication<'a> {
         } else if refreshed.is_some() {
             refreshed
         } else {
-            let root = sync.service.state_dir.join(pir_artifact::namespace("objects"));
+            let root = sync
+                .service
+                .state_dir
+                .join(pir_artifact::namespace("objects"));
             let i = inventory.clone();
             let worker = sync.service.role == Role::Worker;
             let backend = sync.backend;
@@ -562,7 +568,10 @@ impl PreparedPublication<'_> {
             if sync.retained.len() > 2 {
                 sync.retained.remove(0);
             }
-            let root = sync.service.state_dir.join(pir_artifact::namespace("objects"));
+            let root = sync
+                .service
+                .state_dir
+                .join(pir_artifact::namespace("objects"));
             let retained = sync.retained.clone();
             tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
         }

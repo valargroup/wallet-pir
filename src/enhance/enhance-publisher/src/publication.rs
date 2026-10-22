@@ -6,7 +6,7 @@
 //! That pass records which file each hash was read from, so publication only
 //! rehashes files that were changed, replaced or truncated since.
 use enhance_query_server::{
-    protocol::{ Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
+    protocol::{Coverage, Geometry, MAX_QUERY_SHARDS, PROTOCOL_REVISION},
     publication::{Inventory, VERSION},
 };
 mod object_io;
@@ -68,7 +68,10 @@ pub fn prepare_publication(
     persist_metadata(
         root,
         &pir_artifact::namespace("inventories"),
-        &format!("{}.json", enhance_query_server::publication::inventory_digest(prepared.inventory())),
+        &format!(
+            "{}.json",
+            enhance_query_server::publication::inventory_digest(prepared.inventory())
+        ),
         prepared.inventory(),
     )?;
     Ok(prepared)

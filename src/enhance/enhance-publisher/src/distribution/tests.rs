@@ -6,7 +6,7 @@ fn collect_files_removes_only_unretained_owned_files() {
     let scratch = tempfile::tempdir().unwrap();
     let directory = scratch.path().join(pir_artifact::namespace("objects"));
     assert!(collect_files(&directory, &BTreeSet::new()).is_ok());
-    fs::create_dir(&directory).unwrap();
+    fs::create_dir_all(&directory).unwrap();
     let (kept, stale) = ("ab".repeat(32), "cd".repeat(32));
     let retained = [
         kept.clone(),

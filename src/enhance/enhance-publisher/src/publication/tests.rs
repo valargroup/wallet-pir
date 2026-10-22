@@ -205,6 +205,7 @@ fn repeated_digest_with_a_different_length_is_rejected() {
             plan,
             rows: vec![rows],
             hint,
+            public_params_sha256: public.checksum.clone(),
             public,
             packing,
         }],
