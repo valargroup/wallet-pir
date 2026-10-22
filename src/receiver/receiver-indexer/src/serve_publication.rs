@@ -556,6 +556,16 @@ impl Updater {
                         verified,
                     })
                 }
+                // A transient failure, such as writing the correction floor, leaves the
+                // record unsettled, so the next poll loads it again.
+                Err(refusal @ Refusal::Unavailable(_)) => {
+                    warn!(revision = %record.revision, %refusal, "publication load deferred");
+                    self.reporter.update(|status| {
+                        status.preparing = None;
+                        status.refusal = Some(refusal);
+                    });
+                    return;
+                }
                 Err(refusal) => return self.refuse(record, refusal),
             }
             // A newer record that arrived while this one prepared supersedes it.

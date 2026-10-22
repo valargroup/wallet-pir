@@ -84,7 +84,13 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
 /// A publication ending `offset` blocks after activation at `hash`, with two payments
 /// to the fixture receiver and their companion witness table.
 fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
+    corrected_publication(offset, hash, 0)
+}
+
+/// [`publication`] under history correction revision `revision`.
+fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, witness::Table) {
     let mut manifest = common::manifest(MIN_ROWS);
+    manifest.history_revision = revision;
     manifest.genesis = mainnet();
     manifest.start_height = activation();
     manifest.end_height = activation() + offset;
@@ -505,6 +511,48 @@ async fn a_failed_correction_is_loaded_once() {
         .filter(|l| l.contains("publication prepared") && l.contains(rev.as_str()))
         .count();
     assert_eq!(prepared, 1, "{log}");
+}
+
+/// A correction whose floor cannot be recorded yet is deferred, not refused: once the
+/// state directory takes the floor again, the next poll activates it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrecordable_floor_defers_the_correction() {
+    let world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start();
+    world
+        .until("first publication", &mut served, |h| {
+            h["serving"] == session(&a)
+        })
+        .await;
+    // A directory where the floor file goes makes recording it fail.
+    let floor = world
+        .root
+        .path()
+        .join("state")
+        .join(receiver_indexer::serve_publication::HISTORY_FILE);
+    std::fs::create_dir(&floor).unwrap();
+    let (b, b_witness) = corrected_publication(2, [0xb2; 32], 1);
+    world.node.set(activation() + 2, [0xb2; 32]);
+    let (b_dir, b_rev) = stage(&root, "b", &b, Some(&b_witness));
+    world.assign(&b_dir, &b_rev);
+    world
+        .until("deferred correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == b_rev.as_str()
+                && refusal(h).0 == "unavailable"
+        })
+        .await;
+    std::fs::remove_dir(&floor).unwrap();
+    world
+        .until("corrected publication", &mut served, |h| {
+            h["serving"] == session(&b)
+        })
+        .await;
 }
 
 async fn check_staged_publication(case: StagedCase) {
