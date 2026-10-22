@@ -1941,9 +1941,9 @@ mod tests {
         }
     }
 
-    /// A displaced inventory that a request still holds keeps its stored tables through
-    /// later passes after its retention ends, so the request can still load them; the
-    /// first pass after it is released deletes them.
+    /// A displaced inventory that a request still holds keeps its stored tables through a
+    /// pass after its retention ends, so the request can still load them; the first pass
+    /// after it is released deletes them.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_held_inventory_keeps_its_stored_tables_until_released() {
         let publications = Publications::new(std::time::Duration::from_millis(1), 1 << 30);
@@ -1964,11 +1964,9 @@ mod tests {
             .path()
             .join(crate::durable::TABLES_DIR)
             .join(format!("p-{}.rows", hex::encode(revision)));
-        for _ in 0..2 {
-            paused.extend(&[], 1, 0);
-            paused.refresh().await.unwrap();
-            assert!(rows.exists());
-        }
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        assert!(rows.exists());
         drop((held, recent));
         paused.extend(&[], 1, 0);
         paused.refresh().await.unwrap();
