@@ -124,6 +124,7 @@
       "native:pir-monitor:bin:pir-monitor",
       "native:status-publisher:doc:status_publisher",
       "native:status-publisher:lib:status_publisher",
+      "native:status-publisher:test:object_access_http",
       "native:status-shared:doc:status_shared",
       "native:status-shared:lib:status_shared",
       "native:status-query-server:doc:status_query_server",
