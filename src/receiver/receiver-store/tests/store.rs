@@ -1,10 +1,10 @@
 mod common;
 use common::{manifest, receiver, record};
-use receiver_directory::{
+use receiver_store::Error;
+use zakura_pir_publisher::receiver::{
     snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES, SLOTS},
     RawRecord, ReceiverBytes,
 };
-use receiver_store::Error;
 
 fn row<'a>(s: &'a Snapshot, r: &ReceiverBytes, page: u32) -> &'a [u8] {
     let n = row_for(&s.manifest, r, page).unwrap();
@@ -407,8 +407,8 @@ fn unsnapshottable_payments_are_refused() {
 /// exactly at it is valid.
 #[test]
 fn store_positions_end_within_the_tree() {
-    use receiver_directory::snapshot::TREE_SIZE;
     use receiver_store::{Config, IndexedBlock, Store};
+    use zakura_pir_publisher::receiver::snapshot::TREE_SIZE;
     let dir = tempfile::tempdir().unwrap();
     let config = |start_position| Config {
         genesis: [1; 32],
@@ -765,7 +765,10 @@ fn sealed_shards_follow_rewinds_and_corrections() {
 /// 100, and returns its configuration and that payment's record.
 fn legacy_store(
     legacy: &std::path::Path,
-) -> (receiver_store::Config, receiver_directory::RawRecord) {
+) -> (
+    receiver_store::Config,
+    zakura_pir_publisher::receiver::RawRecord,
+) {
     let config = receiver_store::Config {
         genesis: [1; 32],
         start_height: 100,
@@ -872,7 +875,10 @@ fn a_version_2_store_converts_once_and_stays_for_rollback() {
     std::fs::write(path.with_extension("upgrading"), b"partial").unwrap();
     assert!(upgrade(&legacy, &path).unwrap());
     assert_eq!(legacy_bytes(&legacy), (2, 285));
-    assert_eq!(legacy_bytes(&path), (3, receiver_directory::RECORD_BYTES));
+    assert_eq!(
+        legacy_bytes(&path),
+        (3, zakura_pir_publisher::receiver::RECORD_BYTES)
+    );
     let mut store = Store::open(&path, config.clone()).unwrap();
     let snapshot = store.snapshot(8, 0).unwrap();
     assert_eq!(

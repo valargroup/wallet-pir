@@ -3,19 +3,24 @@
 use crate::canonical::{tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::read_limited;
 use clap::Parser;
-use receiver_directory::{
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use zakura_pir_client::receiver::Client;
+use zakura_pir_client::receiver::WitnessClient;
+use zakura_pir_publisher::receiver::crypto::{recovery::Action, Receiver};
+use zakura_pir_publisher::receiver::inventory::{
+    Capture, Head, Inventory, Shard, MAX_CAPTURE_BYTES, MAX_CHUNK_BYTES,
+};
+use zakura_pir_publisher::receiver::native::public_bytes;
+use zakura_pir_publisher::receiver::native::response_bytes;
+use zakura_pir_publisher::receiver::session::Publication;
+use zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES;
+use zakura_pir_publisher::receiver::{
     blocks::{Batch, MAX_BATCH_BYTES},
     shards::{ShardFilter, MAX_FILTER_BYTES},
     Hash, Payment, ReceiverBytes,
 };
-use receiver_pir::{
-    inventory::{Capture, Head, Inventory, Shard, MAX_CAPTURE_BYTES, MAX_CHUNK_BYTES},
-    public_bytes, response_bytes, Client, Publication, WitnessClient, MAX_MANIFEST_BYTES,
-};
-use serde::Deserialize;
-use serde_json::{json, Value};
-use std::path::PathBuf;
-use zakura_receiver_crypto::{recovery::Action, Receiver};
 use zakura_server_chain::{hash, Network, NodeClient, NodeError};
 
 /// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
@@ -351,8 +356,9 @@ async fn capture(
     origin: &str,
     head: Head,
 ) -> Result<std::result::Result<Inventory, Failure>> {
-    let mismatch =
-        |error: receiver_pir::Error| ("answer_mismatch", json!({"inventory": error.to_string()}));
+    let mismatch = |error: zakura_pir_publisher::receiver::session::Error| {
+        ("answer_mismatch", json!({"inventory": error.to_string()}))
+    };
     let id = hex::encode(head.inventory);
     let mut capture = match Capture::new(head, MAX_CAPTURE_BYTES) {
         Ok(capture) => capture,
@@ -542,7 +548,7 @@ async fn check_witness(
     http: &reqwest::Client,
     origin: &str,
     publication: &Publication,
-    record: &receiver_directory::RawRecord,
+    record: &zakura_pir_publisher::receiver::RawRecord,
     root: Option<Hash>,
 ) -> Result<Option<Failure>> {
     let witnesses = &publication.witnesses;
@@ -609,7 +615,7 @@ async fn check_filters(
         16384,
         "block_head",
         |bytes| {
-            let head: receiver_directory::blocks::Head =
+            let head: zakura_pir_publisher::receiver::blocks::Head =
                 serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
             head.validate(&directory.genesis)
                 .map_err(|e| e.to_string())?;
@@ -753,6 +759,7 @@ pub(crate) mod common;
 mod tests {
     use super::*;
     use axum::{routing, Json, Router};
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
 
     /// A node at tip `tip` on a chain whose block at every positive height is
     /// `[hash; 32]`, reporting Ironwood tree size `size`, and mainnet's genesis. With
@@ -790,8 +797,9 @@ mod tests {
 
     /// [`super::common::manifest`] on mainnet, ending at Ironwood activation, where a
     /// node reports tree sizes.
-    fn anchored_directory() -> receiver_directory::snapshot::Manifest {
-        let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
+    fn anchored_directory() -> zakura_pir_publisher::receiver::snapshot::Manifest {
+        let mut directory =
+            super::common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         directory.genesis = Network::Mainnet.genesis_hash();
         directory.end_height = crate::blocks::ironwood_activation();
         directory
@@ -801,7 +809,7 @@ mod tests {
     fn anchored() -> Head {
         let d = anchored_directory();
         Head {
-            protocol: receiver_pir::inventory::PROTOCOL.into(),
+            protocol: zakura_pir_publisher::receiver::inventory::PROTOCOL.into(),
             genesis: d.genesis,
             history_revision: 0,
             inventory: [0; 32],
@@ -816,10 +824,11 @@ mod tests {
 
     /// The companion witness manifest of `directory`, built at its end.
     fn companion(
-        directory: &receiver_directory::snapshot::Manifest,
-    ) -> receiver_directory::witness::Manifest {
+        directory: &zakura_pir_publisher::receiver::snapshot::Manifest,
+    ) -> zakura_pir_publisher::receiver::witness::Manifest {
         let snapshot =
-            receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+            zakura_pir_publisher::receiver::snapshot::Snapshot::build(directory.clone(), &[])
+                .unwrap();
         crate::witness::table(&snapshot, &[]).unwrap().manifest
     }
 
@@ -852,14 +861,15 @@ mod tests {
         // A segment's companion construction block is checked the same way, even with
         // its payment table's end on the chain.
         let directory = anchored_directory();
-        let segment = |table: receiver_directory::witness::Manifest| {
+        let segment = |table: zakura_pir_publisher::receiver::witness::Manifest| {
             let snapshot =
-                receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+                zakura_pir_publisher::receiver::snapshot::Snapshot::build(directory.clone(), &[])
+                    .unwrap();
             let server = crate::prepared::payments(snapshot).unwrap();
             Publication {
                 payments: server.manifest().clone(),
-                witnesses: receiver_pir::WitnessManifest {
-                    protocol: receiver_pir::PROTOCOL.into(),
+                witnesses: zakura_pir_publisher::receiver::session::WitnessManifest {
+                    protocol: zakura_pir_publisher::receiver::session::PROTOCOL.into(),
                     table,
                     public_digest: [0; 32],
                 },
@@ -1156,9 +1166,13 @@ mod tests {
 
     /// Serves an empty publication of `directory`. Returns the probe's arguments for it,
     /// with the node at `rpc`.
-    async fn publish(directory: receiver_directory::snapshot::Manifest, rpc: &str) -> Args {
+    async fn publish(
+        directory: zakura_pir_publisher::receiver::snapshot::Manifest,
+        rpc: &str,
+    ) -> Args {
         let genesis = directory.genesis;
-        let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
+        let snapshot =
+            zakura_pir_publisher::receiver::snapshot::Snapshot::build(directory, &[]).unwrap();
         let publications = receiver_pir_server::Publications::default();
         let table = crate::witness::table(&snapshot, &[]).unwrap();
         let segment = crate::verify::prepare(snapshot, table).unwrap();
@@ -1335,7 +1349,7 @@ mod tests {
     /// node encodes subtree roots the same way (`Node::bytes_in_display_order`).
     #[test]
     fn the_node_and_witness_payloads_encode_nodes_alike() {
-        use zakura_receiver_crypto::witness::{combine, empty_root};
+        use zakura_pir_publisher::receiver::crypto::witness::{combine, empty_root};
         use zakura_server_chain::testing::{ironwood_root_of, Tx};
         let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
         let refund = Tx::from_bytes(&raw.unwrap());
@@ -1357,14 +1371,20 @@ mod tests {
     async fn witnessed(
         tree_size: u64,
         corrupt: bool,
-    ) -> (String, Publication, receiver_directory::RawRecord, Hash) {
-        use zakura_receiver_crypto::{wire::encode_payload, witness::combine};
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+    ) -> (
+        String,
+        Publication,
+        zakura_pir_publisher::receiver::RawRecord,
+        Hash,
+    ) {
+        use zakura_pir_publisher::receiver::{crypto::witness::combine, wire::encode_payload};
+        let mut manifest =
+            super::common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         (manifest.start_position, manifest.end_position) = (0, tree_size);
         let mut record = super::common::record(0, 1);
         record.payment.position = 5;
         let siblings: [Option<Hash>; 16] = std::array::from_fn(|level| {
-            zakura_receiver_crypto::wire::supplied(5, tree_size, level as u8)
+            zakura_pir_publisher::receiver::wire::supplied(5, tree_size, level as u8)
                 .then_some([level as u8 + 1; 32])
         });
         let mut root = record.payment.cmx;
@@ -1382,7 +1402,8 @@ mod tests {
         }
         let payload = encode_payload(&siblings, 5, tree_size).unwrap();
         let snapshot =
-            receiver_directory::snapshot::Snapshot::build(manifest, &[record.clone()]).unwrap();
+            zakura_pir_publisher::receiver::snapshot::Snapshot::build(manifest, &[record.clone()])
+                .unwrap();
         let genesis = snapshot.manifest.genesis;
         let table = crate::witness::table(&snapshot, &[payload]).unwrap();
         // A corrupt payload would be refused by the publisher's checks; serve it anyway.
@@ -1413,7 +1434,7 @@ mod tests {
     async fn the_witness_payload_must_reach_the_nodes_shard_root() {
         let http = reqwest::Client::new();
         let (origin, publication, record, root) = witnessed(1 << 17, false).await;
-        let check = |record: receiver_directory::RawRecord, root: Option<Hash>| {
+        let check = |record: zakura_pir_publisher::receiver::RawRecord, root: Option<Hash>| {
             let (http, origin, publication) = (http.clone(), origin.clone(), publication.clone());
             async move {
                 check_witness(&http, &origin, &publication, &record, root)
@@ -1474,7 +1495,7 @@ mod tests {
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let mut head = anchored();
-        head.shards = receiver_pir::inventory::MAX_SHARDS;
+        head.shards = zakura_pir_publisher::receiver::inventory::MAX_SHARDS;
         let failure = capture(&reqwest::Client::new(), &origin, head)
             .await
             .unwrap();
@@ -1765,8 +1786,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = crate::application::Config {
             data_dir: dir.path().to_owned(),
-            min_rows: receiver_pir::MIN_ROWS,
-            shard_rows: receiver_pir::MIN_ROWS,
+            min_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
+            shard_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
             shard_target: None,
             start_height: activation,
             end_height: None,
@@ -1794,11 +1815,14 @@ mod tests {
             .unwrap();
         let payment = std::fs::read(rows)
             .unwrap()
-            .chunks(receiver_directory::snapshot::ROW_BYTES)
+            .chunks(zakura_pir_publisher::receiver::snapshot::ROW_BYTES)
             .flat_map(|row| {
-                row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES]
-                    .chunks(receiver_directory::RECORD_BYTES)
-                    .map(|slot| zakura_receiver_crypto::Record::decode(slot).unwrap())
+                row[..zakura_pir_publisher::receiver::snapshot::SLOTS
+                    * zakura_pir_publisher::receiver::RECORD_BYTES]
+                    .chunks(zakura_pir_publisher::receiver::RECORD_BYTES)
+                    .map(|slot| {
+                        zakura_pir_publisher::receiver::crypto::Record::decode(slot).unwrap()
+                    })
                     .collect::<Vec<_>>()
             })
             .flatten()

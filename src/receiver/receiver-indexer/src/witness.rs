@@ -7,14 +7,16 @@
 //! new commitments; a restart or rewind rebuilds them from that shard's stored
 //! commitments. No publication reads the full commitment history.
 use crate::verify::directory_error;
-use receiver_directory::{
-    snapshot::{Manifest, Snapshot},
-    witness, Hash,
-};
 use receiver_store::{Checkpoint, Error, Store, SHARD_LEAVES};
-use zakura_receiver_crypto::{
+use zakura_pir_publisher::receiver::{
+    crypto::witness::combine,
     wire::{decode_payload, is_final, LOWER_LEVELS, PAYLOAD_BYTES},
-    witness::{combine, ShardPaths},
+    witness::ShardPaths,
+};
+use zakura_pir_publisher::receiver::{
+    snapshot::{Manifest, Snapshot},
+    witness::{self, TablePublisherExt},
+    Hash,
 };
 
 /// The filling shard's paths and the stored block they extend through.
@@ -182,8 +184,8 @@ pub fn table_at(
     let rows = u32::try_from(payloads.len().div_ceil(witness::PAYLOADS))
         .map_err(|_| Error::Capacity)?
         .next_power_of_two()
-        .max(receiver_pir::MIN_ROWS);
-    if rows > receiver_pir::MAX_ROWS {
+        .max(zakura_pir_publisher::receiver::session::MIN_ROWS);
+    if rows > zakura_pir_publisher::receiver::session::MAX_ROWS {
         return Err(Error::Capacity);
     }
     Ok(witness::Table::build(
@@ -324,7 +326,7 @@ mod tests {
     /// is refused before serving; a canonical one passes.
     #[test]
     fn provisional_payloads_must_supply_canonical_nodes() {
-        use zakura_receiver_crypto::wire::encode_payload;
+        use zakura_pir_publisher::receiver::wire::encode_payload;
         let mut siblings = [None; 16];
         siblings[0] = Some([1; 32]);
         let payload = encode_payload(&siblings, 0, 2).unwrap();

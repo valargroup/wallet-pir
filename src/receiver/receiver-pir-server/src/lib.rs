@@ -15,11 +15,13 @@ mod prepared;
 /// prepares each one once. This stays in the serving crate: the indexer includes
 /// the preparation cache without this fixture module.
 #[cfg(test)]
-fn empty_snapshot(variant: u8) -> receiver_directory::snapshot::Snapshot {
-    let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+#[cfg(test)]
+fn empty_snapshot(variant: u8) -> zakura_pir_query_server::receiver::snapshot::Snapshot {
+    let mut manifest = common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
     manifest.salt[0] = variant;
     manifest.end_hash = [variant; 32];
-    receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap()
+    zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap()
 }
 pub mod publication;
 pub mod tables;
@@ -32,8 +34,12 @@ use axum::{
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queue};
 pub use publication::{Publication, Publications};
-use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
 use std::{sync::Arc, time::Duration};
+use zakura_pir_query_server::receiver::native::query_bytes;
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::HEADER_BYTES;
+use zakura_pir_query_server::receiver::session::MAGIC;
+use zakura_pir_query_server::receiver::session::MAX_ROWS;
 
 // Preserve the historical bounded categories for unmatched product-shaped
 // paths as well as this service's registered routes.
@@ -307,7 +313,7 @@ async fn health(State(s): State<Service>) -> Response {
 }
 
 /// A 32-byte hash from its hex route segment.
-fn hash(hex: &str) -> Option<receiver_directory::Hash> {
+fn hash(hex: &str) -> Option<zakura_pir_query_server::receiver::Hash> {
     hex::decode(hex).ok()?.try_into().ok()
 }
 
@@ -370,7 +376,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     if body.len() < HEADER_BYTES || &body[..4] != MAGIC {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let id: receiver_directory::Hash = body[4..36].try_into().unwrap();
+    let id: zakura_pir_query_server::receiver::Hash = body[4..36].try_into().unwrap();
     let (publication, epoch) = match s.publications.select(&id) {
         Ok(p) => p,
         Err(status) => return status.into_response(),
@@ -450,8 +456,9 @@ mod tests {
 
     #[tokio::test]
     async fn query_response_retains_admission_and_publication_until_transport_drop() {
-        use receiver_directory::snapshot::Snapshot;
-        use receiver_pir::{Client, MIN_ROWS};
+        use zakura_pir_client::receiver::Client;
+        use zakura_pir_query_server::receiver::session::MIN_ROWS;
+        use zakura_pir_query_server::receiver::snapshot::Snapshot;
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare_payments(snapshot).unwrap();
@@ -504,7 +511,7 @@ mod tests {
         let publication = crate::prepared::prepare_payments(crate::empty_snapshot(1)).unwrap();
         let mut header = MAGIC.to_vec();
         header.extend(publication.segments()[0].payments.id());
-        let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
+        let exact = query_bytes(zakura_pir_query_server::receiver::session::MIN_ROWS).unwrap();
         let publications = Publications::default();
         assert!(publications.publish(publication, 0));
         let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
@@ -622,8 +629,9 @@ mod tests {
     /// `no-store`; one selected before an ordinary rotation is still answered.
     #[tokio::test]
     async fn a_revocation_after_selection_is_gone() {
-        use receiver_directory::snapshot::Snapshot;
-        use receiver_pir::{Client, MIN_ROWS};
+        use zakura_pir_client::receiver::Client;
+        use zakura_pir_query_server::receiver::session::MIN_ROWS;
+        use zakura_pir_query_server::receiver::snapshot::Snapshot;
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare_payments(snapshot).unwrap();
@@ -664,8 +672,8 @@ mod tests {
     /// inventory's filter.
     #[tokio::test]
     async fn a_revocation_during_a_filter_load_is_gone() {
-        use receiver_directory::shards::{Coverage, ShardFilter};
         use std::sync::mpsc;
+        use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
         let snapshot = crate::empty_snapshot(1);
         let coverage = Coverage {
             start_height: 100,
@@ -717,9 +725,13 @@ mod tests {
 #[cfg(all(test, feature = "qualification-tests"))]
 mod fixture_cache_tests {
     use super::*;
-    use receiver_directory::snapshot::Snapshot;
+    use zakura_pir_query_server::receiver::snapshot::Snapshot;
     fn snapshot() -> Snapshot {
-        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[]).unwrap()
+        Snapshot::build(
+            common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS),
+            &[],
+        )
+        .unwrap()
     }
     /// Only an identical snapshot reuses a cached server; a cached server keeps no
     /// report and does not hide corrupt input.

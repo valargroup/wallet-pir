@@ -7,9 +7,6 @@ mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
 use axum::{extract::State, routing::post, Json, Router};
-use receiver_directory::witness;
-use receiver_directory::{snapshot::Snapshot, Hash};
-use receiver_pir::{transport::Transport, Error, MIN_ROWS};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -17,6 +14,13 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use zakura_pir_client::receiver::transport::Transport;
+use zakura_pir_publisher::receiver::session::Error;
+use zakura_pir_publisher::receiver::session::MIN_ROWS;
+use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+use zakura_pir_publisher::receiver::witness;
+use zakura_pir_publisher::receiver::witness::TablePublisherExt as _;
+use zakura_pir_publisher::receiver::{snapshot::Snapshot, Hash};
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -110,7 +114,7 @@ fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, w
         .collect();
     let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let payloads = zakura_pir_publisher::receiver::witness::payloads(&tree, &[0, 5]).unwrap();
     let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
     (snapshot, table)
 }
@@ -338,7 +342,11 @@ impl World {
     }
 
     /// Looks the fixture receiver up over encrypted PIR at the served anchor.
-    async fn lookup(&self, height: u32, hash: Hash) -> Vec<receiver_directory::Payment> {
+    async fn lookup(
+        &self,
+        height: u32,
+        hash: Hash,
+    ) -> Vec<zakura_pir_publisher::receiver::Payment> {
         let accepted = history::Accepted {
             genesis: mainnet(),
             required_start: activation(),
@@ -362,7 +370,7 @@ async fn rpc_handler(state: State<Node>, request: Json<Value>) -> Json<Value> {
 /// Payment session id of a staged publication's one segment.
 fn session(snapshot: &Snapshot) -> String {
     hex::encode(
-        receiver_pir::server::Server::new(snapshot.clone())
+        zakura_pir_query_server::receiver::server::Server::new(snapshot.clone())
             .unwrap()
             .id(),
     )

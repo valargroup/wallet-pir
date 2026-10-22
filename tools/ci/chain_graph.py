@@ -108,7 +108,10 @@ def product_dependency_problems(graph, product):
     errors = []
     if active != ({product} if product else set()):
         errors.append(f'{product}: unexpected active adapters {sorted(active)}')
-    if product != 'receiver' and any(p['name'] == 'zakura-receiver-crypto' for p in graph['packages']):
+    recovery = any(p['name'] == 'zakura-pir-protocol'
+                   and 'receiver-crypto' in nodes.get(p['id'], {}).get('features', [])
+                   for p in graph['packages'])
+    if product != 'receiver' and recovery:
         errors.append(f'{product}: resolves receiver recovery')
     return errors
 

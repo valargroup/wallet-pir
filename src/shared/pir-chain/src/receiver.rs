@@ -3,7 +3,7 @@
 //! recoverable with the zero outgoing viewing key.
 use crate::NodeError;
 use crate::chain::Block;
-use zakura_receiver_crypto::recovery::Action;
+use zakura_pir_protocol::receiver::crypto::recovery::Action;
 
 /// Bounds retained block memory and the amount of work before an anchor check.
 pub const MAX_RECEIVER_BATCH_BLOCKS: u32 = 64;
@@ -22,7 +22,7 @@ pub struct Checkpoint {
 /// A payment's compact context and location, using the library-owned wire record.
 /// All hashes use protocol byte order. Recovery authenticates the receiver before
 /// the adapter returns this record; parsing wire bytes alone does not.
-pub use zakura_receiver_crypto::wire::Payment;
+pub use zakura_pir_protocol::receiver::wire::Payment;
 
 /// One block's Ironwood Actions: every commitment in position order, the count from
 /// coinbase transactions, whose recipients the directory excludes although their
