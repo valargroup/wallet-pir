@@ -93,10 +93,15 @@ def validate(request, inventory):
     require(type(options['publisher_budget_bytes']) is int and options['publisher_budget_bytes'] > 0,
             'Enhance publication disk budget must be explicit')
     settings = request['configuration']['enhance']['settings']
-    require(set(settings) == {'artifact_listen', 'listen', 'data_dir', 'zakura_rpc_url',
-                             'zakura_cookie', 'poll_seconds', 'prevout_cache_outputs'}
+    require({'artifact_listen', 'listen', 'data_dir'} <= set(settings)
+            <= {'artifact_listen', 'listen', 'data_dir', 'prevout_cache_outputs'}
             and settings['artifact_listen'] == '127.0.0.1:8084',
             'Enhance publisher must contain only canonical source settings and private listeners')
+    # The node endpoint belongs to the root chain follower, never to a product.
+    chain = request['configuration'].get('chain')
+    require(isinstance(chain, dict) and {'rpc_url', 'rpc_cookie'} <= set(chain)
+            <= {'rpc_url', 'rpc_cookie', 'poll_ms'},
+            'Enhance publisher needs the root chain settings')
     service = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')['enhance']
     targets = descriptors.select(descriptors.targets(service, inventory), ROLES[:1] + ROLES[2:])
     # External workers are optional; include every one actually in the inventory.

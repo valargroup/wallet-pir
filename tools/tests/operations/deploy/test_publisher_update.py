@@ -235,9 +235,9 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.install_retired_https_settings()
         original = copy.deepcopy(self.request['configuration'])
         changes = [('transparent_history', 'recent_from', 2),
-                   ('transparent_history', 'rpc_url', 'http://other-node:8232'),
+                   ('transparent_history', 'listen', '10.0.0.9:8096'),
                    ('transaction_details', 'poll_ms', 501),
-                   ('enhance', 'poll_seconds', 20),
+                   ('enhance', 'prevout_cache_outputs', 20),
                    ('status', 'publisher', {'state_dir': '/srv/other-status'})]
         for product, field, value in changes:
             with self.subTest(product=product, field=field):
