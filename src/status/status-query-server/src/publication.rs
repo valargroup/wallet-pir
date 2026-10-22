@@ -2,7 +2,8 @@
 //! inventory and authority subject. Hashes bind bytes, not chain truth.
 use crate::{profile, protocol::*};
 use pir_publication::{
-    AuthorityCheckRequest, MaterialIdentity, ObjectReference, PublicationEnvelope, PublicationScope,
+    AuthorityCheckRequest, MaterialIdentity, ObjectReference, PublicationEnvelope,
+    PublicationReference, PublicationScope,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -57,6 +58,18 @@ pub fn validate_current(current: &Current, network: Hash) -> Result<(), Failure>
     Ok(())
 }
 
+/// How the current envelope authorizes a planned inventory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryAuthorization {
+    /// Exactly the publication the envelope names.
+    Latest,
+    /// The latest publication or an earlier one of the same recovery epoch
+    /// that a router's worker still serves. The publisher keeps such
+    /// predecessors retained, and only serves retained objects, so a router can
+    /// commit its worker's view and release the worker to load the latest.
+    RetainedHandover,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Inventory {
@@ -91,22 +104,54 @@ impl Inventory {
         Sha256::digest(serde_json::to_vec(&material).expect("Status material serializes")).into()
     }
 
-    /// Check that this inventory is exactly what eligible `current` publishes.
-    pub fn validate(&self, current: &Current) -> Result<(), Failure> {
+    /// This inventory's own publication reference when fetched as
+    /// `inventory_object`: what an envelope publishing it must name.
+    pub fn publication_reference(
+        &self,
+        inventory_object: &ObjectReference,
+    ) -> PublicationReference<StatusDescriptor> {
+        PublicationReference::new(
+            self.material_identity(),
+            inventory_object.clone(),
+            StatusDescriptor {
+                generation: self.manifest.generation,
+            },
+        )
+    }
+
+    /// Check that eligible `current` authorizes this inventory, fetched as
+    /// `inventory_object`, in the way `authorization` names.
+    ///
+    /// Either way the inventory must have Status geometry and belong to the
+    /// envelope's chain, source and recovery epoch. Status recovers after
+    /// every withdrawal, so the epoch also excludes withdrawn predecessors.
+    pub fn authorize(
+        &self,
+        inventory_object: &ObjectReference,
+        current: &Current,
+        authorization: InventoryAuthorization,
+    ) -> Result<(), Failure> {
         self.validate_material()?;
-        let publication = current
+        let latest = current
             .publication
             .as_ref()
-            .ok_or("Status current names no publication")?;
-        if self.schema != SCHEMA
-            || self.manifest.network != current.scope.chain
-            || self.manifest.recovery_epoch != current.fence.recovery_epoch
+            .filter(|_| current.eligible)
+            .ok_or("Status current grants no publication")?;
+        if self.manifest.network != current.scope.chain
             || self.manifest.salt != current.scope.source
-            || self.manifest.generation > publication.descriptor.generation
-            || publication.material != self.material_identity()
-            || self.units.len() != ROWS / profile().rlwe().d
+            || self.manifest.recovery_epoch != current.fence.recovery_epoch
         {
-            return Err("Status inventory identity differs".into());
+            return Err("Status inventory belongs to another source or recovery epoch".into());
+        }
+        let own = self.publication_reference(inventory_object);
+        let authorized = match authorization {
+            InventoryAuthorization::Latest => own == *latest,
+            InventoryAuthorization::RetainedHandover => {
+                own == *latest || own.descriptor.generation < latest.descriptor.generation
+            }
+        };
+        if !authorized {
+            return Err("Status inventory is not authorized by the current publication".into());
         }
         Ok(())
     }
@@ -244,7 +289,13 @@ mod tests {
                 StatusDescriptor { generation: 7 },
             )),
         };
-        assert!(inventory.validate(&current).is_err());
+        assert!(inventory
+            .authorize(
+                &ObjectReference::for_bytes(b"inventory"),
+                &current,
+                InventoryAuthorization::Latest
+            )
+            .is_err());
         let result = crate::Generation::load_prepared(
             &inventory,
             true,
@@ -253,5 +304,116 @@ mod tests {
             None,
         );
         assert!(result.is_err());
+    }
+
+    /// An inventory with valid Status geometry whose objects are all derived
+    /// from `material`, published as `generation`.
+    fn geometric_inventory(material: u8, generation: u64) -> (Inventory, ObjectReference) {
+        let object = |tag: u8, bytes: u64| ObjectReference {
+            sha256: hex::encode([material ^ tag; 32]),
+            bytes,
+        };
+        let units = (0..ROWS / profile().rlwe().d)
+            .map(|_| object(1, (profile().rlwe().d * ROW_BYTES) as u64))
+            .collect();
+        let packing_blocks = if cfg!(feature = "native-reinspiring") {
+            profile().ypir().db_cols.div_ceil(profile().rlwe().d)
+        } else {
+            1
+        };
+        let packing = (0..packing_blocks).map(|_| object(2, 1)).collect();
+        let public = object(3, 1);
+        let inventory = Inventory {
+            schema: SCHEMA.into(),
+            manifest: Manifest {
+                protocol: PROTOCOL.into(),
+                network: [1; 32],
+                salt: [2; 32],
+                generation,
+                recovery_epoch: 2,
+                coverage_start: 1,
+                anchor_height: 1,
+                anchor_hash: [3; 32],
+                observed_ms: 1,
+                entries: 0,
+                rows_digest: [material; 32],
+                public_digest: [material ^ 3; 32],
+            },
+            units,
+            packing,
+            public,
+        };
+        let inventory_object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
+        (inventory, inventory_object)
+    }
+    fn publishing(inventory: &Inventory, inventory_object: &ObjectReference) -> Current {
+        Current {
+            scope: scope([1; 32], [2; 32]),
+            sequence: 10,
+            eligible: true,
+            fence: pir_publication::AuthorityFence {
+                recovery_epoch: 2,
+                latest_withdrawal: 0,
+            },
+            publication: Some(inventory.publication_reference(inventory_object)),
+        }
+    }
+
+    /// A router's worker may still serve predecessor B while the publisher
+    /// already publishes C with other material. The router must be able to
+    /// commit B so the worker can release its older pin and load C.
+    #[test]
+    fn a_retained_predecessor_is_authorized_only_for_handover_under_the_current_fence() {
+        let (b, b_object) = geometric_inventory(0x10, 4);
+        let (c, c_object) = geometric_inventory(0x20, 5);
+        assert_ne!(b.material_identity(), c.material_identity());
+        let current = publishing(&c, &c_object);
+        use InventoryAuthorization::{Latest, RetainedHandover};
+
+        for authorization in [Latest, RetainedHandover] {
+            c.authorize(&c_object, &current, authorization).unwrap();
+        }
+        b.authorize(&b_object, &current, RetainedHandover).unwrap();
+        assert!(b.authorize(&b_object, &current, Latest).is_err());
+
+        // The latest is bound to its exact inventory object and descriptor.
+        assert!(c.authorize(&b_object, &current, Latest).is_err());
+        let mut relabelled = c.clone();
+        relabelled.manifest.generation = 6;
+        assert!(relabelled.authorize(&c_object, &current, Latest).is_err());
+
+        // A predecessor must be older than the latest publication, under the
+        // current source and recovery epoch, while the envelope is eligible.
+        let (forged, forged_object) = geometric_inventory(0x30, 5);
+        assert!(forged
+            .authorize(&forged_object, &current, RetainedHandover)
+            .is_err());
+        let mut newer = b.clone();
+        newer.manifest.generation = 6;
+        assert!(newer
+            .authorize(&b_object, &current, RetainedHandover)
+            .is_err());
+        let mut old_epoch = b.clone();
+        old_epoch.manifest.recovery_epoch = 1;
+        assert!(old_epoch
+            .authorize(&b_object, &current, RetainedHandover)
+            .is_err());
+        let mut other_source = b.clone();
+        other_source.manifest.salt = [9; 32];
+        assert!(other_source
+            .authorize(&b_object, &current, RetainedHandover)
+            .is_err());
+        let mut withdrawn = current.clone();
+        withdrawn.sequence += 1;
+        withdrawn.eligible = false;
+        withdrawn.fence.latest_withdrawal = withdrawn.sequence;
+        assert!(b
+            .authorize(&b_object, &withdrawn, RetainedHandover)
+            .is_err());
+        let mut recovered = current;
+        recovered.fence.recovery_epoch += 1;
+        assert!(b
+            .authorize(&b_object, &recovered, RetainedHandover)
+            .is_err());
     }
 }

@@ -75,6 +75,7 @@ pub(super) struct StatusPublication {
 pub(super) struct StatusCandidate {
     inventory: Inventory,
     inventory_object: ObjectReference,
+    authorization: InventoryAuthorization,
     previous: Option<Arc<Generation>>,
     material: CandidateMaterial,
 }
@@ -89,6 +90,7 @@ enum CandidateMaterial {
 pub(super) struct StatusLoaded {
     inventory: Inventory,
     inventory_object: ObjectReference,
+    authorization: InventoryAuthorization,
     generation: Generation,
 }
 
@@ -159,23 +161,26 @@ impl PublicationAdapter for StatusPublication {
             .await
             .router_holds
             .retain(|g| g.manifest().fresh(now_ms()).is_ok());
-        let inventory_object = if self.service.role == Role::Router {
+        // A router follows its worker, which may still serve a retained
+        // predecessor of the latest publication.
+        let (inventory_object, authorization) = if self.service.role == Role::Router {
             match worker_handover::serving_inventory(&self.service).await? {
-                Some(inventory) => inventory,
+                Some(inventory) => (inventory, InventoryAuthorization::RetainedHandover),
                 None => return Ok(PublicationPlan::Deferred),
             }
         } else {
-            envelope
+            let latest = envelope
                 .inventory()
                 .cloned()
-                .ok_or("Status current has no inventory")?
+                .ok_or("Status current has no inventory")?;
+            (latest, InventoryAuthorization::Latest)
         };
         let inventory: Inventory = serde_json::from_slice(
             &objects
                 .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
                 .await?,
         )?;
-        inventory.validate(envelope)?;
+        inventory.authorize(&inventory_object, envelope, authorization)?;
         inventory.manifest.fresh(now_ms())?;
         let controller = self.serving_controller().await;
         let previous = controller.as_ref().map(Controller::current);
@@ -229,6 +234,7 @@ impl PublicationAdapter for StatusPublication {
             candidate: StatusCandidate {
                 inventory,
                 inventory_object,
+                authorization,
                 previous,
                 material,
             },
@@ -244,6 +250,7 @@ impl PublicationAdapter for StatusPublication {
         let StatusCandidate {
             inventory,
             inventory_object,
+            authorization,
             previous,
             material,
         } = candidate;
@@ -273,6 +280,7 @@ impl PublicationAdapter for StatusPublication {
         Ok(StatusLoaded {
             inventory,
             inventory_object,
+            authorization,
             generation,
         })
     }
@@ -283,7 +291,9 @@ impl PublicationAdapter for StatusPublication {
         loaded: &StatusLoaded,
     ) -> Result<(MaterialIdentity, AnchorSubject), Error> {
         let manifest = &loaded.inventory.manifest;
-        loaded.inventory.validate(envelope)?;
+        loaded
+            .inventory
+            .authorize(&loaded.inventory_object, envelope, loaded.authorization)?;
         if manifest.recovery_epoch != envelope.fence.recovery_epoch {
             return Err("Status candidate belongs to an earlier recovery epoch".into());
         }
@@ -316,6 +326,7 @@ impl PublicationAdapter for StatusPublication {
             inventory,
             inventory_object,
             generation,
+            ..
         } = loaded;
         let root = self.service.state_dir.clone();
         let record_bytes = serde_json::to_vec(&inventory_object)?;
