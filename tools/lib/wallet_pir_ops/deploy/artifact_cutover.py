@@ -11,7 +11,7 @@ import shlex
 
 from .. import durable
 from . import artifact_preparation, descriptors, units
-from .engine import Deployer, DeployError, file_sha256, mutation_fence, unit_files
+from .engine import Deployer, DeployError, file_sha256, mutation_fence, text_sha256, unit_files
 from .remote import production_lock
 from .transaction import Journal
 
@@ -160,7 +160,7 @@ class Cutover:
             else:
                 preparations.append(self.command(entry, 'verify-prepared', '--stage', entry['stage']))
         return {'request': self.request, 'groups': groups, 'preparations': preparations,
-                'incidents': self.history_incidents(groups[0])}
+                **self.publisher_state(groups[0])}
 
     def plan(self):
         plan = self.capture(allow_unprepared=True)
@@ -252,7 +252,8 @@ class Cutover:
             require(durable.digest(plan) == expected_plan, 'artifact cutover plan changed; review a fresh plan')
             journal = Journal.create(self.state_dir, NAME, durable.digest(self.request),
                                      self.request['source_sha'], [], None)
-            journal.data.update(request=self.request, groups=[], records=[], incidents=plan['incidents'])
+            journal.data.update(request=self.request, groups=[], records=[], incidents=plan['incidents'],
+                                publisher_configs=plan['publisher_configs'])
             for index, (group, deployer) in enumerate(self.groups):
                 journal.data['groups'].append({'id':journal.id + '-' + str(index),
                     'service':group['service'], 'binary_sha256':group['binary_sha256'],
@@ -342,8 +343,13 @@ class Cutover:
                 if guard is not None:
                     problems.extend(guard.before_restore(deployer, child, record))
         require(not problems, 'artifact rollback refused before interruption: ' + '; '.join(problems))
-        # The configured roots now, and those pinned at deployment.
-        records = self.history_incidents(self.child(journal, 0).hosts)
+        # An edited file does not prove which configuration a running process
+        # loaded. Refuse drift instead of guessing its publication roots.
+        publisher = self.publisher_state(self.child(journal, 0).hosts)
+        require(publisher['publisher_configs'] == journal.data['publisher_configs'],
+                'publisher configuration changed since the cutover plan; inspect and restore the '
+                'pinned configuration before rollback; the current release has not been interrupted')
+        records = publisher['incidents']
         records += [entry for entry in journal.data['incidents'] if entry not in records]
         incidents = self.incident_problems(records)
         if incidents:
@@ -403,14 +409,15 @@ class Cutover:
         self.clear_fence(journal)
         journal.set_status('rolled-back')
 
-    def history_incidents(self, records):
-        """Every History publisher's incident record, from its running configuration.
+    def publisher_state(self, records):
+        """Pinned config identities and each enabled History publisher's incident path.
 
         Derived from each publisher unit's effective `--config` document on its
-        own host, never from the request, so no preparation form can omit one.
-        A file need not exist yet: a failure can be recorded after deployment.
+        own host. Pin the exact file bytes: later edits cannot establish the
+        configuration loaded by an existing invocation. Incident files need
+        not exist yet because a serving publisher can create them later.
         """
-        incidents = []
+        incidents, configurations = [], []
         for record in records:
             prefix = record['key'] + ': cannot derive Transparent History incident records: '
             state = self.ex.probe_unit(record['host'], record['unit'])
@@ -430,6 +437,8 @@ class Cutover:
             except (TypeError, ValueError):
                 config = None
             require(isinstance(config, dict), prefix + configs[0] + ' is not a readable publisher configuration')
+            configurations.append({'host':record['host'], 'unit':record['unit'], 'path':configs[0],
+                                   'sha256':text_sha256(raw)})
             history = config.get('transparent_history')
             if history is None:
                 continue
@@ -443,7 +452,7 @@ class Cutover:
             entry = {'host':record['host'], 'path':str(PurePosixPath(root) / INCIDENTS)}
             if entry not in incidents:
                 incidents.append(entry)
-        return incidents
+        return {'incidents':incidents, 'publisher_configs':configurations}
 
     def incident_problems(self, incidents):
         """Incident records the predecessor could not read.

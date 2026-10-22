@@ -337,18 +337,20 @@ class ArtifactCutoverTests(unittest.TestCase):
         self.ex.put('coordinator', INCIDENT, '[]')
         self.ex.put('coordinator', '/srv/history/integrity-failures.json', CURRENT_INCIDENT)
         self.refuses_before_stopping(result)
-        # Moving the root leaves both the pinned and the configured root checked.
+        # An on-disk root move cannot prove what the running publisher loaded.
         self.ex.put('coordinator', CONFIG, publisher_config('/srv/moved'))
-        self.refuses_before_stopping(result)
+        self.refuses_before_stopping(result, 'publisher configuration changed')
         self.ex.put('coordinator', '/srv/history/integrity-failures.json', '[]')
         self.ex.put('coordinator', '/srv/moved/integrity-failures.json', CURRENT_INCIDENT)
-        self.refuses_before_stopping(result)
+        self.refuses_before_stopping(result, 'publisher configuration changed')
         # Without a readable configuration nothing proves which roots exist.
         self.ex.remove('coordinator', '/srv/moved/integrity-failures.json')
         self.ex.remove('coordinator', CONFIG)
         self.refuses_before_stopping(result, 'cannot derive Transparent History incident records')
-        # A disabled History product writes no record; absent files need nothing.
+        # Disabling it on disk also does not prove the running process stopped using it.
         self.ex.put('coordinator', CONFIG, publisher_config('/srv/moved', enabled=False))
+        self.refuses_before_stopping(result, 'publisher configuration changed')
+        self.ex.put('coordinator', CONFIG, publisher_config('/srv/history'))
         self.assertEqual(self.make_target().rollback(result['id'])['status'], 'rolled-back')
         self.assert_serving('old-')
 
@@ -361,6 +363,19 @@ class ArtifactCutoverTests(unittest.TestCase):
         path.write_text(json.dumps(request))
         with self.assertRaisesRegex(DeployError, 'request fields differ'):
             A.load_request(path, sha256(path.read_bytes()))
+
+    def test_publisher_configuration_drift_refuses_before_interruption(self):
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        # A running invocation can still use B while the file already names C.
+        # Neither that edit nor disabling History proves which root it loaded.
+        for document in (publisher_config('/srv/b'), publisher_config('/srv/c'),
+                         publisher_config('/state', enabled=False)):
+            with self.subTest(document=document):
+                self.ex.put('coordinator', CONFIG, document)
+                self.refuses_before_stopping(result, 'publisher configuration changed')
+        self.ex.put('coordinator', CONFIG, publisher_config())
+        self.assertEqual(self.make_target().rollback(result['id'])['status'], 'rolled-back')
+        self.assert_serving('old-')
 
     def test_incomplete_fleet_and_later_deployments_are_refused(self):
         request = copy.deepcopy(self.request)

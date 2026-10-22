@@ -300,9 +300,12 @@ without changing any service unit. Review a fresh activation plan afterward.
 directory. It translates the latest authority records before restoring
 executables through the normal lifecycle. Before stopping anything it reads
 each publisher unit's `--config` document and checks `integrity-failures.json`
-under every enabled Transparent History `publication_root`, plus the roots
-pinned when the cutover was planned; the request names none. A publisher whose
-configuration cannot be read refuses rollback. A failure recorded by the
+under every enabled Transparent History `publication_root`; the request names
+none. The plan pins each configuration path and its exact bytes. An unreadable
+or changed configuration refuses rollback before interruption, including a
+pending root move or disabled History section: an edited file does not prove
+what the running publisher loaded. Inspect and restore the pinned configuration
+before retrying. A failure recorded by the
 current release has no predecessor form, so rollback refuses before stopping
 anything. One recorded while writers stop restarts every current executable on
 the latest records, accepting each once the exact executable runs and answers
