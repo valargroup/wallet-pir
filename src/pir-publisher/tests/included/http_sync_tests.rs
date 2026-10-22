@@ -77,10 +77,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
-    distribution
-        .finalize(initial.candidate.clone(), vec![])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+        )
         .await
-        .unwrap();
+        .unwrap());
     let tls_root = scratch.path().join("tls");
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
@@ -192,10 +196,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             .status(),
         axum::http::StatusCode::OK
     );
-    distribution
-        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            next.candidate.clone(),
+            vec![initial.candidate.clone()],
+        )
         .await
-        .unwrap();
+        .unwrap());
     // Change authority after staging but before the checked activation commits.
     std::fs::write(&tls.control, "pause-current-2").unwrap();
     let checking = tokio::spawn(async move {
@@ -233,10 +241,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         !second.ready().await,
         "withdrawal must fence the previous view too"
     );
-    distribution
-        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            next.candidate.clone(),
+            vec![initial.candidate.clone()],
+        )
         .await
-        .unwrap();
+        .unwrap());
     second.poll_once().await.unwrap();
     assert!(second.ready().await);
     canonical.store(false, Ordering::Release);
@@ -327,7 +339,13 @@ async fn http_display_publisher_recovers_after_an_offline_reorg() {
             },
         )
         .unwrap();
-        assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+        assert_eq!(
+            controller
+                .run(crate::host_engine::PublisherEngine)
+                .await
+                .unwrap(),
+            Outcome::Idle
+        );
         assert_ne!(controller.active().map_sha256, initial.map_sha256);
         assert_eq!(controller.active().tip_hash, fork_hash.to_display_hex());
         let response = distribution
@@ -363,7 +381,7 @@ async fn http_display_publisher_recovers_after_an_offline_reorg() {
         )
         .unwrap();
         assert!(refused
-            .run()
+            .run(crate::host_engine::PublisherEngine)
             .await
             .unwrap_err()
             .to_string()
@@ -469,10 +487,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
-    distribution
-        .finalize(initial.candidate.clone(), vec![])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+        )
         .await
-        .unwrap();
+        .unwrap());
     let tls_root = scratch.path().join("tls");
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
@@ -499,10 +521,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
             .body(axum::body::Body::from(query.body.clone()))
             .unwrap()
     };
-    distribution
-        .finalize(next.candidate.clone(), vec![initial.candidate.clone()])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            next.candidate.clone(),
+            vec![initial.candidate.clone()],
+        )
         .await
-        .unwrap();
+        .unwrap());
     let pause = match phase {
         Recheck::AfterPreparation | Recheck::FloorWriteFailure => "pause-current-2".to_string(),
         Recheck::AfterAnchors => "pause-current-3".to_string(),
@@ -533,10 +559,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
             distribution.withdraw(3).unwrap();
         }
         let offered = if reorg { &recovered } else { &next };
-        distribution
-            .finalize(offered.candidate.clone(), vec![initial.candidate.clone()])
+        assert!(distribution
+            .restore(
+                crate::host_engine::PublisherEngine,
+                offered.candidate.clone(),
+                vec![initial.candidate.clone()],
+            )
             .await
-            .unwrap();
+            .unwrap());
         // The consumer receives the recovered canonical pointer, not the
         // intervening withdrawal. Negative ranges are not a cumulative log.
         let response = distribution
@@ -584,10 +614,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
         std::fs::remove_dir(&failed_floor).unwrap();
     }
     if matches!(phase, Recheck::CandidateAnchor) {
-        distribution
-            .finalize(recovered.candidate.clone(), vec![initial.candidate.clone()])
+        assert!(distribution
+            .restore(
+                crate::host_engine::PublisherEngine,
+                recovered.candidate.clone(),
+                vec![initial.candidate.clone()],
+            )
             .await
-            .unwrap();
+            .unwrap());
     }
     consumer.poll_once().await.unwrap();
     assert!(
@@ -646,10 +680,14 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
-    distribution
-        .finalize(initial.candidate.clone(), vec![])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+        )
         .await
-        .unwrap();
+        .unwrap());
     let tls_root = scratch.path().join("tls");
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
@@ -816,10 +854,14 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
     std::fs::write(&cookie, "fixture:fixture").unwrap();
     let rpc = crate::ingest::zakura::connect(format!("http://{address}"), cookie).unwrap();
     let distribution = Distribution::new(&root, rpc).unwrap();
-    distribution
-        .finalize(initial.candidate.clone(), vec![])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+        )
         .await
-        .unwrap();
+        .unwrap());
     let tls_root = scratch.path().join("tls");
     std::fs::create_dir(&tls_root).unwrap();
     let tls = tls_router(&tls_root, distribution.router()).await;
@@ -842,10 +884,14 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
         panic!("bootstrap stopped before the final source check: {result:?}");
     }
     assert!(tls.control.with_extension("entered").exists());
-    distribution
-        .finalize(next.candidate.clone(), vec![initial.candidate])
+    assert!(distribution
+        .restore(
+            crate::host_engine::PublisherEngine,
+            next.candidate.clone(),
+            vec![initial.candidate],
+        )
         .await
-        .unwrap();
+        .unwrap());
     std::fs::write(&tls.control, "").unwrap();
     let (mut consumer, result) = checking.await.unwrap();
     assert!(
