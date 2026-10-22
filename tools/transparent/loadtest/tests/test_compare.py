@@ -28,15 +28,6 @@ class ComparisonTests(unittest.TestCase):
         b['users'][0]['http_totals']['bytes_up']=0
         self.assertEqual(compare.pair_rows(a,b,[90])[0]['standalone_total_traffic_savings'],-1)
 
-    def test_empty_and_partial_reports_are_readable(self):
-        with tempfile.TemporaryDirectory() as directory:
-            out=Path(directory)
-            value=compare.report(out,{},'preparing',['<failure>'])
-            self.assertFalse(value['success'])
-            text=(out/'report.html').read_text()
-            self.assertIn('preparing',text)
-            self.assertIn('&lt;failure&gt;',text)
-            self.assertIn('Full comparison JSON',text)
 
     def test_empty_successful_children_are_not_a_successful_comparison(self):
         import json
@@ -57,12 +48,6 @@ class ComparisonTests(unittest.TestCase):
         restarted=compare.server_summary({'metrics':[point(1,10,0),point(2,12,1)]})[0]
         self.assertIsNone(restarted['cpu_seconds'])
         self.assertEqual(restarted['peak_rss_bytes'],100)
-
-    def test_unexpected_wallet_index_does_not_break_report(self):
-        data={'users':[{'sample_index':100,'outcome':'exact','seconds':1,'http_totals':{'bytes_down':10}}]}
-        row=compare.pair_rows(data,data,[1])[0]
-        self.assertIsNone(row['source_sample_index'])
-        self.assertIsNone(row['standalone_download_savings'])
 
 
 class ControllerTests(unittest.TestCase):

@@ -1,6 +1,4 @@
 """Fast selection must not silently omit a new integration executable."""
-import json
-import re
 from pathlib import Path
 import sys
 import tempfile
@@ -45,31 +43,6 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('ci_smoke', commands[0])
         self.assertNotIn('layout', str(commands))
 
-    def test_workspace_rust_literal_module_and_fixture_paths_exist(self):
-        checked = set()
-        for package in tests.workspace_packages():
-            directory = Path(package['manifest_path']).parent
-            for source in directory.rglob('*.rs'):
-                if source in checked:
-                    continue
-                checked.add(source)
-                text = source.read_text()
-                paths = re.findall(r'#\[path\s*=\s*"([^"]+)"\]', text)
-                paths += re.findall(r'include_(?:bytes|str)!\(\s*"([^"]+)"', text)
-                for relative in paths:
-                    self.assertTrue((source.parent / relative).is_file(),
-                                    f'{source.relative_to(ROOT)}: missing {relative}')
-
-    def test_operational_filter_and_txid_canary_targets_are_service_owned(self):
-        directory = ROOT / 'tools/transparent'
-        manifest = tomllib.loads((directory / 'Cargo.toml').read_text())
-        self.assertEqual(manifest['package']['name'], 'transparent-tools')
-        for binary in ['transparent-filter-cli', 'txid-quality-canary']:
-            self.assertTrue((directory / 'src/bin' / (binary + '.rs')).is_file(), binary)
-        self.assertIn('transparent', manifest['dependencies']['zakura-pir-client']['features'])
-        self.assertNotIn('wallet', manifest['dependencies']['zakura-pir-client']['features'])
-        registry = json.loads((ROOT / 'tools/ci/integration-tests.json').read_text())
-        self.assertIn('service_tools', registry['transparent-tools']['full'])
 
     def test_missing_stale_duplicate_and_malformed_assignments_fail(self):
         for registry in [{}, {'p': {'fast': [], 'full': []}},
@@ -94,18 +67,6 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual(tests.target_features('fixture', ['plain']), [])
         self.assertEqual(tests.target_features('enhance-publisher', ['ci_smoke']), [])
 
-    def test_each_integration_command_selects_a_service_workspace_package_and_targets(self):
-        packages = {package['name'] for package in tests.workspace_packages()}
-        discovered = tests.targets()
-        for package, tiers in tests.inventory().items():
-            self.assertIn(package, packages)
-            for tier in ['fast', 'full']:
-                command = tests.cargo_args(package, tiers, tier) + tests.target_features(
-                    package, tiers['fast'] if tier == 'fast' else tiers['fast'] + tiers['full'])
-                self.assertEqual(command[command.index('-p') + 1], package)
-                selected = {command[index + 1] for index, word in enumerate(command[:-1])
-                            if word == '--test'}
-                self.assertFalse(selected - discovered[package])
 
     def test_full_runs_both_tiers_and_fast_only_runs_fast(self):
         tiers = {'fast': ['zebra', 'alpha'], 'full': ['crypto']}

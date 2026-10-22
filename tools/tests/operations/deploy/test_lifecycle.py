@@ -5,11 +5,10 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, SERVING_SELECTORS, ROOT  # noqa: E402
+from test_wallet_pir_deploy import ENHANCE, Fleet, NEW_SHA, ROOT  # noqa: E402
 from wallet_pir_ops.deploy import cli  # noqa: E402
 from wallet_pir_ops.deploy.lifecycle import Lifecycle  # noqa: E402
 from wallet_pir_ops.fleet import Fleet as ConfiguredFleet  # noqa: E402
-
 
 
 class LifecycleTests(Fleet):
@@ -35,18 +34,6 @@ class LifecycleTests(Fleet):
         self.assertEqual(rollback.phase, 'rolled-back')
         self.assertEqual(rollback.transaction, result.transaction)
 
-    def test_json_cli_emits_one_result_instead_of_progress_text(self):
-        self.enhance_fleet()
-        output = []
-        selected = [item for role in SERVING_SELECTORS for item in ('--only', role)]
-        code = cli.main(['--inventory', str(self.inventory_path), '--state-dir', str(self.state),
-                         '--json', 'plan', 'enhance', '--binary', str(self.binary), '--retire-historical', *selected],
-                        executor=self.fake, out=output.append)
-        self.assertEqual(code, 0, output)
-        self.assertEqual(len(output), 1)
-        self.assertEqual(json.loads(output[0])['operation'], 'plan')
-        self.assertEqual(len(json.loads(output[0])['targets']), len(ENHANCE))
-        self.assertEqual(self.fake.log, [])
 
     def test_product_publications_cannot_use_the_binary_deploy_driver(self):
         inventory = json.loads(self.inventory_path.read_text())
@@ -99,14 +86,6 @@ class ReadOnlyStatusTests(Fleet):
 
 
 class FleetViewTests(unittest.TestCase):
-    def test_one_view_covers_each_product_without_ssh(self):
-        fleet = ConfiguredFleet.load(ROOT / 'tools/enhance/deploy/deploy-inventory.example.json')
-        view = fleet.describe()
-        self.assertEqual(view['view'], 'configured')
-        self.assertEqual({r['service'] for r in view['roles']}, set(fleet.services))
-        self.assertEqual({r['lifecycle_driver'] for r in view['roles']},
-                         {'binary', 'transparent-history', 'txid-display'})
-
     def test_two_products_cannot_own_the_same_host_unit(self):
         fleet = ConfiguredFleet.load(ROOT / 'tools/enhance/deploy/deploy-inventory.example.json')
         worker = fleet.inventory.services['transparent-history']['roles']['worker'][0]

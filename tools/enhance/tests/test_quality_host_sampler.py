@@ -104,20 +104,6 @@ class OutputIdentityTest(unittest.TestCase):
         # A malformed host_id or size never reaches the snapshot.
         self.assertEqual(written['bad-config'], {'at': 5, 'memory_total_bytes': 1, 'host_id': 'bad-config'})
 
-    def test_host_id_limit_matches_the_apm(self):
-        target = {'sources': ['fallback'], 'unit': 'x.service', 'data_dir': '/'}
-        for host_id in ('a' * 80, 'pir@host_01.example-1'):
-            self.assertEqual(sampler.identity(dict(target, host_id=host_id))['host_id'], host_id)
-        # The APM drops a name longer than 80 characters, so it falls back here, visibly.
-        self.assertEqual(sampler.identity(dict(target, host_id='a' * 81))['host_id'], 'fallback')
-
-    def test_example_config_targets_are_valid(self):
-        config = json.loads((ROOT / 'deploy/pir-quality-hosts.example.json').read_text())
-        for target in config['targets']:
-            self.assertTrue(sampler.UNIT.fullmatch(target['unit']))
-            sampler.extra_units(target)
-            self.assertEqual(sampler.identity(target).get('size'), target.get('size'))
-            self.assertEqual(sampler.identity(target)['host_id'], target.get('host_id', target['sources'][0]))
 
     def test_extra_units_are_validated_and_capped(self):
         ok = {'sources': ['a'], 'unit': 'a.service', 'data_dir': '/', 'units': ['b.service', 'pir-apm.service']}

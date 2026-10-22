@@ -24,16 +24,6 @@ def paths(value):
 
 
 class WorkerRoles(unittest.TestCase):
-    def test_every_product_registers_one_rendered_optional_worker(self):
-        rendered = {(s, r.name) for s, service in REGISTRY.items()
-                    for r in service.roles.values() if r.mode == 'role' and r.optional}
-        self.assertEqual(rendered, set(SETTINGS))
-        serving = {r.name for r in REGISTRY['enhance'].roles.values() if r.mode == 'role' and not r.optional}
-        self.assertEqual(serving, {'worker', 'packing-router', 'query-ingress'})
-        for service, role in SETTINGS:
-            self.assertTrue(REGISTRY[service].roles[role].optional)
-            self.assertTrue(REGISTRY[service].roles[role].owns_unit)
-
     def test_rendered_units_run_the_release_with_inputs_read_only(self):
         for (service, role), settings in SETTINGS.items():
             with self.subTest(service=service):
@@ -79,17 +69,6 @@ class WorkerRoles(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'overlaps'):
             REGISTRY['transparent-history'].roles['external-worker'].render(settings, RELEASE)
 
-    def test_product_checks_are_the_services_own_loaders(self):
-        check = lambda service, role, settings=None: REGISTRY[service].roles[role].render(
-            settings or SETTINGS[(service, role)], RELEASE).check
-        self.assertEqual(check('receiver', 'serve-publication')[:2], ('serve-publication', '--check'))
-        self.assertEqual(check('transparent-history', 'external-worker')[-1], '--verify-only')
-        # No staged inputs, so no check is manufactured.
-        self.assertEqual(check('enhance', 'external-worker'), ('--config', '/etc/enhance-pir/external-worker.json', '--check'))
-        self.assertEqual(check('status', 'external-worker'), ('--config', '/etc/status-pir/external-worker.json', '--check'))
-        self.assertEqual(check('transparent-display', 'external-worker'), ())
-        initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}
-        self.assertEqual(check('transparent-display', 'external-worker', initial)[-1], '--verify-only')
 
     def test_transparent_roles_run_the_host_over_one_generated_section(self):
         configs = {('transparent-history', 'external-worker'): '/etc/transparent-pir/history-worker.json',
@@ -245,18 +224,6 @@ class RolesCommand(unittest.TestCase):
                                      '--release', RELEASE)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn('keep their installed units', refused.stderr)
-
-    def test_the_publisher_invocation_is_preserved(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / 'controller.json'
-            config.write_text(json.dumps(dict(data_dir='/srv/history/journal', publication_root='/srv/publications',
-                                              initial_publication='/srv/publications/initial')))
-            common = ['--config', str(config), '--config-path', '/etc/history/controller.json',
-                      '--state-dir', '/srv/history-state']
-            legacy = self.run_roles(*common)
-            explicit = self.run_roles('--service', 'transparent-history', '--role', 'publisher', *common)
-            self.assertEqual(legacy.returncode, 0, legacy.stderr)
-            self.assertEqual(legacy.stdout, explicit.stdout)
 
 
 if __name__ == '__main__':

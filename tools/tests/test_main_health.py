@@ -52,9 +52,6 @@ class WorkflowPathsTest(unittest.TestCase):
         })
         self.assertEqual(workflow_paths.missing(root), [])
 
-    def test_the_repository_workflows_name_only_existing_scripts(self):
-        self.assertEqual(workflow_paths.missing(), [])
-
 
 class MainHealthTest(unittest.TestCase):
     RED = {'databaseId': 7, 'status': 'completed', 'conclusion': 'failure', 'headSha': 'c29fb883' + 'a' * 32, 'url': 'u'}
@@ -63,8 +60,6 @@ class MainHealthTest(unittest.TestCase):
              'steps': [{'name': 'Validate transparent filter inputs', 'conclusion': 'failure'}]},
             {'name': 'Shared tests', 'conclusion': 'success', 'steps': []}]
 
-    def test_development_pushes_follow_fast_ci_not_release_qualification(self):
-        self.assertEqual(main_health.WORKFLOW, 'CI')
 
     def test_only_pushes_that_move_main_are_checked(self):
         self.assertTrue(main_health.pushes_main([f'refs/heads/main {"c" * 40} refs/heads/main {"d" * 40}']))

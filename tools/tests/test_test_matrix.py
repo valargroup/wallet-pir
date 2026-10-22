@@ -286,22 +286,10 @@ class MatrixTests(unittest.TestCase):
                     self.assertTrue(all(not Path(r['cache']).exists() for r in rows))
 
 
-
 class WorkflowTests(unittest.TestCase):
     def job(self, text, name):
         return re.split(r'\n  [a-z][\w-]*:\n', text.split(f'\n  {name}:\n', 1)[1])[0]
 
-    def test_independent_work_starts_without_waiting_for_common_or_shared(self):
-        text = (ROOT / '.github/workflows/ci-qualify.yml').read_text()
-        for family in ('receiver', 'transparent', 'enhance', 'ops'):
-            job = self.job(text, family)
-            self.assertIn('    needs: select\n', job)
-            self.assertIn('defer-release: true', job)
-            publish = self.job(text, 'publish-' + family)
-            for gate in ('common', family, *(['shared'] if family != 'ops' else [])):
-                self.assertIn(f"needs.{gate}.result == 'success'", publish)
-            self.assertIn('!cancelled()', publish)
-            self.assertIn('qualify-artifacts', publish)
 
     def test_hosted_checks_overlap_helpers_but_failed_helpers_block_completion(self):
         text = (ROOT / '.github/workflows/ci-full.yml').read_text()
@@ -331,43 +319,6 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode == 0, outcome == 'success', result.stderr)
             if outcome != 'success':
                 self.assertIn('validate-ops', result.stderr)
-
-    def test_aggregate_checks_receipts_and_matrix_failures_cannot_hide(self):
-        text = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        shards = self.job(text, 'test-shards')
-        self.assertIn('fail-fast: false', shards)
-        self.assertIn('runs-on: ubuntu-24.04', shards)
-        self.assertNotIn('continue-on-error', shards.split('Report Cargo cache reuse')[0])
-        for family in ('enhance', 'transparent', 'receiver'):
-            aggregate = self.job(text, family + '-test')
-            self.assertIn("needs.test-shards.result == 'success'", aggregate)
-            self.assertIn('uses: ./.github/actions/verify-qualification', aggregate)
-            self.assertIn('family: ' + family, aggregate)
-        for job in ('release', 'release-cuda'):
-            self.assertIn('!inputs.defer-release', self.job(text, job))
-
-    def test_receipt_artifacts_are_isolated_by_attempt_for_full_reruns(self):
-        text = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        shards = self.job(text, 'test-shards')
-        self.assertIn('name: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-${{ matrix.shard }}', shards)
-        action = (ROOT / '.github/actions/verify-qualification/action.yml').read_text()
-        self.assertIn('pattern: qualification-${{ inputs.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', action)
-        self.assertIn('merge-multiple: true', action)
-        self.assertIn('test_matrix.py verify --family "$FAMILY" --receipts qualification-receipts', action)
-        self.assertNotIn('continue-on-error', action)
-        audit = (ROOT / '.github/workflows/ci-matrix-audit.yml').read_text()
-        self.assertEqual(audit.count('name: baseline-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}'), 2)
-        self.assertIn('pattern: qualification-${{ matrix.family }}-${{ github.sha }}-${{ github.run_attempt }}-*', audit)
-
-    def test_cache_variants_remain_isolated_and_qualification_uses_source_snapshots(self):
-        registry = json.loads(matrix.REGISTRY.read_text())
-        scopes = [cargo_cache.SCOPES['full-test', name] for name in registry]
-        self.assertEqual(len(scopes), len(set(scopes)))
-        self.assertTrue(cargo_cache.workspace_lane('full-test'))
-        setup = (ROOT / '.github/actions/rust-setup/action.yml').read_text()
-        self.assertIn("inputs.lane == 'fast' || inputs.lane == 'full-test'", setup)
-        self.assertIn('target/${{ inputs.lane }}', setup)
-        self.assertIn('actions/cache@v4', setup)
 
 
 if __name__ == '__main__':

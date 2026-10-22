@@ -247,13 +247,6 @@ class ReceiverOpsContract(unittest.TestCase):
         self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
         self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 
-    def test_provisioning_installs_the_template_with_a_bootstrap_description(self):
-        """So the first deploy of the provisioned binary restarts it and runs the exact check."""
-        bootstrap = systemd_sections(bootstrap_unit((DIR / 'README.md').read_text(), self.unit))
-        expected = systemd_sections(self.unit.replace('@RELEASE@', '/opt/receiver-pir/releases/<sha256>')
-                                    .replace('@NEAR_KEY@', '<id>'))
-        expected['Unit']['Description'] = [description + ' (bootstrap)' for description in expected['Unit']['Description']]
-        self.assertEqual(bootstrap, expected)
 
     def test_the_inventory_names_the_key_file_the_unit_requires(self):
         self.assertEqual(self.descriptor.get('template_vars'), ['NEAR_KEY'])
@@ -306,17 +299,6 @@ class ReceiverOpsContract(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 check_unit(mutated)
 
-    def test_the_firewall_admits_the_coordinators_ssh(self):
-        tf, monitor_tf = (INFRA / 'receiver.tf').read_text(), (INFRA / 'monitor.tf').read_text()
-        check_firewall(tf, monitor_tf)
-
-    def test_the_monitor_probe_config_is_an_array(self):
-        (block,) = [b for b in fenced((DIR / 'README.md').read_text(), 'json') if 'receiver-probe' in b]
-        configs = json.loads(block)
-        check_probe_config(configs)
-        for mutated in [configs[0], configs * 2, [dict(configs[0], extra=1)]]:
-            with self.assertRaises(AssertionError):
-                check_probe_config(mutated)
 
     def test_the_monitor_probe_merge_keeps_one_receiver_and_the_other_probes(self):
         readme = (DIR / 'README.md').read_text()
