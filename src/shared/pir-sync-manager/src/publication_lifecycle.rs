@@ -19,8 +19,11 @@
 //!   tasks; a cancelled pass leaves its task outstanding and the next pass
 //!   settles it before observing anything. A commit installs only if no fence
 //!   was raised while it was recording, and collects unreferenced objects
-//!   inside its owned operation. Handing the view to the adapter and releasing
-//!   the dependent peer stay pending across cancelled passes until done.
+//!   inside its owned operation. Handing the view to the adapter stays pending
+//!   across cancelled passes until done; releasing the dependent peer stays
+//!   owed until a release completes or a newer commit supersedes it.
+//! - Objects stay cached while a view the adapter still needs references them
+//!   ([`ViewRequirement`]); every other object is collected at the next commit.
 //! - A 304 or a successful response refreshes neither source-observation age
 //!   nor authority-check time; the product's freshness checks still apply.
 mod authority_round;
@@ -30,6 +33,7 @@ mod completion_tests;
 mod durable_operation;
 mod envelope_observation;
 mod object_fetch;
+mod retention;
 
 use crate::{Error, HttpsSource, SyncTask};
 use commit_phase::PendingCompletion;
@@ -37,8 +41,10 @@ pub use durable_operation::PreparedCommit;
 use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
 pub use object_fetch::ObjectFetcher;
 use pir_publication::{
-    AuthorityFloor, MaterialIdentity, ObjectCache, ObjectReference, PublicationEnvelope,
+    AuthorityFloor, ObjectCache, ObjectReference, PublicationEnvelope, ViewIdentity,
 };
+use retention::RetainedViews;
+pub use retention::ViewRequirement;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{collections::BTreeSet, fmt, future::Future};
 
@@ -57,7 +63,7 @@ pub trait PublicationAdapter: Send {
     /// Material loaded from verified objects, ready to install.
     type Loaded: Send + 'static;
     /// What a committed pass reports, for example the serving generation.
-    type Report: Send + 'static;
+    type Report: Clone + Send + 'static;
 
     /// Product checks of an envelope's scope and descriptor. The engine has
     /// already checked the shared fields; succession against the floor is the
@@ -66,14 +72,14 @@ pub trait PublicationAdapter: Send {
     /// Stop serving every installed view and drop held handover views, and
     /// return the identities of views that were serving so the floor can
     /// invalidate them permanently.
-    fn fence_serving(&mut self) -> impl Future<Output = Vec<MaterialIdentity>> + Send;
+    fn fence_serving(&mut self) -> impl Future<Output = Vec<ViewIdentity>> + Send;
     /// Close admission after a durable floor write failed.
     fn close_admission(&mut self) -> impl Future<Output = ()> + Send;
     /// Installed views that must stay authoritative under `envelope`.
     fn serving_subjects(
         &mut self,
         envelope: &Envelope<Self>,
-    ) -> impl Future<Output = Vec<(MaterialIdentity, Self::AuthoritySubject)>> + Send;
+    ) -> impl Future<Output = Vec<(ViewIdentity, Self::AuthoritySubject)>> + Send;
     /// Choose what to load under `envelope`, fetching metadata through
     /// `objects`. The engine refuses a plan whose identity the floor invalidated.
     fn plan(
@@ -87,21 +93,39 @@ pub trait PublicationAdapter: Send {
         candidate: Self::Candidate,
         cache: &ObjectCache,
     ) -> impl Future<Output = Result<Self::Loaded, Error>> + Send;
+    /// Re-identify `loaded` under the re-observed `envelope` when that
+    /// publishes the same reusable material under new metadata, as a
+    /// publisher refreshing its observation during a long load does, fetching
+    /// only metadata through `objects`. Otherwise return `loaded` unchanged. [`Self::revalidate`]
+    /// and the live authority check still decide whether it may commit.
+    fn rebind(
+        &mut self,
+        envelope: &Envelope<Self>,
+        loaded: Self::Loaded,
+        objects: &mut ObjectFetcher<'_>,
+    ) -> impl Future<Output = Result<Self::Loaded, Error>> + Send;
     /// Product checks that `loaded` still belongs to the re-observed `envelope`
     /// (identity, recovery epoch, freshness), and the subject to check live.
     fn revalidate(
         &self,
         envelope: &Envelope<Self>,
         loaded: &Self::Loaded,
-    ) -> Result<(MaterialIdentity, Self::AuthoritySubject), Error>;
+    ) -> Result<(ViewIdentity, Self::AuthoritySubject), Error>;
     /// Reserve `loaded` with a dependent peer before committing (for a Status
     /// router, the worker's matching generation).
     fn reserve_peer(
         &mut self,
         loaded: &Self::Loaded,
     ) -> impl Future<Output = Result<PeerReservation, Error>> + Send;
-    /// Objects `loaded` keeps referenced after commit.
-    fn retained_objects(&self, loaded: &Self::Loaded) -> BTreeSet<String>;
+    /// Objects the view of `loaded` references while it is retained.
+    fn view_objects(&self, loaded: &Self::Loaded) -> BTreeSet<String>;
+    /// Every committed view the adapter still needs, and why: each view that
+    /// can answer a request and each view a peer holds. The engine keeps the
+    /// objects of these views and of the view it is committing, and collects
+    /// every other object inside that commit.
+    fn retained_views(
+        &mut self,
+    ) -> impl Future<Output = Vec<(ViewIdentity, ViewRequirement)>> + Send;
     /// Split `loaded` into the engine-run commit (record, install, revoke on a
     /// failed record) and what the adapter keeps once the install succeeded.
     /// Nothing here may change serving state.
@@ -115,10 +139,10 @@ pub trait PublicationAdapter: Send {
     fn installed(&mut self, view: Self::InstalledView);
     /// Tell a dependent peer the commit happened. The outcome of a network
     /// release can be uncertain, so it must be idempotent: a release cut off
-    /// by cancellation is retried before the next pass observes anything, and
-    /// a [`PeerHandover::Pending`] answer ends the pass so the next pass
-    /// observes fresh authority first and releases again when it recommits
-    /// the serving view.
+    /// by cancellation or answered [`PeerHandover::Pending`] stays owed, and
+    /// each later pass releases again before it observes fresh authority,
+    /// without waiting on the answer, until a release completes or a newer
+    /// commit's release supersedes it.
     fn release_peer(&mut self, report: &Self::Report) -> impl Future<Output = PeerHandover> + Send;
     /// The report of the view still serving, for deferred passes.
     fn serving_report(&mut self) -> impl Future<Output = Self::Report> + Send;
@@ -146,7 +170,7 @@ pub enum PublicationPlan<C> {
     /// Load `candidate` once `required_objects` are fetched and verified.
     Candidate {
         candidate: C,
-        identity: MaterialIdentity,
+        identity: ViewIdentity,
         required_objects: Vec<ObjectReference>,
     },
 }
@@ -238,12 +262,15 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     cache: ObjectCache,
     /// The last envelope body received, used only to answer a 304.
     last_received_envelope: Option<Envelope<A>>,
-    /// Object sets of the last two commits; everything else is collected.
-    retained_commits: Vec<BTreeSet<String>>,
+    /// Objects of the views the adapter still needs; everything else is
+    /// collected at the next commit.
+    retained_views: RetainedViews,
     commit_fence: CommitFence,
     durable_operation: OwnedOperationSlot<DurableOutcome<A::Report, A::InstalledView>>,
     /// An installed commit whose view or peer release is still outstanding.
     pending_completion: Option<PendingCompletion<A::Report, A::InstalledView>>,
+    /// The latest commit whose peer release answered pending.
+    owed_peer_release: Option<A::Report>,
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -267,10 +294,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             floor,
             cache,
             last_received_envelope: None,
-            retained_commits: Vec::new(),
+            retained_views: RetainedViews::default(),
             commit_fence: CommitFence::default(),
             durable_operation: OwnedOperationSlot::new(),
             pending_completion: None,
+            owed_peer_release: None,
         })
     }
     pub fn adapter(&self) -> &A {
@@ -320,7 +348,15 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if !latest.eligible {
             return Err(Box::new(PublicationLifecycleError::WithdrawnBeforeCommit));
         }
-        let (identity, subject) = self.adapter.revalidate(&latest, &loaded)?;
+        let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
+        let loaded = self.adapter.rebind(&latest, loaded, &mut objects).await?;
+        let (identity, subject) = match self.adapter.revalidate(&latest, &loaded) {
+            Ok(checked) => checked,
+            // A newer envelope superseded the candidate; nothing was
+            // activated, so retry at the normal cadence.
+            Err(_) if latest != envelope => return Err(Box::new(AuthorityAdvanced)),
+            Err(error) => return Err(error),
+        };
         let mut subjects = vec![(identity, subject)];
         subjects.extend(
             self.adapter

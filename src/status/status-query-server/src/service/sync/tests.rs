@@ -29,6 +29,8 @@ struct Origin {
     objects: RwLock<std::collections::HashMap<String, Vec<u8>>>,
     /// Every object id requested, in order.
     requested_objects: RwLock<Vec<String>>,
+    /// An envelope published once the named object is requested.
+    publish_on_request: RwLock<Option<(String, Current)>>,
 }
 #[path = "../../../tests/support/status_tls.rs"]
 mod tls;
@@ -114,6 +116,7 @@ async fn setup() -> (
         version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
         objects: RwLock::default(),
         requested_objects: RwLock::default(),
+        publish_on_request: RwLock::default(),
     });
     let shared = current.clone();
     let anchors = current.clone();
@@ -180,6 +183,10 @@ async fn setup() -> (
             let objects = objects.clone();
             async move {
                 objects.requested_objects.write().unwrap().push(id.clone());
+                let mut publish = objects.publish_on_request.write().unwrap();
+                if publish.as_ref().is_some_and(|(object, _)| *object == id) {
+                    *objects.current.write().unwrap() = publish.take().unwrap().1;
+                }
                 let served = objects.objects.read().unwrap().get(&id).cloned();
                 served.unwrap_or_else(|| b"not an inventory".to_vec())
             }
@@ -275,13 +282,13 @@ async fn skipped_withdrawal_fences_old_answers_before_candidate_download() {
     source.current.write().unwrap().sequence += 1;
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
-    assert!(task.floor().is_invalidated(&active_id));
+    assert!(task.floor().is_invalidated(&ViewIdentity(active_id)));
     let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
         service.state_dir.join(FLOOR_FILE),
         task.floor().source().clone(),
     )
     .unwrap();
-    assert!(reopened.is_invalidated(&active_id));
+    assert!(reopened.is_invalidated(&ViewIdentity(active_id)));
     server.abort();
 }
 
@@ -293,7 +300,7 @@ async fn ordinary_https_failure_preserves_a_still_fresh_view() {
     assert!(service.serving().await.is_ok());
     assert!(!task
         .floor()
-        .is_invalidated(&serving_manifest_id(&service).await));
+        .is_invalidated(&ViewIdentity(serving_manifest_id(&service).await)));
     server.abort();
 }
 
@@ -319,7 +326,7 @@ async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
         .join("objects")
         .join(object.sha256)
         .is_file());
-    assert!(task.floor().is_invalidated(&old));
+    assert!(task.floor().is_invalidated(&ViewIdentity(old)));
     assert!(service.serving().await.is_err());
     server.abort();
 }
@@ -552,7 +559,7 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
             .manifest(),
         &before
     );
-    assert!(!task.floor().is_invalidated(&before.id()));
+    assert!(!task.floor().is_invalidated(&ViewIdentity(before.id())));
     assert_eq!(
         task.floor().envelope().unwrap(),
         &*source.current.read().unwrap()
@@ -589,7 +596,7 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     // Negative evidence under the unchanged pointer cannot be saved.
     source.canonical.store(false, Ordering::SeqCst);
     assert!(task.synchronize().await.is_err());
-    assert!(task.floor().is_invalidated(&active_id));
+    assert!(task.floor().is_invalidated(&ViewIdentity(active_id)));
     assert!(!task.floor().is_durable());
     assert!(service.state.lock().await.poisoned);
 
@@ -605,7 +612,7 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     assert!(task.floor().is_durable());
     let reopened: AuthorityFloor<StatusDescriptor> =
         AuthorityFloor::open(floor_path, task.floor().source().clone()).unwrap();
-    assert!(reopened.is_invalidated(&active_id));
+    assert!(reopened.is_invalidated(&ViewIdentity(active_id)));
     let mut older = pointer();
     older.sequence -= 1;
     assert!(reopened.classify(older).is_err());
@@ -828,6 +835,22 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         .clone()
         .unwrap()
         .current();
+    // Only inventory metadata stays available: the bulk material is gone from
+    // both the cache and the origin, so the refresh can only reuse what loaded.
+    let cache = ObjectCache::open(root.path().join("peer/objects")).unwrap();
+    // A worker caches its database units and the public parameters.
+    let bulk: std::collections::BTreeMap<_, _> = inventory
+        .units
+        .iter()
+        .chain([&inventory.public])
+        .map(|object| (object.sha256.clone(), object))
+        .collect();
+    for object in bulk.values() {
+        fs::remove_file(cache.object_path(object).unwrap()).unwrap();
+    }
+    for object in inventory.referenced_objects() {
+        source.objects.write().unwrap().remove(&object.sha256);
+    }
 
     let mut refreshed = inventory.clone();
     refreshed.manifest.generation = 5;
@@ -905,20 +928,19 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     )
     .unwrap();
 
-    // The publisher advances while checking the candidate.
+    // The publisher advances while checking the candidate. Its live answer
+    // for sequence 7 is captured first, to be replayed afterwards.
+    let earlier = AuthorityCheckResponse {
+        authority: source.current.read().unwrap().authority().unwrap(),
+        still_authoritative: vec![true],
+    };
     source.advance_during_check.store(true, Ordering::SeqCst);
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
     assert!(worker.state.lock().await.controller.is_none());
     assert_eq!(task.floor().envelope().unwrap().sequence, 8);
 
     // An answer replayed from the earlier envelope is not live authority.
-    let replayed = AuthorityCheckResponse {
-        authority: fixture::publishing(&inventory, &object)
-            .authority()
-            .unwrap(),
-        still_authoritative: vec![true],
-    };
-    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&replayed).unwrap());
+    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&earlier).unwrap());
     let error = task.synchronize().await.unwrap_err();
     assert_eq!(
         error.downcast_ref::<PublicationLifecycleError>(),
@@ -946,5 +968,60 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     }
     assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
     assert_eq!(serving_manifest_id(&worker).await, inventory.manifest.id());
+    server.abort();
+}
+
+/// A publisher refreshing its observation while a candidate loads publishes
+/// the same material under new metadata. The loaded material commits under
+/// the latest metadata, after its live check, instead of failing as stale.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_latest() {
+    use status_material::fixture::{self, NETWORK, SALT};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let (generation, _) = Generation::prepare(
+        &fixture::snapshot(32, false).unwrap(),
+        4,
+        2,
+        now_ms(),
+        None,
+        MatvecBackend::Cpu,
+    )
+    .unwrap();
+    let mut inventory = export(&source, &generation);
+    let object = publish_inventory(&source, &mut inventory);
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 7,
+        ..fixture::publishing(&inventory, &object)
+    };
+    let mut refreshed = inventory.clone();
+    refreshed.manifest.generation = 5;
+    let refreshed_object = publish_inventory(&source, &mut refreshed);
+    *source.publish_on_request.write().unwrap() = Some((
+        inventory.public.sha256.clone(),
+        Current {
+            scope: scope(NETWORK, SALT),
+            sequence: 8,
+            ..fixture::publishing(&refreshed, &refreshed_object)
+        },
+    ));
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let mut task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    assert!(source.publish_on_request.read().unwrap().is_none());
+    assert_eq!(serving_manifest_id(&worker).await, refreshed.manifest.id());
+    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
     server.abort();
 }

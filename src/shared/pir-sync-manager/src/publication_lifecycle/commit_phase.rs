@@ -5,8 +5,8 @@ use super::{
     PeerHandover, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError,
 };
 use crate::Error;
-use pir_publication::MaterialIdentity;
-use std::{collections::BTreeSet, io};
+use pir_publication::ViewIdentity;
+use std::{io, time::SystemTime};
 
 /// A commit that installed and has not finished completing: the adapter
 /// still needs the view, or the dependent peer still needs its release.
@@ -20,7 +20,7 @@ pub(super) struct PendingCompletion<R, V> {
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// Revoke serving under the commit fence, so no commit that started
     /// earlier can install afterwards. Returns the views that were serving.
-    pub(super) async fn fence_serving(&mut self) -> Vec<MaterialIdentity> {
+    pub(super) async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
         self.commit_fence.fence(self.adapter.fence_serving()).await
     }
 
@@ -28,7 +28,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// outcome, then finish a pending completion, before this pass observes
     /// or writes anything. A commit that installed is completed here as its
     /// own pass would have: the adapter receives the view and the peer is
-    /// released; its collection already ran inside the owned operation.
+    /// released; its collection already ran inside the owned operation. A
+    /// peer release still owed is retried once; a pending answer leaves it
+    /// owed and does not hold the pass back.
     pub(super) async fn settle_durable_operation(&mut self) -> Result<(), Error> {
         match self.durable_operation.settle().await {
             None => {}
@@ -50,6 +52,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         }
         if self.pending_completion.is_some() {
             self.finish_completion().await?;
+        } else if let Some(report) = self.owed_peer_release.clone() {
+            // Cleared only once released, so a cancelled retry stays owed.
+            if self.adapter.release_peer(&report).await == PeerHandover::Complete {
+                self.owed_peer_release = None;
+            }
         }
         Ok(())
     }
@@ -96,7 +103,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// dependent peer is released.
     pub(super) async fn commit(
         &mut self,
-        identity: MaterialIdentity,
+        identity: ViewIdentity,
         loaded: A::Loaded,
     ) -> Result<(A::Report, PeerHandover), Error> {
         if self.floor.is_invalidated(&identity) {
@@ -105,10 +112,13 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if !self.floor.is_durable() {
             return Err(Box::new(PublicationLifecycleError::FloorNotDurable));
         }
-        let retained = self.adapter.retained_objects(&loaded);
+        let objects = self.adapter.view_objects(&loaded);
+        let required = self.adapter.retained_views().await;
         let (prepared, view) = self.adapter.prepare_commit(loaded)?;
-        let retained_commits = retained_after(&self.retained_commits, retained);
-        let keep: BTreeSet<String> = retained_commits.iter().flatten().cloned().collect();
+        let retained_views =
+            self.retained_views
+                .after_commit(identity, objects, &required, SystemTime::now());
+        let keep = retained_views.objects();
         let cache = self.cache.clone();
         let started_under = self.commit_fence.generation().await;
         let fence = self.commit_fence.clone();
@@ -121,7 +131,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                     })
                     .await,
                     view,
-                    retained_commits,
+                    retained_views,
                 })
             })
             .await??;
@@ -133,15 +143,15 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 
     /// Record a finished commit: an installed one becomes the pending
-    /// completion and its retained object sets take effect; otherwise report
-    /// why nothing was installed.
+    /// completion and its retained views take effect; otherwise report why
+    /// nothing was installed.
     fn begin_completion(
         &mut self,
         commit: OwnedCommit<A::Report, A::InstalledView>,
     ) -> Result<(), Error> {
         match commit.outcome {
             CommitOutcome::Installed { report, collected } => {
-                self.retained_commits = commit.retained_commits;
+                self.retained_views = commit.retained_views;
                 self.pending_completion = Some(PendingCompletion {
                     report,
                     view: Some(commit.view),
@@ -157,7 +167,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
 
     /// Hand the pending view to the adapter once and release the dependent
     /// peer. A pass cancelled while releasing leaves the completion pending,
-    /// and the next pass releases again; the release is idempotent.
+    /// and the next pass releases again; the release is idempotent. A pending
+    /// answer leaves this commit's release owed, superseding an older one.
     async fn finish_completion(&mut self) -> Result<(A::Report, PeerHandover), Error> {
         let pending = self
             .pending_completion
@@ -171,26 +182,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             .pending_completion
             .take()
             .expect("a completion is pending");
+        self.owed_peer_release =
+            (handover == PeerHandover::Pending).then(|| completed.report.clone());
         if let Some(error) = completed.collection_failure {
             return Err(error.into());
         }
         Ok((completed.report, handover))
     }
-}
-
-/// The object sets of the last two commits once `objects` is committed.
-fn retained_after(
-    retained_commits: &[BTreeSet<String>],
-    objects: BTreeSet<String>,
-) -> Vec<BTreeSet<String>> {
-    let mut retained: Vec<_> = retained_commits
-        .iter()
-        .filter(|old| **old != objects)
-        .cloned()
-        .collect();
-    retained.push(objects);
-    if retained.len() > 2 {
-        retained.remove(0);
-    }
-    retained
 }

@@ -13,18 +13,25 @@ use crate::{
     Controller,
 };
 use ipir_sp::server::MatvecBackend;
-use pir_publication::{
-    AuthorityFloor, MaterialIdentity, ObjectCache, ObjectReference, SourceBinding,
-};
+use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
 use pir_sync_manager::{
     publication_lifecycle::{
         ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
-        PublicationLifecycle, PublicationPass, PublicationPlan,
+        PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
     },
     Error,
 };
-use status_material::{now_ms, protocol::Manifest, publication::*, Generation};
-use std::{collections::BTreeSet, sync::Arc};
+use status_material::{
+    now_ms,
+    protocol::{Manifest, MAX_AGE_MS},
+    publication::*,
+    Generation,
+};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
 
 /// Durable floor file. Floors of the earlier pointer format live under another
 /// name; their pointers can never be served again, so they are left unread.
@@ -110,7 +117,7 @@ impl PublicationAdapter for StatusPublication {
         validate_current(envelope, self.service.network)
     }
 
-    async fn fence_serving(&mut self) -> Vec<MaterialIdentity> {
+    async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
         let mut state = self.service.state.lock().await;
         let fenced = state
             .controller
@@ -118,7 +125,7 @@ impl PublicationAdapter for StatusPublication {
             .map(Controller::serving_manifests)
             .unwrap_or_default()
             .iter()
-            .map(Manifest::id)
+            .map(view)
             .collect();
         if let Some(controller) = &state.controller {
             controller.revoke();
@@ -131,10 +138,7 @@ impl PublicationAdapter for StatusPublication {
         self.service.state.lock().await.poisoned = true;
     }
 
-    async fn serving_subjects(
-        &mut self,
-        envelope: &Current,
-    ) -> Vec<(MaterialIdentity, AnchorSubject)> {
+    async fn serving_subjects(&mut self, envelope: &Current) -> Vec<(ViewIdentity, AnchorSubject)> {
         let Some(controller) = self.serving_controller().await.filter(|c| !c.revoked()) else {
             return Vec::new();
         };
@@ -144,7 +148,7 @@ impl PublicationAdapter for StatusPublication {
             .filter(|m| {
                 m.recovery_epoch == envelope.fence.recovery_epoch && m.fresh(now_ms()).is_ok()
             })
-            .map(|m| (m.id(), (m.anchor_height, m.anchor_hash)))
+            .map(|m| (view(&m), (m.anchor_height, m.anchor_hash)))
             .collect()
     }
 
@@ -178,6 +182,13 @@ impl PublicationAdapter for StatusPublication {
                 .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
                 .await?,
         )?;
+        // A worker still serving a view from before the latest recovery is
+        // loading, like a worker with no fresh view.
+        if authorization == InventoryAuthorization::RetainedHandover
+            && inventory.manifest.recovery_epoch < envelope.fence.recovery_epoch
+        {
+            return Ok(PublicationPlan::Deferred);
+        }
         inventory.authorize(&inventory_object, envelope, authorization)?;
         inventory.manifest.fresh(now_ms())?;
         let controller = self.serving_controller().await;
@@ -194,19 +205,7 @@ impl PublicationAdapter for StatusPublication {
         let reidentified = previous
             .as_ref()
             .zip(self.loaded_inventory.as_ref())
-            .and_then(|(serving, loaded)| {
-                if loaded.manifest != *serving.manifest()
-                    || loaded.material_identity() != inventory.material_identity()
-                {
-                    return None;
-                }
-                let next = serving.reidentified(
-                    inventory.manifest.generation,
-                    inventory.manifest.recovery_epoch,
-                    inventory.manifest.observed_ms,
-                );
-                (next.manifest() == &inventory.manifest).then_some(next)
-            });
+            .and_then(|(serving, loaded)| reidentify(serving, loaded, &inventory));
         let (material, required_objects) = if already_serving {
             (CandidateMaterial::AlreadyServing, Vec::new())
         } else if let Some(generation) = reidentified {
@@ -228,7 +227,7 @@ impl PublicationAdapter for StatusPublication {
             (CandidateMaterial::LoadFromCache, required)
         };
         Ok(PublicationPlan::Candidate {
-            identity: inventory.manifest.id(),
+            identity: view(&inventory.manifest),
             candidate: StatusCandidate {
                 inventory,
                 inventory_object,
@@ -283,11 +282,48 @@ impl PublicationAdapter for StatusPublication {
         })
     }
 
+    /// A worker's candidate whose latest publication re-identifies the same
+    /// material, typically refreshed while it loaded, takes the latest
+    /// inventory's metadata. A router follows its worker's own inventory.
+    async fn rebind(
+        &mut self,
+        envelope: &Current,
+        loaded: StatusLoaded,
+        objects: &mut ObjectFetcher<'_>,
+    ) -> Result<StatusLoaded, Error> {
+        let Some(latest) = envelope.publication.as_ref().filter(|_| envelope.eligible) else {
+            return Ok(loaded);
+        };
+        if loaded.authorization != InventoryAuthorization::Latest
+            || latest.material != loaded.inventory.material_identity()
+            || *latest
+                == loaded
+                    .inventory
+                    .publication_reference(&loaded.inventory_object)
+        {
+            return Ok(loaded);
+        }
+        let inventory: Inventory = serde_json::from_slice(
+            &objects
+                .fetch_metadata(&latest.inventory, METADATA_LIMIT as u64)
+                .await?,
+        )?;
+        let Some(generation) = reidentify(&loaded.generation, &loaded.inventory, &inventory) else {
+            return Ok(loaded);
+        };
+        Ok(StatusLoaded {
+            inventory,
+            inventory_object: latest.inventory.clone(),
+            authorization: InventoryAuthorization::Latest,
+            generation,
+        })
+    }
+
     fn revalidate(
         &self,
         envelope: &Current,
         loaded: &StatusLoaded,
-    ) -> Result<(MaterialIdentity, AnchorSubject), Error> {
+    ) -> Result<(ViewIdentity, AnchorSubject), Error> {
         let manifest = &loaded.inventory.manifest;
         loaded
             .inventory
@@ -297,7 +333,7 @@ impl PublicationAdapter for StatusPublication {
         }
         manifest.fresh(now_ms())?;
         Ok((
-            manifest.id(),
+            view(manifest),
             (manifest.anchor_height, manifest.anchor_hash),
         ))
     }
@@ -309,11 +345,32 @@ impl PublicationAdapter for StatusPublication {
         worker_handover::pin(&self.service, &loaded.inventory.manifest).await
     }
 
-    fn retained_objects(&self, loaded: &StatusLoaded) -> BTreeSet<String> {
+    fn view_objects(&self, loaded: &StatusLoaded) -> BTreeSet<String> {
         std::iter::once(&loaded.inventory_object)
             .chain(loaded.inventory.referenced_objects())
             .map(|object| object.sha256.clone())
             .collect()
+    }
+
+    /// Every view the controller can still answer from, and each view a
+    /// router holds until the view is too old to answer.
+    async fn retained_views(&mut self) -> Vec<(ViewIdentity, ViewRequirement)> {
+        let state = self.service.state.lock().await;
+        let serving = state
+            .controller
+            .as_ref()
+            .filter(|controller| !controller.revoked())
+            .map(Controller::serving_manifests)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|manifest| (view(&manifest), ViewRequirement::Serving));
+        let held = state.router_holds.iter().map(|generation| {
+            let manifest = generation.manifest();
+            let answerable_until =
+                UNIX_EPOCH + Duration::from_millis(manifest.observed_ms.saturating_add(MAX_AGE_MS));
+            (view(manifest), ViewRequirement::HeldUntil(answerable_until))
+        });
+        serving.chain(held).collect()
     }
 
     fn prepare_commit(
@@ -418,6 +475,32 @@ impl PublicationAdapter for StatusPublication {
         };
         self.service.state.lock().await.synchronization = synchronization.into();
     }
+}
+
+/// `generation`, loaded from `loaded`, under `inventory` when that names the
+/// same verified material with new metadata. Only the manifest's generation,
+/// recovery epoch and observation time may differ.
+fn reidentify(
+    generation: &Generation,
+    loaded: &Inventory,
+    inventory: &Inventory,
+) -> Option<Generation> {
+    if loaded.manifest != *generation.manifest()
+        || loaded.material_identity() != inventory.material_identity()
+    {
+        return None;
+    }
+    let next = generation.reidentified(
+        inventory.manifest.generation,
+        inventory.manifest.recovery_epoch,
+        inventory.manifest.observed_ms,
+    );
+    (next.manifest() == &inventory.manifest).then_some(next)
+}
+
+/// A Status serving view is one exact manifest.
+fn view(manifest: &Manifest) -> ViewIdentity {
+    ViewIdentity(manifest.id())
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ mod publication_authority;
 mod publication_envelope;
 mod published_objects;
 
+use serde::{Deserialize, Serialize};
+
 pub use authority_check::{
     AuthorityCheckRefusal, AuthorityCheckRequest, AuthorityCheckResponse, AUTHORITY_CHECK_PATH,
     MAX_AUTHORITY_SUBJECTS,
@@ -41,7 +43,14 @@ pub use publication_envelope::{
 };
 pub use published_objects::PublishedObjectStore;
 
-/// Identity of material bytes or of one prepared serving view, chosen by the
-/// product (for Status views, the manifest identity). Floors invalidate views
-/// by this identity.
+/// Identity of reusable material bytes, independent of the publication that
+/// names them: a metadata-only refresh keeps it.
 pub type MaterialIdentity = [u8; 32];
+
+/// Identity of one prepared serving view, chosen by the product (for Status,
+/// the manifest identity). Floors invalidate views and query servers retain
+/// objects by this identity; a metadata-only refresh of the same material is
+/// a new view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ViewIdentity(pub [u8; 32]);

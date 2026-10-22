@@ -3,7 +3,7 @@
 //!
 //! A floor only ever moves forward. It is never reset by a restart or a format
 //! change, and it never grants permission to serve by itself.
-use crate::{EnvelopeSuccession, MaterialIdentity, PublicationEnvelope, PublicationReplay};
+use crate::{EnvelopeSuccession, PublicationEnvelope, PublicationReplay, ViewIdentity};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -64,7 +64,7 @@ struct SavedFloor<D> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<SourceBinding>,
     current: Option<PublicationEnvelope<D>>,
-    invalid: BTreeSet<MaterialIdentity>,
+    invalid: BTreeSet<ViewIdentity>,
 }
 
 /// One version of one opened floor. Tokens carry it so a succession check or
@@ -91,7 +91,7 @@ pub struct AuthorityFloor<D> {
     path: PathBuf,
     source: SourceBinding,
     envelope: Option<PublicationEnvelope<D>>,
-    invalidated_views: BTreeSet<MaterialIdentity>,
+    invalidated_views: BTreeSet<ViewIdentity>,
     observed_version: u64,
     durable_version: Option<u64>,
 }
@@ -165,7 +165,7 @@ impl<D: Clone + PartialEq + Serialize + DeserializeOwned> AuthorityFloor<D> {
     pub fn source(&self) -> &SourceBinding {
         &self.source
     }
-    pub fn is_invalidated(&self, view: &MaterialIdentity) -> bool {
+    pub fn is_invalidated(&self, view: &ViewIdentity) -> bool {
         self.invalidated_views.contains(view)
     }
     /// Whether the latest observed floor is durably saved.
@@ -197,7 +197,7 @@ impl<D: Clone + PartialEq + Serialize + DeserializeOwned> AuthorityFloor<D> {
     pub fn record(
         &mut self,
         checked: CheckedSuccession<D>,
-        fenced_views: impl IntoIterator<Item = MaterialIdentity>,
+        fenced_views: impl IntoIterator<Item = ViewIdentity>,
     ) -> Result<(), StaleSuccessionCheck> {
         if checked.checked_at != self.current_version() {
             return Err(StaleSuccessionCheck);
@@ -211,12 +211,12 @@ impl<D: Clone + PartialEq + Serialize + DeserializeOwned> AuthorityFloor<D> {
     }
     /// Permanently invalidate `views` without changing the envelope. The floor
     /// becomes dirty when any view is newly invalidated.
-    pub fn invalidate(&mut self, views: impl IntoIterator<Item = MaterialIdentity>) {
+    pub fn invalidate(&mut self, views: impl IntoIterator<Item = ViewIdentity>) {
         if self.extend_invalidations(views) {
             self.observed_version += 1;
         }
     }
-    fn extend_invalidations(&mut self, views: impl IntoIterator<Item = MaterialIdentity>) -> bool {
+    fn extend_invalidations(&mut self, views: impl IntoIterator<Item = ViewIdentity>) -> bool {
         let before = self.invalidated_views.len();
         self.invalidated_views.extend(views);
         self.invalidated_views.len() != before
@@ -313,14 +313,14 @@ mod tests {
             "a new source binding is not yet durable"
         );
         let checked = floor.classify(envelope(4)).unwrap();
-        floor.record(checked, [[9; 32]]).unwrap();
+        floor.record(checked, [ViewIdentity([9; 32])]).unwrap();
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
         assert!(floor.is_durable());
 
         let reopened = AuthorityFloor::<u64>::open(path.clone(), source("https://a")).unwrap();
         assert_eq!(reopened.envelope(), Some(&envelope(4)));
-        assert!(reopened.is_invalidated(&[9; 32]));
+        assert!(reopened.is_invalidated(&ViewIdentity([9; 32])));
         assert!(reopened.is_durable());
         assert!(reopened.classify(envelope(3)).is_err());
 
@@ -361,7 +361,7 @@ mod tests {
             "the binding must be saved before progression"
         );
         assert!(floor.classify(envelope(6)).is_err());
-        assert!(floor.is_invalidated(&[3; 32]));
+        assert!(floor.is_invalidated(&ViewIdentity([3; 32])));
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
         assert!(floor.is_durable());
@@ -393,21 +393,21 @@ mod tests {
         // A newly invalidated view also makes the floor dirty.
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
-        floor.invalidate([[7; 32]]);
+        floor.invalidate([ViewIdentity([7; 32])]);
         assert!(!floor.is_durable());
-        floor.invalidate([[7; 32]]);
+        floor.invalidate([ViewIdentity([7; 32])]);
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
         assert!(floor.is_durable());
 
         // A check against an older floor version cannot be recorded.
         let checked = floor.classify(envelope(6)).unwrap();
-        floor.invalidate([[8; 32]]);
+        floor.invalidate([ViewIdentity([8; 32])]);
         assert_eq!(floor.record(checked, []), Err(StaleSuccessionCheck));
 
         let reopened = AuthorityFloor::<u64>::open(path, source("https://a")).unwrap();
         assert!(reopened.classify(envelope(4)).is_err());
-        assert!(reopened.is_invalidated(&[7; 32]));
+        assert!(reopened.is_invalidated(&ViewIdentity([7; 32])));
     }
 
     #[test]

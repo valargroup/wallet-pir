@@ -8,9 +8,10 @@
 //! that installed also collects unreferenced objects inside the same
 //! operation, so a collection with an older keep set always finishes before a
 //! later pass fetches anything.
+use super::retention::RetainedViews;
 use crate::Error;
 use pir_publication::WrittenFloor;
-use std::{collections::BTreeSet, fmt, future::Future, io, pin::Pin, sync::Arc};
+use std::{fmt, future::Future, io, pin::Pin, sync::Arc};
 use tokio::task::JoinHandle;
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -50,8 +51,8 @@ pub(super) struct OwnedCommit<R, V> {
     pub(super) outcome: CommitOutcome<R>,
     /// Handed to the adapter once the install succeeded.
     pub(super) view: V,
-    /// The object sets retained once this commit installed, newest last.
-    pub(super) retained_commits: Vec<BTreeSet<String>>,
+    /// The views retained once this commit installed.
+    pub(super) retained_views: RetainedViews,
 }
 
 /// The outcome of the one durable operation a lifecycle may have outstanding.
@@ -159,7 +160,9 @@ impl<T: Send + 'static> OwnedOperationSlot<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pir_publication::ViewIdentity;
     use std::{
+        collections::BTreeSet,
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
             mpsc,
@@ -284,13 +287,20 @@ mod tests {
         let (release, blocked) = mpsc::channel();
         let mut slot = OwnedOperationSlot::new();
         let prepared = blocked_commit(blocked, installed.clone());
-        let retained = vec![BTreeSet::from(["object".to_string()])];
-        let carried = retained.clone();
+        let retained = || {
+            RetainedViews::default().after_commit(
+                ViewIdentity([1; 32]),
+                BTreeSet::from(["object".to_string()]),
+                &[],
+                std::time::SystemTime::now(),
+            )
+        };
+        let carried = retained();
         let commit = async move {
             OwnedCommit {
                 outcome: run_commit(fence, 0, prepared, || Ok(())).await,
                 view: "installed view",
-                retained_commits: carried,
+                retained_views: carried,
             }
         };
         assert!(
@@ -309,7 +319,7 @@ mod tests {
         ));
         assert!(installed.load(Ordering::SeqCst));
         assert_eq!(settled.view, "installed view");
-        assert_eq!(settled.retained_commits, retained);
+        assert_eq!(settled.retained_views, retained());
         assert!(slot.settle().await.is_none(), "settled exactly once");
     }
 

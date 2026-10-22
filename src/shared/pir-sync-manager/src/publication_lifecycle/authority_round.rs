@@ -5,7 +5,7 @@ use super::{
 };
 use crate::Error;
 use pir_publication::{
-    AuthorityCheckRequest, AuthorityCheckResponse, MaterialIdentity, AUTHORITY_CHECK_PATH,
+    AuthorityCheckRequest, AuthorityCheckResponse, ViewIdentity, AUTHORITY_CHECK_PATH,
 };
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -17,7 +17,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     pub(super) async fn check_authority(
         &mut self,
         envelope: &Envelope<A>,
-        subjects: Vec<(MaterialIdentity, A::AuthoritySubject)>,
+        subjects: Vec<(ViewIdentity, A::AuthoritySubject)>,
     ) -> Result<(), Error> {
         let authority = envelope
             .authority()
@@ -52,7 +52,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                 PublicationLifecycleError::AuthorityResponseMismatch,
             ));
         }
-        let refuted: Vec<MaterialIdentity> = identities
+        let refuted: Vec<ViewIdentity> = identities
             .into_iter()
             .zip(answer.still_authoritative)
             .filter_map(|(identity, authoritative)| (!authoritative).then_some(identity))

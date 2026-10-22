@@ -1,13 +1,20 @@
-//! Completion of an installed commit across cancelled passes.
+//! Completion and retention of installed commits across passes.
 use super::*;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, SystemTime},
 };
 
-/// Commits one view; its peer release blocks until `release_gate` has a permit.
+/// Commits views referencing `retained`, declaring `required` as still
+/// needed; its peer release blocks until `release_gate` has a permit and then
+/// answers `handover`.
 struct Adapter {
     retained: BTreeSet<String>,
+    required: Vec<(ViewIdentity, ViewRequirement)>,
+    handover: PeerHandover,
     installed: Arc<AtomicUsize>,
     releases: Arc<AtomicUsize>,
     release_gate: Arc<tokio::sync::Semaphore>,
@@ -23,14 +30,11 @@ impl PublicationAdapter for Adapter {
     fn validate_envelope(&self, _envelope: &Envelope<Self>) -> Result<(), Error> {
         Ok(())
     }
-    async fn fence_serving(&mut self) -> Vec<MaterialIdentity> {
+    async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
         Vec::new()
     }
     async fn close_admission(&mut self) {}
-    async fn serving_subjects(
-        &mut self,
-        _envelope: &Envelope<Self>,
-    ) -> Vec<(MaterialIdentity, ())> {
+    async fn serving_subjects(&mut self, _envelope: &Envelope<Self>) -> Vec<(ViewIdentity, ())> {
         Vec::new()
     }
     async fn plan(
@@ -43,18 +47,29 @@ impl PublicationAdapter for Adapter {
     async fn load(&mut self, _candidate: (), _cache: &ObjectCache) -> Result<(), Error> {
         unreachable!("the test commits directly")
     }
+    async fn rebind(
+        &mut self,
+        _envelope: &Envelope<Self>,
+        _loaded: (),
+        _objects: &mut ObjectFetcher<'_>,
+    ) -> Result<(), Error> {
+        unreachable!("the test commits directly")
+    }
     fn revalidate(
         &self,
         _envelope: &Envelope<Self>,
         _loaded: &(),
-    ) -> Result<(MaterialIdentity, ()), Error> {
+    ) -> Result<(ViewIdentity, ()), Error> {
         unreachable!("the test commits directly")
     }
     async fn reserve_peer(&mut self, _loaded: &()) -> Result<PeerReservation, Error> {
         Ok(PeerReservation::Reserved)
     }
-    fn retained_objects(&self, _loaded: &()) -> BTreeSet<String> {
+    fn view_objects(&self, _loaded: &()) -> BTreeSet<String> {
         self.retained.clone()
+    }
+    async fn retained_views(&mut self) -> Vec<(ViewIdentity, ViewRequirement)> {
+        self.required.clone()
     }
     fn prepare_commit(
         &mut self,
@@ -75,7 +90,7 @@ impl PublicationAdapter for Adapter {
     async fn release_peer(&mut self, _report: &u64) -> PeerHandover {
         self.releases.fetch_add(1, Ordering::SeqCst);
         self.release_gate.acquire().await.unwrap().forget();
-        PeerHandover::Complete
+        self.handover
     }
     async fn serving_report(&mut self) -> u64 {
         0
@@ -91,11 +106,15 @@ fn store(cache: &ObjectCache, bytes: &[u8]) -> ObjectReference {
     object
 }
 
-/// A pass cancelled while releasing the peer keeps the completion pending:
-/// the next pass releases again, the adapter receives the view exactly once,
-/// and the collection that ran inside the commit is not lost.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
+struct Fixture {
+    _root: tempfile::TempDir,
+    lifecycle: PublicationLifecycle<Adapter>,
+    cache: ObjectCache,
+    installed: Arc<AtomicUsize>,
+    releases: Arc<AtomicUsize>,
+    release_gate: Arc<tokio::sync::Semaphore>,
+}
+async fn fixture() -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let source = HttpsSource::new("https://localhost:1", "/feed/", 1 << 20, &[]).unwrap();
     let floor = pir_publication::AuthorityFloor::<()>::open(
@@ -108,33 +127,60 @@ async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
     )
     .unwrap();
     let cache = ObjectCache::open(root.path().join("objects")).unwrap();
-    let kept = store(&cache, b"kept");
-    let stale = store(&cache, b"stale");
     let (installed, releases) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let release_gate = Arc::new(tokio::sync::Semaphore::new(0));
     let adapter = Adapter {
-        retained: BTreeSet::from([kept.sha256.clone()]),
+        retained: BTreeSet::new(),
+        required: Vec::new(),
+        handover: PeerHandover::Complete,
         installed: installed.clone(),
         releases: releases.clone(),
         release_gate: release_gate.clone(),
     };
     let mut lifecycle = PublicationLifecycle::new(adapter, source, floor, cache.clone()).unwrap();
     lifecycle.persist_floor().await.unwrap();
+    Fixture {
+        _root: root,
+        lifecycle,
+        cache,
+        installed,
+        releases,
+        release_gate,
+    }
+}
+fn objects(references: &[&ObjectReference]) -> BTreeSet<String> {
+    references.iter().map(|r| r.sha256.clone()).collect()
+}
+
+/// A pass cancelled while releasing the peer keeps the completion pending:
+/// the next pass releases again, the adapter receives the view exactly once,
+/// and the collection that ran inside the commit is not lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
+    let Fixture {
+        mut lifecycle,
+        cache,
+        installed,
+        releases,
+        release_gate,
+        _root,
+        ..
+    } = fixture().await;
+    let kept = store(&cache, b"kept");
+    let stale = store(&cache, b"stale");
+    lifecycle.adapter.retained = objects(&[&kept]);
 
     // The pass is cancelled while the peer release is blocked.
     assert!(tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        lifecycle.commit([9; 32], ())
+        Duration::from_millis(100),
+        lifecycle.commit(ViewIdentity([9; 32]), ())
     )
     .await
     .is_err());
     assert_eq!(installed.load(Ordering::SeqCst), 1);
     assert_eq!(releases.load(Ordering::SeqCst), 1);
     assert!(lifecycle.pending_completion.is_some());
-    assert_eq!(
-        lifecycle.retained_commits,
-        vec![BTreeSet::from([kept.sha256.clone()])]
-    );
+    assert_eq!(lifecycle.retained_views.views(), [ViewIdentity([9; 32])]);
     assert!(cache.verified_cached(&stale).unwrap().is_none());
     assert!(cache.verified_cached(&kept).unwrap().is_some());
 
@@ -149,4 +195,88 @@ async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
         "the adapter receives the view exactly once"
     );
     assert!(cache.verified_cached(&kept).unwrap().is_some());
+}
+
+/// A view a peer holds keeps its objects through any number of
+/// metadata-only commits that share the reusable material, while each
+/// superseded, unneeded view's own objects are collected. Once the hold's
+/// deadline passes, the next commit collects the held view's objects too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn held_views_survive_refreshes_until_their_deadline_passes() {
+    let Fixture {
+        mut lifecycle,
+        cache,
+        release_gate,
+        _root,
+        ..
+    } = fixture().await;
+    release_gate.add_permits(64);
+    let held_view = ViewIdentity([1; 32]);
+    let (held, material) = (store(&cache, b"held inventory"), store(&cache, b"material"));
+    lifecycle.adapter.retained = objects(&[&held, &material]);
+    lifecycle.commit(held_view, ()).await.unwrap();
+
+    lifecycle.adapter.required = vec![(
+        held_view,
+        ViewRequirement::HeldUntil(SystemTime::now() + Duration::from_secs(3600)),
+    )];
+    let mut superseded: Vec<ObjectReference> = Vec::new();
+    for refresh in 2..12u8 {
+        let inventory = store(&cache, &[refresh]);
+        lifecycle.adapter.retained = objects(&[&inventory, &material]);
+        lifecycle
+            .commit(ViewIdentity([refresh; 32]), ())
+            .await
+            .unwrap();
+        assert!(cache.verified_cached(&held).unwrap().is_some());
+        assert!(cache.verified_cached(&material).unwrap().is_some());
+        assert!(cache.verified_cached(&inventory).unwrap().is_some());
+        for earlier in &superseded {
+            assert!(cache.verified_cached(earlier).unwrap().is_none());
+        }
+        superseded.push(inventory);
+    }
+
+    lifecycle.adapter.required = vec![(
+        held_view,
+        ViewRequirement::HeldUntil(SystemTime::now() - Duration::from_secs(1)),
+    )];
+    let last = store(&cache, b"last inventory");
+    lifecycle.adapter.retained = objects(&[&last, &material]);
+    lifecycle.commit(ViewIdentity([99; 32]), ()).await.unwrap();
+    assert!(cache.verified_cached(&held).unwrap().is_none());
+    assert!(cache.verified_cached(&material).unwrap().is_some());
+    assert_eq!(lifecycle.retained_views.views(), [ViewIdentity([99; 32])]);
+}
+
+/// A peer release answered pending stays owed: each later pass releases
+/// again before observing anything, without failing, and the local
+/// installation never repeats. A completed release clears it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pending_peer_release_is_retried_on_later_passes_until_complete() {
+    let Fixture {
+        mut lifecycle,
+        installed,
+        releases,
+        release_gate,
+        _root,
+        ..
+    } = fixture().await;
+    release_gate.add_permits(64);
+    lifecycle.adapter.handover = PeerHandover::Pending;
+    let (report, handover) = lifecycle.commit(ViewIdentity([3; 32]), ()).await.unwrap();
+    assert_eq!((report, handover), (7, PeerHandover::Pending));
+    assert_eq!(lifecycle.owed_peer_release, Some(7));
+
+    lifecycle.settle_durable_operation().await.unwrap();
+    assert_eq!(releases.load(Ordering::SeqCst), 2);
+    assert_eq!(lifecycle.owed_peer_release, Some(7), "still owed");
+
+    lifecycle.adapter.handover = PeerHandover::Complete;
+    lifecycle.settle_durable_operation().await.unwrap();
+    assert_eq!(releases.load(Ordering::SeqCst), 3);
+    assert_eq!(lifecycle.owed_peer_release, None);
+    lifecycle.settle_durable_operation().await.unwrap();
+    assert_eq!(releases.load(Ordering::SeqCst), 3, "nothing is owed");
+    assert_eq!(installed.load(Ordering::SeqCst), 1);
 }

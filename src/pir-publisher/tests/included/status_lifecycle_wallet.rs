@@ -212,12 +212,6 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         client.observe(&transport, &txid, local).await.unwrap(),
         wallet::Observation::NotFound
     );
-    assert!(root
-        .path()
-        .join("worker/publisher-high-water.json")
-        .is_file());
-    assert!(root
-        .path()
-        .join("router/publisher-high-water.json")
-        .is_file());
+    assert!(root.path().join("worker/publication-floor.json").is_file());
+    assert!(root.path().join("router/publication-floor.json").is_file());
 }
