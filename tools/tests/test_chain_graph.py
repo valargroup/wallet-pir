@@ -24,7 +24,8 @@ class RpcDependencyTests(unittest.TestCase):
         self.assertEqual(graph.rpc_dependency_problems(self.graph()), [])
 
     def test_runtime_or_build_node_or_database_dependency_is_rejected(self):
-        for name in ('zakura-chain', 'zakura-state', 'librocksdb-sys'):
+        for name in ('zakura-chain', 'zakura-state', 'librocksdb-sys', 'zakura-rocksdb',
+                     'zakura-librocksdb-sys'):
             for kind in (None, 'build'):
                 with self.subTest(name=name, kind=kind):
                     self.assertTrue(graph.rpc_dependency_problems(self.graph(True, kind, name)))

@@ -74,10 +74,8 @@ fn endpoint(path: &str) -> Option<&'static str> {
 /// The receiver directory's route categories; session IDs never become labels.
 fn receiver_endpoint(route: &str) -> Option<&'static str> {
     Some(match route.split('/').next()? {
-        "init" => "receiver_init",
         "public" => "receiver_public",
         "query" => "receiver_query",
-        "witness" => "receiver_witness",
         "health" => "receiver_health",
         _ => return None,
     })
