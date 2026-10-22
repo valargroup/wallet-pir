@@ -122,9 +122,16 @@ def advance_floors(owner, roots, destination):
         owner.write(pair[destination] + '/distribution-revision.json', json.dumps(floor) + '\n')
 
 
-def source_unchanged(owner, pair, receipt):
-    require(owner.ex.sha256(owner.host, pair['source'] + '/active.json') == receipt['source_active_sha256'],
-            'source advanced; refresh preparation while it serves')
+def source_resolved(owner, pair, receipt):
+    """Source may advance, but cannot withdraw or move behind our selected anchor.
+
+    The native receipt verifier independently rechecks that anchor with the node.
+    File identities bind the prepared snapshot, not the moving source pointer.
+    """
+    active = json.loads(owner.read(pair['source'] + '/active.json'))
+    height = active.get('height', active.get('tip'))
+    require(type(height) is int and height >= receipt['anchor_height'],
+            'source moved behind the prepared anchor; prepare a current snapshot')
     for name in ('activation.json', 'withdrawn.json', 'halted.json'):
         require(owner.read(pair['source'] + '/' + name) is None, 'source has unresolved publication intent')
     for name, empty in (('invalidate.json', {'rollback': None}), ('integrity-failures.json', [])):
@@ -183,14 +190,13 @@ class Preparation:
                 require(receipt['configuration_sha256'] == publisher.sha(config)
                         and receipt['ownership'] == {'schema': 'transparent-storage-preparation/1', 'product': product, **pair}
                         and receipt['schema'] == 'transparent-prepared-storage/1', 'preparation returned another receipt')
-                require(o.ex.sha256(o.host, pair['source'] + '/active.json') == receipt['source_active_sha256'],
-                        'publication advanced during preparation; refresh while it still serves')
+                source_resolved(o, pair, receipt)
                 records[product] = {'receipt_sha256': o.ex.sha256(o.host, path), 'receipt': receipt}
             require(publisher.sha(o.read(publisher.CONFIG)) == plan['source_configuration_sha256']
                     and publisher.stable_unit(o.ex.probe_unit(o.host, publisher.UNIT)) == plan['unit'],
                     'publisher changed during storage preparation')
             for product, pair in plan['roots'].items():
-                source_unchanged(o, pair, records[product]['receipt'])
+                source_resolved(o, pair, records[product]['receipt'])
             manifest = {'schema': 'publisher-storage-preparation/1', 'plan': plan,
                         'configuration_sha256': publisher.sha(config), 'release': o.request['release'], 'products': records}
             o.ex.write(o.host, self.manifest_path, durable.canonical(manifest), 0o600)
@@ -248,7 +254,7 @@ class Handoff:
             require(o.ex.sha256(o.host, pair['target'] + '/prepared-storage.json')
                     == manifest['products'][product]['receipt_sha256'], 'prepared storage receipt changed')
             self.preparation.run(binary, product, pair, verify=True)
-            source_unchanged(o, pair, manifest['products'][product]['receipt'])
+            source_resolved(o, pair, manifest['products'][product]['receipt'])
 
     def install(self, journal):
         o = self.owner

@@ -27,7 +27,7 @@ class StorageTests(PublisherFixture, unittest.TestCase):
             settings[field] += '.prepared-' + self.identifier
             if product == 'transparent_history':
                 settings['initial_publication'] = settings['initial_publication'].replace(old, settings[field], 1)
-            self.ex.put('coordinator', old + '/active.json', '{"directory":"' + old + '/active","map_sha256":"abc"}')
+            self.ex.put('coordinator', old + '/active.json', '{"directory":"' + old + '/active","map_sha256":"abc","height":2}')
             self.ex.put('coordinator', old + '/distribution-revision.json', '41')
             self.ex.put('coordinator', old + '/active/legacy.bin', 'immutable legacy body')
         self.target = self.make_target()
@@ -132,20 +132,30 @@ class StorageTests(PublisherFixture, unittest.TestCase):
             self.target.plan()
         self.assertEqual(self.ex.effects, [])
 
-    def test_source_advance_after_stop_refuses_handoff_and_rollback_restores_old_owner(self):
+    def test_source_advance_keeps_the_verified_snapshot_and_rollback_restores_old_owner(self):
         self.prepared()
         original = self.ex.systemctl
         def systemctl(host, *argv):
             result = original(host, *argv)
             if argv == ('stop', publisher.UNIT):
-                self.ex.put(host, self.roots['transparent_history']['source'] + '/active.json', '{"advanced":true}')
+                self.ex.put(host, self.roots['transparent_history']['source'] + '/active.json', '{"height":3,"advanced":true}')
             return result
         self.ex.systemctl = systemctl
-        with self.assertRaisesRegex(DeployError, 'source advanced'):
-            self.deploy()
+        self.assertEqual(self.deploy()['phase'], 'committed')
         self.ex.systemctl = original
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
         self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+
+    def test_replaced_chain_anchor_or_a_source_rollback_refuses_before_stop(self):
+        self.prepared()
+        self.rust_fail = True  # Native anchor verification fails against the current node.
+        with self.assertRaisesRegex(DeployError, 'storage preparation refused'):
+            self.target.plan()
+        self.rust_fail = False
+        self.ex.put('coordinator', self.roots['transparent_history']['source'] + '/active.json', '{"height":1}')
+        with self.assertRaisesRegex(DeployError, 'source moved behind'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
 
     def test_interrupted_floor_write_recovers_without_rewinding(self):
         self.prepared()

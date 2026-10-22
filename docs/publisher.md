@@ -240,8 +240,10 @@ The deployment CLI separates storage preparation from service activation:
    to the deployment request. Review a new `publisher-cutover-plan`, then use
    the normal separately authorized deployment transaction. It checks the
    manifest and exact prepared file identities while staging and again after
-   stopping the old owner. Source pointer advancement refuses the handoff;
-   refresh preparation and review a new manifest. It never performs a surprise
+   stopping the old owner. The old publisher may advance while
+   its independent prepared snapshot is verified. The node must still confirm
+   that snapshot's anchor at preparation and handoff; withdrawal, a source
+   rollback below that anchor, or changed prepared files refuses the handoff. It never performs a surprise
    full conversion after stopping services. Normal runtime chain checks still
    decide whether the prepared publication may serve.
 4. Activation carries each distribution revision high-water mark into the new

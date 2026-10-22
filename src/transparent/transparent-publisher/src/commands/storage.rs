@@ -37,7 +37,7 @@ struct Cli {
     source_root: PathBuf,
     #[arg(long)]
     target_root: PathBuf,
-    /// Check a completed preparation for drift without hashing or activation.
+    /// Check completed file identities and the current node anchor without activation.
     #[arg(long)]
     verify_only: bool,
 }
@@ -67,12 +67,13 @@ impl Prepared {
 
 pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
     let cli = Cli::parse_from(args);
-    let verify_only = cli.verify_only;
     let target = cli.target_root.clone();
     let product = cli.product;
     let configuration: serde_json::Value = serde_json::from_slice(&std::fs::read(&cli.config)?)?;
     tokio::task::spawn_blocking(move || prepare(cli)).await??;
-    if !verify_only {
+    {
+        // Recheck the selected snapshot, including at the stopped-owner handoff.
+        // A newer source publication does not invalidate these independent bytes.
         let prepared: Prepared = serde_json::from_slice(&std::fs::read(target.join(RECORD))?)?;
         let settings = &configuration[product.name()]["settings"];
         let cookie = PathBuf::from(
@@ -155,8 +156,8 @@ fn prepare_with(cli: Cli, clone: &preparation::Cloner) -> Result<(), BoxError> {
         return Err("active publication is outside its source root".into());
     }
     let target = preparation::destination(&owner, &source)?;
-    // Candidate material is immutable. A vanished source or an advancing
-    // pointer refuses this attempt; already cloned objects survive a retry.
+    // Pin independent bytes while this source directory still exists. Once
+    // cloned, later publications and source collection cannot change them.
     clone.tree(&source, &target, &owner.target.join(".objects"))?;
     let (map_sha256, anchor_height, anchor_hash) = match cli.product {
         Product::History => history(&owner, &target, settings)?,
@@ -173,11 +174,6 @@ fn prepare_with(cli: Cli, clone: &preparation::Cloner) -> Result<(), BoxError> {
         return Err("source pointer disagrees with its verified publication".into());
     }
     require_resolved(&owner.source)?;
-    if std::fs::read(owner.source.join("active.json"))? != active {
-        return Err(
-            "source publication advanced; refresh preparation while it still serves".into(),
-        );
-    }
     let mut rebased = active_value;
     rebased["directory"] = serde_json::to_value(&target)?;
     storage::records::write_durable(
@@ -482,5 +478,84 @@ mod tests {
         // Even an unchanged active pointer cannot hide new withdrawal state.
         assert!(prepare_with(cli(false), &clone).is_err());
         assert_eq!(preparation::fingerprint(&target).unwrap(), before);
+    }
+    #[tokio::test]
+    async fn read_only_handoff_rechecks_the_anchor_with_the_current_node() {
+        use axum::{extract::State, routing::post, Json, Router};
+        use std::sync::{Arc, RwLock};
+        let anchor = "33".repeat(32);
+        let node = Arc::new(RwLock::new(anchor.clone()));
+        async fn answer(
+            State(node): State<Arc<RwLock<String>>>,
+            Json(request): Json<serde_json::Value>,
+        ) -> Json<serde_json::Value> {
+            assert_eq!(request["method"], "getblockhash");
+            assert_eq!(request["params"], serde_json::json!([12]));
+            Json(
+                serde_json::json!({"id":request["id"],"result":node.read().unwrap().clone(),"error":null}),
+            )
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route("/", post(answer))
+            .with_state(node.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("prepared");
+        std::fs::create_dir(&target).unwrap();
+        storage::layout::complete(&target, "transparent_history").unwrap();
+        let cookie = temp.path().join("node-cookie");
+        std::fs::write(&cookie, b"fixture:fixture").unwrap();
+        let config = temp.path().join("publisher.json");
+        let bytes = serde_json::to_vec(&serde_json::json!({"transparent_history":{"settings":{
+            "rpc_url":url,"rpc_cookie":cookie
+        }}}))
+        .unwrap();
+        std::fs::write(&config, &bytes).unwrap();
+        let record = Prepared {
+            schema: "transparent-prepared-storage/1".into(),
+            ownership: Ownership {
+                schema: "transparent-storage-preparation/1".into(),
+                product: "transparent_history".into(),
+                source: source.clone(),
+                target: target.clone(),
+            },
+            source_active_sha256: "11".repeat(32),
+            configuration_sha256: preparation::digest(&bytes),
+            map_sha256: "22".repeat(32),
+            anchor_height: 12,
+            anchor_hash: anchor,
+            revision_floor: 0,
+            files: preparation::fingerprint(&target).unwrap(),
+        };
+        std::fs::write(target.join(RECORD), serde_json::to_vec(&record).unwrap()).unwrap();
+        let args = || {
+            vec![
+                "prepare-transparent-storage".into(),
+                "--config".into(),
+                config.clone().into_os_string(),
+                "--source-root".into(),
+                source.clone().into_os_string(),
+                "--target-root".into(),
+                target.clone().into_os_string(),
+                "--product".into(),
+                "history".into(),
+                "--verify-only".into(),
+            ]
+        };
+        let before = preparation::fingerprint(&target).unwrap();
+        run(args()).await.unwrap();
+        *node.write().unwrap() = "44".repeat(32);
+        assert!(run(args())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("no longer canonical"));
+        assert_eq!(preparation::fingerprint(&target).unwrap(), before);
+        server.abort();
     }
 }
