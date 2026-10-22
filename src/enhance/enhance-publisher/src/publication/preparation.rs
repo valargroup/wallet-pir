@@ -8,11 +8,13 @@ use enhance_shared::{
     protocol::{digest, Coverage},
     publication::Domain,
 };
+use pir_publication::ObjectInstaller;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 
 pub(super) fn prepare_domains(
     root: &Path,
+    objects: &ObjectInstaller,
     coverage: &Coverage,
     epochs: &BTreeMap<u64, String>,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
@@ -32,7 +34,7 @@ pub(super) fn prepare_domains(
             if hex::encode(Sha256::digest(&bytes)) != unit.content_sha256 {
                 return Err("canonical rows changed during publication preparation".into());
             }
-            rows.push(install_object_bytes(root, &bytes)?);
+            rows.push(install_object_bytes(objects, &bytes)?);
         }
         // A previously verified domain avoids hint and packing preparation.
         let key = digest(&plan);
@@ -54,7 +56,7 @@ pub(super) fn prepare_domains(
             runtime::Packing::new(shard.logical_rows, &hint, &PackingBudget::coordinator())?;
         let prepared = prepared_packing::persist(root, &packing)?;
         install_packing_object(
-            root,
+            objects,
             &root.join(prepared_packing::DIRECTORY).join(&prepared.name),
             &prepared,
         )?;
@@ -63,8 +65,8 @@ pub(super) fn prepare_domains(
         let domain = Domain {
             plan,
             rows,
-            hint: install_object_bytes(root, &encoded)?,
-            public: install_object_bytes(root, &packing.public)?,
+            hint: install_object_bytes(objects, &encoded)?,
+            public: install_object_bytes(objects, &packing.public)?,
             packing: prepared,
         };
         persist_metadata(root, "domains", &format!("{key}.json"), &domain)?;

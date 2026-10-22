@@ -563,11 +563,9 @@ mod tests {
     use receiver_directory::snapshot::Snapshot;
     use receiver_pir::MIN_ROWS;
 
-    /// A minimum-geometry payment table whose salt starts with `salt`.
+    /// A minimum-geometry payment table shared with the empty publication fixtures.
     fn snapshot(salt: u8) -> Snapshot {
-        let mut manifest = crate::common::manifest(MIN_ROWS);
-        manifest.salt[0] = salt;
-        Snapshot::build(manifest, &[]).unwrap()
+        crate::empty_snapshot(salt)
     }
 
     /// A payment source over `snapshot` that prepares it on every load.

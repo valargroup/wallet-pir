@@ -45,6 +45,9 @@ pub struct Config {
 #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
 const ORDINARY_VERIFY: &str =
     "product verify_only is reserved for pir-query-server --verify-only; remove it from serving configuration";
+#[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+const SERVING_PUBLISHER: &str =
+    "Transparent serving requires an HTTPS publisher; only --verify-only checks local state";
 
 /// The one Transparent section a `--verify-only` run checks.
 pub enum Verification<'a> {
@@ -228,17 +231,20 @@ impl Config {
             if worker.verify_only {
                 return Err(ORDINARY_VERIFY.into());
             }
+            if worker.publisher.is_none() {
+                return Err(SERVING_PUBLISHER.into());
+            }
             layout.listener("transparent_history", worker.listen)?;
             layout.root("transparent_history", &worker.shard_dir)?;
-            if let Some(path) = &worker.runtime_cache_dir {
-                layout.root("transparent_history", path)?;
-            }
             layout.probe("transparent_history", worker.listen, "/v1/ready");
         }
         #[cfg(feature = "transparent-detail")]
         if let Some(worker) = active(&self.transaction_details)? {
             if worker.verify_only {
                 return Err(ORDINARY_VERIFY.into());
+            }
+            if worker.publisher.is_none() {
+                return Err(SERVING_PUBLISHER.into());
             }
             layout.listener("transaction_details", worker.listen)?;
             if let Some(path) = &worker.state_dir {
@@ -348,11 +354,18 @@ mod tests {
         let temp = std::env::temp_dir().join("pir-query-server-verify-config");
         let settings = match section {
             "transparent_history" => serde_json::json!({
+                "publisher": "https://publisher.example",
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
                 "listen": "127.0.0.1:18092",
                 "shard_dir": temp.join("history"),
                 "verify_only": verify_only,
             }),
             _ => serde_json::json!({
+                "publisher": "https://publisher.example",
+                "publisher_network": "main",
+                "publisher_genesis": "00".repeat(32),
+                "state_dir": temp.join("detail-state"),
                 "listen": "127.0.0.1:18095",
                 "role": "combined",
                 "publication_dir": temp.join("detail"),
@@ -391,6 +404,39 @@ mod tests {
         let none: Config =
             serde_json::from_str(r#"{"management_listen":"127.0.0.1:18080"}"#).unwrap();
         assert!(none.verification().is_err());
+    }
+
+    #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
+    #[test]
+    fn serving_requires_a_publisher_but_local_verification_does_not() {
+        let sections = [
+            #[cfg(feature = "transparent-history")]
+            "transparent_history",
+            #[cfg(feature = "transparent-detail")]
+            "transaction_details",
+        ];
+        for section in sections {
+            let mut config = transparent(section, false);
+            #[cfg(feature = "transparent-history")]
+            if let Some(settings) = config
+                .transparent_history
+                .as_mut()
+                .and_then(|p| p.settings.as_mut())
+            {
+                settings.publisher = None;
+            }
+            #[cfg(feature = "transparent-detail")]
+            if let Some(settings) = config
+                .transaction_details
+                .as_mut()
+                .and_then(|p| p.settings.as_mut())
+            {
+                settings.publisher = None;
+            }
+            let error = config.validate().err().unwrap();
+            assert!(error.to_string().contains("HTTPS publisher"), "{section}");
+            assert!(config.verification().is_ok(), "{section}");
+        }
     }
 
     #[cfg(all(feature = "transparent-history", feature = "transparent-detail"))]

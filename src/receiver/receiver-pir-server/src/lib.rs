@@ -8,6 +8,19 @@ pub mod blocks;
 #[cfg(test)]
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
+
+/// An empty minimum-geometry snapshot whose salt and end hash are `variant`.
+///
+/// Publication and table tests share these manifests, so the process cache
+/// prepares each one once. This stays in the serving crate: the indexer includes
+/// the preparation cache without this fixture module.
+#[cfg(test)]
+fn empty_snapshot(variant: u8) -> receiver_directory::snapshot::Snapshot {
+    let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+    manifest.salt[0] = variant;
+    manifest.end_hash = [variant; 32];
+    receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap()
+}
 pub mod publication;
 pub mod tables;
 use axum::{
@@ -471,12 +484,7 @@ mod tests {
     /// once, while one of the right length waits and is then told to retry.
     #[tokio::test]
     async fn wrong_lengths_are_refused_without_waiting_for_evaluation() {
-        let snapshot = receiver_directory::snapshot::Snapshot::build(
-            common::manifest(receiver_pir::MIN_ROWS),
-            &[],
-        )
-        .unwrap();
-        let publication = crate::prepared::prepare_payments(snapshot).unwrap();
+        let publication = crate::prepared::prepare_payments(crate::empty_snapshot(1)).unwrap();
         let mut header = MAGIC.to_vec();
         header.extend(publication.segments()[0].payments.id());
         let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
@@ -640,9 +648,8 @@ mod tests {
     #[tokio::test]
     async fn a_revocation_during_a_filter_load_is_gone() {
         use receiver_directory::shards::{Coverage, ShardFilter};
-        use receiver_directory::snapshot::Snapshot;
         use std::sync::mpsc;
-        let snapshot = Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[]).unwrap();
+        let snapshot = crate::empty_snapshot(1);
         let coverage = Coverage {
             start_height: 100,
             end_height: 101,

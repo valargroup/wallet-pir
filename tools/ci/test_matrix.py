@@ -30,8 +30,7 @@ REFERENCE_TESTS = {('pir-e2e-tests', 'ci_hint'), ('pir-e2e-tests', 'encrypted_li
                    ('pir-e2e-tests', 'publication_renewal')}
 # Real-process campaigns are compiled and listed here but run only by their
 # scripts under tools/transparent/scripts; every case must stay ignored.
-MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'controller_update_campaign'),
-                    ('pir-e2e-tests', 'unified_http_sync_campaign')}
+MANUAL_CAMPAIGNS = {('pir-e2e-tests', 'unified_http_sync_campaign')}
 
 
 def variants(groups):
