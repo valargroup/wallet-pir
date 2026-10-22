@@ -287,6 +287,13 @@ mod tests {
             stage: "/unused/stage".into(),
             checkpoints: "/unused/checkpoints".into(),
             records: Vec::new(),
+            originals: Vec::new(),
+            root_owner: pir_artifact::catalog::DirectoryOwner {
+                uid: 0,
+                gid: 0,
+                mode: 0o755,
+            },
+            root_parent: "/unused".into(),
         }
     }
 

@@ -18,6 +18,16 @@ pub struct Command {
 
 #[derive(Subcommand)]
 enum Operation {
+    /// Verify pinned rollback bodies without changing live publication names.
+    VerifyPredecessors {
+        #[arg(long)]
+        stage: PathBuf,
+    },
+    /// Restore collected predecessor aliases from pinned verified bytes.
+    RestorePredecessors {
+        #[arg(long)]
+        stage: PathBuf,
+    },
     /// Check retained file identities without changing a preparation or authority.
     VerifyPrepared {
         #[arg(long)]
@@ -61,6 +71,9 @@ enum Operation {
         product: Product,
         #[arg(long)]
         root: PathBuf,
+        /// Immutable source snapshot, retaining --root as the install location.
+        #[arg(long)]
+        source_root: Option<PathBuf>,
         #[arg(long)]
         inventory: PathBuf,
         #[arg(long)]
@@ -105,6 +118,23 @@ enum Product {
 impl Command {
     pub fn run(self) -> crate::Result<()> {
         let result = match self.operation {
+            Operation::VerifyPredecessors { stage } => {
+                let prepared: pir_artifact::catalog::Prepared =
+                    serde_json::from_slice(&std::fs::read(stage.join("prepared.json"))?)?;
+                if prepared.stage != stage {
+                    return Err("preparation stage differs".into());
+                }
+                prepared.verify_predecessors()?;
+                serde_json::json!({"verified_predecessors":prepared.originals.len()})
+            }
+            Operation::RestorePredecessors { stage } => {
+                let prepared: pir_artifact::catalog::Prepared =
+                    serde_json::from_slice(&std::fs::read(stage.join("prepared.json"))?)?;
+                if prepared.stage != stage {
+                    return Err("preparation stage differs".into());
+                }
+                serde_json::json!({"restored_files":prepared.restore_predecessors()?})
+            }
             Operation::VerifyPrepared { stage } => {
                 let prepared: pir_artifact::catalog::Prepared =
                     serde_json::from_slice(&std::fs::read(stage.join("prepared.json"))?)?;
@@ -162,6 +192,7 @@ impl Command {
             Operation::Prepare {
                 product,
                 root,
+                source_root,
                 inventory,
                 inventory_sha256,
                 stage,
@@ -171,11 +202,15 @@ impl Command {
                 let bytes = std::fs::read(&inventory)?;
                 previous.verify(&bytes)?;
                 let mut catalog = Catalog::new(&root, &stage)?;
+                if let Some(path) = source_root {
+                    catalog = catalog.with_source_root(path)?;
+                }
                 if let Some(path) = checkpoints {
                     catalog = catalog.with_checkpoints(path)?;
                 }
                 migration::persist(&stage.join("predecessor-inventory.json"), &bytes)?;
                 let value: Value = serde_json::from_slice(&bytes)?;
+                pin_inputs(product, &mut catalog, &value)?;
                 let (name, bytes) = convert_product(product, &mut catalog, value)?;
                 serde_json::to_value(catalog.finish(name, previous, &bytes)?)?
             }
@@ -214,6 +249,85 @@ impl Command {
         println!("{}", serde_json::to_string(&result)?);
         Ok(())
     }
+}
+
+fn pin_inputs(product: Product, catalog: &mut Catalog, value: &Value) -> crate::Result<()> {
+    let mut objects = Vec::new();
+    match product {
+        Product::Enhance => {
+            for domain in value["domains"]
+                .as_array()
+                .ok_or("missing Enhance domains")?
+            {
+                objects.extend(
+                    domain["rows"]
+                        .as_array()
+                        .ok_or("missing Enhance rows")?
+                        .iter(),
+                );
+                objects.extend([&domain["hint"], &domain["public"], &domain["packing"]]);
+            }
+        }
+        Product::Status => {
+            objects.extend(
+                value["units"]
+                    .as_array()
+                    .ok_or("missing Status units")?
+                    .iter(),
+            );
+            objects.extend(
+                value["packing"]
+                    .as_array()
+                    .ok_or("missing Status packing")?
+                    .iter(),
+            );
+            objects.push(&value["public"]);
+        }
+        Product::TransparentHistory | Product::TransparentDisplay => {
+            objects.extend(
+                value["artifacts"]
+                    .as_array()
+                    .ok_or("missing Transparent artifacts")?
+                    .iter(),
+            );
+        }
+    }
+    let transparent = matches!(
+        product,
+        Product::TransparentHistory | Product::TransparentDisplay
+    );
+    let mut inputs = std::collections::BTreeMap::new();
+    for object in objects {
+        let checksum = migration::sha256(
+            object["sha256"]
+                .as_str()
+                .ok_or("missing predecessor checksum")?
+                .into(),
+        )?;
+        let bytes = object["bytes"]
+            .as_u64()
+            .ok_or("invalid predecessor length")?;
+        let relative = if transparent {
+            PathBuf::from(
+                object["path"]
+                    .as_str()
+                    .ok_or("missing predecessor artifact path")?,
+            )
+        } else {
+            Path::new("objects").join(&checksum.digest)
+        };
+        if let Some(previous) = inputs.insert(relative, (checksum.clone(), bytes)) {
+            if previous != (checksum, bytes) {
+                return Err("one source path has contradictory identities".into());
+            }
+        }
+    }
+    let inputs = inputs
+        .into_iter()
+        .map(|(path, (checksum, bytes))| (path, checksum, bytes))
+        .collect::<Vec<_>>();
+    catalog.pin_inputs(&inputs)?;
+    Ok(())
 }
 
 #[cfg(any(

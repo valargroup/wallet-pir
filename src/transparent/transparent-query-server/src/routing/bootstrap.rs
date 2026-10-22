@@ -398,19 +398,28 @@ mod object_tests {
 
     #[test]
     fn symlinked_object_directory_is_refused_before_cleanup() {
-        let root = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
-        let sentinel = outside
-            .path()
-            .join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
-        std::fs::write(&sentinel, b"outside").unwrap();
-        std::os::unix::fs::symlink(
-            outside.path(),
-            root.path().join(pir_artifact::namespace("objects")),
-        )
-        .unwrap();
-        assert!(prepare_objects(root.path()).is_err());
-        assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
+        for parent_symlink in [true, false] {
+            let root = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let sentinel = outside
+                .path()
+                .join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
+            std::fs::write(&sentinel, b"outside").unwrap();
+            let link = if parent_symlink {
+                root.path().join("objects")
+            } else {
+                std::fs::create_dir(root.path().join("objects")).unwrap();
+                root.path().join(pir_artifact::namespace("objects"))
+            };
+            std::os::unix::fs::symlink(outside.path(), link).unwrap();
+            assert!(prepare_objects(root.path()).is_err());
+            assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
+            assert_eq!(
+                std::fs::read_dir(outside.path()).unwrap().count(),
+                1,
+                "refusal must not create a directory through the symlink"
+            );
+        }
         let real = tempfile::tempdir().unwrap();
         let objects = prepare_objects(real.path()).unwrap();
         assert!(std::fs::symlink_metadata(objects).unwrap().is_dir());

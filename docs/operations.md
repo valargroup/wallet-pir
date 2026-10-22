@@ -244,8 +244,14 @@ its objects into a separate staging directory. Supply `--product`, the absolute
 publication `--root`, `--inventory`, its operational `--inventory-sha256` pin,
 and `--stage`. Multiple retained inventories can share `--checkpoints`.
 Preparation checks the previous digest and computes the current digest in one
-stream. Unchanged objects use hard links; Transparent runtime headers require
+stream. It pins declared inputs before scanning, so source collection cannot
+remove the rest of a batch, and completed pins survive an interrupted command.
+Unchanged objects use hard links; Transparent runtime headers require
 separate files but reuse the prepared body without rebuilding PIR matrices.
+On Linux filesystems with reflink support, the converter shares unchanged body
+blocks and allocates the new header separately. Other filesystems copy the
+body. Measure free space on each actual publication filesystem before staging;
+directory sizes do not measure space saved by shared blocks.
 Checkpoints bind successful work to the file's device, inode, length and change
 times. Changed or replaced files are verified again.
 
@@ -264,7 +270,8 @@ atomic installation. Retain both original immutable files and preparation
 records until rollback is retired.
 
 Use `wallet-pir-deploy.py artifact-checksum-plan` and
-`artifact-checksum-preflight` with a pinned private request before
+`artifact-checksum-prepare --expect-plan-sha256 HASH` for online preparation,
+then review `artifact-checksum-preflight` with the same pinned private request before
 `artifact-checksum-deploy --expect-plan-sha256 HASH`. The request names every
 affected target, separate CPU/CUDA executable groups, prepared trees, mutable
 record conversions and the existing publisher discovery origin. The first
@@ -274,6 +281,14 @@ latest small records, starts the publisher, verifies discovery contract 2, and
 starts consumers. Each product retains its independent encrypted-answer check.
 An intervening publication without a prepared translation refuses the cutover;
 refresh preparation and retry while the predecessors serve.
+
+A producer preparation may include a `source` with `product`, exact UTF-8
+`inventory` bytes, `inventory_sha256` and a shared absolute `checkpoints` path.
+A consumer preparation instead names `publisher_host` and `publisher_stage` in
+its `source`; it must follow that producer in the request. The tool transfers
+only the three public preparation metadata files, then verifies the consumer's
+own cached bytes. Preparation stages the pinned publisher maintenance binary
+without changing any service unit. Review a fresh activation plan afterward.
 
 `artifact-checksum-status` reports the durable transaction.
 `artifact-checksum-rollback --transaction ID` uses the same request and state

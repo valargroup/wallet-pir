@@ -688,6 +688,28 @@ impl ShippedRuntimes {
         }
         fs::create_dir_all(directory)?;
         let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+        // XFS can share unchanged body extents with the predecessor. Writing
+        // the new header then allocates only its changed blocks. Unsupported
+        // filesystems retain the portable streaming-copy path.
+        #[cfg(target_os = "linux")]
+        let shared_blocks = match rustix::fs::ioctl_ficlone(temporary.as_file(), &input) {
+            Ok(()) => true,
+            Err(error)
+                if [
+                    rustix::io::Errno::OPNOTSUPP,
+                    rustix::io::Errno::XDEV,
+                    rustix::io::Errno::NOTTY,
+                    rustix::io::Errno::INVAL,
+                    rustix::io::Errno::NOSYS,
+                ]
+                .contains(&error) =>
+            {
+                false
+            }
+            Err(error) => return Err(error.into()),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let shared_blocks = false;
         temporary.write_all(&current_identity)?;
         temporary.write_all(&[0u8; 32])?;
         let mut old_body = pir_artifact::Hasher::for_algorithm(pir_artifact::Algorithm::Sha256);
@@ -701,7 +723,9 @@ impl ShippedRuntimes {
             }
             old_body.update(&buffer[..n]);
             body.update(&buffer[..n]);
-            temporary.write_all(&buffer[..n])?;
+            if !shared_blocks {
+                temporary.write_all(&buffer[..n])?;
+            }
             copied += n as u64;
             if copied > bytes {
                 return Err(invalid("predecessor runtime grew"));
@@ -737,7 +761,8 @@ impl ShippedRuntimes {
             &proof,
             &serde_json::to_vec(&serde_json::json!({
                 "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(&target)?),
-                "previous_identity":previous_identity,"current_identity":current_identity
+                "previous_identity":previous_identity,"current_identity":current_identity,
+                "shared_blocks":shared_blocks
             }))?,
         )?;
         Ok((target.to_path_buf(), checksum))

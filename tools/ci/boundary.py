@@ -135,6 +135,8 @@ SHARED_SCOPES = {
 # graph. Every kind of edge counts, including optional and target-specific edges.
 # Synchronization is transport and scheduling, never a product or PIR engine.
 SYNC_MANAGER = 'pir-sync-manager'
+ARTIFACT = 'pir-artifact'
+ARTIFACT_PATH = 'src/shared/pir-artifact/'
 SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
@@ -330,7 +332,9 @@ def violations(packages, allowed):
                 local_pipeline = (name == PIPELINE and not dependency['git'] and
                                   dependency.get('path') == 'src/shared/pir-pipeline/') or (
                                   name == DISCOVERY and not dependency['git'] and
-                                  dependency.get('path') == DISCOVERY_PATH)
+                                  dependency.get('path') == DISCOVERY_PATH) or (
+                                  name == ARTIFACT and not dependency['git'] and
+                                  dependency.get('path') == ARTIFACT_PATH)
                 registry_utility = (name in SYNC_DIRECT - {PIPELINE} and
                                     not dependency.get('path') and not dependency['git'])
                 if not (local_pipeline or registry_utility):
@@ -467,7 +471,7 @@ def resolved_violations(metadata, *, workspace_unified=False):
                 seen.add(current)
                 target = packages[current]
                 if current != root_id and (
-                        (target['source'] is None and target['name'] not in {PIPELINE, DISCOVERY})
+                        (target['source'] is None and target['name'] not in {PIPELINE, DISCOVERY, ARTIFACT})
                         or target['name'] in COMMON | NODE | CANONICAL
                         or target['name'] in {'ipir-sp', 'inspiring', 'reinspiring',
                                               'simplepir-kernel', 'valar-spiral-rs'}

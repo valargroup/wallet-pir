@@ -466,8 +466,8 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
                 target = artifact_cutover.Cutover(request, inventory,
                     descriptors.load_descriptors(args.descriptors), executor or SSHExecutor(inventory),
                     args.state_dir, **options)
-                result = (target.deploy(args.expect_plan_sha256) if operation == 'deploy' else
-                          target.rollback(args.transaction) if operation == 'rollback' else target.plan())
+                result = (getattr(target, operation)(args.expect_plan_sha256) if operation in ('prepare', 'deploy') else
+                          target.rollback(args.transaction) if operation == 'rollback' else getattr(target, operation)())
             out(json.dumps(result, sort_keys=True))
             return 0
         if args.command.startswith('status-routing-'):
