@@ -257,8 +257,8 @@ async fn router_query(
 mod tests {
     use super::*;
     use crate::Controller;
-    use status_shared::{protocol::PROTOCOL, Generation};
     use axum::{body::Body, http::Request};
+    use status_shared::{protocol::PROTOCOL, Generation};
     use std::sync::Arc;
     use tower::ServiceExt;
 
