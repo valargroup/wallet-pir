@@ -1,8 +1,9 @@
 //! Actual canonical-mode CLI ingestion against a local trusted-RPC test double.
 //! The public transaction is real; the block envelope and the mixed
 //! transactions built from its actions are synthetic, not consensus-valid.
+#[path = "support/serving.rs"]
+mod serving;
 mod support;
-use enhance_publisher::local_serving as serving;
 // The offline journal repair shares the RPC double; producer fee derivation is
 // tested with the producer in the shared server chain adapters.
 #[path = "rpc/rebuild.rs"]
@@ -14,7 +15,6 @@ use axum::{
     routing::post,
     Json, Router,
 };
-use enhance_query_server::worker::Worker;
 use enhance_query_server::{client::EnhancePirClient, protocol::Manifest, ACTIVATION_HEIGHT};
 use serde_json::{json, Value};
 use std::{
@@ -22,7 +22,7 @@ use std::{
     path::Path,
     process::{Child, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -168,7 +168,13 @@ fn start(root: &Path, address: &str, rpc: &str, roles: &serving::Roles) -> Proce
             .unwrap(),
     )
 }
-async fn published(process: &mut Process, root: &Path, origin: &str, hash: &str) -> Manifest {
+async fn published(
+    process: &mut Process,
+    root: &Path,
+    origin: &str,
+    hash: &str,
+    roles: &serving::Roles,
+) -> Manifest {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -180,9 +186,10 @@ async fn published(process: &mut Process, root: &Path, origin: &str, hash: &str)
             "coordinator stopped: {}",
             std::fs::read_to_string(root.join("coordinator.log")).unwrap()
         );
+        roles.synchronize().await;
         if let Ok(response) = client.get(format!("{origin}/v1/enhance/init")).send().await {
             if let Ok(manifest) = response.json::<Manifest>().await {
-                if manifest.anchor_block_hash == hash {
+                if manifest.anchor_block_hash == hash && roles.accepts(&manifest) {
                     return manifest;
                 }
             }
@@ -248,250 +255,86 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
             .with_state(state.clone()),
     )
     .await;
-    let mut workers = Vec::new();
-    let mut replicas = Vec::new();
-    let hold_prepare = Arc::new(AtomicBool::new(false));
-    let held_requests = Arc::new(AtomicUsize::new(0));
-    let hold_commit = Arc::new(AtomicBool::new(false));
-    let held_commits = Arc::new(AtomicUsize::new(0));
-    for i in 0..2 {
-        let hold = hold_prepare.clone();
-        let held = held_requests.clone();
-        let commit_hold = hold_commit.clone();
-        let commit_held = held_commits.clone();
-        let (url, task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router()
-                .layer(axum::middleware::from_fn(
-                    move |request: axum::extract::Request, next: axum::middleware::Next| {
-                        let hold = hold.clone();
-                        let held = held.clone();
-                        let commit_hold = commit_hold.clone();
-                        let commit_held = commit_held.clone();
-                        async move {
-                            if request.uri().path() == "/internal/prepare"
-                                && hold.load(Ordering::SeqCst)
-                            {
-                                held.fetch_add(1, Ordering::SeqCst);
-                                while hold.load(Ordering::SeqCst) {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                }
-                            }
-                            if request.uri().path() == "/internal/commit"
-                                && commit_hold.load(Ordering::SeqCst)
-                            {
-                                commit_held.fetch_add(1, Ordering::SeqCst);
-                                while commit_hold.load(Ordering::SeqCst) {
-                                    tokio::time::sleep(Duration::from_millis(10)).await;
-                                }
-                            }
-                            next.run(request).await
-                        }
-                    },
-                )),
-        )
-        .await;
-        workers.push(task);
-        replicas.push(json!({"name":format!("r{i}"),"url":url}));
-    }
-    std::fs::write(
-        root.path().join("workers.json"),
-        serde_json::to_vec(&json!({"groups":[{"name":"g0","replicas":replicas}]})).unwrap(),
-    )
-    .unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
-    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = socket.local_addr().unwrap().to_string();
-    drop(socket);
     let roles = serving::Roles::for_process(&root.path().join("roles"))
         .await
         .unwrap();
-    let origin = roles.origin.clone();
+    let address = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .to_string();
     let mut process = start(root.path(), &address, &rpc_url, &roles);
-    let first = published(&mut process, root.path(), &origin, &state.blocks[0].1).await;
-    assert_eq!(first.coverage.records, 6);
-    assert_eq!(
-        std::fs::read_to_string(root.path().join("data/source-mode")).unwrap(),
-        "canonical-archive"
-    );
-    let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
-    assert_answers(&mut retained, &expected).await;
-    // A reorg response whose declared tree has a missing prefix cannot be
-    // committed. Observe the actual ingestion failure, not just a short delay.
-    state.tree_size.store(7, Ordering::SeqCst);
-    state.selected.store(1, Ordering::SeqCst);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        assert!(process.0.try_wait().unwrap().is_none());
-        let log = std::fs::read_to_string(root.path().join("coordinator.log")).unwrap();
-        if log.contains("journal continuity mismatch") {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "missing ingestion rejection: {log}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        published(&mut process, root.path(), &origin, &state.blocks[0].1).await,
-        first,
-        "invalid RPC metadata must not replace the published generation"
-    );
-    assert_eq!(
-        retained
-            .query_position_with_timing(0)
-            .await
+    let first = published(
+        &mut process,
+        root.path(),
+        &roles.origin,
+        &state.blocks[0].1,
+        &roles,
+    )
+    .await;
+    let mut client = EnhancePirClient::connect(&roles.origin).await.unwrap();
+    assert_answers(&mut client, &expected).await;
+    let size = || {
+        serde_json::from_slice::<Value>(
+            &std::fs::read(root.path().join("data/enhance/manifest.json")).unwrap(),
+        )
+        .unwrap()["tree_size"]
+            .as_u64()
             .unwrap()
-            .0
-            .as_ref(),
-        expected[0],
-        "journal rewind must not invalidate the retained serving snapshot"
-    );
-    hold_prepare.store(true, Ordering::SeqCst);
-    state.tree_size.store(6, Ordering::SeqCst);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    while held_requests.load(Ordering::SeqCst) == 0 {
-        assert!(process.0.try_wait().unwrap().is_none());
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "prepare barrier not reached"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let controller_path = root.path().join("data/control/controller.json");
-    let interrupted: Value =
-        serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
-    assert_eq!(interrupted["operation"]["phase"], "PREPARING");
-    assert_eq!(
-        published(&mut process, root.path(), &origin, &state.blocks[0].1).await,
-        first,
-        "an in-flight candidate must not replace the published generation"
-    );
-    drop(process); // Kill the real process with a durably reserved, uncommitted candidate.
-    hold_prepare.store(false, Ordering::SeqCst);
-    let mut process = start(root.path(), &address, &rpc_url, &roles);
-    let second = published(&mut process, root.path(), &origin, &state.blocks[1].1).await;
-    let recovered: Value =
-        serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
-    assert!(recovered["epoch"].as_u64().unwrap() > interrupted["epoch"].as_u64().unwrap());
-    assert!(
-        recovered["next_attempt"].as_u64().unwrap() > interrupted["next_attempt"].as_u64().unwrap()
-    );
-    assert!(second.generation > first.generation);
-    assert_eq!(
-        second.coverage.records, 6,
-        "reorg must rewind before replay, not append duplicates"
-    );
-    assert_eq!(
-        retained
-            .query_position_with_timing(1)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        expected[1]
-    );
-    // Finish the preceding publication's acknowledgements before arming the
-    // barrier, so only the new reorg decision can trigger this crash boundary.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let settled: Value =
-            serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
-        if settled["pending_commits"].as_array().unwrap().is_empty() {
-            break;
-        }
-        assert!(process.0.try_wait().unwrap().is_none());
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "preceding commit outbox did not drain"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    hold_commit.store(true, Ordering::SeqCst);
-    state.selected.store(2, Ordering::SeqCst);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    while held_commits.load(Ordering::SeqCst) == 0 {
-        assert!(process.0.try_wait().unwrap().is_none());
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "commit barrier not reached"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let committed: Value =
-        serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
-    assert_eq!(committed["pending_commits"].as_array().unwrap().len(), 2);
-    let third = published(&mut process, root.path(), &origin, &state.blocks[2].1).await;
-    assert!(third.generation > second.generation);
-    assert_eq!(
-        serde_json::to_value(&third).unwrap(),
-        committed["published"][0]
-    );
-    drop(process); // Durable publication, but neither worker has acknowledged it.
-    hold_commit.store(false, Ordering::SeqCst);
-    let before_restart = state.calls.load(Ordering::SeqCst);
-    let mut process = start(root.path(), &address, &rpc_url, &roles);
-    let restarted = published(&mut process, root.path(), &origin, &state.blocks[2].1).await;
-    assert_eq!(restarted, third);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let recovered: Value =
-            serde_json::from_slice(&std::fs::read(&controller_path).unwrap()).unwrap();
-        if recovered["pending_commits"].as_array().unwrap().is_empty() {
-            assert!(recovered["epoch"].as_u64().unwrap() > committed["epoch"].as_u64().unwrap());
-            assert_eq!(
-                recovered["next_attempt"], committed["next_attempt"],
-                "committed recovery must not start another candidate"
-            );
-            break;
-        }
-        assert!(process.0.try_wait().unwrap().is_none());
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "commit outbox did not drain"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while state.calls.load(Ordering::SeqCst) <= before_restart + 2 {
-        assert!(tokio::time::Instant::now() < deadline);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(
-        published(&mut process, root.path(), &origin, &state.blocks[2].1).await,
-        third
-    );
-    let mut current = EnhancePirClient::connect(&origin).await.unwrap();
-    assert_answers(&mut current, &expected).await;
-    assert_answers(&mut retained, &expected).await;
-    assert_eq!(
-        retained
-            .query_position_with_timing(1)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        expected[1]
-    );
+    };
+    assert_eq!(size(), 6);
     drop(process);
+    let mut process = start(root.path(), &address, &rpc_url, &roles);
+    let restarted = published(
+        &mut process,
+        root.path(),
+        &roles.origin,
+        &state.blocks[0].1,
+        &roles,
+    )
+    .await;
+    assert!(restarted.generation > first.generation);
+    assert_eq!(size(), 6, "restart must not duplicate records");
+    state.selected.store(1, Ordering::SeqCst);
+    state.tree_size.store(7, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while size() != 0 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    roles.synchronize().await;
+    assert!(
+        !reqwest::get(format!("{}/v1/enhance/init", roles.origin))
+            .await
+            .unwrap()
+            .status()
+            .is_success(),
+        "incomplete source cannot reactivate publication"
+    );
+    state.tree_size.store(6, Ordering::SeqCst);
+    let next = published(
+        &mut process,
+        root.path(),
+        &roles.origin,
+        &state.blocks[1].1,
+        &roles,
+    )
+    .await;
+    assert!(next.generation > restarted.generation);
+    assert_eq!(size(), 6);
+    assert_answers(&mut client, &expected).await;
     rpc_task.abort();
-    for worker in workers {
-        worker.abort();
-    }
 }
 
-/// The application commits independently of remote preparation refusal. Exercise
-/// collection/restart/reorg and two real publications against the frozen byte oracle.
-/// The larger CLI scenario above retains its independent end-to-end qualification.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn application_collection_commits_survive_preparation_refusal_restart_and_reorg() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consumers() {
     use enhance_publisher::{
         application::{collect, Source},
-        capacity,
-        control::{Group, Ledger, Replica},
         ingest::EnhanceJournal,
+        publisher::Publisher,
         zakura::{Prevouts, ZakuraClient},
     };
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
@@ -505,7 +348,7 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
         calls: Arc::new(AtomicUsize::new(0)),
         tree_size: Arc::new(AtomicUsize::new(2)),
     };
-    let (rpc_url, rpc_task) = serve(
+    let (url, node) = serve(
         Router::new()
             .route("/", post(rpc))
             .with_state(state.clone()),
@@ -513,162 +356,52 @@ async fn application_collection_commits_survive_preparation_refusal_restart_and_
     .await;
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
-    let source = Source::Canonical {
-        rpc: ZakuraClient::from_cookie_file(&rpc_url, root.path().join("cookie")).unwrap(),
-        prevouts: Box::new(Prevouts::new(100)),
+    let rpc = ZakuraClient::from_cookie_file(&url, root.path().join("cookie")).unwrap();
+    let source = Source {
+        rpc: rpc.clone(),
+        prevouts: Prevouts::new(100),
     };
-    let refuse = Arc::new(AtomicBool::new(true));
-    let mut workers = Vec::new();
-    let mut replicas = Vec::new();
-    for i in 0..2 {
-        let (worker_url, worker_task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router()
-                .layer(axum::middleware::from_fn({
-                    let refuse = refuse.clone();
-                    move |request: axum::extract::Request, next: axum::middleware::Next| {
-                        let refuse = refuse.clone();
-                        async move {
-                            if request.uri().path() == "/internal/prepare"
-                                && refuse.load(Ordering::SeqCst)
-                            {
-                                return axum::response::IntoResponse::into_response(
-                                    StatusCode::SERVICE_UNAVAILABLE,
-                                );
-                            }
-                            next.run(request).await
-                        }
-                    }
-                })),
-        )
-        .await;
-        workers.push(worker_task);
-        replicas.push(Replica {
-            name: format!("r{i}"),
-            url: worker_url,
-            incarnation: String::new(),
-            ledger: Ledger::default(),
-        });
-    }
-    let groups = vec![Group {
-        placement_policy: Default::default(),
-        id: "g0".into(),
-        sequence: 0,
-        replicas,
-    }];
-    let mut serving = serving::Serving::start(
-        &root.path().join("roles"),
-        &root.path().join("control"),
-        groups.clone(),
-    )
-    .await
-    .unwrap();
-    let coordinator = serving.coordinator();
+    let publisher_root = root.path().join("publication");
+    let publisher = Publisher::open(&publisher_root, rpc.clone()).unwrap();
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let collected = collect(&mut journal, &coordinator, &source).await.unwrap();
-    assert!(
-        coordinator.manifest().await.is_none(),
-        "collection does not activate"
-    );
-    assert!(collected
-        .publish(capacity::Policy::default())
+    let work = collect(&mut journal, &publisher, &source)
         .await
-        .is_err());
+        .unwrap()
+        .unwrap();
+    publisher.revoke_after(0).unwrap();
+    assert!(publisher.publish(work).await.is_err());
     assert_eq!(
         journal.tree_size(),
         2,
-        "preparation failure preserves commits"
+        "publication refusal preserves acquisition"
     );
-    assert!(coordinator.manifest().await.is_none());
-    // Compare records to the frozen independent byte oracle, not producer output.
     let expected =
         hex::decode(include_str!("fixtures/ironwood-canonical-record-0.hex").trim()).unwrap();
     assert_eq!(
         journal.records().read_records(0, 1).unwrap(),
         expected[84..]
     );
-    // Drain the refused candidate before restart; the next pass must recover the
-    // committed source without rereading or duplicating its positions.
-    coordinator.reconcile().await.unwrap();
     drop(journal);
-    drop(coordinator);
+    drop(publisher);
+    let publisher = Publisher::open(&publisher_root, rpc).unwrap();
     let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let coordinator = serving.restart(groups).await.unwrap();
-    coordinator.reconcile().await.unwrap();
-    drop(collect(&mut journal, &coordinator, &source).await.unwrap());
-    assert_eq!(journal.tree_size(), 2);
-    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[0].1);
-    // Retry preparation through the shared lifecycle, using the existing worker
-    // HTTP boundaries and original independent client/record oracle.
-    refuse.store(false, Ordering::SeqCst);
-    collect(&mut journal, &coordinator, &source)
+    let work = collect(&mut journal, &publisher, &source)
         .await
         .unwrap()
-        .publish(capacity::Policy::default())
-        .await
         .unwrap();
-    let first = coordinator.manifest().await.unwrap();
-    let origin = serving.origin.clone();
-    let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
-    assert_eq!(
-        retained
-            .query_position_with_timing(0)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        &expected[84..]
-    );
-    // Reorg plus invalid source completeness must fail after the durable rewind.
+    assert_eq!(journal.tree_size(), 2);
+    publisher.publish(work).await.unwrap();
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
-    assert!(collect(&mut journal, &coordinator, &source).await.is_err());
+    assert!(collect(&mut journal, &publisher, &source).await.is_err());
     assert_eq!(journal.tree_size(), 0);
-    assert!(journal.highest_committed().is_none());
-    // The next source pass can recover; it must never append duplicate positions.
     state.tree_size.store(2, Ordering::SeqCst);
-    drop(collect(&mut journal, &coordinator, &source).await.unwrap());
-    assert_eq!(journal.tree_size(), 2);
-    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
-    assert_eq!(
-        coordinator.manifest().await.unwrap().generation,
-        first.generation,
-        "collection cannot activate a replacement"
-    );
-    collect(&mut journal, &coordinator, &source)
+    let work = collect(&mut journal, &publisher, &source)
         .await
         .unwrap()
-        .publish(capacity::Policy::default())
-        .await
         .unwrap();
-    let next = coordinator.manifest().await.unwrap();
-    assert!(next.generation > first.generation);
-    assert_eq!(next.anchor_block_hash, state.blocks[1].1);
-    let mut current = EnhancePirClient::connect(&origin).await.unwrap();
-    assert_eq!(
-        current
-            .query_position_with_timing(0)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        &expected[84..]
-    );
-    assert_eq!(
-        retained
-            .query_position_with_timing(0)
-            .await
-            .unwrap()
-            .0
-            .as_ref(),
-        &expected[84..],
-        "existing client recovers expected answer after publication replacement"
-    );
-    for worker in workers {
-        worker.abort();
-        let _ = worker.await;
-    }
-    rpc_task.abort();
-    let _ = rpc_task.await;
+    assert_eq!(journal.tree_size(), 2);
+    publisher.publish(work).await.unwrap();
+    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
+    node.abort();
 }

@@ -553,9 +553,58 @@ fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
     assert_eq!(faults.live_bytes.load(SeqCst), 0);
 }
 
-// The fast algebra oracle in ipir uses one column block. Keep the full
-// Engine/composed-tail oracle at deployed geometry in qualification.
-#[cfg(feature = "qualification-tests")]
+impl Evaluation {
+    /// Borrow the existing publication only when the generic combiner is the
+    /// identity. Partial and composed domains, including the 8K tail, return
+    /// none and still evaluate through the summed units.
+    fn verified_hint_artifact(
+        &self,
+    ) -> Result<Option<crate::artifact::PublicationArtifact>, String> {
+        let ([unit], [identity], [spec]) = (
+            self.units.as_slice(),
+            self.plan.units.as_slice(),
+            self.plan.shard.units.as_slice(),
+        ) else {
+            return Ok(None);
+        };
+        let params = parameters(self.plan.shard.logical_rows)?;
+        let runtime = unit.runtime();
+        let local = runtime.server.params();
+        let layout = DatabaseLayout {
+            shard_rows: identity.allocated_rows as usize,
+            ..ENHANCE_LAYOUT
+        };
+        let (ring, expected) = crate::ipir::shard_parameters(&layout).map_err(|e| e.to_string())?;
+        if self.plan.validate().is_err()
+            || self.plan.shard.composed()
+            || spec.local_row_start != 0
+            || identity.allocated_rows > self.plan.shard.logical_rows
+            || !layout.shard_rows.is_multiple_of(rlwe().d)
+            || runtime.query_row_start != 0
+            || runtime.shard_id != self.plan.shard.id
+            || runtime.rows_sha256 != identity.content_sha256
+            || ring.d != rlwe().d
+            || ring.q != rlwe().q
+            || local.db_rows != expected.db_rows
+            || local.db_cols != expected.db_cols
+            || local.p != expected.p
+            || local.item_size_bits != expected.item_size_bits
+            || local.query_bits != expected.query_bits
+            || local.q_prime_1 != expected.q_prime_1
+            || local.db_cols != params.db_cols
+            || local.p != params.p
+        {
+            return Ok(None);
+        }
+        unit.publication()
+            .validate(params.db_cols / rlwe().d, rlwe().d)
+            .map_err(|e| e.to_string())?;
+        Ok(Some(unit.publication().clone()))
+    }
+}
+
+// One supported 8K composed tail, including the zero-filled gap, against
+// monolithic preprocessing. Larger tail-growth campaigns stay in qualification.
 #[test]
 fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
     let directory = tempfile::tempdir().unwrap();

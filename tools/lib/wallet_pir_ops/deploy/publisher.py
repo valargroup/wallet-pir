@@ -26,7 +26,8 @@ SCHEMA = 'transparent-publisher-cutover/1'
 EXPANDED_SCHEMA = 'publisher-cutover/2'
 SERVING_SCHEMA = 'publisher-cutover/3'
 HTTPS_SCHEMA = 'publisher-https-cutover/1'
-SERVING_SCHEMAS = (SERVING_SCHEMA, HTTPS_SCHEMA)
+ENHANCE_HTTPS_SCHEMA = 'enhance-https-cutover/1'
+SERVING_SCHEMAS = (SERVING_SCHEMA, HTTPS_SCHEMA, ENHANCE_HTTPS_SCHEMA)
 EXPANDED_PRODUCTS = ['enhance', 'status', 'transparent_history', 'transaction_details']
 ADOPTED = ('enhance-pir-coordinator.service', 'status-controller-qualification.service')
 PRODUCTS = ['transparent_history', 'transaction_details']
@@ -40,6 +41,11 @@ INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
 SAMPLER = '/etc/pir-quality/hosts.json'
 LOAD_DROP = '/etc/systemd/system/' + LOAD + '.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf'
 UNIT_PATH = '/etc/systemd/system/' + UNIT
+# The completed Status HTTPS cutover (tools/status/lib/https_cutover.py, retired
+# after 6b6b923b) left this ExecStart-only override on the publisher. An ordinary
+# update owns it only when its bytes are exactly that renderer's output for the
+# running executable.
+STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
 
 
@@ -61,7 +67,8 @@ def load_request(path, expected, *, recovery=False):
                 | ({'https'} if request.get('schema') == HTTPS_SCHEMA else set())
                 | ({'resume_load'} if 'resume_load' in request else set())
                 | ({'expected_disk_latch_sha256'} if 'expected_disk_latch_sha256' in request else set())
-                | ({'preserve_serving'} if 'preserve_serving' in request else set())),
+                | ({'preserve_serving'} if 'preserve_serving' in request else set())
+                | ({'enhance_https'} if request.get('schema') == ENHANCE_HTTPS_SCHEMA else set())),
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
     if 'expected_disk_latch_sha256' in request:
@@ -132,7 +139,42 @@ def load_request(path, expected, *, recovery=False):
     if request['schema'] == HTTPS_SCHEMA:
         from .publisher_https import validate
         validate(request, inventory)
+    if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+        from .enhance_https import validate
+        validate(request, inventory)
     return request, inventory
+
+
+def exec_override(command):
+    return '[Service]\nExecStart=\nExecStart=' + command + '\n'
+
+
+def status_https_override(state, executable_sha256):
+    """Return the installed Status HTTPS override text, or None without drop-ins.
+
+    Refuses any other drop-in, and an override that differs from the Status
+    renderer's output: the fragment command with only its executable replaced by
+    a digest-named publisher release whose digest is the running executable's.
+    The override changes only ExecStart, so the fragment keeps every sandbox,
+    environment and resource setting.
+    """
+    if not state['drop_ins']:
+        return None
+    require([d['path'] for d in state['drop_ins']] == [STATUS_HTTPS_DROP],
+            'unexpected publisher drop-ins; reconcile before changing ownership')
+    text = state['drop_ins'][0]['text']
+    try:
+        fragment = units.exec_start(units.effective([state['fragment_text']]))
+        _, previous, _ = units.split_exec(fragment)
+        _, override, _ = units.split_exec(units.exec_start(units.effective([text])))
+    except units.UnitError as error:
+        raise DeployError('unknown Status HTTPS publisher override: ' + str(error)) from error
+    release = re.fullmatch(re.escape(ROOT_DIR) + '/releases/([a-f0-9]{64})/pir-publisher', override)
+    require(release is not None and release[1] == executable_sha256,
+            'Status HTTPS override does not run the pinned running publisher release')
+    require(fragment.count(previous) == 1 and text == exec_override(fragment.replace(previous, override, 1)),
+            'Status HTTPS publisher override changed; reconcile before changing ownership')
+    return text
 
 
 def stable_unit(state):
@@ -151,9 +193,14 @@ class Cutover:
         self.clock, self.sleep = clock, sleep
         self.lock = None
         self.serving = None
+        self.supervision = None
+        self.identifier = None
         if request['schema'] in SERVING_SCHEMAS:
             from .publisher_serving import Serving
-            if request['schema'] == HTTPS_SCHEMA:
+            if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+                from .enhance_https import EnhanceServing
+                self.serving = EnhanceServing(self)
+            elif request['schema'] == HTTPS_SCHEMA:
                 from .publisher_https import HttpsServing
                 self.serving = HttpsServing(self)
             else:
@@ -166,7 +213,7 @@ class Cutover:
         config = self.request['configuration']
         history = config['transparent_history']['settings']
         display = config['transaction_details']['settings']
-        paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, LOAD_DROP, ROOT_DIR + '/latest.json',
+        paths = [CONFIG, INVENTORY, SAMPLER, UNIT_PATH, STATUS_HTTPS_DROP, LOAD_DROP, ROOT_DIR + '/latest.json',
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
         if self.expanded:
@@ -199,6 +246,14 @@ class Cutover:
         extra = self.request['release']['binary_bytes']
         if self.request['schema'] == HTTPS_SCHEMA:
             extra += self.request['https']['publisher_budget_bytes']
+        if self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            extra += self.request['enhance_https']['publisher_budget_bytes']
+            extra += self.request['serving']['binary_bytes']
+            extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
+            # Ingress or another consumer can share the coordinator filesystem.
+            # Reserve its declared cache in addition to publisher preparation.
+            extra += sum(target.settings['synchronization']['cache_limit_bytes']
+                         for target in self.serving.deployer.targets if target.host == self.host)
         resource = self.resources(extra)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
@@ -207,11 +262,18 @@ class Cutover:
         require(unified['active_state'] == 'active' and unified['main_pid'], 'unified publisher must already be running')
         require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
                 'standalone and unified publishers both own state')
-        require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
+        override = None
+        if self.request['schema'] == SERVING_SCHEMA:
+            override = status_https_override(unified, unified['exe_sha256'])
+        else:
+            require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
         if self.request['schema'] == HTTPS_SCHEMA:
             from .publisher_https import validate_settings
+            validate_settings(installed, config)
+        elif self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .enhance_https import validate_settings
             validate_settings(installed, config)
         else:
             require(config == installed, 'publisher updates must preserve every product setting')
@@ -250,6 +312,10 @@ class Cutover:
             SAMPLER: json.dumps(sampler, indent=2) + '\n',
             LOAD_DROP: '[Service]\nExecStart=\nExecStart=' + load_command + '\n',
         }
+        if override is not None:
+            # Keep the override and point it at the candidate, so rollback
+            # restores the pinned bytes and running executable together.
+            desired[STATUS_HTTPS_DROP] = exec_override(units.exec_start(units.effective([desired[UNIT_PATH]])))
         # Pin consumed inputs without changing their contents or permissions.
         for path in inputs(config):
             require(self.read(path) is not None, 'missing publisher configuration: ' + path)
@@ -275,6 +341,8 @@ class Cutover:
         self.ex.write(self.host, path + '/journal.json', durable.canonical(journal), 0o600)
 
     def effect(self, journal, name, action):
+        if self.supervision and journal['phase'] not in ('restoring', 'rolled-back'):
+            self.supervision.guard()
         journal['intent'] = name
         self.save(journal)
         self.lock.verify()
@@ -413,10 +481,12 @@ class Cutover:
     def deploy(self, binary, expected_plan, serving_binary=None):
         require(file_sha256(binary) == self.request['release']['binary_sha256'] and
                 Path(binary).stat().st_size == self.request['release']['binary_bytes'], 'publisher executable does not match request')
+        require(self.request['schema'] != ENHANCE_HTTPS_SCHEMA or self.supervision is not None,
+                'Enhance HTTPS deployment requires the independent supervised runner')
         with production_lock(self.inventory, self.ex) as self.lock:
             plan = self.capture()
             require(durable.digest(plan) == expected_plan, 'publisher plan is stale; review a fresh plan')
-            identifier = new_id('publisher', self.request['release']['binary_sha256'])
+            identifier = self.identifier or new_id('publisher', self.request['release']['binary_sha256'])
             journal = {'schema': self.request['schema'], 'id': identifier, 'phase': 'staging', 'request': self.request,
                        'plan': plan, 'completed': [], 'intent': None}
             self.save(journal)
@@ -436,6 +506,8 @@ class Cutover:
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
+            if self.supervision:
+                self.supervision.arm()
             if self.resume_load:
                 self.effect(journal, 'pause continuous load', lambda: self.stop(LOAD))
             else:
@@ -458,10 +530,17 @@ class Cutover:
                 self.serving.verify(journal)
                 self.serving.route(journal)
             self.exact(journal)
+            if self.supervision:
+                self.serving.verify_advancement(journal)
+                self.exact(journal)
             if self.resume_load:
                 self.effect(journal, 'resume continuous load', lambda: self.ex.systemctl(self.host, 'start', LOAD))
             else:
                 self.require_stopped_load()
+            if self.supervision:
+                self.supervision.accept({'products': {name: {'ready': True, 'advanced': True, 'exact': True}
+                    for name in self.request['checks']}, 'progress': journal['product_progress'],
+                    'request_sha256': durable.digest(self.request)})
             self.save(journal, 'committed')
             return journal
 
@@ -672,21 +751,31 @@ def register(commands):
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
+        command.add_argument('--cuda-binary')
         if operation in ('preflight', 'deploy'):
             command.add_argument('--archive', required=True)
         if operation == 'deploy':
             command.add_argument('--expect-plan-sha256', required=True)
 
+    for operation in ('run', 'watchdog'):
+        command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
+        command.add_argument('--transaction', required=True)
+
 
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
+    if operation in ('run', 'watchdog'):
+        from .cutover_runner import dispatch as supervised
+        return supervised(args)
     request, inventory = load_request(args.request, args.request_sha256,
                                       recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify', 'continue'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
         target.serving.binary = getattr(args, 'serving_binary', None)
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            target.serving.cuda_binary = getattr(args, 'cuda_binary', None)
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
     if operation == 'continue':
@@ -707,6 +796,14 @@ def dispatch(args, executor=None, **_options):
                     stable_unit(executor.probe_unit(c['host'], c['unit'])) for c in request['https']['consumers']}
                 result['history_edge_sha256'] = sha(executor.read(request['https']['history_edge']['host'],
                                                                  '/etc/caddy/Caddyfile'))
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            pointer = target.read(ROOT_DIR + '/supervised-latest.json')
+            if pointer is not None:
+                from .cutover_guard import unit_name
+                pointer = json.loads(pointer)
+                unit_name(pointer['id'])
+                if pointer['request_sha256'] == args.request_sha256:
+                    result['supervision'] = json.loads(target.read(ROOT_DIR + '/transactions/' + pointer['id'] + '/decision.json'))
         return result
     if operation == 'plan':
         return target.plan()
@@ -721,6 +818,9 @@ def dispatch(args, executor=None, **_options):
             return target.plan()
         if target.serving:
             target.serving.binary = args.serving_binary
+        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .cutover_runner import launch
+            return launch(target, args, binary)
         try:
             return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
         except Exception:

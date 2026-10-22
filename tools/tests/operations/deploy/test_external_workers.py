@@ -326,7 +326,9 @@ class TwoEnhanceWorkers(unittest.TestCase):
             'hosts': {'local': {}},
             'services': {'enhance': {'roles': {'external-worker': [
                 {'host': 'local', 'install': True, 'unit': unit, 'vars': {'listen': listen},
-                 'settings': {'listen': listen, 'data_dir': data}}
+                 'settings': {'listen': listen, 'data_dir': data, 'synchronization': {
+                     'publisher_origin': 'https://publisher.example', 'shards': [0],
+                     'download_budget_bytes': 4 << 30, 'cache_limit_bytes': 4 << 30}}}
                 for unit, listen, data in workers]}}},
         }))
         fake = FakeFleet()

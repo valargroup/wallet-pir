@@ -160,6 +160,59 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
     Ok(())
 }
 
+/// [`write_atomic`] for a record that must survive a crash before its caller
+/// acts on it: completion evidence that permits activation and cheap restart,
+/// and the integrity-failure record that keeps corrupt bytes withdrawn.
+///
+/// Unlike [`write_atomic`], every step is an error: the parent directory is
+/// opened before the final name changes, and a failed directory sync fails
+/// the write. After a sync failure the final name may already hold the new
+/// bytes, but the caller has not been told they are durable. A failed attempt
+/// removes its temporary and leaves the final name as it was or whole.
+pub fn write_durable(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
+    write_durable_with(
+        path,
+        bytes,
+        |p| std::fs::File::open(p),
+        std::fs::File::sync_all,
+    )
+}
+
+pub(crate) fn write_durable_with(
+    path: &Path,
+    bytes: &[u8],
+    open_directory: impl FnOnce(&Path) -> std::io::Result<std::fs::File>,
+    sync_directory: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+) -> Result<(), BoxError> {
+    use std::io::Write;
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let directory = open_directory(parent)
+        .map_err(|error| format!("open {} to sync it: {error}", parent.display()))?;
+    let temp = path.with_extension("tmp");
+    let replaced = (|| {
+        let mut file = std::fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if let Err(error) = replaced {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("write {}: {error}", path.display()).into());
+    }
+    sync_directory(&directory).map_err(|error| {
+        format!(
+            "sync {} after replacing {}: {error}",
+            parent.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
 pub fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {
     let path = dir.join(name);
     if path.exists() {
@@ -1186,6 +1239,60 @@ impl ValidatePrevious for transparent_filter::ShardMap {
 mod tests {
     use super::*;
     use crate::ingest::snapshot::Snapshot;
+
+    #[test]
+    fn a_durable_record_refuses_an_unopenable_directory_before_replacing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history-restore.json");
+        std::fs::write(&path, b"old").unwrap();
+        let error = write_durable_with(
+            &path,
+            b"new",
+            |_| Err(std::io::Error::other("open refused")),
+            |_| unreachable!("no directory to sync"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("open refused"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        assert!(!path.with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn a_durable_record_reports_a_failed_directory_sync() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("integrity-failures.json");
+        let error = write_durable_with(
+            &path,
+            b"[]",
+            |p| std::fs::File::open(p),
+            |_| Err(std::io::Error::other("sync refused")),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("sync refused"), "{error}");
+        // The rename happened, so the name holds whole bytes, but the caller
+        // was not told they are durable.
+        assert_eq!(std::fs::read(&path).unwrap(), b"[]");
+        write_durable(&path, b"[1]").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"[1]");
+    }
+
+    #[test]
+    fn an_interrupted_durable_replacement_keeps_the_previous_record_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history-restore.json");
+        std::fs::write(&path, b"old").unwrap();
+        // A crash before the rename leaves only a partial temporary, which the
+        // next write replaces without ever exposing it under the final name.
+        std::fs::write(path.with_extension("tmp"), b"ne").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        write_durable(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert!(!path.with_extension("tmp").exists());
+        // A temporary that cannot be written fails without touching the name.
+        std::fs::create_dir(path.with_extension("tmp")).unwrap();
+        assert!(write_durable(&path, b"newer").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    }
     fn options(output: &Path, previous: Option<&Path>) -> PublishOptions {
         PublishOptions {
             data_dir: PathBuf::new(),

@@ -1,5 +1,5 @@
 //! Enhance publisher diagnostics and offline maintenance.
-use crate::{coordinator::Coordinator, zakura::ZakuraClient};
+use crate::zakura::ZakuraClient;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -13,6 +13,16 @@ struct Cli {
 enum Command {
     /// Report compiled capabilities without opening state or loading a GPU driver.
     BuildInfo,
+    /// Offline transfer of recovery floors for the locked HTTPS cutover.
+    HandoffHttpsState {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        transaction: String,
+        /// Fence retained sessions before restoring the previous runtime.
+        #[arg(long)]
+        rollback: bool,
+    },
     /// Prepare a complete immutable publication from a stopped canonical journal.
     /// The wallet manifest pins coverage, recovery identities and expected setup.
     PreparePublication {
@@ -22,16 +32,6 @@ enum Command {
         manifest: PathBuf,
         #[arg(long)]
         output: PathBuf,
-    },
-    /// Confirm retained sessions already have router-prepared packing artifacts.
-    PreparePackingArtifacts {
-        #[arg(long)]
-        data_dir: PathBuf,
-    },
-    /// Offline bridge for rolling back to coordinator packing without losing recovery history.
-    RestoreLegacyPlacement {
-        #[arg(long)]
-        control_dir: PathBuf,
     },
     /// Offline re-derivation of a coordinator journal's records from chain into
     /// a staged journal that a restarted coordinator adopts. Reads the source
@@ -63,6 +63,16 @@ pub async fn run(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse_from(args);
     match cli.command {
+        Command::HandoffHttpsState {
+            data_dir,
+            transaction,
+            rollback,
+        } => {
+            println!(
+                "{}",
+                crate::handoff::transfer(&data_dir, rollback, &transaction)?
+            );
+        }
         Command::PreparePublication {
             source,
             manifest,
@@ -102,10 +112,6 @@ pub async fn run(
                     "source_revision": option_env!("WALLET_PIR_SOURCE_REVISION"),
                 })
             );
-        }
-        Command::PreparePackingArtifacts { data_dir } => Coordinator::backfill_prepared(&data_dir)?,
-        Command::RestoreLegacyPlacement { control_dir } => {
-            crate::control::Store::open(&control_dir)?.restore_legacy_placement()?;
         }
         Command::RebuildJournal {
             source,

@@ -109,23 +109,46 @@ pub async fn run(
     poll_seconds: u64,
     commit_every: u64,
 ) -> Result<(), BoxError> {
-    let mut cache = OutputCache::new(cache_outputs);
-    loop {
-        let tip = zakura.tip_height().await?;
-        state.set_tip(tip).await;
+    pir_pipeline::publisher::PublisherService::new(FilterIngestion {
+        zakura,
+        state,
+        cache: OutputCache::new(cache_outputs),
+        cache_outputs,
+        poll_seconds,
+        commit_every,
+        retrying: false,
+    })
+    .run(std::future::pending())
+    .await
+}
+
+struct FilterIngestion {
+    zakura: NodeClient,
+    state: ServiceState,
+    cache: OutputCache,
+    cache_outputs: usize,
+    poll_seconds: u64,
+    commit_every: u64,
+    retrying: bool,
+}
+impl pir_pipeline::publisher::Workflow for FilterIngestion {
+    type Error = BoxError;
+    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
+        self.retrying = false;
+        let tip = self.zakura.tip_height().await?;
+        self.state.set_tip(tip).await;
         {
-            let mut inner = state.inner().write().await;
+            let mut inner = self.state.inner().write().await;
             let store = &mut inner.store;
-            reconcile(&zakura, store, tip, &state).await?;
+            reconcile(&self.zakura, store, tip, &self.state).await?;
         }
 
-        let mut next = state.inner().read().await.store.next_height();
+        let mut next = self.state.inner().read().await.store.next_height();
         if next > tip {
-            state.set_phase(Phase::Serving).await;
-            tokio::time::sleep(std::time::Duration::from_secs(poll_seconds)).await;
-            continue;
+            self.state.set_phase(Phase::Serving).await;
+            return Ok(pir_pipeline::publisher::Control::Continue);
         }
-        state
+        self.state
             .set_phase(Phase::Syncing {
                 current_height: next.checked_sub(1),
                 target_height: tip,
@@ -136,31 +159,50 @@ pub async fn run(
         let mut committed = false;
         while next <= tip {
             // Fetch and build outside the lock; take it only to append.
-            let built = build_block_filter(&zakura, &mut cache, next).await?;
-            {
-                let mut inner = state.inner().write().await;
-                let store = &mut inner.store;
-                // Coverage cannot have moved: this task is the only writer.
-                // Checking anyway keeps the append total rather than relying on
-                // that staying true.
-                if store.next_height() != next {
-                    break;
-                }
-                store.append(next, built.block_hash, built.filter.as_slice())?;
-                since_commit += 1;
-                if since_commit >= commit_every {
-                    store.commit()?;
-                    since_commit = 0;
-                    committed = true;
-                }
-            }
+            let state = &self.state;
+            let commit_every = self.commit_every;
+            let rpc = &self.zakura;
+            let cache = &mut self.cache;
+            let built = pir_pipeline::publisher::PublicationPass::new(
+                async { Ok::<_, BoxError>(pir_pipeline::Input::Work(next)) },
+                |height| async move {
+                    build_block_filter(rpc, cache, height)
+                        .await
+                        .map(pir_pipeline::Input::Work)
+                },
+                |built| async {
+                    {
+                        let mut inner = state.inner().write().await;
+                        let store = &mut inner.store;
+                        // Coverage cannot have moved: this task is the only writer.
+                        // Checking anyway keeps the append total rather than relying on
+                        // that staying true.
+                        if store.next_height() != next {
+                            return Ok(None);
+                        }
+                        store.append(next, built.block_hash, built.filter.as_slice())?;
+                        since_commit += 1;
+                        if since_commit >= commit_every {
+                            store.commit()?;
+                            since_commit = 0;
+                            committed = true;
+                        }
+                    }
+                    Ok(Some(built))
+                },
+            )
+            .run(&mut ())
+            .await?;
+            let pir_pipeline::Input::Work(Some(built)) = built else {
+                break;
+            };
             // Republish progress on the same cadence as the commit, so the
             // health endpoint tracks the backfill instead of reporting the
             // height this pass started from for its whole duration. Doing it
             // per block would take the state lock once more per block for a
             // number an operator reads at human speed.
             if committed {
-                state
+                self.state
                     .set_phase(Phase::Syncing {
                         current_height: Some(next),
                         target_height: tip,
@@ -168,16 +210,36 @@ pub async fn run(
                     .await;
                 committed = false;
             }
-            state
+            self.state
                 .metrics()
                 .observe_block(built.rpc_lookups, built.cache_hits);
             next += 1;
         }
         {
-            let mut inner = state.inner().write().await;
+            let mut inner = self.state.inner().write().await;
             inner.store.commit()?;
         }
-        state.set_phase(Phase::Serving).await;
-        tokio::time::sleep(std::time::Duration::from_secs(poll_seconds)).await;
+        self.state.set_phase(Phase::Serving).await;
+        Ok(pir_pipeline::publisher::Control::Continue)
+    }
+    fn failed(&mut self, error: &BoxError) -> pir_pipeline::FailurePolicy {
+        tracing::error!(%error, "filter ingestion stopped");
+        self.retrying = true;
+        self.cache = OutputCache::new(self.cache_outputs);
+        pir_pipeline::FailurePolicy::NextPoll
+    }
+    async fn wait(&mut self) -> Result<(), BoxError> {
+        let seconds = if self.retrying {
+            self.state
+                .set_phase(Phase::Failed {
+                    reason: "ingestion failed; retrying; inspect local logs".into(),
+                })
+                .await;
+            30
+        } else {
+            self.poll_seconds
+        };
+        tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+        Ok(())
     }
 }

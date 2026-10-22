@@ -30,6 +30,10 @@ ENHANCE_PUBLIC_HOST {
 	handle /v1/status/* {
 		reverse_proxy 127.0.0.1:8492
 	}
+	# Only publication artifacts and bounded authority are exposed here.
+	handle /provider/enhance/v1/* {
+		reverse_proxy 127.0.0.1:8084
+	}
 	# Wallets reach only query ingress: manifest, session reads and queries.
 	# Query admission can reject overload before evaluation. Use a fresh local
 	# upstream connection so a stale keepalive socket cannot turn that response

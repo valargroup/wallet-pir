@@ -22,22 +22,32 @@ pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Re
     config.validate()?;
     let publisher = Publisher::new(config.publisher)?;
     let rpc = NodeClient::from_cookie_file(config.rpc_url, config.cookie)?;
-    let thread = std::thread::Builder::new()
-        .name("status-publisher".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .max_blocking_threads(2)
-                .enable_all()
-                .build()?;
-            runtime.block_on(publisher.run_managed(rpc, http, stop))
-        })?;
-    tokio::task::spawn_blocking(move || {
-        thread
-            .join()
-            .map_err(|_| -> Box<dyn std::error::Error + Send + Sync> {
-                "Status publisher thread panicked".into()
-            })?
+    pir_pipeline::publisher::dedicated_runtime("status-publisher", move || async move {
+        publisher.run_managed(rpc, http, stop).await
     })
-    .await?
+    .await
+}
+
+/// Validate and declare this publisher without opening credentials or state.
+pub fn configure(
+    config: Config,
+) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
+    use pir_pipeline::publisher::{
+        PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,
+    };
+    config.validate()?;
+    let resources = PublisherResources {
+        listeners: vec![config.publisher.private_listen],
+        writable_paths: vec![config.publisher.state_dir.clone()],
+        probes: vec![ReadinessProbe {
+            address: config.publisher.private_listen,
+            path: "/control/active",
+            rule: ReadinessRule::HttpSuccess,
+        }],
+    };
+    Ok(PublisherDefinition::new(
+        "status",
+        resources,
+        move |context| run(config, context.http, context.shutdown),
+    ))
 }

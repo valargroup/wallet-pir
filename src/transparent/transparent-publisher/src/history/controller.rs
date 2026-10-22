@@ -1,5 +1,7 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
+mod workflow;
+use workflow::HistoryPublication;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent::layout::Geometry;
 use zakura_pir_publisher::transparent::seal::DecoupledPolicy;
@@ -442,14 +444,14 @@ pub async fn run_managed(
     let mut tasks = pir_pipeline::service::Tasks::default();
     let server = tokio::spawn(http.serve(config.listen, authority.router()));
     tasks.own(&server);
-    let (notify, mut updates) = tokio::sync::watch::channel(0u64);
+    let (notify, updates) = tokio::sync::watch::channel(0u64);
     let ingest_config = config.clone();
     let ingest_authority = authority.clone();
     let ingest_store = store.clone();
     let ingest_rpc = rpc.clone();
     let input_stop = shutdown.clone();
     let failed_authority = authority.clone();
-    let mut ingest = tokio::spawn(async move {
+    let ingest = tokio::spawn(async move {
         let mut task = HistoryInputTask {
             config: ingest_config,
             rpc: ingest_rpc,
@@ -496,64 +498,18 @@ pub async fn run_managed(
             ),
         }
     }
-    loop {
-        if shutdown.requested() {
-            ingest.await??;
-            return Ok(());
-        }
-        if server.is_finished() || ingest.is_finished() {
-            shutdown.request();
-            if !ingest.is_finished() {
-                (&mut ingest).await??;
-            }
-            return Err("history publisher background service stopped".into());
-        }
-        if let Err(error) = withdraw_fleet(&config, &authority).await {
-            tracing::error!(%error, "fleet withdrawal of corrupt bytes failed; retrying");
-            authority.0.status.write().unwrap()["fleet_withdrawal_error"] =
-                error.to_string().into();
-        }
-        if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
-            if shutdown.requested() {
-                tracing::info!(%error, "publication cycle ended by shutdown");
-                continue;
-            }
-            authority
-                .0
-                .publication_failures
-                .fetch_add(1, Ordering::Relaxed);
-            tracing::error!(%error,"publication failed; keeping valid coverage and retrying");
-            authority.0.status.write().unwrap()["publication_error"] = error.to_string().into();
-        }
-        let public_height = authority.0.active.read().unwrap().publication.height;
-        let oldest = authority
-            .0
-            .observed
-            .read()
-            .unwrap()
-            .range((public_height.saturating_add(1))..)
-            .map(|(_, t)| t.elapsed().as_secs())
-            .max()
-            .unwrap_or(0);
-        if oldest > 30 {
-            tracing::error!(
-                alert = "transparent_publication_stale",
-                oldest_unpublished_seconds = oldest,
-                "publication freshness target exceeded"
-            );
-        }
-        if let Err(error) = collect_candidates(&config, &authority) {
-            tracing::warn!(%error,"candidate collection failed");
-        }
-        pir_pipeline::wait(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
-            async {
-                let _ = updates.changed().await;
-            },
-            shutdown.cancelled(),
-        )
-        .await;
-    }
+    pir_pipeline::publisher::PublisherService::new(HistoryPublication {
+        config,
+        rpc,
+        store,
+        authority,
+        shutdown: shutdown.clone(),
+        server,
+        ingest,
+        updates,
+    })
+    .run(shutdown.cancelled())
+    .await
 }
 
 // Independent from publication: backpressure or slow fleet preparation cannot
@@ -948,8 +904,8 @@ async fn publish_candidate(
         authority.0.foreground.fetch_add(1, Ordering::AcqRel);
         Foreground(&authority.0.foreground)
     });
-    pir_pipeline::advance(
-        input,
+    pir_pipeline::publisher::PublicationPass::new(
+        async { Ok::<_, BoxError>(input) },
         |work| {
             prepare_candidate(
                 config,
@@ -962,8 +918,8 @@ async fn publish_candidate(
             )
         },
         |candidate| activate_history(config, rpc, authority, candidate),
-        &mut HistoryProgress,
     )
+    .run(&mut HistoryProgress)
     .await?;
     Ok(())
 }
@@ -1277,7 +1233,7 @@ async fn activate_history(
         // required preparation passed and before the active pointer moves.
         let record =
             distribution.restore_record(config.http_only, config.recent_from, height, &hash)?;
-        publication::write_atomic(
+        publication::write_durable(
             &directory.join(transparent_shared::publication::RESTORE_FILE),
             &serde_json::to_vec(&record)?,
         )?;
@@ -1350,7 +1306,7 @@ async fn activate_history(
                 .cloned()
                 .collect();
             if remaining.len() != failures.len() {
-                publication::write_atomic(
+                publication::write_durable(
                     &config.publication_root.join(INTEGRITY_FAILURES),
                     &serde_json::to_vec(&remaining)?,
                 )?;
@@ -1717,25 +1673,31 @@ fn validation_event(
             let _gate = authority.0.publication_gate.lock().unwrap();
             // An unreadable record is never replaced by one holding only this
             // failure; the publication is withdrawn below either way.
-            match integrity_failures(root) {
+            let recorded = match integrity_failures(root) {
                 Ok(mut failures) => {
                     if !failures.contains(&failure) {
                         failures.push(failure.clone());
                     }
-                    if let Err(error) = serde_json::to_vec(&failures)
+                    match serde_json::to_vec(&failures)
                         .map_err(BoxError::from)
                         .and_then(|bytes| {
-                            publication::write_atomic(&root.join(INTEGRITY_FAILURES), &bytes)
-                        })
-                    {
-                        tracing::error!(%error, "could not record the integrity failure");
+                            publication::write_durable(&root.join(INTEGRITY_FAILURES), &bytes)
+                        }) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            tracing::error!(%error, "could not record the integrity failure");
+                            false
+                        }
                     }
                 }
-                Err(error) => tracing::error!(
-                    %error,
-                    "integrity failure record is unreadable; kept as is and the publication withdrawn"
-                ),
-            }
+                Err(error) => {
+                    tracing::error!(
+                        %error,
+                        "integrity failure record is unreadable; kept as is and the publication withdrawn"
+                    );
+                    false
+                }
+            };
             let active = authority.0.active.read().unwrap().clone();
             if let Some(distribution) = &active.distribution {
                 if lists_failed(std::slice::from_ref(&failure), distribution.inventory()) {
@@ -1747,6 +1709,9 @@ fn validation_event(
                     let mut value = validation_status(identity, "failed");
                     value["reason"] = format!("{}: {reason}", failure.path).into();
                     value["artifact"] = serde_json::to_value(&failure).unwrap_or_default();
+                    // False when the failure is not durably recorded, so a
+                    // restart would not by itself keep these bytes withdrawn.
+                    value["recorded"] = recorded.into();
                     status["integrity_validation"] = value;
                 }
             }

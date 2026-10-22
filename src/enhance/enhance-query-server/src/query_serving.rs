@@ -49,41 +49,26 @@ pub(crate) async fn admitted<T: Send + 'static>(
 
 pub(crate) struct Answer {
     pub coefficients: Vec<u64>,
-    pub intermediate_bytes: usize,
     pub worker_time: Option<std::time::Duration>,
 }
 
 /// Retry only when the previous worker demonstrably did not accept evaluation.
 /// The selected lease remains charged until the complete worker response is read.
-pub(crate) async fn evaluate<G>(
-    http: &reqwest::Client,
-    request: &Evaluate,
-    route_count: usize,
-    mut select: impl FnMut(Option<&str>) -> Result<(String, G), Error>,
-) -> Result<Answer, Error> {
-    evaluate_exact(http, request, route_count, |excluded| {
-        select(excluded).map(|(url, guard)| (url, None, guard))
-    })
-    .await
-}
-
 /// Autonomous peers also bind acceptance to the process that promised readiness.
 pub(crate) async fn evaluate_exact<G>(
     http: &reqwest::Client,
     request: &Evaluate,
     route_count: usize,
-    mut select: impl FnMut(Option<&str>) -> Result<(String, Option<String>, G), Error>,
+    mut select: impl FnMut(Option<&str>) -> Result<(String, String, G), Error>,
 ) -> Result<Answer, Error> {
     let mut excluded = None;
     for attempt in 0..2 {
         let (worker, incarnation, _lease) = select(excluded.as_deref())?;
-        let mut builder = http
+        let builder = http
             .post(format!("{worker}/internal/evaluate"))
             .timeout(std::time::Duration::from_secs(30))
-            .json(request);
-        if let Some(incarnation) = incarnation {
-            builder = builder.header("x-enhance-worker-incarnation", incarnation);
-        }
+            .json(request)
+            .header("x-enhance-worker-incarnation", incarnation);
         let response = builder.send().await;
         match response {
             Err(e) if e.is_connect() && attempt == 0 && route_count > 1 => {
@@ -133,7 +118,6 @@ pub(crate) async fn evaluate_exact<G>(
                 }
                 return Ok(Answer {
                     coefficients: result.coefficients,
-                    intermediate_bytes: bytes.len(),
                     worker_time,
                 });
             }
@@ -273,13 +257,14 @@ mod tests {
     ) -> (Result<Answer, Error>, usize, usize) {
         let (a, ac, at) = server(first_status, rejected, binding).await;
         let (b, bc, bt) = server(StatusCode::OK, false, vec![7]).await;
-        let result = evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+        let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             Ok((
                 if excluded.is_none() {
                     a.clone()
                 } else {
                     b.clone()
                 },
+                "01".repeat(16),
                 (),
             ))
         })
@@ -382,13 +367,14 @@ mod tests {
             );
             let first_task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             let (second, calls, second_task) = server(StatusCode::OK, false, vec![7]).await;
-            let result = evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+            let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
                 Ok((
                     if excluded.is_none() {
                         first.clone()
                     } else {
                         second.clone()
                     },
+                    "01".repeat(16),
                     (),
                 ))
             })
@@ -412,13 +398,14 @@ mod tests {
             // The request may have been accepted: no response is permission to replay.
         });
         let (second, calls, second_task) = server(StatusCode::OK, false, vec![7]).await;
-        let result = evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+        let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             Ok((
                 if excluded.is_none() {
                     first.clone()
                 } else {
                     second.clone()
                 },
+                "01".repeat(16),
                 (),
             ))
         })
@@ -440,13 +427,14 @@ mod tests {
                 server_timing(StatusCode::TOO_MANY_REQUESTS, true, vec![7], Some("9999")).await;
             let (second, _, second_task) =
                 server_timing(StatusCode::OK, false, vec![7], header).await;
-            let answer = evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+            let answer = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
                 Ok((
                     if excluded.is_none() {
                         first.clone()
                     } else {
                         second.clone()
                     },
+                    "01".repeat(16),
                     (),
                 ))
             })
@@ -465,7 +453,7 @@ mod tests {
         drop(listener);
         let (available, calls, task) = server(StatusCode::OK, false, vec![7]).await;
         let mut selections = Vec::new();
-        evaluate(&reqwest::Client::new(), &request(), 2, |excluded| {
+        evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             selections.push(excluded.map(str::to_owned));
             Ok((
                 if excluded.is_none() {
@@ -473,6 +461,7 @@ mod tests {
                 } else {
                     available.clone()
                 },
+                "01".repeat(16),
                 (),
             ))
         })

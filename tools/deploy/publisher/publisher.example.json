@@ -3,27 +3,13 @@
   "enhance": {
     "enabled": true,
     "settings": {
-      "packing_router_config": "/etc/enhance-pir/packing-routers.json",
-      "query_ingress": [
-        "http://127.0.0.1:8083"
-      ],
-      "pool_placement": false,
-      "frontier_replicas": 2,
-      "artifact_listen": "10.0.0.1:8084",
+      "artifact_listen": "127.0.0.1:8084",
       "listen": "127.0.0.1:8080",
       "data_dir": "/srv/pir-publisher/enhance",
-      "worker_config": "/etc/enhance-pir/workers.json",
       "zakura_rpc_url": "http://127.0.0.1:8232",
       "zakura_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "isolated_fixture": false,
-      "fixture_records": 67,
-      "fixture_append_records": 1,
       "poll_seconds": 10,
-      "prevout_cache_outputs": 250000,
-      "capacity_fallback_rows_per_second": 1.0,
-      "capacity_readiness_seconds": 21600.0,
-      "capacity_burst_rows": 4096,
-      "sealed_shards": 6
+      "prevout_cache_outputs": 250000
     }
   },
   "status": {

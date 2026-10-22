@@ -1,24 +1,14 @@
 //! The independent wallet library (zakura-pir-enhance, native feature) must
-//! decode real answers from the distributed native serving path: coordinator
-//! control + ingress + packing router + workers, exactly as production wires them.
+//! decode real answers through publisher HTTPS, autonomous workers, packing
+//! routers and ingress.
 #![cfg(feature = "native-reinspiring")]
 use axum::{
     extract::Request,
     routing::{get, post},
     Router,
 };
-use enhance_publisher::{
-    control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
-    store::RecordJournal,
-};
 use enhance_query_server::RECORD_BYTES;
-use enhance_query_server::{
-    packing_router::{PackingRouter, RouterRegistration},
-    query_ingress::QueryIngress,
-    types::{DatabaseId, ENHANCE_LAYOUT},
-    worker::Worker,
-};
+use pir_e2e_tests::enhance_fixture::System;
 use tokio_stream::StreamExt;
 use wallet::transport::{Method, Request as WalletRequest, ResponseBody, Transport};
 use zakura_pir_client::enhance as wallet;
@@ -87,63 +77,12 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
             enhance_query_server::protocol::unit_parameter_id(rows).unwrap()
         );
     }
-    let root = tempfile::tempdir().unwrap();
+    let records: u64 = 67;
+    let anchor_hash = "01".repeat(32);
+    let system =
+        System::with_backend((0..records).map(record).collect(), Default::default(), 1, 2).await;
+    let ingress_query = system.origin.clone();
     let mut tasks = Vec::new();
-    let mut replicas = Vec::new();
-    for index in 0..2 {
-        let worker = Worker::open(&root.path().join(format!("worker-{index}"))).unwrap();
-        let (url, task) = serve(worker.router()).await;
-        tasks.push(task);
-        replicas.push(Replica {
-            name: format!("worker-{index}"),
-            url,
-            incarnation: String::new(),
-            ledger: Ledger::default(),
-        });
-    }
-    let groups = vec![Group {
-        placement_policy: Default::default(),
-        id: "pair".into(),
-        sequence: 0,
-        replicas,
-    }];
-    let artifact_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let artifact_origin = format!("http://{}", artifact_listener.local_addr().unwrap());
-    let packing =
-        PackingRouter::open(&root.path().join("packing"), &artifact_origin, 6, 4).unwrap();
-    packing.start_worker_health_monitor();
-    let (packing_control, task) = serve(packing.control_router()).await;
-    tasks.push(task);
-    let (packing_query, task) = serve(packing.public_router()).await;
-    tasks.push(task);
-    let ingress = QueryIngress::open(&root.path().join("ingress"), 16).unwrap();
-    let (ingress_control, task) = serve(ingress.control_router()).await;
-    tasks.push(task);
-    let (ingress_query, task) = serve(ingress.public_router()).await;
-    tasks.push(task);
-    let coordinator = Coordinator::open_with_serving(
-        &root.path().join("coordinator"),
-        groups,
-        vec![RouterRegistration {
-            name: "packing".into(),
-            url: packing_control,
-            query_url: packing_query,
-            domains: Default::default(),
-        }],
-        vec![ingress_control],
-    )
-    .unwrap();
-    let artifacts = coordinator.artifact_router();
-    tasks.push(tokio::spawn(async move {
-        axum::serve(artifact_listener, artifacts).await.unwrap()
-    }));
-    let heart = coordinator.clone();
-    let heartbeat = tokio::spawn(async move {
-        loop {
-            heart.refresh_routers().await;
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        }
-    });
     // Minimal Caddy equivalent: every wallet route goes to query ingress.
     let query_origin = ingress_query.clone();
     let metadata_origin = ingress_query.clone();
@@ -178,28 +117,6 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
         }));
     let (public, task) = serve(proxy).await;
     tasks.push(task);
-    let mut journal = RecordJournal::open(
-        root.path().join("journal"),
-        DatabaseId::Enhance,
-        ENHANCE_LAYOUT,
-    )
-    .unwrap();
-    // Three used rows of a 4,096-row domain: the wallet selects over one
-    // 2,048-row block, so this also covers its prefix upload end to end.
-    let records: u64 = 67;
-    let anchor_hash = "01".repeat(32);
-    journal
-        .append_block(
-            3428143,
-            anchor_hash.clone(),
-            &(0..records).map(record).collect::<Vec<_>>(),
-        )
-        .unwrap();
-    coordinator
-        .publish(&journal, 3428143, anchor_hash.clone())
-        .await
-        .unwrap();
-
     // Wallet side: independent implementation, wallet-owned anchor acceptance.
     let transport = PlainHttp(reqwest::Client::new());
     let pending = wallet::transport::PendingClient::fetch(&transport, &public)
@@ -243,7 +160,6 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
         wallet::ClientResourceLimits::new(32768),
     );
     assert!(pending.accept(&wrong).is_err());
-    heartbeat.abort();
     for task in tasks {
         task.abort();
     }

@@ -446,6 +446,29 @@ async fn polling_is_sequential_and_backs_off_after_complete_passes() {
     assert_eq!(delay(0, 1000), Duration::from_secs(5));
 }
 
+#[tokio::test(start_paused = true)]
+async fn shorter_success_interval_preserves_sequential_work_and_failure_backoff() {
+    let probe = Arc::new(Mutex::new(Probe::default()));
+    let manager =
+        SyncManager::new(Task(probe.clone())).with_success_interval(Duration::from_secs(1));
+    let running = tokio::spawn(manager.run());
+    for _ in 0..30 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+    running.abort();
+    let _ = running.await;
+    let p = probe.lock().unwrap();
+    assert!(p.completed.len() >= 3);
+    assert_eq!(p.completed[1].0 - p.completed[0].0, Duration::from_secs(3));
+    let retry_gap = p.completed[2].0 - p.completed[1].0;
+    assert!(retry_gap >= Duration::from_secs(12));
+    assert!(retry_gap <= Duration::from_secs(14));
+    for events in p.events.chunks_exact(3) {
+        assert_eq!(events, ["started", "work", "finished"]);
+    }
+}
+
 #[tokio::test]
 async fn discovery_accepts_only_a_trusted_compatible_publisher() {
     let tls = Tls::new().await;

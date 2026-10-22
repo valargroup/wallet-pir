@@ -160,8 +160,6 @@ pub struct PreparedShard {
 pub struct CachedShard {
     runtime: ShardRuntime,
     publication: PublicationArtifact,
-    /// Monotonic load order, so a worker can pick the newest runtime of a shard.
-    prepared_at: u64,
 }
 
 impl CachedShard {
@@ -172,17 +170,6 @@ impl CachedShard {
     pub fn publication(&self) -> &PublicationArtifact {
         &self.publication
     }
-
-    /// Monotonic load order, so a worker can pick the newest runtime of a shard.
-    pub fn prepared_at(&self) -> u64 {
-        self.prepared_at
-    }
-}
-
-fn next_prepared_at() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Directory holding one shard's artifacts, namespaced by table so several
@@ -200,27 +187,6 @@ impl ShardRuntime {
     /// parameters) and sizes, and verifies the database and CRS files against
     /// the SHA-256 digests recorded at persist time. It does not decide whether
     /// the shard belongs to a current publication; the publication owner does.
-    #[allow(clippy::too_many_arguments)]
-    pub fn load_cached(
-        artifact_root: &Path,
-        table: DatabaseId,
-        layout: &DatabaseLayout,
-        shard_id: u64,
-        query_row_start: usize,
-        rows_sha256: &str,
-        rlwe: &RlweParams,
-    ) -> Result<CachedShard, String> {
-        Self::load(
-            &shard_artifact_dir(artifact_root, table, shard_id),
-            table,
-            layout,
-            shard_id,
-            query_row_start,
-            rows_sha256,
-            rlwe,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn load_cached_with_backend(
         artifact_root: &Path,
@@ -398,7 +364,6 @@ impl ShardRuntime {
                 server,
             },
             publication,
-            prepared_at: next_prepared_at(),
         })
     }
 }
@@ -542,7 +507,6 @@ impl PreparedShard {
         Ok(CachedShard {
             runtime,
             publication,
-            prepared_at: next_prepared_at(),
         })
     }
 }
