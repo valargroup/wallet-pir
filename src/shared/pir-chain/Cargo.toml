@@ -39,7 +39,7 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt", "macros", "sync"], optional = true }
-# Common RC1 support from https://github.com/zakura-core/zakura/pull/1542.
+# Common 4.0.0 support from zakura main.
 # Changing this revision does not upgrade a deployed node; a direct database
 # reader must match the running node's format.
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "ae0f629bbee85cfe80d89e65d86fb2e931832efe", optional = true }
