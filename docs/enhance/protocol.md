@@ -95,7 +95,7 @@ validated canonical domain layout; stored units commit to all padding bytes.
 Routing revision, placement revision, anchor and lifecycle label are excluded.
 Consequently sealing and placement alone preserve identity; changed content,
 composition or domain recovery epoch does not. The server and wallet share a
-[frozen vector](../../src/enhance/enhance-query-server/tests/fixtures/v7-session.json) checked by
+[frozen vector](../../src/enhance/enhance-material/tests/fixtures/v7-session.json) checked by
 the worker, packing-router and publisher recovery tests. The vector digest is
 `09d98421023fcb7801828a031db61a263a69aabba820d214d22e773cbeb12e0b`.
 
@@ -129,11 +129,11 @@ drawn below it. Servers also accept the full selection from older wallets, so
 they take four exact lengths for a growing domain. Someone watching encrypted
 traffic, though not the server, which sees the domain in the header, can tell
 queries to the growing domain apart by length. The server and wallet share the
-[query-rows vector](../../src/enhance/enhance-query-server/tests/fixtures/query-rows.json).
+[query-rows vector](../../src/enhance/enhance-material/tests/fixtures/query-rows.json).
 
 The authoritative wire types and validation are in
-[the protocol module](../../src/enhance/enhance-query-server/src/protocol.rs); record encoding is in
-[record.rs](../../src/enhance/enhance-query-server/src/record.rs).
+[the protocol module](../../src/enhance/enhance-material/src/protocol.rs); record encoding is in
+[record.rs](../../src/enhance/enhance-material/src/record.rs).
 
 ## Compatibility and trust
 
