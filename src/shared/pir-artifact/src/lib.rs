@@ -106,7 +106,7 @@ pub fn digest(bytes: &[u8]) -> String {
 #[derive(Clone)]
 enum State {
     Sha256(sha2::Sha256),
-    Blake3(blake3::Hasher),
+    Blake3(Box<blake3::Hasher>),
 }
 
 #[derive(Clone)]
@@ -126,7 +126,7 @@ impl Hasher {
     pub fn for_algorithm(algorithm: Algorithm) -> Self {
         Self(match algorithm {
             Algorithm::Sha256 => State::Sha256(sha2::Sha256::new()),
-            Algorithm::Blake3 => State::Blake3(blake3::Hasher::new()),
+            Algorithm::Blake3 => State::Blake3(Box::new(blake3::Hasher::new())),
         })
     }
 
