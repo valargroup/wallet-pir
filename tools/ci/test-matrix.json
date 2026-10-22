@@ -72,7 +72,9 @@
       "transparent:transparent-tools:example:transparent-txid-demo",
       "transparent:transparent-tools:test:compact_export",
       "transparent:transparent-tools:test:txid_shipped_runtimes",
-      "transparent:pir-publisher:test:commands"
+      "transparent:pir-publisher:test:commands",
+      "transparent:pir-e2e-tests:lib:pir_e2e_tests",
+      "transparent:pir-e2e-tests:doc:pir_e2e_tests"
     ]
   },
   "transparent-backend": {
@@ -118,7 +120,6 @@
     "targets": [
       "native:enhance-pir-client:bin:enhance-pir-cli",
       "native:enhance-pir-load-test:bin:enhance-pir-load-test",
-      "native:enhance-query-server:test:routing_contract",
       "native:pir-apm:bin:pir-apm",
       "native:pir-apm:doc:pir_apm",
       "native:pir-apm:lib:pir_apm",
@@ -143,7 +144,7 @@
       "native:enhance-publisher:lib:enhance_publisher",
       "native:pir-e2e-tests:test:ci_hint",
       "native:pir-e2e-tests:test:encrypted_lifecycle",
-      "native:pir-e2e-tests:test:packing_http",
+      "native:pir-e2e-tests:test:publication_binding_http",
       "native:status-query-server:test:status_wallet",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
@@ -154,7 +155,10 @@
       "native:pir-query-server:doc:pir_query_server",
       "native:pir-query-server:lib:pir_query_server",
       "native:pir-query-server:test:operator",
-      "native:pir-publisher:test:commands"
+      "native:pir-publisher:test:commands",
+      "native:pir-e2e-tests:test:publication_renewal",
+      "native:pir-e2e-tests:lib:pir_e2e_tests",
+      "native:pir-e2e-tests:doc:pir_e2e_tests"
     ]
   },
   "enhance-http": {
@@ -169,7 +173,7 @@
       "native:pir-e2e-tests:test:canonical_record",
       "native:pir-e2e-tests:test:enhance_wallet_native",
       "native:pir-e2e-tests:test:note_recovery",
-      "native:pir-e2e-tests:test:row_repair_http",
+      "native:pir-e2e-tests:test:cache_recovery_http",
       "native:pir-e2e-tests:test:rpc"
     ]
   },
@@ -179,8 +183,8 @@
       "reference:pir-e2e-tests:test:ci_hint",
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
       "reference:enhance-query-server:lib:enhance_query_server",
-      "reference:enhance-query-server:test:routing_contract",
-      "reference:status-query-server:lib:status_query_server"
+      "reference:status-query-server:lib:status_query_server",
+      "reference:pir-e2e-tests:test:publication_renewal"
     ]
   },
   "enhance-cuda-check": {

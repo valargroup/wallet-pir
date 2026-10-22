@@ -29,12 +29,7 @@ fn maintenance_commands_remain() {
     let output = server().arg("--help").output().unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    for name in [
-        "rebuild-journal",
-        "prepare-packing-artifacts",
-        "restore-legacy-placement",
-        "build-info",
-    ] {
+    for name in ["rebuild-journal", "prepare-publication", "build-info"] {
         assert!(help.contains(name), "{name} missing from:\n{help}");
     }
 }
@@ -73,6 +68,10 @@ fn maintenance_commands_require_the_compiled_product() {
         ("enhance", cfg!(feature = "enhance")),
         ("status", cfg!(feature = "status")),
         ("publish-history", cfg!(feature = "transparent-history")),
+        (
+            "prepare-history-restore",
+            cfg!(feature = "transparent-history"),
+        ),
         ("verify-filters", cfg!(feature = "transparent-history")),
         ("detail", cfg!(feature = "transparent-detail")),
         ("ingest-events", cfg!(feature = "rocksdb-reader")),

@@ -43,15 +43,14 @@ support its independent handover rules without implementing a new promotion poli
 
 | Existing code | Current responsibility | Planned change |
 |---|---|---|
-| [`coordinator/publication.rs`](../../src/enhance/enhance-publisher/src/coordinator/publication.rs) | Upload rows, command replica preparation, fetch hints, request router packing, activate replicas | Prepare complete artifacts locally and publish an immutable inventory; remove outbound preparation and activation |
-| [`serving_control.rs`](../../src/enhance/enhance-publisher/src/serving_control.rs) | Prepare, activate and refresh router/ingress views; serve packing artifacts | Replace consumer control with read-only publication distribution and pull-based product authority checks |
-| [`coordinator/snapshots.rs`](../../src/enhance/enhance-publisher/src/coordinator/snapshots.rs) | Persist and restore snapshots; collect obsolete artifacts | Retain publication roots and referenced immutable objects; remove remote-preparation assumptions |
-| [`worker.rs`](../../src/enhance/enhance-query-server/src/worker.rs) | Stage rows and prepare/activate evaluation state under private control | Load verified published rows into the selected CPU/CUDA backend; own synchronization and activation |
-| [`prepared_packing.rs`](../../src/enhance/enhance-query-server/src/prepared_packing.rs) | Persist, verify and map prepared packing | Reuse the format and bounded loaders; remove router-built production preparation |
-| [`packing_router.rs`](../../src/enhance/enhance-query-server/src/packing_router.rs) | Load packing and route evaluations from a controlled serving view | Pull publications, load packing and establish matching worker readiness locally |
-| [`query_ingress.rs`](../../src/enhance/enhance-query-server/src/query_ingress.rs) | Advertise manifests and forward bound sessions to activated routers | Pull publication metadata and activate only locally ready routing views |
-| [`service.rs`](../../src/enhance/enhance-query-server/src/service.rs) and the root hosts | Configure and supervise serving roles | Start one sequential synchronization task per role alongside existing listeners and shutdown handling |
-| [`pir-sync-manager`](../../src/shared/pir-sync-manager/src/lib.rs) | HTTPS restrictions, transfer accounting, sequential polling and backoff | Reuse without absorbing Enhance schemas, authority or activation policy |
+| [`publisher.rs`](../../src/enhance/enhance-publisher/src/publisher.rs) | Durable generation/recovery ownership and complete local preparation | Publishes without consumer destinations or acknowledgments |
+| [`distribution.rs`](../../src/enhance/enhance-publisher/src/distribution.rs) | Atomic current, immutable objects and real canonical authority | Read-only HTTPS distribution; withdrawals fence pending work and responses |
+| [`worker_sync.rs`](../../src/enhance/enhance-query-server/src/worker_sync.rs) | Verified row loading, backend admission and exact readiness | Autonomous worker activation and bounded peer pins |
+| [`router_sync.rs`](../../src/enhance/enhance-query-server/src/router_sync.rs) | Published packing, compatible workers and exact evaluations | Local handover, byte-budget admission and response fences |
+| [`ingress_sync.rs`](../../src/enhance/enhance-query-server/src/ingress_sync.rs) | Manifest/routing activation with compatible routers | Separate control/query origins and retained request bindings |
+| [`prepared_packing.rs`](../../src/enhance/enhance-query-server/src/prepared_packing.rs) | Verified persisted/mapped packing | Reuses the existing format and bounded loaders |
+| [`service.rs`](../../src/enhance/enhance-query-server/src/service.rs) and root hosts | Configure/supervise one role | Requires synchronization settings; validates actual role JSON without opening state |
+| [`pir-sync-manager`](../../src/shared/pir-sync-manager/src/lib.rs) | HTTPS transfer accounting, sequential polling and backoff | Enhance authority, recovery and activation policy stays product-owned |
 
 The current native and reference builds have different prepared-packing formats.
 A successful HTTP transfer or an equal source commit does not establish format

@@ -459,17 +459,17 @@ fn verify_staged(data_dir: &Path, staged_dir: &Path, live_dir: &Path) -> Result<
     Ok(receipt)
 }
 
-/// Shard ids the coordinator has sealed, read without the control lock.
+/// Sealed domain ids from publisher recovery state, read before journal adoption.
 fn sealed_shards(data_dir: &Path) -> Result<BTreeSet<u64>, String> {
-    let path = data_dir.join("control").join("controller.json");
+    let path = data_dir.join("publication").join("publisher.json");
     if !path.exists() {
         return Ok(BTreeSet::new());
     }
     let state: serde_json::Value =
-        serde_json::from_slice(&fs::read(&path).map_err(|e| format!("control state: {e}"))?)
-            .map_err(|e| format!("control state: {e}"))?;
+        serde_json::from_slice(&fs::read(&path).map_err(|e| format!("publisher state: {e}"))?)
+            .map_err(|e| format!("publisher state: {e}"))?;
     let Some(sealed) = state.pointer("/recovery/sealed") else {
-        return Err("control state has no recovery.sealed".into());
+        return Err("publisher state has no recovery.sealed".into());
     };
     sealed
         .as_object()

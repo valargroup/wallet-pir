@@ -19,7 +19,7 @@ class SnapshotPreparation:
         existing = self.owner.read(script)
         require(existing in (None, SCRIPT), 'snapshot validation helper changed outside its transaction')
         if existing is None:
-            self.serving.write(self.owner.host, script, SCRIPT, 0o600)
+            self.owner.write(script, SCRIPT, 0o600)
         return script
 
     def pin_snapshot(self, journal, section, source):

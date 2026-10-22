@@ -4,5 +4,6 @@
 pub mod detail;
 pub mod filters;
 pub mod history;
+pub mod history_restore;
 #[cfg(feature = "rocksdb-reader")]
 pub mod ingest;

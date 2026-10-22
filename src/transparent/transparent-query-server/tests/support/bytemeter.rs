@@ -6,7 +6,6 @@
 //! host to the relay (`reqwest::ClientBuilder::resolve`). Bytes are counted
 //! before they are forwarded, so once a client has read a whole response the
 //! counters already include it.
-#![allow(dead_code)]
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -18,7 +17,6 @@ pub struct ByteMeter {
     pub addr: SocketAddr,
     up: Arc<AtomicU64>,
     down: Arc<AtomicU64>,
-    connections: Arc<AtomicU64>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -29,11 +27,9 @@ impl ByteMeter {
         let addr = listener.local_addr()?;
         let up = Arc::new(AtomicU64::new(0));
         let down = Arc::new(AtomicU64::new(0));
-        let connections = Arc::new(AtomicU64::new(0));
-        let (up_total, down_total, accepted) = (up.clone(), down.clone(), connections.clone());
+        let (up_total, down_total) = (up.clone(), down.clone());
         let task = tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
-                accepted.fetch_add(1, Ordering::Relaxed);
                 let (up, down) = (up_total.clone(), down_total.clone());
                 tokio::spawn(async move {
                     let Ok(server) = tokio::net::TcpStream::connect(upstream).await else {
@@ -54,7 +50,6 @@ impl ByteMeter {
             addr,
             up,
             down,
-            connections,
             task,
         })
     }
@@ -67,12 +62,6 @@ impl ByteMeter {
     /// Bytes sent to clients so far.
     pub fn down(&self) -> u64 {
         self.down.load(Ordering::Relaxed)
-    }
-
-    /// Connections accepted so far: each one is a TCP and, over HTTPS, a TLS
-    /// handshake that a fresh client pays.
-    pub fn connections(&self) -> u64 {
-        self.connections.load(Ordering::Relaxed)
     }
 
     pub fn snapshot(&self) -> (u64, u64) {

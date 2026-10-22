@@ -251,8 +251,6 @@ class HttpsServing(Serving):
                               'seed_paths': sorted(set(seed_paths)), 'legacy_active_record': legacy_active,
                               'legacy_shard_dir': legacy_shards})
         plan['https_consumers'] = consumers
-        from .publisher_warmup import SCRIPT
-        plan['snapshot_warmer_sha256'] = sha(SCRIPT)
         return plan
 
     def stage(self, parent, binary):

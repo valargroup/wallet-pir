@@ -1,145 +1,122 @@
-# Enhance PIR v7 architecture
+# Enhance publication and query serving
 
-Enhance PIR serves `ironwood-enhance-pir-v7`, schema 11, using fixed storage
-shards, composed query domains and content-bound wallet sessions. The coordinator
-owns ingestion, publication, placement and recovery control. A separate packing
-router decodes wallet queries and packs results; worker replicas evaluate private
-row queries. The September 24, 2026 rollout deployed EPQ7 query ingress, a dedicated
-8 GiB packing router and a two-worker pool with replication factor two. The
-coordinator never faces wallets: query ingress serves the manifest, session
-documents and queries, and the coordinator keeps public session metadata and
-immutable artifacts without resident serving packing objects. See the
-[rollout evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/architecture2-2026-09-24/README.md) and
-[qualification](qualification.md) for measured limits and outstanding gates.
+The publisher saves canonical records, prepares complete serving material once,
+and publishes it over HTTPS. Workers, packing routers and query ingress follow
+that source independently. The publisher has no consumer inventory and never
+contacts a consumer to prepare, acknowledge or activate a publication.
+
+The key invariant is that every encrypted request stays bound to the rows,
+public setup, recovery identity and session it selected. A newer publication
+never substitutes different material into an older admitted request.
 
 ## Ingestion application
 
-`enhance_publisher::application` supplies product operations to the internal
-`src/shared/pir-pipeline` lifecycle. Shared supervision waits the existing poll delay
-after each complete pass, with explicit product retry/stop policy. Recovery and
-inventory reconciliation still precede collection. `collect` revokes before
-journal rewind and commits validated records independently of publication; its
-work token borrows the source, journal and coordinator without copying records.
-Shared preparation observes capacity and skips an unchanged anchor, then shared
-publication invokes the coordinator's checked operation. Distributed preparation,
-canonical revalidation and activation stay together under the coordinator's
-existing publication permit and durable recovery contract. Failed preparation
-leaves the journal available for retry or restart. The executable configures the
-source and listeners and calls this application API.
+The `pir-publisher` host runs canonical acquisition and local preparation through
+supervised tasks. Acquisition commits complete blocks and coalesces preparation
+into one active operation and one latest pending token. It continues while CPU
+preparation runs on a blocking thread. A work token pins the committed journal
+prefix and the withdrawal revision observed before preparation.
 
-The shared component owns no journal, manifest, authority, serialization or work
-queue. Acquisition returns typed work, unchanged or deferred outcomes; preparation
-and owner publication consume product tokens. Separately running acquisition,
-publication and heartbeat tasks can compose these operations and boundary waits
-without coalescing ordered archive work. Internal progress callbacks and phase
-timing do not confer freshness. Cancellation is observed between complete passes;
-outer application cancellation retains its existing recovery contract. Enhance
-and Receiver currently use the standard path only. Future prepared-publication
-sources can supply product-owned work through the same internal acquisition seam;
-there are no new wallet routes, flags or HTTP sources in these products. Serving
-libraries cannot depend on this ingestion component, and its dependency checks
-allow only Tokio and its utility graph, including dev/build/target edges.
-
-Status also composes the shared lifecycle in the application's
-`status::source` and `status::publisher`: independently supervised observation and
-heartbeats continue during preparation. Source checkpoints remain a cache,
-observations carry their original freshness, and failed preparation cannot grant
-serving authority. Its [architecture](../status/architecture_status.md#observation-collection-and-publication)
-describes the owner activation and recovery boundary. Serving packages continue to consume prepared publications
-without depending on ingestion or the chain reader.
+Generation reservation is durable before preparation starts. Publication verifies
+all rows, hints, public setup and packing, syncs their immutable files, checks the
+canonical anchor, then atomically advances current. A failed write poisons the
+owner until reopen. A reorganization durably withdraws authority before journal
+rewind; old work cannot publish after withdrawal, even if its rows are replayed.
 
 ## Data and query path
 
-Each commitment-tree position identifies a 653-byte suffix record. There are
-33 records per row and 32,768 rows per fixed storage shard: 1,081,344 records.
-Storage shard `i` owns `[i * 1,081,344, (i + 1) * 1,081,344)` forever. There
-are no loans, returns, lender counts, or settling assignments. Wallets support
-at most 24 storage shards, including exactly 24 full shards.
-
-Caddy terminates TLS at the existing public wallet endpoint. The deployed topology
-below uses solid arrows for requests and responses, and dashed arrows for internal
-publication and control. Each evaluation goes to one selected worker; the two
-worker paths are alternatives, not query fan-out.
-
 ```mermaid
-flowchart TB
-    wallet["Wallet"]
-    subgraph origin["Coordinator host · public origin"]
-        caddy["Caddy · TLS"]
-        ingress["Query ingress · EPQ7 session routing"]
-        coordinator["Coordinator · publication and recovery"]
-        caddy <-->|"Manifest, sessions, query"| ingress
-        coordinator -. "Manifests and session-to-router assignments" .-> ingress
-    end
-    subgraph packing_host["Packing-router host · 8 GiB"]
-        router["Packing router · decode, select, pack"]
-    end
-    subgraph worker_host_1["Worker host 1 · 8 GiB"]
-        worker1["Evaluation replica 1"]
-    end
-    subgraph worker_host_2["Worker host 2 · 8 GiB"]
-        worker2["Evaluation replica 2"]
-    end
-    wallet <-->|"HTTPS"| caddy
-    ingress <-->|"Session document, query / packed response"| router
-    router <-->|"Evaluation / intermediate"| worker1
-    router <-->|"Evaluation / intermediate"| worker2
-    coordinator -. "Serving views and artifacts" .-> router
-    coordinator -. "Prepare and activate" .-> worker1
-    coordinator -. "Prepare and activate" .-> worker2
+flowchart LR
+    node[Canonical node] --> publisher[Publisher: journal and local preparation]
+    worker[Worker: verified rows and CPU/CUDA evaluation] -->|HTTPS pull| publisher
+    router[Packing router: published packing] -->|HTTPS pull| publisher
+    ingress[Query ingress: manifest and routes] -->|HTTPS pull| publisher
+    wallet[Wallet] --> ingress
+    ingress -->|Bound query| router
+    router -->|Bound evaluation| worker
+    worker -->|Encrypted intermediate| router
+    router -->|Encrypted response| ingress
+    ingress --> wallet
 ```
 
-Ingress reads the fixed EPQ7 binding prefix at `/v1/enhance/query` and forwards the
-bounded upload to a router assigned to that exact session, without decoding upload
-keys or packing. The router validates and decodes the request, selects a ready
-worker from its activated placement view, and sends a bound evaluation request.
-It checks the intermediate's binding, shape and coefficient range, then packs it
-using that request's upload keys and the pinned session's resident packing material.
+Caddy routes `/provider/enhance/v1/*` to the publisher artifact listener and
+`/v1/enhance/*` to query ingress. Publisher operator routes remain private.
+Worker evaluation, readiness, peer handover and metrics remain on private
+listeners. Ingress configuration names both a router's control origin and query
+origin. It checks readiness on the former and forwards to the latter with the
+promised process incarnation.
 
-Ingress answers `/v1/enhance/init` and `/v1/enhance/sessions/{generation}/{shard}`
-from the manifests in its activated view and forwards `/v1/enhance/session/{id}`
-to a router assigned to that session, which returns its retained public session
-document. Ingress and router accept queries only for the current generation;
-retained generations remain for session reads until expiry.
+## Placement, serving state and admission
 
-No synchronous coordinator lookup is needed per request. The coordinator serves
-only private health, readiness, metrics and artifact routes; it never receives
-wallet requests. Without registered packing routers it still publishes, but no
-wallet route serves the result. The public URL,
-EPQ7 framing, session identities and response bindings are unchanged by this
-separation. Wallets neither select nor learn physical replicas. Session identity
-binds packing material, not the process or host performing packing.
+Operator configuration owns domain responsibilities and downstream peers.
+Workers download only assigned rows, verify hashes and lengths, and construct
+the selected CPU or CUDA evaluation database without preparing hints. Routers
+verify and map publisher-prepared packing, then require exact worker readiness.
+Ingress advertises a publication only after every covered domain has compatible
+router readiness. Future static responsibilities may be configured before those
+domains exist; a publication with missing responsibilities remains unready.
 
-Caddy and ingress remain on the coordinator host, so query traffic still crosses
-that host's NIC and its failure removes the public endpoint. A separate packing
-host does not provide origin high availability. Evaluation and control APIs remain
-private under the existing trust model, with network access restricted to the
-serving and control tiers.
+Each process distinguishes candidate, active and retained material. Activation
+atomically swaps local metadata and routes. Bounded consumer-to-consumer pins
+keep material promised upstream alive during handover. Pins name the exact
+manifest and process incarnation, expire after thirty seconds, and are capped
+at sixty-four holders. An admitted task separately owns its material until its
+response completes. Lost handover replies and peer restarts cannot pin forever
+or silently move a request to a different incarnation.
 
-Workers run one evaluation per admitted query, without waiting to collect a
-batch. On the tested 8 GiB x86 workers, singleton scans completed 458 of 480
-queries at 16 offered QPS with 2.4-second p99 latency; experimental batches
-completed 416 with 10.5-second p99. The
-[Linux comparison](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/batching-linux-2026-09-24/README.md) records the
-hardware and workload. Batching needs a demonstrated gain on the intended
-hardware before it becomes part of the serving path.
+Worker admission retains the existing full-growth and transition reservation:
+at most five domains while any is active, or the selected six/seven sealed-domain
+policy. Seven remains a hardware qualification choice. The resident model keeps
+its existing overhead, growth and overlap limits. Router packing retains its
+existing byte budget and complete-candidate overlap check. Cache/download
+budgets are explicit disk/transport limits, separate from resident admission.
 
-Storage ownership, query coordinates and serving placement are separate:
+### Publication and serving authority
 
-| Object | Meaning | Identity |
-|---|---|---|
-| Storage shard | Fixed global row range; immutable once sealed | Global row start divided by 32,768 |
-| Query domain | Ordered units evaluated under one setup seed | Domain ID and content-derived session ID |
-| Routing view | Canonical mapping from populated global rows to domain-local rows | Routing revision, recovery epoch and chain anchor |
-| Session | Content, geometry, setup and packing material used by the wallet | Digest of the bound material and domain recovery epoch |
-| Placement | Ready evaluation replicas serving the domain; router assignments are separate | Placement revision |
+`pir-sync-manager` serializes successful polls and bounded error backoff. Product
+adapters own schema, identity, recovery, loading, activation and refusal policy.
+Waiting for a peer to load is deferred coordination; it does not start an
+independent retry timer. Router and ingress maintenance renew peer promises
+while loading or waiting.
+
+The publisher supplies authority only after a real canonical node observation.
+Its five-second lifetime is never extended by an unchanged HTTP response or a
+local timer. Processes persist publication/recovery floors before serving.
+Cached bytes on restart confer no authority. Explicit withdrawal, revocation,
+expired source authority and failed safety persistence close admission.
+
+An ordinary update preserves still-authorized active and admitted views. A slow
+request may renew authority for its exact original manifest before release.
+Renewal must preserve its admission withdrawal revision: withdrawal followed by
+fresh publication cannot revive that old request. Results and response bodies
+remain guarded against live durable invalidations and expiry. A disconnected
+source cannot supply a renewal.
+
+## Composed domains and canonical routing
+
+The fixed geometry, composition rules, canonical sessions, record layout and
+wallet framing are unchanged; see [protocol](protocol.md) and the
+[serving contract](../serving-contract.md). Reuse is determined by
+exact unit/content/setup identities rather than equal whole-publication counters.
+Unchanged material can serve a retained binding after ordinary advancement.
+An incompatible profile, geometry, native format, identity or incarnation is
+refused before evaluation against substitute material.
+
+## Confirmation and recovery
+
+A complete domain seals only after its completing block has one thousand
+canonical confirmations. The publisher retains that completing height/hash and
+detects unfenced changes. A rewind across sealed history raises recovery/domain
+floors and revokes affected retained sessions before modifying journal bytes.
+Ordinary append is not revocation. Source startup withdraws the last current
+until it has fresh canonical validation.
 
 ## Record metadata and fees
 
-The coordinator derives each record's metadata from the canonical block, which it
+The publisher derives each record's metadata from the canonical block, which it
 reads through the server-only chain adapters (`zakura-server-chain`, `src/shared/pir-chain`):
 they decode blocks and transactions, resolve spent outputs and compute fees, and the
-coordinator maps their results onto records. Every
+publisher maps their results onto records. Every
 Ironwood action of a transaction carries the same expiry, transparent input and
 output flags, and fee. The fee is the whole transaction's: the remaining value of
 its transaction value pool, that is transparent inputs minus transparent outputs
@@ -150,326 +127,20 @@ A coinbase transaction has no fee of its own; its records have the fee-absent fl
 For any other transaction, every spent transparent output must be known. The
 producer resolves spent outputs only for non-coinbase transactions with Ironwood
 actions and transparent inputs: first from earlier transactions in the same block,
-then from a bounded cache of recent outputs (`--prevout-cache-outputs`, default
+then from a bounded cache of recent outputs (`prevout_cache_outputs`, default
 250,000 outputs, whole transactions evicted oldest first), then with one JSON-RPC 2.0
 batch of `getrawtransaction` calls per 256 missing transactions. Returned
 transactions must have the requested txid. A missing transaction (-5), an output
 index past the transaction's outputs, a duplicate input, a negative value pool, or
-any RPC or batch-shape error fails the whole block; the coordinator retries it at
+any RPC or batch-shape error fails the whole block; the publisher retries it at
 the next poll. The producer never publishes zero, a guess or a partial input total.
 Blocks without such a transaction issue no extra RPC.
 
 Cache entries are keyed by outpoint, and a txid commits to its outputs, so an entry
-remains correct after a reorganization. Coordinators before this rule published a
+remains correct after a reorganization. Publishers before this rule published a
 fee only for pure-Ironwood transactions. A restart with the fixed binary does not
 change records already in the journal; [deployment](deployment.md#repairing-historical-fees)
 describes the offline rebuild and its adoption.
-
-## Placement, serving state and admission
-
-Each query domain is placed on `r` workers from a pool, with `r = 2` by default.
-The frontier can use a higher factor when capacity permits; production starts
-with two workers and factor two. Each selected worker holds the complete domain
-assignment. Inventory groups remain legacy containers, but placement and readiness
-no longer require rigid worker pairs. The reservation ledger and persisted
-operation phases still govern preparation, activation and draining. Moves retain
-source and destination reservations until draining completes; insufficient
-capacity preserves the published placement rather than publishing partial
-replication.
-
-Pool placement allows individual-worker growth and additional frontier replicas
-without giving every sealed domain the same replica count. Two copies still yield
-roughly 50 percent raw storage efficiency. Router assignments and their replication
-factor are independent of worker placement. Adding evaluation replicas does not
-create more packing objects on an existing router.
-
-A router shares one packing object across evaluation replicas using the same
-material. Distinct retained frontier material requires distinct objects; verified
-identical immutable material may be shared. Routing or placement changes alone do
-not require copies. For resident material `P`, `r` evaluation replicas and `k`
-router copies, worker-side packing would cost approximately `r × P`; separate
-routers cost `k × P`, excluding preparation and request allocations. Router
-replication therefore still duplicates the sessions those routers serve.
-
-The initial router serves all assigned domains that fit its budget. The implemented
-ingress can route exact sessions to separately assigned routers and rotate among
-assigned copies. Partitioning assignments avoids loading the full working set on
-every router. A single router remains a failure and throughput boundary for its
-domains even when several evaluation workers are ready. Replacement routers need
-capacity and exact-session readiness before receiving traffic. Physical
-multi-router moves, overlap, draining and replication still require qualification;
-automatic fleet expansion is not enabled by this rollout.
-
-| Responsibility | Owner | Rule |
-|---|---|---|
-| Eligibility and assignment | Coordinator | Publish exact-session-ready workers and router assignments |
-| Worker selection | Packing router | Choose the eligible worker with the fewest evaluations outstanding through this router; rotate equal-load ties |
-| Public request admission | Ingress and packing router | Bound reception and forwarding at ingress; reserve the complete decode/evaluate/pack lifetime at the router |
-| Evaluation admission and scheduling | Worker | Enforce local resource limits and run one evaluation per admitted query |
-
-Router counts guide selection without a live worker queue-depth feed. Multiple
-routers have independent counts; worker-local admission is authoritative. The
-router admits at most four requests, with 16 waiting slots and a two-second
-admission deadline. It acquires the active permit before reading a body, with a
-512 KiB body limit and a 30-second reception deadline. Permits and session pins
-remain owned by admitted work through cancellation, packing and buffered response
-delivery. Worker permits cover internal body reception, decoded coefficients,
-evaluation, serialization and bounded output buffering. Ingress separately bounds
-uploads, connections and response buffering.
-
-Evaluation may be retried once on a different eligible worker only after a
-connection failure known to precede acceptance or an explicit `not-accepted`
-rejection for overload, unavailable session or readiness. An ambiguous failure,
-invalid intermediate or packing failure is not replayed. Ingress never retries a
-forwarded public query. These bounds prevent duplicate cryptographic work and
-retry storms.
-
-### Publication and serving authority
-
-Publication requires readiness for the exact worker sessions, router material and
-ingress view. The sequence below shows an ordinary successful publication; each
-router and ingress acknowledgment binds its own view digest, controller epoch and
-process incarnation. Routers do not own placement or make workers ready.
-
-```mermaid
-sequenceDiagram
-    participant C as Coordinator
-    participant W as Evaluation workers
-    participant R as Packing routers
-    participant I as Query ingress
-    C->>W: Prepare domains and activate candidate manifest
-    W-->>C: Ready: manifest digest and worker incarnation
-    C->>R: Prepare revisioned serving view
-    R->>C: Fetch immutable session artifacts
-    C-->>R: Artifact bytes
-    R->>R: Verify identity and load packing material
-    R-->>C: Ready: view digest, controller epoch, incarnation
-    C->>I: Prepare exact-session router assignments
-    I-->>C: Ready: view digest, controller epoch, incarnation
-    C->>C: Persist prepared serving decision
-    C->>C: Validate canonical state and commit publication
-    C->>R: Activate acknowledged view
-    R-->>C: Activated
-    C->>I: Activate acknowledged view
-    I-->>C: Activated
-    C->>C: Persist active decision and expose public readiness
-    Note over C,I: Activation and refresh must match the acknowledged view and process
-```
-
-Activation and refresh must match the acknowledged view and process incarnation.
-A five-second control watchdog expires serving authority when refreshes stop.
-Restart begins unready, preserves durable fences, and requires reconstruction and
-activation of exact-session state. An atomic local view swap alone is insufficient
-for publication: all serving participants must acknowledge the corresponding
-state. Missing material, stale authority or failed reconciliation fails closed.
-Registered routers cannot simply be removed or replaced without explicit fencing.
-
-## Composed domains and canonical routing
-
-A successor B with fewer than 4,096 occupied rows has an 8,192-row query domain
-composed from its own rows and predecessor A's suffix. The diagram uses half-open
-row ranges, local to each shard or query domain. Storage ownership stays fixed;
-only the canonical query route changes.
-
-```text
-Storage ownership in both states
-  A: [0, 32768)                         B: its own fixed shard range
-     includes tail [28672, 32768)          never owns A's tail
-
-Before: B has fewer than 4,096 occupied rows
-  B query domain (8,192 rows)
-  +--------------------------------+--------------------------------+
-  | [0, 4096)                      | [4096, 8192)                   |
-  | B's occupied rows + zero pad   | A's tail [28672, 32768)         |
-  +--------------------------------+--------------------------------+
-  Canonical routes: A's earlier rows -> A; A's tail -> B; B's rows -> B
-
-At the first occupied record in B's 4,096th row
-  B query domain (4,096 rows at this threshold)
-  +--------------------------------+
-  | [0, 4096)                      |    A's tail removed from B
-  | B's owned rows                 |    B's local offsets unchanged
-  +--------------------------------+
-  Canonical routes: all of A -> A; B's rows -> B
-
-  A retains its complete storage and query domain in both states.
-```
-
-The threshold counts occupied rows, not completely filled rows; B's last occupied
-row may still contain padding. B's plain domain grows as further rows arrive.
-Clients do not choose between alternative routes for the same position. Manifest
-routes are validated against the exact geometry, coverage, local offsets and
-lifecycle; gaps, overlap and noncanonical alternatives are rejected. A single
-ingested block can cross multiple boundaries. Publication follows the complete
-block and never exposes an intermediate boundary or an artificial threshold view.
-
-Progressive frontier units retain the 8,192-row cap. Tail units refer to the
-predecessor's source rows without transferring storage ownership. Their hashes
-commit to the padded bytes and their recovery epoch.
-
-The first shard has no predecessor and keeps the bootstrap exception to the
-population floor. For later shards, composition supplies that floor without
-moving records or rebuilding the predecessor. B's own units use B's setup seed
-and keep their local offsets when the tail is removed. The extra unit is
-prepared under the same seed and occupies 96 MiB at the default geometry.
-Changing the unit set changes the whole-domain hint and requires new packing
-state even when B's owned units are reused.
-
-A growing unit starts at 2,048 allocated rows, expands to 4,096 and then 8,192,
-and rolls over when full. A smaller completed-unit cap saves retained database
-memory but increases the number of units read and summed for every hint rebuild.
-The 8K cap retains that publication and evaluation tradeoff; it does not qualify
-an additional sealed shard for placement.
-
-For a canonical plain domain with one aligned unit, the worker validates the
-unit's complete MPH1 shape, digest and clean EOF, then streams its pinned
-publication directly. The unit's setup offset and output parameters must match
-the domain; unallocated domain rows are prescribed zero padding. This avoids
-decoding, re-encoding and persisting an identical combined hint. Other domains
-use the existing combiner. Streaming still verifies the pinned file, including
-after retirement unlinks it, and each peer still builds and supplies its own
-material for comparison. Status uses its separate hint encoding and owner.
-
-## Confirmation and recovery
-
-A shard is growing, full but provisional, or sealed. Sealing requires 1,000
-canonical successor blocks after the block that completes the shard. Confirmation
-alone does not change its session or padded contents. Provisional full shards
-count toward active placement until confirmation. The existing six-sealed-shard
-policy remains the default; seven requires separate hardware qualification.
-The confirmation clock starts at the completing block, even when publication
-occurs later. This depth follows the chain source's local reorg policy; it is
-not a consensus guarantee.
-
-Tip routing includes provisional successors and composed tails before sealing.
-Every affected domain must be prepared and admitted before the complete anchored
-view is published. Failed preparation leaves the previous view in service.
-Each crossed boundary has its own confirmation clock. A finalized seal survives
-an ordinary rollback while its completing block remains canonical, even if the
-new tip is less than 1,000 blocks above it.
-
-Ordinary rollback affects provisional coverage and advances routing. It preserves
-sealed sessions. A deep rollback that invalidates a seal durably increments the
-recovery epoch and revokes affected and downstream session identities before
-journal truncation or replay. Retrying the same pending rollback does not increment
-the epoch twice. Unaffected domains retain their own recovery epochs.
-
-Workers persist revocations, reject revoked sessions and drop revoked runtime
-assignments. Every future reservation requires the worker to acknowledge the
-current revocation set, so a disconnected replica cannot silently rejoin with stale
-state. Coordinator publication refuses to commit across a concurrent recovery
-fence. Ingress and packing routers also persist recovery fences. The coordinator
-requires serving participants to acknowledge revocation; the router checks authority and
-revocation before and after packing, and both router and ingress fence buffered
-response release. Requests already evaluating retain their resource pins until
-completion, but their results cannot cross the final revocation fence.
-
-## Session identity and routing freshness
-
-`generation` is the routing revision. It binds a query to the current accepted
-anchor and routing table. `placement_revision` changes with actual ready replica
-routes. Neither field contributes to the content-derived session ID.
-
-A session ID commits to the protocol, domain, domain recovery epoch, logical row
-count, owned record count, ordered padded unit commitments and packing material.
-See [the wire contract](protocol.md) and its independent frozen vector. Identical
-material is reused across routing and placement updates. Deep recovery changes
-identity even when replay reconstructs identical bytes.
-
-Clients refresh routing on a 30-second cadence and on structured 409/410 errors.
-The wallet must independently accept each new anchor using scanned chain state.
-Only then may it rebind cached material. Each query uses fresh PIR randomness and
-a fresh request ID. Responses must match routing, domain, packing material,
-recovery epoch, session, request and anchor.
-
-The serving path rejects stale routing at admission with HTTP 409 and unavailable
-or revoked sessions with HTTP 410. A routine routing switch does not revoke
-already admitted work against its pinned domain. Recovery does: affected
-responses must pass the final revocation fence. Unchanged sealed material can
-be reused across publications, but a cached session never substitutes for a
-current routing view. Packing keys remain per-query; session-scoped key reuse
-requires a separate protocol review.
-
-## Resource ownership
-
-Worker ledgers account for resident runtimes, candidates, request work, pinned
-retained resources and the 96 MiB tail-construction reserve, alongside the existing
-frontier reserve. Reservations precede allocation; cancellation does not release
-resources still owned by admitted CPU work. These estimates are admission controls,
-not substitutes for Linux RSS and cgroup measurements.
-
-The standalone router charges 768 MiB per resident packing object and an additional
-1 GiB during construction. Its packing ledger is capped at 6,400 MiB: six resident
-charges plus one 1,792 MiB construction charge leave 768 MiB within the 7 GiB
-process ceiling for requests and runtime. The deployed 8 GiB host uses a zero-swap
-service and four admitted requests. The remaining 1 GiB is host reserve; any
-co-located ingress or TLS service would also have to fit there.
-
-The configured ceiling is six distinct serving objects plus one construction slot,
-not six domains: retained versions and request pins also consume residency unless
-their material is verified identical. Six distinct retained frontier objects use
-the full default serving allocation. Additional sealed domains then require another
-router assignment or separately qualified limits. Expired objects must lose their
-last pin before their space can be reused. Preparation is serialized, and excess
-assignment or construction overlap is refused. Routing changes reuse material;
-revocation and retirement remove ownership while admitted requests retain their
-pins. Health and metrics expose resident objects and charged bytes.
-
-Budget the router's peak as the sum of:
-
-```text
-resident material for every distinct retained/pinned assigned session
-+ construction/loading and assignment-move overlap
-+ admitted requests × (body + decoded keys/coefficients + intermediate
-                      + transient packing allocations + buffered response)
-+ bounded queues, connections and runtime overhead
-```
-
-Per-stage maxima cannot replace this sum unless allocation lifetimes are proven
-disjoint. Neither a semaphore nor an object count proves physical fit. Slow readers
-and cancelled CPU work retain charges until their resources are actually released.
-
-Each worker must fit its complete assignment independently, including provisional
-successors, retained mutable revisions, preparation overlap and recovery replacements.
-Workers gain neither resident packing state nor public upload keys. Internal request
-buffers and evaluation intermediates remain worker charges. Public bodies, decoded
-keys, results and packing transients belong to the router; ingress, Caddy and TLS
-buffers belong to their respective host. Coordinator artifact construction and
-publication overlap remain coordinator charges even though it retains no serving
-packing objects. Services sharing a host must fit their combined peak during
-publication and serving.
-
-The legacy coordinator-packing mode retains its separate budget: a 24 GiB default,
-capped by physical/cgroup memory after a 1.5 GiB host/request reserve and configurable
-through `ENHANCE_COORDINATOR_MEMORY_BYTES`. Identical cached domain keys share objects
-after restart. This is not the standalone router's budget. The September 23 combined
-coordinator buffered each roughly 282 KB query, decoded it, forwarded to one replica
-at a time and packed under a fleet-wide slot count; its sampled cgroup peak was about
-8 GB. That historical measurement does not establish standalone-router capacity.
-
-### Packing measurements and assignment limits
-
-The [packing-budget experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/packing-budget-2026-09-24/README.md)
-measured the production packing component at frozen commit `a3c7626` under Linux
-cgroup caps. An independently allocated object retained about 689 MiB of live heap.
-Ten objects could be constructed under an 8 GiB cap; constructing the eleventh was
-OOM-killed. This hard boundary is not a serving assignment limit.
-
-The six-object trial, with one construction/activation slot and four concurrent
-packing requests, peaked at 6.27 GiB in a cold-cache run with 512 verified responses.
-Seven serving objects plus one construction slot also passed at about 6.94 GiB,
-which is a measured component limit rather than a supported serving configuration.
-These trials measure allocation and construction overlap, not the extracted HTTP
-lifecycle, aged allocator behavior, recovery or production throughput. The
-[earlier worker-serving investigation](worker_serving_investigation.md) records the
-alternative of packing on workers; its budget is not the gate for this architecture.
-
-The physical extracted-path trial measured five distinct retained objects plus
-publication construction overlap at **6.172 GiB**, on the actual **8 GiB, 4-vCPU**
-router with **four concurrent clients**. Swap and memory pressure/OOM counters
-remained zero. That qualifies the measured initial assignment of one growing domain
-with five retained sessions; the configured six-object ceiling remains an admission
-guard, not proof of six-object or multi-domain qualification.
 
 ## Wallet privacy and trust
 
@@ -505,126 +176,19 @@ work by the number of queried domains. See [wallet integration](integration.md).
 
 ## Package boundaries
 
-Serving and ingestion are separate packages, following Receiver's indexer/server
-split. `src/enhance/enhance-query-server` (unpublished) owns the wallet protocol
-(`enhance_query_server::protocol`), the client (`enhance_query_server::client`),
-record types and constants, prepared runtimes, workers, query ingress, packing
-routers, admission, response guards, serving fences, pure placement policy
-(`placement`). `pir-query-server` (`src/pir-query-server`) is the serving host. It
-compiles Enhance, Status, and Transparent only behind the matching Cargo
-feature, and one process may enable any subset. Enhance still names one role
-per process (`worker`, `query-ingress`, or `packing-router`); Status names
-`worker` or `router`. `src/status/status-query-server`
-holds Status generations, the distributed controller and its roles over the
-`status_query_server::protocol` wire contract. Both use `src/shared/pir-serving` for the profile
-modulus and native hints, wallet-libraries PIR packages and other `src/shared/`
-runtime helpers, and never chain readers (`zakura-server-chain`, node crates),
-ingestion, publishers, applications, tools or another product's packages.
-`src/enhance/enhance-publisher` owns chain reading (`zakura`), the Enhance and
-record journals (`ingest`), the durable control store, publication, preparation
-orchestration (`serving_control`), activation, recovery, retention and artifact
-collection, pool and capacity planning, publication telemetry and rebuilds.
-Its `enhance-pir-server` maintenance commands are `rebuild-journal`,
-`prepare-packing-artifacts`, `restore-legacy-placement`, and `build-info`
-(`build-info` has no CUDA field). Worker, query ingress, and packing router
-processes are `pir-query-server --config`, one Enhance role each. Enhance and Status publication run as independent applications within `pir-publisher`. The
-Enhance `coordinator::Coordinator` is the composition API; its private operator
-routes (`operator`) serve health, readiness and metrics only. Dependencies run
-only from publisher to query server. Revocations reach ingress and routers
-through their control routes. The `local-serving` feature starts an in-process
-packing router and query ingress beside a coordinator for tools and tests that
-drive wallet traffic; production builds leave it off. Status observation
-(`source`) and publication (`publisher`), publication authority and the
-`status-pir` command line live in `src/status/status-publisher`. Ingestion checkpoints source state
-independently and hands its latest snapshot to publication; slow worker
-preparation does not block source observation.
-Ingestion-dependent tests live with those packages. `tools/ci/boundary.py`
-enforces these rules for every dependency kind and
-for resolved workspace and standalone graphs.
-
-Raw PIR integration that Enhance shares with Status or Transparent lives in
-`src/shared/pir-runtime`: the P16Q48 profile parameters, packing-key decoding and
-response packing (opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
-handles), intermediate accumulation and streaming stored coefficients into an
-opaque `PreparedDatabase` used by Enhance and Status. Transparent retains its
-P16 adapter, but all current table variants select P8; it is not counted as an
-active P16 consumer. The shared loader
-rejects incomplete reads and constructors that leave coefficients unconsumed;
-accumulation validates the entire contribution before changing its destination.
-Status keeps digest-based block reuse while shared packing owns the matrices. Preparation, evaluation and
-packing stay separate calls, so workers evaluate and the packing router or
-coordinator packs. Record layouts, framing, session checks, setup seeds and the
-native profile stay in `enhance-query-server` and `status-query-server`; Status takes its
-modulus from `src/shared/pir-serving`.
+`enhance-publisher` owns chain reading, ingestion, journals, local preparation,
+publication and recovery. `enhance-query-server` owns synchronization and all
+serving roles and has no publisher or chain-reader dependency. Shared transport
+and scheduling live in `pir-sync-manager`; Enhance policy stays in Enhance.
+The root hosts are `pir-publisher` and `pir-query-server`; product crates are
+libraries. Test/workload composition belongs under `tools/`.
 
 ## Validation and deployment
 
-The validation suite includes independent server/wallet session vectors, malformed
-bindings and routing, composition thresholds, maximum coverage, canonical sealing,
-ordinary and deep rollback, an admitted-response recovery fence, worker restart,
-real HTTP wallet reuse/cover, and transactional SQLite application. Extracted-path
-coverage adds replica selection, one retry on explicit rejection, no ambiguous
-replay, three-worker pool publication without extra packing copies, controller
-heartbeat expiry, explicit revocation and guarded response release.
-
-The [September 24 rollout](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/architecture2-2026-09-24/README.md) records
-86 passing server library tests, eight passing HTTP regression tests and two passing
-pool-expansion tooling tests; three large capacity scenarios remained explicitly
-ignored. The physical fixture used 600,000 records, eight publications, four
-concurrent clients and 256 checked publication-round answers. Twenty disconnected
-slow uploads released admission. Router restart began unready and rebuilt the exact
-session state before queries resumed. The complete trial lasted 430 seconds.
-The fixture placed evaluation workers and ingress in the test process on the
-coordinator; only the router ran on its final host. Post-cutover sampling covered
-the actual coordinator, ingress, router and both 8 GiB workers.
-
-The production wallet checked 28 canonical records, routing refresh and a cover
-round. Both workers appeared in evaluation accounting, the coordinator reported
-zero resident packing objects, and publication advanced after cutover. Short public
-runs returned:
-
-| Path and load | Correct answers | Correct QPS | p50 | p95 | p99 |
-|---|---:|---:|---:|---:|---:|
-| Legacy baseline | 1,096/1,096 | 18.26 | — | — | 193.28 ms |
-| Packing router, two clients | 638/638 | 10.62 | 157.31 ms | 185.60 ms | 222.46 ms |
-| Packing router, four clients | 936/936 | 15.59 | — | — | 290.56 ms |
-
-All three runs returned correct answers without errors. The new four-core router
-had lower throughput in these runs; they do not establish a capacity increase.
-The split permits independent evaluation, packing and publication scaling, but
-retains packing CPU and intermediate-transfer costs.
-
-The earlier focused v7 Linux workload exercised composition growth, tail removal,
-frontier expansion and rewind using independent process/cgroup sampling. Its
-roughly 30-minute run returned correct answers but failed the strict memory gate
-through reclaim pressure and swap growth; public load runs also exceeded the
-proposed p99 regression gate. Neither that run nor the seven-minute router fixture
-satisfies the outstanding six-hour fleet qualification. Worker memory calibration,
-publication latency and the supported block-burst envelope remain open. Existing
-worker placement limits are not increased by these results.
-
-Further qualification must measure exact-answer QPS, p50/p95/p99, 429/502/503 rates,
-evaluation rejections, packing queue/CPU, intermediate bytes, and per-tier memory
-peaks under full-size domains, cover-like traffic and concurrent publication.
-Record the binary, assignments and session counts, allocation high water, cgroup
-current/peak memory, CPU and network usage, resetting peaks between trials.
-Exercise slow uploads/readers, disconnects, worker/router loss, retained-session
-expiry, stale placement, assignment moves and recovery during evaluation and
-packing. Confirm bounded retry, fail-closed routing, resource pins and coordinator
-responsiveness. Physical multi-router moves, additional sealed-domain capacity,
-aged allocator behavior and sustained production load remain separate gates.
-
-SSH rollout uses fresh v7 controller and worker directories. A stopped, validated
-schema-11 canonical journal can be copied from v6; caches and publications must be
-rebuilt. Old binaries, service overrides and data are preserved for rollback. V7 is
-intentionally incompatible with v6 clients; the packing-router rollout itself
-requires no wallet protocol change.
-
-The [SSH runbook](https://github.com/valargroup/wallet-pir/blob/f26b9476fbcd37aca4b4882b9264e90c1896be16/tools/enhance/deploy/architecture2-ssh.md) recorded topology, private
-ports, firewall restrictions, CPU-compatible build flags and cutover checks. Rollback
-stops public admission and the new serving processes, preserves current publication
-and recovery history, and converts pooled placement offline only when it can be
-represented by complete legacy pairs. An old control backup must not replace newer
-publication or recovery decisions. Deployment procedures and dated measurements
-remain in [deployment](deployment.md), [qualification](qualification.md) and the
-linked evidence rather than defining broader capacity guarantees here.
+Small correctness fixtures retain real TLS, independent plaintext oracles,
+negative identities, restart, storage failure and response-release checks.
+Full-size, hardware, resource and sustained service qualification are separate
+release gates. The [development plan](https-sync-development-plan.md) defines the
+direct cutover and one-hour recovery requirement. Source and local tests do not
+establish the state of production; use the locked [deployment](deployment.md)
+transaction and its exact artifact/configuration evidence.

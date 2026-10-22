@@ -158,6 +158,43 @@ class CutoverTests(unittest.TestCase):
             self.assertEqual(self.host.read(role['host'], role['config_path']).encode(), self.before[(role['host'], role['config_path'])])
             self.assertNotEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
 
+    def interrupted_stopped_candidate(self):
+        plan = self.cutover.plan()
+        self.host.fail_new_checks = True
+        with patch.object(self.cutover, 'restore', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.cutover.deploy(plan['plan_sha256'])
+        for role in self.request['roles'].values():
+            self.host.systemctl(role['host'], 'stop', role['unit'])
+        return plan
+
+    def test_resume_reapplies_partial_restoration_and_starts_candidate(self):
+        plan = self.interrupted_stopped_candidate()
+        journal = Journal.load(Path(self.root.name), 'status-https')
+        item = journal.data['plan']['files'][0]
+        self.host.write(item['host'], item['path'], item['before'].encode(), item['mode'])
+        self.host.fail_new_checks = False
+        self.assertEqual(self.cutover.resume(plan['plan_sha256'])['phase'], 'committed')
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
+
+    def test_resume_failure_holds_candidate_without_restoring_it(self):
+        plan = self.interrupted_stopped_candidate()
+        with self.assertRaisesRegex(DeployError, 'wrong encrypted answer'):
+            self.cutover.resume(plan['plan_sha256'])
+        self.assertEqual(Journal.load(Path(self.root.name), 'status-https').status, 'held')
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['exe_sha256'], role['binary_sha256'])
+
+    def test_resume_refuses_foreign_file_before_starting_services(self):
+        plan = self.interrupted_stopped_candidate()
+        role = self.request['roles']['worker']
+        self.host.write(role['host'], role['config_path'], b'foreign configuration', 0o644)
+        with self.assertRaisesRegex(DeployError, 'foreign managed-file'):
+            self.cutover.resume(plan['plan_sha256'])
+        for role in self.request['roles'].values():
+            self.assertEqual(self.host.probe_unit(role['host'], role['unit'])['active_state'], 'inactive')
+
     def test_twenty_minute_failure_starts_rollback_without_erasing_new_state(self):
         role = self.request['roles']['worker']
         self.host.unhealthy.add((role['host'], role['binary_sha256']))

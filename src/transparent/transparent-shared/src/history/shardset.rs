@@ -468,10 +468,6 @@ impl SegmentSource {
         &self.sha256
     }
 
-    pub fn zero_from_row(&self) -> u64 {
-        self.zero_from_row
-    }
-
     /// Bytes this segment occupies on disk, and transiently in memory while a
     /// runtime is built from it.
     ///
@@ -732,6 +728,13 @@ impl SegmentSource {
         Ok(bytes)
     }
 
+    /// Check `bytes`, read from this segment's file, against its manifest
+    /// length and digest and its zero tail, whatever evidence it carries.
+    pub(crate) fn verify_bytes(&self, bytes: &[u8]) -> Result<(), LoadError> {
+        self.check(bytes.len(), Sha256::digest(bytes).as_slice())?;
+        self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))
+    }
+
     /// What this process observed of the file when it verified it, if that
     /// is settled enough to vouch for the same unchanged file later.
     pub(crate) fn evidence(&self) -> Option<FileStamp> {
@@ -765,7 +768,7 @@ impl SegmentSource {
         .expect("segment identity serializes")
     }
 
-    /// Byte offset of [`Self::zero_from_row`].
+    /// Byte offset of the first row whose bytes must be zero.
     fn zero_from(&self) -> usize {
         self.zero_from_row.min(self.rows) as usize * self.row_bytes as usize
     }

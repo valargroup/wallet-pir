@@ -684,17 +684,6 @@ mod rpc {
                 .collect()
         }
 
-        /// Whether the node has the transaction `txid` (protocol byte order), checking
-        /// the identity of what it returns.
-        pub async fn has_transaction(&self, txid: [u8; 32]) -> Result<bool, NodeError> {
-            Ok(self
-                .transparent_transactions(&[txid])
-                .await?
-                .pop()
-                .flatten()
-                .is_some())
-        }
-
         /// One JSON-RPC call whose result is returned as raw JSON, for tools that
         /// deliberately read the node's verbose answers instead of this crate's parser.
         pub async fn call_value(

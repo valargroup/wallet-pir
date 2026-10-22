@@ -11,6 +11,8 @@ SETTINGS = {
         'member_id': 'https-1', 'fleet_host': 'coordinator', 'fleet_state': '/opt/transparent-publisher/state'},
     ('enhance', 'external-worker'): {
         'listen': '127.0.0.1:8091', 'data_dir': '/srv/enhance-worker',
+        'synchronization': {'publisher_origin': 'https://publisher.example', 'download_budget_bytes': 8 << 30,
+                            'cache_limit_bytes': 8 << 30, 'shards': [0]},
         'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},
     ('status', 'external-worker'): {
         'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'publisher': 'https://publisher.example',

@@ -23,6 +23,48 @@ or incompatible recent runtime prevents finalization. It verifies native body
 checksums, public-mask binding and source self-consistency through the production
 loader; a header/length match alone is insufficient.
 
+Those checks apply to new publication bytes. Once they pass, and before the
+active pointer moves, the publisher writes `history-restore.json` beside the
+publication: the exact inventory bytes and SHA-256, map, chain and anchor
+identity, holdings mode and completed phases. `pir-publisher
+prepare-history-restore --config FILE --publication DIR --output RECORD` writes
+the same record for a pinned publication after the full checks, without a
+journal writer or service. A restarted publisher with such a record restores the
+same inventory from metadata digests, safe regular paths, exact lengths and
+runtime identity headers, and serves it only after fresh canonicality, intent
+and fleet checks. Only a missing record, or unresolved withdrawal or activation
+intent, uses the full preparation path. A malformed or incompatible record,
+unsafe or incomplete files, or an unreadable failure record refuse to start;
+deleting the record clears neither recorded integrity failures nor intent, so
+the remedy is a deploy of verified replacement bytes. An ordinary
+`publisher-cutover/3` deploy pins the active publication with the snapshot
+helper while the predecessor still serves, runs this command on the pin,
+refuses before stopping if the active publication moved, and keeps the pin
+across the stop. It installs the record only if the active pointer and map are
+unchanged after the stop and every pinned file is still the same inode with the
+same size in the live publication; otherwise it restarts the predecessor and
+refuses so the deploy can be retried. Rollback
+restores a replaced record's exact bytes, or its absence. Deploy readiness does
+not wait for background validation.
+After serving starts, one low-priority background thread, yielding to
+distribution and candidate preparation, hashes every listed artifact
+(`integrity_validation` in `/v1/status`) and then loads and self-checks each
+runtime under memory admission (`correctness_validation`), using only the files
+it hashed unchanged; a newer publication or a withdrawal stops it. A correctness
+failure is reported and the publication keeps serving. A confirmed integrity
+mismatch is recorded in `integrity-failures.json` and withdraws every
+publication listing those bytes, in this and later processes, until freshly
+verified replacement bytes are published; `recorded` is false in its status
+when the record could not be made durable, so only this process withdraws it.
+Completion and failure records are synced with their directory before they are
+acted on. Withdrawing the publisher's own
+routes would leave the router proxying setup and query requests to workers
+that still serve the publication, so unless the controller is HTTP-only or a
+shadow, it also sends the fleet `withdraw` operation, retried each publication
+pass until it succeeds; a restarted process with such a record sends it before
+anything else. A later activation of verified replacement bytes supersedes a
+withdrawal still pending.
+
 All routes are under `/provider/v1/`, GET-only except the POSTed batch check:
 
 | Route | Response |

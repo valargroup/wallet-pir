@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use tower_http::limit::RequestBodyLimitLayer;
 use transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
+use transparent_shared::tx_detail::serves;
 use transparent_shared::tx_detail::set::DisplaySet;
 use transparent_shared::tx_detail::DisplayRole;
-use transparent_shared::tx_detail::{parse_role, serves};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -315,9 +315,4 @@ pub async fn run_with(
     let _prewarm = prewarm;
     axum::serve(listener, app).await?;
     Ok(())
-}
-
-pub fn role_from_text(text: &str) -> Result<DisplayRole, String> {
-    parse_role(text)
-        .ok_or_else(|| format!("{text} is not recent-replica, archive-owner or combined"))
 }

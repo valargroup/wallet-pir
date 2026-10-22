@@ -142,6 +142,14 @@ answer probes. Failure or expiration starts rollback. Run this operation in the
 persistent operator job infrastructure: a durable journal permits recovery after
 runner failure, but does not itself execute rollback if the runner disappears.
 
+If an operator interrupts restoration after the three services have stopped,
+`status-https-resume` accepts the same request and reviewed plan digest. It checks
+machine identities, staged executables, unit definitions and every managed file
+against the retained transaction before reapplying the candidate and starting it.
+It retains the original recovery deadline. A resumed attempt holds the candidate
+on failure rather than starting another automatic rollback; inspect its status
+and repair the reported failure before making the next operator decision.
+
 With the same request and its exact checksum, recover using:
 
 ```sh
