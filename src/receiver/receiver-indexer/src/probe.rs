@@ -310,11 +310,7 @@ async fn probe(
     {
         return Ok(Some(failure));
     }
-    // The node's checks hold for the whole lookup only if the terminal block is still
-    // its own.
-    if rpc.block_hash(u64::from(directory.end_height)).await? != directory.end_hash {
-        return Err("chain changed during the probe".into());
-    }
+    still_anchored(&rpc, directory, &publication.witnesses.table).await?;
     indexer_report(&http, &args.health_url, &id).await
 }
 
@@ -359,6 +355,25 @@ async fn check_anchor(
     Ok(None)
 }
 
+/// Errs unless `rpc` still has both blocks [`check_anchor`] checked: the payment table's
+/// end and the companion witness table `table`'s construction block. The node's checks
+/// hold for the whole lookup only if neither changed during it.
+async fn still_anchored(
+    rpc: &NodeClient,
+    directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
+) -> Result<()> {
+    for anchor in [
+        TreeAnchor::payments(directory),
+        TreeAnchor::witnesses(table),
+    ] {
+        if rpc.block_hash(u64::from(anchor.height)).await? != anchor.hash {
+            return Err("chain changed during the probe".into());
+        }
+    }
+    Ok(())
+}
+
 /// Whether the publication trails `tip`, the highest any node reported, by more than
 /// `max_lag` blocks.
 fn check_lag(
@@ -391,7 +406,7 @@ enum Verdict {
 /// fixture's `pinned` height and block hash, which must be the node's (a fixture off
 /// the chain is invalid), and reads the root of the fixture's Ironwood `shard`, `None`
 /// while the node has not completed it. Reads by hash or of deep history need no
-/// recheck; the probe rechecks the terminal block once its lookup ends.
+/// recheck; the probe rechecks both anchors once its lookup ends ([`still_anchored`]).
 async fn verify(
     rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
@@ -977,6 +992,35 @@ mod tests {
             ..good(end + 2)
         };
         assert_eq!(decide(&[incomplete, other]).await, Ok((end + 2, None)));
+    }
+
+    /// After the lookup, a reorg of either anchor's block fails the probe, including the
+    /// companion witness table's construction block below an unchanged payment end.
+    #[tokio::test]
+    async fn a_reorg_of_either_anchor_during_the_lookup_fails_the_probe() {
+        let directory = anchored();
+        let end = u64::from(directory.end_height);
+        let mut table = companion(&directory);
+        table.tree_height = directory.end_height - 1;
+        table.tree_hash = [5; 32];
+        let recheck = |node: Node| {
+            let (directory, table) = (directory.clone(), table.clone());
+            async move {
+                let rpc = NodeClient::new(serve_node(node).await, None).unwrap();
+                still_anchored(&rpc, &directory, &table).await.is_ok()
+            }
+        };
+        assert!(recheck(good(end)).await);
+        let witness_reorged = Node {
+            fixture: 6,
+            ..good(end)
+        };
+        let end_reorged = Node {
+            anchor: 4,
+            ..good(end)
+        };
+        assert!(!recheck(witness_reorged).await);
+        assert!(!recheck(end_reorged).await);
     }
 
     /// Serves an empty publication of `directory`. Returns the probe's arguments for it,
