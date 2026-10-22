@@ -46,6 +46,7 @@ order = ["worker", "external-worker", "packing-router", "query-ingress"]
 ancillary = ["routing"]
 
 [services.enhance.roles.worker]
+guard = "tools.enhance.lib.deploy_prerequisites:Guard"
 unit = "enhance-pir-worker.service"
 binary = "pir-query-server"
 mode = "role"
@@ -65,6 +66,7 @@ adoptable_drop_ins = ["50-candidate-5270482.conf", "60-candidate-216b999.conf", 
 # `"install": true`. Verification proves the process and its identity; serving
 # authority still comes from the product's controller, never from the deploy.
 [services.enhance.roles.external-worker]
+guard = "tools.enhance.lib.deploy_prerequisites:Guard"
 unit = "enhance-pir-worker.service"
 binary = "pir-query-server"
 mode = "role"
@@ -78,6 +80,7 @@ health = "http://{listen}/internal/health"
 ready_timeout = 300
 
 [services.enhance.roles.packing-router]
+guard = "tools.enhance.lib.deploy_prerequisites:Guard"
 unit = "enhance-pir-packing-router.service"
 binary = "pir-query-server"
 mode = "role"
@@ -94,6 +97,7 @@ adopt_command_write_paths = true
 adoptable_drop_ins = ["zz-cleanup-*.conf", "zzz-gpu-5ad545d.conf", "zzzz-main-3685438.conf", "zzzzz-mapped-4d14feb.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzz-observability.conf", "zzzzzzzzzzzzzzzz-main.conf"]
 
 [services.enhance.roles.query-ingress]
+guard = "tools.enhance.lib.deploy_prerequisites:Guard"
 unit = "enhance-pir-query-ingress.service"
 binary = "pir-query-server"
 mode = "role"
