@@ -109,25 +109,48 @@ impl PublicationAdapter for StatusPublication {
         validate_current(envelope, self.service.network)
     }
 
-    async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
-        let mut state = self.service.state.lock().await;
-        let fenced = state
-            .controller
-            .as_ref()
-            .map(Controller::serving_manifests)
-            .unwrap_or_default()
-            .iter()
-            .map(view)
-            .collect();
-        if let Some(controller) = &state.controller {
-            controller.revoke();
+    fn fence_serving(
+        &mut self,
+    ) -> impl std::future::Future<Output = Vec<ViewIdentity>> + Send + 'static {
+        let service = self.service.clone();
+        async move {
+            let mut state = service.state.lock().await;
+            let fenced = state
+                .controller
+                .as_ref()
+                .map(Controller::serving_manifests)
+                .unwrap_or_default()
+                .iter()
+                .map(view)
+                .collect();
+            if let Some(controller) = &state.controller {
+                controller.revoke();
+            }
+            state.router_holds.clear();
+            fenced
         }
-        state.router_holds.clear();
-        fenced
     }
 
-    async fn close_admission(&mut self) {
-        self.service.state.lock().await.poisoned = true;
+    fn invalidate_views(
+        &mut self,
+        views: Vec<ViewIdentity>,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let service = self.service.clone();
+        async move {
+            let mut state = service.state.lock().await;
+            let views: BTreeSet<_> = views.into_iter().map(|view| view.0).collect();
+            if let Some(controller) = &state.controller {
+                controller.invalidate(views.iter().copied());
+            }
+            state
+                .router_holds
+                .retain(|generation| !views.contains(&generation.manifest().id()));
+        }
+    }
+
+    fn close_admission(&mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let service = self.service.clone();
+        async move { service.state.lock().await.poisoned = true }
     }
 
     async fn serving_subjects(&mut self, envelope: &Current) -> Vec<(ViewIdentity, AnchorSubject)> {
@@ -350,7 +373,7 @@ impl PublicationAdapter for StatusPublication {
             .controller
             .as_ref()
             .filter(|controller| !controller.revoked())
-            .map(Controller::serving_manifests)
+            .map(Controller::retained_manifests)
             .unwrap_or_default()
             .into_iter()
             .map(|manifest| (view(&manifest), ViewRequirement::Serving));

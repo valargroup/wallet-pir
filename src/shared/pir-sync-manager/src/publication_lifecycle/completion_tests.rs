@@ -18,6 +18,11 @@ struct Adapter {
     installed: Arc<AtomicUsize>,
     releases: Arc<AtomicUsize>,
     release_gate: Arc<tokio::sync::Semaphore>,
+    invalidated: Arc<std::sync::Mutex<Vec<ViewIdentity>>>,
+    invalidating: Arc<tokio::sync::Notify>,
+    invalidation_gate: Arc<tokio::sync::Semaphore>,
+    revocations: Arc<AtomicUsize>,
+    admission_closed: Arc<AtomicUsize>,
 }
 impl PublicationAdapter for Adapter {
     type Descriptor = ();
@@ -30,10 +35,32 @@ impl PublicationAdapter for Adapter {
     fn validate_envelope(&self, _envelope: &Envelope<Self>) -> Result<(), Error> {
         Ok(())
     }
-    async fn fence_serving(&mut self) -> Vec<ViewIdentity> {
-        Vec::new()
+    fn fence_serving(&mut self) -> impl Future<Output = Vec<ViewIdentity>> + Send + 'static {
+        let revocations = self.revocations.clone();
+        async move {
+            revocations.fetch_add(1, Ordering::SeqCst);
+            Vec::new()
+        }
     }
-    async fn close_admission(&mut self) {}
+    fn invalidate_views(
+        &mut self,
+        views: Vec<ViewIdentity>,
+    ) -> impl Future<Output = ()> + Send + 'static {
+        let invalidated = self.invalidated.clone();
+        let invalidating = self.invalidating.clone();
+        let gate = self.invalidation_gate.clone();
+        async move {
+            invalidating.notify_one();
+            gate.acquire().await.unwrap().forget();
+            invalidated.lock().unwrap().extend(views);
+        }
+    }
+    fn close_admission(&mut self) -> impl Future<Output = ()> + Send + 'static {
+        let closed = self.admission_closed.clone();
+        async move {
+            closed.fetch_add(1, Ordering::SeqCst);
+        }
+    }
     async fn serving_subjects(&mut self, _envelope: &Envelope<Self>) -> Vec<(ViewIdentity, ())> {
         Vec::new()
     }
@@ -136,6 +163,11 @@ async fn fixture() -> Fixture {
         installed: installed.clone(),
         releases: releases.clone(),
         release_gate: release_gate.clone(),
+        invalidated: Arc::default(),
+        invalidating: Arc::default(),
+        invalidation_gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        revocations: Arc::default(),
+        admission_closed: Arc::default(),
     };
     let mut lifecycle = PublicationLifecycle::new(adapter, source, floor, cache.clone()).unwrap();
     lifecycle.persist_floor().await.unwrap();
@@ -150,6 +182,64 @@ async fn fixture() -> Fixture {
 }
 fn objects(references: &[&ObjectReference]) -> BTreeSet<String> {
     references.iter().map(|r| r.sha256.clone()).collect()
+}
+
+#[tokio::test]
+async fn cancelled_selective_invalidation_finishes_once_and_closes_admission_on_write_failure() {
+    for fail_write in [false, true] {
+        let mut fixture = fixture().await;
+        if fail_write {
+            let path = fixture._root.path().join("floor.json");
+            std::fs::rename(&path, fixture._root.path().join("previous-floor.json")).unwrap();
+            std::fs::create_dir(path).unwrap();
+        }
+        let invalidating = fixture.lifecycle.adapter.invalidating.clone();
+        let gate = fixture.lifecycle.adapter.invalidation_gate.clone();
+        let refuted = ViewIdentity([7; 32]);
+        {
+            let pass = fixture.lifecycle.invalidate_views(vec![refuted]);
+            tokio::pin!(pass);
+            tokio::select! {
+                result = &mut pass => panic!("invalidation finished before its gate opened: {result:?}"),
+                () = invalidating.notified() => {}
+            }
+            // Dropping the pass leaves revocation and persistence in the
+            // owned slot, even though revocation has not acquired its lock yet.
+        }
+        assert!(fixture.lifecycle.floor.is_invalidated(&refuted));
+        assert!(!fixture.lifecycle.floor.is_durable());
+        assert!(fixture
+            .lifecycle
+            .adapter
+            .invalidated
+            .lock()
+            .unwrap()
+            .is_empty());
+        gate.add_permits(1);
+        fixture.lifecycle.settle_durable_operation().await.unwrap();
+        fixture.lifecycle.settle_durable_operation().await.unwrap();
+        assert_eq!(
+            *fixture.lifecycle.adapter.invalidated.lock().unwrap(),
+            vec![refuted]
+        );
+        assert!(!fixture
+            .lifecycle
+            .floor
+            .is_invalidated(&ViewIdentity([8; 32])));
+        assert_eq!(fixture.lifecycle.floor.is_durable(), !fail_write);
+        assert_eq!(
+            fixture.lifecycle.adapter.revocations.load(Ordering::SeqCst),
+            usize::from(fail_write)
+        );
+        assert_eq!(
+            fixture
+                .lifecycle
+                .adapter
+                .admission_closed
+                .load(Ordering::SeqCst),
+            usize::from(fail_write)
+        );
+    }
 }
 
 /// A pass cancelled while releasing the peer keeps the completion pending:

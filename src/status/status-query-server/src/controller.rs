@@ -3,14 +3,18 @@
 use http::StatusCode;
 use status_shared::protocol::*;
 use status_shared::{now_ms, Generation};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, RwLock,
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
 };
 
 struct Views {
     active: Arc<Generation>,
     retained: Vec<Arc<Generation>>,
+    invalidated: BTreeSet<Hash>,
 }
 #[derive(Clone)]
 pub struct Controller {
@@ -24,6 +28,7 @@ impl Controller {
             views: Arc::new(RwLock::new(Views {
                 active: Arc::new(g),
                 retained: Vec::new(),
+                invalidated: BTreeSet::new(),
             })),
         }
     }
@@ -45,8 +50,32 @@ impl Controller {
         let views = self.views.read().unwrap();
         std::iter::once(&views.active)
             .chain(views.retained.iter())
+            .filter(|generation| !views.invalidated.contains(&generation.manifest().id()))
             .map(|g| g.manifest().clone())
             .collect()
+    }
+    /// Material still held by the controller or an in-flight request, including
+    /// a revoked view whose last request has not released its generation yet.
+    pub(crate) fn retained_manifests(&self) -> Vec<Manifest> {
+        let views = self.views.read().unwrap();
+        std::iter::once(&views.active)
+            .chain(views.retained.iter())
+            .map(|generation| generation.manifest().clone())
+            .collect()
+    }
+    /// Revoke these exact loaded views without changing any other view. Checks
+    /// after admission or evaluation see the same revocation as new requests.
+    pub(crate) fn invalidate(&self, identities: impl IntoIterator<Item = Hash>) {
+        let mut views = self.views.write().unwrap();
+        let loaded: BTreeSet<_> = std::iter::once(&views.active)
+            .chain(views.retained.iter())
+            .map(|generation| generation.manifest().id())
+            .collect();
+        views.invalidated.extend(
+            identities
+                .into_iter()
+                .filter(|identity| loaded.contains(identity)),
+        );
     }
     pub fn resolve(&self, id: Hash) -> Result<Arc<Generation>, StatusCode> {
         let views = self.views.read().unwrap();
@@ -94,11 +123,20 @@ impl Controller {
         // epoch changes. `check` rejects it before its material is used.
         views.retained.push(old_active);
         views.active = Arc::new(g);
+        let loaded: BTreeSet<_> = std::iter::once(&views.active)
+            .chain(views.retained.iter())
+            .map(|generation| generation.manifest().id())
+            .collect();
+        views
+            .invalidated
+            .retain(|identity| loaded.contains(identity));
         Ok(evicted)
     }
     pub fn check(&self, g: &Generation) -> Result<(), StatusCode> {
+        let views = self.views.read().unwrap();
         if self.revoked.load(Ordering::SeqCst)
-            || self.current().manifest().recovery_epoch != g.manifest().recovery_epoch
+            || views.invalidated.contains(&g.manifest().id())
+            || views.active.manifest().recovery_epoch != g.manifest().recovery_epoch
         {
             return Err(StatusCode::GONE);
         }
@@ -158,6 +196,51 @@ mod controller_tests {
         controller.activate(recovered).unwrap();
         let revoked = controller.resolve(third_id).unwrap();
         assert_eq!(controller.check(&revoked), Err(StatusCode::GONE));
+    }
+
+    #[test]
+    fn a_revoked_view_stops_in_flight_requests_without_revoking_other_views() {
+        let base = generation();
+        let controller = Controller::new(base.clone());
+        let pinned = controller.current();
+        let refuted = pinned.manifest().id();
+        controller
+            .activate(base.reidentified(2, 0, now_ms()))
+            .unwrap();
+        controller.invalidate([refuted, [99; 32]]);
+        assert_eq!(controller.check(&pinned), Err(StatusCode::GONE));
+        assert!(controller.check(&controller.current()).is_ok());
+        assert!(!controller.revoked());
+        assert_eq!(controller.serving_manifests().len(), 1);
+        assert_eq!(controller.retained_manifests().len(), 2);
+        assert_eq!(controller.views.read().unwrap().invalidated.len(), 1);
+
+        // A pinned, revoked generation still needs its objects. After its
+        // final request releases it, normal activation can retire its tombstone.
+        controller
+            .activate(base.reidentified(3, 0, now_ms()))
+            .unwrap();
+        assert!(controller
+            .views
+            .read()
+            .unwrap()
+            .invalidated
+            .contains(&refuted));
+        drop(pinned);
+        controller
+            .activate(base.reidentified(4, 0, now_ms()))
+            .unwrap();
+        assert!(!controller
+            .views
+            .read()
+            .unwrap()
+            .invalidated
+            .contains(&refuted));
+        assert_eq!(
+            controller.resolve(refuted).err(),
+            Some(StatusCode::CONFLICT)
+        );
+        assert!(controller.check(&controller.current()).is_ok());
     }
 
     #[test]

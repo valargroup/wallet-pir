@@ -96,7 +96,7 @@ async fn provider_ready(
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let controller = service.serving().await?;
+    let controller = service.available_controller().await?;
     let generation = controller.resolve(id)?;
     controller.check(&generation)?;
     Ok(Json(true))
@@ -179,15 +179,18 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
     if service.role != Role::Worker {
         return Err(StatusCode::NOT_FOUND);
     }
-    let controller = service.serving().await?;
+    let controller = service.available_controller().await?;
+    let generation = controller.for_body(&body)?;
+    controller.check(&generation)?;
     let http_state = HttpState {
-        controller,
+        controller: controller.clone(),
         origin: String::new(),
         http: service.serving_http.clone(),
         permits: service.permits.clone(),
     };
     let result = evaluate(State(http_state), body).await?;
-    service.serving().await?;
+    service.available_controller().await?;
+    controller.check(&generation)?;
     Ok(result)
 }
 async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, StatusCode> {
@@ -210,7 +213,7 @@ async fn router_session(
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .try_into()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let controller = service.serving().await?;
+    let controller = service.available_controller().await?;
     let generation = controller.resolve(id)?;
     controller.check(&generation)?;
     Ok(shared_bytes(generation.public().clone()))
@@ -223,7 +226,9 @@ async fn router_query(
     if service.role != Role::Router {
         return Err(StatusCode::NOT_FOUND);
     }
-    let controller = service.serving().await?;
+    let controller = service.available_controller().await?;
+    let generation = controller.for_body(&body)?;
+    controller.check(&generation)?;
     // The ingress proxy sets the forwarding headers; the loopback peer address
     // carries no client identity.
     let key = pir_control::admission::client_key(&headers, None);
@@ -232,12 +237,13 @@ async fn router_query(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     };
     let http_state = HttpState {
-        controller,
+        controller: controller.clone(),
         origin: service.worker_origin.clone(),
         http: service.serving_http.clone(),
         permits: service.permits.clone(),
     };
     let result = query(State(http_state), body).await?;
-    service.serving().await?;
+    service.available_controller().await?;
+    controller.check(&generation)?;
     Ok(result)
 }

@@ -66,6 +66,12 @@ service; a floor bound to another source is refused, and a floor written before
 source binding keeps its replay protection.
 Withdrawal or a new recovery epoch fences active service. Exact-anchor checks
 also catch invalidated older views after a consumer skips an intermediate update.
+A negative anchor answer revokes only the views bound to that anchor. Other
+fresh sessions keep working, including a retained session when the latest view
+was invalidated. The shared engine owns revocation and its floor write together,
+so cancelling a synchronization pass cannot lose or repeat the invalidation.
+Revoked material still pinned by an in-flight request remains retained until
+the request releases it and a later activation retires that view.
 A revoked view cannot prevent loading a verified replacement. Withdrawal during
 candidate preparation reopens publisher authority before the next publication.
 A disk failure persisting authority closes admission. Restart reuses completed
