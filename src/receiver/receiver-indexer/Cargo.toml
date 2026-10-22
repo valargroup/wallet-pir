@@ -15,6 +15,10 @@ doc = false
 name = "receiver-probe"
 path = "src/bin/receiver-probe.rs"
 
+[features]
+# Restore the multi-publication sealing campaigns that prepare many PIR tables.
+qualification-tests = []
+
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 axum = "0.7"

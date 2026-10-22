@@ -706,6 +706,61 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
     assert_eq!(store.snapshot(4, 0).unwrap().manifest.records, u64::from(n));
 }
 
+/// Sealed shards are recorded contiguously from the configured start through stored
+/// blocks; a rewind past a shard's end removes it, and so does a correction at or before
+/// its end, while earlier shards stay.
+#[test]
+fn sealed_shards_follow_rewinds_and_corrections() {
+    use receiver_store::{Config, IndexedBlock, SealedShard, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(
+        dir.path().join("directory.sqlite"),
+        Config {
+            genesis: [1; 32],
+            start_height: 100,
+            start_parent: [2; 32],
+            start_position: 0,
+        },
+    )
+    .unwrap();
+    let block = |height: u32| IndexedBlock {
+        height,
+        hash: [height as u8; 32],
+        parent: [if height == 100 { 2 } else { height as u8 - 1 }; 32],
+        start_position: 0,
+        end_position: 0,
+        coinbase_actions: 0,
+        payments: vec![],
+        commitments: vec![],
+    };
+    for height in 100..104 {
+        store.append(&block(height)).unwrap();
+    }
+    let shard = |start, end| SealedShard {
+        start_height: start,
+        end_height: end,
+        segments: 1,
+        rows: 8,
+        payloads: 64,
+    };
+    assert!(store.seal(&shard(101, 101)).is_err());
+    assert!(store.seal(&shard(100, 104)).is_err());
+    store.seal(&shard(100, 100)).unwrap();
+    store.seal(&shard(101, 102)).unwrap();
+    assert!(store.seal(&shard(102, 103)).is_err());
+    assert_eq!(
+        store.sealed_shards().unwrap(),
+        [shard(100, 100), shard(101, 102)]
+    );
+    store.rewind(101, [101; 32]).unwrap();
+    assert_eq!(store.sealed_shards().unwrap(), [shard(100, 100)]);
+    store.append(&block(102)).unwrap();
+    store.seal(&shard(101, 102)).unwrap();
+    store.correct(1, &[block(101)]).unwrap();
+    assert_eq!(store.sealed_shards().unwrap(), [shard(100, 100)]);
+    assert_eq!(store.records(100, 102).unwrap(), []);
+}
+
 /// Writes an earlier release's version 2 store at `legacy` holding one payment in block
 /// 100, and returns its configuration and that payment's record.
 fn legacy_store(

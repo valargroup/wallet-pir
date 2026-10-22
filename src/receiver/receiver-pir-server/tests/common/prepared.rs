@@ -1,6 +1,7 @@
 //! Process-local reuse of verified public fixtures, never wallets or service state.
 #![allow(dead_code)]
 use receiver_directory::{
+    shards::ShardFilter,
     snapshot::{Snapshot, ROW_BYTES},
     witness,
 };
@@ -8,10 +9,10 @@ use receiver_pir::{
     server::{Server, WitnessServer},
     Error, MIN_ROWS,
 };
-use receiver_pir_server::Publication;
+use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication};
 use std::{
     collections::VecDeque,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 // Only the fixed minimum geometry is retained. Larger geometry campaigns build
@@ -24,10 +25,35 @@ static WITNESSES: OnceLock<Mutex<VecDeque<WitnessServer>>> = OnceLock::new();
 /// Prepares `snapshot` and its companion `witnesses` as production does, reusing a
 /// cached server prepared from an identical snapshot or an identical witness table. Any
 /// other input, including one differing only in its manifest, builds a new server.
-pub fn prepare(snapshot: Snapshot, witnesses: witness::Table) -> Result<Publication, Error> {
+pub fn segment(snapshot: Snapshot, witnesses: witness::Table) -> Result<Segment, Error> {
     let server = payments(snapshot)?;
     let witnesses = companion(witnesses, &server)?;
-    Ok(Publication::verified(server, witnesses))
+    Ok(Segment::resident(server, witnesses))
+}
+
+/// An inventory of one recent-tier shard holding the segment [`segment`] prepares.
+pub fn prepare(snapshot: Snapshot, witnesses: witness::Table) -> Result<Publication, Error> {
+    inventory(vec![(false, vec![(snapshot, witnesses)], None)])
+}
+
+/// One fixture shard: whether it is sealed, its segments' tables and its filter.
+pub type FixtureShard = (bool, Vec<(Snapshot, witness::Table)>, Option<ShardFilter>);
+
+/// An inventory of `shards` in order, each sealed or not, with its segments and filter.
+/// Every segment of a shard covers exactly the first segment's coverage.
+pub fn inventory(shards: Vec<FixtureShard>) -> Result<Publication, Error> {
+    let genesis = shards[0].1[0].0.manifest.genesis;
+    let revision = shards[0].1[0].0.manifest.history_revision;
+    let mut prepared = Vec::new();
+    for (sealed, tables, filter) in shards {
+        let segments = tables
+            .into_iter()
+            .map(|(snapshot, table)| segment(snapshot, table))
+            .collect::<Result<_, _>>()?;
+        let filter = filter.map(|f| Arc::new(FilterSource::memory(&f)));
+        prepared.push((sealed, segments, filter));
+    }
+    Publication::assemble(genesis, revision, prepared)
 }
 
 /// A zero-payload companion table for `snapshot`, built at its end, for serving tests
@@ -64,29 +90,19 @@ pub fn companion_table(
 
 /// [`prepare`] with a [`placeholder`] companion.
 pub fn prepare_payments(snapshot: Snapshot) -> Result<Publication, Error> {
-    prepare_payments_in(CACHE.get_or_init(Default::default), snapshot)
-}
-
-/// [`prepare_payments`] reusing payment servers from `cache` instead of the process-wide one.
-pub fn prepare_payments_in(
-    cache: &Mutex<VecDeque<Server>>,
-    snapshot: Snapshot,
-) -> Result<Publication, Error> {
     snapshot.validate()?;
     let witnesses = placeholder(&snapshot);
-    let server = payments_in(cache, snapshot)?;
-    let witnesses = companion(witnesses, &server)?;
-    Ok(Publication::verified(server, witnesses))
+    prepare(snapshot, witnesses)
 }
 
 /// [`payments_in`] the process-wide cache.
-fn payments(snapshot: Snapshot) -> Result<Server, Error> {
+pub fn payments(snapshot: Snapshot) -> Result<Server, Error> {
     payments_in(CACHE.get_or_init(Default::default), snapshot)
 }
 
 /// The payment server for `snapshot`, reusing one in `cache` prepared from an identical
 /// snapshot.
-fn payments_in(cache: &Mutex<VecDeque<Server>>, snapshot: Snapshot) -> Result<Server, Error> {
+pub fn payments_in(cache: &Mutex<VecDeque<Server>>, snapshot: Snapshot) -> Result<Server, Error> {
     if snapshot.manifest.rows != MIN_ROWS || snapshot.data.len() != MIN_ROWS as usize * ROW_BYTES {
         return Server::new(snapshot);
     }
@@ -112,7 +128,7 @@ fn payments_in(cache: &Mutex<VecDeque<Server>>, snapshot: Snapshot) -> Result<Se
 
 /// The witness server for `table`, reusing one prepared from an identical table, whose
 /// manifest binds the same payment table and rows.
-fn companion(table: witness::Table, payments: &Server) -> Result<WitnessServer, Error> {
+pub fn companion(table: witness::Table, payments: &Server) -> Result<WitnessServer, Error> {
     table.validate()?;
     table
         .manifest

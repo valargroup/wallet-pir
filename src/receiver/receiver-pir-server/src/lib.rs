@@ -9,6 +9,7 @@ pub mod blocks;
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
 pub mod publication;
+pub mod tables;
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
@@ -53,7 +54,8 @@ fn endpoint(path: &str) -> Option<&'static str> {
 /// The receiver directory's route categories; session IDs never become labels.
 fn receiver_endpoint(route: &str) -> Option<&'static str> {
     Some(match route.split('/').next()? {
-        "init" => "receiver_init",
+        "inventory" => "receiver_inventory",
+        "shard-filters" => "receiver_shard_filters",
         "public" => "receiver_public",
         "query" => "receiver_query",
         "block-filters" => "receiver_block_filters",
@@ -102,8 +104,9 @@ struct Service {
 const MAX_FILTER_BATCHES: usize = 8;
 
 /// The receiver categories `pir_observability` reports.
-const ENDPOINTS: [&str; 5] = [
-    "receiver_init",
+const ENDPOINTS: [&str; 6] = [
+    "receiver_inventory",
+    "receiver_shard_filters",
     "receiver_public",
     "receiver_query",
     "receiver_block_filters",
@@ -140,15 +143,58 @@ fn router(service: Service) -> Router {
             }),
         )
         .route(
-            "/v1/receiver/init",
+            "/v1/receiver/inventory",
             get(|State(s): State<Service>| async move {
-                match s.publications.select(None) {
-                    Ok((p, _)) => (
-                        [(header::CACHE_CONTROL, "no-store")],
-                        Json(p.session()),
-                    )
-                        .into_response(),
+                match s.publications.current() {
+                    Ok(p) => json(p.head_bytes().to_vec()),
                     Err(status) => status.into_response(),
+                }
+            }),
+        )
+        .route(
+            "/v1/receiver/inventory/:inventory/:chunk",
+            get(
+                |State(s): State<Service>, Path((id, chunk)): Path<(String, usize)>| async move {
+                    let Some(id) = hash(&id) else {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    };
+                    match s.publications.inventory(&id) {
+                        Ok((p, _)) => match p.chunk(chunk) {
+                            Some(bytes) => json(bytes.to_vec()),
+                            None => StatusCode::NOT_FOUND.into_response(),
+                        },
+                        Err(status) => status.into_response(),
+                    }
+                },
+            ),
+        )
+        .route(
+            "/v1/receiver/shard-filters/:digest",
+            get(|State(s): State<Service>, Path(digest): Path<String>| async move {
+                let Some(digest) = hash(&digest) else {
+                    return StatusCode::BAD_REQUEST.into_response();
+                };
+                let (publication, epoch) = match s.publications.with_filter(&digest) {
+                    Ok(selected) => selected,
+                    Err(status) => return status.into_response(),
+                };
+                // Filter bytes are read into the table budget and stay counted until
+                // the response is sent. Holding the selected inventory meanwhile keeps
+                // the filter's file (see `Publications::references`).
+                let tables = s.publications.tables();
+                let loaded = tokio::task::spawn_blocking(move || {
+                    tables.filter(publication.filter(&digest).expect("selected by digest"))
+                })
+                .await;
+                // A revocation during the load is 410, as for queries: a revoked
+                // inventory's filter could wrongly rule a payment out.
+                if s.publications.epoch() != epoch {
+                    return StatusCode::GONE.into_response();
+                }
+                match loaded {
+                    Ok(Ok(resident)) => binary(axum::body::Bytes::from_owner(Filter(resident))),
+                    Ok(Err(tables::LoadError::Busy)) => overloaded(),
+                    _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
                 }
             }),
         )
@@ -183,6 +229,16 @@ fn router(service: Service) -> Router {
         .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(metrics, observe))
         .with_state(service)
+}
+
+/// A resident filter's encoding as a response body, holding its budget until sent.
+struct Filter(Arc<tables::Resident>);
+
+impl AsRef<[u8]> for Filter {
+    /// The encoding the resident entry holds.
+    fn as_ref(&self) -> &[u8] {
+        self.0.filter().expect("a filter entry")
+    }
 }
 
 /// Marks every error response `no-store`, leaving its status, other headers and body
@@ -220,12 +276,29 @@ async fn health(State(s): State<Service>) -> Response {
         .into_response()
 }
 
+/// A 32-byte hash from its hex route segment.
+fn hash(hex: &str) -> Option<receiver_directory::Hash> {
+    hex::decode(hex).ok()?.try_into().ok()
+}
+
+/// An uncached JSON response of already serialized `body`.
+fn json(body: Vec<u8>) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 /// Serves the public PIR setup of the payment or witness session whose hex id is `id`.
 fn public(s: &Service, id: &str) -> Response {
-    let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
+    let Some(id) = hash(id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    match s.publications.select(Some(id)) {
+    match s.publications.select(&id) {
         Ok((p, _)) => binary(p.table(&id).expect("selected by id").public().to_vec()),
         Err(status) => status.into_response(),
     }
@@ -268,11 +341,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let id: receiver_directory::Hash = body[4..36].try_into().unwrap();
-    let (publication, epoch) = match s.publications.select(Some(id)) {
+    let (publication, epoch) = match s.publications.select(&id) {
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
-    let rows = publication.table(&id).expect("selected by id").rows();
+    let source = publication.table(&id).expect("selected by id").clone();
+    let rows = source.rows();
     let expected = query_bytes(rows).expect("a served geometry");
     match body.len().cmp(&expected) {
         std::cmp::Ordering::Greater => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
@@ -282,16 +356,18 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     let Ok(permit) = s.queue.acquire(|| ()).await else {
         return overloaded();
     };
-    let result = pir_control::admission::spawn_admitted(
-        (permit, client, publication),
-        move |(_, _, publication)| {
-            publication
-                .table(&id)
-                .expect("selected by id")
-                .respond(&body)
-        },
-    )
-    .await;
+    let tables = s.publications.tables();
+    let result =
+        pir_control::admission::spawn_admitted(
+            (permit, client, publication),
+            move |_| match tables.get(&source) {
+                Ok(resident) => resident.respond(&body).map_err(Some),
+                // Tables in use fill the memory budget; the client retries.
+                Err(tables::LoadError::Busy) => Err(None),
+                Err(tables::LoadError::Load(error)) => Err(Some(error)),
+            },
+        )
+        .await;
     // A revocation during evaluation is 410; after it, wallets revalidate their anchor.
     if s.publications.epoch() != epoch {
         return StatusCode::GONE.into_response();
@@ -303,8 +379,9 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
             *response.body_mut() = pir_control::http::retain(body, guards);
             response
         }
-        Ok((Err(Error::Revision), _)) => StatusCode::GONE.into_response(),
-        Ok((Err(Error::Malformed), _)) => StatusCode::BAD_REQUEST.into_response(),
+        Ok((Err(Some(Error::Revision)), _)) => StatusCode::GONE.into_response(),
+        Ok((Err(Some(Error::Malformed)), _)) => StatusCode::BAD_REQUEST.into_response(),
+        Ok((Err(None), _)) => overloaded(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -344,25 +421,16 @@ mod tests {
     #[tokio::test]
     async fn query_response_retains_admission_and_publication_until_transport_drop() {
         use receiver_directory::snapshot::Snapshot;
-        use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
+        use receiver_pir::{Client, MIN_ROWS};
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare_payments(snapshot).unwrap();
-        let accepted = AcceptedCoverage {
-            genesis: [1; 32],
-            required_start: 100,
-            height: 101,
-            hash: [3; 32],
-        };
-        let client = Client::new(
-            publication.server.manifest().clone(),
-            publication.server.public(),
-            accepted,
-        )
-        .unwrap();
+        let source = &publication.segments()[0].payments;
+        let manifest = source.payment_manifest().unwrap().clone();
+        let client = Client::new(manifest, source.public()).unwrap();
         let publications = Publications::default();
         assert!(publications.publish(publication, 0));
-        let prepared = Arc::downgrade(&publications.select(None).unwrap().0);
+        let prepared = Arc::downgrade(&publications.current().unwrap());
         let queue = Arc::new(Queue::new(1, 1, WAIT, true));
         let clients = ClientSlots::new(1);
         let service = Service {
@@ -410,7 +478,7 @@ mod tests {
         .unwrap();
         let publication = crate::prepared::prepare_payments(snapshot).unwrap();
         let mut header = MAGIC.to_vec();
-        header.extend(publication.id);
+        header.extend(publication.segments()[0].payments.id());
         let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
         let publications = Publications::default();
         assert!(publications.publish(publication, 0));
@@ -530,18 +598,13 @@ mod tests {
     #[tokio::test]
     async fn a_revocation_after_selection_is_gone() {
         use receiver_directory::snapshot::Snapshot;
-        use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
+        use receiver_pir::{Client, MIN_ROWS};
         let snapshot =
             Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare_payments(snapshot).unwrap();
-        let server = publication.server.clone();
-        let accepted = AcceptedCoverage {
-            genesis: [1; 32],
-            required_start: 100,
-            height: 101,
-            hash: [3; 32],
-        };
-        let client = Client::new(server.manifest().clone(), server.public(), accepted).unwrap();
+        let source = publication.segments()[0].payments.clone();
+        let manifest = source.payment_manifest().unwrap().clone();
+        let client = Client::new(manifest, source.public()).unwrap();
         let publications = Publications::default();
         assert!(publications.publish(publication, 0));
         let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
@@ -571,6 +634,60 @@ mod tests {
         assert_eq!(revoked.headers()[header::CACHE_CONTROL], "no-store");
         task.abort();
     }
+
+    /// A shard filter whose load a revocation overtakes is 410, never the revoked
+    /// inventory's filter.
+    #[tokio::test]
+    async fn a_revocation_during_a_filter_load_is_gone() {
+        use receiver_directory::shards::{Coverage, ShardFilter};
+        use receiver_directory::snapshot::Snapshot;
+        use std::sync::mpsc;
+        let snapshot = Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[]).unwrap();
+        let coverage = Coverage {
+            start_height: 100,
+            end_height: 101,
+            end_hash: [3; 32],
+        };
+        let filter = ShardFilter::build([1; 32], 0, coverage, &[common::receiver()]).unwrap();
+        let (started, loading) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let released = std::sync::Mutex::new(released);
+        let encoding = filter.bytes().to_vec();
+        let source = Arc::new(tables::FilterSource::stored(
+            filter.digest(),
+            encoding.len() as u32,
+            filter.receivers(),
+            move || {
+                started.send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+                Ok(encoding.clone())
+            },
+        ));
+        let segment =
+            crate::prepared::segment(snapshot.clone(), crate::prepared::placeholder(&snapshot))
+                .unwrap();
+        let publication =
+            Publication::assemble([1; 32], 0, vec![(true, vec![segment], Some(source))]).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(publication, 0));
+        let (url, task) = serve(publications.clone(), Arc::new(Queue::new(1, 1, WAIT, true))).await;
+        let url = url.replace(
+            "/v1/receiver/query",
+            &format!(
+                "/v1/receiver/shard-filters/{}",
+                hex::encode(filter.digest())
+            ),
+        );
+        let response = tokio::spawn(reqwest::get(url));
+        tokio::task::spawn_blocking(move || loading.recv().unwrap())
+            .await
+            .unwrap();
+        publications.revoke();
+        release.send(()).unwrap();
+        let response = response.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::GONE);
+        task.abort();
+    }
 }
 
 #[cfg(test)]
@@ -586,29 +703,30 @@ mod fixture_cache_tests {
     fn reused_servers_do_not_share_reports_or_hide_corruption() {
         // A cache of its own, so concurrent tests cannot evict its entries.
         let cache = Default::default();
-        let prepare = |snapshot| prepared::prepare_payments_in(&cache, snapshot);
-        let first = prepare(snapshot()).unwrap();
-        let second = prepare(snapshot()).unwrap();
+        let payments = |snapshot| prepared::payments_in(&cache, snapshot);
+        let (first, second) = (payments(snapshot()).unwrap(), payments(snapshot()).unwrap());
         assert!(std::ptr::eq(
-            first.server.public().as_ptr(),
-            second.server.public().as_ptr()
+            first.public().as_ptr(),
+            second.public().as_ptr()
         ));
         let mut salted = snapshot();
         salted.manifest.salt[0] ^= 1;
         let salted = Snapshot::build(salted.manifest, &[]).unwrap();
-        let other = prepare(salted).unwrap();
+        let other = payments(salted).unwrap();
         assert!(!std::ptr::eq(
-            first.server.public().as_ptr(),
-            other.server.public().as_ptr()
+            first.public().as_ptr(),
+            other.public().as_ptr()
         ));
+        let first = prepared::prepare_payments(snapshot()).unwrap();
+        let second = prepared::prepare_payments(snapshot()).unwrap();
         let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
         assert!(changed.report.is_some());
         assert!(second.report.is_none());
         let mut corrupt = snapshot();
         corrupt.data[0] ^= 1;
-        assert!(prepare(corrupt).is_err());
+        assert!(payments(corrupt).is_err());
         let mut corrupt = snapshot();
         corrupt.manifest.end_height = 0;
-        assert!(prepare(corrupt).is_err());
+        assert!(payments(corrupt).is_err());
     }
 }

@@ -13,10 +13,7 @@ mod common;
 mod history;
 use receiver_directory::witness;
 use receiver_directory::{snapshot::Snapshot, Hash, Payment};
-use receiver_pir::{
-    transport::{DirectoryClient, Transport},
-    AcceptedCoverage, Error, MIN_ROWS,
-};
+use receiver_pir::{transport::Transport, Error, MIN_ROWS};
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -99,17 +96,34 @@ async fn main() {
             let (snapshot, witness) = publication(offset, hash);
             let dir = dir.join(name);
             std::fs::create_dir_all(&dir).unwrap();
-            let revision = hex::encode(snapshot.manifest.revision().unwrap());
-            let file = |ext: &str| dir.join(format!("{revision}.{ext}"));
+            let segment = hex::encode(snapshot.manifest.revision().unwrap());
+            let file = |ext: &str| dir.join(format!("{segment}.{ext}"));
+            let layout = receiver_indexer::application::Layout {
+                genesis: snapshot.manifest.genesis,
+                history_revision: snapshot.manifest.history_revision,
+                shards: vec![receiver_indexer::application::LayoutShard {
+                    sealed: false,
+                    segments: vec![receiver_indexer::application::LayoutSegment {
+                        payments: snapshot.manifest.revision().unwrap(),
+                        witnesses: witness.manifest.revision().unwrap(),
+                    }],
+                    filter: None,
+                }],
+            };
+            let (id, bytes) = layout.encode().unwrap();
+            let revision = hex::encode(id);
+            std::fs::write(dir.join(format!("{revision}.inventory.json")), bytes).unwrap();
             std::fs::write(
                 file("json"),
                 serde_json::to_vec_pretty(&snapshot.manifest).unwrap(),
             )
             .unwrap();
             std::fs::write(file("rows"), &snapshot.data).unwrap();
-            std::fs::write(file("witness"), &witness.data).unwrap();
+            let companion = hex::encode(witness.manifest.revision().unwrap());
+            let companion = |ext: &str| dir.join(format!("{companion}.{ext}"));
+            std::fs::write(companion("witness"), &witness.data).unwrap();
             std::fs::write(
-                file("witness.json"),
+                companion("witness.json"),
                 serde_json::to_vec_pretty(&witness.manifest).unwrap(),
             )
             .unwrap();
@@ -125,7 +139,15 @@ async fn main() {
                     "size": anchor.size})
             })
             .collect();
-            let session = receiver_pir::server::Server::new(snapshot).unwrap().id();
+            let genesis = snapshot.manifest.genesis;
+            let segment = receiver_indexer::verify::prepare(snapshot, witness).unwrap();
+            let inventory = receiver_pir_server::Publication::assemble(
+                genesis,
+                0,
+                vec![(false, vec![segment], None)],
+            )
+            .unwrap();
+            let session = inventory.id();
             println!(
                 "{}",
                 serde_json::json!({"directory": dir, "revision": revision,
@@ -137,20 +159,17 @@ async fn main() {
         Some("lookup") => {
             let origin = &args[2];
             let (offset, hash) = (args[3].parse().expect("OFFSET"), byte(&args[4]));
-            let accepted = AcceptedCoverage {
+            let accepted = history::Accepted {
                 genesis: zakura_server_chain::Network::Mainnet.genesis_hash(),
                 required_start: activation(),
                 height: activation() + offset,
                 hash,
             };
             let http = Http(reqwest::Client::new());
-            let manifest = DirectoryClient::fetch_manifest(origin, &http)
+            let session = history::connect(origin, http, accepted).await.unwrap();
+            let mut found = history::inventory_history(&session.client, common::receiver())
                 .await
                 .unwrap();
-            let client = DirectoryClient::connect_manifest(origin, http, accepted, manifest)
-                .await
-                .unwrap();
-            let mut found = history::history(&client, common::receiver()).await.unwrap();
             found.sort_by_key(|payment| payment.position);
             let exact = found == payments(offset, hash);
             println!(

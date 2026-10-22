@@ -2,15 +2,17 @@
 //! Chain transport and decoding remain in the upstream server chain adapter.
 use crate::{
     canonical::{check_serving, freshest, is_canonical},
+    seal::{Policy, Sealer},
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-use receiver_directory::{
-    snapshot::{Snapshot, MAX_ROWS},
-    witness,
-};
-use receiver_pir_server::{Publication, Publications};
-use receiver_store::{Checkpoint, Config as StoreConfig, Error, PayoutStore, Store};
+use receiver_directory::{shards::ShardFilter, witness};
+#[cfg(test)]
+use receiver_pir_server::publication::DEFAULT_RETENTION;
+use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
+use receiver_store::{Checkpoint, Config as StoreConfig, Error, PayoutStore, SealedShard, Store};
+use sha2::Digest;
+use std::sync::Arc;
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -39,8 +41,13 @@ pub struct Config {
     /// An operator cap on the rolling filter window; see [`crate::blocks::filter_window_blocks`].
     pub filter_blocks: Option<u32>,
     pub history_revision: u64,
+    /// Pinned payment table rows of sealed shards' segments.
+    pub shard_rows: u32,
+    /// Payments after which a shard seals; see [`Policy::new`] for the default.
+    pub shard_target: Option<u64>,
 }
 
+#[cfg(test)]
 use crate::verify::prepare as prepare_snapshot;
 
 /// The publication [`refresh`] last activated, with what it was built from.
@@ -50,12 +57,16 @@ struct Active {
     history_revision: u64,
 }
 
-/// In-memory publication identity and the filling Ironwood shard's paths across polls.
-/// Recreate on restart; committed progress is recovered from the store.
+/// In-memory publication identity, the filling Ironwood shard's paths, the open shard's
+/// projection and sealed shards' prepared sessions across polls. Recreate on restart:
+/// committed progress, seals and completed witnesses are recovered from the store.
 #[derive(Default)]
 pub struct State {
     active: Option<Active>,
     witnesses: crate::witness::Witnesses,
+    sealer: Option<Sealer>,
+    kept: Vec<Kept>,
+    durable: Option<crate::durable::Durable>,
 }
 
 /// Poll the product refresh operation, retaining its state across source or
@@ -139,7 +150,7 @@ impl pir_pipeline::Task for Ingestion<'_> {
 /// is still on `genesis`'s network. While
 /// serving, `active` stays while it is served at an unmoved tip and was built from the
 /// same history correction revision, taking the optional audit's latest report in
-/// place; otherwise a new one is built once the previous revision's grace ends.
+/// place; otherwise a new one is built once the retained set has room.
 pub async fn refresh(
     args: &Config,
     nodes: &[NodeClient],
@@ -430,7 +441,13 @@ impl<'a> Collected<'a> {
             refresh_started,
             history_revision,
         } = self;
-        let State { active, witnesses } = state;
+        let State {
+            active,
+            witnesses,
+            sealer,
+            kept,
+            durable,
+        } = state;
         // The optional audit never prevents chain publication. Off, its empty store needs
         // no terminal block time; on, a time or store that is unavailable degrades its
         // report instead.
@@ -462,66 +479,218 @@ impl<'a> Collected<'a> {
             }
         }
         let started = std::time::Instant::now();
-        let records = store.counts()?.0;
-        // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
-        let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
-        let snapshot = loop {
-            if rows > MAX_ROWS {
-                return Err(
-                    "directory exceeds the maximum row count; no publication created".into(),
+        let policy = Policy::new(args.shard_rows, args.shard_target)?;
+        // A sealed shard keeps the rows it was sealed under, and serving refuses tables
+        // below `min_rows`, so a raised `min_rows` would publish shards every server
+        // refuses. Resealing would discard sealed history on a configuration edit, so it
+        // is the operator's call: lower `min_rows` again or rebuild the index.
+        if let Some(shard) = store
+            .sealed_shards()?
+            .into_iter()
+            .find(|shard| shard.rows < args.min_rows)
+        {
+            return Err(format!(
+                "the shard sealed over blocks {}..={} has {} rows, fewer than min_rows {}; \
+                 lower min_rows or rebuild the index",
+                shard.start_height, shard.end_height, shard.rows, args.min_rows
+            )
+            .into());
+        }
+        if sealer.as_ref().is_none_or(|s| *s.policy() != policy) {
+            *sealer = Some(Sealer::new(policy));
+        }
+        let sealer = sealer.as_mut().expect("set above");
+        sealer
+            .advance(store, genesis)
+            .map_err(|error| match error {
+                Error::Capacity => format!(
+                    "block {} needs more segments than a shard holds; no publication created",
+                    tip.height + 1
+                )
+                .into(),
+                error => Box::<dyn std::error::Error + Send + Sync>::from(error),
+            })?;
+        log_stage("seal", started);
+        let started = std::time::Instant::now();
+        let revision = history_revision;
+        let sealed_shards = store.sealed_shards()?;
+        if let Some(serving) = serving.filter(|_| durable.is_none()) {
+            *durable = Some(crate::durable::Durable::open(
+                &args.data_dir,
+                serving.tables(),
+            )?);
+        }
+        // Each shard is built and prepared, or written, before the next is built, so one
+        // shard's tables at most are held outside the serving cache.
+        let root = args.data_dir.join("publications");
+        let mut prepared = Vec::new();
+        let mut layout = Vec::new();
+        let (mut records, mut segments) = (0u64, 0usize);
+        let mut next_kept = Vec::new();
+        for shard in sealed_shards.iter().map(Some).chain([None]) {
+            let plan = match shard {
+                Some(shard) => {
+                    let end = store.checkpoint(shard.end_height)?;
+                    let reusable = kept.iter().position(|k| {
+                        serving.is_some()
+                            && k.shard == *shard
+                            && k.end == end
+                            && k.history_revision == revision
+                    });
+                    match reusable {
+                        Some(index) => {
+                            let k = kept.swap_remove(index);
+                            let mut parts = Vec::new();
+                            for mut segment in k.segments {
+                                let frozen = segment.frozen.as_ref().is_some_and(|c| {
+                                    store.checkpoint(c.height).ok().as_ref() == Some(c)
+                                });
+                                parts.push(if frozen {
+                                    Part::Ready(segment)
+                                } else {
+                                    let source = &segment.segment.payments;
+                                    // A frozen companion whose block a reorg replaced reads
+                                    // its records back from the stored payment table.
+                                    let leaves = match segment.leaves.take() {
+                                        Some(leaves) => leaves,
+                                        None => {
+                                            let durable = durable.as_ref().expect("serving");
+                                            let snapshot = durable.snapshot(source)?;
+                                            crate::shards::leaves(&snapshot)?
+                                        }
+                                    };
+                                    let payments = &source
+                                        .payment_manifest()
+                                        .ok_or(Error::Malformed)?
+                                        .directory;
+                                    let (table, frozen) = crate::shards::rewitness(
+                                        store, witnesses, payments, &leaves, &tip,
+                                    )?;
+                                    segment.leaves = Some(leaves);
+                                    Part::Witness(segment, Box::new((table, frozen)))
+                                });
+                            }
+                            Plan {
+                                sealed: Some((k.shard, k.end)),
+                                parts,
+                                filter: Some(PlanFilter::Stored(k.filter)),
+                            }
+                        }
+                        None => {
+                            let built =
+                                crate::shards::sealed(store, witnesses, shard, &tip, revision)?;
+                            Plan {
+                                sealed: Some((built.shard, built.end)),
+                                parts: built
+                                    .segments
+                                    .into_iter()
+                                    .map(|segment| Part::Fresh(Box::new(segment)))
+                                    .collect(),
+                                filter: Some(PlanFilter::Built(built.filter)),
+                            }
+                        }
+                    }
+                }
+                None => {
+                    let from = sealed_shards
+                        .last()
+                        .map_or(args.start_height, |s| s.end_height + 1);
+                    if from > tip.height {
+                        break;
+                    }
+                    let recent = crate::shards::recent(
+                        store,
+                        witnesses,
+                        from,
+                        &tip,
+                        args.min_rows,
+                        sealer.policy(),
+                        revision,
+                    )?;
+                    Plan {
+                        sealed: None,
+                        parts: vec![Part::Fresh(Box::new(recent))],
+                        filter: None,
+                    }
+                }
+            };
+            records += plan.parts.iter().map(Part::records).sum::<u64>();
+            segments += plan.parts.len();
+            if serving.is_some() {
+                let mut tables = durable.take().expect("opened when serving");
+                let (tables, shard) = tokio::task::spawn_blocking(move || {
+                    let shard = prepare_plan(&mut tables, plan);
+                    (tables, shard)
+                })
+                .await?;
+                *durable = Some(tables);
+                let (sealed, segments, filter) = shard?;
+                if let Some((shard, end)) = &sealed {
+                    next_kept.push(Kept {
+                        shard: shard.clone(),
+                        end: end.clone(),
+                        history_revision: revision,
+                        filter: filter.clone().expect("sealed shards have filters"),
+                        segments: segments.clone(),
+                    });
+                }
+                let segments: Vec<_> = segments.into_iter().map(|s| s.segment).collect();
+                prepared.push((sealed.is_some(), segments, filter));
+            } else {
+                // Nothing is written for a chain or node that has changed since ranking.
+                if !is_canonical(rpc, tip.height, tip.hash).await? {
+                    return Err("chain changed while building shards; rerun to reconcile".into());
+                }
+                rpc.check_network(genesis).await?;
+                layout.push(write_plan(&root, plan)?);
+            }
+        }
+        // Exactly this publication's sealed shards are kept for the next.
+        *kept = next_kept;
+        // Stored tables neither a live inventory nor this candidate names are dropped.
+        // Only now does the candidate name its own: after a restart nothing else does,
+        // so pruning earlier would delete every reusable table.
+        if let Some(serving) = serving {
+            let mut live = serving.references();
+            for (_, segments, filter) in &prepared {
+                live.extend(filter.as_ref().map(|f| f.digest()));
+                live.extend(
+                    segments
+                        .iter()
+                        .flat_map(|s| [s.payments.id(), s.witnesses.id()]),
                 );
             }
-            match store.snapshot(rows, history_revision) {
-                Ok(s) => break s,
-                Err(Error::Capacity) => rows *= 2,
-                Err(e) => return Err(e.into()),
-            }
-        };
-        log_stage("directory", started);
-        if !is_canonical(
-            rpc,
-            snapshot.manifest.end_height,
-            snapshot.manifest.end_hash,
-        )
-        .await?
-        {
-            return Err("chain changed before publication; rerun to reconcile".into());
+            durable
+                .as_mut()
+                .expect("opened when serving")
+                .retain(&live)?;
         }
-        let started = std::time::Instant::now();
-        // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
-        let witnesses = companion(store, witnesses, &snapshot)?;
-        log_stage("witness_prepare", started);
-        info!(
-            witness_rows = witnesses.manifest.rows,
-            payloads = witnesses.manifest.payloads,
-            "witnesses prepared"
-        );
-        if !is_canonical(
-            rpc,
-            snapshot.manifest.end_height,
-            snapshot.manifest.end_hash,
-        )
-        .await?
-        {
-            return Err("chain changed while building proofs; rerun to reconcile".into());
+        log_stage("shards", started);
+        if !is_canonical(rpc, tip.height, tip.hash).await? {
+            return Err("chain changed while building shards; rerun to reconcile".into());
         }
         // Ranking read the genesis before the pass, and an endpoint can be repointed.
         rpc.check_network(genesis).await?;
-        let revision = hex::encode(snapshot.manifest.revision()?);
-        let summary = serde_json::json!({"revision":revision,"start_height":snapshot.manifest.start_height,
-        "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
-        "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
-        "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
-        "witness_rows":witnesses.manifest.rows,"history_revision":history_revision});
-        let candidate = if serving.is_some() {
-            let started = std::time::Instant::now();
-            let publication =
-                tokio::task::spawn_blocking(move || prepare_snapshot(snapshot, witnesses))
-                    .await??;
-            log_stage("pir_prepare", started);
-            Candidate::Serving(Box::new(publication))
-        } else {
-            Candidate::Files(Box::new((snapshot, witnesses)))
+        let shards = prepared.len().max(layout.len());
+        let summary = serde_json::json!({"start_height":args.start_height,
+        "end_height":tip.height,"records":records,
+        "actions":tip.position-store.config().start_position,
+        "excluded_coinbase_actions":store.counts()?.1,
+        "shards":shards,"sealed_shards":sealed_shards.len(),
+        "segments":segments,"history_revision":revision});
+        let candidate = match serving {
+            Some(_) => Candidate::Serving(Box::new(Publication::assemble(
+                genesis, revision, prepared,
+            )?)),
+            None => Candidate::Files(Layout {
+                genesis,
+                history_revision: revision,
+                shards: layout,
+            }),
+        };
+        let revision = match &candidate {
+            Candidate::Serving(publication) => hex::encode(publication.id()),
+            Candidate::Files(_) => String::new(),
         };
         Ok(Input::Work(Prepared {
             candidate,
@@ -539,46 +708,124 @@ impl<'a> Collected<'a> {
     }
 }
 
-enum Candidate {
-    Serving(Box<Publication>),
-    /// A one-shot run's rows and companion table, to write.
-    Files(Box<(Snapshot, witness::Table)>),
+/// A sealed shard prepared for serving, kept across publications while its blocks and
+/// correction generation are unchanged.
+pub(crate) struct Kept {
+    shard: SealedShard,
+    end: Checkpoint,
+    history_revision: u64,
+    filter: Arc<FilterSource>,
+    segments: Vec<KeptSegment>,
 }
 
-/// The companion witness table for `snapshot`, which the store's tip anchors: one payload
-/// per payment in position order, each checked to fold to its completed Ironwood shard's
-/// recorded root. More payloads than the largest witness table holds publish nothing.
-fn companion(
-    store: &mut Store,
-    witnesses: &mut crate::witness::Witnesses,
-    snapshot: &Snapshot,
-) -> Result<witness::Table> {
-    let m = &snapshot.manifest;
-    let tip = store.tip()?;
-    let positions = store.payment_positions(m.start_position, m.end_position)?;
-    if (tip.height, tip.hash, tip.position) != (m.end_height, m.end_hash, m.end_position)
-        || positions.len() as u64 != m.records
-    {
-        return Err("the index moved while building witnesses; retrying".into());
-    }
-    let payloads = witnesses.payloads(store, &tip, &positions)?;
-    let table = match crate::witness::table(snapshot, &payloads) {
-        Err(Error::Capacity) => {
-            return Err(format!(
-                "{} payments exceed the largest witness table; no publication created",
-                payloads.len()
-            )
-            .into())
+/// One kept segment: its sessions, its record count, the block its companion is frozen
+/// at (`None` while provisional) and, only while provisional, its checked records in
+/// ordinal order. A provisional companion is rebuilt at every tip from those records; a
+/// frozen one keeps none, so sealed history holds no per-payment state in memory, and
+/// reads them back from its stored table if a reorg unfreezes it.
+#[derive(Clone)]
+pub(crate) struct KeptSegment {
+    segment: Segment,
+    records: u64,
+    leaves: Option<Vec<(u64, [u8; 32], u32)>>,
+    frozen: Option<Checkpoint>,
+}
+
+impl KeptSegment {
+    /// A segment serving `segment` with `leaves`, keeping them only if `frozen` is `None`.
+    fn new(
+        segment: Segment,
+        leaves: Vec<(u64, [u8; 32], u32)>,
+        frozen: Option<Checkpoint>,
+    ) -> Self {
+        Self {
+            segment,
+            records: leaves.len() as u64,
+            leaves: frozen.is_none().then_some(leaves),
+            frozen,
         }
-        table => table?,
+    }
+}
+
+/// How one segment reaches serving.
+enum Part {
+    /// Kept as it is: a frozen companion whose dependency is still stored.
+    Ready(KeptSegment),
+    /// A kept payment session with a rebuilt companion and its frozen context.
+    Witness(KeptSegment, Box<(witness::Table, Option<Checkpoint>)>),
+    /// Freshly built tables.
+    Fresh(Box<crate::shards::Built>),
+}
+
+impl Part {
+    /// The payments the segment holds.
+    fn records(&self) -> u64 {
+        match self {
+            Part::Ready(k) | Part::Witness(k, ..) => k.records,
+            Part::Fresh(built) => built.snapshot.manifest.records,
+        }
+    }
+}
+
+/// One shard of a publication: sealed with its end, or the recent tier, with its
+/// segments and filter.
+struct Plan {
+    sealed: Option<(SealedShard, Checkpoint)>,
+    parts: Vec<Part>,
+    filter: Option<PlanFilter>,
+}
+
+/// A planned shard's filter: freshly built, or a kept shard's stored source.
+enum PlanFilter {
+    Built(ShardFilter),
+    Stored(Arc<FilterSource>),
+}
+
+/// A planned shard's prepared segments.
+type PreparedShard = (
+    Option<(SealedShard, Checkpoint)>,
+    Vec<KeptSegment>,
+    Option<Arc<FilterSource>>,
+);
+
+/// Prepares every segment of `plan` for serving through `durable`, reusing kept and
+/// stored tables. Blocking.
+fn prepare_plan(
+    durable: &mut crate::durable::Durable,
+    plan: Plan,
+) -> std::result::Result<PreparedShard, receiver_pir::Error> {
+    let segments = plan
+        .parts
+        .into_iter()
+        .map(|part| match part {
+            Part::Ready(kept) => Ok(kept),
+            Part::Witness(kept, rebuilt) => {
+                let (table, frozen) = *rebuilt;
+                Ok(KeptSegment::new(
+                    durable.rewitness(&kept.segment.payments, table)?,
+                    kept.leaves.expect("taken to rebuild"),
+                    frozen,
+                ))
+            }
+            Part::Fresh(built) => Ok(KeptSegment::new(
+                durable.segment(built.snapshot, built.witnesses)?,
+                built.leaves,
+                built.frozen,
+            )),
+        })
+        .collect::<std::result::Result<_, receiver_pir::Error>>()?;
+    let filter = match plan.filter {
+        Some(PlanFilter::Built(filter)) => Some(durable.filter(&filter)?),
+        Some(PlanFilter::Stored(source)) => Some(source),
+        None => None,
     };
-    for (shard, root) in verify::check_publication(snapshot, &table)? {
-        let shard = u32::try_from(shard)?;
-        if store.completed_shard(shard)?.map(|s| s.root) != Some(root) {
-            return Err(Error::Coverage.into());
-        }
-    }
-    Ok(table)
+    Ok((plan.sealed, segments, filter))
+}
+
+enum Candidate {
+    Serving(Box<Publication>),
+    /// A one-shot run's layout, whose tables are already written.
+    Files(Layout),
 }
 
 struct Prepared<'a> {
@@ -610,20 +857,22 @@ impl Prepared<'_> {
             summary,
         } = self;
         let publication = match candidate {
-            Candidate::Files(files) => {
-                let (snapshot, witnesses) = *files;
+            Candidate::Files(layout) => {
                 let started = std::time::Instant::now();
-                write_publication(&args.data_dir.join("publications"), &snapshot, witnesses)?;
+                let root = args.data_dir.join("publications");
+                let layout = write_layout(&root, &layout)?;
                 log_stage("directory_write", started);
+                let mut summary = summary;
+                summary["revision"] = hex::encode(layout).into();
                 println!("{summary}");
                 return Ok(());
             }
             Candidate::Serving(publication) => *publication,
         };
         let serving = serving.expect("serving candidate has publication owner");
-        let end_height = publication.manifest().end_height;
+        let end_height = publication.head().end_height;
         let started = std::time::Instant::now();
-        let anchor = publication.manifest();
+        let anchor = publication.head();
         if !is_canonical(rpc, anchor.end_height, anchor.end_hash).await? {
             serving.revoke();
             return Err("chain changed during PIR preparation; retrying".into());
@@ -690,24 +939,138 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Durably write a revision's rows, its companion witness table and witness manifest,
-/// then its manifest. A session manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which
-/// clients read no more of, or invalid records or witnesses, writes nothing.
-fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: witness::Table) -> Result<()> {
-    verify::check_publication(snapshot, &witnesses)?;
-    let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
-    let witness_manifest = serde_json::to_vec_pretty(&witnesses.manifest)?;
-    if manifest.len() + witness_manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
-        return Err("publication manifest exceeds its size bound; nothing written".into());
+/// Durably writes every segment's rows and manifest with its companion witness table
+/// and manifest, every sealed shard's filter, then the [`Layout`] naming them, which
+/// staged serving loads. Returns the layout's identity. Invalid records or witnesses,
+/// or a session manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], write nothing for
+/// their shard.
+#[cfg(test)]
+fn write_publication(
+    root: &Path,
+    genesis: [u8; 32],
+    history_revision: u64,
+    plans: Vec<Plan>,
+) -> Result<[u8; 32]> {
+    let shards = plans
+        .into_iter()
+        .map(|plan| write_plan(root, plan))
+        .collect::<Result<_>>()?;
+    write_layout(
+        root,
+        &Layout {
+            genesis,
+            history_revision,
+            shards,
+        },
+    )
+}
+
+/// Durably writes one planned shard's tables and filter for a one-shot run, after
+/// checking every segment, and returns its entry in the [`Layout`].
+fn write_plan(root: &Path, plan: Plan) -> Result<LayoutShard> {
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut segments = Vec::new();
+    for part in plan.parts {
+        let Part::Fresh(built) = part else {
+            return Err("one-shot publications build every table".into());
+        };
+        let (snapshot, witnesses) = (built.snapshot, built.witnesses);
+        verify::check_publication(&snapshot, &witnesses)?;
+        let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
+        let witness_manifest = serde_json::to_vec_pretty(&witnesses.manifest)?;
+        if manifest.len() + witness_manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
+            return Err("publication manifest exceeds its size bound; nothing written".into());
+        }
+        // A sealed payment table keeps its revision while its provisional companion
+        // changes, so each table is named by its own revision.
+        let segment = LayoutSegment {
+            payments: snapshot.manifest.revision()?,
+            witnesses: witnesses.manifest.revision()?,
+        };
+        let (name, companion) = (
+            hex::encode(segment.payments),
+            hex::encode(segment.witnesses),
+        );
+        files.push((format!("{name}.rows"), snapshot.data));
+        files.push((format!("{name}.json"), manifest));
+        files.push((format!("{companion}.witness"), witnesses.data));
+        files.push((format!("{companion}.witness.json"), witness_manifest));
+        segments.push(segment);
     }
+    let filter = match plan.filter {
+        Some(PlanFilter::Built(filter)) => Some(filter),
+        Some(PlanFilter::Stored(_)) => {
+            return Err("one-shot publications build every filter".into())
+        }
+        None => None,
+    };
+    let filter = filter.map(|filter| {
+        files.push((
+            format!("{}.filter", hex::encode(filter.digest())),
+            filter.bytes().to_vec(),
+        ));
+        filter.digest()
+    });
     std::fs::create_dir_all(root)?;
-    let revision = hex::encode(snapshot.manifest.revision()?);
-    write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
-    write_revision_file(root, &format!("{revision}.witness"), &witnesses.data)?;
-    write_revision_file(root, &format!("{revision}.witness.json"), &witness_manifest)?;
-    write_revision_file(root, &format!("{revision}.json"), &manifest)?;
+    for (name, bytes) in files {
+        write_revision_file(root, &name, &bytes)?;
+    }
+    Ok(LayoutShard {
+        sealed: plan.sealed.is_some(),
+        segments,
+        filter,
+    })
+}
+
+/// Durably writes `layout` beside the tables it names and returns its identity.
+fn write_layout(root: &Path, layout: &Layout) -> Result<[u8; 32]> {
+    let (id, bytes) = layout.encode()?;
+    std::fs::create_dir_all(root)?;
+    write_revision_file(root, &format!("{}.inventory.json", hex::encode(id)), &bytes)?;
     std::fs::File::open(root)?.sync_all()?;
-    Ok(())
+    Ok(id)
+}
+
+/// The files of a one-shot publication that staged serving assembles into an
+/// inventory: each shard's segments by payment and companion table revision and its
+/// filter by digest.
+/// Coverage comes from the segments' own manifests.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Layout {
+    pub genesis: [u8; 32],
+    pub history_revision: u64,
+    pub shards: Vec<LayoutShard>,
+}
+
+/// One shard of a [`Layout`].
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutShard {
+    pub sealed: bool,
+    pub segments: Vec<LayoutSegment>,
+    pub filter: Option<LayoutHash>,
+}
+
+/// One segment of a [`LayoutShard`]: its payment table's revision, naming its `.json`
+/// and `.rows`, and its companion's own revision, naming its `.witness.json` and
+/// `.witness`.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutSegment {
+    pub payments: LayoutHash,
+    pub witnesses: LayoutHash,
+}
+
+/// A hash written as hex in a [`Layout`].
+pub type LayoutHash = [u8; 32];
+
+impl Layout {
+    /// The compact JSON a layout file holds and its identity, the SHA-256 of those bytes.
+    pub fn encode(&self) -> Result<([u8; 32], Vec<u8>)> {
+        let bytes = serde_json::to_vec(self)?;
+        Ok((sha2::Sha256::digest(&bytes).into(), bytes))
+    }
 }
 
 /// Atomically write one content-addressed revision file. An existing file must be identical.
@@ -743,6 +1106,7 @@ use crate::probe::common;
 mod tests {
     use super::*;
     use axum::{extract::State as HttpState, routing::post, Json, Router};
+    use receiver_directory::snapshot::Snapshot;
     use receiver_pir_server::Publication;
     use serde_json::{json, Value};
     use std::{
@@ -816,13 +1180,14 @@ mod tests {
         NodeClient::new(url, None).unwrap()
     }
 
-    /// An empty publication ending at block `[hash; 32]`, height 101.
+    /// An empty one-shard inventory ending at block `[hash; 32]`, height 101.
     fn publication(hash: u8) -> Publication {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[]).unwrap();
         let table = crate::witness::table(&snapshot, &[]).unwrap();
-        prepare_snapshot(snapshot, table).unwrap()
+        let segment = prepare_snapshot(snapshot, table).unwrap();
+        Publication::assemble([1; 32], 0, vec![(false, vec![segment], None)]).unwrap()
     }
 
     /// A check that finds an anchor off the chain after a revocation and a new
@@ -891,6 +1256,14 @@ mod tests {
         /// Indexes the activation block and serves it. Each block hash request first
         /// runs `on_hash` on the provider store, as a concurrent feed read would.
         async fn new(on_hash: impl Fn(&mut PayoutStore) + Send + Sync + 'static) -> Self {
+            Self::serving(on_hash, Publications::default()).await
+        }
+
+        /// [`Self::new`] serving through `publications`.
+        async fn serving(
+            on_hash: impl Fn(&mut PayoutStore) + Send + Sync + 'static,
+            publications: Publications,
+        ) -> Self {
             let height = u64::from(crate::blocks::ironwood_activation());
             let dir = tempfile::tempdir().unwrap();
             let provider = dir.path().join(PROVIDERS);
@@ -941,8 +1314,9 @@ mod tests {
                 audit_enabled: true,
                 filter_blocks: None,
                 history_revision: 0,
+                shard_rows: receiver_pir::MIN_ROWS,
+                shard_target: None,
             };
-            let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
             let app = crate::router::router_with_publications(publications.clone());
@@ -956,6 +1330,18 @@ mod tests {
                 origin,
                 state: State::default(),
             }
+        }
+
+        /// Restarts the service as a new process would: fresh serving state, table cache
+        /// and listener, with the same budget, over the same data directory and node.
+        async fn restart(&mut self) {
+            self.publications =
+                Publications::new(DEFAULT_RETENTION, self.publications.tables().budget());
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            self.origin = format!("http://{}", socket.local_addr().unwrap());
+            let app = crate::router::router_with_publications(self.publications.clone());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            self.state = State::default();
         }
 
         /// Refreshes, as the serving loop does.
@@ -976,6 +1362,17 @@ mod tests {
             reqwest::get(url).await.unwrap().json().await.unwrap()
         }
 
+        /// The current inventory's last shard's first segment, from its first chunk.
+        async fn segment(&self) -> receiver_pir::Publication {
+            let head: receiver_pir::inventory::Head =
+                serde_json::from_value(self.get("inventory").await).unwrap();
+            let chunk = self
+                .get(&format!("inventory/{}/0", hex::encode(head.inventory)))
+                .await;
+            let chunk: receiver_pir::inventory::Chunk = serde_json::from_value(chunk).unwrap();
+            chunk.shards.last().unwrap().segments[0].clone()
+        }
+
         fn store(&self) -> Store {
             Store::open(
                 self.dir.path().join(receiver_store::STORE_FILE),
@@ -993,6 +1390,1125 @@ mod tests {
         fn provider(&self) -> PayoutStore {
             PayoutStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
+    }
+
+    /// A reqwest transport for the library client that counts encrypted queries.
+    #[derive(Clone, Default)]
+    struct Wallet {
+        http: reqwest::Client,
+        queries: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl receiver_pir::transport::Transport for Wallet {
+        async fn get(
+            &self,
+            url: &str,
+            limit: usize,
+        ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
+            wallet_read(self.http.get(url), limit).await
+        }
+        async fn post(
+            &self,
+            url: &str,
+            body: Vec<u8>,
+            limit: usize,
+        ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
+            self.queries
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            wallet_read(self.http.post(url).body(body), limit).await
+        }
+    }
+
+    /// One response within `limit`, 410 as a revision change.
+    async fn wallet_read(
+        request: reqwest::RequestBuilder,
+        limit: usize,
+    ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
+        let failed = |e: reqwest::Error| receiver_pir::Error::Transport(e.to_string());
+        let response = request.send().await.map_err(failed)?;
+        if response.status() == reqwest::StatusCode::GONE {
+            return Err(receiver_pir::Error::Revision);
+        }
+        let response = response.error_for_status().map_err(failed)?;
+        crate::read_limited(response, limit)
+            .await
+            .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+    }
+
+    impl Paused {
+        /// Appends a validated block after the store's tip paying each of `paid` once,
+        /// with `extra` further commitments, every commitment `variant`, and makes the
+        /// node agree. Returns the block.
+        fn extend(
+            &mut self,
+            paid: &[[u8; 43]],
+            extra: usize,
+            variant: u8,
+        ) -> receiver_store::IndexedBlock {
+            let mut store = self.store();
+            let tip = store.tip().unwrap();
+            let height = tip.height + 1;
+            let mut hash = [variant; 32];
+            hash[..4].copy_from_slice(&height.to_le_bytes());
+            let cmx = [6; 32];
+            let payments = paid
+                .iter()
+                .enumerate()
+                .map(|(i, receiver)| {
+                    let mut payment = super::common::record(0, 1).payment;
+                    (payment.height, payment.block_hash, payment.cmx) = (height, hash, cmx);
+                    payment.position = tip.position + i as u64;
+                    payment.tx_index = i as u32 + 1;
+                    payment.txid = [variant; 32];
+                    payment.txid[..8].copy_from_slice(&payment.position.to_le_bytes());
+                    (*receiver, payment)
+                })
+                .collect();
+            let count = paid.len() + extra;
+            let mut commitments = vec![cmx; count];
+            if let Some(first) = commitments.get_mut(paid.len()) {
+                first[31] = variant & 0x3f;
+            }
+            let block = receiver_store::IndexedBlock {
+                height,
+                hash,
+                parent: tip.hash,
+                start_position: tip.position,
+                end_position: tip.position + count as u64,
+                coinbase_actions: 0,
+                payments,
+                commitments,
+            };
+            verify::append(&mut store, &block).unwrap();
+            *self.node.tip.lock().unwrap() = u64::from(height);
+            self.node
+                .hashes
+                .lock()
+                .unwrap()
+                .insert(u64::from(height), hash);
+            block
+        }
+
+        /// Captures the served inventory at the store's tip as a wallet does, with the
+        /// count of encrypted queries the client then sends.
+        async fn capture(
+            &self,
+            filters: bool,
+        ) -> (
+            receiver_pir::transport::InventoryClient<Wallet>,
+            Arc<std::sync::atomic::AtomicUsize>,
+        ) {
+            use receiver_pir::transport::{Inventories, InventoryClient};
+            let wallet = Wallet::default();
+            let queries = wallet.queries.clone();
+            let genesis = Network::Mainnet.genesis_hash();
+            let head = Inventories::head(&self.origin, &wallet, &genesis)
+                .await
+                .unwrap();
+            let inventory = Inventories::capture(&self.origin, &wallet, head)
+                .await
+                .unwrap();
+            let tip = self.store().tip().unwrap();
+            let activation = crate::blocks::ironwood_activation();
+            inventory
+                .accept(&genesis, activation, tip.height, &tip.hash)
+                .unwrap();
+            (
+                InventoryClient::new(&self.origin, wallet, inventory, filters),
+                queries,
+            )
+        }
+    }
+
+    /// Every record of `receiver` in the captured inventory, with the shard and segment
+    /// holding it, skipping sealed shards whose filter excludes it as a wallet may.
+    async fn lookup(
+        client: &receiver_pir::transport::InventoryClient<Wallet>,
+        receiver: [u8; 43],
+    ) -> Vec<(u32, u32, receiver_directory::RawRecord)> {
+        let mut found = Vec::new();
+        for shard in client.inventory().shards() {
+            if client.uses_filters() && shard.filter.is_some() {
+                let filter = client.filter(shard.index).await.unwrap();
+                if !filter.matches(&[receiver])[0] {
+                    continue;
+                }
+            }
+            for index in 0..shard.segments.len() as u32 {
+                let segment = client.segment(shard.index, index).await.unwrap();
+                let mut page = 0;
+                while let Some(record) = client.page(&segment, receiver, page).await.unwrap() {
+                    page += 1;
+                    let last = page == record.total;
+                    found.push((shard.index, index, record));
+                    if last {
+                        break;
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    /// One segment of a layout a one-shot pass wrote: its payment manifest and records,
+    /// and its companion's manifest and payload rows.
+    struct Written {
+        payments: receiver_directory::snapshot::Manifest,
+        rows: Vec<u8>,
+        witnesses: receiver_directory::witness::Manifest,
+        payloads: Vec<u8>,
+    }
+
+    impl Written {
+        /// The payment of `receiver`, which must be the segment's only one for it, with
+        /// its companion payload.
+        fn payment(&self, receiver: [u8; 43]) -> (zakura_receiver_crypto::Payment, [u8; 512]) {
+            let mut found = Vec::new();
+            for row in self.rows.chunks(receiver_directory::snapshot::ROW_BYTES) {
+                let slots =
+                    &row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES];
+                for slot in slots.chunks(receiver_directory::RECORD_BYTES) {
+                    if let Some(r) = zakura_receiver_crypto::Record::decode(slot).unwrap() {
+                        if *r.receiver.as_bytes() == receiver {
+                            found.push(r);
+                        }
+                    }
+                }
+            }
+            assert_eq!(found.len(), 1);
+            let r = found.remove(0);
+            let at = r.ordinal as usize * receiver_directory::witness::PAYLOAD_BYTES;
+            (r.payment, self.payloads[at..at + 512].try_into().unwrap())
+        }
+    }
+
+    /// Runs a one-shot pass with `state` into an emptied publications directory, as an
+    /// indexer that writes files does, and returns every segment it wrote in layout
+    /// order. One-shot passes prepare no PIR tables.
+    async fn one_shot(paused: &Paused, state: &mut State) -> (Layout, Vec<Vec<Written>>) {
+        let root = paused.dir.path().join("publications");
+        let _ = std::fs::remove_dir_all(&root);
+        let rpc = std::slice::from_ref(&paused.rpc);
+        refresh(
+            &paused.args,
+            rpc,
+            Network::Mainnet.genesis_hash(),
+            None,
+            state,
+        )
+        .await
+        .unwrap();
+        let read = |name: String| std::fs::read(root.join(name)).unwrap();
+        let name = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .find(|n| n.ends_with(".inventory.json"))
+            .unwrap();
+        let layout: Layout = serde_json::from_slice(&read(name)).unwrap();
+        let shards = layout
+            .shards
+            .iter()
+            .map(|shard| {
+                shard
+                    .segments
+                    .iter()
+                    .map(|s| {
+                        let (p, w) = (hex::encode(s.payments), hex::encode(s.witnesses));
+                        Written {
+                            payments: serde_json::from_slice(&read(format!("{p}.json"))).unwrap(),
+                            rows: read(format!("{p}.rows")),
+                            witnesses: serde_json::from_slice(&read(format!("{w}.witness.json")))
+                                .unwrap(),
+                            payloads: read(format!("{w}.witness")),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        (layout, shards)
+    }
+
+    /// The lower path of every position in a fresh rebuild from all `store`'s
+    /// commitments, the independent oracle for served payloads.
+    fn fresh(store: &Store, positions: &[u64]) -> Vec<[u8; 512]> {
+        let size = store.tip().unwrap().position;
+        let tree: Vec<_> = (0..size.div_ceil(1 << 16))
+            .flat_map(|s| store.commitments(s << 16, size.min((s + 1) << 16)).unwrap())
+            .collect();
+        zakura_receiver_crypto::witness::payloads(&tree, positions).unwrap()
+    }
+
+    /// Shards sealed under fewer rows than a restart's raised `min_rows` refuse the
+    /// publication, serving or written, rather than publish tables serving refuses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_raised_min_rows_refuses_shards_sealed_below_it() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[super::common::receiver()], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let sealed = paused.store().sealed_shards().unwrap();
+        assert!(!sealed.is_empty());
+        assert!(sealed.iter().all(|s| s.rows == receiver_pir::MIN_ROWS));
+        paused.restart().await;
+        paused.args.min_rows = 2 * receiver_pir::MIN_ROWS;
+        paused.args.shard_rows = 2 * receiver_pir::MIN_ROWS;
+        let refused = paused.refresh().await.unwrap_err().to_string();
+        assert!(refused.contains("fewer than min_rows 16384"), "{refused}");
+        assert!(paused.publications.ready_at().is_none());
+        let written = paused.dir.path().join("publications");
+        let before = std::fs::read_dir(&written).map_or(0, |d| d.count());
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        let one_shot = refresh(&paused.args, rpc, genesis, None, &mut State::default()).await;
+        assert!(one_shot.unwrap_err().to_string().contains("min_rows"));
+        assert_eq!(std::fs::read_dir(&written).map_or(0, |d| d.count()), before);
+    }
+
+    /// Blocks that each reach the target seal into shards. A wallet's library client
+    /// skips a sealed shard its filter excludes and reads the rest over real encrypted
+    /// PIR, with each payment's companion payload equal to a fresh rebuild; the filters
+    /// serve by digest; a restart rebuilds the identical inventory; and a displaced
+    /// inventory keeps serving its chunks and sessions while sealed sessions carry over.
+    #[cfg(feature = "qualification-tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sealed_shards_serve_through_the_library_client() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let (one, two) = (receiver(), seeded_receiver(1));
+        paused.extend(&[one], 2, 0);
+        paused.extend(&[two], 0, 0);
+        paused.extend(&[one], 1, 0);
+        paused.extend(&[], 3, 0);
+        paused.refresh().await.unwrap();
+        let (client, queries) = paused.capture(true).await;
+        let shards = client.inventory().shards();
+        let sealed: Vec<_> = shards
+            .iter()
+            .map(|s| (s.sealed, s.filter.is_some()))
+            .collect();
+        assert_eq!(
+            sealed,
+            [(true, true), (true, true), (true, true), (false, false)]
+        );
+        let found = lookup(&client, one).await;
+        // Shard 1 holds only the other receiver, so its filter spares a query.
+        assert_eq!(
+            queries.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "one page each in shards 0 and 2, and the recent tier's empty page"
+        );
+        let positions: Vec<u64> = found.iter().map(|f| f.2.payment.position).collect();
+        assert_eq!(
+            found.iter().map(|f| f.0).collect::<Vec<_>>(),
+            [0, 2],
+            "{positions:?}"
+        );
+        let store = paused.store();
+        let expected = fresh(&store, &positions);
+        for ((shard, segment, record), expected) in found.iter().zip(expected) {
+            let segment = client.segment(*shard, *segment).await.unwrap();
+            assert_eq!(
+                client.witness(&segment, record.ordinal).await.unwrap(),
+                expected
+            );
+        }
+        let head = client.inventory().head().clone();
+        // A restart rebuilds the identical inventory from the store.
+        paused.state = State::default();
+        paused.refresh().await.unwrap();
+        let (again, _) = paused.capture(true).await;
+        assert_eq!(again.inventory().head(), &head);
+        // A new tip replaces the recent tier; the sealed shards keep their sessions and
+        // the displaced inventory still serves its chunk.
+        paused.extend(&[two], 0, 0);
+        paused.refresh().await.unwrap();
+        let (next, _) = paused.capture(true).await;
+        assert_ne!(next.inventory().head().inventory, head.inventory);
+        let sessions = |c: &receiver_pir::transport::InventoryClient<Wallet>, i: usize| {
+            c.inventory().shards()[i].segments[0].payments.id().unwrap()
+        };
+        assert_eq!(sessions(&next, 0), sessions(&client, 0));
+        // Both inventories and the kept shards share each sealed filter's one source,
+        // which holds none of its bytes.
+        let live = paused.publications.live();
+        assert_eq!(live.len(), 2);
+        let mut shared = 0;
+        for kept in &paused.state.kept {
+            assert_eq!(kept.filter.held_bytes(), 0);
+            for publication in &live {
+                if let Some(source) = publication.filter(&kept.filter.digest()) {
+                    assert!(Arc::ptr_eq(source, &kept.filter));
+                    shared += 1;
+                }
+            }
+        }
+        assert_eq!(
+            shared,
+            3 * 2 + 1,
+            "three shards in both, the new seal in one"
+        );
+        let chunk = format!(
+            "{}/v1/receiver/inventory/{}/0",
+            paused.origin,
+            hex::encode(head.inventory)
+        );
+        assert!(reqwest::get(chunk).await.unwrap().status().is_success());
+        assert_eq!(lookup(&client, two).await.len(), 1);
+    }
+
+    /// Two one-shot runs a block apart keep a sealed payment table whose provisional
+    /// companion changed: each table is written under its own revision, so the second run
+    /// writes the new companion beside the old instead of colliding with it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn one_shot_runs_name_a_changed_companion_by_its_own_revision() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[super::common::receiver()], 2, 0);
+        paused.extend(&[], 1, 0);
+        let genesis = Network::Mainnet.genesis_hash();
+        let root = paused.dir.path().join("publications");
+        let layouts = || -> Vec<Layout> {
+            std::fs::read_dir(&root)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.to_str().unwrap().ends_with(".inventory.json"))
+                .map(|p| serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap())
+                .collect()
+        };
+        let mut state = State::default();
+        let rpc = std::slice::from_ref(&paused.rpc);
+        refresh(&paused.args, rpc, genesis, None, &mut state)
+            .await
+            .unwrap();
+        let first = layouts().remove(0);
+        paused.extend(&[], 1, 0);
+        let rpc = std::slice::from_ref(&paused.rpc);
+        refresh(&paused.args, rpc, genesis, None, &mut state)
+            .await
+            .unwrap();
+        let all = layouts();
+        assert_eq!(all.len(), 2);
+        let second = all.into_iter().find(|l| *l != first).unwrap();
+        let sealed = |l: &Layout| {
+            let segment = &l.shards[0].segments[0];
+            (segment.payments, segment.witnesses)
+        };
+        let ((payments, old), (same, new)) = (sealed(&first), sealed(&second));
+        assert_eq!(payments, same);
+        assert_ne!(old, new);
+        for companion in [old, new] {
+            let name = format!("{}.witness.json", hex::encode(companion));
+            assert!(root.join(name).exists());
+        }
+    }
+
+    /// More sealed shards than the table budget holds still serve every payment over
+    /// real encrypted PIR: prepared tables are cached within the budget and reloaded from
+    /// the data directory when evicted, and a restart prepares none of them again. A
+    /// sealed shard and the recent tier are four tables against a budget of two, the
+    /// most one lookup needs at once.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sealed_tables_beyond_the_budget_load_on_demand() {
+        use super::common::receiver;
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let publications = Publications::new(std::time::Duration::from_secs(600), budget);
+        let mut paused = Paused::serving(|_| {}, publications.clone()).await;
+        paused.args.shard_target = Some(1);
+        let payees = [receiver()];
+        for payee in payees {
+            paused.extend(&[payee], 0, 0);
+        }
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let tables = publications.tables();
+        assert!(tables.resident() <= budget);
+        let (client, _) = paused.capture(false).await;
+        assert_eq!(client.inventory().shards().len(), 2);
+        let loads = tables.loads();
+        for payee in payees {
+            let found = lookup(&client, payee).await;
+            assert_eq!(found.len(), 1);
+            let (shard, segment, record) = &found[0];
+            let segment = client.segment(*shard, *segment).await.unwrap();
+            let payload = client.witness(&segment, record.ordinal).await.unwrap();
+            assert_eq!(
+                payload,
+                fresh(&paused.store(), &[record.payment.position])[0]
+            );
+            assert!(tables.resident() <= budget);
+        }
+        assert!(tables.loads() > loads, "evicted tables were loaded again");
+        // A new process finds every table in the data directory and prepares none:
+        // nothing it serves yet names them, so they must outlive its first pass.
+        let head = client.inventory().head().clone();
+        let stored = std::fs::read_dir(paused.dir.path().join(crate::durable::TABLES_DIR))
+            .unwrap()
+            .count();
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        let (again, _) = paused.capture(false).await;
+        assert_eq!(again.inventory().head(), &head);
+        assert_eq!(paused.state.durable.as_ref().unwrap().prepared(), 0);
+        let tables = paused.publications.tables();
+        assert_eq!(tables.loads(), 0);
+        assert!(tables.resident() <= budget);
+        let found = lookup(&again, payees[0]).await;
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            std::fs::read_dir(paused.dir.path().join(crate::durable::TABLES_DIR))
+                .unwrap()
+                .count(),
+            stored
+        );
+    }
+
+    /// The checked records kept shards hold in memory.
+    #[cfg(feature = "qualification-tests")]
+    fn kept_leaves(state: &State) -> usize {
+        state
+            .kept
+            .iter()
+            .flat_map(|k| &k.segments)
+            .map(|s| s.leaves.as_ref().map_or(0, Vec::len))
+            .sum()
+    }
+
+    /// Memory a serving indexer holds for its inventories: the table budget's resident
+    /// bytes (prepared tables and filter encodings), and bytes held outside it, which are
+    /// sources holding prepared state in memory and kept shards' checked records.
+    #[cfg(feature = "qualification-tests")]
+    fn footprint(paused: &Paused) -> (usize, usize) {
+        let held: usize = paused
+            .publications
+            .live()
+            .iter()
+            .map(|p| p.held_bytes())
+            .sum();
+        let leaves = kept_leaves(&paused.state) * std::mem::size_of::<(u64, [u8; 32], u32)>();
+        (paused.publications.tables().resident(), held + leaves)
+    }
+
+    /// Publishing more sealed shards, and restarting as a new process, keeps the accounted
+    /// footprint within the table budget, with nothing held outside it once companions
+    /// freeze: memory does not grow with sealed history. Every payment still serves.
+    #[cfg(feature = "qualification-tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn resident_memory_stays_bounded_as_sealed_shards_accumulate() {
+        use super::common::{receiver, seeded_receiver};
+        // Four sealed shards per batch, the second batch all paying one receiver.
+        let batches = [
+            [
+                receiver(),
+                seeded_receiver(1),
+                seeded_receiver(2),
+                seeded_receiver(3),
+            ],
+            [seeded_receiver(4); 4],
+        ];
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let publications = Publications::new(DEFAULT_RETENTION, budget);
+        let mut paused = Paused::serving(|_| {}, publications).await;
+        paused.args.shard_target = Some(1);
+        let mut footprints = Vec::new();
+        for batch in batches {
+            for payee in batch {
+                paused.extend(&[payee], 0, 0);
+            }
+            // Completing the Ironwood shard freezes every companion so far.
+            paused.extend(&[], 1 << 16, 0);
+            paused.refresh().await.unwrap();
+            footprints.push(footprint(&paused));
+        }
+        let sealed = paused.state.kept.len();
+        assert_eq!(sealed, 8);
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.state.kept.len(), sealed);
+        assert_eq!(paused.state.durable.as_ref().unwrap().prepared(), 0);
+        footprints.push(footprint(&paused));
+        for (resident, held) in &footprints {
+            assert!(*resident <= budget, "{footprints:?}");
+            assert_eq!(*held, 0, "{footprints:?}");
+        }
+        // The oldest and newest shards serve through cold loads within the budget.
+        let (client, _) = paused.capture(true).await;
+        for (payee, payments) in [(receiver(), 1), (seeded_receiver(4), 4)] {
+            assert_eq!(lookup(&client, payee).await.len(), payments);
+            let (resident, held) = footprint(&paused);
+            assert!(resident <= budget && held == 0);
+        }
+    }
+
+    /// A displaced inventory that a request still holds keeps its stored tables through a
+    /// pass after its retention ends, so the request can still load them; the first pass
+    /// after it is released deletes them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_held_inventory_keeps_its_stored_tables_until_released() {
+        let publications = Publications::new(std::time::Duration::from_millis(1), 1 << 30);
+        let mut paused = Paused::serving(|_| {}, publications.clone()).await;
+        paused.extend(&[super::common::receiver()], 0, 0);
+        paused.refresh().await.unwrap();
+        // A request selected the recent tier and waits to load it.
+        let held = publications.live().remove(0);
+        let recent = held.segments().last().unwrap().payments.clone();
+        let revision = recent
+            .payment_manifest()
+            .unwrap()
+            .directory
+            .revision()
+            .unwrap();
+        let rows = paused
+            .dir
+            .path()
+            .join(crate::durable::TABLES_DIR)
+            .join(format!("p-{}.rows", hex::encode(revision)));
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        assert!(rows.exists());
+        drop((held, recent));
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        assert!(!rows.exists());
+    }
+
+    /// A staged check verifies every segment of a one-shot inventory but keeps none
+    /// prepared: every table and filter it lists reloads from the staged files. Staged
+    /// serving keeps its prepared tables within the budget: a sealed shard and the recent
+    /// tier are four tables against a budget of two.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_staged_check_keeps_no_prepared_segment() {
+        use crate::serve_publication::{load, PublicationRecord};
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[super::common::receiver()], 0, 0);
+        paused.extend(&[], 1, 0);
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        refresh(&paused.args, rpc, genesis, None, &mut State::default())
+            .await
+            .unwrap();
+        let root = paused.dir.path().join("publications");
+        let layout = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .find_map(|n| n.strip_suffix(".inventory.json").map(str::to_owned))
+            .unwrap();
+        let path = paused.dir.path().join("record.json");
+        let record = json!({"directory": root, "revision": layout});
+        std::fs::write(&path, record.to_string()).unwrap();
+        let config = serde_json::from_value(json!({
+            "publication_record": path, "bind": "127.0.0.1:18380",
+            "state_dir": paused.dir.path().join("state"),
+            "rpc_urls": ["http://127.0.0.1:1"], "no_auth": true,
+        }))
+        .unwrap();
+        let record = PublicationRecord::read(&path).unwrap();
+        let checked = load(&record, &config, None).unwrap();
+        let shards = checked.publication().inventory().shards();
+        assert_eq!(shards.iter().filter(|s| s.filter.is_some()).count(), 1);
+        assert_eq!(checked.publication().segments().len(), 2);
+        assert_eq!(checked.publication().held_bytes(), 0);
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let publications = Publications::new(DEFAULT_RETENTION, budget);
+        let served = load(&record, &config, Some(&publications)).unwrap();
+        assert_eq!(served.publication().held_bytes(), 0);
+        assert!(publications.tables().resident() <= budget);
+        // A staged rows file replaced by a longer one is refused before it is read.
+        let staged = checked.publication().segments()[0].payments.clone();
+        let revision = staged
+            .payment_manifest()
+            .unwrap()
+            .directory
+            .revision()
+            .unwrap();
+        let rows = root.join(format!("{}.rows", hex::encode(revision)));
+        let mut longer = std::fs::read(&rows).unwrap();
+        longer.extend_from_slice(&[0; 4096]);
+        std::fs::write(&rows, longer).unwrap();
+        let tables = receiver_pir_server::tables::Tables::new(1 << 30);
+        assert!(tables.get(&staged).is_err());
+        assert_eq!(tables.resident(), 0);
+    }
+
+    /// A stored manifest over the manifest size bound does not stop a restart: its table
+    /// is discarded as a leftover and prepared again, and a wallet reads it as usual.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_oversized_stored_manifest_is_prepared_again_after_a_restart() {
+        let payee = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.extend(&[payee], 0, 0);
+        paused.refresh().await.unwrap();
+        let tables = paused.dir.path().join(crate::durable::TABLES_DIR);
+        let manifest = std::fs::read_dir(&tables)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                let name = p.file_name().unwrap().to_str().unwrap();
+                name.starts_with("p-") && name.ends_with(".json")
+            })
+            .unwrap();
+        let mut bytes = std::fs::read(&manifest).unwrap();
+        bytes.resize(receiver_pir::MAX_MANIFEST_BYTES + 1, b' ');
+        std::fs::write(&manifest, bytes).unwrap();
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert!(paused.state.durable.as_ref().unwrap().prepared() >= 1);
+        let (client, _) = paused.capture(false).await;
+        assert_eq!(lookup(&client, payee).await.len(), 1);
+    }
+
+    /// A stored table whose public setup is not the one its manifest binds is not
+    /// served after a restart: it is prepared again, and a wallet reads it as usual.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_corrupt_stored_setup_is_prepared_again_after_a_restart() {
+        let payee = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.extend(&[payee], 0, 0);
+        paused.refresh().await.unwrap();
+        let tables = paused.dir.path().join(crate::durable::TABLES_DIR);
+        let publics: Vec<_> = std::fs::read_dir(&tables)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "public"))
+            .collect();
+        assert_eq!(publics.len(), 2, "the payment and witness tables");
+        for public in &publics {
+            let mut bytes = std::fs::read(public).unwrap();
+            bytes[0] ^= 1;
+            std::fs::write(public, bytes).unwrap();
+        }
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.state.durable.as_ref().unwrap().prepared(), 2);
+        let (client, _) = paused.capture(false).await;
+        let found = lookup(&client, payee).await;
+        assert_eq!(found.len(), 1);
+        let (shard, segment, record) = &found[0];
+        let segment = client.segment(*shard, *segment).await.unwrap();
+        let payload = client.witness(&segment, record.ordinal).await.unwrap();
+        assert_eq!(
+            payload,
+            fresh(&paused.store(), &[record.payment.position])[0]
+        );
+    }
+
+    /// After a restart a stored table or filter is reused only if it is exactly what the
+    /// index rebuilds: corrupted or missing rows are prepared again and a corrupted filter
+    /// is written again, so wallets read every payment, payload and filter as before.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stored_copies_are_rebuilt_unless_they_match_the_index() {
+        let payee = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[payee], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let tables = paused.dir.path().join(crate::durable::TABLES_DIR);
+        let files = |extension: &str, prefix: &str| -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(&tables)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| {
+                    p.extension().is_some_and(|e| e == extension)
+                        && p.file_name().unwrap().to_str().unwrap().starts_with(prefix)
+                })
+                .collect()
+        };
+        let flip = |path: &std::path::Path| {
+            let mut bytes = std::fs::read(path).unwrap();
+            bytes[0] ^= 1;
+            std::fs::write(path, bytes).unwrap();
+        };
+        let (payments, witnesses, filters) = (
+            files("rows", "p-"),
+            files("rows", "w-"),
+            files("filter", "f-"),
+        );
+        assert_eq!((payments.len(), witnesses.len(), filters.len()), (2, 2, 1));
+        let filter = std::fs::read(&filters[0]).unwrap();
+        payments.iter().for_each(|p| flip(p));
+        witnesses
+            .iter()
+            .for_each(|w| std::fs::remove_file(w).unwrap());
+        flip(&filters[0]);
+        paused.restart().await;
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.state.durable.as_ref().unwrap().prepared(), 4);
+        assert_eq!(std::fs::read(&filters[0]).unwrap(), filter);
+        let (client, _) = paused.capture(true).await;
+        let found = lookup(&client, payee).await;
+        assert_eq!(found.len(), 1);
+        let (shard, segment, record) = &found[0];
+        let segment = client.segment(*shard, *segment).await.unwrap();
+        let payload = client.witness(&segment, record.ordinal).await.unwrap();
+        assert_eq!(
+            payload,
+            fresh(&paused.store(), &[record.payment.position])[0]
+        );
+    }
+
+    /// A cold reload, staged or stored, reads only the rows of the geometry it was
+    /// verified under: a longer replacement is refused before it is read, and a
+    /// replaced manifest is never used.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cold_reloads_read_only_the_verified_geometry() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.extend(&[super::common::receiver()], 0, 0);
+        paused.refresh().await.unwrap();
+        let stored = paused.publications.live()[0].segments()[0].payments.clone();
+        let revision = stored
+            .payment_manifest()
+            .unwrap()
+            .directory
+            .revision()
+            .unwrap();
+        let file = |extension: &str| {
+            let name = format!("p-{}.{extension}", hex::encode(revision));
+            paused
+                .dir
+                .path()
+                .join(crate::durable::TABLES_DIR)
+                .join(name)
+        };
+        let rows = std::fs::read(file("rows")).unwrap();
+        let mut manifest: receiver_pir::Manifest =
+            serde_json::from_slice(&std::fs::read(file("json")).unwrap()).unwrap();
+        manifest.directory.rows *= 2;
+        std::fs::write(file("json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let cold = || receiver_pir_server::tables::Tables::new(1 << 30);
+        assert!(cold().get(&stored).is_ok());
+        std::fs::write(file("rows"), [rows.as_slice(), &rows].concat()).unwrap();
+        let tables = cold();
+        assert!(matches!(
+            tables.get(&stored),
+            Err(receiver_pir_server::tables::LoadError::Load(_))
+        ));
+        assert_eq!(tables.resident(), 0);
+    }
+
+    /// `receiver`'s first payment's companion payload in the first shard, checked against
+    /// a fresh rebuild from `store`.
+    #[cfg(feature = "qualification-tests")]
+    async fn served_payload(
+        client: &receiver_pir::transport::InventoryClient<Wallet>,
+        store: &Store,
+        receiver: [u8; 43],
+    ) -> [u8; 512] {
+        let segment = client.segment(0, 0).await.unwrap();
+        let record = client.page(&segment, receiver, 0).await.unwrap().unwrap();
+        let payload = client.witness(&segment, record.ordinal).await.unwrap();
+        assert_eq!(payload, fresh(store, &[record.payment.position])[0]);
+        payload
+    }
+
+    /// The first shard's payment and witness session IDs and witness tree height.
+    #[cfg(feature = "qualification-tests")]
+    fn first_shard(
+        client: &receiver_pir::transport::InventoryClient<Wallet>,
+    ) -> ([u8; 32], [u8; 32], u32) {
+        let segment = &client.inventory().shards()[0].segments[0];
+        (
+            segment.payments.id().unwrap(),
+            segment.witnesses.id().unwrap(),
+            segment.witnesses.table.tree_height,
+        )
+    }
+
+    /// A sealed shard's payment table stays while its companion follows its witness
+    /// dependencies: provisional at each tip until its payment's Ironwood shard
+    /// completes, rebuilt when a reorg replaces the block after the seal, frozen at the
+    /// completing block and reused, and rebuilt again when a reorg replaces that block
+    /// even though every payment block is unchanged. Served payloads equal a fresh
+    /// rebuild throughout.
+    #[cfg(feature = "qualification-tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn witness_dependencies_follow_reorgs_after_a_seal() {
+        let one = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let paid = paused.extend(&[one], 4, 0);
+        paused.refresh().await.unwrap();
+        let (payments, w0, _) = first_shard(&paused.capture(false).await.0);
+        // Short of completing Ironwood shard 0, after the seal.
+        let filler = (1 << 16) - 15;
+        paused.extend(&[], filler, 0);
+        paused.refresh().await.unwrap();
+        let (client, _) = paused.capture(false).await;
+        let (p1, w1, _) = first_shard(&client);
+        assert_eq!(p1, payments);
+        assert_ne!(w1, w0);
+        let provisional = served_payload(&client, &paused.store(), one).await;
+        // A provisional companion keeps its records to rebuild at the next tip.
+        assert_eq!(kept_leaves(&paused.state), 1);
+        // A reorg after the seal, before witness finality.
+        paused.store().rewind(paid.height, paid.hash).unwrap();
+        paused.extend(&[], filler, 1);
+        paused.refresh().await.unwrap();
+        let (client, _) = paused.capture(false).await;
+        let (p2, w2, _) = first_shard(&client);
+        assert_eq!(p2, payments);
+        assert_ne!(w2, w1);
+        assert_ne!(
+            served_payload(&client, &paused.store(), one).await,
+            provisional
+        );
+        // Completing the Ironwood shard freezes the companion at the completing block.
+        let completing = paused.extend(&[], 20, 0);
+        paused.refresh().await.unwrap();
+        let (client, _) = paused.capture(false).await;
+        let (_, w3, frozen_at) = first_shard(&client);
+        assert_eq!(frozen_at, completing.height);
+        let final_payload = served_payload(&client, &paused.store(), one).await;
+        // A frozen one keeps none: only its record count stays in memory.
+        assert_eq!(kept_leaves(&paused.state), 0);
+        assert_eq!(paused.state.kept[0].segments[0].records, 1);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        assert_eq!(first_shard(&paused.capture(false).await.0).1, w3);
+        // A reorg of the completing block rebuilds the companion of the unchanged table,
+        // from records read back from its stored payment table.
+        let before = paused.store().checkpoint(completing.height - 1).unwrap();
+        paused.store().rewind(before.height, before.hash).unwrap();
+        paused.extend(&[], 20, 2);
+        paused.refresh().await.unwrap();
+        let (client, _) = paused.capture(false).await;
+        let (p5, w5, _) = first_shard(&client);
+        assert_eq!(p5, payments);
+        assert_ne!(w5, w3);
+        assert_ne!(
+            served_payload(&client, &paused.store(), one).await,
+            final_payload
+        );
+    }
+
+    /// The first sealed shard's payment table revision and companion manifest in
+    /// `shards`, as a one-shot pass wrote them.
+    fn first_written(shards: &[Vec<Written>]) -> ([u8; 32], receiver_directory::witness::Manifest) {
+        let segment = &shards[0][0];
+        (
+            segment.payments.revision().unwrap(),
+            segment.witnesses.clone(),
+        )
+    }
+
+    /// A sealed shard's companion, in written passes that prepare no PIR, is provisional
+    /// at each tip until its payment's Ironwood shard completes, and is rebuilt when a
+    /// reorg replaces the block after the seal while its payment table stays. Payloads
+    /// equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal` checks
+    /// the same over served PIR under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn written_companions_stay_provisional_and_follow_a_reorg() {
+        let one = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let mut state = State::default();
+        let paid = paused.extend(&[one], 4, 0);
+        let (payments, w0) = first_written(&one_shot(&paused, &mut state).await.1);
+        // Short of completing Ironwood shard 0, after the seal.
+        let filler = (1 << 16) - 15;
+        paused.extend(&[], filler, 0);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p1, w1) = first_written(&shards);
+        assert_eq!(p1, payments);
+        assert_ne!(w1, w0);
+        assert_eq!(w1.tree_height, paused.store().tip().unwrap().height);
+        let (payment, provisional) = shards[0][0].payment(one);
+        assert_eq!(provisional, fresh(&paused.store(), &[payment.position])[0]);
+        // A reorg after the seal, before witness finality.
+        paused.store().rewind(paid.height, paid.hash).unwrap();
+        paused.extend(&[], filler, 1);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p2, w2) = first_written(&shards);
+        assert_eq!(p2, payments);
+        assert_ne!(w2, w1);
+        let (_, reorged) = shards[0][0].payment(one);
+        assert_eq!(reorged, fresh(&paused.store(), &[payment.position])[0]);
+        assert_ne!(reorged, provisional);
+    }
+
+    /// A sealed shard's companion, in written passes that prepare no PIR, freezes at the
+    /// block completing its payment's Ironwood shard and stays unchanged after it, and
+    /// is rebuilt when a reorg replaces that block though the payment table is unchanged.
+    /// Payloads equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal`
+    /// checks the same over served PIR under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn written_companions_freeze_and_follow_a_reorg_of_the_completing_block() {
+        let one = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let mut state = State::default();
+        paused.extend(&[one], 4, 0);
+        paused.extend(&[], (1 << 16) - 15, 0);
+        let completing = paused.extend(&[], 20, 0);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (payments, w3) = first_written(&shards);
+        assert_eq!(w3.tree_height, completing.height);
+        let (payment, final_payload) = shards[0][0].payment(one);
+        assert_eq!(
+            final_payload,
+            fresh(&paused.store(), &[payment.position])[0]
+        );
+        paused.extend(&[], 1, 0);
+        assert_eq!(first_written(&one_shot(&paused, &mut state).await.1).1, w3);
+        // A reorg of the completing block rebuilds the companion of the unchanged table.
+        let before = paused.store().checkpoint(completing.height - 1).unwrap();
+        paused.store().rewind(before.height, before.hash).unwrap();
+        paused.extend(&[], 20, 2);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p5, w5) = first_written(&shards);
+        assert_eq!(p5, payments);
+        assert_ne!(w5, w3);
+        let (_, rebuilt) = shards[0][0].payment(one);
+        assert_eq!(rebuilt, fresh(&paused.store(), &[payment.position])[0]);
+        assert_ne!(rebuilt, final_payload);
+    }
+
+    /// A correction adding a payment to a sealed shard older than the rolling filters
+    /// unseals from the corrected block and writes the shards again under the new
+    /// generation with the same boundaries, the payment and its witness, without any PIR
+    /// preparation. `a_correction_older_than_retention_rebuilds_its_shard` also checks
+    /// the served sessions' revocation under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_written_correction_older_than_retention_reseals_its_shard() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        (paused.args.shard_target, paused.args.filter_blocks) = (Some(1), Some(1));
+        let block = paused.extend(&[receiver()], 1, 0);
+        paused.extend(&[seeded_receiver(1)], 0, 0);
+        paused.extend(&[], 1, 0);
+        let bounds = |shards: &[Vec<Written>]| {
+            shards
+                .iter()
+                .map(|s| (s[0].payments.start_height, s[0].payments.end_height))
+                .collect::<Vec<_>>()
+        };
+        let (old, shards) = one_shot(&paused, &mut State::default()).await;
+        let old_bounds = bounds(&shards);
+        let mut corrected = block.clone();
+        let mut omitted = corrected.payments[0].1.clone();
+        omitted.position += 1;
+        omitted.cmx = corrected.commitments[1];
+        (omitted.tx_index, omitted.txid) = (2, [9; 32]);
+        let three = seeded_receiver(2);
+        corrected.payments.push((three, omitted.clone()));
+        paused.store().correct(1, &[corrected]).unwrap();
+        assert!(paused.store().sealed_shards().unwrap().is_empty());
+        paused.args.history_revision = 1;
+        let (layout, shards) = one_shot(&paused, &mut State::default()).await;
+        assert_eq!(layout.history_revision, 1);
+        assert_eq!(bounds(&shards), old_bounds);
+        let sealed = |l: &Layout| l.shards.iter().map(|s| s.sealed).collect::<Vec<_>>();
+        assert_eq!(sealed(&layout), sealed(&old));
+        let (payment, payload) = shards[0][0].payment(three);
+        let fields = |p: &zakura_receiver_crypto::Payment| (p.position, p.cmx, p.tx_index, p.txid);
+        assert_eq!(
+            fields(&payment),
+            (
+                omitted.position,
+                omitted.cmx,
+                omitted.tx_index,
+                omitted.txid
+            )
+        );
+        assert_eq!(payload, fresh(&paused.store(), &[omitted.position])[0]);
+    }
+
+    /// A reorg across a seal removes the sealed shard and revokes its sessions, and the
+    /// replacement chain is sealed afresh.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_reorg_across_a_seal_reseals_the_replacement() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[receiver()], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let (old, _) = paused.capture(true).await;
+        let old_head = old.inventory().head().clone();
+        let activation = paused
+            .store()
+            .checkpoint(crate::blocks::ironwood_activation())
+            .unwrap();
+        paused
+            .store()
+            .rewind(activation.height, activation.hash)
+            .unwrap();
+        assert!(paused.store().sealed_shards().unwrap().is_empty());
+        paused.extend(&[seeded_receiver(1)], 0, 7);
+        paused.extend(&[], 1, 7);
+        paused.refresh().await.unwrap();
+        let chunk = format!(
+            "{}/v1/receiver/inventory/{}/0",
+            paused.origin,
+            hex::encode(old_head.inventory)
+        );
+        assert_eq!(
+            reqwest::get(chunk).await.unwrap().status(),
+            reqwest::StatusCode::GONE
+        );
+        let (client, _) = paused.capture(true).await;
+        let shard = &client.inventory().shards()[0];
+        assert!(shard.sealed);
+        assert_ne!(shard.end_hash, old.inventory().shards()[0].end_hash);
+        assert!(lookup(&client, receiver()).await.is_empty());
+        assert_eq!(lookup(&client, seeded_receiver(1)).await.len(), 1);
+    }
+
+    /// A correction adding a payment to a sealed shard older than the rolling filters
+    /// revokes every session at once, unseals from the corrected block and republishes
+    /// under the new generation with the same boundaries, the payment and its witness.
+    #[cfg(feature = "qualification-tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_correction_older_than_retention_rebuilds_its_shard() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        (paused.args.shard_target, paused.args.filter_blocks) = (Some(1), Some(1));
+        let block = paused.extend(&[receiver()], 1, 0);
+        paused.extend(&[seeded_receiver(1)], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let (old, _) = paused.capture(true).await;
+        let bounds = |c: &receiver_pir::transport::InventoryClient<Wallet>| {
+            let shards = c.inventory().shards();
+            shards
+                .iter()
+                .map(|s| (s.start_height, s.end_height))
+                .collect::<Vec<_>>()
+        };
+        let mut corrected = block.clone();
+        let mut omitted = corrected.payments[0].1.clone();
+        omitted.position += 1;
+        omitted.cmx = corrected.commitments[1];
+        (omitted.tx_index, omitted.txid) = (2, [9; 32]);
+        let three = seeded_receiver(2);
+        corrected.payments.push((three, omitted.clone()));
+        paused.store().correct(1, &[corrected]).unwrap();
+        assert!(paused.store().sealed_shards().unwrap().is_empty());
+        paused.args.history_revision = 1;
+        paused.refresh().await.unwrap();
+        let chunk = format!(
+            "{}/v1/receiver/inventory/{}/0",
+            paused.origin,
+            hex::encode(old.inventory().head().inventory)
+        );
+        assert_eq!(
+            reqwest::get(chunk).await.unwrap().status(),
+            reqwest::StatusCode::GONE
+        );
+        let (client, _) = paused.capture(true).await;
+        assert_eq!(client.inventory().head().history_revision, 1);
+        assert_eq!(bounds(&client), bounds(&old));
+        let found = lookup(&client, three).await;
+        assert_eq!(found.len(), 1);
+        let (shard, segment, record) = &found[0];
+        assert_eq!((*shard, record.payment.position), (0, omitted.position));
+        let segment = client.segment(*shard, *segment).await.unwrap();
+        assert_eq!(
+            client.witness(&segment, record.ordinal).await.unwrap(),
+            fresh(&paused.store(), &[omitted.position])[0]
+        );
     }
 
     /// An offline correction edits an existing index and never starts an empty one,
@@ -1017,8 +2533,7 @@ mod tests {
     async fn an_offline_correction_is_published_at_the_next_start() {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
-        let old: receiver_pir::Publication =
-            serde_json::from_value(paused.get("init").await).unwrap();
+        let old = paused.segment().await.payments;
         let height = crate::blocks::ironwood_activation();
         let block = receiver_store::IndexedBlock {
             height,
@@ -1051,11 +2566,9 @@ mod tests {
         correct(paused.dir.path(), config, 1, std::slice::from_ref(&block)).unwrap();
         paused.state = State::default();
         paused.refresh().await.unwrap();
-        let next: receiver_pir::Publication =
-            serde_json::from_value(paused.get("init").await).unwrap();
         assert_eq!(paused.args.history_revision, 0);
-        assert_eq!(next.payments.directory.history_revision, 1);
-        let id = hex::encode(old.payments.id().unwrap());
+        assert_eq!(paused.get("inventory").await["history_revision"], 1);
+        let id = hex::encode(old.id().unwrap());
         let gone = reqwest::get(format!("{}/v1/receiver/public/{id}", paused.origin))
             .await
             .unwrap();
@@ -1068,10 +2581,10 @@ mod tests {
     async fn source_failure_keeps_serving_and_restart_recovers() {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
-        let first = paused.get("init").await;
+        let first = paused.get("inventory").await;
         paused.node.hashes.lock().unwrap().remove(&0);
         assert!(paused.refresh().await.is_err());
-        assert_eq!(paused.get("init").await, first);
+        assert_eq!(paused.get("inventory").await, first);
         paused
             .node
             .hashes
@@ -1080,7 +2593,7 @@ mod tests {
             .insert(0, Network::Mainnet.genesis_hash());
         paused.state = State::default();
         paused.refresh().await.unwrap();
-        assert_eq!(paused.get("init").await, first);
+        assert_eq!(paused.get("inventory").await, first);
     }
 
     /// A raised correction revision is durable before the backfill it needs: when that
@@ -1240,11 +2753,11 @@ mod tests {
     async fn unchanged_anchor_rebuilds_revoked_pir() {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
-        let first = paused.get("init").await;
+        let first = paused.get("inventory").await;
         paused.publications.revoke();
         assert!(paused.publications.current_anchor().is_none());
         paused.refresh().await.unwrap();
-        assert_eq!(paused.get("init").await, first);
+        assert_eq!(paused.get("inventory").await, first);
         assert!(paused.publications.current_anchor().is_some());
     }
 
@@ -1263,7 +2776,7 @@ mod tests {
             .insert(u64::from(height), [4; 32]);
         assert!(paused.refresh().await.is_err());
         assert!(paused.publications.anchors().is_empty());
-        let response = reqwest::get(format!("{}/v1/receiver/init", paused.origin))
+        let response = reqwest::get(format!("{}/v1/receiver/inventory", paused.origin))
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
@@ -1279,7 +2792,7 @@ mod tests {
     async fn preparation_failure_keeps_commits_and_restart_retries() {
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
-        let first = paused.get("init").await;
+        let first = paused.get("inventory").await;
         let height = crate::blocks::ironwood_activation() + 1;
         let mut record = super::common::record(0, 1);
         record.payment.height = height;
@@ -1309,7 +2822,7 @@ mod tests {
         let error = paused.refresh().await.unwrap_err();
         assert!(error.to_string().contains("malformed"), "{error}");
         assert_eq!(paused.store().tip().unwrap().height, height);
-        assert_eq!(paused.get("init").await, first);
+        assert_eq!(paused.get("inventory").await, first);
         let mut store = paused.store();
         store.rewind(height - 1, [3; 32]).unwrap();
         block.payments[0].1.cmx = [6; 32];
@@ -1318,9 +2831,9 @@ mod tests {
         drop(store);
         paused.state = State::default();
         paused.refresh().await.unwrap();
-        let next = paused.get("init").await;
-        assert_eq!(next["payments"]["directory"]["end_height"], height);
-        assert_eq!(next["payments"]["directory"]["records"], 1);
+        let next = paused.get("inventory").await;
+        assert_eq!(next["end_height"], height);
+        assert_eq!(paused.segment().await.payments.directory.records, 1);
         assert_ne!(next, first);
     }
 
@@ -1361,10 +2874,7 @@ mod tests {
         assert_eq!(store.tip().unwrap().height, height);
         drop(store);
         paused.refresh().await.unwrap();
-        assert_eq!(
-            paused.get("init").await["payments"]["directory"]["end_height"],
-            height
-        );
+        assert_eq!(paused.get("inventory").await["end_height"], height);
     }
 
     /// A response admitted under the old revision retains its immutable bytes
@@ -1374,16 +2884,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         let mut paused = Paused::new(|_| {}).await;
         paused.refresh().await.unwrap();
-        let old = paused.get("init").await;
-        let old_manifest: receiver_pir::Publication = serde_json::from_value(old.clone()).unwrap();
-        let old_manifest = old_manifest.payments;
-        let height = crate::blocks::ironwood_activation();
-        let accepted = receiver_pir::AcceptedCoverage {
-            genesis: Network::Mainnet.genesis_hash(),
-            required_start: height,
-            height,
-            hash: [3; 32],
-        };
+        let old_manifest = paused.segment().await.payments;
         let public = reqwest::get(format!(
             "{}/v1/receiver/public/{}",
             paused.origin,
@@ -1396,7 +2897,7 @@ mod tests {
         .bytes()
         .await
         .unwrap();
-        let client = receiver_pir::Client::new(old_manifest.clone(), &public, accepted).unwrap();
+        let client = receiver_pir::Client::new(old_manifest.clone(), &public).unwrap();
         let query = client.prepare(super::common::receiver(), 0).unwrap();
         let response = reqwest::Client::new()
             .post(format!("{}/v1/receiver/query", paused.origin))
@@ -1435,9 +2936,7 @@ mod tests {
             .unwrap()
             .insert(u64::from(height), [4; 32]);
         paused.refresh().await.unwrap();
-        let next: receiver_pir::Publication =
-            serde_json::from_value(paused.get("init").await).unwrap();
-        let next = next.payments;
+        let next = paused.segment().await.payments;
         assert_ne!(
             next.directory.data_sha256,
             old_manifest.directory.data_sha256
@@ -1468,16 +2967,7 @@ mod tests {
         .bytes()
         .await
         .unwrap();
-        let client = receiver_pir::Client::new(
-            next,
-            &public,
-            receiver_pir::AcceptedCoverage {
-                height,
-                hash: [4; 32],
-                ..accepted
-            },
-        )
-        .unwrap();
+        let client = receiver_pir::Client::new(next, &public).unwrap();
         let query = client.prepare(expected.receiver, 0).unwrap();
         let response = reqwest::Client::new()
             .post(format!("{}/v1/receiver/query", paused.origin))
@@ -1630,10 +3120,7 @@ mod tests {
         paused.args.depth = 5;
         paused.refresh().await.unwrap();
         let height = crate::blocks::ironwood_activation();
-        assert_eq!(
-            paused.get("init").await["payments"]["directory"]["end_height"],
-            height
-        );
+        assert_eq!(paused.get("inventory").await["end_height"], height);
     }
 
     /// A zero companion payload for each record of `snapshot`, all positions in its
@@ -1669,6 +3156,20 @@ mod tests {
         ));
     }
 
+    /// A one-shot plan of one recent-tier segment, `snapshot` with `witnesses`.
+    fn plan(snapshot: Snapshot, witnesses: witness::Table) -> Vec<Plan> {
+        vec![Plan {
+            sealed: None,
+            parts: vec![Part::Fresh(Box::new(crate::shards::Built {
+                snapshot,
+                witnesses,
+                leaves: Vec::new(),
+                frozen: None,
+            }))],
+            filter: None,
+        }]
+    }
+
     /// One-shot output validates persisted records and proofs before creating files.
     #[test]
     fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
@@ -1676,7 +3177,10 @@ mod tests {
         manifest.end_position = 300;
         let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)]).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        write_publication(
+        let write = |root: &Path, snapshot: &Snapshot, table| {
+            write_publication(root, [1; 32], 0, plan(snapshot.clone(), table))
+        };
+        write(
             &dir.path().join("valid"),
             &valid,
             placeholder(&valid, false),
@@ -1693,14 +3197,11 @@ mod tests {
             let snapshot = Snapshot::build(manifest.clone(), &[record]).unwrap();
             let root = dir.path().join(format!("invalid-{field}"));
             let table = placeholder(&snapshot, false);
-            assert!(
-                write_publication(&root, &snapshot, table).is_err(),
-                "field {field}"
-            );
+            assert!(write(&root, &snapshot, table).is_err(), "field {field}");
             assert!(!root.exists());
         }
         let root = dir.path().join("invalid-proof");
-        assert!(write_publication(&root, &valid, placeholder(&valid, true)).is_err());
+        assert!(write(&root, &valid, placeholder(&valid, true)).is_err());
         assert!(!root.exists());
     }
 }

@@ -11,13 +11,10 @@ mod prepared;
 #[path = "common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
-use history::history;
+use history::{history, Accepted, Session};
 use receiver_directory::snapshot::Snapshot;
 use receiver_pir::MIN_ROWS;
-use receiver_pir::{
-    transport::{DirectoryClient, Transport},
-    AcceptedCoverage, Error,
-};
+use receiver_pir::{transport::Transport, Error};
 use receiver_pir_server::{Publication, Publications};
 use router::router_with_publications;
 use std::{
@@ -26,8 +23,8 @@ use std::{
 };
 
 /// The chain anchor that [`manifest`] ends at.
-fn accepted() -> AcceptedCoverage {
-    AcceptedCoverage {
+fn accepted() -> Accepted {
+    Accepted {
         genesis: [1; 32],
         required_start: 100,
         height: 101,
@@ -119,9 +116,8 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
 }
 
 /// Connects over PIR to the publication `origin` advertises.
-async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a Http>, Error> {
-    let manifest = DirectoryClient::fetch_manifest(origin, http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted(), manifest).await
+async fn connect<'a>(origin: &str, http: &'a Http) -> Result<Session<&'a Http>, Error> {
+    history::connect(origin, http, accepted()).await
 }
 
 /// The library client reads a two-page history over this service's PIR, one encrypted

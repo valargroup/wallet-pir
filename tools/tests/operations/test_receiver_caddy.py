@@ -100,13 +100,14 @@ def wallet_routes(caddyfile):
     return routes
 
 
-# The production edge before this release, which served aggregate filters and the
-# witness file instead of block filters and witnesses over PIR, and the routes the
-# release adds to it.
+# The production edge before this release, which served aggregate filters, the
+# witness file and one publication's `init` instead of block filters, witnesses over
+# PIR and the shard inventory, and the routes the release adds to it.
 PREVIOUS_ROUTES = ['/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
                    '/v1/receiver/witness/*', '/v1/receiver/filters/*']
 PREVIOUS = LIVE.replace(' '.join(wallet_routes(LIVE)), ' '.join(PREVIOUS_ROUTES))
-ADDED = {'/v1/receiver/block-filters/*'}
+ADDED = {'/v1/receiver/block-filters/*', '/v1/receiver/inventory', '/v1/receiver/inventory/*',
+         '/v1/receiver/shard-filters/*'}
 
 # Loaded as `sitecustomize` by the remote program, it logs each fsync, link, rename and
 # Caddy reload to STUB_FS_LOG in order, and fails directory fsyncs under STUB_DIR_SYNC_FAILS.
@@ -376,7 +377,7 @@ class ReceiverCutover(StubDroplet):
         # The new routes break the running binary's probe, so they are restored.
         run = self.apply(LIVE)
         removed = [route for route in PREVIOUS_ROUTES if route not in wallet_routes(LIVE)]
-        self.assertTrue({'/v1/receiver/witness/*', '/v1/receiver/filters/*'} <= set(removed), removed)
+        self.assertEqual(set(removed), {'/v1/receiver/init', '/v1/receiver/witness/*', '/v1/receiver/filters/*'})
         self.assertIn('the edge does not serve ' + ' '.join(removed), run.stderr)
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertEqual((self.live.read_text(), self.running.read_text()), (PREVIOUS, PREVIOUS))
