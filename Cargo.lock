@@ -3775,6 +3775,7 @@ dependencies = [
  "ipir-sp",
  "memmap2",
  "pir-observability",
+ "pir-publication",
  "pir-runtime",
  "rayon",
  "reinspiring",

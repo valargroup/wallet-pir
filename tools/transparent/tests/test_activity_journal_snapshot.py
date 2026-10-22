@@ -2016,21 +2016,5 @@ class Tree(Fixture):
             S.verify_tree(snapshot.target, record['manifest'], request=snapshot.request, budget=S.Budget(time.monotonic()+60, 'test'))
 
 
-class Wrapper(unittest.TestCase):
-    def test_closed_wrapper_actions(self):
-        from wallet_pir_ops.deploy import cli
-        parser = cli.parser()
-        for action in ('plan', 'preflight', 'status', 'reconcile'):
-            args = parser.parse_args(['schema-snapshot-'+action, '--request', 'r', '--request-sha256', 'h'])
-            self.assertEqual(args.command, 'schema-snapshot-'+action)
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            parser.parse_args(['schema-snapshot-stage', '--request', 'r', '--request-sha256', 'h'])
-        parser.parse_args(['schema-snapshot-stage', '--request', 'r', '--request-sha256', 'h', '--expect-plan-sha256', 'p'])
-        self.assertEqual(parser.parse_args(['schema-snapshot-owner', '--request-sha256', 'h']).command, 'schema-snapshot-owner')
-        output = []
-        self.assertEqual(cli.main(['schema-snapshot-owner', '--request-sha256', 'not-hex'], out=output.append), 1)
-        self.assertIn('invalid journal snapshot request digest', output[0])
-
-
 if __name__ == '__main__':
     unittest.main()

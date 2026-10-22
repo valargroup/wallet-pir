@@ -32,66 +32,6 @@ def register(commands):
             command.add_argument('--request-sha256', required=True)
             if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-'+name, help='retain the verified changed-native candidate bundle without installation')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-upload-'+name, help='transfer the three pinned candidate archives to the coordinator')
-        command.add_argument('--source-sha', required=True)
-        if name in ('status','reconcile'):
-            command.add_argument('--request-sha256', required=True)
-            continue
-        command.add_argument('--attempt', type=int, required=True)
-        for kind in ('transparent-filter','transparent-publisher','supplemental'):
-            command.add_argument('--'+kind, required=True, metavar='ARCHIVE')
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-snapshot-'+name, help='immutable full-journal snapshot for candidate qualification')
-        command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-snapshot-owner', help=argparse.SUPPRESS)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
-        command = commands.add_parser('schema-candidate-execute-'+name, help='closed candidate native gate execution on the coordinator')
-        command.add_argument('--source-sha', required=True)
-        if name in ('status','reconcile'):
-            command.add_argument('--request-sha256', required=True)
-            continue
-        command.add_argument('--mode', choices=('artifact-verification','native-certificates','independent-chain-oracle'), required=True)
-        command.add_argument('--attempt', type=int, required=True)
-        command.add_argument('--preparation-request-sha256', required=True)
-        command.add_argument('--snapshot-request-sha256')
-        command.add_argument('--snapshot-owner-sha256')
-        command.add_argument('--snapshot-manifest-sha256')
-        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile','survey'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    command.add_argument('--expect-plan-sha256')
-    command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    command = commands.add_parser('schema-candidate-worker-build', help='render candidate worker executables for an already staged publication')
-    command.add_argument('--host', required=True)
-    command.add_argument('--source-sha', required=True)
-    command.add_argument('--publication-request-sha256', required=True)
-    command.add_argument('--attempt', type=int, default=1)
-    for name in ('plan','preflight','run','status','reconcile'):
-        command = commands.add_parser('schema-qualify-'+name, help='deployed candidate load/freshness/capacity/fault qualification')
-        if name in ('plan','preflight','run'):
-            command.add_argument('--request', required=True)
-        command.add_argument('--request-sha256', required=True)
-        if name == 'run': command.add_argument('--expect-plan-sha256', required=True)
-    command = commands.add_parser('schema-qualify-summary', help='read-only capacity decision from reconciled trials')
-    command.add_argument('--transaction', required=True)
-    command = commands.add_parser('schema-qualify-exec', help=argparse.SUPPRESS)
-    command.add_argument('--request-sha256', required=True)
-    command = commands.add_parser('schema-qualify-remote', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('probe','act','status','reconcile'), required=True)
-    command.add_argument('--request-sha256', required=True)
-    for name in ('plan','preflight','stage','status','reconcile'):
         command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -266,52 +206,6 @@ def dispatch(args, executor=None, out=print, **options):
             return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
         out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
         return 0
-    if args.command.startswith('schema-snapshot-'):
-        module = import_module('tools.transparent.lib.activity_journal_snapshot')
-        try:
-            if args.command == 'schema-snapshot-owner':
-                result = module.owner_main(args.request_sha256)
-            else:
-                if not args.inventory: raise ValueError('journal snapshot requires the pinned coordinator inventory')
-                request = module.read_request(args.request, args.request_sha256)
-                result = module.Snapshot(descriptors.load_inventory(args.inventory), request, args.request_sha256).run(
-                    args.command.removeprefix('schema-snapshot-'), getattr(args,'expect_plan_sha256',None))
-        except (module.Unknown, module.Interrupted) as error:
-            out('error: outcome unknown or interrupted; observe schema-snapshot-status, then reconcile: %s' % error)
-            return 75
-        out(json.dumps(result, sort_keys=True))
-        return 0
-    if args.command == 'schema-candidate-execute-receive':
-        module = import_module('tools.transparent.lib.activity_candidate_execution')
-        return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out, args.expect_plan_sha256)
-    if args.command == 'schema-candidate-receive':
-        module = import_module('tools.transparent.lib.activity_candidate_upload')
-        return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out)
-    if args.command.startswith('schema-qualify-'):
-        module = import_module('tools.transparent.lib.activity_deployed_qualification')
-        if args.command == 'schema-qualify-remote':
-            request = module.read_remote_request(sys.stdin.buffer,args.request_sha256)
-            out(json.dumps(module.remote_run(request, args.action), sort_keys=True))
-            return 0
-        if args.command == 'schema-qualify-summary':
-            out(json.dumps(module.summary_report(args.transaction), sort_keys=True))
-            return 0
-        if not args.inventory: raise ValueError('qualification requires the pinned coordinator inventory')
-        inventory = descriptors.load_inventory(args.inventory)
-        if args.command in ('schema-qualify-plan','schema-qualify-preflight','schema-qualify-run'):
-            with Path(args.request).open('rb') as stream: request = module.read_request(stream, args.request_sha256)
-        else:
-            request = module.retained_request(args.request_sha256)
-        qualification = module.Qualification(inventory, request, args.request_sha256)
-        if args.command == 'schema-qualify-exec':
-            qualification.execute()
-            return 0
-        action = args.command.removeprefix('schema-qualify-')
-        result = qualification.run(action, getattr(args,'expect_plan_sha256',None))
-        out(json.dumps(result, sort_keys=True))
-        if action == 'plan':
-            out('plan sha256: '+module.digest(result))
-        return 0
     if args.command.startswith('schema-host-'):
         module = import_module('tools.transparent.lib.activity_schema_dispatch')
         request = module.read_request(sys.stdin.buffer, args.request_sha256)
@@ -335,56 +229,6 @@ def dispatch(args, executor=None, out=print, **options):
     if args.command.startswith('txid-display-'):
         module = import_module('tools.txid.lib.txid_display_poc')
         return module.main(args, descriptors.load_inventory(args.inventory), out, executor=executor, **options)
-    if args.command.startswith('schema-candidate-execute-'):
-        module = import_module('tools.transparent.lib.activity_candidate_execution')
-        action = args.command.removeprefix('schema-candidate-execute-')
-        execution = module.Execution(descriptors.load_inventory(args.inventory), args.source_sha,
-                                     mode=getattr(args,'mode',None), attempt=getattr(args,'attempt',None),
-                                     preparation=getattr(args,'preparation_request_sha256',None),
-                                     request_sha256=getattr(args,'request_sha256',None),
-                                     snapshot={k:getattr(args,'snapshot_'+k,None) for k in
-                                               ('request_sha256','owner_sha256','manifest_sha256')}
-                                              if any(getattr(args,'snapshot_'+k,None) for k in
-                                                     ('request_sha256','owner_sha256','manifest_sha256')) else None)
-        try:
-            result = execution.run(action, getattr(args,'expect_plan_sha256',None))
-        except module.Unknown as error:
-            out('error: outcome unknown: %s' % error)
-            return 75
-        out(json.dumps(result,sort_keys=True))
-        if action == 'plan':
-            out('plan sha256: '+result['plan_sha256'])
-        return 0
-    if args.command.startswith('schema-candidate-upload-'):
-        module = import_module('tools.transparent.lib.activity_candidate_upload')
-        action = args.command.removeprefix('schema-candidate-upload-')
-        archives = ({kind:getattr(args, kind.replace('-','_')) for kind in module.ORDER}
-                    if action not in ('status','reconcile') else None)
-        upload = module.Upload(descriptors.load_inventory(args.inventory), args.source_sha,
-                               attempt=getattr(args,'attempt',None), archives=archives,
-                               request_sha256=getattr(args,'request_sha256',None))
-        try:
-            result = upload.run(action, getattr(args,'expect_plan_sha256',None))
-        except module.Unknown as error:
-            out('error: outcome unknown: %s' % error)
-            return 75
-        out(json.dumps(result,sort_keys=True))
-        if action == 'plan':
-            out('plan sha256: '+module.digest(result))
-        return 0
-    if args.command.startswith('schema-candidate-'):
-        module = import_module('tools.transparent.lib.activity_input_stage')
-        inventory = descriptors.load_inventory(args.inventory)
-        if args.command == 'schema-candidate-worker-build':
-            result = module.build_candidate(inventory,args.host,args.source_sha,args.publication_request_sha256,args.attempt)
-        else:
-            with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
-            if len(raw)>module.MAX_REQUEST: raise ValueError('candidate request exceeds bound')
-            request=json.loads(raw,object_pairs_hook=module.unique)
-            result=module.CandidatePreparation(inventory,request,args.request_sha256).run(
-                args.command.removeprefix('schema-candidate-'),getattr(args,'expect_plan_sha256',None))
-        out(json.dumps(result,sort_keys=True))
-        return 0
     if args.command.startswith('schema-input-'):
         module = import_module('tools.transparent.lib.activity_input_stage')
         inventory = descriptors.load_inventory(args.inventory)
