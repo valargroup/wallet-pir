@@ -28,8 +28,8 @@ pub struct SourceBinding {
 pub enum AuthorityFloorError {
     /// The saved floor belongs to a different publisher, product or chain.
     WrongSource {
-        saved: SourceBinding,
-        configured: SourceBinding,
+        saved: Box<SourceBinding>,
+        configured: Box<SourceBinding>,
     },
     /// The saved floor is unreadable or not a floor.
     Corrupt(serde_json::Error),
@@ -126,8 +126,8 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
         let durable_version = match saved.source {
             Some(saved) if saved != source => {
                 return Err(AuthorityFloorError::WrongSource {
-                    saved,
-                    configured: source,
+                    saved: Box::new(saved),
+                    configured: Box::new(source),
                 })
             }
             Some(_) => Some(0),
