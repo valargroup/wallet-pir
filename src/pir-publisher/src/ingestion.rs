@@ -1,25 +1,16 @@
-//! Root chain following and per-product journal scheduling.
-mod follower;
-mod schedule;
-#[cfg(test)]
-mod tests;
+//! The root chain follower's concrete node source. Scheduling lives in
+//! `pir_pipeline::ingestion`; this host only supplies the RPC transport.
+use pir_pipeline::ingestion::{CanonicalChain, ChainFuture, ChainSource};
 
-#[allow(unused_imports)]
-pub use follower::{ChainFollower, ChainSource, NodeSource};
-
-use crate::publisher::PublisherEngine;
-use pir_pipeline::{
-    ingestion::{ChainFeed, Ingestion, IngestionExecutor, IngestionRun},
-    service::Shutdown,
-};
-
-impl IngestionExecutor for PublisherEngine {
-    fn ingest<'a, I: Ingestion + 'a>(
-        &'a self,
-        ingestion: I,
-        feed: ChainFeed,
-        shutdown: Shutdown,
-    ) -> IngestionRun<'a, I::Error> {
-        schedule::run(ingestion, feed, shutdown)
+/// The node RPC client as the follower's source.
+pub struct NodeSource(pub pir_node_rpc::RpcClient);
+impl CanonicalChain for NodeSource {
+    fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+        Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+    }
+}
+impl ChainSource for NodeSource {
+    fn tip_height(&self) -> ChainFuture<'_, u64> {
+        Box::pin(async move { Ok(self.0.tip_height().await?) })
     }
 }

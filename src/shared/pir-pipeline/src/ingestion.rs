@@ -5,6 +5,12 @@
 //! coverage, withdrawal before rewind, bounded block ingestion and the action
 //! taken once coverage reaches the observed tip; they never follow the tip.
 use crate::FailurePolicy;
+mod follower;
+mod schedule;
+#[cfg(test)]
+mod tests;
+
+pub use follower::{ChainFollower, ChainSource};
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -115,4 +121,15 @@ pub trait IngestionExecutor: Clone + Send + Sync + 'static {
         feed: ChainFeed,
         shutdown: crate::service::Shutdown,
     ) -> IngestionRun<'a, I::Error>;
+}
+
+impl IngestionExecutor for crate::engine::PublisherEngine {
+    fn ingest<'a, I: Ingestion + 'a>(
+        &'a self,
+        ingestion: I,
+        feed: ChainFeed,
+        shutdown: crate::service::Shutdown,
+    ) -> IngestionRun<'a, I::Error> {
+        schedule::run(ingestion, feed, shutdown)
+    }
 }

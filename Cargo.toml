@@ -16,6 +16,8 @@ members = [
     "src/shared/pir-sync-manager",
     "src/shared/pir-service-discovery",
     "src/shared/pir-serving",
+    # Bounded node JSON-RPC transport, free of chain decoding.
+    "src/shared/pir-node-rpc",
     # Zakura node reads and chain interpretation for the publishers and tools.
     "src/shared/pir-chain",
     # Protocol libraries, clients and stores.

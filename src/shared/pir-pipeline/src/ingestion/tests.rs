@@ -1,5 +1,5 @@
 use super::schedule::{self, BACKFILL_BLOCKS, LIVE_BLOCKS};
-use pir_pipeline::{
+use crate::{
     ingestion::{BlockId, CanonicalChain, ChainFeed, ChainFuture, ChainObservation, Ingestion},
     service::Shutdown,
     FailurePolicy,

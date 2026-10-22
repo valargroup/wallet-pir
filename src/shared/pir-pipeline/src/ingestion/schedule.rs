@@ -3,7 +3,7 @@
 //! Both schedulers lock the same writer for one atomic operation at a time, so
 //! live reconciliation (including reorg withdrawal) interleaves with each
 //! bounded backfill batch instead of waiting for a long catch-up to finish.
-use pir_pipeline::{
+use crate::{
     ingestion::{CanonicalChain, ChainFeed, ChainObservation, Ingestion, IngestionRun},
     service::Shutdown,
     FailurePolicy,
@@ -79,7 +79,7 @@ pub(crate) async fn reconcile<I: Ingestion>(
 /// Why one scheduled operation did not complete.
 pub(crate) enum Outcome<E> {
     /// The follower's source failed; nothing advanced, retry on the next pass.
-    Source(pir_pipeline::ingestion::Error),
+    Source(crate::ingestion::Error),
     /// A writer operation failed; the product's failure policy applies.
     Writer(E),
 }

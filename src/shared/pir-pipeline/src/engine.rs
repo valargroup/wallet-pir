@@ -1,6 +1,6 @@
 //! One execution order for every prepared publisher, independent of its data.
-use pir_pipeline::service::Shutdown;
-use pir_pipeline::{
+use crate::service::Shutdown;
+use crate::{
     publisher::{Control, Publication, Publisher, PublisherExecutor, PublisherRun},
     FailurePolicy, Input,
 };

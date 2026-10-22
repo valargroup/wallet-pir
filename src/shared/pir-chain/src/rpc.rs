@@ -4,12 +4,13 @@
 //! (the receiver indexer's) rereads a cookie file on every request, since the node
 //! rotates it when it restarts, and bounds every response; and
 //! [`NodeClient::from_cookie_file`] (Enhance's and Status's) reads the cookie once
-//! and reports a refused credential as [`NodeError::InvalidCookie`].
-use reqwest::StatusCode;
-use serde::Deserialize;
+//! and reports a refused credential as [`NodeError::InvalidCookie`]. Transport,
+//! authentication and framing live in `pir-node-rpc`; this facade adds chain
+//! interpretation and maps transport errors onto [`NodeError`].
+use pir_node_rpc::{Credentials, HttpPolicy, RpcClient, RpcError};
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::NodeError;
 
@@ -24,90 +25,33 @@ pub const RPC_RESPONSE_BYTES: usize =
         + 64 * 1024;
 const _: () = assert!(RPC_RESPONSE_BYTES > 2 * crate::chain::MAX_BLOCK_BYTES as usize + 64 * 1024);
 
-/// Whole-response bound for Enhance, Status and Transparent, including batches.
-const SHARED_RPC_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-#[derive(Clone, Copy)]
-struct HttpPolicy {
-    connection_timeout: Option<std::time::Duration>,
-    request_timeout: std::time::Duration,
-    response_limit: usize,
-}
-
 const RECEIVER_POLICY: HttpPolicy = HttpPolicy {
     connection_timeout: Some(std::time::Duration::from_secs(20)),
     request_timeout: std::time::Duration::from_secs(120),
     response_limit: RPC_RESPONSE_BYTES,
 };
-const FIXED_COOKIE_POLICY: HttpPolicy = HttpPolicy {
-    connection_timeout: None,
-    request_timeout: std::time::Duration::from_secs(120),
-    response_limit: SHARED_RPC_RESPONSE_BYTES,
-};
+/// Enhance's, Status's and Transparent's policy, shared with the root follower.
+const FIXED_COOKIE_POLICY: HttpPolicy = HttpPolicy::SHARED;
 
-/// How a client authenticates.
-#[derive(Clone)]
-enum Credentials {
-    /// A node whose RPC disables authentication.
-    None,
-    /// A cookie file reread on every request.
-    CookieFile(PathBuf),
-    /// Credentials read once, at construction.
-    Fixed { username: String, password: String },
+impl From<RpcError> for NodeError {
+    fn from(error: RpcError) -> Self {
+        match error {
+            RpcError::Http(error) => NodeError::Http(error),
+            RpcError::Cookie(error) => NodeError::Cookie(error),
+            RpcError::InvalidCookie => NodeError::InvalidCookie,
+            RpcError::Rpc(code, message) => NodeError::Rpc(code, message),
+            RpcError::MissingResult => NodeError::MissingResult,
+            RpcError::Oversized(limit) => NodeError::Oversized(limit),
+            RpcError::Decode(error) => NodeError::Decode(error),
+            RpcError::Batch(message) => NodeError::Batch(message),
+        }
+    }
 }
 
 /// One node's JSON-RPC endpoint and how to authenticate to it.
 #[derive(Clone)]
 pub struct NodeClient {
-    http: reqwest::Client,
-    url: String,
-    credentials: Credentials,
-    /// The whole-response bound for singles and batches.
-    limit: usize,
-    /// The JSON-RPC request ID, which names the caller in node logs.
-    id: &'static str,
-}
-
-/// The `user` and `password` of a cookie file.
-fn read_cookie(path: &Path) -> Result<(String, String), NodeError> {
-    let cookie = std::fs::read_to_string(path)?;
-    match cookie.trim().split_once(':') {
-        Some((username, password)) if !username.is_empty() && !password.is_empty() => {
-            Ok((username.to_owned(), password.to_owned()))
-        }
-        _ => Err(NodeError::InvalidCookie),
-    }
-}
-
-#[derive(Deserialize)]
-pub(crate) struct RpcResponse<T> {
-    pub(crate) result: Option<T>,
-    pub(crate) error: Option<RpcError>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct RpcError {
-    pub(crate) code: i64,
-    pub(crate) message: String,
-}
-
-/// `response`'s body, refused as soon as it declares or reaches more than `limit`
-/// bytes, so an oversized body is never buffered past the limit.
-async fn read_limited(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, NodeError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err(NodeError::Oversized(limit));
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > limit {
-            return Err(NodeError::Oversized(limit));
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    rpc: RpcClient,
 }
 
 impl NodeClient {
@@ -133,10 +77,10 @@ impl NodeClient {
         rpc_url: impl Into<String>,
         cookie_path: impl AsRef<Path>,
     ) -> Result<Self, NodeError> {
-        let (username, password) = read_cookie(cookie_path.as_ref())?;
+        let credentials = Credentials::read_once(cookie_path.as_ref())?;
         Self::configured(
             rpc_url.into(),
-            Credentials::Fixed { username, password },
+            credentials,
             "enhance-pir",
             FIXED_COOKIE_POLICY,
         )
@@ -148,28 +92,21 @@ impl NodeClient {
         id: &'static str,
         policy: HttpPolicy,
     ) -> Result<Self, NodeError> {
-        let mut http = reqwest::Client::builder().timeout(policy.request_timeout);
-        if let Some(timeout) = policy.connection_timeout {
-            http = http.connect_timeout(timeout);
-        }
         Ok(Self {
-            http: http.build()?,
-            url,
-            credentials,
-            limit: policy.response_limit,
-            id,
+            rpc: RpcClient::new(url, credentials, id, policy)?,
         })
     }
 
     /// This client, naming itself `id` in its JSON-RPC requests, as the node logs.
-    pub fn with_request_id(mut self, id: &'static str) -> Self {
-        self.id = id;
-        self
+    pub fn with_request_id(self, id: &'static str) -> Self {
+        Self {
+            rpc: self.rpc.with_request_id(id),
+        }
     }
 
     /// The endpoint this client calls.
     pub fn url(&self) -> &str {
-        &self.url
+        self.rpc.url()
     }
 
     /// The `nodes` whose genesis block is `genesis` (see [`Self::check_network`]), each
@@ -220,7 +157,7 @@ impl NodeClient {
 
     /// The node's chain tip height.
     pub async fn tip_height(&self) -> Result<u64, NodeError> {
-        self.call("getblockcount", json!([])).await
+        Ok(self.rpc.tip_height().await?)
     }
 
     /// The hash, in protocol byte order, of the node's block at `height`.
@@ -230,7 +167,7 @@ impl NodeClient {
 
     /// The hash of the node's block at `height`, in RPC display order.
     pub async fn block_hash_display(&self, height: u64) -> Result<String, NodeError> {
-        self.call("getblockhash", json!([height])).await
+        Ok(self.rpc.block_hash_display(height).await?)
     }
 
     /// The node's raw `getblock` bytes for `block`, a height or a display-order hash.
@@ -239,67 +176,24 @@ impl NodeClient {
         Ok(hex::decode(raw)?)
     }
 
-    /// The request builder for one POST to the node, with its credentials.
-    fn post(&self) -> Result<reqwest::RequestBuilder, NodeError> {
-        let request = self.http.post(&self.url);
-        Ok(match &self.credentials {
-            Credentials::None => request,
-            Credentials::CookieFile(path) => {
-                let (username, password) = read_cookie(path)?;
-                request.basic_auth(username, Some(password))
-            }
-            Credentials::Fixed { username, password } => {
-                request.basic_auth(username, Some(password))
-            }
-        })
-    }
-
-    /// Sends `request` and reads its body within this client's bound, refusing a
-    /// non-success status.
-    async fn send(&self, request: reqwest::RequestBuilder) -> Result<Vec<u8>, NodeError> {
-        let response = request.send().await?;
-        if matches!(self.credentials, Credentials::Fixed { .. })
-            && response.status() == StatusCode::UNAUTHORIZED
-        {
-            return Err(NodeError::InvalidCookie);
-        }
-        let response = response.error_for_status()?;
-        read_limited(response, self.limit).await
-    }
-
     /// One JSON-RPC 1.0 call to the node.
     pub(crate) async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,
     ) -> Result<T, NodeError> {
-        let body = json!({"jsonrpc": "1.0", "id": self.id, "method": method, "params": params});
-        let body = self.send(self.post()?.json(&body)).await?;
-        let response: RpcResponse<T> = serde_json::from_slice(&body).map_err(NodeError::Decode)?;
-        if let Some(error) = response.error {
-            return Err(NodeError::Rpc(error.code, error.message));
-        }
-        response.result.ok_or(NodeError::MissingResult)
+        Ok(self.rpc.call(method, params).await?)
     }
 
-    /// One JSON-RPC 2.0 batch, results placed by their echoed id.
-    ///
-    /// The node rejects 1.0 batches, so batches use 2.0 while single calls
-    /// stay on 1.0. Per-entry RPC errors are returned to the caller; a
-    /// malformed batch response is an error for the whole batch.
+    /// One JSON-RPC 2.0 batch, results placed by their echoed id; see
+    /// [`RpcClient::batch_mixed`].
     #[cfg(any(test, feature = "enhance", feature = "transparent"))]
     pub(crate) async fn batch<T: DeserializeOwned>(
         &self,
         method: &str,
         params: Vec<serde_json::Value>,
     ) -> Result<Vec<Result<T, (i64, String)>>, NodeError> {
-        self.batch_mixed(
-            params
-                .into_iter()
-                .map(|params| json!({"method": method, "params": params}))
-                .collect(),
-        )
-        .await
+        Ok(self.rpc.batch(method, params).await?)
     }
 
     /// [`Self::batch`] for calls of any methods, each given as
@@ -309,72 +203,7 @@ impl NodeClient {
         &self,
         calls: Vec<serde_json::Value>,
     ) -> Result<Vec<Result<T, (i64, String)>>, NodeError> {
-        if calls.is_empty() {
-            return Ok(Vec::new());
-        }
-        let requests: Vec<_> = calls
-            .into_iter()
-            .enumerate()
-            .map(|(id, call)| {
-                json!({"jsonrpc": "2.0", "id": id, "method": call["method"], "params": call["params"]})
-            })
-            .collect();
-        let body = self.send(self.post()?.json(&requests)).await?;
-        let value: serde_json::Value = serde_json::from_slice(&body).map_err(NodeError::Decode)?;
-        let entries = match value {
-            serde_json::Value::Array(entries) => entries,
-            other => {
-                // A node refusing the whole batch answers with one error object.
-                return Err(
-                    match other.pointer("/error/code").and_then(|c| c.as_i64()) {
-                        Some(code) => NodeError::Rpc(
-                            code,
-                            other
-                                .pointer("/error/message")
-                                .and_then(|m| m.as_str())
-                                .unwrap_or_default()
-                                .to_string(),
-                        ),
-                        None => NodeError::Batch("batch response is not an array".into()),
-                    },
-                );
-            }
-        };
-        if entries.len() != requests.len() {
-            return Err(NodeError::Batch(format!(
-                "asked for {} results, got {}",
-                requests.len(),
-                entries.len()
-            )));
-        }
-        let mut placed: Vec<Option<Result<T, (i64, String)>>> =
-            (0..requests.len()).map(|_| None).collect();
-        for entry in entries {
-            let id = entry
-                .get("id")
-                .and_then(|id| id.as_u64())
-                .and_then(|id| usize::try_from(id).ok())
-                .filter(|id| *id < placed.len())
-                .ok_or_else(|| {
-                    NodeError::Batch("batch entry id is missing or out of range".into())
-                })?;
-            if placed[id].is_some() {
-                return Err(NodeError::Batch(format!("batch id {id} appeared twice")));
-            }
-            let response: RpcResponse<T> = serde_json::from_value(entry)
-                .map_err(|error| NodeError::Batch(format!("batch entry {id}: {error}")))?;
-            placed[id] = Some(match (response.error, response.result) {
-                (Some(error), _) => Err((error.code, error.message)),
-                (None, Some(result)) => Ok(result),
-                (None, None) => {
-                    return Err(NodeError::Batch(format!("batch entry {id} has no result")));
-                }
-            });
-        }
-        Ok(placed
-            .into_iter()
-            .map(|entry| entry.expect("every id placed"))
-            .collect())
+        Ok(self.rpc.batch_mixed(calls).await?)
     }
 }
 
@@ -495,10 +324,10 @@ pub(crate) mod tests {
         let order = |ranked: Vec<(u64, NodeClient)>| -> Vec<_> {
             ranked
                 .into_iter()
-                .map(|(tip, node)| (tip, node.url))
+                .map(|(tip, node)| (tip, node.url().to_owned()))
                 .collect()
         };
-        let urls: Vec<_> = nodes.iter().map(|node| node.url.clone()).collect();
+        let urls: Vec<_> = nodes.iter().map(|node| node.url().to_owned()).collect();
         let ranked = NodeClient::ranked(&nodes, ours).await.unwrap();
         let mut expected = vec![
             (150, urls[5].clone()),
@@ -532,35 +361,8 @@ pub(crate) mod tests {
             Err(NodeError::Oversized(RPC_RESPONSE_BYTES))
         ));
     }
-    /// A real HTTP peer with exact framing, including deliberately broken bodies.
-    async fn raw_node(headers: String, body: Vec<u8>, delay: std::time::Duration) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut request = Vec::new();
-            let mut buffer = [0u8; 4096];
-            loop {
-                let n = socket.read(&mut buffer).await.unwrap();
-                if n == 0 {
-                    return;
-                }
-                request.extend_from_slice(&buffer[..n]);
-                if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            if socket.write_all(headers.as_bytes()).await.is_err() {
-                return;
-            }
-            tokio::time::sleep(delay).await;
-            let _ = socket.write_all(&body).await;
-            let _ = socket.shutdown().await;
-        });
-        url
-    }
-
+    /// Transport, framing, deadlines and batches are covered by `pir-node-rpc`; the
+    /// facade keeps each client's policy.
     #[test]
     fn production_deadlines_and_response_bounds_are_explicit() {
         use std::time::Duration;
@@ -576,166 +378,5 @@ pub(crate) mod tests {
             Duration::from_secs(120)
         );
         assert_eq!(FIXED_COOKIE_POLICY.response_limit, 64 * 1024 * 1024);
-    }
-
-    #[tokio::test]
-    async fn exact_limit_and_unannounced_bodies_obey_the_same_bound() {
-        let body = br#"{"result":7,"error":null}"#.to_vec();
-        for declared in [false, true] {
-            for limit in [body.len(), body.len() - 1] {
-                let length = if declared {
-                    format!("Content-Length: {}\r\n", body.len())
-                } else {
-                    String::new()
-                };
-                let url = raw_node(
-                    format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n"),
-                    body.clone(),
-                    std::time::Duration::ZERO,
-                )
-                .await;
-                let client = NodeClient::configured(
-                    url,
-                    Credentials::None,
-                    "receiver-indexer",
-                    HttpPolicy {
-                        response_limit: limit,
-                        ..RECEIVER_POLICY
-                    },
-                )
-                .unwrap();
-                let result = client.tip_height().await;
-                if limit == body.len() {
-                    assert_eq!(result.unwrap(), 7);
-                } else {
-                    assert!(matches!(result, Err(NodeError::Oversized(bound)) if bound == limit));
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn malformed_and_truncated_bodies_are_refused() {
-        for (body, length) in [
-            (b"{".to_vec(), 1),
-            (br#"{"result":7,"error":null}"#.to_vec(), 100),
-        ] {
-            let url = raw_node(
-                format!("HTTP/1.1 200 OK\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"),
-                body,
-                std::time::Duration::ZERO,
-            )
-            .await;
-            assert!(matches!(
-                NodeClient::new(url, None).unwrap().tip_height().await,
-                Err(NodeError::Decode(_)) | Err(NodeError::Http(_))
-            ));
-        }
-    }
-
-    #[tokio::test]
-    async fn the_total_deadline_covers_a_body_after_headers_arrive() {
-        use std::time::Duration;
-        let body = br#"{"result":7,"error":null}"#.to_vec();
-        let url = raw_node(
-            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()),
-            body,
-            Duration::from_millis(300),
-        )
-        .await;
-        let client = NodeClient::configured(
-            url,
-            Credentials::None,
-            "receiver-indexer",
-            HttpPolicy {
-                request_timeout: Duration::from_millis(30),
-                ..RECEIVER_POLICY
-            },
-        )
-        .unwrap();
-        assert!(
-            matches!(client.tip_height().await, Err(NodeError::Http(error)) if error.is_timeout())
-        );
-    }
-
-    #[tokio::test]
-    async fn the_connection_deadline_covers_a_stalled_tls_handshake() {
-        use std::time::{Duration, Instant};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("https://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (_socket, _) = listener.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_secs(10)).await;
-        });
-        let client = NodeClient::configured(
-            url,
-            Credentials::None,
-            "receiver-indexer",
-            HttpPolicy {
-                connection_timeout: Some(Duration::from_millis(30)),
-                request_timeout: Duration::from_secs(5),
-                ..RECEIVER_POLICY
-            },
-        )
-        .unwrap();
-        let start = Instant::now();
-        assert!(
-            matches!(client.tip_height().await, Err(NodeError::Http(error)) if error.is_timeout())
-        );
-        assert!(
-            start.elapsed() < Duration::from_secs(3),
-            "connection must expire before the total deadline"
-        );
-        server.abort();
-    }
-
-    #[tokio::test]
-    async fn batch_answers_are_ordered_and_bad_ids_fail_the_whole_batch() {
-        let valid = json!([{"id":1,"error":{"code":-5,"message":"missing"}}, {"id":0,"result":7}]);
-        let cases = vec![
-            (valid, true),
-            (json!([{"id":0,"result":7},{"id":0,"result":8}]), false),
-            (json!([{"id":0,"result":7}]), false),
-            (json!([{"id":0,"result":7},{"id":2,"result":8}]), false),
-            (json!([{"id":0,"result":7},{"id":-1,"result":8}]), false),
-            (json!([{"id":0,"result":7},{"id":"1","result":8}]), false),
-            (json!([{"id":0,"result":7},{"id":1.0,"result":8}]), false),
-            (json!([{"id":0,"result":7},{"id":null,"result":8}]), false),
-            (json!([{"id":0,"result":7},{"result":8}]), false),
-        ];
-        for (answer, valid) in cases {
-            let url = serve(Router::new().route(
-                "/",
-                post(move |Json(request): Json<serde_json::Value>| {
-                    assert_eq!(request[0]["jsonrpc"], "2.0");
-                    assert_eq!(request[0]["id"], 0);
-                    assert_eq!(request[1]["id"], 1);
-                    let answer = answer.clone();
-                    async move { Json(answer) }
-                }),
-            ))
-            .await;
-            let result = NodeClient::new(url, None)
-                .unwrap()
-                .batch::<u64>("getblockcount", vec![json!([]), json!([])])
-                .await;
-            if valid {
-                assert_eq!(result.unwrap(), vec![Ok(7), Err((-5, "missing".into()))]);
-            } else {
-                assert!(matches!(result, Err(NodeError::Batch(_))));
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn a_whole_batch_rpc_error_keeps_its_code() {
-        let url = serve(Router::new().route(
-            "/",
-            post(|| async { Json(json!({"error":{"code":-32600,"message":"bad batch"}})) }),
-        ))
-        .await;
-        assert!(
-            matches!(NodeClient::new(url, None).unwrap().batch::<u64>("getblockcount", vec![json!([])]).await, Err(NodeError::Rpc(-32600, message)) if message == "bad batch")
-        );
     }
 }

@@ -55,10 +55,15 @@ fn follow(
     shutdown: &Shutdown,
     tasks: &mut Tasks,
 ) -> Result<pir_pipeline::ingestion::ChainFeed> {
-    use crate::ingestion::{ChainFollower, NodeSource};
-    let client =
-        zakura_server_chain::NodeClient::from_cookie_file(chain.rpc_url, chain.rpc_cookie)?
-            .with_request_id("pir-publisher-follower");
+    use crate::ingestion::NodeSource;
+    use pir_node_rpc::{Credentials, HttpPolicy, RpcClient};
+    use pir_pipeline::ingestion::ChainFollower;
+    let client = RpcClient::new(
+        chain.rpc_url,
+        Credentials::read_once(&chain.rpc_cookie)?,
+        "pir-publisher-follower",
+        HttpPolicy::SHARED,
+    )?;
     let follower = ChainFollower::new(std::sync::Arc::new(NodeSource(client)), chain.poll);
     let feed = follower.feed();
     let task = tokio::spawn(follower.run(shutdown.clone()));

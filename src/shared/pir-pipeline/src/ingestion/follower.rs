@@ -1,5 +1,5 @@
 //! The one root chain follower for every scheduled product.
-use pir_pipeline::{
+use crate::{
     ingestion::{BlockId, CanonicalChain, ChainFeed, ChainFuture, ChainObservation},
     service::Shutdown,
 };
@@ -68,7 +68,7 @@ impl ChainFollower {
 
 /// Read genesis and an anchored tip: the tip hash is reread after its height
 /// so a tip that moved during the pass is reported at the height read.
-async fn observe(source: &dyn ChainSource) -> pir_pipeline::ingestion::Result<(String, BlockId)> {
+async fn observe(source: &dyn ChainSource) -> crate::ingestion::Result<(String, BlockId)> {
     let genesis = source.hash_at(0).await?;
     let height = source.tip_height().await?;
     let hash = source.hash_at(height).await?;
@@ -79,18 +79,5 @@ struct Canonical(Arc<dyn ChainSource>);
 impl CanonicalChain for Canonical {
     fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
         self.0.hash_at(height)
-    }
-}
-
-/// The node RPC client as the follower's source.
-pub struct NodeSource(pub zakura_server_chain::NodeClient);
-impl CanonicalChain for NodeSource {
-    fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
-        Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
-    }
-}
-impl ChainSource for NodeSource {
-    fn tip_height(&self) -> ChainFuture<'_, u64> {
-        Box::pin(async move { Ok(self.0.tip_height().await?) })
     }
 }
