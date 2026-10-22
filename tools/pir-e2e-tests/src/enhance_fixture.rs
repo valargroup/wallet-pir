@@ -92,6 +92,12 @@ pub struct Tls {
     _child: tokio::process::Child,
 }
 pub async fn tls(root: &Path, upstream: &str) -> Tls {
+    tls_with_discovery(root, upstream, None).await
+}
+/// [`tls`] for a unified publisher, which serves service discovery on its
+/// management listener: the edge proxies that exact path to `discovery`
+/// (`host:port`), as a production edge does.
+pub async fn tls_with_discovery(root: &Path, upstream: &str, discovery: Option<&str>) -> Tls {
     let cert = root.join("ca.pem");
     let key = root.join("key.pem");
     assert!(tokio::process::Command::new("openssl")
@@ -122,7 +128,11 @@ pub async fn tls(root: &Path, upstream: &str) -> Tls {
         .success());
     let control = root.join("fault");
     std::fs::write(&control, "").unwrap();
-    let mut child = tokio::process::Command::new("python3")
+    let mut command = tokio::process::Command::new("python3");
+    if let Some(discovery) = discovery {
+        command.env("DISCOVERY_UPSTREAM", discovery);
+    }
+    let mut child = command
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../src/pir-publisher/tests/support/distribution_tls.py"

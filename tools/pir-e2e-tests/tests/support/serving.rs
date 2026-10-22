@@ -3,7 +3,7 @@
 use enhance_query_server::{
     ingress_sync, router_sync, synchronization::Config as SourceConfig, worker_sync,
 };
-use pir_e2e_tests::enhance_fixture::{serve, tls, Listening, Tls};
+use pir_e2e_tests::enhance_fixture::{serve, tls_with_discovery, Listening, Tls};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -16,6 +16,7 @@ struct Consumers {
 pub struct Roles {
     pub origin: String,
     artifact_listen: std::net::SocketAddr,
+    management_listen: std::net::SocketAddr,
     consumers: Arc<tokio::sync::Mutex<Consumers>>,
     _listeners: Vec<Listening>,
     _tls: Tls,
@@ -32,7 +33,15 @@ impl Roles {
     pub async fn for_process(root: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let artifact_listen = address();
-        let transport = tls(root, &format!("http://{artifact_listen}")).await;
+        // The publisher serves discovery on its management listener, which
+        // keeps one address across restarts like the artifact listener.
+        let management_listen = address();
+        let transport = tls_with_discovery(
+            root,
+            &format!("http://{artifact_listen}"),
+            Some(&management_listen.to_string()),
+        )
+        .await;
         // The reference packing is larger than 512 MiB even for the smallest
         // domain. Bound scratch space by its actual format plus two row files;
         // this fixture does not change any role's resident admission budget.
@@ -104,6 +113,7 @@ impl Roles {
         Ok(Self {
             origin,
             artifact_listen,
+            management_listen,
             consumers: Arc::new(tokio::sync::Mutex::new(Consumers {
                 workers,
                 router: router_sync,
@@ -155,7 +165,7 @@ impl Roles {
         self.minimum_generation
             .store(minimum, std::sync::atomic::Ordering::Release);
         Ok(
-            serde_json::json!({ "management_listen": address(), "enhance": { "enabled": true, "settings": {
+            serde_json::json!({ "management_listen": self.management_listen, "enhance": { "enabled": true, "settings": {
                 "listen": listen, "artifact_listen": self.artifact_listen, "data_dir": root.join("data"),
                 "zakura_rpc_url": rpc, "zakura_cookie": root.join("cookie"), "poll_seconds": 1, "prevout_cache_outputs": 1000
             }}}),
