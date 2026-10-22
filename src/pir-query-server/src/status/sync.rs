@@ -6,6 +6,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, io::Read};
 
+#[derive(Debug)]
+struct PublicationAdvanced;
+impl std::fmt::Display for PublicationAdvanced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Status publication advanced during coordination")
+    }
+}
+impl std::error::Error for PublicationAdvanced {}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Floor {
@@ -220,6 +229,9 @@ impl StatusSync {
             ))
             .send()
             .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            return Err(Box::new(PublicationAdvanced));
+        }
         let bytes = serving::bounded(response, 16)
             .await
             .map_err(|_| "Status worker cannot evaluate candidate generation")?;
@@ -255,6 +267,10 @@ impl StatusSync {
             .source
             .post_json("anchors/check", serde_json::to_vec(&request)?)
             .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            response.discard().await?;
+            return Err(Box::new(PublicationAdvanced));
+        }
         if !response.status().is_success() {
             response.discard().await?;
             return Err("Status authority changed during synchronization".into());
@@ -556,7 +572,23 @@ impl SyncTask for StatusSync {
     async fn synchronize(&mut self) -> Result<u64, Failure> {
         self.deferred = false;
         self.service.state.lock().await.synchronization = "synchronizing".into();
-        let result = self.update().await;
+        let result = match self.update().await {
+            // A newer pointer won the authority handshake. Nothing was activated;
+            // retry at the normal cadence rather than spending half the serving
+            // freshness window in transport-failure backoff.
+            Err(error) if error.is::<PublicationAdvanced>() => {
+                self.deferred = true;
+                Ok(self
+                    .service
+                    .state
+                    .lock()
+                    .await
+                    .controller
+                    .as_ref()
+                    .map_or(0, |c| c.current().manifest().generation))
+            }
+            result => result,
+        };
         self.service.state.lock().await.synchronization = if result.is_ok() && self.deferred {
             "waiting_for_peer"
         } else if result.is_ok() {
