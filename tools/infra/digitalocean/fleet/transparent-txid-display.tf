@@ -1,8 +1,7 @@
 # The txid display archive host: the sealed txid display v2 archives from
 # height 1, one table per 40,000-entry archive. It is not a history archive
 # owner and is absent from the transparent worker roster. It shares the worker
-# tag, so it gets the worker firewall, including the display port the
-# `firewall` phase opens.
+# tag with the other display hosts.
 #
 # Sizing (status.md, 2026-10-08): about 426 archive tables at the 3.51M-height
 # journal end, 16.7 GiB of runtimes at 40.05 MiB each, plus about 2.5 GiB a

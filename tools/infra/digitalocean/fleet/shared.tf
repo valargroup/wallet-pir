@@ -86,8 +86,8 @@ resource "digitalocean_volume_attachment" "zakura" {
   volume_id  = digitalocean_volume.zakura.id
 }
 
-# The coordinator intentionally has no cloud firewall. SSH must remain reachable
-# when operator/VPN source addresses change. Keep private services bound to loopback.
+# Wallet PIR hosts intentionally have no cloud firewall. Keep private services
+# bound to loopback or the VPC interface.
 
 resource "digitalocean_project_resources" "wallet" {
   project = var.wallet_pir_project_id
@@ -127,11 +127,6 @@ moved {
 moved {
   from = digitalocean_droplet.worker
   to   = digitalocean_droplet.enhance_worker
-}
-
-moved {
-  from = digitalocean_firewall.worker
-  to   = digitalocean_firewall.enhance_worker
 }
 
 moved {

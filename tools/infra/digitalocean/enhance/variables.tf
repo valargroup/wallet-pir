@@ -1,8 +1,3 @@
-variable "allowed_ssh_cidrs" {
-  description = "Operator CIDRs allowed to SSH to firewalled workers and auxiliary hosts; the coordinator has no cloud firewall."
-  type        = list(string)
-}
-
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for valargroup.dev."
   type        = string

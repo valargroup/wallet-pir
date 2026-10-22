@@ -21,7 +21,7 @@ receiver-pir.valargroup.dev {
 	# deployed `/v1/receiver/` one. `/v1/receiver/health` and `/metrics` are
 	# deliberately not here, as Transparent keeps its operator routes off the edge:
 	# health reports the indexer's NEAR feed and payout check. The PIR monitor reads
-	# health over the private network, where the firewall opens 18380 to it alone.
+	# health over the private network on port 18380.
 	@wallet path /receiver/v1/inventory /receiver/v1/inventory/* /receiver/v1/query /receiver/v1/public/* /receiver/v1/shard-filters/* /receiver/v1/block-filters/* /v1/receiver/inventory /v1/receiver/inventory/* /v1/receiver/query /v1/receiver/public/* /v1/receiver/shard-filters/* /v1/receiver/block-filters/*
 	handle @wallet {
 		reverse_proxy 10.70.0.11:18380

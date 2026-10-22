@@ -1,6 +1,5 @@
 module "enhance" {
   source                           = "../enhance"
-  allowed_ssh_cidrs                = var.allowed_ssh_cidrs
   cloudflare_zone_id               = var.cloudflare_zone_id
   coordinator_tag                  = digitalocean_tag.coordinator.name
   enable_backups                   = var.enable_backups
@@ -19,7 +18,6 @@ module "enhance" {
 
 module "status" {
   source                           = "../status"
-  allowed_ssh_cidrs                = var.allowed_ssh_cidrs
   coordinator_tag                  = digitalocean_tag.coordinator.name
   enhance_worker_deploy_public_key = var.enhance_worker_deploy_public_key
   image                            = var.image
@@ -32,29 +30,26 @@ module "status" {
 }
 
 module "transparent" {
-  source                                = "../transparent"
-  allowed_ssh_cidrs                     = var.allowed_ssh_cidrs
-  cloudflare_zone_id                    = var.cloudflare_zone_id
-  coordinator_id                        = digitalocean_droplet.coordinator.id
-  coordinator_tag                       = digitalocean_tag.coordinator.name
-  enable_backups                        = var.enable_backups
-  image                                 = var.image
-  region                                = var.region
-  ssh_key_ids                           = var.ssh_key_ids
-  transparent_archive_names             = var.transparent_archive_names
-  transparent_archive_size              = var.transparent_archive_size
-  transparent_loadgen_count             = var.transparent_loadgen_count
-  transparent_loadgen_extra_ssh_cidrs   = var.transparent_loadgen_extra_ssh_cidrs
-  transparent_loadgen_size              = var.transparent_loadgen_size
-  transparent_recent_count              = var.transparent_recent_count
-  transparent_recent_size               = var.transparent_recent_size
-  transparent_router_count              = var.transparent_router_count
-  transparent_router_size               = var.transparent_router_size
-  transparent_txid_display_port_enabled = var.transparent_txid_display_port_enabled
-  transparent_v12_enabled               = var.transparent_v12_enabled
-  transparent_v12_size                  = var.transparent_v12_size
-  transparent_worker_deploy_public_key  = var.transparent_worker_deploy_public_key
-  vpc_id                                = digitalocean_vpc.wallet.id
+  source                               = "../transparent"
+  cloudflare_zone_id                   = var.cloudflare_zone_id
+  coordinator_id                       = digitalocean_droplet.coordinator.id
+  coordinator_tag                      = digitalocean_tag.coordinator.name
+  enable_backups                       = var.enable_backups
+  image                                = var.image
+  region                               = var.region
+  ssh_key_ids                          = var.ssh_key_ids
+  transparent_archive_names            = var.transparent_archive_names
+  transparent_archive_size             = var.transparent_archive_size
+  transparent_loadgen_count            = var.transparent_loadgen_count
+  transparent_loadgen_size             = var.transparent_loadgen_size
+  transparent_recent_count             = var.transparent_recent_count
+  transparent_recent_size              = var.transparent_recent_size
+  transparent_router_count             = var.transparent_router_count
+  transparent_router_size              = var.transparent_router_size
+  transparent_v12_enabled              = var.transparent_v12_enabled
+  transparent_v12_size                 = var.transparent_v12_size
+  transparent_worker_deploy_public_key = var.transparent_worker_deploy_public_key
+  vpc_id                               = digitalocean_vpc.wallet.id
 }
 
 module "transparent_tx_detail" {

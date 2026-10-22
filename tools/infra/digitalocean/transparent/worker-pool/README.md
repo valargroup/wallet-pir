@@ -27,10 +27,10 @@ describes the actuator, the inventory and the invariants this root serves.
   different lock from the production root's
   `/run/lock/wallet-pir-production.lock`: the two roots never share state.
 - **Never the production root.** The production root keeps the archive
-  owners, the static recent replicas, the router, the VPC, the worker tag and
-  its firewall. This root refers to the tag by name (`worker_tag`, default
-  `transparent-pir-worker`), so an elastic member gets exactly the static
-  workers' ingress, and it takes the VPC and project as inputs. The same root
+  owners, the static recent replicas, the router, the VPC and the worker tag.
+  This root refers to the tag by name (`worker_tag`, default
+  `transparent-pir-worker`) and takes the VPC and project as inputs.
+  Neither root creates cloud firewalls. The same root
   serves a bench fleet with a bench VPC, project and tag.
 
 ## Members

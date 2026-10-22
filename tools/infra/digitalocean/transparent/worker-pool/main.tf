@@ -4,7 +4,7 @@ locals {
 }
 
 # Elastic recent replicas only. Archive owners, static recent replicas, the
-# router, the tag and the firewall all belong to the production root.
+# router and tag belong to the production root.
 resource "digitalocean_droplet" "recent" {
   for_each   = var.members
   name       = each.key

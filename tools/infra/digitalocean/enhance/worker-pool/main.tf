@@ -44,34 +44,3 @@ resource "digitalocean_project_resources" "worker" {
   resources = [digitalocean_droplet.worker[count.index].urn]
   lifecycle { prevent_destroy = true }
 }
-
-resource "digitalocean_firewall" "worker" {
-  name = "enhance-pir-v4-workers"
-  tags = [digitalocean_tag.worker.name]
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "22"
-    source_addresses = concat(var.operator_ssh_cidrs, ["${var.coordinator_private_ipv4}/32"])
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "8291"
-    source_addresses = ["${var.coordinator_private_ipv4}/32"]
-  }
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  lifecycle { prevent_destroy = true }
-}

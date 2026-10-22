@@ -26,7 +26,7 @@ resource "digitalocean_tag" "transparent_router" {
 }
 
 
-# The transparent two-tier fleet. Both tiers share the worker tag and firewall;
+# The transparent two-tier fleet. Both tiers share the worker tag;
 # roles differ in size and in the roster the outputs render. Names carry the
 # role so an assignment and a `/v1/ready` body read the same as the droplet list.
 resource "digitalocean_droplet" "transparent_recent" {
@@ -134,162 +134,6 @@ resource "digitalocean_droplet" "transparent_router" {
 }
 
 
-# Same shape as the Enhance worker firewall: SSH from the coordinator and from
-# operator CIDRs, the service port from the coordinator tag alone, and no public
-# ingress at all.
-resource "digitalocean_firewall" "transparent_worker" {
-  name = "transparent-pir-workers"
-  tags = [digitalocean_tag.transparent_worker.name]
-
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "22"
-    source_tags = [var.coordinator_tag]
-  }
-
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-
-  # The shard retrieval port itself stays private. The coordinator verifies
-  # deployments, the router proxies wallets, and optional load generators
-  # exercise the fleet from inside the VPC.
-  inbound_rule {
-    protocol   = "tcp"
-    port_range = "8093"
-    source_tags = concat(
-      [var.coordinator_tag, digitalocean_tag.transparent_router.name],
-      digitalocean_tag.transparent_loadgen[*].name,
-    )
-  }
-
-  # The txid display worker port, shared by every worker-tagged host. The
-  # public router proxies /v2/txid/ to the one-query site through this rule
-  # (the site's own firewall admits only the coordinator), so production keeps
-  # the variable true in txid-display.auto.tfvars.
-  dynamic "inbound_rule" {
-    for_each = var.transparent_txid_display_port_enabled ? [8095] : []
-    content {
-      protocol    = "tcp"
-      port_range  = tostring(inbound_rule.value)
-      source_tags = [var.coordinator_tag, digitalocean_tag.transparent_router.name]
-    }
-  }
-
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
-
-# The router: SSH from the coordinator and operators, public TLS, nothing else
-# inbound. Its egress to the workers' 8093 is governed by their firewall.
-resource "digitalocean_firewall" "transparent_router" {
-  name = "transparent-pir-router"
-  tags = [digitalocean_tag.transparent_router.name]
-
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "22"
-    source_tags = [var.coordinator_tag]
-  }
-
-  # The router's internal plain-HTTP listener, the same routes as the public
-  # site without TLS, for the load harness and deploy verification from the
-  # coordinator before the public name points here. VPC only.
-  inbound_rule {
-    protocol   = "tcp"
-    port_range = "8080"
-    source_tags = concat(
-      [var.coordinator_tag],
-      digitalocean_tag.transparent_loadgen[*].name,
-    )
-  }
-
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
-
-resource "digitalocean_firewall" "transparent_loadgen" {
-  count = var.transparent_loadgen_count > 0 ? 1 : 0
-  name  = "transparent-pir-loadgen"
-  tags  = [digitalocean_tag.transparent_loadgen[0].name]
-
-  dynamic "inbound_rule" {
-    for_each = toset(concat(var.allowed_ssh_cidrs, var.transparent_loadgen_extra_ssh_cidrs))
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
-
 # Taken from the router attribute rather than a hand-maintained variable, so a
 # rebuilt router cannot leave the record pointing at an address nothing answers
 # on. The Enhance record predates this and still carries a hardcoded IP.
@@ -343,42 +187,6 @@ resource "digitalocean_tag" "transparent_v12" {
 
 # Public TLS for the staging site, and the plain-HTTP internal listener for
 # load and deploy checks from the coordinator.
-resource "digitalocean_firewall" "transparent_v12" {
-  count = var.transparent_v12_enabled ? 1 : 0
-  name  = "transparent-pir-v12"
-  tags  = [digitalocean_tag.transparent_v12[0].name]
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  # The production router serves /v2/ on transparent-pir.valargroup.dev
-  # through this listener.
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8080"
-    source_tags = concat([var.coordinator_tag, digitalocean_tag.transparent_router.name], digitalocean_tag.transparent_loadgen[*].name)
-  }
-
-  # The recent worker's shard port. The worker firewall opens only 8093, the
-  # archive worker's port; the coordinator reads both workers' init and
-  # verifies deployments on each.
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8193"
-    source_tags = concat([var.coordinator_tag], digitalocean_tag.transparent_loadgen[*].name)
-  }
-}
-
-
 resource "cloudflare_dns_record" "transparent_v12_staging" {
   count   = var.transparent_v12_enabled ? 1 : 0
   zone_id = var.cloudflare_zone_id

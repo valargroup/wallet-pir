@@ -52,67 +52,6 @@ resource "digitalocean_droplet" "enhance_legacy_worker" {
 }
 
 
-resource "digitalocean_firewall" "enhance_worker" {
-  name = "enhance-pir-workers"
-  tags = [digitalocean_tag.enhance_worker.name]
-
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "22"
-    source_tags = [var.coordinator_tag]
-  }
-
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8091"
-    source_tags = [var.coordinator_tag]
-  }
-
-  # Schema-11 candidate and serving workers; retain 8091 for the rollback fleet.
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8291"
-    source_tags = [var.coordinator_tag]
-  }
-
-  # Only evaluation traffic is allowed from the independently scaled packing tier.
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8091"
-    source_tags = [digitalocean_tag.enhance_packing_router.name]
-  }
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8291"
-    source_tags = [digitalocean_tag.enhance_packing_router.name]
-  }
-
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
-
 resource "cloudflare_dns_record" "enhance" {
   zone_id = var.cloudflare_zone_id
   name    = local.enhance_public_hostname
@@ -154,39 +93,6 @@ resource "digitalocean_droplet" "enhance_packing_router" {
   }
 }
 
-
-resource "digitalocean_firewall" "enhance_packing_router" {
-  name = "enhance-pir-packing-routers"
-  tags = [digitalocean_tag.enhance_packing_router.name]
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "22"
-    source_tags = [var.coordinator_tag]
-  }
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8092-8093"
-    source_tags = [var.coordinator_tag]
-  }
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
 
 resource "digitalocean_droplet" "enhance_pool_worker" {
   count      = var.enhance_pool_worker_count
