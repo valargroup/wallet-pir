@@ -1,11 +1,12 @@
-use super::verification::{check_object, FileIdentity, VerificationPass, SETTLED};
+use super::verification::{check_object, VerificationPass};
 use super::*;
 use crate::{prepared_packing, runtime};
 use enhance_shared::protocol::Lifecycle;
 use enhance_shared::publication::Domain;
 use enhance_shared::publication::Object;
+use pir_publication::FileIdentity;
 use sha2::{Digest, Sha256};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 fn object(root: &Path, bytes: &[u8]) -> Object {
     let object = Object {
@@ -19,7 +20,7 @@ fn object(root: &Path, bytes: &[u8]) -> Object {
 
 /// Let every file written so far settle, so its hash can be reused.
 fn settle() {
-    std::thread::sleep(SETTLED + Duration::from_millis(100));
+    std::thread::sleep(Duration::from_millis(1100));
 }
 
 fn verified(root: &Path, object: &Object) -> FileIdentity {
@@ -110,17 +111,6 @@ fn a_replaced_object_with_the_same_bytes_is_hashed_again() {
     let mut hashed = VerificationStats::default();
     check_object(root, &object, Some(&identity), &mut hashed).unwrap();
     assert_eq!((hashed.files, hashed.reused), (1, 0));
-}
-
-#[test]
-fn a_recently_changed_file_is_not_reused() {
-    let root = tempfile::tempdir().unwrap();
-    let object = object(root.path(), b"fresh object");
-    let identity = FileIdentity::of(&fs::metadata(object.path(root.path()).unwrap()).unwrap());
-    let ctime = UNIX_EPOCH + Duration::new(identity.ctime.0 as u64, identity.ctime.1 as u32);
-    assert!(!identity.settled_before(ctime));
-    assert!(!identity.settled_before(ctime + SETTLED - Duration::from_nanos(1)));
-    assert!(identity.settled_before(ctime + SETTLED));
 }
 
 #[test]

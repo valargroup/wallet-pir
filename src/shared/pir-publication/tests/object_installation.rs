@@ -1,5 +1,5 @@
 //! Filesystem contracts shared by byte-producing and file-producing publishers.
-use pir_publication::{ObjectInstallError, ObjectInstaller, ObjectReference, PublishedObjectStore};
+use pir_publication::{ObjectFileError, ObjectInstaller, ObjectReference, PublishedObjectStore};
 use std::{
     cell::Cell,
     fs::{self, File},
@@ -123,7 +123,7 @@ fn interrupted_input_and_cancelled_verification_expose_no_completed_object() {
             polls.get() == 3
         })
         .unwrap_err();
-    assert!(matches!(error, ObjectInstallError::Cancelled), "{error}");
+    assert!(matches!(error, ObjectFileError::Cancelled), "{error}");
     assert_eq!(fs::read_dir(installer.directory()).unwrap().count(), 0);
 }
 
@@ -217,7 +217,7 @@ fn replacement_and_mutation_during_verification_or_before_installation_fail() {
             false
         });
         assert!(
-            matches!(result, Err(ObjectInstallError::FileChanged(_))),
+            matches!(result, Err(ObjectFileError::FileChanged(_))),
             "replace={replace}, poll={change_on_poll}: {result:?}"
         );
         assert_eq!(fs::read_dir(installer.directory()).unwrap().count(), 0);
@@ -233,7 +233,7 @@ fn a_prepared_file_must_match_its_declared_digest() {
     let expected = ObjectReference::for_bytes(b"expected");
     assert!(matches!(
         installer.install_prepared_file(&source, Some(&expected.sha256), &|| false),
-        Err(ObjectInstallError::DigestMismatch(_))
+        Err(ObjectFileError::DigestMismatch { .. })
     ));
     assert_eq!(fs::read_dir(installer.directory()).unwrap().count(), 0);
 }

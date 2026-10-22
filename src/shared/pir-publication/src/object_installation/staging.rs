@@ -1,5 +1,6 @@
 //! Private construction files; dropping one attempt never touches another.
-use super::{verification::copy_and_hash, ObjectInstallError};
+use super::ObjectFileError;
+use crate::object_file::copy_and_hash;
 use crate::ObjectReference;
 use std::{
     fs,
@@ -14,7 +15,7 @@ pub(super) struct StagedObject {
 }
 
 impl StagedObject {
-    fn reserve(directory: &Path) -> Result<Self, ObjectInstallError> {
+    fn reserve(directory: &Path) -> Result<Self, ObjectFileError> {
         // Keep construction outside the completed-object namespace. Existing
         // product collectors need see only completed objects, never an active
         // installer's private directory.
@@ -35,7 +36,7 @@ impl StagedObject {
         })
     }
 
-    pub(super) fn create(directory: &Path) -> Result<Self, ObjectInstallError> {
+    pub(super) fn create(directory: &Path) -> Result<Self, ObjectFileError> {
         let staged = Self::reserve(directory)?;
         fs::OpenOptions::new()
             .create_new(true)
@@ -45,7 +46,7 @@ impl StagedObject {
         Ok(staged)
     }
 
-    pub(super) fn adopt(directory: &Path, source: &Path) -> Result<Self, ObjectInstallError> {
+    pub(super) fn adopt(directory: &Path, source: &Path) -> Result<Self, ObjectFileError> {
         let staged = Self::reserve(directory)?;
         fs::hard_link(source, &staged.path)?;
         Ok(staged)
@@ -59,11 +60,11 @@ impl StagedObject {
         &mut self,
         input: &mut impl Read,
         stop: &dyn Fn() -> bool,
-    ) -> Result<ObjectReference, ObjectInstallError> {
+    ) -> Result<ObjectReference, ObjectFileError> {
         let mut file = fs::OpenOptions::new().write(true).open(&self.path)?;
         let reference = copy_and_hash(input, &mut file, stop)?;
         if file.metadata()?.len() != reference.bytes {
-            return Err(ObjectInstallError::FileChanged(self.path.clone()));
+            return Err(ObjectFileError::FileChanged(self.path.clone()));
         }
         Ok(reference)
     }
