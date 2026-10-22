@@ -45,15 +45,28 @@ fn manifest() -> Manifest {
 }
 fn pointer() -> Current {
     Current {
-        schema: SCHEMA.into(),
-        revision: 5,
-        recovery_epoch: 2,
-        network: [1; 32],
-        salt: [2; 32],
-        generation: 3,
-        inventory: Some(ObjectReference::for_bytes(b"not an inventory")),
+        scope: scope([1; 32], [2; 32]),
+        sequence: 5,
         eligible: true,
+        fence: pir_publication::AuthorityFence {
+            recovery_epoch: 2,
+            latest_withdrawal: 0,
+        },
+        publication: Some(publication(3)),
     }
+}
+fn publication(generation: u64) -> pir_publication::PublicationReference<StatusDescriptor> {
+    pir_publication::PublicationReference::new(
+        [6; 32],
+        ObjectReference::for_bytes(b"not an inventory"),
+        StatusDescriptor { generation },
+    )
+}
+/// The publisher's withdrawal transition.
+fn withdraw(current: &mut Current) {
+    current.sequence += 1;
+    current.eligible = false;
+    current.fence.latest_withdrawal = current.sequence;
 }
 fn role_config(role: Role, state_dir: std::path::PathBuf, tls: &tls::Tls) -> RoleConfig {
     RoleConfig {
@@ -130,14 +143,15 @@ async fn setup() -> (
                 async move {
                     if shared.advance_during_check.swap(false, Ordering::SeqCst) {
                         let mut current = shared.current.write().unwrap();
-                        current.revision += 1;
                         if shared.withdraw_during_check.load(Ordering::SeqCst) {
-                            current.eligible = false;
+                            withdraw(&mut current);
+                        } else {
+                            current.sequence += 1;
                         }
                         return StatusCode::CONFLICT.into_response();
                     }
                     Json(AuthorityCheckResponse {
-                        pointer: shared.current.read().unwrap().clone(),
+                        authority: shared.current.read().unwrap().authority().unwrap(),
                         still_authoritative: vec![
                             shared.canonical.load(Ordering::SeqCst);
                             request.subjects.len()
@@ -188,11 +202,7 @@ async fn tls_withdrawal_fences_before_persisting_and_refuses_replay() {
     let (_root, service, mut task, source, _tls, server) = setup().await;
     // The fixture inventory is malformed, but the pointer floor is raised.
     assert!(task.synchronize().await.is_err());
-    {
-        let mut current = source.current.write().unwrap();
-        current.revision += 1;
-        current.eligible = false;
-    }
+    withdraw(&mut source.current.write().unwrap());
     // Withdrawal fences service but keeps the normal poll cadence.
     deferred(task.synchronize().await.unwrap());
     assert_eq!(
@@ -201,6 +211,7 @@ async fn tls_withdrawal_fences_before_persisting_and_refuses_replay() {
     );
     assert!(service.serving().await.is_err());
     assert_eq!(saved_floor(&service)["current"]["eligible"], false);
+    // Undoing the withdrawal at the same sequence is a divergent replay.
     source.current.write().unwrap().eligible = true;
     let error = task.synchronize().await.unwrap_err();
     assert!(error.is::<pir_publication::PublicationReplay>(), "{error}");
@@ -241,11 +252,11 @@ async fn skipped_withdrawal_fences_old_answers_before_candidate_download() {
     assert!(task.synchronize().await.is_err());
     let active_id = serving_manifest_id(&service).await;
     source.canonical.store(false, Ordering::SeqCst);
-    source.current.write().unwrap().revision += 1;
+    source.current.write().unwrap().sequence += 1;
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
     assert!(task.floor().is_invalidated(&active_id));
-    let reopened: AuthorityFloor<Current> = AuthorityFloor::open(
+    let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
         service.state_dir.join(FLOOR_FILE),
         task.floor().source().clone(),
     )
@@ -270,19 +281,19 @@ async fn ordinary_https_failure_preserves_a_still_fresh_view() {
 async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
     let (_root, service, mut task, source, _tls, server) = setup().await;
     let old = serving_manifest_id(&service).await;
-    source.current.write().unwrap().eligible = false;
+    withdraw(&mut source.current.write().unwrap());
     deferred(task.synchronize().await.unwrap());
     assert!(service.serving().await.is_err());
     {
         let mut current = source.current.write().unwrap();
-        current.revision += 1;
-        current.generation += 1;
+        current.sequence += 1;
+        current.publication = Some(publication(4));
         current.eligible = true;
     }
     // This fixture deliberately has no valid prepared inventory. Recovery must
     // reach its download/validation without making the withdrawn view usable.
     assert!(task.synchronize().await.is_err());
-    let object = pointer().inventory.unwrap();
+    let object = pointer().inventory().cloned().unwrap();
     assert!(service
         .state_dir
         .join("objects")
@@ -350,7 +361,7 @@ async fn worker_retains_the_routers_view_until_handover_commits() {
 async fn consumer_restart_requires_https_authority_despite_completed_objects() {
     let (_root, service, mut task, _source, tls, server) = setup().await;
     assert!(task.synchronize().await.is_err());
-    let object = pointer().inventory.unwrap();
+    let object = pointer().inventory().cloned().unwrap();
     let path = service.state_dir.clone();
     assert!(path.join("objects").join(&object.sha256).is_file());
     drop(task);
@@ -374,9 +385,9 @@ async fn floors_refuse_another_publisher_and_keep_unbound_replay_protection() {
     let path = service.state_dir.clone();
     drop(task);
     drop(service);
-    // A floor written before source binding keeps its revision floor.
+    // A floor written before source binding keeps its sequence floor.
     let mut legacy = pointer();
-    legacy.revision = 9;
+    legacy.sequence = 9;
     fs::write(
         path.join(FLOOR_FILE),
         serde_json::to_vec(&serde_json::json!({ "current": legacy, "invalid": [] })).unwrap(),
@@ -391,7 +402,7 @@ async fn floors_refuse_another_publisher_and_keep_unbound_replay_protection() {
     drop(task);
 
     // Once bound, another publisher origin or chain cannot reuse the floor.
-    let mut bound: AuthorityFloor<Current> = AuthorityFloor::open(
+    let mut bound: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
         path.join(FLOOR_FILE),
         SourceBinding {
             publisher_origin: "https://other.example/".into(),
@@ -453,7 +464,7 @@ async fn incompatible_discovery_stops_polling_without_observing_product_state() 
     *origin.version.write().unwrap() = "999.0.0".into();
     let error = task.synchronize().await.unwrap_err();
     assert!(task.terminal(&error));
-    assert!(task.floor().pointer().is_none());
+    assert!(task.floor().envelope().is_none());
     assert!(!service.state_dir.join(FLOOR_FILE).exists());
     let returned = pir_sync_manager::SyncManager::new(task).run().await;
     assert!(pir_sync_manager::is_incompatible(returned.as_ref()));
@@ -483,7 +494,7 @@ async fn ordinary_discovery_failure_is_retryable_and_never_renews_freshness() {
     let error = task.synchronize().await.unwrap_err();
     assert!(!task.terminal(&error));
     assert_eq!(observed_ms(&service).await, before);
-    assert!(task.floor().pointer().is_none());
+    assert!(task.floor().envelope().is_none());
     server.abort();
 }
 
@@ -523,7 +534,7 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
     );
     assert!(!task.floor().is_invalidated(&before.id()));
     assert_eq!(
-        task.floor().pointer().unwrap(),
+        task.floor().envelope().unwrap(),
         &*source.current.read().unwrap()
     );
     // The next attempt really runs; its invalid fixture must still be refused.
@@ -537,7 +548,7 @@ async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring(
     source.advance_during_check.store(true, Ordering::SeqCst);
     source.withdraw_during_check.store(true, Ordering::SeqCst);
     deferred(task.synchronize().await.unwrap());
-    assert!(!task.floor().pointer().unwrap().eligible);
+    assert!(!task.floor().envelope().unwrap().eligible);
     assert!(service.serving().await.is_err());
     server.abort();
 }
@@ -572,11 +583,11 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     fs::remove_dir_all(&floor_path).unwrap();
     assert!(task.synchronize().await.is_err()); // The inventory is still malformed.
     assert!(task.floor().is_durable());
-    let reopened: AuthorityFloor<Current> =
+    let reopened: AuthorityFloor<StatusDescriptor> =
         AuthorityFloor::open(floor_path, task.floor().source().clone()).unwrap();
     assert!(reopened.is_invalidated(&active_id));
     let mut older = pointer();
-    older.revision -= 1;
+    older.sequence -= 1;
     assert!(reopened.classify(older).is_err());
     server.abort();
 }

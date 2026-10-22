@@ -1,8 +1,8 @@
 //! Status material hooks for the shared publication lifecycle.
 //!
-//! [`pir_sync_manager::publication_lifecycle`] owns pointer succession, the
+//! [`pir_sync_manager::publication_lifecycle`] owns envelope succession, the
 //! durable floor, object transfer, authority checks and commit ordering. This
-//! adapter chooses the Status inventory (from the pointer, or from the worker
+//! adapter chooses the Status inventory (from the envelope, or from the worker
 //! for a router), loads generations, pins the worker during router handover
 //! and installs committed views in the role's controller.
 mod worker_handover;
@@ -28,9 +28,9 @@ use pir_sync_manager::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 
-/// Durable floor file. Its name and pointer encoding are unchanged so an
-/// existing floor keeps its revision and invalidations across this upgrade.
-const FLOOR_FILE: &str = "publisher-high-water.json";
+/// Durable floor file. Floors of the earlier pointer format live under another
+/// name; their pointers can never be served again, so they are left unread.
+const FLOOR_FILE: &str = "publication-floor.json";
 const ACTIVE_RECORD: &str = "active.json";
 
 pub(super) type StatusSynchronization = PublicationLifecycle<StatusPublication>;
@@ -99,15 +99,15 @@ impl StatusPublication {
 }
 
 impl PublicationAdapter for StatusPublication {
-    type Pointer = Current;
+    type Descriptor = StatusDescriptor;
     type AuthoritySubject = AnchorSubject;
     type Candidate = StatusCandidate;
     type Loaded = StatusLoaded;
     type Report = u64;
     type InstalledView = Inventory;
 
-    fn validate_pointer(&self, pointer: &Current) -> Result<(), Error> {
-        pointer.validate(self.service.network)
+    fn validate_envelope(&self, envelope: &Current) -> Result<(), Error> {
+        validate_current(envelope, self.service.network)
     }
 
     async fn fence_serving(&mut self) -> Vec<MaterialIdentity> {
@@ -133,7 +133,7 @@ impl PublicationAdapter for StatusPublication {
 
     async fn serving_subjects(
         &mut self,
-        pointer: &Current,
+        envelope: &Current,
     ) -> Vec<(MaterialIdentity, AnchorSubject)> {
         let Some(controller) = self.serving_controller().await.filter(|c| !c.revoked()) else {
             return Vec::new();
@@ -141,14 +141,16 @@ impl PublicationAdapter for StatusPublication {
         controller
             .serving_manifests()
             .into_iter()
-            .filter(|m| m.recovery_epoch == pointer.recovery_epoch && m.fresh(now_ms()).is_ok())
+            .filter(|m| {
+                m.recovery_epoch == envelope.fence.recovery_epoch && m.fresh(now_ms()).is_ok()
+            })
             .map(|m| (m.id(), (m.anchor_height, m.anchor_hash)))
             .collect()
     }
 
     async fn plan(
         &mut self,
-        pointer: &Current,
+        envelope: &Current,
         objects: &mut ObjectFetcher<'_>,
     ) -> Result<PublicationPlan<StatusCandidate>, Error> {
         self.service
@@ -163,9 +165,9 @@ impl PublicationAdapter for StatusPublication {
                 None => return Ok(PublicationPlan::Deferred),
             }
         } else {
-            pointer
-                .inventory
-                .clone()
+            envelope
+                .inventory()
+                .cloned()
                 .ok_or("Status current has no inventory")?
         };
         let inventory: Inventory = serde_json::from_slice(
@@ -173,7 +175,7 @@ impl PublicationAdapter for StatusPublication {
                 .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
                 .await?,
         )?;
-        inventory.validate(pointer)?;
+        inventory.validate(envelope)?;
         inventory.manifest.fresh(now_ms())?;
         let controller = self.serving_controller().await;
         let previous = controller.as_ref().map(Controller::current);
@@ -184,13 +186,14 @@ impl PublicationAdapter for StatusPublication {
             return Ok(PublicationPlan::Deferred);
         }
         // Reuse only material this process already verified and loaded. The
-        // new identity still passes live authority and freshness checks.
+        // new publication identity still passes live authority and freshness
+        // checks.
         let reidentified = previous
             .as_ref()
             .zip(self.loaded_inventory.as_ref())
             .and_then(|(serving, loaded)| {
                 if loaded.manifest != *serving.manifest()
-                    || !loaded.same_prepared_material(&inventory)
+                    || loaded.material_identity() != inventory.material_identity()
                 {
                     return None;
                 }
@@ -276,12 +279,12 @@ impl PublicationAdapter for StatusPublication {
 
     fn revalidate(
         &self,
-        pointer: &Current,
+        envelope: &Current,
         loaded: &StatusLoaded,
     ) -> Result<(MaterialIdentity, AnchorSubject), Error> {
         let manifest = &loaded.inventory.manifest;
-        loaded.inventory.validate(pointer)?;
-        if manifest.recovery_epoch != pointer.recovery_epoch {
+        loaded.inventory.validate(envelope)?;
+        if manifest.recovery_epoch != envelope.fence.recovery_epoch {
             return Err("Status candidate belongs to an earlier recovery epoch".into());
         }
         manifest.fresh(now_ms())?;

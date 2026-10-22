@@ -13,8 +13,8 @@
 //!   answer) fences serving through the adapter before the floor is persisted,
 //!   so a failing write can never leave a fenced view serving.
 //! - The floor is dirty until its latest version is durably synced; a dirty
-//!   floor blocks every positive step, even under an unchanged pointer.
-//! - A pass commits only after re-observing the pointer and a live authority
+//!   floor blocks every positive step, even under an unchanged envelope.
+//! - A pass commits only after re-observing the envelope and a live authority
 //!   check, then rechecks the floor. Floor writes and commits run as owned
 //!   tasks; a cancelled pass leaves its task outstanding and the next pass
 //!   settles it before observing anything. A commit installs only if no fence
@@ -28,8 +28,8 @@ mod commit_phase;
 #[cfg(test)]
 mod completion_tests;
 mod durable_operation;
+mod envelope_observation;
 mod object_fetch;
-mod pointer_observation;
 
 use crate::{Error, HttpsSource, SyncTask};
 use commit_phase::PendingCompletion;
@@ -37,14 +37,16 @@ pub use durable_operation::PreparedCommit;
 use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
 pub use object_fetch::ObjectFetcher;
 use pir_publication::{
-    AuthorityFloor, MaterialIdentity, ObjectCache, ObjectReference, PublicationPointer,
+    AuthorityFloor, MaterialIdentity, ObjectCache, ObjectReference, PublicationEnvelope,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::{collections::BTreeSet, fmt, future::Future};
 
 /// Product hooks for one query-server role.
 pub trait PublicationAdapter: Send {
-    type Pointer: PublicationPointer + Serialize + DeserializeOwned + Send + Sync + 'static;
+    /// The product's typed part of a [`PublicationEnvelope`]; every other
+    /// envelope field and its succession rule are shared.
+    type Descriptor: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync + 'static;
     /// What the publisher checks per serving view (for Status, an anchor).
     type AuthoritySubject: Serialize + Send + Sync;
     /// What the adapter keeps about a view once it is installed (for Status,
@@ -57,25 +59,26 @@ pub trait PublicationAdapter: Send {
     /// What a committed pass reports, for example the serving generation.
     type Report: Send + 'static;
 
-    /// Product checks of a pointer's own fields (schema, chain, required
-    /// references). Succession against the floor is the engine's job.
-    fn validate_pointer(&self, pointer: &Self::Pointer) -> Result<(), Error>;
+    /// Product checks of an envelope's scope and descriptor. The engine has
+    /// already checked the shared fields; succession against the floor is the
+    /// engine's job.
+    fn validate_envelope(&self, envelope: &Envelope<Self>) -> Result<(), Error>;
     /// Stop serving every installed view and drop held handover views, and
     /// return the identities of views that were serving so the floor can
     /// invalidate them permanently.
     fn fence_serving(&mut self) -> impl Future<Output = Vec<MaterialIdentity>> + Send;
     /// Close admission after a durable floor write failed.
     fn close_admission(&mut self) -> impl Future<Output = ()> + Send;
-    /// Installed views that must stay authoritative under `pointer`.
+    /// Installed views that must stay authoritative under `envelope`.
     fn serving_subjects(
         &mut self,
-        pointer: &Self::Pointer,
+        envelope: &Envelope<Self>,
     ) -> impl Future<Output = Vec<(MaterialIdentity, Self::AuthoritySubject)>> + Send;
-    /// Choose what to load under `pointer`, fetching metadata through
+    /// Choose what to load under `envelope`, fetching metadata through
     /// `objects`. The engine refuses a plan whose identity the floor invalidated.
     fn plan(
         &mut self,
-        pointer: &Self::Pointer,
+        envelope: &Envelope<Self>,
         objects: &mut ObjectFetcher<'_>,
     ) -> impl Future<Output = Result<PublicationPlan<Self::Candidate>, Error>> + Send;
     /// Load a candidate whose required objects are verified in `cache`.
@@ -84,11 +87,11 @@ pub trait PublicationAdapter: Send {
         candidate: Self::Candidate,
         cache: &ObjectCache,
     ) -> impl Future<Output = Result<Self::Loaded, Error>> + Send;
-    /// Product checks that `loaded` still belongs to the re-observed `pointer`
+    /// Product checks that `loaded` still belongs to the re-observed `envelope`
     /// (identity, recovery epoch, freshness), and the subject to check live.
     fn revalidate(
         &self,
-        pointer: &Self::Pointer,
+        envelope: &Envelope<Self>,
         loaded: &Self::Loaded,
     ) -> Result<(MaterialIdentity, Self::AuthoritySubject), Error>;
     /// Reserve `loaded` with a dependent peer before committing (for a Status
@@ -125,7 +128,10 @@ pub trait PublicationAdapter: Send {
     }
 }
 
-/// What a pass should do under the observed pointer.
+/// The envelope a [`PublicationAdapter`] publishes under.
+pub type Envelope<A> = PublicationEnvelope<<A as PublicationAdapter>::Descriptor>;
+
+/// What a pass should do under the observed envelope.
 pub enum PublicationPlan<C> {
     /// Nothing can be loaded yet (for example a peer is still loading or a
     /// preparation slot is busy). The current view keeps its own checks.
@@ -158,7 +164,7 @@ pub enum PeerHandover {
 pub enum PublicationPass<R> {
     /// A candidate committed; `handover` reports the dependent peer.
     Committed { report: R, handover: PeerHandover },
-    /// Nothing committed this pass: withdrawn, a newer pointer appeared during
+    /// Nothing committed this pass: withdrawn, a newer envelope appeared during
     /// the authority check, or the plan deferred.
     Deferred { report: R },
 }
@@ -166,19 +172,21 @@ pub enum PublicationPass<R> {
 /// Distinct lifecycle refusals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicationLifecycleError {
-    /// A non-success, non-304 answer to a pointer request.
-    PointerUnavailable(u16),
-    /// A 304 without a previously observed pointer.
+    /// A non-success, non-304 answer to an envelope request.
+    EnvelopeUnavailable(u16),
+    /// A 304 without a previously observed envelope.
     UnexpectedNotModified,
     /// The publisher refused an authority check for a reason other than an
-    /// advanced pointer.
+    /// advanced authority.
     AuthorityCheckRefused(u16),
-    /// The authority response names another pointer or another subject count.
+    /// The authority response binds another authority or subject count.
     AuthorityResponseMismatch,
     /// The candidate was invalidated by the floor.
     CandidateInvalidated,
-    /// The pointer was withdrawn between planning and commit.
+    /// The envelope was withdrawn between planning and commit.
     WithdrawnBeforeCommit,
+    /// The envelope's shared fields are inconsistent.
+    MalformedEnvelope,
     /// The latest floor is not durable yet, so nothing may progress.
     FloorNotDurable,
     /// Serving was fenced while the commit was recording; nothing installed.
@@ -187,16 +195,17 @@ pub enum PublicationLifecycleError {
 impl fmt::Display for PublicationLifecycleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PointerUnavailable(status) => {
-                write!(f, "publication pointer unavailable (HTTP {status})")
+            Self::EnvelopeUnavailable(status) => {
+                write!(f, "publication envelope unavailable (HTTP {status})")
             }
-            Self::UnexpectedNotModified => f.write_str("unexpected unchanged pointer response"),
+            Self::UnexpectedNotModified => f.write_str("unexpected unchanged envelope response"),
             Self::AuthorityCheckRefused(status) => {
                 write!(f, "publisher refused the authority check (HTTP {status})")
             }
             Self::AuthorityResponseMismatch => f.write_str("authority check response differs"),
             Self::CandidateInvalidated => f.write_str("publication candidate was invalidated"),
             Self::WithdrawnBeforeCommit => f.write_str("publication withdrawn before commit"),
+            Self::MalformedEnvelope => f.write_str("publication envelope is malformed"),
             Self::FloorNotDurable => f.write_str("publication floor is not durable yet"),
             Self::CommitFenced => f.write_str("serving was fenced while the commit was recording"),
         }
@@ -204,24 +213,24 @@ impl fmt::Display for PublicationLifecycleError {
 }
 impl std::error::Error for PublicationLifecycleError {}
 
-/// A newer pointer won the authority check; nothing was committed.
+/// A newer envelope won the authority check; nothing was committed.
 #[derive(Debug)]
-struct PointerAdvanced;
-impl fmt::Display for PointerAdvanced {
+struct AuthorityAdvanced;
+impl fmt::Display for AuthorityAdvanced {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("publication pointer advanced during the authority check")
+        f.write_str("publication authority advanced during the authority check")
     }
 }
-impl std::error::Error for PointerAdvanced {}
+impl std::error::Error for AuthorityAdvanced {}
 
 /// Owns one role's publication source, floor, cache and adapter.
 pub struct PublicationLifecycle<A: PublicationAdapter> {
     adapter: A,
     source: HttpsSource,
-    floor: AuthorityFloor<A::Pointer>,
+    floor: AuthorityFloor<A::Descriptor>,
     cache: ObjectCache,
-    /// The last pointer body received, used only to answer a 304.
-    last_received_pointer: Option<A::Pointer>,
+    /// The last envelope body received, used only to answer a 304.
+    last_received_envelope: Option<Envelope<A>>,
     /// Object sets of the last two commits; everything else is collected.
     retained_commits: Vec<BTreeSet<String>>,
     commit_fence: CommitFence,
@@ -236,11 +245,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     pub fn new(
         adapter: A,
         source: HttpsSource,
-        floor: AuthorityFloor<A::Pointer>,
+        floor: AuthorityFloor<A::Descriptor>,
         cache: ObjectCache,
     ) -> Result<Self, Error> {
-        if let Some(pointer) = floor.pointer() {
-            adapter.validate_pointer(pointer)?;
+        if let Some(envelope) = floor.envelope() {
+            adapter.validate_envelope(envelope)?;
         }
         if floor.source().publisher_origin != source.origin().as_str() {
             return Err("publication floor and source name different publishers".into());
@@ -250,7 +259,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             source,
             floor,
             cache,
-            last_received_pointer: None,
+            last_received_envelope: None,
             retained_commits: Vec::new(),
             commit_fence: CommitFence::default(),
             durable_operation: OwnedOperationSlot::new(),
@@ -260,7 +269,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     pub fn adapter(&self) -> &A {
         &self.adapter
     }
-    pub fn floor(&self) -> &AuthorityFloor<A::Pointer> {
+    pub fn floor(&self) -> &AuthorityFloor<A::Descriptor> {
         &self.floor
     }
 
@@ -269,18 +278,18 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         self.source.discover().await?;
         self.source.reset_budget();
         // Observe and fence.
-        let pointer = self.observe_pointer().await?;
-        if !pointer.eligible() {
+        let envelope = self.observe_envelope().await?;
+        if !envelope.eligible {
             return Ok(self.deferred().await);
         }
-        let serving = self.adapter.serving_subjects(&pointer).await;
+        let serving = self.adapter.serving_subjects(&envelope).await;
         if !serving.is_empty() {
-            self.check_authority(&pointer, serving).await?;
+            self.check_authority(&envelope, serving).await?;
         }
         // Plan and fetch.
         let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
         let (candidate, identity, required_objects) =
-            match self.adapter.plan(&pointer, &mut objects).await? {
+            match self.adapter.plan(&envelope, &mut objects).await? {
                 PublicationPlan::Deferred => {
                     return Ok(PublicationPass::Deferred {
                         report: self.adapter.serving_report().await,
@@ -298,10 +307,10 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         for object in &required_objects {
             objects.fetch(object).await?;
         }
-        // Load, then revalidate against a freshly observed pointer.
+        // Load, then revalidate against a freshly observed envelope.
         let loaded = self.adapter.load(candidate, &self.cache).await?;
-        let latest = self.observe_pointer().await?;
-        if !latest.eligible() {
+        let latest = self.observe_envelope().await?;
+        if !latest.eligible {
             return Err(Box::new(PublicationLifecycleError::WithdrawnBeforeCommit));
         }
         let (identity, subject) = self.adapter.revalidate(&latest, &loaded)?;
@@ -315,7 +324,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         );
         self.check_authority(&latest, subjects).await?;
         if self.adapter.reserve_peer(&loaded).await? == PeerReservation::PeerAdvanced {
-            return Err(Box::new(PointerAdvanced));
+            return Err(Box::new(AuthorityAdvanced));
         }
         let (report, handover) = self.commit(identity, loaded).await?;
         Ok(PublicationPass::Committed { report, handover })
@@ -335,9 +344,9 @@ impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
     async fn synchronize(&mut self) -> Result<Self::Report, Error> {
         self.adapter.pass_started().await;
         let result = match self.run_pass().await {
-            // A newer pointer won the authority check. Nothing was activated;
+            // A newer envelope won the authority check. Nothing was activated;
             // retry at the normal cadence instead of transport backoff.
-            Err(error) if error.is::<PointerAdvanced>() => Ok(self.deferred().await),
+            Err(error) if error.is::<AuthorityAdvanced>() => Ok(self.deferred().await),
             result => result,
         };
         self.adapter.pass_finished(&result).await;

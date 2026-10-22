@@ -1,7 +1,7 @@
 //! One live authority check against the publisher.
 use super::{
-    pointer_observation::POINTER_LIMIT, PointerAdvanced, PublicationAdapter, PublicationLifecycle,
-    PublicationLifecycleError,
+    envelope_observation::ENVELOPE_LIMIT, AuthorityAdvanced, Envelope, PublicationAdapter,
+    PublicationLifecycle, PublicationLifecycleError,
 };
 use crate::Error;
 use pir_publication::{
@@ -9,18 +9,22 @@ use pir_publication::{
 };
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
-    /// Ask whether `subjects` are still authoritative under `pointer`.
-    /// A conflict re-observes the pointer, so a withdrawal or new epoch fences
+    /// Ask whether `subjects` are still authoritative under exactly the
+    /// publication and fence of the eligible `envelope`. A conflict
+    /// re-observes the envelope, so a withdrawal or new fence fences serving
     /// before the pass defers. Every negative answer fences serving, then
     /// permanently invalidates that view in the persisted floor.
     pub(super) async fn check_authority(
         &mut self,
-        pointer: &A::Pointer,
+        envelope: &Envelope<A>,
         subjects: Vec<(MaterialIdentity, A::AuthoritySubject)>,
     ) -> Result<(), Error> {
+        let authority = envelope
+            .authority()
+            .ok_or(PublicationLifecycleError::WithdrawnBeforeCommit)?;
         let (identities, subjects): (Vec<_>, Vec<_>) = subjects.into_iter().unzip();
         let request = AuthorityCheckRequest {
-            pointer: pointer.clone(),
+            authority,
             subjects,
         };
         let mut response = self
@@ -30,8 +34,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if response.status() == reqwest::StatusCode::CONFLICT {
             response.discard().await?;
             drop(response);
-            self.observe_pointer().await?;
-            return Err(Box::new(PointerAdvanced));
+            self.observe_envelope().await?;
+            return Err(Box::new(AuthorityAdvanced));
         }
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -40,10 +44,10 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                 status,
             )));
         }
-        let answer: AuthorityCheckResponse<A::Pointer> =
-            serde_json::from_slice(&response.read_limited(POINTER_LIMIT).await?)?;
+        let answer: AuthorityCheckResponse =
+            serde_json::from_slice(&response.read_limited(ENVELOPE_LIMIT).await?)?;
         drop(response);
-        if answer.pointer != *pointer || answer.still_authoritative.len() != identities.len() {
+        if answer.authority != authority || answer.still_authoritative.len() != identities.len() {
             return Err(Box::new(
                 PublicationLifecycleError::AuthorityResponseMismatch,
             ));

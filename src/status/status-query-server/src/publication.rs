@@ -1,8 +1,11 @@
 //! Status's typed adapter of the shared publication contract: its pointer,
 //! inventory and authority subject. Hashes bind bytes, not chain truth.
 use crate::{profile, protocol::*};
-use pir_publication::{AuthorityCheckRequest, ObjectReference, PublicationPointer};
+use pir_publication::{
+    AuthorityCheckRequest, MaterialIdentity, ObjectReference, PublicationEnvelope, PublicationScope,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = "status-prepared-distribution-v1";
 pub const PREFIX: &str = "/provider/status/v1/";
@@ -12,63 +15,46 @@ pub type Failure = Box<dyn std::error::Error + Send + Sync>;
 /// A serving view's anchor: the publisher confirms the height still has this hash.
 pub type AnchorSubject = (u32, Hash);
 /// Status's authority check: anchors of candidate and serving views.
-pub type AnchorCheckRequest = AuthorityCheckRequest<Current, AnchorSubject>;
+pub type AnchorCheckRequest = AuthorityCheckRequest<AnchorSubject>;
 
+/// Status's publication envelope. Everything except the descriptor is the
+/// shared publication contract.
+pub type Current = PublicationEnvelope<StatusDescriptor>;
+
+/// The Status-specific part of a publication reference.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Current {
-    pub schema: String,
-    pub revision: u64,
-    pub recovery_epoch: u64,
-    pub network: Hash,
-    pub salt: Hash,
+pub struct StatusDescriptor {
+    /// The manifest generation the referenced inventory publishes.
     pub generation: u64,
-    pub inventory: Option<ObjectReference>,
-    pub eligible: bool,
 }
-impl Current {
-    pub fn validate(&self, network: Hash) -> Result<(), Failure> {
-        if self.schema != SCHEMA
-            || self.revision == 0
-            || self.generation == 0
-            || self.salt == [0; 32]
-            || self.network != network
-            || self.recovery_epoch == 0
-            || (self.eligible && self.inventory.is_none())
-        {
-            return Err("invalid Status publisher identity".into());
-        }
-        if let Some(i) = &self.inventory {
-            i.validate(METADATA_LIMIT as u64)?;
-        }
-        Ok(())
+
+/// The publication scope of Status on `network` with dataset `salt`.
+pub fn scope(network: Hash, salt: Hash) -> PublicationScope {
+    PublicationScope {
+        product: SCHEMA.into(),
+        chain: network,
+        source: salt,
     }
 }
-impl PublicationPointer for Current {
-    fn revision(&self) -> u64 {
-        self.revision
+
+/// Status checks of an envelope's scope and descriptor; the shared fields
+/// are checked by [`PublicationEnvelope::validate`].
+pub fn validate_current(current: &Current, network: Hash) -> Result<(), Failure> {
+    current.validate()?;
+    if current.scope.product != SCHEMA
+        || current.scope.chain != network
+        || current.scope.source == [0; 32]
+    {
+        return Err("invalid Status publisher identity".into());
     }
-    fn recovery_epoch(&self) -> u64 {
-        self.recovery_epoch
-    }
-    fn eligible(&self) -> bool {
-        self.eligible
-    }
-    fn inventory(&self) -> Option<&ObjectReference> {
-        self.inventory.as_ref()
-    }
-    fn with_eligibility(&self, eligible: bool) -> Self {
-        Self {
-            eligible,
-            ..self.clone()
+    if let Some(publication) = &current.publication {
+        if publication.descriptor.generation == 0 {
+            return Err("invalid Status publication generation".into());
         }
+        publication.inventory.validate(METADATA_LIMIT as u64)?;
     }
-    /// The network and dataset salt never change; generations never go back.
-    fn may_follow(&self, previous: &Self) -> bool {
-        self.network == previous.network
-            && self.salt == previous.salt
-            && self.generation >= previous.generation
-    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -88,25 +74,36 @@ impl Inventory {
             .chain(&self.packing)
             .chain(std::iter::once(&self.public))
     }
-    /// Exact distributed objects and commitments; publication identity may advance.
-    pub fn same_prepared_material(&self, next: &Self) -> bool {
-        self.schema == next.schema
-            && self.manifest.network == next.manifest.network
-            && self.manifest.salt == next.manifest.salt
-            && self.manifest.rows_digest == next.manifest.rows_digest
-            && self.manifest.public_digest == next.manifest.public_digest
-            && self.units == next.units
-            && self.packing == next.packing
-            && self.public == next.public
+    /// Identity of the exact distributed objects and commitments. A
+    /// metadata-only refresh (new generation, epoch or observation time)
+    /// keeps it, so the bytes stay reusable under a new publication identity.
+    pub fn material_identity(&self) -> MaterialIdentity {
+        let material = (
+            &self.schema,
+            self.manifest.network,
+            self.manifest.salt,
+            self.manifest.rows_digest,
+            self.manifest.public_digest,
+            &self.units,
+            &self.packing,
+            &self.public,
+        );
+        Sha256::digest(serde_json::to_vec(&material).expect("Status material serializes")).into()
     }
 
+    /// Check that this inventory is exactly what eligible `current` publishes.
     pub fn validate(&self, current: &Current) -> Result<(), Failure> {
         self.validate_material()?;
+        let publication = current
+            .publication
+            .as_ref()
+            .ok_or("Status current names no publication")?;
         if self.schema != SCHEMA
-            || self.manifest.network != current.network
-            || self.manifest.recovery_epoch != current.recovery_epoch
-            || self.manifest.salt != current.salt
-            || self.manifest.generation > current.generation
+            || self.manifest.network != current.scope.chain
+            || self.manifest.recovery_epoch != current.fence.recovery_epoch
+            || self.manifest.salt != current.scope.source
+            || self.manifest.generation > publication.descriptor.generation
+            || publication.material != self.material_identity()
             || self.units.len() != ROWS / profile().rlwe().d
         {
             return Err("Status inventory identity differs".into());
@@ -170,34 +167,32 @@ pub struct ProviderStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn current() -> Current {
-        Current {
-            schema: SCHEMA.into(),
-            revision: 10,
-            recovery_epoch: 2,
-            network: [1; 32],
-            salt: [2; 32],
-            generation: 7,
-            inventory: Some(ObjectReference::for_bytes(b"inventory")),
-            eligible: true,
-        }
-    }
     #[test]
-    fn status_identity_changes_are_replays() {
-        use pir_publication::PointerSuccession;
-        let old = current();
-        for field in ["generation", "network", "salt"] {
-            let mut next = old.clone();
-            next.revision += 1;
-            match field {
-                "generation" => next.generation = 6,
-                "network" => next.network = [9; 32],
-                _ => next.salt = [9; 32],
-            }
-            assert!(
-                PointerSuccession::classify(&next, Some(&old)).is_err(),
-                "publisher changed {field}"
-            );
+    fn status_scope_changes_are_replays() {
+        use pir_publication::{AuthorityFence, EnvelopeSuccession, PublicationReference};
+        let old = Current {
+            scope: scope([1; 32], [2; 32]),
+            sequence: 10,
+            eligible: true,
+            fence: AuthorityFence {
+                recovery_epoch: 2,
+                latest_withdrawal: 0,
+            },
+            publication: Some(PublicationReference::new(
+                [3; 32],
+                ObjectReference::for_bytes(b"inventory"),
+                StatusDescriptor { generation: 7 },
+            )),
+        };
+        assert!(validate_current(&old, [1; 32]).is_ok());
+        assert!(validate_current(&old, [9; 32]).is_err());
+        for next_scope in [scope([9; 32], [2; 32]), scope([1; 32], [9; 32])] {
+            let next = Current {
+                scope: next_scope,
+                sequence: 11,
+                ..old.clone()
+            };
+            assert!(EnvelopeSuccession::classify(&next, Some(&old)).is_err());
         }
     }
     #[test]
@@ -226,16 +221,30 @@ mod tests {
         let mut next = inventory.clone();
         next.manifest.generation += 1;
         next.manifest.observed_ms += 1;
-        assert!(inventory.same_prepared_material(&next));
+        assert_eq!(inventory.material_identity(), next.material_identity());
         next.public = ObjectReference::for_bytes(b"other");
-        assert!(!inventory.same_prepared_material(&next));
+        assert_ne!(inventory.material_identity(), next.material_identity());
         next = inventory.clone();
         next.manifest.salt[0] ^= 1;
-        assert!(!inventory.same_prepared_material(&next));
+        assert_ne!(inventory.material_identity(), next.material_identity());
         next = inventory.clone();
         next.manifest.rows_digest[0] ^= 1;
-        assert!(!inventory.same_prepared_material(&next));
-        assert!(inventory.validate(&current()).is_err());
+        assert_ne!(inventory.material_identity(), next.material_identity());
+        let current = Current {
+            scope: scope([1; 32], [2; 32]),
+            sequence: 10,
+            eligible: true,
+            fence: pir_publication::AuthorityFence {
+                recovery_epoch: 2,
+                latest_withdrawal: 0,
+            },
+            publication: Some(pir_publication::PublicationReference::new(
+                inventory.material_identity(),
+                ObjectReference::for_bytes(b"inventory"),
+                StatusDescriptor { generation: 7 },
+            )),
+        };
+        assert!(inventory.validate(&current).is_err());
         let result = crate::Generation::load_prepared(
             &inventory,
             true,

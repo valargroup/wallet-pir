@@ -5,35 +5,6 @@ use std::sync::{
     Arc,
 };
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-struct Pointer {
-    revision: u64,
-    eligible: bool,
-}
-impl PublicationPointer for Pointer {
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-    fn recovery_epoch(&self) -> u64 {
-        1
-    }
-    fn eligible(&self) -> bool {
-        self.eligible
-    }
-    fn inventory(&self) -> Option<&ObjectReference> {
-        None
-    }
-    fn with_eligibility(&self, eligible: bool) -> Self {
-        Self {
-            eligible,
-            ..self.clone()
-        }
-    }
-    fn may_follow(&self, _previous: &Self) -> bool {
-        true
-    }
-}
-
 /// Commits one view; its peer release blocks until `release_gate` has a permit.
 struct Adapter {
     retained: BTreeSet<String>,
@@ -42,26 +13,29 @@ struct Adapter {
     release_gate: Arc<tokio::sync::Semaphore>,
 }
 impl PublicationAdapter for Adapter {
-    type Pointer = Pointer;
+    type Descriptor = ();
     type AuthoritySubject = ();
     type InstalledView = &'static str;
     type Candidate = ();
     type Loaded = ();
     type Report = u64;
 
-    fn validate_pointer(&self, _pointer: &Pointer) -> Result<(), Error> {
+    fn validate_envelope(&self, _envelope: &Envelope<Self>) -> Result<(), Error> {
         Ok(())
     }
     async fn fence_serving(&mut self) -> Vec<MaterialIdentity> {
         Vec::new()
     }
     async fn close_admission(&mut self) {}
-    async fn serving_subjects(&mut self, _pointer: &Pointer) -> Vec<(MaterialIdentity, ())> {
+    async fn serving_subjects(
+        &mut self,
+        _envelope: &Envelope<Self>,
+    ) -> Vec<(MaterialIdentity, ())> {
         Vec::new()
     }
     async fn plan(
         &mut self,
-        _pointer: &Pointer,
+        _envelope: &Envelope<Self>,
         _objects: &mut ObjectFetcher<'_>,
     ) -> Result<PublicationPlan<()>, Error> {
         unreachable!("the test commits directly")
@@ -71,7 +45,7 @@ impl PublicationAdapter for Adapter {
     }
     fn revalidate(
         &self,
-        _pointer: &Pointer,
+        _envelope: &Envelope<Self>,
         _loaded: &(),
     ) -> Result<(MaterialIdentity, ()), Error> {
         unreachable!("the test commits directly")
@@ -124,7 +98,7 @@ fn store(cache: &ObjectCache, bytes: &[u8]) -> ObjectReference {
 async fn a_pass_cancelled_during_peer_release_completes_on_the_next_pass() {
     let root = tempfile::tempdir().unwrap();
     let source = HttpsSource::new("https://localhost:1", "/feed/", 1 << 20, &[]).unwrap();
-    let floor = pir_publication::AuthorityFloor::<Pointer>::open(
+    let floor = pir_publication::AuthorityFloor::<()>::open(
         root.path().join("floor.json"),
         pir_publication::SourceBinding {
             publisher_origin: source.origin().to_string(),

@@ -1,9 +1,9 @@
-//! The query server's durable publication floor: the newest accepted pointer,
+//! The query server's durable publication floor: the newest accepted envelope,
 //! the source it came from, and every permanently invalidated serving view.
 //!
 //! A floor only ever moves forward. It is never reset by a restart or a format
 //! change, and it never grants permission to serve by itself.
-use crate::{MaterialIdentity, PointerSuccession, PublicationPointer, PublicationReplay};
+use crate::{EnvelopeSuccession, MaterialIdentity, PublicationEnvelope, PublicationReplay};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -56,14 +56,14 @@ impl From<io::Error> for AuthorityFloorError {
 }
 
 /// Saved representation. `source` is absent in floors written before source
-/// binding existed; such a floor keeps its pointer and invalidations and is
+/// binding existed; such a floor keeps its envelope and invalidations and is
 /// bound to the configured source on its next save.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SavedFloor<P> {
+struct SavedFloor<D> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<SourceBinding>,
-    current: Option<P>,
+    current: Option<PublicationEnvelope<D>>,
     invalid: BTreeSet<MaterialIdentity>,
 }
 
@@ -83,32 +83,33 @@ static NEXT_FLOOR: AtomicU64 = AtomicU64::new(0);
 ///
 /// Every change bumps `observed_version`. The floor is *dirty* until a
 /// complete write of the latest version has been synced; a dirty floor permits
-/// no positive progression (accepting a pointer as fresh, committing a view),
-/// even when the next pointer is unchanged, until a later write succeeds.
-pub struct AuthorityFloor<P> {
+/// no positive progression (accepting an envelope as fresh, committing a
+/// view), even when the next envelope is unchanged, until a later write
+/// succeeds.
+pub struct AuthorityFloor<D> {
     floor: u64,
     path: PathBuf,
     source: SourceBinding,
-    pointer: Option<P>,
+    envelope: Option<PublicationEnvelope<D>>,
     invalidated_views: BTreeSet<MaterialIdentity>,
     observed_version: u64,
     durable_version: Option<u64>,
 }
 
-/// A pointer [`AuthorityFloor::classify`] accepted as a successor of one exact
-/// version of one floor. Only this token can raise that floor, so no caller can
-/// advance it without the succession check.
-pub struct CheckedSuccession<P> {
-    pointer: P,
-    succession: PointerSuccession,
+/// An envelope [`AuthorityFloor::classify`] accepted as a successor of one
+/// exact version of one floor. Only this token can raise that floor, so no
+/// caller can advance it without the succession check.
+pub struct CheckedSuccession<D> {
+    envelope: PublicationEnvelope<D>,
+    succession: EnvelopeSuccession,
     checked_at: FloorVersion,
 }
-impl<P> CheckedSuccession<P> {
-    pub fn succession(&self) -> PointerSuccession {
+impl<D> CheckedSuccession<D> {
+    pub fn succession(&self) -> EnvelopeSuccession {
         self.succession
     }
-    pub fn pointer(&self) -> &P {
-        &self.pointer
+    pub fn envelope(&self) -> &PublicationEnvelope<D> {
+        &self.envelope
     }
 }
 
@@ -123,13 +124,13 @@ impl fmt::Display for StaleSuccessionCheck {
 }
 impl std::error::Error for StaleSuccessionCheck {}
 
-impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
+impl<D: Clone + PartialEq + Serialize + DeserializeOwned> AuthorityFloor<D> {
     /// Open the floor at `path`, or an empty floor when none was saved. A floor
     /// without a saved source binding (new, or written before binding existed)
     /// opens dirty, so the binding is made durable before any progression.
     pub fn open(path: PathBuf, source: SourceBinding) -> Result<Self, AuthorityFloorError> {
         let saved = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<SavedFloor<P>>(&bytes)
+            Ok(bytes) => serde_json::from_slice::<SavedFloor<D>>(&bytes)
                 .map_err(AuthorityFloorError::Corrupt)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => SavedFloor {
                 source: None,
@@ -152,14 +153,14 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
             floor: NEXT_FLOOR.fetch_add(1, Ordering::Relaxed),
             path,
             source,
-            pointer: saved.current,
+            envelope: saved.current,
             invalidated_views: saved.invalid,
             observed_version: 0,
             durable_version,
         })
     }
-    pub fn pointer(&self) -> Option<&P> {
-        self.pointer.as_ref()
+    pub fn envelope(&self) -> Option<&PublicationEnvelope<D>> {
+        self.envelope.as_ref()
     }
     pub fn source(&self) -> &SourceBinding {
         &self.source
@@ -178,34 +179,37 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
         }
     }
     /// Check `next` against the floor without changing it.
-    pub fn classify(&self, next: P) -> Result<CheckedSuccession<P>, PublicationReplay> {
-        let succession = PointerSuccession::classify(&next, self.pointer.as_ref())?;
+    pub fn classify(
+        &self,
+        next: PublicationEnvelope<D>,
+    ) -> Result<CheckedSuccession<D>, PublicationReplay> {
+        let succession = EnvelopeSuccession::classify(&next, self.envelope.as_ref())?;
         Ok(CheckedSuccession {
-            pointer: next,
+            envelope: next,
             succession,
             checked_at: self.current_version(),
         })
     }
     /// Raise the floor to a checked successor and permanently invalidate
     /// `fenced_views`. The caller fences serving first and saves afterwards;
-    /// the floor stays dirty until then. An unchanged pointer with no new
+    /// the floor stays dirty until then. An unchanged envelope with no new
     /// invalidation changes nothing.
     pub fn record(
         &mut self,
-        checked: CheckedSuccession<P>,
+        checked: CheckedSuccession<D>,
         fenced_views: impl IntoIterator<Item = MaterialIdentity>,
     ) -> Result<(), StaleSuccessionCheck> {
         if checked.checked_at != self.current_version() {
             return Err(StaleSuccessionCheck);
         }
         let newly_invalidated = self.extend_invalidations(fenced_views);
-        if checked.succession != PointerSuccession::Unchanged || newly_invalidated {
-            self.pointer = Some(checked.pointer);
+        if checked.succession != EnvelopeSuccession::Unchanged || newly_invalidated {
+            self.envelope = Some(checked.envelope);
             self.observed_version += 1;
         }
         Ok(())
     }
-    /// Permanently invalidate `views` without changing the pointer. The floor
+    /// Permanently invalidate `views` without changing the envelope. The floor
     /// becomes dirty when any view is newly invalidated.
     pub fn invalidate(&mut self, views: impl IntoIterator<Item = MaterialIdentity>) {
         if self.extend_invalidations(views) {
@@ -223,7 +227,7 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
     pub fn pending_write(&self) -> Result<PendingFloorWrite, AuthorityFloorError> {
         let bytes = serde_json::to_vec(&SavedFloor {
             source: Some(self.source.clone()),
-            current: self.pointer.clone(),
+            current: self.envelope.clone(),
             invalid: self.invalidated_views.clone(),
         })
         .map_err(AuthorityFloorError::Corrupt)?;
@@ -273,38 +277,8 @@ impl PendingFloorWrite {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
 
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    struct SavedPointer {
-        revision: u64,
-        recovery_epoch: u64,
-        generation: u64,
-        eligible: bool,
-    }
-    impl PublicationPointer for SavedPointer {
-        fn revision(&self) -> u64 {
-            self.revision
-        }
-        fn recovery_epoch(&self) -> u64 {
-            self.recovery_epoch
-        }
-        fn eligible(&self) -> bool {
-            self.eligible
-        }
-        fn inventory(&self) -> Option<&crate::ObjectReference> {
-            None
-        }
-        fn with_eligibility(&self, eligible: bool) -> Self {
-            Self {
-                eligible,
-                ..self.clone()
-            }
-        }
-        fn may_follow(&self, previous: &Self) -> bool {
-            self.generation >= previous.generation
-        }
-    }
+    type SavedEnvelope = PublicationEnvelope<u64>;
     fn source(origin: &str) -> SourceBinding {
         SourceBinding {
             publisher_origin: origin.into(),
@@ -312,12 +286,20 @@ mod tests {
             chain: [1; 32],
         }
     }
-    fn pointer(revision: u64) -> SavedPointer {
-        SavedPointer {
-            revision,
-            recovery_epoch: 1,
-            generation: 1,
-            eligible: true,
+    fn envelope(sequence: u64) -> SavedEnvelope {
+        PublicationEnvelope {
+            scope: crate::PublicationScope {
+                product: "test".into(),
+                chain: [1; 32],
+                source: [2; 32],
+            },
+            sequence,
+            eligible: false,
+            fence: crate::AuthorityFence {
+                recovery_epoch: 1,
+                latest_withdrawal: 0,
+            },
+            publication: None,
         }
     }
 
@@ -330,18 +312,17 @@ mod tests {
             !floor.is_durable(),
             "a new source binding is not yet durable"
         );
-        let checked = floor.classify(pointer(4)).unwrap();
+        let checked = floor.classify(envelope(4)).unwrap();
         floor.record(checked, [[9; 32]]).unwrap();
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
         assert!(floor.is_durable());
 
-        let reopened =
-            AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
-        assert_eq!(reopened.pointer(), Some(&pointer(4)));
+        let reopened = AuthorityFloor::<u64>::open(path.clone(), source("https://a")).unwrap();
+        assert_eq!(reopened.envelope(), Some(&envelope(4)));
         assert!(reopened.is_invalidated(&[9; 32]));
         assert!(reopened.is_durable());
-        assert!(reopened.classify(pointer(3)).is_err());
+        assert!(reopened.classify(envelope(3)).is_err());
 
         for wrong in [
             source("https://b"),
@@ -355,7 +336,7 @@ mod tests {
             },
         ] {
             assert!(matches!(
-                AuthorityFloor::<SavedPointer>::open(path.clone(), wrong),
+                AuthorityFloor::<u64>::open(path.clone(), wrong),
                 Err(AuthorityFloorError::WrongSource { .. })
             ));
         }
@@ -368,24 +349,23 @@ mod tests {
         fs::write(
             &path,
             serde_json::to_vec(&serde_json::json!({
-                "current": pointer(7),
+                "current": envelope(7),
                 "invalid": vec![[3u8; 32]],
             }))
             .unwrap(),
         )
         .unwrap();
-        let mut floor =
-            AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
+        let mut floor = AuthorityFloor::<u64>::open(path.clone(), source("https://a")).unwrap();
         assert!(
             !floor.is_durable(),
             "the binding must be saved before progression"
         );
-        assert!(floor.classify(pointer(6)).is_err());
+        assert!(floor.classify(envelope(6)).is_err());
         assert!(floor.is_invalidated(&[3; 32]));
         let written = floor.pending_write().unwrap().write().unwrap();
         floor.confirm_durable(written);
         assert!(floor.is_durable());
-        assert!(AuthorityFloor::<SavedPointer>::open(path, source("https://b")).is_err());
+        assert!(AuthorityFloor::<u64>::open(path, source("https://b")).is_err());
     }
 
     #[test]
@@ -398,15 +378,15 @@ mod tests {
 
         // A write prepared before a later change cannot make the newer floor durable.
         let stale = floor.pending_write().unwrap();
-        let checked = floor.classify(pointer(5)).unwrap();
+        let checked = floor.classify(envelope(5)).unwrap();
         floor.record(checked, []).unwrap();
         let stale = stale.write().unwrap();
         floor.confirm_durable(stale);
         assert!(!floor.is_durable());
 
-        // Repeating the identical pointer does not hide the pending save.
-        let unchanged = floor.classify(pointer(5)).unwrap();
-        assert_eq!(unchanged.succession(), PointerSuccession::Unchanged);
+        // Repeating the identical envelope does not hide the pending save.
+        let unchanged = floor.classify(envelope(5)).unwrap();
+        assert_eq!(unchanged.succession(), EnvelopeSuccession::Unchanged);
         floor.record(unchanged, []).unwrap();
         assert!(!floor.is_durable());
 
@@ -421,12 +401,12 @@ mod tests {
         assert!(floor.is_durable());
 
         // A check against an older floor version cannot be recorded.
-        let checked = floor.classify(pointer(6)).unwrap();
+        let checked = floor.classify(envelope(6)).unwrap();
         floor.invalidate([[8; 32]]);
         assert_eq!(floor.record(checked, []), Err(StaleSuccessionCheck));
 
-        let reopened = AuthorityFloor::<SavedPointer>::open(path, source("https://a")).unwrap();
-        assert!(reopened.classify(pointer(4)).is_err());
+        let reopened = AuthorityFloor::<u64>::open(path, source("https://a")).unwrap();
+        assert!(reopened.classify(envelope(4)).is_err());
         assert!(reopened.is_invalidated(&[7; 32]));
     }
 
@@ -444,14 +424,14 @@ mod tests {
 
         // Both floors are at the same version, but a check of one cannot
         // raise the other.
-        let checked = first.classify(pointer(9)).unwrap();
+        let checked = first.classify(envelope(9)).unwrap();
         assert_eq!(second.record(checked, []), Err(StaleSuccessionCheck));
-        assert_eq!(second.pointer(), None);
+        assert_eq!(second.envelope(), None);
 
         // A write of one floor cannot make the other durable.
-        let checked = second.classify(pointer(2)).unwrap();
+        let checked = second.classify(envelope(2)).unwrap();
         second.record(checked, []).unwrap();
-        let checked = first.classify(pointer(3)).unwrap();
+        let checked = first.classify(envelope(3)).unwrap();
         first.record(checked, []).unwrap();
         let written = first.pending_write().unwrap().write().unwrap();
         second.confirm_durable(written);

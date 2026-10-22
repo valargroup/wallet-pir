@@ -1,5 +1,6 @@
-//! Durable Status publication counter. Opening always starts a new recovery
-//! epoch; restored metadata alone never makes a serving generation ready.
+//! Durable Status generation counter. Recovery epochs belong to the shared
+//! publication authority; restored metadata alone never makes a serving
+//! generation ready.
 use serde::{Deserialize, Serialize};
 use status_query_server::protocol::{Error as StatusError, Hash, Manifest};
 use std::{
@@ -7,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthorityError {
@@ -28,7 +29,6 @@ struct State {
     network: Hash,
     salt: Hash,
     generation: u64,
-    recovery_epoch: u64,
     last_manifest: Option<Hash>,
 }
 
@@ -54,7 +54,7 @@ impl Authority {
         lock.try_lock()
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let state_path = path.as_ref().join("authority.json");
-        let mut state: State = if state_path.exists() {
+        let state: State = if state_path.exists() {
             serde_json::from_slice(&fs::read(state_path)?)?
         } else {
             State {
@@ -62,7 +62,6 @@ impl Authority {
                 network,
                 salt,
                 generation: 0,
-                recovery_epoch: 0,
                 last_manifest: None,
             }
         };
@@ -73,11 +72,6 @@ impl Authority {
         {
             return Err(AuthorityError::State);
         }
-        state.recovery_epoch = state
-            .recovery_epoch
-            .checked_add(1)
-            .ok_or(AuthorityError::State)?;
-        // Persist the fence before admitting a new observation or query.
         persist(path.as_ref(), &state)?;
         Ok(Self {
             dir: path.as_ref().to_path_buf(),
@@ -87,28 +81,24 @@ impl Authority {
         })
     }
 
-    pub fn next_identity(&self) -> Result<(u64, u64), AuthorityError> {
+    pub fn next_generation(&self) -> Result<u64, AuthorityError> {
         if self.poisoned {
             return Err(AuthorityError::State);
         }
-        Ok((
-            self.state
-                .generation
-                .checked_add(1)
-                .ok_or(AuthorityError::State)?,
-            self.state.recovery_epoch,
-        ))
+        self.state
+            .generation
+            .checked_add(1)
+            .ok_or(AuthorityError::State)
     }
 
-    /// Commit before installing material in a serving controller. A crash
-    /// after this commit leaves a gap, then a new recovery epoch on reopen.
+    /// Commit before publishing material. A crash after this commit leaves a
+    /// generation gap; generations are never reused.
     pub fn commit(&mut self, manifest: &Manifest) -> Result<(), AuthorityError> {
         manifest.fresh(super::now_ms())?;
-        let (generation, epoch) = self.next_identity()?;
+        let generation = self.next_generation()?;
         if manifest.network != self.state.network
             || manifest.salt != self.state.salt
             || manifest.generation != generation
-            || manifest.recovery_epoch != epoch
         {
             return Err(AuthorityError::State);
         }
@@ -117,12 +107,11 @@ impl Authority {
             network: self.state.network,
             salt: self.state.salt,
             generation,
-            recovery_epoch: epoch,
             last_manifest: Some(manifest.id()),
         };
         if let Err(error) = persist(&self.dir, &next) {
             // A rename may have happened even when directory sync failed.
-            // Require a reopen and new recovery epoch before further commits.
+            // Require a reopen before further commits.
             self.poisoned = true;
             return Err(error);
         }
@@ -161,22 +150,22 @@ mod tests {
     }
 
     #[test]
-    fn restart_fences_prior_sessions_and_never_reuses_generation() {
+    fn restart_never_reuses_a_generation() {
         let dir = tempfile::tempdir().unwrap();
         {
             let mut authority = Authority::open(dir.path(), [1; 32], [2; 32]).unwrap();
-            assert_eq!(authority.next_identity().unwrap(), (1, 1));
+            assert_eq!(authority.next_generation().unwrap(), 1);
             authority.commit(&manifest(1, 1)).unwrap();
-            assert_eq!(authority.next_identity().unwrap(), (2, 1));
+            assert_eq!(authority.next_generation().unwrap(), 2);
         }
         let mut recovered = Authority::open(dir.path(), [1; 32], [2; 32]).unwrap();
-        assert_eq!(recovered.next_identity().unwrap(), (2, 2));
+        assert_eq!(recovered.next_generation().unwrap(), 2);
         assert!(matches!(
-            recovered.commit(&manifest(2, 1)),
+            recovered.commit(&manifest(1, 2)),
             Err(AuthorityError::State)
         ));
         recovered.commit(&manifest(2, 2)).unwrap();
-        assert_eq!(recovered.next_identity().unwrap(), (3, 2));
+        assert_eq!(recovered.next_generation().unwrap(), 3);
     }
 
     #[test]

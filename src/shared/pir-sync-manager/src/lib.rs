@@ -1,7 +1,7 @@
 //! HTTPS transfer, sequential polling and the shared publication lifecycle
 //! used by every PIR query server.
 //!
-//! [`publication_lifecycle`] owns pointer succession, durable floors, object
+//! [`publication_lifecycle`] owns envelope succession, durable floors, object
 //! transfer and commit ordering; products supply material hooks. A successful
 //! transfer or poll confers no permission to serve.
 mod discovery;
