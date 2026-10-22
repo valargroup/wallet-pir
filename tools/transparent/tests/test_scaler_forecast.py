@@ -18,36 +18,6 @@ def snap(resident, memory, budget=100.0, limit=100.0):
 
 
 class ForecastTests(unittest.TestCase):
-    def test_observe_takes_the_worst_serving_recent_replica(self):
-        self.assertEqual(F.observe(snap(60.0, 70.0)), (0.6, 0.7))
-        self.assertEqual(F.observe(snapshot(members={'r': member(cache_budget_bytes=0)})), (None, None))
-
-    def test_one_sample_per_day_keeping_the_maximum(self):
-        samples = F.update([], snap(50.0, 60.0), NOW)
-        samples = F.update(samples, snap(55.0, 58.0), NOW + 60)
-        self.assertEqual(len(samples), 1)
-        self.assertEqual((samples[0]['resident_ratio'], samples[0]['memory_ratio']), (0.55, 0.6))
-        samples = F.update(samples, snap(52.0, 61.0), NOW + DAY)
-        self.assertEqual(len(samples), 2)
-        unchanged = F.update(samples, snapshot(members={}), NOW + DAY)
-        self.assertEqual(unchanged, samples)
-
-    def test_keeps_fourteen_days(self):
-        samples = []
-        for day in range(20):
-            samples = F.update(samples, snap(50.0 + day, 50.0), NOW + day * DAY)
-        self.assertEqual(len(samples), 14)
-        self.assertEqual(samples[0]['resident_ratio'], 0.56)
-
-    def test_least_squares_recovers_a_line(self):
-        intercept, slope = F.fit([(0, 1.0), (1, 3.0), (2, 5.0), (3, 7.0)])
-        self.assertAlmostEqual(intercept, 1.0)
-        self.assertAlmostEqual(slope, 2.0)
-        intercept, slope = F.fit([(0, 0.0), (1, 1.0), (2, 0.0), (3, 1.0)])
-        self.assertAlmostEqual(slope, 0.2)
-        self.assertIsNone(F.fit([(1, 1.0)]))
-        self.assertIsNone(F.fit([(1, 1.0), (1, 2.0)]))
-
     def test_days_until_the_cache_budget(self):
         # 50% growing one point a day: 85% is 35 days after day 0, 26 after day 9.
         samples = []

@@ -2,7 +2,7 @@
 //! widening it later rebuilds every sealed shard. Pin every offset here, and
 //! pin that a record survives the journal and the padded shard read unchanged.
 
-use enhance_publisher::store::RecordJournal;
+use enhance_publisher::journal::RecordJournal;
 use enhance_query_server::types::{DatabaseId, ENHANCE_LAYOUT};
 use enhance_query_server::{
     EnhanceRecord, EnhanceRecordParts, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SHARD_ROWS,

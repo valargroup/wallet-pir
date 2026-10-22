@@ -1,5 +1,6 @@
 # Documentation
 
+- [PR management and labels](pr-management.md): automatic component labels and author/agent guidance for breaking changes, security, privacy and PIR schemes.
 - [Unified publisher](publisher.md): source layout, configuration, managed services and gated cutover.
 - [Query server host](query-server.md): one serving process for any compiled subset of Enhance, Status, and Transparent.
 - [Service discovery releases](service-discovery-release.md): the publisher-query server contract crate and its crates.io publication.

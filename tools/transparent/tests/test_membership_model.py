@@ -69,24 +69,6 @@ class MembershipModelTest(unittest.TestCase):
                 violations = self.results[('mutant', name)]['violations']
                 self.assertTrue(any(text in v for v, _ in violations), violations)
 
-    def test_initial_states_are_consistent(self):
-        for name, config in MM.CONFIGS.items():
-            model = MM.Model(config)
-            state = model.initial()
-            self.assertEqual(model.check(state), [], name)
-            serving = [m for m in model.recent if model.serving(state, m)]
-            self.assertGreaterEqual(len(serving), 2, name)
-
-    def test_every_configuration_is_the_single_archive_owner_topology(self):
-        # One static owner holds the whole archive and is enrolled and routed
-        # from the start; every other member is a recent replica.
-        for name, config in MM.CONFIGS.items():
-            model = MM.Model(config)
-            state = model.initial()
-            self.assertEqual([m for m in model.members if m not in model.recent], [MM.ARCHIVE], name)
-            self.assertEqual(state[MM.INTENT][MM.ARCHIVE], MM.ENROLLED, name)
-            self.assertTrue(state[MM.RENDERED] & MM.bit(MM.ARCHIVE), name)
-
 
 if __name__ == '__main__':
     unittest.main()

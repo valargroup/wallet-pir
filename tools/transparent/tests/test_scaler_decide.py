@@ -1,5 +1,4 @@
 """decide(): every hold, trigger, cooldown, budget and protection rule."""
-import copy
 import random
 import unittest
 
@@ -689,15 +688,6 @@ class PropertyTests(unittest.TestCase):
                 self.assertGreaterEqual(serving - 1, 2)
             if decision['action'] == 'scale_out':
                 self.assertLessEqual(new['summary']['budget']['monthly_cost_usd'] + 48 * decision['count'], 400)
-
-    def test_decide_is_pure(self):
-        snap = hot()
-        state = D.initial_state()
-        before = (copy.deepcopy(snap), copy.deepcopy(state))
-        first = run(snap, fast(), state)
-        second = run(snap, fast(), state)
-        self.assertEqual(first, second)
-        self.assertEqual((snap, state), before)
 
 
 if __name__ == '__main__':

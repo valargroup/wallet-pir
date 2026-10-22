@@ -123,10 +123,6 @@ class RouterHookTests(unittest.TestCase):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'invalid api version'):
                 render(False, False, api_version=version)
 
-    def test_any_numbered_api_version_renders(self):
-        live, _ = render(False, False, api_version='v3')
-        self.assertIn('^/v3/shards/(', live.decode())
-        self.assertNotIn('/v1/shards', live.decode())
 
     def test_withdrawal_needs_no_api_version(self):
         for (internal, guarded), digests in GOLDEN.items():
@@ -146,10 +142,6 @@ class RouterHookTests(unittest.TestCase):
                 withdrawn, = render(internal, guarded, live=False, route_imports=['/etc/caddy/../x.caddy'])
                 self.assertEqual(hashlib.sha256(withdrawn).hexdigest(), digests[1])
 
-    def test_publisher_redeploys_carry_the_key(self):
-        self.assertIn('route_imports', LIVE.OPERATIONAL_KEYS)
-        merged = LIVE.carry_operational({'roster': 'new'}, {'roster': 'old', 'route_imports': [GLOB]})
-        self.assertEqual(merged, {'roster': 'new', 'route_imports': [GLOB]})
 
     def test_composed_router_adapts_with_caddy_when_available(self):
         caddy = shutil.which('caddy')

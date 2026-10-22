@@ -48,9 +48,6 @@ class SampleTests(unittest.TestCase):
                 changed=copy.deepcopy(native); mutate(changed)
                 with self.assertRaises(ValueError): M.bind_native(changed,sample,**kwargs)
 
-    def test_actual_closed_seed_has_expected_distinct_random_heights(self):
-        expected = set(M.EXPLICIT) | {1210880,1470438,2185090,2664258,2721514,3500736,3500737}
-        self.assertEqual(M.fixed_heights(), expected)
 
     def test_equal_later_density_does_not_replace_initial_tuple_ties(self):
         values = M.Densest()

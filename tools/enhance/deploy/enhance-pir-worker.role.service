@@ -1,8 +1,8 @@
 # Enhance worker, rendered by tools/enhance/lib/roles.py. Fleet workers and an
-# external worker share it. The worker is passive: its controller (the
-# coordinator) reserves, uploads rows, prepares, activates and commits over the
-# internal routes, authenticated by the ENHANCE_INTERNAL_TOKEN in the
-# inventory's credential file. A packing router must list it before it serves.
+# external worker share it. The worker downloads prepared material over HTTPS
+# for its assigned domains. Private evaluation uses ENHANCE_INTERNAL_TOKEN when
+# configured in the inventory's credential file. A packing router lists the
+# worker before it serves.
 # ExecStart, the config path and ReadWritePaths are rendered.
 [Unit]
 Description=Ironwood Enhance PIR worker

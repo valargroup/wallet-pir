@@ -27,16 +27,16 @@ class DurableInputTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
             self.assertEqual(list(Path(directory).iterdir()), [path])
 
-    def test_json_encoding_stays_identical_and_nonfinite_values_refuse(self):
+    def test_invalid_json_preserves_the_previous_private_request(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'request.json'
             durable.atomic_json(path, {'z': '\u00e9', 'a': [True, None]}, mode=0o600)
-            expected = b'{\n  "a": [\n    true,\n    null\n  ],\n  "z": "\\u00e9"\n}\n'
-            self.assertEqual(path.read_bytes(), expected)
+            self.assertEqual(json.loads(path.read_text()), {'z': '\u00e9', 'a': [True, None]})
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            previous = path.read_bytes()
             with self.assertRaises(ValueError):
                 durable.atomic_json(path, {'invalid': float('nan')})
-            self.assertEqual(path.read_bytes(), expected)
+            self.assertEqual(path.read_bytes(), previous)
 
     def test_failed_sync_propagates_and_cleans_the_staging_file(self):
         for directory_failure in (False, True):

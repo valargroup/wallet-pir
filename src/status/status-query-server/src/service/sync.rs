@@ -1,10 +1,20 @@
 //! Status publication policy hosted by the product-neutral HTTPS loop.
-use super::*;
+mod objects;
+use super::{serving, Service};
+use crate::{
+    distributed::{Role, RoleConfig},
+    now_ms,
+    protocol::{Hash, Manifest},
+    publication::*,
+    Controller, Generation,
+};
+use ipir_sp::server::MatvecBackend;
+use objects::{collect, persist, verify_file};
 use pir_pipeline::Input;
 use pir_sync_manager::{HttpsSource, SyncTask};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, io::Read};
+use std::{collections::BTreeSet, fs};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
 struct PublicationAdvanced;
@@ -17,35 +27,38 @@ impl std::error::Error for PublicationAdvanced {}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Floor {
+/// Durable publisher revision and permanently invalidated serving views.
+struct PublisherHighWater {
     current: Option<Current>,
     invalid: BTreeSet<Hash>,
 }
-pub(super) struct StatusSync {
+pub(super) struct StatusSynchronization {
     service: Service,
     source: HttpsSource,
     backend: MatvecBackend,
-    floor: Floor,
+    floor: PublisherHighWater,
     conditional: Option<Current>,
     retained: Vec<Object>,
     loaded: Option<Inventory>,
     deferred: bool,
 }
-impl StatusSync {
+impl StatusSynchronization {
     pub fn new(service: Service, config: &RoleConfig) -> Result<Self, Failure> {
         let source = super::source(config)?;
-        let floor = match fs::read(service.dir.join("publisher-high-water.json")) {
-            Ok(bytes) => serde_json::from_slice::<Floor>(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Floor::default(),
+        let floor = match fs::read(service.state_dir.join("publisher-high-water.json")) {
+            Ok(bytes) => serde_json::from_slice::<PublisherHighWater>(&bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                PublisherHighWater::default()
+            }
             Err(error) => return Err(error.into()),
         };
         if let Some(current) = &floor.current {
             current.validate(service.network)?;
         }
-        fs::create_dir_all(service.dir.join("objects"))?;
+        fs::create_dir_all(service.state_dir.join("objects"))?;
         // The exclusive owner can remove interrupted transfer files. Completed
         // objects and every authority/revocation record are preserved.
-        for entry in fs::read_dir(service.dir.join("objects"))? {
+        for entry in fs::read_dir(service.state_dir.join("objects"))? {
             let entry = entry?;
             if entry.file_type()?.is_file()
                 && entry
@@ -73,7 +86,7 @@ impl StatusSync {
         })
     }
     async fn save_floor(&self) -> Result<(), Failure> {
-        let root = self.service.dir.clone();
+        let root = self.service.state_dir.clone();
         let bytes = serde_json::to_vec(&self.floor)?;
         let result = tokio::task::spawn_blocking(move || {
             persist(&root, "publisher-high-water.json", &bytes)
@@ -144,7 +157,7 @@ impl StatusSync {
     }
     async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
         object.validate(attempt_limit())?;
-        let root = self.service.dir.join("objects");
+        let root = self.service.state_dir.join("objects");
         let target = root.join(&object.sha256);
         if target.exists() {
             let path = target.clone();
@@ -304,7 +317,14 @@ impl StatusSync {
     }
     async fn update(&mut self) -> Result<u64, Failure> {
         let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
-        match pir_pipeline::advance(input, Acquired::prepare, Prepared::publish, &mut ()).await? {
+        match pir_pipeline::advance(
+            input,
+            AcquiredPublication::prepare,
+            PreparedPublication::publish,
+            &mut (),
+        )
+        .await?
+        {
             Input::Work(generation) => Ok(generation),
             Input::Deferred => Ok(self
                 .service
@@ -319,7 +339,7 @@ impl StatusSync {
             }
         }
     }
-    async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Failure> {
+    async fn acquire(&mut self) -> Result<Input<AcquiredPublication<'_>>, Failure> {
         self.source.discover().await?;
         self.source.reset_budget();
         let current = self.current().await?;
@@ -423,7 +443,7 @@ impl StatusSync {
                 self.object(object).await?;
             }
         }
-        Ok(Input::Work(Acquired {
+        Ok(Input::Work(AcquiredPublication {
             sync: self,
             inventory,
             inventory_object,
@@ -436,22 +456,22 @@ impl StatusSync {
 
 // Tokens borrow the sole synchronization owner. No phase can run twice or
 // overlap another pass; only publication may persist and switch the active view.
-struct Acquired<'a> {
-    sync: &'a mut StatusSync,
+struct AcquiredPublication<'a> {
+    sync: &'a mut StatusSynchronization,
     inventory: Inventory,
     inventory_object: Object,
     previous: Option<Arc<Generation>>,
     unchanged: bool,
     refreshed: Option<Generation>,
 }
-struct Prepared<'a> {
-    sync: &'a mut StatusSync,
+struct PreparedPublication<'a> {
+    sync: &'a mut StatusSynchronization,
     inventory: Inventory,
     inventory_object: Object,
     candidate: Option<Generation>,
 }
-impl<'a> Acquired<'a> {
-    async fn prepare(self) -> Result<Input<Prepared<'a>>, Failure> {
+impl<'a> AcquiredPublication<'a> {
+    async fn prepare(self) -> Result<Input<PreparedPublication<'a>>, Failure> {
         let Self {
             sync,
             inventory,
@@ -465,7 +485,7 @@ impl<'a> Acquired<'a> {
         } else if refreshed.is_some() {
             refreshed
         } else {
-            let root = sync.service.dir.join("objects");
+            let root = sync.service.state_dir.join("objects");
             let i = inventory.clone();
             let worker = sync.service.role == Role::Worker;
             let backend = sync.backend;
@@ -482,7 +502,7 @@ impl<'a> Acquired<'a> {
                 .await??,
             )
         };
-        Ok(Input::Work(Prepared {
+        Ok(Input::Work(PreparedPublication {
             sync,
             inventory,
             inventory_object,
@@ -490,7 +510,7 @@ impl<'a> Acquired<'a> {
         }))
     }
 }
-impl Prepared<'_> {
+impl PreparedPublication<'_> {
     async fn publish(self) -> Result<u64, Failure> {
         let Self {
             sync,
@@ -507,7 +527,7 @@ impl Prepared<'_> {
         sync.pin_worker(&inventory.manifest).await?;
         inventory.manifest.fresh(now_ms())?;
         if let Some(candidate) = candidate {
-            let root = sync.service.dir.clone();
+            let root = sync.service.state_dir.clone();
             let bytes = serde_json::to_vec(&inventory_object)?;
             if let Err(error) =
                 tokio::task::spawn_blocking(move || persist(&root, "active.json", &bytes)).await?
@@ -542,7 +562,7 @@ impl Prepared<'_> {
             if sync.retained.len() > 2 {
                 sync.retained.remove(0);
             }
-            let root = sync.service.dir.join("objects");
+            let root = sync.service.state_dir.join("objects");
             let retained = sync.retained.clone();
             tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
         }
@@ -569,7 +589,7 @@ impl Prepared<'_> {
     }
 }
 
-impl SyncTask for StatusSync {
+impl SyncTask for StatusSynchronization {
     type Report = u64;
     type Error = Failure;
     async fn synchronize(&mut self) -> Result<u64, Failure> {
@@ -611,57 +631,5 @@ impl SyncTask for StatusSync {
         }
     }
 }
-fn persist(root: &FsPath, name: &str, bytes: &[u8]) -> std::io::Result<()> {
-    pir_control::durable::write_atomic(root, name, |f| f.write_all(bytes))?;
-    pir_control::durable::sync_dir(root)
-}
-fn verify_file(path: &FsPath, object: &Object) -> Result<(), Failure> {
-    let file = fs::File::open(path)?;
-    if file.metadata()?.len() != object.bytes {
-        return Err("Status cached object length differs".into());
-    }
-    let mut reader = std::io::BufReader::new(file);
-    let mut buffer = [0u8; 65536];
-    let mut hash = Sha256::new();
-    loop {
-        let n = reader.read(&mut buffer)?;
-        if n == 0 {
-            break;
-        }
-        hash.update(&buffer[..n]);
-    }
-    if hex::encode(hash.finalize()) != object.sha256 {
-        return Err("Status cached object digest differs".into());
-    }
-    Ok(())
-}
-
-fn collect(root: &FsPath, inventories: &[Object]) -> Result<(), Failure> {
-    let mut keep = BTreeSet::new();
-    for object in inventories {
-        keep.insert(object.sha256.clone());
-        let bytes = fs::read(root.join(&object.sha256))?;
-        object.verify(&bytes)?;
-        let inventory: Inventory = serde_json::from_slice(&bytes)?;
-        inventory.validate_material()?;
-        for item in inventory
-            .units
-            .iter()
-            .chain(&inventory.packing)
-            .chain(std::iter::once(&inventory.public))
-        {
-            keep.insert(item.sha256.clone());
-        }
-    }
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
-            fs::remove_file(entry.path())?;
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests;

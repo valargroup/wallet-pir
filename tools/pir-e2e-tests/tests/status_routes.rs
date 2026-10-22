@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use enhance_publisher::{publisher::Publisher, zakura::ZakuraClient};
+use enhance_publisher::{chain_source::ZakuraClient, publisher::EnhancePublisher};
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -12,7 +12,7 @@ async fn unready_publisher_serves_operator_routes_and_never_wallets() {
     let root = tempfile::tempdir().unwrap();
     let cookie = root.path().join("cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
-    let publisher = Publisher::open(
+    let publisher = EnhancePublisher::open(
         &root.path().join("publisher"),
         ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap(),
     )
