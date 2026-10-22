@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from ..role_config import directory, render, service_settings
 from . import units
+from .coordinator_edge import replace_in_site, site_span
 from .publisher import require, sha, stable_unit
 from .publisher_serving import Serving
 
@@ -141,7 +142,8 @@ class HttpsServing(Serving):
         require('\n' + internal + ' {' in '\n' + before, 'history private listener differs')
         def site(address, upstream):
             return (address + ' {\n\trequest_body {\n\t\tmax_size 1MB\n\t}\n'
-                    '\t@wallet path /v1/ready /v2/*\n\thandle @wallet {\n'
+                    # `/transparent/v1/*` is the canonical alias of `/v2/*`.
+                    '\t@wallet path /v1/ready /v2/* /transparent/v1/*\n\thandle @wallet {\n'
                     '\t\treverse_proxy ' + upstream + '\n\t}\n'
                     '\thandle {\n\t\trespond 404\n\t}\n}\n')
         global_options = before.split(origin + ' {', 1)[0]
@@ -166,8 +168,11 @@ class HttpsServing(Serving):
         require('/provider/v1/' not in text and '/provider/txid/v1/' not in text,
                 'publisher distribution routes are already owned')
         marker = '\thandle {\n\t\trespond 404\n\t}'
-        require(text.count(marker) == 1, 'publisher TLS edge has no unique final refusal route')
-        return text.replace(marker, addition + marker)
+        # Insert into the publisher origin's own site; other sites on the edge
+        # (the unified wallet host) keep their own final refusal untouched.
+        span = site_span(text, origin.hostname)
+        require(text[span[0]:span[1]].count(marker) == 1, 'publisher TLS edge has no unique final refusal route')
+        return replace_in_site(text, span, lambda block: block.replace(marker, addition + marker))
 
     def capture(self):
         plan = super().capture()

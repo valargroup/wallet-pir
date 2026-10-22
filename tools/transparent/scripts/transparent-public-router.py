@@ -26,6 +26,12 @@ HERE = Path(__file__).resolve().parent
 ROUTES = HERE.parent / 'deploy/api'
 ADDRESS = re.compile(r'[A-Za-z0-9_.:-]+')
 VERSION_FILE = re.compile(r'(v[1-9][0-9]*)\.caddy')
+# Canonical public prefix of a wallet API version, served beside `/v<N>/`.
+CANONICAL = {'v2': 'transparent/v1'}
+
+
+def prefixes(version):
+    return [version] + ([CANONICAL[version]] if version in CANONICAL else [])
 
 
 def live_fleet():
@@ -38,8 +44,8 @@ def live_fleet():
 def version_routes(directory, withdrawn=()):
     """`(version, text)` for each route file, in version order.
 
-    A file may only handle paths under its own prefix, so one version's file
-    can never shadow another's.
+    A file may only handle paths under its own prefix or that version's
+    canonical prefix, so one version's file can never shadow another's.
     """
     found = {}
     for path in Path(directory).iterdir():
@@ -50,15 +56,17 @@ def version_routes(directory, withdrawn=()):
         text = path.read_text()
         for line in text.splitlines():
             stripped = line.strip()
-            if stripped.startswith('handle') and not stripped.startswith(f'handle /{version}/'):
+            if stripped.startswith('handle') and not any(
+                    stripped.startswith(f'handle /{prefix}/') for prefix in prefixes(version)):
                 raise ValueError(f'{path.name} handles a path outside /{version}/: {stripped}')
         found[version] = text
     unknown = set(withdrawn) - set(found)
     if unknown:
         raise ValueError(f'no route file to withdraw for {sorted(unknown)}')
     for version in withdrawn:
-        found[version] = (f'# {version} withdrawn by an operator.\nhandle /{version}/* {{\n'
-                          f'\theader Retry-After 1\n\trespond "transparent {version} maintenance" 503\n}}\n')
+        found[version] = f'# {version} withdrawn by an operator.\n' + ''.join(
+            f'handle /{prefix}/* {{\n\theader Retry-After 1\n\trespond "transparent {version} maintenance" 503\n}}\n'
+            for prefix in prefixes(version))
     return sorted(found.items(), key=lambda item: int(item[0][1:]))
 
 

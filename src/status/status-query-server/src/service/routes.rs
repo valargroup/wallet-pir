@@ -35,10 +35,15 @@ impl Service {
             .merge(telemetry::routes())
     }
     pub fn query_routes(&self) -> Router {
-        Router::new()
-            .route("/v1/status/init", get(router_init))
-            .route("/v1/status/session/:id", get(router_session))
-            .route("/v1/status/query", post(router_query))
+        crate::PUBLIC_ROUTES
+            .mount(
+                Router::new(),
+                [
+                    ("/init", get(router_init)),
+                    ("/session/:id", get(router_session)),
+                    ("/query", post(router_query)),
+                ],
+            )
             .layer(axum::middleware::from_fn(|req, next| {
                 telemetry::observe("router", req, next)
             }))
@@ -246,4 +251,114 @@ async fn router_query(
     service.available_controller().await?;
     controller.check(&generation)?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Controller;
+    use axum::{body::Body, http::Request};
+    use status_shared::{protocol::PROTOCOL, Generation};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    /// A router serving one fresh public-only generation.
+    async fn router_service() -> (tempfile::TempDir, Service, Manifest) {
+        let root = tempfile::tempdir().unwrap();
+        let service = Service::open(
+            Role::Router,
+            [1; 32],
+            root.path().join("router"),
+            "http://127.0.0.1:1".into(),
+        )
+        .unwrap();
+        let manifest = Manifest {
+            protocol: PROTOCOL.into(),
+            network: [1; 32],
+            salt: [2; 32],
+            generation: 3,
+            recovery_epoch: 2,
+            coverage_start: 1,
+            anchor_height: 1,
+            anchor_hash: [3; 32],
+            observed_ms: now_ms(),
+            entries: 0,
+            rows_digest: [4; 32],
+            public_digest: [5; 32],
+        };
+        service.state.lock().await.controller = Some(Controller::new(Generation::public_only(
+            manifest.clone(),
+            Arc::new(b"public material".to_vec()),
+        )));
+        (root, service, manifest)
+    }
+
+    async fn answer(router: Router, method: &str, path: &str) -> (StatusCode, Vec<u8>) {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .body(Body::from(vec![0; 4]))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, body.to_vec())
+    }
+
+    #[tokio::test]
+    async fn canonical_and_legacy_public_paths_reach_the_same_handlers() {
+        let (_root, service, manifest) = router_service().await;
+        let session = format!("/session/{}", hex::encode(manifest.id()));
+        for (method, operation) in [("GET", "/init"), ("GET", &*session), ("POST", "/query")] {
+            let canonical = answer(
+                service.query_routes(),
+                method,
+                &format!("/status/v1{operation}"),
+            )
+            .await;
+            let legacy = answer(
+                service.query_routes(),
+                method,
+                &format!("/v1/status{operation}"),
+            )
+            .await;
+            assert_ne!(canonical.0, StatusCode::NOT_FOUND, "{operation} is routed");
+            assert_eq!(canonical, legacy, "{operation}");
+        }
+        let (status, body) = answer(service.query_routes(), "GET", "/status/v1/init").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(serde_json::from_slice::<Manifest>(&body).unwrap(), manifest);
+        let (status, body) = answer(
+            service.query_routes(),
+            "GET",
+            &format!("/status/v1{session}"),
+        )
+        .await;
+        assert_eq!((status, &*body), (StatusCode::OK, &b"public material"[..]));
+    }
+
+    #[tokio::test]
+    async fn control_and_worker_routes_are_not_public_under_either_prefix() {
+        let (_root, service, manifest) = router_service().await;
+        let id = hex::encode(manifest.id());
+        for prefix in ["/status/v1", "/v1/status"] {
+            for (method, control) in [
+                ("GET", "/control/health".to_string()),
+                ("GET", "/control/identity".to_string()),
+                ("GET", "/provider-status".to_string()),
+                ("GET", "/v1/provider-status".to_string()),
+                ("POST", format!("/v1/provider-pin/{id}")),
+                ("POST", "/evaluate".to_string()),
+                ("GET", "/internal/metrics".to_string()),
+            ] {
+                let path = format!("{prefix}{control}");
+                for routes in [service.query_routes(), service.routes()] {
+                    let (status, _) = answer(routes, method, &path).await;
+                    assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+                }
+            }
+        }
+    }
 }

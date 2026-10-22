@@ -11,14 +11,16 @@ import re
 from urllib.parse import urlsplit
 
 from wallet_pir_ops.paths import ROOT
-from wallet_pir_ops.deploy import descriptors, units
+from wallet_pir_ops.deploy import coordinator_edge, descriptors, units
 from wallet_pir_ops.deploy.engine import Deployer, DeployError, mutation_fence
 from wallet_pir_ops.deploy.remote import production_lock
 from wallet_pir_ops.deploy.transaction import FINAL, Journal
 
 SERVICE = 'status-routing'
 CONFIG = '/etc/caddy/Caddyfile'
-ROUTE = re.compile(r'(?m)^([ \t]*handle /v1/status/\* \{\n[ \t]*reverse_proxy )127\.0\.0\.1:(8489|8492)(\n[ \t]*\})')
+# The legacy `/v1/status/*` route is required; its canonical `/status/v1/*`
+# alias, when present, moves with it so the two never reach different routers.
+ROUTE = re.compile(r'(?m)^([ \t]*handle /(v1/status|status/v1)/\* \{\n[ \t]*reverse_proxy )127\.0\.0\.1:(8489|8492)(\n[ \t]*\})')
 
 
 def digest(value):
@@ -31,9 +33,15 @@ def require(condition, message):
 
 
 def candidate(text):
-    matches = list(ROUTE.finditer(text))
-    require(len(matches) == 1, 'expected exactly one simple Status wallet route')
-    return ROUTE.sub(lambda m: m[1] + '127.0.0.1:8492' + m[3], text)
+    # The legacy route lives on one site; each site (the Enhance host and the
+    # unified wallet host) may carry one canonical alias, and every alias moves
+    # with the legacy route so no site reaches a different router.
+    prefixes = [m[2] for m in ROUTE.finditer(text)]
+    require(prefixes.count('v1/status') == 1 and text.count('handle /status/v1/') == prefixes.count('status/v1'),
+            'expected exactly one simple Status wallet route and simple canonical aliases')
+    for start, end in coordinator_edge.sites(text).values():
+        require(text[start:end].count('handle /status/v1/') <= 1, 'expected at most one canonical alias per site')
+    return ROUTE.sub(lambda m: m[1] + '127.0.0.1:8492' + m[4], text)
 
 
 def load_request(path, expected):

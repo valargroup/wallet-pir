@@ -871,8 +871,8 @@ async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response
         .windows(2)
         .find(|w| w[0] == "revisions")
         .map(|w| w[1].to_owned());
-    let chunk = path
-        .strip_prefix("/v2/txid/map/")
+    let chunk = transparent_shared::http::shard_operation(&path)
+        .and_then(|operation| operation.strip_prefix("/txid/map/"))
         .and_then(|rest| rest.split('/').nth(1))
         .map(str::to_owned);
     let (state, map_sha256) = {

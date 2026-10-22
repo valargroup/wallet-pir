@@ -35,6 +35,13 @@ run "all_services" {
     error_message = "Shared membership must retain the coordinator, node volume, first worker pair, legacy pair, history hosts, router and load generator."
   }
   assert {
+    condition = (cloudflare_dns_record.wallet_pir.name == "wallet-pir.valargroup.dev"
+      && cloudflare_dns_record.wallet_pir.content == var.wallet_pir_coordinator_dns_ipv4
+      && cloudflare_dns_record.wallet_pir.type == "A" && !cloudflare_dns_record.wallet_pir.proxied
+    && output.wallet_pir_public_url == "https://wallet-pir.valargroup.dev")
+    error_message = "The unified host must point unproxied at the coordinator edge that serves the Enhance host."
+  }
+  assert {
     condition     = length(output.enhance_worker_groups) == 2 && length(output.enhance_worker_public_ipv4) == 4
     error_message = "Replica group outputs must keep their original shape."
   }

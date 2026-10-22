@@ -9,6 +9,53 @@ and role validation live in `status-query-server::service` and its product
 configuration; the host delegates to that crate, as it does for Enhance and
 Transparent.
 
+## Public routes
+
+One selected server base serves every product under its own namespace. Wallets
+should use the canonical paths; the deployed paths remain explicit aliases of
+the same handlers and return identical responses. Each product declares its
+public operations once and mounts them at both prefixes through
+`pir_control::public_routes::PublicMount`.
+
+| Product | Canonical | Legacy alias | Operations |
+| --- | --- | --- | --- |
+| Enhance | `/enhance/v1/<op>` | `/v1/enhance/<op>` | `init`, `session/:id`, `sessions/:generation/:shard`, `query` |
+| Status | `/status/v1/<op>` | `/v1/status/<op>` | `init`, `session/:id`, `query` |
+| Transparent | `/transparent/v1/<op>` | `/v2/<op>` | `shards`, `shards/init`, `shards/:id/revisions/...`, `filters/shards[/:id/filter]`, `txid/...` |
+| Transparent filters | `/transparent/v1/filters/<op>` | `/v1/filters/<op>` | `info`, `chain`, `digests`, `range` |
+| Receiver | `/receiver/v1/<op>` | `/v1/receiver/<op>` | see the Receiver docs |
+
+The two Transparent alias groups share the canonical namespace; their suffixes
+are disjoint (`filters/shards...` versus `filters/{info,chain,digests,range}`)
+and route construction panics if they ever overlap. An alias serves only its own
+group, so `/v2/filters/info` and `/v1/filters/shards` stay unrouted. Health,
+readiness, metrics, `/control/*`, `/internal/*`, `/evaluate`, `/v1/provider-*`
+and publisher status are never mounted under a canonical prefix and stay on
+their private paths. Peer-to-peer calls between roles, deploy probes and the
+`pir-apm` quality probes keep the legacy paths that deployed binaries already
+serve.
+
+`https://wallet-pir.valargroup.dev` is the unified base for the canonical paths.
+It is a second site on the coordinator's Caddy
+([`tools/deploy/coordinator/Caddyfile`](../tools/deploy/coordinator/Caddyfile),
+rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
+`tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
+filter operations reach the coordinator's loopback services; Transparent
+queries, history filter shards and Receiver cross to `transparent-pir` and
+`receiver-pir` over verified HTTPS, naming each origin as Host and SNI. It
+serves no legacy alias and no operator path. The product hosts keep serving both
+forms for released wallets. Receiver's edge trusts only the coordinator's
+address to forward `X-Forwarded-For`, so its per-client admission still keys on
+the wallet. The site reaches the live coordinator file only through the
+transactional `wallet-pir-deploy coordinator-edge-{plan,preflight,deploy,status,rollback}`
+operation (`wallet_pir_ops.deploy.unified_edge`). Under the production lock it pins the
+live file and coordinator identity, adds or replaces only the unified site, validates,
+reloads, probes the host locally (canonical routes 200, legacy and operator paths 404)
+and restores the exact previous file on any failure. Its request is
+`{"schema": "coordinator-unified-edge/1", "host", "machine_id", "enhance_public_url"}`.
+Product cutovers edit their own site in place and keep it. Whether the host is
+live is recorded in the product status pages, not here.
+
 ## Features
 
 The host compiles a product only when that product's Cargo feature is enabled:

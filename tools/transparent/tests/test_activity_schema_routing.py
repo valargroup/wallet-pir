@@ -60,12 +60,16 @@ class CoordinatorGuard(unittest.TestCase):
   root * /public
   file_server
  }
+ handle_path /transparent/v1/filters/parents/* {
+  root * /public
+  file_server
+ }
  handle /apm* { reverse_proxy 127.0.0.1:3002 }
  handle { reverse_proxy 127.0.0.1:8080 }
 }
 '''
         guarded = M.guard_coordinator(config)
-        self.assertEqual(guarded.count('503'), 3)
+        self.assertEqual(guarded.count('503'), 4)
         self.assertNotIn('8094', guarded)
         self.assertNotIn('8090', guarded)
         self.assertNotIn('file_server', guarded)

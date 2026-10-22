@@ -10,3 +10,10 @@ mod controller;
 pub mod distributed;
 pub mod service;
 pub use controller::Controller;
+
+/// Where the wallet-facing Status operations (`/init`, `/session/:id`,
+/// `/query`) are served: the canonical `/status/v1` namespace and the deployed
+/// `/v1/status` alias reach the same router handlers. Control, provider and
+/// worker routes are never mounted under either.
+pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
+    pir_control::public_routes::PublicMount::new("/status/v1", "/v1/status");

@@ -144,6 +144,17 @@ class StatusRouting(unittest.TestCase):
         self.routing.rollback(journal.id)
         self.assertEqual(self.host.read('coordinator', CONFIG), BEFORE)
 
+    def test_canonical_alias_moves_with_the_legacy_route(self):
+        canonical = ' handle /status/v1/* {\n  reverse_proxy 127.0.0.1:8489\n }\n'
+        text = BEFORE.replace(' handle /v1/enhance/*', canonical + ' handle /v1/enhance/*')
+        self.assertEqual(candidate(text), text.replace(':8489', ':8492'))
+        foreign = canonical.replace(':8489', ':9000')
+        for refused in (text.replace(canonical, canonical + canonical),
+                        BEFORE.replace(' handle /v1/enhance/*', foreign + ' handle /v1/enhance/*'),
+                        text.replace('/v1/status/*', '/other/*')):
+            with self.subTest(text=refused), self.assertRaises(DeployError):
+                candidate(refused)
+
     def test_ambiguous_or_unrecognized_routes_are_refused(self):
         for text in (BEFORE + BEFORE, BEFORE.replace(':8489', ':9000'), BEFORE.replace('/v1/status/*', '/other/*')):
             with self.subTest(text=text), self.assertRaises(DeployError):

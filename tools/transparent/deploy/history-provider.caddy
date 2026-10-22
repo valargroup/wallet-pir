@@ -3,12 +3,13 @@
 # through its existing trusted service. This installs no display process.
 # Set TRANSPARENT_DISPLAY_UPSTREAM explicitly: an approved HTTPS origin or an
 # operator-managed loopback display service, never this forwarding site's URL.
+# `/transparent/v1/` is the canonical wallet prefix; `/v2/` remains its alias.
 provider.example.invalid {
-    @history path /v2/shards /v2/shards/* /v2/filters/shards /v2/filters/shards/*
+    @history path /v2/shards /v2/shards/* /v2/filters/shards /v2/filters/shards/* /transparent/v1/shards /transparent/v1/shards/* /transparent/v1/filters/shards /transparent/v1/filters/shards/*
     handle @history {
         reverse_proxy 127.0.0.1:8092
     }
-    @display path /v2/txid /v2/txid/*
+    @display path /v2/txid /v2/txid/* /transparent/v1/txid /transparent/v1/txid/*
     handle @display {
         reverse_proxy {$TRANSPARENT_DISPLAY_UPSTREAM} {
             header_up Host {upstream_hostport}

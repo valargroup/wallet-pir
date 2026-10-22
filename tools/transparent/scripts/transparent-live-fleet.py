@@ -112,6 +112,16 @@ def api_version(config):
     return version
 
 
+# Canonical public prefix of a wallet API version, routed beside `/<version>/`.
+# Only the wallet paths below move; probes and operator routes keep theirs.
+CANONICAL_API = {'v2': 'transparent/v1'}
+
+
+def api_prefixes(api):
+    """The legacy and, when the version has one, canonical wallet prefixes."""
+    return [api] + ([CANONICAL_API[api]] if api in CANONICAL_API else [])
+
+
 def caddy_swap_command(target):
     """Remote shell that installs the Caddyfile on stdin at `target`.
 
@@ -783,6 +793,8 @@ class Fleet:
         if workers:
             # Withdrawal never needs the version, so a bad one cannot block it.
             api = api_version(self.c)
+            served = api_prefixes(api)
+            pattern_prefix = '(?:' + '|'.join(served) + ')' if len(served) > 1 else api
             # Only serving sites import, so a bad key can never block withdrawal.
             imports = route_import_lines(self.c)
             workers = self.render_set(workers, assignment)
@@ -800,10 +812,12 @@ class Fleet:
                 if not ids:
                     continue
                 pattern = '|'.join(map(str,ids))
-                body += [f'\t@{name} path_regexp ^/{api}/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
+                body += [f'\t@{name} path_regexp ^/{pattern_prefix}/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
                          f'\thandle @{name} {{\n\t\treverse_proxy {" ".join(upstreams)} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n{ROUTER_HEALTH}\t\t}}\n\t}}']
             body += [*imports,
-                     f'\t@metadata path /{api}/shards /{api}/shards/init /{api}/filters/shards /{api}/filters/shards/* /{api}/shards/*/revisions/*/manifest',
+                     '\t@metadata path ' + ' '.join(
+                         f'/{p}/shards /{p}/shards/init /{p}/filters/shards /{p}/filters/shards/* /{p}/shards/*/revisions/*/manifest'
+                         for p in served),
                      f'\thandle @metadata {{\n\t\treverse_proxy {authority} {{\n\t\t\theader_up Host {{upstream_hostport}}\n\t\t}}\n\t}}', '\thandle {\n\t\trespond 404\n\t}',
                      ROUTER_PROXY_ERRORS.rstrip('\n')]
         else:
