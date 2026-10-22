@@ -44,8 +44,9 @@ PRODUCTS = {
         # setting naming its status listener.
         'publisher_product': 'transparent_history',
         'status_listen': 'listen',
-        # Values the controller configuration must hold; a single journal
-        # writer (follow_journal false) and no shipped runtimes.
+        # Values the controller configuration must hold: a single journal
+        # writer (follow_journal false), and for the standalone fleet
+        # controller no shipped runtimes.
         'config_equals': {'follow_journal': False, 'data_dir': '/srv/transparent-activity/full-v3/journal',
                           'publication_root': '/srv/transparent-activity/full-v12/publications'},
         'config_absent_or': {'ship_runtimes': False},
@@ -88,8 +89,8 @@ COMPONENTS = ('workers', 'controller')
 # The unified owner, as installed by `publisher-cutover-*`.
 PUBLISHER_UNIT = 'pir-publisher.service'
 PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
-# Autonomous HTTPS History providers (publisher `http_only`): each worker pins its
-# configuration and unit, and its holdings decide the only ready identity it may
+# Autonomous HTTPS History providers, the only History workers of the unified
+# publisher: each worker pins its configuration and unit, and its holdings decide the only ready identity it may
 # report. A full-holdings provider has no assignment; a recent provider owns the
 # `assignment.json` its own bootstrap staged (routing/manager.rs). Settings are
 # the enabled `transparent_history.settings` of the `--config FILE`, whose whole
@@ -389,13 +390,14 @@ class Upgrade:
                 problem_if(config.get(key) != value, 'controller %s is %r, expected %r' % (key, config.get(key), value), problems)
             for key, value in self.request['publication'].items():
                 problem_if(config.get(key) != value, 'publication %s is %r, request pins %r' % (key, config.get(key), value), problems)
-            http_only = config.get('http_only') is True
             if self.providers:
-                # Providers synchronize from the publisher's HTTPS publication with its runtimes.
-                problem_if(not self.unified or not http_only or config.get('ship_runtimes') is not True,
-                           'HTTPS provider workers need %s with http_only and ship_runtimes' % PUBLISHER_UNIT, problems)
+                # Providers synchronize from the unified publisher's HTTPS publication.
+                problem_if(not self.unified, 'HTTPS provider workers need %s' % PUBLISHER_UNIT, problems)
+            elif self.unified:
+                problem_if(True, '%s publishes History over HTTPS only; pin each provider worker configuration instead'
+                           % PUBLISHER_UNIT, problems)
             else:
-                problem_if(http_only, 'controller is http_only; pin each provider worker configuration instead', problems)
+                # The standalone fleet controller's own configuration file.
                 for key, value in self.product['config_absent_or'].items():
                     problem_if(config.get(key, value) != value, 'controller %s must stay %r' % (key, value), problems)
                 for key in ('fleet_config', 'fleet_command'):

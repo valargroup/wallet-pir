@@ -2211,7 +2211,10 @@ component. `baseline` records both components.
   serves the product's `/v1/status`. Only `workers` transactions run, never restarting the
   publisher, and `baseline` records only the workers; a `controller` request refuses and the
   publisher executable changes through `publisher-cutover-*` ([publisher](../publisher.md)). A
-  standalone controller still running or still in the inventory beside it refuses.
+  standalone controller still running or still in the inventory beside it refuses. The unified
+  publisher distributes History only over HTTPS, so its History workers must be autonomous
+  providers: each pins its `--config` file (`config_sha256`) and unit (`unit_sha256`), the request
+  has `load: null`, and fleet-controlled worker pins refuse.
 - Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
   (`upgrade-transparent-fleet.py`) and 7,200 seconds for the 4k8 Display request. Full warm
   readiness remains required; the generic binary engine's 180-second default is insufficient

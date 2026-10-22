@@ -749,13 +749,13 @@ class UnifiedOwner:
         shape = self.fake.health_shapes[('coordinator', standalone)]
         self.fake.systemctl('coordinator', 'stop', standalone)
         self.fake.systemctl('coordinator', 'disable', standalone)
+        history = {key: value for key, value in CONFIG.items() if key not in ('fleet_command', 'fleet_config')}
         self.configuration = {
             'management_listen': '127.0.0.1:18080',
-            'transparent_history': {'enabled': True, 'settings': {
-                **CONFIG, 'listen': HISTORY_LISTEN, 'ship_runtimes': False, 'distribute_prepared': False}},
+            'transparent_history': {'enabled': True, 'settings': {**history, 'listen': HISTORY_LISTEN}},
             'transaction_details': {'enabled': True, 'settings': {
                 'root': DISPLAY_ROOT, 'journal': '/srv/txid-display-genesis/journal-v3', 'status_listen': DISPLAY_LISTEN,
-                'ship_runtimes': False, 'trust_sealed': False}}}
+                'trust_sealed': False}}}
         self.fake.install('coordinator', PUBLISHER, '[Service]\nExecStart=%s --config %s\nTimeoutStopSec=infinity\n'
                           % (PUBLISHER_BIN, PUBLISHER_CONFIG),
                           files={PUBLISHER_BIN: b'pir-publisher', PUBLISHER_CONFIG: json.dumps(self.configuration)})
@@ -813,75 +813,6 @@ class UnifiedOwner:
         self.publisher_untouched()
 
 
-class UnifiedHistoryUpgrade(UnifiedOwner, Harness):
-    # The standalone fleet's setup and helpers, without its standalone-only tests.
-    standalone_request = HistoryUpgrade.base_request
-    running, pins, load_active = HistoryUpgrade.running, HistoryUpgrade.pins, HistoryUpgrade.load_active
-
-    def setUp(self):
-        HistoryUpgrade.setUp(self)
-        self.adopt(CONTROLLER, 'http://%s/v1/status' % HISTORY_LISTEN)
-        self.fake.log.clear()
-
-    def test_unified_worker_upgrade_keeps_publisher_load_and_rollback(self):
-        self.assertEqual(self.run_cli('baseline')[0], 0)
-        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
-        self.assertEqual(code, 0, lines)
-        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
-        self.assertEqual(code, 0, lines)
-        self.assertEqual(set(self.running().values()), {sha256(NEW)})
-        self.assertEqual(self.pins(), {i: sha256(NEW) for i in IDS.values()})
-        self.assertTrue(self.load_active())
-        self.publisher_untouched()
-        self.assertEqual(self.run_cli('rollback')[0], 0)
-        self.assertEqual(set(self.running().values()), {sha256(OLD)})
-        self.assertEqual(self.pins(), {i: sha256(OLD) for i in IDS.values()})
-        self.publisher_untouched()
-
-    def test_unified_controller_upgrade_belongs_to_the_publisher_lifecycle(self):
-        self.run_cli('baseline')
-        self.controller_component_directs_to_publisher_lifecycle()
-
-    def test_unified_ambiguous_owner_or_drift_refuses_before_any_change(self):
-        self.run_cli('baseline')
-        published = self.fake.read('coordinator', PUBLISHER_CONFIG)
-        drift = {
-            'follow_journal': lambda c: c['transparent_history']['settings'].update(follow_journal=True),
-            'source': lambda c: c['transparent_history']['settings'].update(source_sha='ff27d649'),
-            'disabled': lambda c: c['transparent_history'].update(enabled=False),
-        }
-        for name, change in drift.items():
-            with self.subTest(name):
-                configuration = json.loads(published)
-                change(configuration)
-                self.fake.put('coordinator', PUBLISHER_CONFIG, json.dumps(configuration))
-                self.write_request()  # Pinning the drifted bytes does not make them acceptable.
-                self.refuses()
-                self.fake.put('coordinator', PUBLISHER_CONFIG, published)
-        self.write_request()
-        with self.subTest('unpinned configuration'):
-            self.fake.put('coordinator', PUBLISHER_CONFIG, published + ' ')
-            self.refuses(message='differs from its pinned digest')
-            self.fake.put('coordinator', PUBLISHER_CONFIG, published)
-        with self.subTest('standalone controller running beside the publisher'):
-            self.fake.systemctl('coordinator', 'restart', CONTROLLER)
-            self.refuses(message='beside ' + PUBLISHER)
-            self.fake.systemctl('coordinator', 'stop', CONTROLLER)
-        with self.subTest('both owners in the inventory'):
-            self.write_inventory(lambda d: d['services']['transparent-history']['roles'].update(controller=[
-                {'host': 'coordinator', 'unit': CONTROLLER, 'vars': {'listen': HISTORY_LISTEN}}]))
-            self.refuses()
-        with self.subTest('owner on another host'):
-            self.write_inventory(lambda d: d['services']['publisher']['roles']['server'][0].update(host='v12'))
-            self.refuses()
-        self.write_inventory()
-        with self.subTest('registry without the publisher'):
-            self.descriptors = ('--descriptors', str(ROOT / 'tools/transparent/deploy/services.toml'))
-            self.refuses()
-        self.assertEqual(set(self.running().values()), {sha256(OLD)})
-        self.publisher_untouched()
-
-
 PUBLISHER_ORIGIN = 'https://enhance-pir.example'
 
 
@@ -897,7 +828,7 @@ def provider_assignment(map_sha256):
 
 
 class ProviderHistoryUpgrade(UnifiedOwner, Harness):
-    """Autonomous HTTPS providers under an http_only publisher: archive full holdings, recent self-assigned."""
+    """Autonomous HTTPS providers under the unified publisher: archive full holdings, recent self-assigned."""
     standalone_request = HistoryUpgrade.base_request
     running = HistoryUpgrade.running
     FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
@@ -1022,9 +953,6 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     def setUp(self):
         HistoryUpgrade.setUp(self)
         self.adopt(CONTROLLER, 'http://%s/v1/status' % HISTORY_LISTEN)
-        self.configuration['transparent_history']['settings'].update(
-            http_only=True, ship_runtimes=True, distribute_prepared=True)
-        self.place('coordinator', PUBLISHER_CONFIG, self.configuration)
         for unit, full in self.FULL.items():
             root = provider_shard_dir(unit)
             self.place('v12', history_config(unit), self.provider_document(full, root))
@@ -1102,8 +1030,8 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
             'wrong mode': (swap_identities, 'configuration makes it'),
             'config changed': (lambda r: r['workers'][recent].update(config_sha256='0' * 64), 'differs from its pinned digest'),
             'unit changed': (lambda r: r['workers'][archive].update(unit_sha256='0' * 64), 'unit changed from the pinned bytes'),
-            'fleet pins on http_only': (lambda r: [p.pop(k) for p in r['workers'].values()
-                                                   for k in ('config_sha256', 'unit_sha256')], None),
+            'fleet pins under the publisher': (lambda r: [p.pop(k) for p in r['workers'].values()
+                                                          for k in ('config_sha256', 'unit_sha256')], None),
         }
         for name, (change, message) in cases.items():
             with self.subTest(name):
@@ -1158,10 +1086,51 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
                 self.refuses(message=message)
                 self.install_active(recent, MAP)
 
-    def test_fleet_controlled_pins_still_refuse_against_http_only_publisher(self):
+    def test_fleet_controlled_pins_refuse_under_the_unified_publisher(self):
         self.run_cli('baseline')
-        self.refuses(change_request=lambda r: [p.pop(k) for p in r['workers'].values()
-                                               for k in ('config_sha256', 'unit_sha256')])
+        fleet = UnifiedOwner.base_request(self, 'workers')
+        self.refuses(change_request=lambda r: r.update(workers=fleet['workers'], load=fleet['load']),
+                     message='publishes History over HTTPS only')
+
+    def test_ambiguous_owner_or_publisher_drift_refuses_before_any_change(self):
+        self.run_cli('baseline')
+        published = self.fake.read('coordinator', PUBLISHER_CONFIG)
+        drift = {
+            'follow_journal': lambda c: c['transparent_history']['settings'].update(follow_journal=True),
+            'source': lambda c: c['transparent_history']['settings'].update(source_sha='ff27d649'),
+            'disabled': lambda c: c['transparent_history'].update(enabled=False),
+        }
+        for name, change in drift.items():
+            with self.subTest(name):
+                configuration = json.loads(published)
+                change(configuration)
+                self.fake.put('coordinator', PUBLISHER_CONFIG, json.dumps(configuration))
+                self.write_request()  # Pinning the drifted bytes does not make them acceptable.
+                self.refuses()
+                self.fake.put('coordinator', PUBLISHER_CONFIG, published)
+        self.write_request()
+        with self.subTest('unpinned configuration'):
+            self.fake.put('coordinator', PUBLISHER_CONFIG, published + ' ')
+            self.refuses(message='differs from its pinned digest')
+            self.fake.put('coordinator', PUBLISHER_CONFIG, published)
+        with self.subTest('standalone controller running beside the publisher'):
+            self.fake.systemctl('coordinator', 'restart', CONTROLLER)
+            self.refuses(message='beside ' + PUBLISHER)
+            self.fake.systemctl('coordinator', 'stop', CONTROLLER)
+        with self.subTest('both owners in the inventory'):
+            self.write_inventory(lambda d: d['services']['transparent-history']['roles'].update(controller=[
+                {'host': 'coordinator', 'unit': CONTROLLER, 'vars': {'listen': HISTORY_LISTEN}}]))
+            self.refuses()
+        with self.subTest('owner on another host'):
+            self.write_inventory(lambda d: d['services']['publisher']['roles']['server'][0].update(host='v12'))
+            self.refuses()
+        self.write_inventory()
+        with self.subTest('registry without the publisher'):
+            self.descriptors = ('--descriptors', str(ROOT / 'tools/transparent/deploy/services.toml'))
+            self.refuses()
+        self.assertEqual(set(self.running().values()), {sha256(OLD)})
+        self.publisher_untouched()
+
 
 
 class UnifiedDisplayUpgrade(UnifiedOwner, Harness):
