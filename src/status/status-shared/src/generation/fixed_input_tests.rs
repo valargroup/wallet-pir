@@ -20,8 +20,7 @@ fn stream(label: &[u8], len: usize) -> Vec<u8> {
 #[test]
 fn fixed_inputs_pin_public_material_and_answer() {
     let snapshot = fixture::snapshot(32, false).unwrap();
-    let (generation, _) =
-        Generation::prepare(&snapshot, 1, 1, 1, None, MatvecBackend::Cpu).unwrap();
+    let (generation, _) = Generation::prepare(&snapshot, 1, 1, 1, None).unwrap();
     let p = profile();
     let q = p.rlwe().q;
     let keys_len = ipir_sp::serialize::serialized_packing_keys_len(p.rlwe());

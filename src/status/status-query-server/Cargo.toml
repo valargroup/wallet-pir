@@ -17,7 +17,6 @@ required-features = ["native-reinspiring"]
 qualification-tests = ["status-shared/qualification-tests"]
 default = []
 native-reinspiring = ["status-shared/native-reinspiring", "ipir-sp/native-reinspiring"]
-cuda = ["status-shared/cuda"]
 
 client = ["status-shared/client"]
 [dependencies]

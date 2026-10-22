@@ -38,8 +38,6 @@ pub struct RoleConfig {
     #[serde(default)]
     pub publisher_ca: Option<PathBuf>,
     pub worker_origin: String,
-    #[serde(default)]
-    pub cuda: bool,
 }
 
 impl RoleConfig {
@@ -136,7 +134,23 @@ mod tests {
             publisher: "https://publisher.example".into(),
             publisher_ca: None,
             worker_origin: "http://127.0.0.1:8381".into(),
-            cuda: false,
+        }
+    }
+
+    #[test]
+    fn role_configuration_rejects_removed_cuda_selection() {
+        for cuda in [false, true] {
+            let error = serde_json::from_value::<RoleConfig>(serde_json::json!({
+                "role": "worker",
+                "network_hex": "01".repeat(32),
+                "state_dir": "/tmp/status-worker",
+                "listen": "127.0.0.1:8381",
+                "publisher": "https://publisher.example",
+                "worker_origin": "",
+                "cuda": cuda,
+            }))
+            .unwrap_err();
+            assert!(error.to_string().contains("unknown field `cuda`"));
         }
     }
 

@@ -1,6 +1,8 @@
 # Status PIR
 
-Status PIR serves note-status records. Its Cargo packages live under
+Status PIR serves note-status records using CPU evaluation only. CUDA support
+is limited to Enhance; enabling the query host's `cuda` feature does not change
+Status evaluation. Status role configuration has no `cuda` field. Its Cargo packages live under
 `src/status/`; operations under `tools/status/`, scripts under `tools/status/` and
 retained evidence alongside Enhance under [Enhance evidence](../../evidence/enhance/README.md).
 

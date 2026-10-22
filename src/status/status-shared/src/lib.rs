@@ -7,7 +7,6 @@
 //! HTTP, listeners, controllers, peer coordination and admission stay in
 //! `status-query-server`; chain observation and publication stay in
 //! `status-publisher`.
-mod backend;
 pub mod fixture;
 mod generation;
 pub mod index;

@@ -10,7 +10,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use ipir_sp::server::MatvecBackend;
 use pir_pipeline::Input;
 use pir_publication::{
     conditional_token, AuthorityCheckRefusal, AuthorityCheckResponse, AuthorityTransition,
@@ -171,7 +170,6 @@ impl Publisher {
                             epoch,
                             observed.observed_ms,
                             previous.as_ref(),
-                            MatvecBackend::Cpu,
                         )?;
                         Ok(g)
                     })

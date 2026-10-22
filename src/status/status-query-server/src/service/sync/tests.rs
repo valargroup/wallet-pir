@@ -86,7 +86,6 @@ fn role_config(role: Role, state_dir: std::path::PathBuf, tls: &tls::Tls) -> Rol
         publisher: tls.origin.clone(),
         publisher_ca: Some(tls.certificate.clone()),
         worker_origin: String::new(),
-        cuda: false,
     }
 }
 fn saved_floor(service: &Service) -> serde_json::Value {
@@ -664,22 +663,14 @@ async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (b, _) = Generation::prepare(
-        &fixture::snapshot(32, false).unwrap(),
-        4,
-        2,
-        now_ms(),
-        None,
-        MatvecBackend::Cpu,
-    )
-    .unwrap();
+    let (b, _) =
+        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
     let (c, _) = Generation::prepare(
         &fixture::snapshot(32, true).unwrap(),
         5,
         2,
         now_ms(),
         Some(&b),
-        MatvecBackend::Cpu,
     )
     .unwrap();
     let (mut b_inventory, mut c_inventory) = (export(&source, &b), export(&source, &c));
@@ -794,15 +785,8 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) = Generation::prepare(
-        &fixture::snapshot(32, false).unwrap(),
-        4,
-        2,
-        now_ms(),
-        None,
-        MatvecBackend::Cpu,
-    )
-    .unwrap();
+    let (generation, _) =
+        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
     let mut inventory = export(&source, &generation);
     let publish = |inventory: &mut Inventory, sequence: u64| {
         let object = publish_inventory(&source, inventory);
@@ -899,15 +883,8 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) = Generation::prepare(
-        &fixture::snapshot(32, false).unwrap(),
-        4,
-        2,
-        now_ms(),
-        None,
-        MatvecBackend::Cpu,
-    )
-    .unwrap();
+    let (generation, _) =
+        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {
@@ -979,15 +956,8 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) = Generation::prepare(
-        &fixture::snapshot(32, false).unwrap(),
-        4,
-        2,
-        now_ms(),
-        None,
-        MatvecBackend::Cpu,
-    )
-    .unwrap();
+    let (generation, _) =
+        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {

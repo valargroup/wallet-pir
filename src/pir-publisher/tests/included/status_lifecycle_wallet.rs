@@ -118,7 +118,6 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         publisher: tls.origin.clone(),
         publisher_ca: Some(tls.certificate.clone()),
         worker_origin: worker_origin.clone(),
-        cuda: false,
     };
     let worker = config(
         Role::Worker,

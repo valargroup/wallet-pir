@@ -1,7 +1,6 @@
 //! Independent wallet client over real Status router and worker listeners.
 use super::Service;
 use crate::{distributed::Role, Controller};
-use ipir_sp::server::MatvecBackend;
 use status_shared::fixture;
 use status_shared::{
     now_ms,
@@ -27,8 +26,7 @@ async fn activated(role: Role, dir: &FsPath, worker_origin: String, g: Generatio
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn independent_status_wallet_decrypts_http_and_rejects_invalid_envelopes() {
     let snapshot = fixture::snapshot(32, false).unwrap();
-    let (generation, _) =
-        Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
+    let (generation, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None).unwrap();
     // Preparation may outlast the observation window on a busy host. This
     // immutable synthetic snapshot is still verified immediately before publish.
     let generation = generation.reobserved(now_ms());

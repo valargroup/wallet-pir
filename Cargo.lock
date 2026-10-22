@@ -3344,7 +3344,6 @@ dependencies = [
  "inspiring",
  "ipir-sp",
  "memmap2",
- "pir-cuda",
  "pir-publication",
  "pir-runtime",
  "pir-serving",

@@ -52,7 +52,6 @@ impl Generation {
         inventory: &Inventory,
         worker: bool,
         object: impl Fn(&ObjectReference) -> std::io::Result<std::path::PathBuf>,
-        backend: MatvecBackend,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
         inventory.validate_material()?;
@@ -93,7 +92,14 @@ impl Generation {
                 }
                 let mut reader = bytes.as_slice();
                 let db = build_from_le_u16(&mut reader, bytes.len() / 2, |values| {
-                    crate::backend::server(&local, values, backend).map(PreparedDatabase::new)
+                    IPIRServer::try_from_profile_with_backend(
+                        &local,
+                        values,
+                        false,
+                        true,
+                        ipir_sp::server::MatvecBackend::Cpu,
+                    )
+                    .map(PreparedDatabase::new)
                 })??;
                 generation.units.push(Arc::new(Unit {
                     bytes_digest: digest,

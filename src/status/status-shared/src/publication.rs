@@ -293,7 +293,6 @@ mod tests {
             &inventory,
             true,
             |_| panic!("malformed geometry must not reach the filesystem"),
-            ipir_sp::server::MatvecBackend::Cpu,
             None,
         );
         assert!(result.is_err());

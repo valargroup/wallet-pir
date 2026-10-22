@@ -1,6 +1,5 @@
 //! The native Status profile, checked with the in-repo client over real server material.
 #![cfg(feature = "native-reinspiring")]
-use ipir_sp::server::MatvecBackend;
 use status_shared::protocol as server;
 use status_shared::{fixture, now_ms, Generation};
 
@@ -10,13 +9,8 @@ fn native_client_decodes_real_server_two_mask_material() {
     let entries = std::env::var("STATUS_TEST_ENTRIES")
         .map(|n| n.parse::<usize>().unwrap())
         .unwrap_or(32);
-    let backend = if std::env::var_os("STATUS_TEST_CUDA").is_some() {
-        MatvecBackend::Cuda { device: 0 }
-    } else {
-        MatvecBackend::Cpu
-    };
     let snapshot = fixture::snapshot(entries, false).unwrap();
-    let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, backend).unwrap();
+    let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None).unwrap();
     assert_eq!(
         g.public().len(),
         zakura_pir_query_server::native::public_len(server::COLS)
@@ -61,7 +55,7 @@ fn native_client_decodes_real_server_two_mask_material() {
 fn native_server_answers_dithered_queries_in_the_same_envelope() {
     use zakura_pir_client::native as n;
     let snapshot = fixture::snapshot(32, false).unwrap();
-    let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None, MatvecBackend::Cpu).unwrap();
+    let (g, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None).unwrap();
     let setup = server::native_packing_setup(&g.manifest().network, &g.manifest().salt);
     let masks = server::native_query_masks(&g.manifest().network, &g.manifest().salt);
     let mut header = server::QUERY_MAGIC.to_vec();

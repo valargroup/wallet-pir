@@ -36,9 +36,8 @@ NATIVE = ['enhance-shared/native-reinspiring', 'enhance-shared/client',
           'native-certificate/native-reinspiring', 'pir-query-server/status',
           'pir-query-server/native-reinspiring']
 CUDA = ['enhance-shared/cuda', 'enhance-shared/native-reinspiring',
-        'enhance-query-server/cuda', 'enhance-query-server/native-reinspiring', 'status-shared/cuda',
-        'status-query-server/cuda',
-        'status-publisher/cuda', 'pir-query-server/enhance', 'pir-query-server/native-reinspiring',
+        'enhance-query-server/cuda', 'enhance-query-server/native-reinspiring',
+        'pir-query-server/enhance', 'pir-query-server/native-reinspiring',
         'pir-query-server/cuda', 'enhance-pir-load-test/native-reinspiring']
 TRANSPARENT = ['pir-publisher/rocksdb-reader', 'transparent-tools/test-support',
                'transparent-tools/compact-export', 'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',

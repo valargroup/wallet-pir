@@ -10,13 +10,11 @@ publish = false
 qualification-tests = []
 default = []
 native-reinspiring = ["pir-serving/native-reinspiring", "dep:zakura-pir-query-server", "dep:reinspiring", "ipir-sp/native-reinspiring"]
-cuda = ["dep:pir-cuda", "pir-cuda/cuda"]
 # Wallet-side query preparation and decoding for diagnostics and wire tests.
 client = ["dep:zakura-pir-client"]
 
 [dependencies]
 pir-publication = { path = "../../shared/pir-publication" }
-pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 # Profile modulus and native hint helpers are shared with Enhance serving.
 pir-serving = { path = "../../shared/pir-serving" }
 pir-runtime = { path = "../../shared/pir-runtime" }

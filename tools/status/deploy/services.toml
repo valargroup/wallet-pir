@@ -28,7 +28,7 @@ mode = "role"
 template = "status-worker.role.service"
 renderer = "tools.status.lib.roles:status_worker"
 optional = true
-# Settings: network_hex, listen, publisher, state_dir, cuda?, limits?.
+# Settings: network_hex, listen, publisher, state_dir, limits?.
 # Identity carries binary_sha256; serving readiness requires autonomous HTTPS synchronization.
 health = "http://{listen}/control/identity"
 ready_timeout = 180

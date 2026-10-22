@@ -23,7 +23,6 @@ class CudaSelectionTests(unittest.TestCase):
     def test_implementation_and_contract_changes_select_cuda(self):
         for path in ('src/shared/pir-cuda/src/lib.rs',
                      'src/enhance/enhance-shared/src/matvec.rs',
-                     'src/status/status-shared/src/backend.rs',
                      'src/shared/pir-runtime/src/evaluation.rs',
                      'src/pir-query-server/tests/operator.rs',
                      'tools/pir-e2e-tests/tests/http.rs',
@@ -35,6 +34,9 @@ class CudaSelectionTests(unittest.TestCase):
     def test_unrelated_products_docs_helpers_and_ci_do_not_select_cuda(self):
         paths = ['docs/enhance/cuda_workers.md', 'src/transparent/transparent-query-server/src/lib.rs',
                  'src/enhance/enhance-query-server/src/router.rs',
+                 'src/status/status-shared/src/generation.rs',
+                 'src/status/status-query-server/src/distributed.rs',
+                 'src/status/status-query-server/tests/status_wallet.rs',
                  'tools/ci/fast.py', 'tools/tests/test_iteration.py',
                  '.github/workflows/deploy-transparent.yml']
         self.assertEqual(self.select(paths), {'cuda': False, 'reasons': []})
@@ -67,7 +69,7 @@ checksum = "first"
         self.assertTrue(self.select(['Cargo.toml'], before, after)['cuda'])
 
     def test_ambiguous_missing_or_deleted_inputs_require_cuda(self):
-        for path in ['Cargo.lock', 'src/status/status-query-server/Cargo.toml']:
+        for path in ['Cargo.lock', 'src/enhance/enhance-query-server/Cargo.toml']:
             self.assertTrue(self.select([path])['cuda'])
         lock = {'package': [{'name': 'simplepir-kernel', 'version': '1', 'dependencies': ['helper']},
                             {'name': 'helper', 'version': '1'}, {'name': 'helper', 'version': '2'}]}

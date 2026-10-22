@@ -12,7 +12,6 @@ use crate::{
     distributed::{Role, RoleConfig},
     Controller,
 };
-use ipir_sp::server::MatvecBackend;
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
 use pir_sync_manager::{
     publication_lifecycle::{
@@ -55,14 +54,8 @@ pub(super) fn synchronization(
         },
     )?;
     let cache = ObjectCache::open(service.state_dir.join("objects"))?;
-    let backend = if config.cuda {
-        MatvecBackend::Cuda { device: 0 }
-    } else {
-        MatvecBackend::Cpu
-    };
     let adapter = StatusPublication {
         service,
-        backend,
         loaded_inventory: None,
     };
     PublicationLifecycle::new(adapter, source, floor, cache)
@@ -70,7 +63,6 @@ pub(super) fn synchronization(
 
 pub(super) struct StatusPublication {
     service: Service,
-    backend: MatvecBackend,
     /// The inventory of the last view this process loaded and committed. Only
     /// its already-verified material may be re-identified without reloading.
     loaded_inventory: Option<Inventory>,
@@ -261,13 +253,11 @@ impl PublicationAdapter for StatusPublication {
                 let cache = cache.clone();
                 let loading = inventory.clone();
                 let worker = self.service.role == Role::Worker;
-                let backend = self.backend;
                 tokio::task::spawn_blocking(move || {
                     Generation::load_prepared(
                         &loading,
                         worker,
                         |object| cache.object_path(object),
-                        backend,
                         previous.as_deref(),
                     )
                 })

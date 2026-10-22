@@ -16,7 +16,6 @@ default = []
 # Standalone diagnostic commands use wallet helpers; the embedded publisher does not.
 cli = ["status-shared/client"]
 native-reinspiring = ["status-shared/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
-cuda = ["status-shared/cuda"]
 # Chain fixtures and the wallet client for host regressions. Production builds leave it off.
 fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 

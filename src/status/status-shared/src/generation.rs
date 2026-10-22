@@ -5,10 +5,7 @@ use super::{index, profile};
 use crate::protocol::*;
 #[cfg(not(feature = "native-reinspiring"))]
 use ipir_sp::IPIRClient;
-use ipir_sp::{
-    server::{CrsBlock, MatvecBackend},
-    IPIRServer, ProductionSimplePirParams, SimplePirProfile,
-};
+use ipir_sp::{server::CrsBlock, IPIRServer, ProductionSimplePirParams, SimplePirProfile};
 use pir_runtime::evaluation::{build_from_le_u16, PreparedDatabase};
 #[cfg(not(feature = "native-reinspiring"))]
 use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
@@ -225,16 +222,9 @@ impl Generation {
         recovery_epoch: u64,
         observed_ms: u64,
         previous: Option<&Self>,
-        backend: MatvecBackend,
     ) -> Result<(Self, Preparation), Error> {
-        let (mut worker, mut stats) = Self::prepare_worker(
-            snapshot,
-            generation,
-            recovery_epoch,
-            observed_ms,
-            previous,
-            backend,
-        )?;
+        let (mut worker, mut stats) =
+            Self::prepare_worker(snapshot, generation, recovery_epoch, observed_ms, previous)?;
         let started = Instant::now();
         let router = Self::prepare_router_with_previous(
             worker.manifest.clone(),
@@ -298,7 +288,7 @@ impl Generation {
         p.ypir().db_cols.div_ceil(p.rlwe().d) * p.rlwe().d * p.rlwe().d * 8
     }
 
-    /// Router material owns no database or GPU allocations.
+    /// Router material owns no database allocations.
     pub fn prepare_router(manifest: Manifest, bytes: &[u8]) -> Result<Self, Error> {
         Self::prepare_router_with_previous(manifest, bytes, None)
     }
@@ -408,7 +398,6 @@ impl Generation {
         recovery_epoch: u64,
         observed_ms: u64,
         previous: Option<&Self>,
-        backend: MatvecBackend,
     ) -> Result<(Self, Preparation), Error> {
         let start = Instant::now();
         let p = profile();
@@ -438,7 +427,14 @@ impl Generation {
             // second database copy and preserves a kernel-construction error.
             let mut reader = bytes;
             let db = build_from_le_u16(&mut reader, bytes.len() / 2, |values| {
-                crate::backend::server(&local, values, backend).map(PreparedDatabase::new)
+                IPIRServer::try_from_profile_with_backend(
+                    &local,
+                    values,
+                    false,
+                    true,
+                    ipir_sp::server::MatvecBackend::Cpu,
+                )
+                .map(PreparedDatabase::new)
             })
             .map_err(|_| Error::Unavailable)?
             .map_err(|_| Error::Unavailable)?;

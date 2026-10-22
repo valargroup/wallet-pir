@@ -1,6 +1,7 @@
 # Status PIR backend
 
 For the current private live rollout, see [distributed Status qualification](status_distributed.md).
+Status evaluation is CPU-only. The GPU measurements below are historical.
 The sections below retain the isolated fixture baseline. Public Status remains disabled.
 
 This is an isolated backend experiment for the [status architecture](architecture_status.md).
@@ -57,14 +58,13 @@ cargo test --locked -p status-query-server --lib index::tests
 cargo test --locked --profile release-fast -p pir-query-server \
   --features status,native-reinspiring --lib status::
 cargo build --locked --profile release-fast -p pir-publisher --features status,native-reinspiring
-cargo build --locked --profile release-fast -p pir-query-server --features status,cuda
+cargo build --locked --profile release-fast -p pir-query-server --features status,native-reinspiring
 cargo test --locked --profile release-fast -p status-publisher \
   --features fixtures,native-reinspiring --lib \
   shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
 ```
 
-CUDA selection fails explicitly without a working GPU/runtime. CPU and native
-profile checks do not establish CUDA qualification. Build with the intended CPU
+Status has no CUDA feature or runtime backend selection. Build with the intended CPU
 flags; the CPU Status host uses `x86-64-v3`.
 
 The Status lifecycle runs the actual publisher routes and worker/router consumers

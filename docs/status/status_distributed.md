@@ -19,7 +19,7 @@ flowchart LR
 The publisher retains the existing rolling source window, coverage rules, index,
 salt, cryptographic profile and durable generation/recovery identity. It prepares
 hints and packing material once on CPU, independently of consumer availability.
-Workers load database coefficients into their selected CPU/CUDA backend; routers
+Workers load database coefficients into the CPU backend; routers
 map verified prepared packing material. Missing or incompatible material refuses
 loading; neither role falls back to computing hints or packing matrices.
 
@@ -139,6 +139,5 @@ edge; the router's worker connection remains private encrypted evaluation.
 
 The external-worker installation rehearsal proves process identity and restart
 only when no real HTTPS publication is configured. It reports encrypted answers
-as unexecuted. Real TLS lifecycle checks, unchanged-wallet compatibility, CUDA
-qualification where used and the [six-hour live-source gate](status_qualification.md)
+as unexecuted. Real TLS lifecycle checks, unchanged-wallet compatibility and the [six-hour live-source gate](status_qualification.md)
 remain distinct evidence requirements.

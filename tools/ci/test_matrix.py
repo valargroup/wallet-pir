@@ -40,8 +40,8 @@ def variants(groups):
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
         'reference': dict(family='enhance', packages=['enhance-shared', 'enhance-query-server', 'status-shared', 'status-query-server', 'pir-e2e-tests'],
                           features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-shared', 'enhance-query-server', 'status-shared', 'status-query-server', 'pir-e2e-tests'])),
-        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-shared', 'enhance-query-server', 'status-shared', 'status-query-server',
-                                             'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
+        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-shared', 'enhance-query-server',
+                                             'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=qualification_features(groups['receiver'])),
     }
 
@@ -357,8 +357,7 @@ def run_baseline(family, plan, output, include_cuda=False):
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance' and include_cuda:
-        run(['cargo', 'check', '--locked', '-p', 'enhance-shared', '-p', 'enhance-query-server', '-p', 'status-query-server',
-             '-p', 'status-publisher', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
+        run(['cargo', 'check', '--locked', '-p', 'enhance-shared', '-p', 'enhance-query-server', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
              '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family, include_cuda):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,
