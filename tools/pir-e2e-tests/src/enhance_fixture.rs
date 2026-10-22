@@ -1,6 +1,8 @@
 //! Isolated current ownership boundary: local publisher, real HTTPS, and
 //! independently loaded serving roles. No publisher-to-consumer control exists.
-use enhance_publisher::{publisher::Publisher, store::RecordJournal, zakura::ZakuraClient};
+use enhance_publisher::{
+    chain_source::ZakuraClient, journal::RecordJournal, publisher::EnhancePublisher,
+};
 use enhance_query_server::{
     ingress_sync,
     protocol::Manifest,
@@ -38,7 +40,7 @@ impl Drop for Listening {
     }
 }
 pub fn distribution_router(
-    distribution: &enhance_publisher::distribution::Distribution,
+    distribution: &enhance_publisher::distribution::PublicationDistribution,
 ) -> axum::Router {
     distribution.router().route(
         pir_service_discovery::PATH,
@@ -158,7 +160,7 @@ pub async fn tls(root: &Path, upstream: &str) -> Tls {
 
 pub struct System {
     pub root: tempfile::TempDir,
-    pub publisher: Publisher,
+    pub publisher: EnhancePublisher,
     pub journal: RecordJournal,
     pub manifest: Manifest,
     pub origin: String,
@@ -224,7 +226,7 @@ impl System {
         .await;
         let cookie = root.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let publisher = Publisher::open(
+        let publisher = EnhancePublisher::open(
             &root.path().join("publisher"),
             ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
         )

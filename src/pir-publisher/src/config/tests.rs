@@ -64,7 +64,7 @@ fn embedded_status_setting_is_rejected() {
     .unwrap();
     config["enhance"]["settings"]["status_config"] = serde_json::Value::Null;
     assert!(
-        serde_json::from_value::<enhance_publisher::service::Config>(
+        serde_json::from_value::<enhance_publisher::service::EnhancePublisherConfig>(
             config["enhance"]["settings"].clone()
         )
         .is_err()

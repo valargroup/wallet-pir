@@ -1,5 +1,5 @@
 //! Independent publication source shared by TLS regression targets.
-use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
+use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::Inventory,
@@ -7,7 +7,7 @@ use enhance_query_server::{
 use pir_e2e_tests::enhance_fixture::{record, serve, tls, Listening, Tls};
 pub(crate) struct Published {
     pub(crate) scratch: tempfile::TempDir,
-    pub(crate) distribution: Distribution,
+    pub(crate) distribution: PublicationDistribution,
     pub(crate) inventory: Inventory,
     pub(crate) manifest: Manifest,
     pub(crate) transport: Tls,
@@ -20,7 +20,7 @@ impl Published {
     }
     pub(crate) async fn with_records(count: u64) -> Self {
         Self::prepared_by(move |root| {
-            enhance_publisher::publication::prepare(
+            enhance_publisher::publication::prepare_publication(
                 root,
                 Lifecycle::default()
                     .coverage(count, Geometry::default())
@@ -35,7 +35,7 @@ impl Published {
     /// Publishes the verified preparation that `prepare` produces under the publication
     /// root, on a blocking thread.
     pub(crate) async fn prepared_by(
-        prepare: impl FnOnce(&std::path::Path) -> enhance_publisher::publication::Prepared
+        prepare: impl FnOnce(&std::path::Path) -> enhance_publisher::publication::PreparedPublication
             + Send
             + 'static,
     ) -> Self {
@@ -46,7 +46,7 @@ impl Published {
         }))).await;
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let distribution = Distribution::open(
+        let distribution = PublicationDistribution::open(
             &root,
             ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
         )

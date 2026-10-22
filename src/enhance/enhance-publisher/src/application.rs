@@ -1,19 +1,21 @@
 //! Canonical acquisition and local preparation run independently. A bounded
 //! latest-work slot coalesces source progress while one publication prepares.
 use crate::{
+    chain_source::{Prevouts, ZakuraClient},
     ingest::EnhanceJournal,
-    publisher::{Publisher, Work},
-    zakura::{Prevouts, ZakuraClient},
+    publisher::{EnhancePublisher, PublicationWork},
 };
 use pir_pipeline::{FailurePolicy, Input};
 use std::time::Duration;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub struct Source {
+/// Canonical node access and the shared spent-output cache used during acquisition.
+pub struct CanonicalSource {
     pub rpc: ZakuraClient,
     pub prevouts: Prevouts,
 }
-pub struct Config {
+/// Polling cadence for canonical chain acquisition.
+pub struct AcquisitionConfig {
     pub poll: Duration,
 }
 
@@ -21,9 +23,9 @@ pub struct Config {
 /// preparation. A prepared token can only publish under its original fence.
 pub async fn collect(
     journal: &mut EnhanceJournal,
-    publisher: &Publisher,
-    source: &Source,
-) -> Result<Option<Work>> {
+    publisher: &EnhancePublisher,
+    source: &CanonicalSource,
+) -> Result<Option<PublicationWork>> {
     let tip = source.rpc.tip_height().await?;
     let mut ancestor = None;
     for block in journal.records().blocks().iter().rev() {
@@ -40,25 +42,29 @@ pub async fn collect(
         .committed_height()
         .map_or(enhance_query_server::ACTIVATION_HEIGHT, |h| h + 1);
     for height in next..=tip {
-        journal
-            .append_block(&crate::zakura::block(&source.rpc, height, &source.prevouts).await?)?;
+        journal.append_block(
+            &crate::chain_source::block(&source.rpc, height, &source.prevouts).await?,
+        )?;
     }
     publisher.work(journal.records()).map_err(Into::into)
 }
 
+/// Supervise acquisition, HTTP, and one coalescing publication task until
+/// shutdown. Journal commits continue during preparation; in-flight publication
+/// finishes its owner operation before the publication task exits.
 pub async fn run_until(
-    config: Config,
-    publisher: Publisher,
+    config: AcquisitionConfig,
+    publisher: EnhancePublisher,
     journal: EnhanceJournal,
-    source: Source,
+    source: CanonicalSource,
     http: tokio::task::JoinHandle<std::io::Result<()>>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<()> {
-    let (latest, pending) = tokio::sync::watch::channel::<Option<Work>>(None);
+    let (latest, pending) = tokio::sync::watch::channel::<Option<PublicationWork>>(None);
     let preparing = publisher.clone();
     let stop = shutdown.clone();
     let publication = tokio::spawn(async move {
-        pir_pipeline::publisher::PublisherService::new(Publication {
+        pir_pipeline::publisher::PublisherService::new(PublicationWorkflow {
             publisher: preparing,
             pending,
             closed: false,
@@ -67,7 +73,7 @@ pub async fn run_until(
         .await
     });
     let result = pir_pipeline::supervise(
-        &mut Acquisition {
+        &mut CanonicalAcquisition {
             publisher,
             journal,
             source,
@@ -84,15 +90,15 @@ pub async fn run_until(
     publication.await??;
     result
 }
-struct Acquisition<'a> {
-    publisher: Publisher,
+struct CanonicalAcquisition<'a> {
+    publisher: EnhancePublisher,
     journal: EnhanceJournal,
-    source: Source,
-    latest: tokio::sync::watch::Sender<Option<Work>>,
+    source: CanonicalSource,
+    latest: tokio::sync::watch::Sender<Option<PublicationWork>>,
     http: tokio::task::JoinHandle<std::io::Result<()>>,
     publication: &'a tokio::task::JoinHandle<Result<()>>,
 }
-impl pir_pipeline::Task for Acquisition<'_> {
+impl pir_pipeline::Task for CanonicalAcquisition<'_> {
     type Error = Box<dyn std::error::Error + Send + Sync>;
     async fn run(&mut self) -> Result<()> {
         if self.http.is_finished() || self.publication.is_finished() {
@@ -125,12 +131,12 @@ impl pir_pipeline::Task for Acquisition<'_> {
     }
 }
 
-struct Publication {
-    publisher: Publisher,
-    pending: tokio::sync::watch::Receiver<Option<Work>>,
+struct PublicationWorkflow {
+    publisher: EnhancePublisher,
+    pending: tokio::sync::watch::Receiver<Option<PublicationWork>>,
     closed: bool,
 }
-impl pir_pipeline::publisher::Workflow for Publication {
+impl pir_pipeline::publisher::Workflow for PublicationWorkflow {
     type Error = Box<dyn std::error::Error + Send + Sync>;
     async fn step(&mut self) -> Result<pir_pipeline::publisher::Control> {
         use pir_pipeline::publisher::{Control, PublicationPass};

@@ -1,14 +1,14 @@
 //! Append finalized Ironwood enhancement records to the active journal.
 
-use crate::store::{RecordJournal, StoreError};
+use crate::chain_source::CanonicalBlock;
+use crate::journal::{JournalError, RecordJournal};
 use crate::types::{DatabaseId, ENHANCE_LAYOUT};
-use crate::zakura::CanonicalBlock;
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IngestError {
     #[error("journal error: {0}")]
-    Store(#[from] StoreError),
+    Store(#[from] JournalError),
     #[error("ingest invariant violated: {0}")]
     Invariant(String),
 }

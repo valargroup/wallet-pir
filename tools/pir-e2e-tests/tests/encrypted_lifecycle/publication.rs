@@ -1,7 +1,7 @@
 //! The real publisher distribution router, node RPC and TLS transport.
 use super::encrypted::{record, serve};
 use crate::publication_source::Published;
-use enhance_publisher::{distribution::Distribution, zakura::ZakuraClient};
+use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, PREFIX},
@@ -819,7 +819,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         }))).await;
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
+        let distribution = PublicationDistribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let preparing = root.clone();
@@ -982,7 +982,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
-        let distribution = Distribution::open(&root, rpc.clone()).unwrap();
+        let distribution = PublicationDistribution::open(&root, rpc.clone()).unwrap();
         let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
@@ -1069,7 +1069,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(distribution.publish(manifest, inventory).await.is_err());
         upstream.stop().await;
         drop(distribution);
-        let reopened = Distribution::open(&root, rpc).unwrap();
+        let reopened = PublicationDistribution::open(&root, rpc).unwrap();
         let listener = serve(reopened.router()).await;
         let restored: AuthorityResponse = reqwest::get(format!("{}{PREFIX}current", listener.url)).await.unwrap().json().await.unwrap();
         assert!(!restored.current.eligible);
@@ -1099,7 +1099,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         ))).await;
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let distribution = Distribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
+        let distribution = PublicationDistribution::open(&root, ZakuraClient::from_cookie_file(&node.url, cookie).unwrap()).unwrap();
         let prepare_root = root.clone();
         let initial = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap().inventory().clone();
         let orphan = hex::encode(Sha256::digest(b"interrupted candidate"));
@@ -1137,7 +1137,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
         pinned.read_to_string(&mut bytes).unwrap();
         assert_eq!(bytes, "interrupted candidate", "already-open streams survive collection");
         assert!(root.join("objects/operator-note").exists());
-        enhance_publisher::publication::verify(&root, initial).unwrap();
+        enhance_publisher::publication::verify_publication(&root, initial).unwrap();
         assert!(root.join("current.json").exists());
         assert!(root.join("distribution.lock").exists());
         assert!(root.join("prepare.lock").exists());
@@ -1219,7 +1219,7 @@ fn shared_publication(count: u64) -> std::path::PathBuf {
     if !prepared.exists() {
         let started = std::time::Instant::now();
         let temporary = tempfile::tempdir_in(&cache).unwrap();
-        enhance_publisher::publication::prepare(
+        enhance_publisher::publication::prepare_publication(
             temporary.path(),
             coverage,
             &[(0, "0".into())].into(),
@@ -1240,12 +1240,15 @@ fn shared_publication(count: u64) -> std::path::PathBuf {
 /// shared preparation, so the publisher takes its retained-domain path: it
 /// reinstalls the rows, checks the retained domain identity and hashes every
 /// object.
-fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publication::Prepared {
+fn prepare_publication(
+    root: &Path,
+    count: u64,
+) -> enhance_publisher::publication::PreparedPublication {
     let shared = shared_publication(count);
     for directory in ["objects", "domains"] {
         copy_tree(&shared.join(directory), &root.join(directory));
     }
-    enhance_publisher::publication::prepare(
+    enhance_publisher::publication::prepare_publication(
         root,
         fixture_coverage(count),
         &[(0, "0".into())].into(),
@@ -1275,7 +1278,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         let cookie = scratch.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file(&node.url, cookie).unwrap();
-        let distribution = Distribution::open(&root, rpc.clone()).unwrap();
+        let distribution = PublicationDistribution::open(&root, rpc.clone()).unwrap();
         let upstream = serve(pir_e2e_tests::enhance_fixture::distribution_router(&distribution)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let current_url = format!("{}{PREFIX}current", transport.origin);
@@ -1300,7 +1303,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         assert_eq!(withdrawn.current.revoked, [session].into());
         upstream.stop().await;
         drop(distribution);
-        let reopened = Distribution::open(&root, rpc).unwrap();
+        let reopened = PublicationDistribution::open(&root, rpc).unwrap();
         let listener = serve(reopened.router()).await;
         let restored: AuthorityResponse = reqwest::get(format!("{}{PREFIX}current", listener.url)).await.unwrap().json().await.unwrap();
         assert!(!restored.current.eligible);
