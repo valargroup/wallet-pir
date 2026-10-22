@@ -13,8 +13,13 @@ The publisher host lives at `src/pir-publisher`. Each product publisher lives
 beside that product's query server: `src/enhance/enhance-publisher`,
 `src/status/status-publisher`, `src/transparent/transparent-publisher`, and
 `src/receiver/receiver-indexer`. Those packages keep their existing names.
-`src/shared/pir-pipeline` is the shared lifecycle library, and `src/shared`
-otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
+`src/shared/pir-pipeline` is the shared lifecycle library: it also owns the
+publication engine, the transport-free chain follower and the live and backfill
+ingestion schedulers, so products and fast tests use them without the host or a
+node stack. `src/shared/pir-node-rpc` is the bounded node JSON-RPC transport
+(credentials, deadlines, response bounds, batches) with no chain decoding;
+`zakura-server-chain` builds its `NodeClient` on it and the root follower uses it
+alone. `src/shared` otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
 indexer's SQLite stores. History and transaction details remain separate modes
 of `transparent-publisher`. Enhance, Status, and Transparent wallet-client and
 chain-fixture regressions run with the host, not as a second copy of that stack
@@ -90,11 +95,13 @@ must use continuous serving, and Enhance's embedded Status setting is replaced
 by the separate Status section. No configuration reload is performed.
 
 The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
-1000) names the one node every chain-following product reads. Enhance requires
-it and no longer accepts `zakura_rpc_url`, `zakura_cookie` or `poll_seconds`.
-Status, Transparent History, Transparent Filters and transaction details still
-carry their own source settings until they move to the root follower. Receiver
-keeps its own multi-node settings and never uses the root section.
+1000) names the one node every chain-following product reads. Enhance, Status,
+Transparent History and Transparent Filters require it and no longer accept
+their own node endpoint, cookie or polling settings (`zakura_rpc_url`,
+`zakura_cookie`, `poll_seconds`, `rpc_url`, `rpc_cookie`, `cookie`). Transaction
+details still carry their own source settings and follow the node themselves
+until they move to the root follower. Receiver keeps its own multi-node settings
+and never uses the root section.
 
 ### Root chain following
 
@@ -435,8 +442,10 @@ The two Transparent features select separate configuration sections and owners.
 Long-running services use `pir-publisher --config FILE`. Existing history and
 display settings live under `transparent_history.settings` and
 `transaction_details.settings`. The optional `transparent_filters` section,
-compiled by `transparent-history`, runs the existing filter ingestion and HTTP
-service with its own state and listener. Use the packaged
+compiled by `transparent-history`, runs filter ingestion from the root chain
+follower and the HTTP service with its own state and listener. It extends the
+existing filter store with the same transparent extraction History uses and
+needs no historical event journal. Use the packaged
 `tools/transparent/deploy/transparent-filters.example.json` when installing the
 filter unit; install its reviewed configuration as
 `/etc/wallet-pir/transparent-filters.json` before starting it.
