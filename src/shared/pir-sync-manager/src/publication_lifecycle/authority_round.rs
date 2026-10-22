@@ -54,10 +54,11 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             .filter_map(|(identity, authoritative)| (!authoritative).then_some(identity))
             .collect();
         if !refuted.is_empty() {
-            self.adapter.fence_serving().await;
-            if self.floor.invalidate(refuted) {
-                self.persist_floor().await?;
-            }
+            self.fence_serving().await;
+            self.floor.invalidate(refuted);
+        }
+        if !self.floor.is_durable() {
+            self.persist_floor().await?;
         }
         Ok(())
     }

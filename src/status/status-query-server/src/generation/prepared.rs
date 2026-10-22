@@ -51,14 +51,14 @@ impl Generation {
     pub fn load_prepared(
         inventory: &Inventory,
         worker: bool,
-        object: impl Fn(&ObjectReference) -> std::path::PathBuf,
+        object: impl Fn(&ObjectReference) -> std::io::Result<std::path::PathBuf>,
         backend: MatvecBackend,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
         inventory.validate_material()?;
         let read = |o: &ObjectReference| -> Result<Vec<u8>, Failure> {
             let mut bytes = Vec::new();
-            File::open(object(o))?
+            File::open(object(o)?)?
                 .take(o.bytes + 1)
                 .read_to_end(&mut bytes)?;
             o.verify(&bytes)?;
@@ -109,7 +109,7 @@ impl Generation {
             #[cfg(feature = "native-reinspiring")]
             let mut blocks = Vec::new();
             for item in &inventory.packing {
-                let file = File::open(object(item))?;
+                let file = File::open(object(item)?)?;
                 let mut hash = Sha256::new();
                 let mut reader = &file;
                 let n = std::io::copy(&mut reader, &mut HashWriter(&mut hash))?;

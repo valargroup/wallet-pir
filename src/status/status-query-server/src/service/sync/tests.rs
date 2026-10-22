@@ -402,7 +402,8 @@ async fn floors_refuse_another_publisher_and_keep_unbound_replay_protection() {
         },
     )
     .unwrap();
-    bound.advance(legacy, []);
+    let checked = bound.classify(legacy).unwrap();
+    bound.record(checked, []).unwrap();
     bound.pending_write().unwrap().write().unwrap();
     assert!(synchronization(service.clone(), &config).is_err());
     server.abort();
@@ -540,5 +541,44 @@ async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring(
     deferred(task.synchronize().await.unwrap());
     assert!(!task.floor().pointer().unwrap().eligible);
     assert!(service.serving().await.is_err());
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    // The fixture inventory is malformed, but the floor is made durable.
+    assert!(task.synchronize().await.is_err());
+    assert!(task.floor().is_durable());
+    let active_id = serving_manifest_id(&service).await;
+    let floor_path = service.state_dir.join(FLOOR_FILE);
+    // A non-empty directory replaces the floor file, so the rename fails.
+    fs::remove_file(&floor_path).unwrap();
+    fs::create_dir(&floor_path).unwrap();
+    fs::write(floor_path.join("occupant"), b"").unwrap();
+
+    // Negative evidence under the unchanged pointer cannot be saved.
+    source.canonical.store(false, Ordering::SeqCst);
+    assert!(task.synchronize().await.is_err());
+    assert!(task.floor().is_invalidated(&active_id));
+    assert!(!task.floor().is_durable());
+    assert!(service.state.lock().await.poisoned);
+
+    // The identical pointer still makes no progress while the save fails.
+    source.canonical.store(true, Ordering::SeqCst);
+    let error = task.synchronize().await.unwrap_err();
+    assert!(error.is::<std::io::Error>(), "{error}");
+    assert!(!task.floor().is_durable());
+
+    // Once the filesystem is repaired, the same pointer saves the floor first.
+    fs::remove_dir_all(&floor_path).unwrap();
+    assert!(task.synchronize().await.is_err()); // The inventory is still malformed.
+    assert!(task.floor().is_durable());
+    let reopened: AuthorityFloor<Current> =
+        AuthorityFloor::open(floor_path, task.floor().source().clone()).unwrap();
+    assert!(reopened.is_invalidated(&active_id));
+    let mut older = pointer();
+    older.revision -= 1;
+    assert!(reopened.classify(older).is_err());
     server.abort();
 }

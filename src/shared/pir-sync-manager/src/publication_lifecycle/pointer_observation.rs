@@ -1,7 +1,7 @@
 //! Observe the publication pointer and advance the durable floor.
 use super::{PublicationAdapter, PublicationLifecycle, PublicationLifecycleError};
 use crate::Error;
-use pir_publication::{conditional_token, PointerSuccession, PublicationPointer, CURRENT_PATH};
+use pir_publication::{conditional_token, PublicationPointer, CURRENT_PATH};
 
 /// Bound on a pointer body; pointers name objects, never contain material.
 pub(super) const POINTER_LIMIT: usize = 64 << 10;
@@ -29,36 +29,19 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         };
         drop(response);
         self.adapter.validate_pointer(&pointer)?;
-        let succession = self.floor.classify(&pointer)?;
-        if succession != PointerSuccession::Unchanged {
-            let fenced = if !pointer.eligible() || succession.fences_earlier_views() {
-                self.adapter.fence_serving().await
-            } else {
-                Vec::new()
-            };
-            self.floor.advance(pointer.clone(), fenced);
+        let checked = self.floor.classify(pointer.clone())?;
+        let fenced = if !pointer.eligible() || checked.succession().fences_earlier_views() {
+            self.fence_serving().await
+        } else {
+            Vec::new()
+        };
+        self.floor.record(checked, fenced)?;
+        // A dirty floor (a new binding, a change, or an earlier failed save) is
+        // saved before this observation counts, even if the pointer is unchanged.
+        if !self.floor.is_durable() {
             self.persist_floor().await?;
         }
         self.last_received_pointer = Some(pointer.clone());
         Ok(pointer)
-    }
-
-    /// Make the floor durable; on failure, close admission before returning.
-    pub(super) async fn persist_floor(&mut self) -> Result<(), Error> {
-        let write = self.floor.pending_write()?;
-        let result = tokio::task::spawn_blocking(move || write.write()).await;
-        match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                self.adapter.fence_serving().await;
-                self.adapter.close_admission().await;
-                Err(error.into())
-            }
-            Err(error) => {
-                self.adapter.fence_serving().await;
-                self.adapter.close_admission().await;
-                Err(error.into())
-            }
-        }
     }
 }

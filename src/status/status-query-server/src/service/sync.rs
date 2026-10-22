@@ -21,8 +21,8 @@ use pir_publication::{
 };
 use pir_sync_manager::{
     publication_lifecycle::{
-        ObjectFetcher, PeerHandover, PeerReservation, PublicationAdapter, PublicationLifecycle,
-        PublicationPass, PublicationPlan,
+        ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
+        PublicationLifecycle, PublicationPass, PublicationPlan,
     },
     Error,
 };
@@ -104,6 +104,7 @@ impl PublicationAdapter for StatusPublication {
     type Candidate = StatusCandidate;
     type Loaded = StatusLoaded;
     type Report = u64;
+    type InstalledView = Inventory;
 
     fn validate_pointer(&self, pointer: &Current) -> Result<(), Error> {
         pointer.validate(self.service.network)
@@ -301,37 +302,30 @@ impl PublicationAdapter for StatusPublication {
             .collect()
     }
 
-    fn commit(
+    fn prepare_commit(
         &mut self,
         loaded: StatusLoaded,
-    ) -> impl std::future::Future<Output = Result<u64, Error>> + Send + 'static {
-        self.loaded_inventory = Some(loaded.inventory.clone());
-        let service = self.service.clone();
-        async move {
-            let StatusLoaded {
-                inventory,
-                inventory_object,
-                generation,
-            } = loaded;
-            let root = service.state_dir.clone();
-            let bytes = serde_json::to_vec(&inventory_object)?;
-            let written = tokio::task::spawn_blocking(move || {
-                pir_control::durable::write_atomic(&root, ACTIVE_RECORD, |f| f.write_all(&bytes))?;
-                pir_control::durable::sync_dir(&root)
-            })
-            .await;
-            let mut state = service.state.lock().await;
-            if let Err(error) = written.map_err(Error::from).and_then(|w| Ok(w?)) {
-                // The record may have been replaced; nothing may serve until a
-                // later commit succeeds.
-                if let Some(controller) = &state.controller {
-                    controller.revoke();
-                }
-                state.router_holds.clear();
-                state.poisoned = true;
-                return Err(error);
-            }
+    ) -> Result<(PreparedCommit<u64>, Inventory), Error> {
+        let StatusLoaded {
+            inventory,
+            inventory_object,
+            generation,
+        } = loaded;
+        let root = self.service.state_dir.clone();
+        let record_bytes = serde_json::to_vec(&inventory_object)?;
+        let record = Box::new(move || {
+            pir_control::durable::write_atomic(&root, ACTIVE_RECORD, |f| {
+                f.write_all(&record_bytes)
+            })?;
+            pir_control::durable::sync_dir(&root)
+        });
+        let reported_generation = inventory.manifest.generation;
+        let install_service = self.service.clone();
+        let install = Box::pin(async move {
+            let mut state = install_service.state.lock().await;
             let mut retired_owner = None;
+            // Activation refuses before changing any view, so an error leaves
+            // serving unchanged.
             let retired = match state.controller.as_ref() {
                 Some(controller) if !controller.revoked() => {
                     if controller.current().manifest().id() != generation.manifest().id() {
@@ -351,8 +345,29 @@ impl PublicationAdapter for StatusPublication {
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
             }
-            Ok(inventory.manifest.generation)
-        }
+            Ok(reported_generation)
+        });
+        let revoke_service = self.service.clone();
+        let revoke_after_failed_record = Box::pin(async move {
+            let mut state = revoke_service.state.lock().await;
+            if let Some(controller) = &state.controller {
+                controller.revoke();
+            }
+            state.router_holds.clear();
+            state.poisoned = true;
+        });
+        Ok((
+            PreparedCommit {
+                record,
+                install,
+                revoke_after_failed_record,
+            },
+            inventory,
+        ))
+    }
+
+    fn installed(&mut self, inventory: Inventory) {
+        self.loaded_inventory = Some(inventory);
     }
 
     async fn release_peer(&mut self, _generation: &u64) -> PeerHandover {

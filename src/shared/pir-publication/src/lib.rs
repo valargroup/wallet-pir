@@ -20,7 +20,10 @@ pub use authority_check::{
     AuthorityCheckRefusal, AuthorityCheckRequest, AuthorityCheckResponse, AUTHORITY_CHECK_PATH,
     MAX_AUTHORITY_SUBJECTS,
 };
-pub use authority_floor::{AuthorityFloor, AuthorityFloorError, PendingFloorWrite, SourceBinding};
+pub use authority_floor::{
+    AuthorityFloor, AuthorityFloorError, CheckedSuccession, PendingFloorWrite, SourceBinding,
+    StaleSuccessionCheck, WrittenFloor,
+};
 pub use object_cache::{ObjectCache, PartialObject};
 pub use object_reference::{
     is_object_digest, object_digest, ObjectReference, ObjectReferenceError, OBJECTS_PATH,

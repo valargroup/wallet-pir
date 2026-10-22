@@ -65,8 +65,15 @@ impl PublishedObjectStore {
         activatable_until_ms: u64,
         now_ms: u64,
     ) -> io::Result<()> {
+        let objects: BTreeSet<String> = objects.into_iter().map(|object| object.sha256).collect();
+        if !objects.iter().all(|name| is_object_digest(name)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "retained object reference is not a SHA-256 digest",
+            ));
+        }
         let next = RetainedPublication {
-            objects: objects.into_iter().map(|object| object.sha256).collect(),
+            objects,
             activatable_until_ms,
         };
         let mut retained = self.retained.write().unwrap();

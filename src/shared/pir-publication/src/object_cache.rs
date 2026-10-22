@@ -45,15 +45,23 @@ impl ObjectCache {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
-    /// Where `object` lives once promoted. The path alone proves nothing.
-    pub fn object_path(&self, object: &ObjectReference) -> PathBuf {
-        self.directory.join(&object.sha256)
+    /// Where `object` lives once promoted. The path alone proves nothing. A
+    /// name that is not a SHA-256 digest is refused, so a reference can never
+    /// address a file outside the object namespace.
+    pub fn object_path(&self, object: &ObjectReference) -> io::Result<PathBuf> {
+        if !is_object_digest(&object.sha256) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "object reference is not a SHA-256 digest",
+            ));
+        }
+        Ok(self.directory.join(&object.sha256))
     }
     /// The promoted file for `object` after re-verifying its full length and
     /// digest, or `None` when it is absent. A present file with different bytes
     /// is an error: an immutable promoted object was altered.
     pub fn verified_cached(&self, object: &ObjectReference) -> io::Result<Option<PathBuf>> {
-        let path = self.object_path(object);
+        let path = self.object_path(object)?;
         let file = match fs::File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -80,6 +88,7 @@ impl ObjectCache {
     /// Start a new partial file for `object`. Dropping the partial before
     /// [`PartialObject::promote`] removes it.
     pub fn begin_partial(&self, object: &ObjectReference) -> io::Result<PartialObject> {
+        let target_path = self.object_path(object)?;
         let partial_path = self.directory.join(format!(
             "{PARTIAL_PREFIX}{}",
             hex::encode(rand::random::<[u8; 16]>())
@@ -91,7 +100,7 @@ impl ObjectCache {
         Ok(PartialObject {
             directory: self.directory.clone(),
             partial_path,
-            target_path: self.object_path(object),
+            target_path,
             file: Some(file),
         })
     }
@@ -196,8 +205,8 @@ mod tests {
         let cache = ObjectCache::open(dir.path().to_path_buf()).unwrap();
         let object = ObjectReference::for_bytes(b"blocked");
         // A non-empty directory at the target name makes the rename fail.
-        fs::create_dir(cache.object_path(&object)).unwrap();
-        fs::write(cache.object_path(&object).join("occupant"), b"").unwrap();
+        fs::create_dir(cache.object_path(&object).unwrap()).unwrap();
+        fs::write(cache.object_path(&object).unwrap().join("occupant"), b"").unwrap();
         let mut partial = cache.begin_partial(&object).unwrap();
         let mut file = partial.take_file().unwrap();
         file.write_all(b"blocked").unwrap();
@@ -212,6 +221,20 @@ mod tests {
             "the partial was removed"
         );
         assert!(cache.verified_cached(&object).is_err());
+    }
+
+    #[test]
+    fn references_that_are_not_digests_never_reach_the_filesystem() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = ObjectCache::open(dir.path().join("objects")).unwrap();
+        fs::write(dir.path().join("secret"), b"x").unwrap();
+        let escape = ObjectReference {
+            sha256: "../secret".into(),
+            bytes: 1,
+        };
+        assert!(cache.object_path(&escape).is_err());
+        assert!(cache.verified_cached(&escape).is_err());
+        assert!(cache.begin_partial(&escape).is_err());
     }
 
     #[test]

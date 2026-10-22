@@ -12,16 +12,24 @@
 //! - Negative evidence (withdrawal, a new recovery epoch, a non-authoritative
 //!   answer) fences serving through the adapter before the floor is persisted,
 //!   so a failing write can never leave a fenced view serving.
+//! - The floor is dirty until its latest version is durably synced; a dirty
+//!   floor blocks every positive step, even under an unchanged pointer.
 //! - A pass commits only after re-observing the pointer and a live authority
-//!   check, then rechecks the floor. The commit runs as an owned task: if the
-//!   waiter is cancelled, the durable write and install still finish together.
+//!   check, then rechecks the floor. Floor writes and commits run as owned
+//!   tasks; a cancelled pass leaves its task outstanding and the next pass
+//!   settles it before observing anything. A commit installs only if no fence
+//!   was raised while it was recording.
 //! - A 304 or a successful response refreshes neither source-observation age
 //!   nor authority-check time; the product's freshness checks still apply.
 mod authority_round;
+mod commit_phase;
+mod durable_operation;
 mod object_fetch;
 mod pointer_observation;
 
 use crate::{Error, HttpsSource, SyncTask};
+pub use durable_operation::PreparedCommit;
+use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
 pub use object_fetch::ObjectFetcher;
 use pir_publication::{
     AuthorityFloor, MaterialIdentity, ObjectCache, ObjectReference, PublicationPointer,
@@ -34,6 +42,9 @@ pub trait PublicationAdapter: Send {
     type Pointer: PublicationPointer + Serialize + DeserializeOwned + Send + Sync + 'static;
     /// What the publisher checks per serving view (for Status, an anchor).
     type AuthoritySubject: Serialize + Send + Sync;
+    /// What the adapter keeps about a view once it is installed (for Status,
+    /// the inventory whose material may later be re-identified).
+    type InstalledView: Send;
     /// Planned material whose objects the engine fetches before loading.
     type Candidate: Send;
     /// Material loaded from verified objects, ready to install.
@@ -83,13 +94,15 @@ pub trait PublicationAdapter: Send {
     ) -> impl Future<Output = Result<PeerReservation, Error>> + Send;
     /// Objects `loaded` keeps referenced after commit.
     fn retained_objects(&self, loaded: &Self::Loaded) -> BTreeSet<String>;
-    /// Durably record and install `loaded`. The returned future is spawned and
-    /// owned by the runtime, so it must not borrow the adapter. A failed durable
-    /// write must fence serving and close admission before returning.
-    fn commit(
+    /// Split `loaded` into the engine-run commit (record, install, revoke on a
+    /// failed record) and what the adapter keeps once the install succeeded.
+    /// Nothing here may change serving state.
+    fn prepare_commit(
         &mut self,
         loaded: Self::Loaded,
-    ) -> impl Future<Output = Result<Self::Report, Error>> + Send + 'static;
+    ) -> Result<(PreparedCommit<Self::Report>, Self::InstalledView), Error>;
+    /// The engine installed the view prepared with `view`.
+    fn installed(&mut self, view: Self::InstalledView);
     /// Tell a dependent peer the commit happened.
     fn release_peer(&mut self, report: &Self::Report) -> impl Future<Output = PeerHandover> + Send;
     /// The report of the view still serving, for deferred passes.
@@ -161,6 +174,10 @@ pub enum PublicationLifecycleError {
     CandidateInvalidated,
     /// The pointer was withdrawn between planning and commit.
     WithdrawnBeforeCommit,
+    /// The latest floor is not durable yet, so nothing may progress.
+    FloorNotDurable,
+    /// Serving was fenced while the commit was recording; nothing installed.
+    CommitFenced,
 }
 impl fmt::Display for PublicationLifecycleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -175,6 +192,8 @@ impl fmt::Display for PublicationLifecycleError {
             Self::AuthorityResponseMismatch => f.write_str("authority check response differs"),
             Self::CandidateInvalidated => f.write_str("publication candidate was invalidated"),
             Self::WithdrawnBeforeCommit => f.write_str("publication withdrawn before commit"),
+            Self::FloorNotDurable => f.write_str("publication floor is not durable yet"),
+            Self::CommitFenced => f.write_str("serving was fenced while the commit was recording"),
         }
     }
 }
@@ -200,6 +219,8 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     last_received_pointer: Option<A::Pointer>,
     /// Object sets of the last two commits; everything else is collected.
     retained_commits: Vec<BTreeSet<String>>,
+    commit_fence: CommitFence,
+    durable_operation: OwnedOperationSlot<DurableOutcome<A::Report>>,
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -224,6 +245,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             cache,
             last_received_pointer: None,
             retained_commits: Vec::new(),
+            commit_fence: CommitFence::default(),
+            durable_operation: OwnedOperationSlot::new(),
         })
     }
     pub fn adapter(&self) -> &A {
@@ -234,6 +257,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 
     async fn run_pass(&mut self) -> Result<PublicationPass<A::Report>, Error> {
+        self.settle_durable_operation().await;
         self.source.discover().await?;
         self.source.reset_budget();
         // Observe and fence.
@@ -285,15 +309,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if self.adapter.reserve_peer(&loaded).await? == PeerReservation::PeerAdvanced {
             return Err(Box::new(PointerAdvanced));
         }
-        // Commit: the floor is final here, no await separates this check from
-        // spawning the owned commit.
-        if self.floor.is_invalidated(&identity) {
-            return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
-        }
-        let retained = self.adapter.retained_objects(&loaded);
-        let report = owned_commit(self.adapter.commit(loaded)).await??;
-        // Retain.
-        self.retain_commit(retained).await?;
+        let report = self.commit(identity, loaded).await?;
         let handover = self.adapter.release_peer(&report).await;
         Ok(PublicationPass::Committed { report, handover })
     }
@@ -303,28 +319,6 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             report: self.adapter.serving_report().await,
         }
     }
-
-    async fn retain_commit(&mut self, objects: BTreeSet<String>) -> Result<(), Error> {
-        self.retained_commits.retain(|old| *old != objects);
-        self.retained_commits.push(objects);
-        if self.retained_commits.len() > 2 {
-            self.retained_commits.remove(0);
-        }
-        let keep: BTreeSet<String> = self.retained_commits.iter().flatten().cloned().collect();
-        let cache = self.cache.clone();
-        tokio::task::spawn_blocking(move || cache.collect_unreferenced(&keep)).await??;
-        Ok(())
-    }
-}
-
-/// Run `commit` as a task the runtime owns. Cancelling the returned future
-/// detaches the waiter only; the durable write and install still finish together.
-async fn owned_commit<F>(commit: F) -> Result<F::Output, tokio::task::JoinError>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-{
-    tokio::spawn(commit).await
 }
 
 impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
@@ -344,33 +338,5 @@ impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::is_incompatible(error.as_ref())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::owned_commit;
-    use std::sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    };
-
-    #[tokio::test]
-    async fn a_cancelled_waiter_never_abandons_an_owned_commit() {
-        let (release, released) = tokio::sync::oneshot::channel::<()>();
-        let (finished, installed) = tokio::sync::oneshot::channel::<()>();
-        let committed = Arc::new(AtomicBool::new(false));
-        let observed = committed.clone();
-        let waiter = tokio::spawn(owned_commit(async move {
-            released.await.unwrap();
-            observed.store(true, Ordering::SeqCst);
-            finished.send(()).unwrap();
-        }));
-        tokio::task::yield_now().await;
-        waiter.abort();
-        assert!(waiter.await.unwrap_err().is_cancelled());
-        release.send(()).unwrap();
-        installed.await.unwrap();
-        assert!(committed.load(Ordering::SeqCst));
     }
 }
