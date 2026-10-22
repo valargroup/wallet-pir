@@ -1,6 +1,5 @@
 //! Private publication control and request-scoped, atomic serving snapshots.
-//! The Unix socket is an operator interface, never routed through the public edge.
-use crate::control::persist;
+use crate::durable::persist;
 use crate::history::service::{self, ServiceConfig, ServiceState};
 use crate::preparation::{PreparationOutcome, PreparingGuard, Refusal};
 use axum::{
@@ -246,8 +245,8 @@ impl LiveService {
         })))
     }
     /// Loads, builds and warms a candidate publication. Refusals are typed by
-    /// what the controller must do about them; the control socket carries
-    /// only their text, exactly as before.
+    /// what the controller must do about them; a refused command reports
+    /// only their text.
     async fn prepare(
         &self,
         expected: String,
@@ -799,23 +798,6 @@ impl LiveService {
         )
         .await?;
         Ok(serde_json::json!({"active":map_sha256}))
-    }
-
-    pub async fn listen(
-        &self,
-        path: &Path,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let service = self.clone();
-        crate::control::listen(path, move |command: Command| {
-            let service = service.clone();
-            async move {
-                match service.command(command).await {
-                    Ok(value) => serde_json::json!({"ok": true, "result": value}),
-                    Err(error) => serde_json::json!({"ok": false, "error": error}),
-                }
-            }
-        })
-        .await
     }
 }
 

@@ -8,9 +8,6 @@
 //! takes it over by inode and finds its runtimes resident, so a seal costs the
 //! cycle that publishes it nothing.
 //!
-//! One JSON line each way over a root-only Unix socket. Replies are flat:
-//! `{"ok":true,...}` or `{"ok":false,"error":...}`.
-//!
 //! A reorg invalidates only unsealed revisions, and only digest-addressed
 //! requests to them are refused: the map, readiness and every archive keep
 //! serving until the next activation replaces the recent shard. A reorg that
@@ -20,7 +17,7 @@
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use super::service::{self, json, DisplayRuntime, DisplayState};
-use crate::control::persist;
+use crate::durable::persist;
 use crate::preparation::{PreparationOutcome, PreparingGuard, Refusal};
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -801,31 +798,6 @@ impl DisplayLive {
         .await
         .map_err(|e| format!("collection task failed: {e}"))?
     }
-
-    pub async fn listen(
-        &self,
-        path: &Path,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let service = self.clone();
-        crate::control::listen(path, move |command: DisplayCommand| {
-            let service = service.clone();
-            async move { reply_line(service.command(command).await) }
-        })
-        .await
-    }
-}
-
-/// The control reply line for a command result.
-pub fn reply_line(result: Result<Reply, String>) -> serde_json::Value {
-    match result {
-        Ok(fields) => {
-            let mut line = Reply::new();
-            line.insert("ok".into(), true.into());
-            line.extend(fields);
-            serde_json::Value::Object(line)
-        }
-        Err(error) => serde_json::json!({"ok": false, "error": error}),
-    }
 }
 
 /// The lowest shard id whose sealed revision `map` has not published. Shard
@@ -1043,7 +1015,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn commands_and_replies_use_the_wire_shapes() {
+    fn commands_use_their_json_shapes() {
         let command: DisplayCommand = serde_json::from_str(
             r#"{"operation":"prepare","expected":"","publication":{"directory":"/p","map_sha256":"ab"}}"#,
         )
@@ -1060,10 +1032,6 @@ mod tests {
         ] {
             serde_json::from_str::<DisplayCommand>(line).unwrap();
         }
-        let ok = reply_line(Ok(reply(serde_json::json!({"built": 2}))));
-        assert_eq!(ok, serde_json::json!({"ok": true, "built": 2}));
-        let refused = reply_line(Err("no".into()));
-        assert_eq!(refused, serde_json::json!({"ok": false, "error": "no"}));
     }
 
     #[test]

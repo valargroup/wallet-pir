@@ -114,7 +114,7 @@ impl Job {
             stamp: self.stamp.lock().unwrap().clone(),
             passed,
         };
-        crate::control::persist(&record_path(&self.primary), &record).map_err(io::Error::other)
+        crate::durable::persist(&record_path(&self.primary), &record).map_err(io::Error::other)
     }
     fn fail(&self, error: &io::Error) {
         // Withdraw in memory even if persisting the failure also fails.

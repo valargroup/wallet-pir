@@ -213,14 +213,6 @@ path = "src/bin/shard-assign.rs"
 name = "shard-prune"
 path = "src/bin/shard-prune.rs"
 
-[[bin]]
-name = "shard-control"
-path = "src/bin/shard-control.rs"
-
-[[bin]]
-name = "txid-control"
-path = "src/bin/txid-control.rs"
-
 [dependencies]
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
 transparent-query-server = { path = "../../src/transparent/transparent-query-server", features = ["transparent-history", "transparent-detail"] }
