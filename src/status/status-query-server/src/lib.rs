@@ -24,6 +24,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// Where the wallet-facing Status operations (`/init`, `/session/:id`,
+/// `/query`) are served: the canonical `/status/v1` namespace and the deployed
+/// `/v1/status` alias reach the same router handlers. Control, provider and
+/// worker routes are never mounted under either.
+pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
+    pir_control::public_routes::PublicMount::new("/status/v1", "/v1/status");
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

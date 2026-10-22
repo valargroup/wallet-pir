@@ -157,10 +157,16 @@ pub fn stage(operation: &'static str, elapsed: std::time::Duration, success: boo
 
 /// The wallet-facing or role operation a request path counts as, if any.
 pub fn operation(role: &str, path: &str) -> Option<&'static str> {
+    if role == "router" {
+        let operation = crate::PUBLIC_ROUTES.operation(path)?;
+        return match operation {
+            "/init" => Some("init"),
+            "/query" => Some("router_query"),
+            o if o.starts_with("/session/") => Some("public_material"),
+            _ => None,
+        };
+    }
     match (role, path) {
-        ("router", "/v1/status/init") => Some("init"),
-        ("router", p) if p.starts_with("/v1/status/session/") => Some("public_material"),
-        ("router", "/v1/status/query") => Some("router_query"),
         ("worker", "/evaluate") => Some("worker_evaluate"),
         _ => None,
     }
@@ -391,6 +397,16 @@ mod tests {
             operation("router", "/v1/status/query"),
             Some("router_query")
         );
+        assert_eq!(operation("router", "/status/v1/init"), Some("init"));
+        assert_eq!(
+            operation("router", "/status/v1/session/00"),
+            Some("public_material")
+        );
+        assert_eq!(
+            operation("router", "/status/v1/query"),
+            Some("router_query")
+        );
+        assert_eq!(operation("router", "/status/v1/evaluate"), None);
         assert_eq!(operation("worker", "/evaluate"), Some("worker_evaluate"));
         assert_eq!(operation("worker", "/v1/status/query"), None);
         assert_eq!(operation("router", "/control/health"), None);
