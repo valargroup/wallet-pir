@@ -207,6 +207,48 @@ pub fn prepare(
     Ok(record)
 }
 
+/// Pin an input before a long batch starts. An existing positive checkpoint
+/// can follow this exact alias operation; otherwise the new pin remains
+/// unverified until `prepare` hashes it against the expected predecessor.
+pub fn pin_unverified(
+    directory: &Path,
+    source: &Path,
+    previous: &Checksum,
+    bytes: u64,
+    destination: &Path,
+) -> io::Result<()> {
+    previous.validate()?;
+    let named = Stamp::of(&fs::symlink_metadata(source)?)?;
+    if named.bytes != bytes {
+        return Err(invalid("source pin length differs"));
+    }
+    let checkpoint = directory.join(format!("{}-{}.json", previous.key()?, CURRENT.name()));
+    if checkpoint.exists() {
+        let mut record: Converted = serde_json::from_reader(File::open(checkpoint)?.take(65537))?;
+        if record.version == 1
+            && record.previous == *previous
+            && record.bytes == bytes
+            && record.stamp == named
+            && record.checksum.algorithm == CURRENT
+        {
+            record.checksum.require_current()?;
+            record.source = source.into();
+            return link_to(directory, &mut record, destination).map(|_| ());
+        }
+    }
+    fs::hard_link(source, destination)?;
+    let pinned = Stamp::of(&fs::symlink_metadata(destination)?)?;
+    if !pinned.same_contents(&named) {
+        return Err(invalid("source changed while being pinned"));
+    }
+    File::open(
+        destination
+            .parent()
+            .ok_or_else(|| invalid("pin has no parent"))?,
+    )?
+    .sync_all()
+}
+
 /// Link unchanged bytes into a prepared namespace without changing the source.
 /// A distinct existing inode is refused; the product must explicitly validate
 /// copies rather than inherit another file's verification record.

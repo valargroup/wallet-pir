@@ -20,13 +20,26 @@ pub fn prepare(preparation: &Path, root: &Path, stage: &Path) -> crate::Result<P
     let old: Value = serde_json::from_slice(&old_bytes)?;
     let new: Value = serde_json::from_slice(&new_bytes)?;
     let mut catalog = Catalog::new(root, stage)?;
+    let mut inputs = Vec::new();
+    for (key, expected) in &publisher.objects {
+        let digest = key
+            .strip_prefix("sha256-")
+            .ok_or("invalid predecessor cache key")?;
+        let relative = Path::new("objects").join(digest);
+        match std::fs::symlink_metadata(root.join(&relative)) {
+            Ok(_) => inputs.push((relative, migration::sha256(digest.into())?, expected.bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    catalog.pin_inputs(&inputs)?;
     for (key, expected) in &publisher.objects {
         let digest = key
             .strip_prefix("sha256-")
             .ok_or("invalid predecessor cache key")?;
         let previous = migration::sha256(digest.into())?;
         let relative = Path::new("objects").join(digest);
-        let source = root.join(&relative);
+        let source = catalog.root().join(&relative);
         match std::fs::symlink_metadata(&source) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.into()),

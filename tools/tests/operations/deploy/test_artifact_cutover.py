@@ -36,9 +36,12 @@ class Fleet(FakeFleet):
     def run(self, host, argv, timeout):
         if len(argv) > 2 and argv[1] == 'artifact-checksum':
             self.events.append(argv[2])
-            if argv[2] in ('verify-prepared', 'install-prepared'):
+            if argv[2] in ('verify-prepared', 'install-prepared', 'verify-predecessors', 'restore-predecessors'):
                 return 0, '{"verified_files":1}'
             argument = lambda name: argv[argv.index(name) + 1]
+            if argv[2] == 'prepare':
+                self.put(host, argument('--stage') + '/prepared.json', '{}')
+                return 0, '{"inventory":{"checksum":{"algorithm":"blake3","digest":"' + 'a'*64 + '"},"bytes":2}}'
             if argv[2] == 'prepare-record':
                 value = json.loads(self.read(host, argument('--input')))
                 if '--reverse' in argv and self.unknown:
@@ -116,6 +119,19 @@ class ArtifactCutoverTests(unittest.TestCase):
         before = len(self.ex.log)
         self.target.rollback(result['id'])
         self.assertEqual(len(self.ex.log), before)
+
+    def test_preparation_keeps_predecessors_running_and_requires_a_fresh_activation_plan(self):
+        group, deployer = self.target.groups[0]
+        entry = self.request['preparations'][0]
+        entry.update(helper=deployer.release_binary(group['binary_sha256']),
+                     helper_sha256=group['binary_sha256'], source={'product':'status',
+                     'inventory':'{}','inventory_sha256':sha256(b'{}'),'checkpoints':'/stage/checkpoints'})
+        before = self.target.plan()['plan_sha256']
+        self.assertEqual(self.target.prepare(before)['status'], 'prepared')
+        self.assertNotEqual(self.target.preflight()['plan_sha256'], before)
+        self.assertFalse(any(op == 'systemctl' for _,op,_ in self.ex.log))
+        self.assertEqual(self.ex.read('coordinator', '/stage/predecessor-input.json'), '{}')
+        self.assertIsNone(self.ex.read('coordinator', A.FENCE))
 
     def test_failed_acceptance_keeps_new_withdrawal_when_old_binaries_are_restored(self):
         self.ex.fail_exact = True

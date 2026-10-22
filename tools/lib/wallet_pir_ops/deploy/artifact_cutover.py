@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from .. import durable
-from . import descriptors
+from . import artifact_preparation, descriptors
 from .engine import Deployer, DeployError, file_sha256, mutation_fence
 from .remote import production_lock
 from .transaction import Journal
@@ -44,8 +44,11 @@ def load_request(path, expected):
                 and type(group['binary_bytes']) is int and group['binary_bytes'] > 0,
                 'invalid executable identity')
     for preparation in request['preparations']:
-        require(set(preparation) == {'host', 'helper', 'helper_sha256', 'root', 'stage'},
+        fields = {'host', 'helper', 'helper_sha256', 'root', 'stage'}
+        require(set(preparation) in (fields, fields | {'source'}),
                 'preparation fields differ')
+        if 'source' in preparation:
+            artifact_preparation.validate(preparation['source'])
         for field in ('helper', 'root', 'stage'):
             require(descriptors.PLAIN_PATH.fullmatch(preparation[field]) is not None,
                     'preparation paths must be absolute plain paths')
@@ -86,6 +89,12 @@ class Cutover:
                 'one complete publisher group must precede every query group')
         for entry in request['preparations'] + request['records'] + [request['discovery']]:
             require(entry['host'] in inventory.hosts, 'artifact cutover names an unknown host')
+        for index, entry in enumerate(request['preparations']):
+            source = entry.get('source', {})
+            if 'publisher_host' in source:
+                require(any(p['host'] == source['publisher_host'] and p['stage'] == source['publisher_stage']
+                            and 'product' in p.get('source', {}) for p in request['preparations'][:index]),
+                        'cache preparation must follow its declared publisher preparation')
 
     @contextlib.contextmanager
     def ownership(self, transaction=None):
@@ -111,7 +120,7 @@ class Cutover:
         require(code == 0, 'artifact maintenance refused; inspect its retained output: ' + output[-1500:])
         return json.loads(output)
 
-    def capture(self):
+    def capture(self, allow_unprepared=False):
         mutation_fence(self.inventory, self.ex)
         groups = []
         for group, deployer in self.groups:
@@ -128,13 +137,50 @@ class Cutover:
             require(descriptors.exact_check(deployer.service, self.inventory) is not None,
                     'every product needs its independent exact-answer check')
             groups.append([deployer.record(plan) for plan in plans])
-        preparations = [self.command(entry, 'verify-prepared', '--stage', entry['stage'])
-                        for entry in self.request['preparations']]
+        preparations = []
+        for entry in self.request['preparations']:
+            if 'source' in entry and self.ex.sha256(entry['host'], entry['stage'] + '/prepared.json') is None:
+                require(allow_unprepared, 'artifact preparation is incomplete; run artifact-checksum-prepare first')
+                preparations.append({'state':'not-prepared'})
+            else:
+                preparations.append(self.command(entry, 'verify-prepared', '--stage', entry['stage']))
         return {'request': self.request, 'groups': groups, 'preparations': preparations}
 
     def plan(self):
-        plan = self.capture()
+        plan = self.capture(allow_unprepared=True)
         return {'plan': plan, 'plan_sha256': durable.digest(plan)}
+
+    def preflight(self):
+        plan = self.capture()
+        return {'plan':plan, 'plan_sha256':durable.digest(plan)}
+
+    def prepare(self, expected_plan):
+        with self.ownership() as held:
+            mutation_fence(self.inventory, self.ex, held)
+            plan = self.capture(allow_unprepared=True)
+            require(durable.digest(plan) == expected_plan, 'artifact preparation plan changed')
+            journal = Journal.create(self.state_dir, NAME + '-preparation', durable.digest(self.request),
+                                     self.request['source_sha'], [], None)
+            journal.data['request'] = self.request
+            journal.save()
+            try:
+                publisher, deployer = self.groups[0]
+                entries = [entry for entry in self.request['preparations'] if 'source' in entry]
+                require(all(entry['helper_sha256'] == publisher['binary_sha256']
+                            and entry['helper'] == deployer.release_binary(publisher['binary_sha256'])
+                            for entry in entries), 'preparation must use the pinned publisher maintenance executable')
+                deployer.stage([entry['host'] for entry in entries], publisher['binary_sha256'],
+                               publisher['binary'], journal)
+                for entry in entries:
+                    journal.event('preparing public artifacts', host=entry['host'], stage=entry['stage'])
+                    result = artifact_preparation.run(self, entry)
+                    journal.event('prepared public artifacts', host=entry['host'], stage=entry['stage'],
+                                  inventory=result.get('inventory'))
+                journal.set_status('prepared')
+            except Exception as error:
+                journal.set_status('failed', error=str(error))
+                raise
+            return journal.data
 
     def child(self, journal, index):
         child = Journal(self.state_dir / (journal.id + '-group-' + str(index) + '.json'),
@@ -288,7 +334,11 @@ class Cutover:
                 if current != item['previous_sha256']:
                     self.convert_record(entry, reverse=True)
         if any(self.child(journal, index).touched() for index in range(len(self.groups))):
+            for entry in self.request['preparations']:
+                self.command(entry, 'verify-predecessors', '--stage', entry['stage'])
             self.stop(journal)
+            for entry in self.request['preparations']:
+                self.command(entry, 'restore-predecessors', '--stage', entry['stage'])
         reverse = []
         for entry, item in zip(self.request['records'], journal.data['records']):
             if item['installed'] and self.ex.sha256(entry['host'], entry['input']) != item['previous_sha256']:
@@ -338,11 +388,11 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+    for operation in ('plan', 'preflight', 'prepare', 'deploy', 'status', 'rollback'):
         parser = commands.add_parser(NAME + '-' + operation, allow_abbrev=False)
         parser.add_argument('--request', type=Path, required=True)
         parser.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
+        if operation in ('prepare', 'deploy'):
             parser.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             parser.add_argument('--transaction')

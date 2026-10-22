@@ -4,14 +4,21 @@ use transparent_shared::publication::{self, Error};
 
 pub(crate) const PARTIAL: &str = ".partial-";
 
-/// Create or open `<directory>/objects`, refuse anything but a real directory
+/// Create or open the algorithm's object namespace, refuse symlinks at either level
 /// before enumerating it, and remove interrupted partials. This directory has
 /// one owner; an interrupted object is never reused.
 pub(crate) fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
     let objects = directory.join(pir_artifact::namespace("objects"));
-    std::fs::create_dir_all(&objects)?;
-    if !std::fs::symlink_metadata(&objects)?.is_dir() {
-        return Err("object cache must be a real directory".into());
+    std::fs::create_dir_all(directory)?;
+    for path in [directory.join("objects"), objects.clone()] {
+        match std::fs::create_dir(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+        if !std::fs::symlink_metadata(&path)?.is_dir() {
+            return Err("object cache must be a real directory".into());
+        }
     }
     remove_partials(&objects)?;
     Ok(objects)
@@ -49,11 +56,13 @@ pub(crate) fn collect_objects(
 ) -> Result<Option<(usize, u64)>, Error> {
     use std::os::unix::fs::MetadataExt;
     let objects = root.join(pir_artifact::namespace("objects"));
-    match std::fs::symlink_metadata(&objects) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return Err("object cache must be a real directory".into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.into()),
+    for path in [root.join("objects"), objects.clone()] {
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("object cache must be a real directory".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        }
     }
     if std::fs::symlink_metadata(linked)?.nlink() < 2 {
         return Ok(None);

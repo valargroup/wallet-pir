@@ -1517,14 +1517,13 @@ pub(crate) mod tests {
         let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default())).with_disk(Some(disk));
         let affected = ("affected".to_string(), Table::Directory, 0);
         let healthy = ("healthy".to_string(), Table::Directory, 0);
-        use sha2::{Digest, Sha256};
         let affected_disk = root.path().join(format!(
             "{}-cached.runtime",
-            hex::encode(Sha256::digest(affected.0.as_bytes()))
+            pir_artifact::digest(affected.0.as_bytes())
         ));
         let healthy_disk = root.path().join(format!(
             "{}-cached.runtime",
-            hex::encode(Sha256::digest(healthy.0.as_bytes()))
+            pir_artifact::digest(healthy.0.as_bytes())
         ));
         std::fs::write(&affected_disk, b"derived from corrupt source").unwrap();
         std::fs::write(&healthy_disk, b"unrelated runtime").unwrap();

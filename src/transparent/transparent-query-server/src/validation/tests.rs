@@ -38,7 +38,7 @@ fn startup_removes_interrupted_repairs_without_following_links() {
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
     let objects = root.path().join(pir_artifact::namespace("objects"));
-    std::fs::create_dir(&objects).unwrap();
+    std::fs::create_dir_all(&objects).unwrap();
     let interrupted = objects.join("digest.validation.repair-1");
     let alias = root.path().join(".validation-link-1");
     let retained = objects.join("digest.validation.json");
