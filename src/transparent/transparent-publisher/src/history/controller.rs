@@ -1806,7 +1806,9 @@ async fn prepare_runtimes(
         }
     };
     let directory = directory.to_path_buf();
-    let stored = config.http_only;
+    // Only the publisher's own candidates use its store; an operator-supplied
+    // initial publication outside the publication root is never rewritten.
+    let stored = config.http_only && directory.parent() == Some(config.publication_root.as_path());
     let (previous, prepared) = tokio::task::spawn_blocking(move || {
         // Every revision the publisher wrote; it retains them all, and so
         // may a worker.
