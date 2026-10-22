@@ -55,8 +55,14 @@ pub struct ChainFeed {
 /// fails without advancing coverage; the root never cancels one in progress.
 pub trait Ingestion: Send {
     type Error: std::fmt::Display + Send;
-    /// The first height an empty journal covers.
-    fn start_height(&self) -> u64;
+    /// The first height an empty journal covers when the observed tip is
+    /// `tip`; a rolling window starts below the tip, a journal at a fixed height.
+    fn start_height(&self, tip: u64) -> u64;
+    /// Refuse an observation from a different network than committed state
+    /// records, before any reconciliation can treat it as a reorg.
+    fn check_network(&self, _genesis: &str) -> std::result::Result<(), Self::Error> {
+        Ok(())
+    }
     /// The newest committed block, or `None` for an empty journal.
     fn committed(&self) -> Option<BlockId>;
     /// The newest committed block at or below `height`, for reconciliation.

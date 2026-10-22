@@ -12,7 +12,8 @@ pub(super) struct Publication<'a> {
     pub(super) previous: Option<Generation>,
     pub(super) last_observed: u64,
     pub(super) server: tokio::task::JoinHandle<std::io::Result<()>>,
-    pub(super) observer: tokio::task::JoinHandle<Result<(), ObservationError>>,
+    pub(super) observer:
+        &'a tokio::task::JoinHandle<Result<(), super::ingestion::ObservationError>>,
 }
 impl pir_pipeline::publisher::Publisher for Publication<'_> {
     type Error = Failure;

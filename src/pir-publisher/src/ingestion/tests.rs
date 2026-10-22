@@ -80,7 +80,7 @@ struct Journal {
 }
 impl Ingestion for Journal {
     type Error = String;
-    fn start_height(&self) -> u64 {
+    fn start_height(&self, _tip: u64) -> u64 {
         self.start
     }
     fn committed(&self) -> Option<BlockId> {

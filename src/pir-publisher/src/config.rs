@@ -126,6 +126,7 @@ impl Config {
         register!(
             status,
             status_publisher::service::configure,
+            chain,
             crate::publisher::PublisherEngine
         );
         #[cfg(feature = "transparent-history")]

@@ -54,7 +54,7 @@ fn identity(block: &crate::journal::JournalBlock) -> BlockId {
 }
 impl Ingestion for EnhanceIngestion {
     type Error = Box<dyn std::error::Error + Send + Sync>;
-    fn start_height(&self) -> u64 {
+    fn start_height(&self, _tip: u64) -> u64 {
         enhance_shared::ACTIVATION_HEIGHT
     }
     fn committed(&self) -> Option<BlockId> {
@@ -260,7 +260,7 @@ mod tests {
             height: first + 2,
             hash: format!("{:064x}", first + 2),
         };
-        assert_eq!(ingestion.start_height(), first);
+        assert_eq!(ingestion.start_height(0), first);
         assert_eq!(ingestion.committed(), Some(tip.clone()));
         assert_eq!(
             ingestion.checkpoint_at_or_below(first + 10),

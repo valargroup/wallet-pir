@@ -4,7 +4,7 @@
 //! live reconciliation (including reorg withdrawal) interleaves with each
 //! bounded backfill batch instead of waiting for a long catch-up to finish.
 use pir_pipeline::{
-    ingestion::{BlockId, CanonicalChain, ChainFeed, ChainObservation, Ingestion, IngestionRun},
+    ingestion::{CanonicalChain, ChainFeed, ChainObservation, Ingestion, IngestionRun},
     service::Shutdown,
     FailurePolicy,
 };
@@ -35,6 +35,9 @@ pub(crate) async fn reconcile<I: Ingestion>(
     chain: &dyn CanonicalChain,
     observation: &ChainObservation,
 ) -> Result<Coverage, Outcome<I::Error>> {
+    writer
+        .check_network(&observation.genesis)
+        .map_err(Outcome::Writer)?;
     let tip = &observation.tip;
     let newest = writer.checkpoint_at_or_below(tip.height);
     let mut candidate = newest.clone();
@@ -69,9 +72,9 @@ pub(crate) async fn reconcile<I: Ingestion>(
         Some(block) => Coverage::Missing {
             from: block.height + 1,
         },
-        None if writer.start_height() > tip.height => Coverage::Ahead,
+        None if writer.start_height(tip.height) > tip.height => Coverage::Ahead,
         None => Coverage::Missing {
-            from: writer.start_height(),
+            from: writer.start_height(tip.height),
         },
     })
 }
@@ -116,7 +119,7 @@ pub(crate) fn run<'a, I: Ingestion + 'a>(
 ) -> IngestionRun<'a, I::Error> {
     Box::pin(async move {
         let writer = Arc::new(Mutex::new(ingestion));
-        let targets = Arc::new(watch::channel::<Option<BlockId>>(None).0);
+        let targets = Arc::new(watch::channel::<Option<ChainObservation>>(None).0);
         let live = live(
             writer.clone(),
             feed.clone(),
@@ -162,7 +165,7 @@ fn settle<I: Ingestion>(writer: &mut I, outcome: Outcome<I::Error>) -> Result<()
 async fn live<I: Ingestion>(
     writer: Arc<Mutex<I>>,
     mut feed: ChainFeed,
-    targets: Arc<watch::Sender<Option<BlockId>>>,
+    targets: Arc<watch::Sender<Option<ChainObservation>>>,
     shutdown: Shutdown,
 ) -> Result<(), I::Error> {
     loop {
@@ -199,7 +202,7 @@ async fn live<I: Ingestion>(
                     targets.send_if_modified(|target| {
                         let idle = target.is_none();
                         if idle {
-                            *target = Some(observation.tip.clone());
+                            *target = Some(observation.clone());
                         }
                         idle
                     });
@@ -217,8 +220,8 @@ async fn live<I: Ingestion>(
 async fn backfill<I: Ingestion>(
     writer: Arc<Mutex<I>>,
     feed: ChainFeed,
-    targets: Arc<watch::Sender<Option<BlockId>>>,
-    mut pending: watch::Receiver<Option<BlockId>>,
+    targets: Arc<watch::Sender<Option<ChainObservation>>>,
+    mut pending: watch::Receiver<Option<ChainObservation>>,
     shutdown: Shutdown,
 ) -> Result<(), I::Error> {
     loop {
@@ -227,14 +230,11 @@ async fn backfill<I: Ingestion>(
             _ = shutdown.cancelled() => return Ok(()),
             changed = pending.changed() => if changed.is_err() { return Ok(()) },
         }
-        let Some(target) = pending.borrow_and_update().clone() else {
+        // A fixed target: the observation that found the gap.
+        let Some(fixed) = pending.borrow_and_update().clone() else {
             continue;
         };
-        let fixed = ChainObservation {
-            genesis: String::new(),
-            tip: target.clone(),
-            pass: 0,
-        };
+        let target = &fixed.tip;
         while !shutdown.requested() {
             let mut writer = writer.lock().await;
             let batch = async {
