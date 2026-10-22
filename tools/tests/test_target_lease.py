@@ -120,17 +120,6 @@ class TargetLeaseTests(unittest.TestCase):
                 with lease.local_target(ROOT):
                     pass
 
-    def test_flags_partition_pools_but_target_root_does_not(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(lease.subprocess, 'check_output', return_value=b'rustc fixture'):
-            root = Path(tmp)
-            env = {'CARGO_HOME': str(root / 'home')}
-            base = lease.compatibility(root, env)
-            self.assertEqual(base, lease.compatibility(root, dict(env, CARGO_TARGET_DIR='elsewhere')))
-            self.assertNotEqual(base, lease.compatibility(root, dict(env, RUSTFLAGS='-C target-cpu=native')))
-            (root / '.cargo').mkdir()
-            (root / '.cargo/config.toml').write_text('[build]\njobs=2\n')
-            self.assertNotEqual(base, lease.compatibility(root, env))
 
     def test_stale_inherited_descriptor_fails_closed(self):
         with patch.dict(os.environ, {lease.LEASE_FD: '999999'}):

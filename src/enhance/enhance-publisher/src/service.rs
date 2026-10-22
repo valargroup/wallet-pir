@@ -2,17 +2,19 @@
 //! consumer configuration and never appear in this application's settings.
 use crate::{
     application,
+    chain_source::{Prevouts, ZakuraClient},
     ingest::EnhanceJournal,
-    publisher::Publisher,
-    zakura::{Prevouts, ZakuraClient},
+    publisher::EnhancePublisher,
 };
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+/// Canonical source, durable state directory, and local publisher listeners.
+/// Consumers choose their own serving destinations independently.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Config {
+pub struct EnhancePublisherConfig {
     pub artifact_listen: Option<SocketAddr>,
     pub listen: SocketAddr,
     pub data_dir: PathBuf,
@@ -21,7 +23,9 @@ pub struct Config {
     pub poll_seconds: u64,
     pub prevout_cache_outputs: usize,
 }
-impl Config {
+impl EnhancePublisherConfig {
+    /// Check paths, polling, listeners, and credential-free HTTP RPC URLs
+    /// without opening state or reading the cookie file.
     pub fn validate(&self) -> Result<()> {
         let rpc = reqwest::Url::parse(&self.zakura_rpc_url)?;
         if self.poll_seconds == 0
@@ -38,7 +42,13 @@ impl Config {
         Ok(())
     }
 }
-pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -> Result<()> {
+/// Lock the service directory, verify offline recovery, adopt any completed
+/// rebuild, and supervise the artifact listener and canonical publisher loop.
+pub async fn run(
+    config: EnhancePublisherConfig,
+    http: Http<axum::Router>,
+    shutdown: Shutdown,
+) -> Result<()> {
     config.validate()?;
     let _lock = pir_pipeline::service::lock(&config.data_dir)?;
     crate::handoff::verify_startup(&config.data_dir)?;
@@ -54,8 +64,8 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
     })?;
     let mut tasks = Tasks::default();
     match crate::rebuild::adopt_staged(&config.data_dir)? {
-        crate::rebuild::Adoption::None => {}
-        crate::rebuild::Adoption::Adopted {
+        crate::rebuild::JournalAdoption::None => {}
+        crate::rebuild::JournalAdoption::Adopted {
             receipt_id,
             height,
             changed_records,
@@ -63,12 +73,12 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
         } => {
             tracing::info!(%receipt_id, height, changed_records, previous = %previous.display(), "adopted staged Enhance journal rebuild")
         }
-        crate::rebuild::Adoption::Rejected { reason, moved_to } => {
+        crate::rebuild::JournalAdoption::Rejected { reason, moved_to } => {
             tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
         }
     }
     let rpc = ZakuraClient::from_cookie_file(&config.zakura_rpc_url, &config.zakura_cookie)?;
-    let publisher = Publisher::open(&config.data_dir.join("publication"), rpc.clone())?;
+    let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
     let artifacts = tokio::spawn(http.serve(
         config.artifact_listen.ok_or("artifact listener missing")?,
         publisher.distribution().router(),
@@ -88,12 +98,12 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
     let serving = tokio::spawn(http.serve(config.listen, publisher.router()));
     tasks.own(&serving);
     application::run_until(
-        application::Config {
+        application::AcquisitionConfig {
             poll: Duration::from_secs(config.poll_seconds),
         },
         publisher,
         EnhanceJournal::open(&config.data_dir)?,
-        application::Source {
+        application::CanonicalSource {
             rpc,
             prevouts: Prevouts::new(config.prevout_cache_outputs),
         },
@@ -109,7 +119,7 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
 
 /// Validate and declare this publisher without opening credentials or state.
 pub fn configure(
-    config: Config,
+    config: EnhancePublisherConfig,
 ) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
     use pir_pipeline::publisher::{
         PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,

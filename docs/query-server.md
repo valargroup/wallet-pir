@@ -4,7 +4,10 @@
 Status, Transparent history, and transaction details. The host crate is
 `src/pir-query-server`. Its management server
 reserves listeners and owns process shutdown. Product libraries continue to own
-evaluation, admission, and readiness.
+evaluation, admission, and readiness. Status HTTP routes, synchronization,
+and role validation live in `status-query-server::service` and its product
+configuration; the host delegates to that crate, as it does for Enhance and
+Transparent.
 
 ## Features
 

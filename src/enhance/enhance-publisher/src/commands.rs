@@ -1,5 +1,5 @@
 //! Enhance publisher diagnostics and offline maintenance.
-use crate::zakura::ZakuraClient;
+use crate::chain_source::ZakuraClient;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -53,7 +53,7 @@ enum Command {
         /// Non-empty blocks fetched concurrently.
         #[arg(long, default_value_t = 8)]
         concurrency: usize,
-        #[arg(long, default_value_t = crate::zakura::DEFAULT_CACHE_OUTPUTS)]
+        #[arg(long, default_value_t = crate::chain_source::DEFAULT_CACHE_OUTPUTS)]
         cache_outputs: usize,
     },
 }
@@ -82,7 +82,7 @@ pub async fn run(
                 let manifest: enhance_query_server::protocol::Manifest =
                     crate::publication::read_metadata(&manifest)?;
                 manifest.validate()?;
-                let journal = crate::store::JournalSnapshot::read(
+                let journal = crate::journal::CommittedJournalSnapshot::read(
                     &source, crate::types::DatabaseId::Enhance, crate::types::ENHANCE_LAYOUT,
                 ).map_err(|e| e.to_string())?;
                 if journal.tree_size() != manifest.coverage.records
@@ -92,7 +92,7 @@ pub async fn run(
                 {
                     return Err("journal differs from publication anchor or coverage".into());
                 }
-                let prepared = crate::publication::prepare(
+                let prepared = crate::publication::prepare_publication(
                     &output, manifest.coverage.clone(), &manifest.domain_recovery_epochs,
                     |start, count| journal.read_records(start, count).map_err(|e| e.to_string()),
                 )?;

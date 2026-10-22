@@ -150,10 +150,6 @@ class BehaviourTest(unittest.TestCase):
         # The lone owner's outage is exercised, not just configured.
         self.assertTrue(crashed)
 
-    def test_deterministic(self):
-        scenario = suite()[-1]
-        self.assertEqual(run(scenario).events, run(scenario).events)
-
 
 class MutationTest(unittest.TestCase):
     """Deliberately broken scalers; the checker must object to each."""

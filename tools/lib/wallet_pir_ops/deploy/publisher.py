@@ -72,7 +72,7 @@ def load_request(path, expected, *, recovery=False):
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
     if 'expected_disk_latch_sha256' in request:
-        require(request['schema'] == SERVING_SCHEMA and request.get('resume_load') is False
+        require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and request.get('resume_load') is False
                 and isinstance(request['expected_disk_latch_sha256'], str)
                 and re.fullmatch('[a-f0-9]{64}', request['expected_disk_latch_sha256']),
                 'expected_disk_latch_sha256 pins an existing disk-only incident with resume_load:false')
@@ -80,8 +80,8 @@ def load_request(path, expected, *, recovery=False):
         require(request['schema'] == SERVING_SCHEMA and type(request['preserve_serving']) is bool,
                 'preserve_serving must be a boolean for publisher-cutover/3 only')
     if 'resume_load' in request:
-        require(request['schema'] == SERVING_SCHEMA and type(request['resume_load']) is bool,
-                'resume_load must be a boolean for publisher-cutover/3 only')
+        require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and type(request['resume_load']) is bool,
+                'resume_load must be a boolean for a publisher update or Enhance HTTPS cutover')
     require(recovery or request['schema'] in SERVING_SCHEMAS,
             'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
@@ -209,7 +209,7 @@ class Cutover:
     def read(self, path):
         return self.ex.read(self.host, path)
 
-    def resources(self, extra_bytes=0):
+    def resources(self, extra_bytes=0, allocations=None):
         config = self.request['configuration']
         history = config['transparent_history']['settings']
         display = config['transaction_details']['settings']
@@ -219,13 +219,19 @@ class Cutover:
         if self.expanded:
             from .publisher_products import inputs, locks
             paths += [*inputs(config), *locks(config)]
+        paths += list(allocations or {})
         result = self.ex.publisher_resources(self.host, paths)
         require(result['machine_id'] == self.request['machine_id'], 'coordinator machine identity differs')
         require(result['memory_available'] >= result['memory_total'] * .2, 'less than 20 percent available memory')
         minimum = 50 if self.expanded else 24
         require(result['memory_total'] >= minimum * (1 << 30), 'coordinator is too small for the combined publisher budget')
+        budgets = {}
+        for path, amount in (allocations or {}).items():
+            device = result['disks'][path]['device']
+            budgets[device] = budgets.get(device, 0) + amount
         for disk in result['disks'].values():
-            require(disk['available'] - extra_bytes >= disk['total'] * .2, 'staging would leave less than 20 percent disk headroom')
+            reserved = budgets.get(disk['device'], 0) if allocations is not None else extra_bytes
+            require(disk['available'] - reserved >= disk['total'] * .2, 'staging would leave less than 20 percent disk headroom')
         return result
 
     def latest(self):
@@ -244,17 +250,22 @@ class Cutover:
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
         extra = self.request['release']['binary_bytes']
+        allocations = None
         if self.request['schema'] == HTTPS_SCHEMA:
             extra += self.request['https']['publisher_budget_bytes']
         if self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
-            extra += self.request['enhance_https']['publisher_budget_bytes']
             extra += self.request['serving']['binary_bytes']
             extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
-            # Ingress or another consumer can share the coordinator filesystem.
-            # Reserve its declared cache in addition to publisher preparation.
-            extra += sum(target.settings['synchronization']['cache_limit_bytes']
-                         for target in self.serving.deployer.targets if target.host == self.host)
-        resource = self.resources(extra)
+            allocations = {ROOT_DIR + '/.staging-budget': extra,
+                           self.request['configuration']['enhance']['settings']['data_dir'] + '/.staging-budget':
+                           self.request['enhance_https']['publisher_budget_bytes']}
+            # Charge each write to its actual filesystem; unchanged product
+            # volumes retain their free-space floor without an Enhance charge.
+            for target in self.serving.deployer.targets:
+                if target.host == self.host:
+                    path = target.settings['data_dir'] + '/.staging-budget'
+                    allocations[path] = allocations.get(path, 0) + target.settings['synchronization']['cache_limit_bytes']
+        resource = self.resources(extra, allocations)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')
@@ -263,7 +274,7 @@ class Cutover:
         require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
                 'standalone and unified publishers both own state')
         override = None
-        if self.request['schema'] == SERVING_SCHEMA:
+        if self.request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA):
             override = status_https_override(unified, unified['exe_sha256'])
         else:
             require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
@@ -516,7 +527,10 @@ class Cutover:
             self.unlocked()
             from .publisher_restore import HistoryRestore
             HistoryRestore(self).install(journal)
-            if self.serving:
+            enhance_https = self.request['schema'] == ENHANCE_HTTPS_SCHEMA
+            if enhance_https:
+                self.serving.prepare_handoff(journal)
+            elif self.serving:
                 self.serving.activate(journal)
             for path, text in plan['desired'].items():
                 mode = 0o644 if path.startswith('/etc/systemd/') else 0o600
@@ -526,6 +540,10 @@ class Cutover:
             self.effect(journal, 'start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
             self.save(journal, 'verifying')
             self.ready(True)
+            if enhance_https:
+                self.serving.route(journal)
+                self.serving.publication_ready()
+                self.serving.activate(journal)
             if self.serving:
                 self.serving.verify(journal)
                 self.serving.route(journal)
@@ -746,6 +764,9 @@ class Cutover:
 
 
 def register(commands):
+    cleanup = commands.add_parser('publisher-cutover-prune-qualification', allow_abbrev=False)
+    cleanup.add_argument('--host', action='append', required=True)
+    cleanup.add_argument('--confirm-path', required=True, choices=('/srv/enhance-pir-v7/qualification-worker',))
     for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
@@ -756,16 +777,24 @@ def register(commands):
             command.add_argument('--archive', required=True)
         if operation == 'deploy':
             command.add_argument('--expect-plan-sha256', required=True)
+            command.add_argument('--supervision', choices=('coordinator', 'operator'), default='coordinator')
 
     for operation in ('run', 'watchdog'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--transaction', required=True)
+        command.add_argument('--supervision', choices=('coordinator', 'operator'), default='coordinator')
 
 
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
+    if operation == 'prune-qualification':
+        from .enhance_https import prune_qualification
+        return prune_qualification(args, executor)
     if operation in ('run', 'watchdog'):
+        if args.supervision == 'operator':
+            from .cutover_operator import dispatch as supervised
+            return supervised(args)
         from .cutover_runner import dispatch as supervised
         return supervised(args)
     request, inventory = load_request(args.request, args.request_sha256,
@@ -797,6 +826,10 @@ def dispatch(args, executor=None, **_options):
                 result['history_edge_sha256'] = sha(executor.read(request['https']['history_edge']['host'],
                                                                  '/etc/caddy/Caddyfile'))
         if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .cutover_operator import status as operator_status
+            operator = operator_status(args.state_dir, args.request_sha256)
+            if operator is not None:
+                result['operator_supervision'] = operator
             pointer = target.read(ROOT_DIR + '/supervised-latest.json')
             if pointer is not None:
                 from .cutover_guard import unit_name
@@ -819,6 +852,9 @@ def dispatch(args, executor=None, **_options):
         if target.serving:
             target.serving.binary = args.serving_binary
         if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            if args.supervision == 'operator':
+                from .cutover_operator import launch
+                return launch(target, args, binary)
             from .cutover_runner import launch
             return launch(target, args, binary)
         try:

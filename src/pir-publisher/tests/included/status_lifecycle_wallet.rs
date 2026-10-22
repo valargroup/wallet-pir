@@ -1,15 +1,15 @@
 //! Full native Status publication and wallet recovery through real TLS consumers.
 use super::*;
-use pir_query_server::status::serve_role_on;
 use status_query_server::distributed::{Role, RoleConfig};
+use status_query_server::service::serve_role_on;
 use std::sync::atomic::AtomicBool;
-#[path = "../../../pir-query-server/tests/support/status_tls.rs"]
+#[path = "../../../status/status-query-server/tests/support/status_tls.rs"]
 mod tls;
 #[allow(dead_code)]
 mod transport {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../pir-query-server/tests/support/status_http.rs"
+        "/../../status/status-query-server/tests/support/status_http.rs"
     ));
 }
 use zakura_pir_client::status as wallet;

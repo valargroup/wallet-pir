@@ -31,7 +31,8 @@ HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 def feedback_tooling(path):
     if path.startswith('tools/tests/operations/'):
         return False
-    return path == '.gitignore' or path.startswith(('tools/ci/', 'tools/tests/',
+    return path in {'.gitignore', '.github/labeler.yml', '.github/labels.json',
+                    '.github/workflows/pr-labels.yml'} or path.startswith(('tools/ci/', 'tools/tests/',
         '.github/workflows/ci', '.github/actions/rust-setup/', '.github/actions/qualify-artifacts/'))
 
 

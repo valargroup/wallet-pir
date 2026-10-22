@@ -10,8 +10,10 @@ The two packages have separate responsibilities:
   owns publication authority, and prepares and activates datasets on serving
   workers. Its diagnostic commands run through `pir-publisher status`.
 - `status-query-server` serves prepared datasets through controllers, routers and
-  workers. Its `protocol` module defines the wire contract and probe client; its
-  pure snapshot helpers encode datasets without reading the chain.
+  workers. Its `service` module owns HTTP routes, admission, telemetry, and
+  publisher synchronization; the root query host reserves listeners and
+  supervises the role. Its `protocol` module defines the wire contract and probe
+  client; its pure snapshot helpers encode datasets without reading the chain.
 
 The publisher depends on query-server; query-server never depends on the
 publisher or chain readers. Ingestion and publication run independently inside

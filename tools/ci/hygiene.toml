@@ -5,6 +5,10 @@ files = 30
 large_bytes = 1048576
 
 [[allow_data]]
+pattern = ".github/labels.json"
+reason = "Repository label definitions consumed by the PR labeling workflow."
+
+[[allow_data]]
 pattern = "tools/ci/*.json"
 reason = "CI registries consumed by the affected/full check planners."
 

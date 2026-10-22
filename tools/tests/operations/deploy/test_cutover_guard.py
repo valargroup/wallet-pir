@@ -84,6 +84,16 @@ class GuardTests(unittest.TestCase):
         self.assertFalse(self.guard.claim_rollback(runner_active=True))
         self.guard.guard()
 
+    def test_reboot_requires_recovery_even_when_wall_clock_moved_backwards(self):
+        original = Decision(self.root, 'publisher-fixture', clock=lambda: self.now,
+                            boot_id='first-boot', elapsed=lambda: 10)
+        original.arm()
+        restarted = Decision(self.root, 'publisher-fixture', clock=lambda: self.now - 100,
+                             boot_id='next-boot', elapsed=lambda: 1)
+        with self.assertRaisesRegex(DeployError, 'deadline'):
+            restarted.guard()
+        self.assertTrue(restarted.claim_rollback(runner_active=False))
+
     def test_dead_controller_is_recovered_even_before_the_deadline(self):
         self.guard.arm()
         self.assertTrue(self.guard.claim_rollback(runner_active=False))

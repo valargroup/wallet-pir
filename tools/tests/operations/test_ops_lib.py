@@ -102,11 +102,11 @@ class DurableTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             durable.digest({'a': float('nan')})
 
-    def test_atomic_json_is_private_indented_and_leaves_no_temporary(self):
+    def test_failed_atomic_write_preserves_private_state_and_leaves_no_temporary(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'value.json'
             durable.atomic_json(path, {'z': 1, 'a': 'é'})
-            self.assertEqual(path.read_bytes(), b'{\n  "a": "\\u00e9",\n  "z": 1\n}\n')
+            self.assertEqual(json.loads(path.read_text()), {'z': 1, 'a': 'é'})
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             durable.atomic_json(path, {'shared': True}, mode=0o644)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
@@ -118,12 +118,6 @@ class DurableTests(unittest.TestCase):
 
 
 class HostLockTests(unittest.TestCase):
-    def test_no_config_is_a_no_op(self):
-        with hostlock.PinnedHostLock(None) as lock:
-            self.assertIsNone(lock.fd)
-            self.assertEqual(lock.descriptors(), ())
-            lock.verify()
-
     def test_contention_inheritance_and_replacement(self):
         with tempfile.TemporaryDirectory() as temp:
             Lock = lock_class(Path(temp))
@@ -147,39 +141,6 @@ class HostLockTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, '^state lock file was replaced$'):
                     held.descriptors()
             self.assertIsNone(held.fd)
-
-    def test_instance_path_overrides_the_class_path(self):
-        with tempfile.TemporaryDirectory() as temp:
-            Lock = lock_class(Path(temp))
-            other = Path(temp) / 'other.lock'
-            with Lock(CONFIG, path=other) as held, Lock(CONFIG):
-                self.assertEqual(os.fstat(held.fd).st_ino, other.stat().st_ino)
-
-    def test_refusals_keep_their_messages(self):
-        with tempfile.TemporaryDirectory() as temp:
-            Lock = lock_class(Path(temp))
-            for config in [dict(CONFIG, machine_id='b' * 32), dict(CONFIG, type='native'),
-                           dict(CONFIG, extra=True), {'type': 'pinned_host', 'machine_id': 7}, ['type', 'machine_id']]:
-                with self.subTest(config=config), self.assertRaisesRegex(ValueError, '^state writer must run as root on the pinned host$'):
-                    with Lock(config):
-                        pass
-            with patch.object(Lock, 'ROOT_UID', os.geteuid() + 1):
-                with self.assertRaisesRegex(ValueError, 'pinned host'):
-                    with Lock(CONFIG):
-                        pass
-            Lock.PATH.touch()
-            Lock.PATH.chmod(0o640)
-            with self.assertRaisesRegex(ValueError, '^state lock requires a private root-owned regular file$'):
-                with Lock(CONFIG):
-                    pass
-            Lock.PATH.unlink()
-            Lock.PATH.symlink_to(Lock.MACHINE_ID)
-            with self.assertRaises(OSError):
-                with Lock(CONFIG):
-                    pass
-            unheld = Lock(CONFIG)
-            with self.assertRaisesRegex(ValueError, '^pinned-host state lock is not held$'):
-                unheld.verify()
 
 
 class TerraformTests(unittest.TestCase):

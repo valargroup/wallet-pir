@@ -152,7 +152,8 @@ def publisher_resources(paths):
         while not parent.exists():
             parent = parent.parent
         info = os.statvfs(parent)
-        disks[name] = {'available': info.f_bavail * info.f_frsize, 'total': info.f_blocks * info.f_frsize}
+        disks[name] = {'available': info.f_bavail * info.f_frsize, 'total': info.f_blocks * info.f_frsize,
+                       'device': parent.stat().st_dev}
     return {'machine_id': Path('/etc/machine-id').read_text().strip(), 'files': files, 'disks': disks,
             'memory_available': int(memory['MemAvailable'].split()[0]) * 1024,
             'memory_total': int(memory['MemTotal'].split()[0]) * 1024}
