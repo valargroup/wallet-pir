@@ -12,6 +12,7 @@ members = [
     "src/shared/pir-runtime",
     "src/shared/pir-cuda",
     "src/shared/pir-pipeline",
+    "src/shared/pir-publication",
     "src/shared/pir-sync-manager",
     "src/shared/pir-service-discovery",
     "src/shared/pir-serving",
