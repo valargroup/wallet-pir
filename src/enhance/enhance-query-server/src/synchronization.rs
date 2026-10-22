@@ -407,6 +407,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
+        remove_digest_part_transfers(&root.join("objects"))?;
         Ok(Self {
             safety,
             source: config.source(config.download_budget_bytes)?,
@@ -536,6 +537,29 @@ impl Client {
             })?,
         )
     }
+}
+
+/// Remove transfers interrupted while partial objects were named
+/// `<sha256>.part`. The shared cache neither creates nor collects that name, yet
+/// such a file counts against the cache budget. Other files are left alone.
+fn remove_digest_part_transfers(objects: &Path) -> std::io::Result<()> {
+    let entries = match fs::read_dir(objects) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file()
+            && name
+                .strip_suffix(".part")
+                .is_some_and(crate::protocol::canonical_hash)
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -739,6 +763,27 @@ mod tests {
         let name = "01".repeat(32);
         fs::write(root.path().join("objects").join(&name), [1, 2]).unwrap();
         assert!(client.collect(&[name].into()).is_err());
+        client.collect(&Default::default()).unwrap();
+    }
+
+    #[test]
+    fn restart_removes_digest_part_transfers_but_keeps_other_files() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = root.path().join("objects");
+        fs::create_dir_all(&objects).unwrap();
+        let interrupted = objects.join(format!("{}.part", "01".repeat(32)));
+        fs::write(&interrupted, [1, 2]).unwrap();
+        fs::write(objects.join("notes.part"), b"").unwrap();
+        let config = Config {
+            publisher_origin: "https://publisher.example".into(),
+            trusted_ca: None,
+            download_budget_bytes: METADATA_LIMIT * 3,
+            cache_limit_bytes: 1,
+        };
+        let safety = Safety::open(root.path(), &config.publisher_origin).unwrap();
+        let client = Client::new(root.path(), &config, safety).unwrap();
+        assert!(!interrupted.exists());
+        assert!(objects.join("notes.part").exists());
         client.collect(&Default::default()).unwrap();
     }
 }

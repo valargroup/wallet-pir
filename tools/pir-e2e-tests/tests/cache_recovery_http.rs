@@ -70,3 +70,54 @@ async fn restart_repairs_corrupt_cached_rows_before_readiness() {
         hex::encode(Sha256::digest(&repaired))
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transfers_interrupted_under_digest_part_names_do_not_exhaust_the_cache() {
+    let system = System::start((0..67).map(record).collect()).await;
+    let measured = system.root.path().join("measured-worker");
+    let worker = Worker::open(
+        &measured,
+        Config {
+            source: system.source.clone(),
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    worker.synchronizer().unwrap().poll_once().await.unwrap();
+    let required: u64 = std::fs::read_dir(measured.join("objects"))
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    drop(worker);
+
+    // A full-budget file left by an interrupted transfer of the earlier layout.
+    let root = system.root.path().join("restarted-worker");
+    std::fs::create_dir_all(root.join("objects")).unwrap();
+    let interrupted = root
+        .join("objects")
+        .join(format!("{}.part", "ab".repeat(32)));
+    std::fs::write(&interrupted, vec![0u8; required as usize]).unwrap();
+    let mut source = system.source.clone();
+    source.cache_limit_bytes = required;
+    let worker = Worker::open(
+        &root,
+        Config {
+            source,
+            shards: [0].into(),
+        },
+        Default::default(),
+        Default::default(),
+    )
+    .unwrap();
+    worker.synchronizer().unwrap().poll_once().await.unwrap();
+    assert!(!interrupted.exists());
+    for entry in std::fs::read_dir(root.join("objects")).unwrap() {
+        let path = entry.unwrap().path();
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
+        );
+    }
+}
