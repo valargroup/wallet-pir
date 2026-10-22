@@ -1,7 +1,12 @@
 use super::*;
+use crate::protocol::{MAX_AGE_MS, PROTOCOL};
+use crate::service::routes::{provider_commit, provider_pin};
+use axum::extract::{Path, State};
 use axum::{
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
+    Json, Router,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -48,7 +53,7 @@ fn pointer() -> Current {
 async fn setup() -> (
     tempfile::TempDir,
     Service,
-    StatusSync,
+    StatusSynchronization,
     Arc<Origin>,
     tls::Tls,
     tokio::task::JoinHandle<()>,
@@ -145,7 +150,7 @@ async fn setup() -> (
         manifest(),
         Arc::new(vec![]),
     )));
-    let task = StatusSync::new(service.clone(), &config).unwrap();
+    let task = StatusSynchronization::new(service.clone(), &config).unwrap();
     (root, service, task, current, tls, server)
 }
 #[tokio::test]
@@ -166,9 +171,10 @@ async fn tls_withdrawal_fences_before_persisting_and_refuses_replay() {
         "waiting_for_peer"
     );
     assert!(service.serving().await.is_err());
-    let saved: Floor =
-        serde_json::from_slice(&fs::read(service.dir.join("publisher-high-water.json")).unwrap())
-            .unwrap();
+    let saved: PublisherHighWater = serde_json::from_slice(
+        &fs::read(service.state_dir.join("publisher-high-water.json")).unwrap(),
+    )
+    .unwrap();
     assert!(!saved.current.unwrap().eligible);
     let mut replay = pointer.current.read().unwrap().clone();
     replay.eligible = true;
@@ -195,7 +201,7 @@ async fn unchanged_https_authority_never_renews_observation_age() {
 #[tokio::test]
 async fn failure_to_persist_authority_closes_admission() {
     let (_root, service, mut task, pointer, _tls, server) = setup().await;
-    fs::create_dir(service.dir.join("publisher-high-water.json")).unwrap();
+    fs::create_dir(service.state_dir.join("publisher-high-water.json")).unwrap();
     let current = pointer.current.read().unwrap().clone();
     assert!(task.observe(current).await.is_err());
     assert!(service.state.lock().await.poisoned);
@@ -222,9 +228,10 @@ async fn skipped_withdrawal_fences_old_answers_before_candidate_download() {
     source.current.write().unwrap().revision += 1;
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
-    let floor: Floor =
-        serde_json::from_slice(&fs::read(service.dir.join("publisher-high-water.json")).unwrap())
-            .unwrap();
+    let floor: PublisherHighWater = serde_json::from_slice(
+        &fs::read(service.state_dir.join("publisher-high-water.json")).unwrap(),
+    )
+    .unwrap();
     assert!(floor.invalid.contains(&active_id));
     server.abort();
 }
@@ -262,7 +269,11 @@ async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
     // reach its download/validation without making the withdrawn view usable.
     assert!(task.synchronize().await.is_err());
     let object = pointer().inventory.unwrap();
-    assert!(service.dir.join("objects").join(object.sha256).is_file());
+    assert!(service
+        .state_dir
+        .join("objects")
+        .join(object.sha256)
+        .is_file());
     assert!(task.floor.invalid.contains(&old.manifest().id()));
     assert!(service.serving().await.is_err());
     server.abort();
@@ -273,9 +284,15 @@ async fn truncated_objects_never_become_completed_cache_entries() {
     let object = Object::new(b"not an inventory");
     fs::write(&tls.control, "truncated").unwrap();
     assert!(task.object(&object).await.is_err());
-    assert!(!service.dir.join("objects").join(&object.sha256).exists());
+    assert!(!service
+        .state_dir
+        .join("objects")
+        .join(&object.sha256)
+        .exists());
     assert_eq!(
-        fs::read_dir(service.dir.join("objects")).unwrap().count(),
+        fs::read_dir(service.state_dir.join("objects"))
+            .unwrap()
+            .count(),
         0
     );
     fs::write(&tls.control, "").unwrap();
@@ -323,7 +340,7 @@ async fn consumer_restart_requires_https_authority_despite_completed_objects() {
     task.observe(current).await.unwrap();
     let object = Object::new(b"not an inventory");
     task.object(&object).await.unwrap();
-    let path = service.dir.clone();
+    let path = service.state_dir.clone();
     drop(task);
     drop(service);
     fs::write(&tls.control, "refused-body").unwrap();
@@ -339,7 +356,7 @@ async fn consumer_restart_requires_https_authority_despite_completed_objects() {
         worker_origin: String::new(),
         cuda: false,
     };
-    let mut task = StatusSync::new(service.clone(), &config).unwrap();
+    let mut task = StatusSynchronization::new(service.clone(), &config).unwrap();
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
     assert!(path.join("objects").join(object.sha256).is_file());
@@ -383,7 +400,7 @@ async fn incompatible_discovery_stops_polling_without_observing_product_state() 
     let error = task.synchronize().await.unwrap_err();
     assert!(task.terminal(&error));
     assert!(task.floor.current.is_none());
-    assert!(!service.dir.join("publisher-high-water.json").exists());
+    assert!(!service.state_dir.join("publisher-high-water.json").exists());
     let returned = pir_sync_manager::SyncManager::new(task).run().await;
     assert!(pir_sync_manager::is_incompatible(returned.as_ref()));
     server.abort();

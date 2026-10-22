@@ -215,33 +215,13 @@ impl Config {
         }
         #[cfg(feature = "status")]
         if let Some(role) = active(&self.status)? {
-            if !role.listen.ip().is_loopback()
-                || role
-                    .query_listen
-                    .is_some_and(|addr| !addr.ip().is_loopback())
-            {
-                return Err("Status role listener must be loopback".into());
+            role.validate()?;
+            for address in role.listens() {
+                layout.listener("status", address)?;
             }
-            let url = reqwest::Url::parse(&role.publisher)?;
-            if url.scheme() != "https"
-                || url.host_str().is_none()
-                || url.path() != "/"
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.query().is_some()
-                || url.fragment().is_some()
-            {
-                return Err("Status publisher must be an explicit HTTPS origin".into());
-            }
-            if role.role == status_query_server::distributed::Role::Router {
-                status_query_server::distributed::loopback_origin(&role.worker_origin)?;
-            }
-            layout.listener("status", role.listen)?;
-            if let Some(addr) = role.query_listen {
-                layout.listener("status", addr)?;
-            }
-            layout.root("status", &role.state_dir)?;
-            layout.probe("status", role.listen, "/control/health");
+            layout.root("status", role.state_dir())?;
+            let (address, path) = role.probe();
+            layout.probe("status", address, path);
         }
         #[cfg(feature = "transparent-history")]
         if let Some(worker) = active(&self.transparent_history)? {

@@ -1,9 +1,10 @@
 //! Status PIR serving core: generations, the authority that decides which one a
 //! request may use, the private role protocol and aggregate telemetry.
 //!
-//! This library is runtime-free. `pir-query-server` owns the role listeners,
-//! admission and outbound HTTP; chain observation, publication and the CLI live
-//! in `status-publisher`. Neither may be reached from here.
+//! The [`service`] module owns Status listeners, admission and outbound HTTP.
+//! `pir-query-server` reserves listeners and supervises the product task; chain
+//! observation and publication remain in `status-publisher`, which this crate
+//! must never depend on.
 mod backend;
 mod controller;
 pub mod distributed;
@@ -12,6 +13,7 @@ mod generation;
 pub mod index;
 pub mod protocol;
 pub mod publication;
+pub mod service;
 pub mod telemetry;
 use crate::protocol::*;
 pub use controller::Controller;
