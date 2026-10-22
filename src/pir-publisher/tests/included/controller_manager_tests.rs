@@ -1020,7 +1020,9 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     // cache object plus bad download cannot borrow a resident runtime to pass.
     // Objects are read-only inodes shared with staged trees; replace the cache
     // entry rather than write through the active publication's runtime.
-    let object = state.join("objects").join(&runtime.sha256);
+    let object = state
+        .join(pir_artifact::namespace("objects"))
+        .join(&runtime.sha256);
     assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
     std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, b"corrupt").unwrap();
@@ -1328,7 +1330,7 @@ async fn manager_collects_obsolete_objects_after_publication_contents_change() {
         .inventory()
         .artifacts
         .iter()
-        .map(|artifact| artifact.sha256.clone())
+        .map(|artifact| artifact.checksum.clone())
         .collect();
     let owner = authority(&directory, Some(distribution), rpc.client.clone());
     let tls = tls(root.path(), owner.clone()).await;
@@ -1343,14 +1345,19 @@ async fn manager_collects_obsolete_objects_after_publication_contents_change() {
     );
     let downloaded: std::collections::BTreeSet<_> = first_objects
         .into_iter()
-        .filter(|digest| state.join("objects").join(digest).is_file())
+        .filter(|digest| {
+            state
+                .join(pir_artifact::namespace("objects"))
+                .join(digest)
+                .is_file()
+        })
         .collect();
     let (next_dir, next_set, next_distribution) = immutable_publication(3);
     let next_objects: std::collections::BTreeSet<_> = next_distribution
         .inventory()
         .artifacts
         .iter()
-        .map(|artifact| artifact.sha256.clone())
+        .map(|artifact| artifact.checksum.clone())
         .collect();
     let obsolete: Vec<_> = downloaded.difference(&next_objects).collect();
     let shared: Vec<_> = downloaded.intersection(&next_objects).collect();
@@ -1366,21 +1373,24 @@ async fn manager_collects_obsolete_objects_after_publication_contents_change() {
     follow.poll_once().await.unwrap();
     // The first predecessor and its reusable downloads survive early collection.
     assert!(first_tree.is_dir());
-    assert!(obsolete
-        .iter()
-        .all(|digest| state.join("objects").join(digest).is_file()));
+    assert!(obsolete.iter().all(|digest| state
+        .join(pir_artifact::namespace("objects"))
+        .join(digest)
+        .is_file()));
     // Retire the first tree beyond both predecessor and unused-tree retention.
     for _ in 0..7 {
         owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
         follow.poll_once().await.unwrap();
     }
     assert!(!first_tree.exists());
-    assert!(obsolete
-        .iter()
-        .all(|digest| !state.join("objects").join(digest).exists()));
-    assert!(shared
-        .iter()
-        .all(|digest| state.join("objects").join(digest).is_file()));
+    assert!(obsolete.iter().all(|digest| !state
+        .join(pir_artifact::namespace("objects"))
+        .join(digest)
+        .exists()));
+    assert!(shared.iter().all(|digest| state
+        .join(pir_artifact::namespace("objects"))
+        .join(digest)
+        .is_file()));
     let active = live.command(Command::Status).await.unwrap();
     assert_eq!(active["active"]["map_sha256"], next_set.map_digest);
     let (origin, task) = worker(live).await;
@@ -1480,7 +1490,7 @@ async fn manager_bounds_memory_while_retaining_admitted_upload() {
         3
     );
     query(&origin, &set).await;
-    assert!(state.join("objects").is_dir());
+    assert!(state.join(pir_artifact::namespace("objects")).is_dir());
     // Eleven activations leave the active tree, three retained predecessors,
     // the tree the admitted request held and three unused trees on disk.
     let trees: Vec<_> = std::fs::read_dir(&state)

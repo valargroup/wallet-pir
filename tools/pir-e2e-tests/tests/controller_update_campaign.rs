@@ -427,7 +427,7 @@ async fn offered(publisher: &str, client: &reqwest::Client) -> Option<(serde_jso
     let inventory: serde_json::Value = client
         .get(format!(
             "{publisher}/provider/v1/inventories/{}",
-            record["inventory_sha256"].as_str()?
+            record["inventory_checksum"].as_str()?
         ))
         .send()
         .await
@@ -623,7 +623,7 @@ impl Campaign {
                     if record["anchor_height"].as_u64() >= Some(min_anchor) {
                         let identity = serde_json::json!({"revision":record["revision"],
                             "anchor_height":record["anchor_height"],"anchor_hash":record["anchor_hash"],
-                            "inventory_sha256":record["inventory_sha256"],"map_sha256":map});
+                            "inventory_checksum":record["inventory_checksum"],"map_sha256":map});
                         self.ledger.record(
                             "controller_offered",
                             serde_json::json!({"phase":phase,"publication":identity,

@@ -23,6 +23,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "lib"))
+from wallet_pir_ops.artifact_checksum import StreamHasher, hash_bytes, hash_file, valid as valid_checksum
+
 PREFIX = "/provider/v1/"
 METADATA_LIMIT = 16 << 20
 ETAG_LIMIT = 256
@@ -53,8 +56,7 @@ def wave_evidence_bytes(args, inventory, current):
 
 
 def digest_file(path):
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+    return hash_file(path)
 
 
 class BudgetExceeded(ValueError):
@@ -131,8 +133,8 @@ def is_digest(value):
 
 def check_current(current):
     if (not isinstance(current, dict) or
-        current.get("schema") != "transparent-prepared-distribution-v1" or
-        not is_digest(current.get("inventory_sha256")) or
+        current.get("schema") != "transparent-prepared-distribution-v2" or
+        not valid_checksum(current.get("inventory_checksum")) or
         not is_digest(current.get("genesis_hash")) or not is_digest(current.get("anchor_hash")) or
         type(current.get("revision")) is not int or current["revision"] < 0 or
         type(current.get("anchor_height")) is not int or current["anchor_height"] < 0 or
@@ -146,11 +148,11 @@ def check_current(current):
 
 
 PROFILE = "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1"
-RUNTIME = "transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1"
+RUNTIME = "transparent-runtime-v4/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1"
 
 
 def validate_inventory(inventory, current):
-    if (inventory.get("schema") != "transparent-prepared-distribution-v1" or
+    if (inventory.get("schema") != "transparent-prepared-distribution-v2" or
         inventory.get("profile") != PROFILE or inventory.get("runtime") != RUNTIME or
         inventory.get("shard_schema") != "transparent-shard-v12" or
         inventory.get("network") != current["network"] or
@@ -165,7 +167,7 @@ def validate_inventory(inventory, current):
         path, kind, size = artifact["path"], artifact["kind"], artifact["bytes"]
         if (not isinstance(path, str) or len(path) > 256 or path in seen or
             any(c in ("", ".", "..") or not re.fullmatch(r"[a-zA-Z0-9_.-]+", c) for c in path.split("/")) or
-            not is_digest(artifact["sha256"]) or type(size) is not int or size <= 0):
+            not valid_checksum(artifact["checksum"]) or type(size) is not int or size <= 0):
             raise ValueError("unsafe/duplicate artifact path, digest or length")
         seen.add(path)
         if kind == "metadata":
@@ -353,7 +355,7 @@ class Consumer:
                     sock.close()
             timer = threading.Timer(self.args.timeout, expire)
             connection = DeadlineHTTPS(self.args.origin, self.context, start + self.args.timeout, sockets)
-            hasher, payload, retry = hashlib.sha256(), bytearray(), False
+            hasher, payload, retry = StreamHasher(), bytearray(), False
             response = None
             timer.start()
             try:
@@ -412,7 +414,7 @@ class Consumer:
                         stream.write(chunk)
                         record["bytes"] += len(chunk)
                         self.charged += len(chunk)
-                        hasher.update(chunk)
+                        hasher.update(chunk, deadline=connection.deadline)
                         if target is None:
                             payload.extend(chunk)
                         if record["bytes"] > limit or self.charged > 64 << 30:
@@ -449,9 +451,21 @@ class Consumer:
                 connection.close()
                 for sock in sockets:
                     sock.close()
-                record["sha256"], record["seconds"] = hasher.hexdigest(), time.monotonic() - start
+                checksum_error = None
+                try:
+                    record["checksum"] = hasher.finish(timeout=self.args.timeout)
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    record["checksum"] = None
+                    if record["error"] is None:
+                        record["error"] = ("artifact checksum helper failed: " + str(error))[:ERROR_LIMIT]
+                        checksum_error = error
+                finally:
+                    hasher.cancel()
+                record["seconds"] = time.monotonic() - start
                 self.receipts.append(record)
                 receipt_credit.write(self.log, json_bytes(record), append=True)
+                if checksum_error is not None:
+                    raise checksum_error
             time.sleep(min(5, .2 * 2 ** (attempt - 1)) + random.uniform(0, .5))
         raise AssertionError("unreachable")
 
@@ -486,14 +500,15 @@ class Consumer:
                     raise ValueError("publisher revision regressed")
                 if old and current["revision"] == old["current"]["revision"] and current != old["current"]:
                     raise ValueError("publisher contradicted an equal revision")
-                inventory_sha = current["inventory_sha256"]
+                inventory_checksum = current["inventory_checksum"]
+                inventory_sha = inventory_checksum["digest"]
                 if not is_digest(inventory_sha):
                     raise ValueError("invalid inventory digest")
                 raw, _ = self.request("inventories/" + inventory_sha, METADATA_LIMIT)
-                if hashlib.sha256(raw).hexdigest() != inventory_sha:
+                if hash_bytes(raw) != inventory_checksum:
                     raise ValueError("inventory digest mismatch")
                 inventory = json.loads(raw)
-                if inventory["schema"] != "transparent-prepared-distribution-v1":
+                if inventory["schema"] != "transparent-prepared-distribution-v2":
                     raise ValueError("unexpected inventory schema")
                 # This load client never activates data. Native providers still
                 # independently validate prepared material through their loader.
@@ -517,16 +532,17 @@ class Consumer:
                         raise ValueError("unknown artifact classification")
                     if artifact["kind"] == "recent_table" and shard_roles.get(artifact["path"].split("/")[0]) != "recent_table":
                         raise ValueError("recent classification disagrees with map")
-                    sha = artifact["sha256"]
+                    checksum = artifact["checksum"]
+                    sha = checksum["digest"]
                     if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
                         raise ValueError("invalid digest")
-                    target = self.objects / sha
-                    if target.exists() and target.stat().st_size == artifact["bytes"] and digest_file(target) == sha:
+                    target = self.objects / (checksum["algorithm"] + "-" + sha)
+                    if target.exists() and target.stat().st_size == artifact["bytes"] and digest_file(target) == checksum:
                         self.reused.append(sha)
                     else:
                         partial = target.with_name(sha + f".{self.args.phase}.{len(self.receipts)}.partial")
                         _, receipt = self.request("artifacts/" + sha, artifact["bytes"], target=partial)
-                        if receipt["bytes"] != artifact["bytes"] or receipt["sha256"] != sha:
+                        if receipt["bytes"] != artifact["bytes"] or receipt["checksum"] != checksum:
                             raise ValueError("artifact length/digest mismatch")
                         if target.exists():
                             os.link(target, self.bodies / f"{self.args.phase}-replaced-{len(self.receipts)}.body")
@@ -597,13 +613,13 @@ def main():
         raw, _ = control.request("current", METADATA_LIMIT)
         current = json.loads(raw)
         check_current(current)
-        raw, _ = control.request("inventories/" + current["inventory_sha256"], METADATA_LIMIT)
-        if hashlib.sha256(raw).hexdigest() != current["inventory_sha256"]:
+        raw, _ = control.request("inventories/" + current["inventory_checksum"]["digest"], METADATA_LIMIT)
+        if hash_bytes(raw) != current["inventory_checksum"]:
             raise ValueError("budget inventory digest mismatch")
         inventory = json.loads(raw)
         validate_inventory(inventory, current)
         map_artifact = next(a for a in inventory["artifacts"] if a["path"] == "shards.json")
-        raw, _ = control.request("artifacts/" + map_artifact["sha256"], map_artifact["bytes"])
+        raw, _ = control.request("artifacts/" + map_artifact["checksum"]["digest"], map_artifact["bytes"])
         validate_map(inventory, current, json.loads(raw))
         args.snapshot = current
         artifacts = [a for a in inventory["artifacts"] if a["kind"] != "archive_table"]
@@ -615,7 +631,7 @@ def main():
         bound = {"candidate_bytes": candidate_bytes, "retained_bytes": args.budget.used,
                  "evidence_reservation_bytes": evidence_bytes,
                  "cache_budget_bytes": args.cache_budget_bytes,
-                 "inventory_sha256": current["inventory_sha256"],
+                 "inventory_checksum": current["inventory_checksum"],
                  "permitted": args.budget.used + candidate_bytes + evidence_bytes <= args.cache_budget_bytes}
         report_credit.save(args.output / f"{args.phase}.disk-bound.json", bound)
         if not bound["permitted"]:

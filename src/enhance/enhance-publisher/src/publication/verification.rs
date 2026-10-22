@@ -1,7 +1,6 @@
 //! Hash evidence is process-local and only reusable for unchanged, settled files.
 use crate::artifact;
 use enhance_query_server::publication::{Inventory, Object};
-use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File},
@@ -111,7 +110,7 @@ fn verify_with(
             .iter()
             .chain([&domain.hint, &domain.public, &packing])
         {
-            pass.check_object(root, object, prior.get(&object.sha256))?;
+            pass.check_object(root, object, prior.get(&object.checksum))?;
         }
     }
     Ok(PreparedPublication {
@@ -137,16 +136,16 @@ impl VerificationPass {
         object: &Object,
         prior: Option<&FileIdentity>,
     ) -> Result<(), String> {
-        if let Some(bytes) = self.checked.get(&object.sha256) {
+        if let Some(bytes) = self.checked.get(&object.checksum) {
             if *bytes != object.bytes {
                 return Err("publication object checksum or length mismatch".into());
             }
             return Ok(());
         }
         if let Some(identity) = check_object(root, object, prior, &mut self.hashed)? {
-            self.evidence.insert(object.sha256.clone(), identity);
+            self.evidence.insert(object.checksum.clone(), identity);
         }
-        self.checked.insert(object.sha256.clone(), object.bytes);
+        self.checked.insert(object.checksum.clone(), object.bytes);
         Ok(())
     }
 }
@@ -173,7 +172,7 @@ pub(super) fn check_object(
     if before.len != object.bytes {
         return Err("publication object checksum or length mismatch".into());
     }
-    let mut hash = Sha256::new();
+    let mut hash = pir_artifact::Hasher::new();
     let mut buffer = vec![0; 1 << 16];
     loop {
         let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
@@ -185,7 +184,7 @@ pub(super) fn check_object(
     }
     hashed.files += 1;
     artifact::release_file_cache(&file);
-    if hex::encode(hash.finalize()) != object.sha256 {
+    if hex::encode(hash.finalize()) != object.checksum {
         return Err("publication object checksum or length mismatch".into());
     }
     if FileIdentity::of(&file.metadata().map_err(|e| e.to_string())?) != before {

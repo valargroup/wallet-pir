@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 pub const PREFIX: &str = "/provider/enhance/v1/";
 pub const METADATA_LIMIT: u64 = 2 * 1024 * 1024;
 pub const MAX_OBJECT_BYTES: u64 = 32768 * ROW_BYTES as u64;
@@ -100,7 +100,8 @@ impl AuthorityResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Object {
-    pub sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub checksum: String,
     pub bytes: u64,
 }
 
@@ -113,7 +114,7 @@ impl Object {
         } else {
             MAX_OBJECT_BYTES.max(prepared_packing::expected_len(32768)?)
         };
-        if !protocol::canonical_hash(&self.sha256) || self.bytes == 0 || self.bytes > limit {
+        if !protocol::canonical_hash(&self.checksum) || self.bytes == 0 || self.bytes > limit {
             return Err("invalid publication object".into());
         }
         Ok(())
@@ -121,7 +122,9 @@ impl Object {
 
     pub fn path(&self, root: &Path) -> Result<PathBuf, String> {
         self.validate()?;
-        Ok(root.join("objects").join(&self.sha256))
+        Ok(root
+            .join(pir_artifact::namespace("objects"))
+            .join(&self.checksum))
     }
 }
 
@@ -132,6 +135,8 @@ pub struct Domain {
     pub rows: Vec<Object>,
     pub hint: Object,
     pub public: Object,
+    /// Client protocol commitment, independent of the artifact checksum.
+    pub public_params_sha256: String,
     pub packing: Artifact,
 }
 
@@ -139,14 +144,14 @@ impl Domain {
     pub fn reference(&self) -> Result<SessionRef, String> {
         Ok(SessionRef {
             shard_id: self.plan.shard.id,
-            public_params_sha256: self.public.sha256.clone(),
+            public_params_sha256: self.public_params_sha256.clone(),
             parameter_id: protocol::parameter_id(self.plan.shard.logical_rows)?,
         })
     }
 
     pub fn packing_object(&self) -> Object {
         Object {
-            sha256: self.packing.sha256.clone(),
+            checksum: self.packing.checksum.clone(),
             bytes: self.packing.bytes,
         }
     }
@@ -195,9 +200,7 @@ impl Inventory {
             domain.plan.validate()?;
             for (rows, unit) in domain.rows.iter().zip(&domain.plan.units) {
                 rows.validate()?;
-                if rows.sha256 != unit.content_sha256
-                    || rows.bytes != unit.allocated_rows * ROW_BYTES as u64
-                {
+                if rows.bytes != unit.allocated_rows * ROW_BYTES as u64 {
                     return Err("publication rows differ from unit identity".into());
                 }
             }
@@ -221,7 +224,10 @@ impl Inventory {
             }
             domain
                 .packing
-                .validate(shard.logical_rows, &domain.public.sha256)?;
+                .validate(shard.logical_rows, &domain.public_params_sha256)?;
+            if !protocol::canonical_hash(&domain.public_params_sha256) {
+                return Err("invalid public parameter protocol commitment".into());
+            }
         }
         Ok(())
     }
@@ -239,4 +245,9 @@ impl Inventory {
         }
         Ok(true)
     }
+}
+
+/// Hash distribution metadata without changing protocol manifest commitments.
+pub fn inventory_digest(value: &impl Serialize) -> String {
+    pir_artifact::digest(&serde_json::to_vec(value).expect("distribution metadata serializes"))
 }

@@ -129,11 +129,11 @@ pub(crate) async fn stage_holdings(
     let started = std::time::Instant::now();
     let raw = source
         .small(
-            &format!("inventories/{}", current.inventory_sha256),
+            &format!("inventories/{}", current.inventory_checksum),
             16 << 20,
         )
         .await?;
-    if publication::digest(&raw) != current.inventory_sha256 {
+    if publication::digest(&raw) != current.inventory_checksum {
         return Err("inventory digest mismatch".into());
     }
     let mut transfer = started.elapsed();
@@ -186,7 +186,7 @@ pub(crate) async fn stage_holdings(
                 stage_object(
                     &config.directory,
                     &stage,
-                    &objects.join(&artifact.sha256),
+                    &objects.join(&artifact.checksum),
                     artifact,
                 )?;
             } else {
@@ -198,10 +198,10 @@ pub(crate) async fn stage_holdings(
                     .open(&target)
                     .await?;
                 let response = source
-                    .get(&format!("artifacts/{}", artifact.sha256))
+                    .get(&format!("artifacts/{}", artifact.checksum))
                     .await?;
                 let verification = if artifact.kind == publication::Kind::Metadata {
-                    pir_sync_manager::Verification::Sha256(&artifact.sha256)
+                    pir_sync_manager::Verification::Artifact(&artifact.checksum)
                 } else {
                     pir_sync_manager::Verification::Length
                 };
@@ -229,7 +229,7 @@ pub(crate) async fn stage_holdings(
         let map: transparent_filter::ShardMap =
             serde_json::from_slice(&std::fs::read(stage.join("shards.json"))?)?;
         map.validate_supported()?;
-        if publication::digest(&serde_json::to_vec(&map)?) != inventory.map_sha256 {
+        if publication::protocol_digest(&serde_json::to_vec(&map)?) != inventory.map_sha256 {
             return Err("downloaded map has another publication identity".into());
         }
         let options = holdings(config, &map, &inventory, full)?;
@@ -316,12 +316,13 @@ mod object_tests {
 
     fn object(root: &std::path::Path, body: &[u8]) -> (PathBuf, publication::Artifact) {
         let artifact = publication::Artifact {
+            source_sha256: None,
             path: "shards.json".into(),
-            sha256: publication::digest(body),
+            checksum: publication::digest(body),
             bytes: body.len() as u64,
             kind: publication::Kind::Metadata,
         };
-        let path = root.join(&artifact.sha256);
+        let path = root.join(&artifact.checksum);
         std::fs::write(&path, body).unwrap();
         let mut permissions = std::fs::metadata(&path).unwrap().permissions();
         permissions.set_readonly(true);
@@ -403,7 +404,11 @@ mod object_tests {
             .path()
             .join(format!("{}{PARTIAL}1-2", "11".repeat(32)));
         std::fs::write(&sentinel, b"outside").unwrap();
-        std::os::unix::fs::symlink(outside.path(), root.path().join("objects")).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path(),
+            root.path().join(pir_artifact::namespace("objects")),
+        )
+        .unwrap();
         assert!(prepare_objects(root.path()).is_err());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
         let real = tempfile::tempdir().unwrap();

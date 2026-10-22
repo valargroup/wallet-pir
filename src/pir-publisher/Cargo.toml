@@ -8,22 +8,26 @@ autotests = false
 
 [features]
 default = []
-enhance = ["dep:enhance-publisher"]
-status = ["dep:status-publisher", "status-publisher/cli"]
-transparent-history = ["dep:transparent-publisher"]
-transparent-detail = ["dep:transparent-publisher"]
+enhance = ["dep:enhance-publisher", "dep:enhance-query-server"]
+status = ["dep:status-publisher", "status-publisher/cli", "dep:status-query-server"]
+transparent-history = ["dep:transparent-publisher", "dep:transparent-shared"]
+transparent-detail = ["dep:transparent-publisher", "dep:transparent-shared"]
 rocksdb-reader = ["transparent-history", "transparent-publisher/rocksdb-reader"]
 receiver = ["dep:receiver-indexer"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
 status-tests = ["status", "status-publisher/fixtures"]
 
 [dependencies]
+enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
+status-query-server = { path = "../status/status-query-server", optional = true }
+transparent-shared = { path = "../transparent/transparent-shared", optional = true }
+pir-artifact = { path = "../shared/pir-artifact" }
 enhance-publisher = { path = "../enhance/enhance-publisher", optional = true }
 status-publisher = { path = "../status/status-publisher", optional = true }
 transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
 receiver-indexer = { path = "../receiver/receiver-indexer", optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
-pir-service-discovery = { version = "1.0.0", path = "../shared/pir-service-discovery" }
+pir-service-discovery = { version = "2.0.0", path = "../shared/pir-service-discovery" }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

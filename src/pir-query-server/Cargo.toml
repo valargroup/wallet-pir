@@ -30,6 +30,7 @@ native-reinspiring = [
 cuda = ["enhance-query-server?/cuda", "status-query-server?/cuda"]
 
 [dependencies]
+pir-artifact = { path = "../shared/pir-artifact" }
 pir-sync-manager = { path = "../shared/pir-sync-manager" }
 enhance-query-server = { path = "../enhance/enhance-query-server", optional = true }
 status-query-server = { path = "../status/status-query-server", optional = true }

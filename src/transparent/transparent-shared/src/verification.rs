@@ -5,8 +5,8 @@
 //! against same-size local corruption. Every reuse checks size and the opened
 //! file's identity; no body is hashed again. Receipts preserve first-load
 //! semantic checks across hard-linked publications and process restarts.
+use pir_artifact::Hasher;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs::File,
     io::{self, Read, Write},
@@ -15,14 +15,17 @@ use std::{
 
 // Older staging could attach a different object's identity to existing bytes.
 // Neither its download identities nor semantic checks are reusable evidence.
-const RECEIVED_VERSION: u32 = 2;
-const CHECK_DOMAIN: &[u8] = b"wallet-pir-local-check-v2\0";
+const RECEIVED_VERSION: u32 = 3;
+const CHECK_DOMAIN: &[u8] = b"wallet-pir-local-check-v3\0";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Received {
     version: u32,
-    sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    checksum: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_sha256: Option<String>,
     bytes: u64,
     object: PathBuf,
 }
@@ -35,7 +38,7 @@ pub(crate) fn expected(path: &Path) -> io::Result<Option<crate::publication::Rec
     };
     let received: Received = serde_json::from_reader(input.take(8193))?;
     if received.version != RECEIVED_VERSION
-        || !crate::publication::is_digest(&received.sha256)
+        || !crate::publication::is_digest(&received.checksum)
         || !received.object.is_absolute()
     {
         return Err(io::Error::new(
@@ -44,7 +47,8 @@ pub(crate) fn expected(path: &Path) -> io::Result<Option<crate::publication::Rec
         ));
     }
     Ok(Some(crate::publication::ReceivedArtifact {
-        sha256: received.sha256,
+        checksum: received.checksum,
+        source_sha256: received.source_sha256,
         bytes: received.bytes,
         object: received.object,
     }))
@@ -74,7 +78,7 @@ fn read_received(path: &Path, file: &File) -> Option<Received> {
     let opened = file.metadata().ok()?;
     let named = std::fs::symlink_metadata(path).ok()?;
     if received.version != RECEIVED_VERSION
-        || !crate::publication::is_digest(&received.sha256)
+        || !crate::publication::is_digest(&received.checksum)
         || !opened.is_file()
         || !named.is_file()
         || opened.len() != received.bytes
@@ -125,7 +129,13 @@ fn persist(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// Called only by the receiving/staging code, after the network hash succeeds
 /// or when reusing its completed digest-named cache object. Copies get their
 /// own size check; all aliases share the original object's semantic receipts.
-pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> io::Result<()> {
+pub(crate) fn received(
+    path: &Path,
+    checksum: &str,
+    source_sha256: Option<&str>,
+    bytes: u64,
+    object: &Path,
+) -> io::Result<()> {
     let file = open(path)?;
     if file.metadata()?.len() != bytes {
         return Err(io::Error::new(
@@ -135,12 +145,13 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
     }
     let next = Received {
         version: RECEIVED_VERSION,
-        sha256: sha256.into(),
+        checksum: checksum.into(),
+        source_sha256: source_sha256.map(str::to_owned),
         bytes,
         object: std::fs::canonicalize(object)?,
     };
     if let Some(previous) = read_received(path, &file) {
-        if previous.sha256 != next.sha256 {
+        if previous.checksum != next.checksum {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "completed artifact already has a different download identity",
@@ -154,8 +165,9 @@ pub(crate) fn received(path: &Path, sha256: &str, bytes: u64, object: &Path) -> 
     persist(&marker(path), &raw)
 }
 
-pub(crate) fn matches_received(path: &Path, file: &File, sha256: &str, bytes: u64) -> bool {
-    read_received(path, file).is_some_and(|r| r.sha256 == sha256 && r.bytes == bytes)
+pub(crate) fn matches_received(path: &Path, file: &File, source_sha256: &str, bytes: u64) -> bool {
+    read_received(path, file)
+        .is_some_and(|r| r.source_sha256.as_deref() == Some(source_sha256) && r.bytes == bytes)
 }
 
 pub(crate) struct Receipt {
@@ -164,9 +176,9 @@ pub(crate) struct Receipt {
 impl Receipt {
     pub(crate) fn new(path: &Path, file: &File, context: &[u8]) -> Option<Self> {
         let received = read_received(path, file)?;
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::new();
         hash.update(CHECK_DOMAIN);
-        hash.update(received.sha256.as_bytes());
+        hash.update(received.checksum.as_bytes());
         hash.update(received.bytes.to_le_bytes());
         hash.update(context);
         let mut name = received.object.file_name()?.to_os_string();
@@ -206,12 +218,13 @@ mod tests {
         let context = b"source-and-parameters";
         let legacy = Received {
             version: 1,
-            sha256: sha.clone(),
+            checksum: sha.clone(),
+            source_sha256: Some(sha.clone()),
             bytes: 13,
             object: object.clone(),
         };
         persist(&marker(&object), &serde_json::to_vec(&legacy).unwrap()).unwrap();
-        let mut hash = Sha256::new();
+        let mut hash = Hasher::new();
         hash.update(b"wallet-pir-local-check-v1\0");
         hash.update(sha.as_bytes());
         hash.update(13u64.to_le_bytes());
@@ -223,7 +236,7 @@ mod tests {
         assert!(!matches_received(&object, &file, &sha, 13));
         assert!(Receipt::new(&object, &file, context).is_none());
 
-        received(&object, &sha, 13, &object).unwrap();
+        received(&object, &sha, Some(&sha), 13, &object).unwrap();
         let check = Receipt::new(&object, &file, context).unwrap();
         assert!(!check.matches(), "an old semantic receipt is not evidence");
         check.record();
@@ -237,7 +250,7 @@ mod tests {
         let linked = dir.path().join("linked");
         std::fs::write(&object, b"network bytes").unwrap();
         let sha = crate::publication::digest(b"network bytes");
-        received(&object, &sha, 13, &object).unwrap();
+        received(&object, &sha, Some(&sha), 13, &object).unwrap();
         let file = open(&object).unwrap();
         assert!(matches_received(&object, &file, &sha, 13));
         let check = Receipt::new(&object, &file, b"source-and-parameters").unwrap();
@@ -245,7 +258,7 @@ mod tests {
         check.record();
         drop(file);
         std::fs::hard_link(&object, &linked).unwrap();
-        received(&linked, &sha, 13, &object).unwrap();
+        received(&linked, &sha, Some(&sha), 13, &object).unwrap();
         let file = open(&linked).unwrap();
         assert!(Receipt::new(&linked, &file, b"source-and-parameters")
             .unwrap()

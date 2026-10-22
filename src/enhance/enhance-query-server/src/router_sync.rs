@@ -549,7 +549,7 @@ impl Synchronizer {
             .iter()
             .map(|domain| {
                 Ok(digest(&(
-                    &domain.packing.sha256,
+                    &domain.packing.checksum,
                     domain.plan.shard.logical_rows,
                     domain.reference()?,
                 )))
@@ -573,7 +573,7 @@ impl Synchronizer {
         }
         let mut keep = domains
             .iter()
-            .map(|domain| domain.packing.sha256.clone())
+            .map(|domain| domain.packing.checksum.clone())
             .collect::<BTreeSet<_>>();
         {
             let inner = self.router.inner.lock().unwrap();
@@ -584,7 +584,7 @@ impl Synchronizer {
                 .cloned()
                 .chain(inner.retired.iter().filter_map(|old| old.view.upgrade()))
             {
-                keep.extend(view.objects.values().map(|object| object.sha256.clone()));
+                keep.extend(view.objects.values().map(|object| object.checksum.clone()));
             }
         }
         self.client.collect(&keep)?;
@@ -593,7 +593,7 @@ impl Synchronizer {
         for domain in domains {
             let object = domain.packing_object();
             let key = digest(&(
-                &domain.packing.sha256,
+                &domain.packing.checksum,
                 domain.plan.shard.logical_rows,
                 domain.reference()?,
             ));

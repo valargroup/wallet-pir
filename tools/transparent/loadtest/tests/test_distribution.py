@@ -1,5 +1,6 @@
 """Small real-TLS controls for the artifact driver, not publisher qualification."""
 import argparse
+import os
 import hashlib
 import http.server
 import importlib.util
@@ -87,27 +88,27 @@ class DistributionTests(unittest.TestCase):
             (recent_revision + "/manifest.json", b"{}", "metadata"),
             (recent_revision + "/filter.bin", b"b", "metadata"),
         ):
-            digest = hashlib.sha256(body).hexdigest()
-            artifacts.append({"path": path, "sha256": digest,
+            digest = distribution.hash_bytes(body)
+            artifacts.append({"path": path, "checksum": digest,
                               "bytes": len(body), "kind": kind})
-            self.replies[distribution.PREFIX + "artifacts/" + digest] = body
-        inventory = {"schema": "transparent-prepared-distribution-v1",
+            self.replies[distribution.PREFIX + "artifacts/" + digest["digest"]] = body
+        inventory = {"schema": "transparent-prepared-distribution-v2",
                      "profile": distribution.PROFILE, "runtime": distribution.RUNTIME,
                      "shard_schema": "transparent-shard-v12", "network": "main",
                      "genesis_hash": "00" * 32,
                      "map_sha256": hashlib.sha256(json.dumps(mapping, separators=(",", ":")).encode()).hexdigest(),
                      "recent_from_shard": 1, "artifacts": artifacts}
         raw = json.dumps(inventory).encode()
-        digest = hashlib.sha256(raw).hexdigest()
-        self.replies[distribution.PREFIX + "inventories/" + digest] = raw
-        self.current = {"schema": "transparent-prepared-distribution-v1", "recovery_epoch": 0,
+        digest = distribution.hash_bytes(raw)
+        self.replies[distribution.PREFIX + "inventories/" + digest["digest"]] = raw
+        self.current = {"schema": "transparent-prepared-distribution-v2", "recovery_epoch": 0,
                         "revision": revision, "eligibility": "canonical",
                         "invalidated_from": None, "anchor_height": revision,
                         "anchor_hash": f"{revision:064x}",
-                        "inventory_sha256": digest, "network": "main",
+                        "inventory_checksum": digest, "network": "main",
                         "genesis_hash": "00" * 32}
         self.etag = f'"revision-{revision}"'
-        self.archive_digest = artifacts[1]["sha256"]
+        self.archive_digest = artifacts[1]["checksum"]["digest"]
 
     def consumer(self, phase):
         output = self.root / "output"
@@ -137,7 +138,7 @@ class DistributionTests(unittest.TestCase):
         for receipt in receipts:
             body = consumer.root / receipt["body_path"]
             self.assertEqual(body.stat().st_size, receipt["bytes"])
-            self.assertEqual(distribution.digest_file(body), receipt["sha256"])
+            self.assertEqual(distribution.digest_file(body), receipt["checksum"])
         return receipts
 
     def test_escaping_heavy_etags_retain_bootstrap_update_and_conditional_receipts(self):
@@ -255,7 +256,7 @@ class DistributionTests(unittest.TestCase):
         with self.assertRaises(distribution.http.client.IncompleteRead):
             # Admit the declared size so this remains an EOF/framing control,
             # independently of the earlier declared-size bound check.
-            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body) + 1, target=target)
+            consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body) + 1, target=target)
         self.assertFalse(target.exists())
         receipt = consumer.receipts[0]
         self.assertEqual(receipt["bytes"], len(body))
@@ -277,7 +278,7 @@ class DistributionTests(unittest.TestCase):
                 length[0] = value
                 target = consumer.objects / f"malformed-{index}"
                 with self.assertRaisesRegex(ValueError, "ambiguous HTTP framing"):
-                    consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                    consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body), target=target)
                 self.assertFalse(target.exists())
         receipts = self.assert_retained_receipts(consumer)
         self.assertEqual(len(receipts), 3)
@@ -336,7 +337,7 @@ class DistributionTests(unittest.TestCase):
         self.server.RequestHandlerClass.do_GET = oversized
         target = consumer.objects / "oversized"
         with self.assertRaisesRegex(ValueError, "Content-Length exceeds body bound"):
-            consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+            consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body), target=target)
         self.assertFalse(target.exists())
         receipts = self.assert_retained_receipts(consumer)
         self.assertEqual(len(receipts), 1)
@@ -394,10 +395,10 @@ class DistributionTests(unittest.TestCase):
             target = consumer.objects / f"chunk-{index}"
             if index < 2:
                 with self.assertRaises(distribution.http.client.HTTPException):
-                    consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                    consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body), target=target)
                 self.assertFalse(target.exists())
             else:
-                consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+                consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body), target=target)
                 self.assertEqual(target.read_bytes(), body)
         self.assertEqual([r["bytes"] for r in consumer.receipts], [len(body)] * 3)
 
@@ -432,14 +433,14 @@ class DistributionTests(unittest.TestCase):
                 time.sleep(.3)
         self.server.RequestHandlerClass.do_GET = retry
         target = consumer.objects / "candidate"
-        consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)
+        consumer.request("artifacts/" + distribution.hash_bytes(body)["digest"], len(body), target=target)
         self.assertEqual([r["bytes"] for r in consumer.receipts], [3, len(body)])
         self.assertEqual([(consumer.root / r["body_path"]).read_bytes() for r in consumer.receipts], [body[:3], body])
         self.assertEqual(target.read_bytes(), body)
         self.assertTrue(consumer.receipts[0]["error"])
 
     def test_mislabeled_archive_is_refused_before_transfer(self):
-        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_sha256"]])
+        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_checksum"]["digest"]])
         inventory["artifacts"][1]["kind"] = "metadata"
         self.replace_inventory(inventory)
         result = self.consumer("bootstrap").run()
@@ -449,18 +450,18 @@ class DistributionTests(unittest.TestCase):
 
     def replace_inventory(self, inventory):
         raw = json.dumps(inventory).encode()
-        digest = hashlib.sha256(raw).hexdigest()
-        self.current["inventory_sha256"] = digest
-        self.replies[distribution.PREFIX + "inventories/" + digest] = raw
+        digest = distribution.hash_bytes(raw)
+        self.current["inventory_checksum"] = digest
+        self.replies[distribution.PREFIX + "inventories/" + digest["digest"]] = raw
 
     def test_invalid_inventory_digest_never_becomes_request_path(self):
-        self.current["inventory_sha256"] = "../unsafe"
+        self.current["inventory_checksum"] = "../unsafe"
         result = self.consumer("bootstrap").run()
         self.assertFalse(result["complete"])
         self.assertEqual(self.paths, [distribution.PREFIX + "current"])
 
     def test_inventory_profile_runtime_and_map_identity_are_mandatory(self):
-        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_sha256"]])
+        inventory = json.loads(self.replies[distribution.PREFIX + "inventories/" + self.current["inventory_checksum"]["digest"]])
         for field in ("profile", "runtime", "shard_schema"):
             with self.subTest(field=field):
                 bad = dict(inventory, **{field: "wrong"})
@@ -540,7 +541,7 @@ class DistributionTests(unittest.TestCase):
         for receipt in consumer.receipts:
             retained = consumer.root / receipt["body_path"]
             self.assertEqual(retained.stat().st_size, receipt["bytes"])
-            self.assertEqual(distribution.digest_file(retained), receipt["sha256"])
+            self.assertEqual(distribution.digest_file(retained), receipt["checksum"])
         with self.assertRaises(distribution.BudgetExceeded):
             distribution.DiskBudget(consumer.args.output, self.retained_size(consumer.args.output) - 1)
 

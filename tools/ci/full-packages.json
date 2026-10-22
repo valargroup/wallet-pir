@@ -1,5 +1,6 @@
 {
   "shared": [
+    "pir-artifact",
     "pir-control",
     "pir-observability",
     "pir-runtime",

@@ -27,6 +27,7 @@ pir-pipeline = { path = "../../shared/pir-pipeline" }
 pir-sync-manager = { path = "../../shared/pir-sync-manager" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["full"] }
+pir-artifact = { path = "../../shared/pir-artifact" }
 pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 # Profile modulus and native hint helpers are shared with Enhance serving.
 pir-serving = { path = "../../shared/pir-serving" }
