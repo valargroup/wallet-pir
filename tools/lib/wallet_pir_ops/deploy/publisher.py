@@ -209,7 +209,7 @@ class Cutover:
     def read(self, path):
         return self.ex.read(self.host, path)
 
-    def resources(self, extra_bytes=0):
+    def resources(self, extra_bytes=0, allocations=None):
         config = self.request['configuration']
         history = config['transparent_history']['settings']
         display = config['transaction_details']['settings']
@@ -219,13 +219,19 @@ class Cutover:
         if self.expanded:
             from .publisher_products import inputs, locks
             paths += [*inputs(config), *locks(config)]
+        paths += list(allocations or {})
         result = self.ex.publisher_resources(self.host, paths)
         require(result['machine_id'] == self.request['machine_id'], 'coordinator machine identity differs')
         require(result['memory_available'] >= result['memory_total'] * .2, 'less than 20 percent available memory')
         minimum = 50 if self.expanded else 24
         require(result['memory_total'] >= minimum * (1 << 30), 'coordinator is too small for the combined publisher budget')
+        budgets = {}
+        for path, amount in (allocations or {}).items():
+            device = result['disks'][path]['device']
+            budgets[device] = budgets.get(device, 0) + amount
         for disk in result['disks'].values():
-            require(disk['available'] - extra_bytes >= disk['total'] * .2, 'staging would leave less than 20 percent disk headroom')
+            reserved = budgets.get(disk['device'], 0) if allocations is not None else extra_bytes
+            require(disk['available'] - reserved >= disk['total'] * .2, 'staging would leave less than 20 percent disk headroom')
         return result
 
     def latest(self):
@@ -244,17 +250,22 @@ class Cutover:
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
         extra = self.request['release']['binary_bytes']
+        allocations = None
         if self.request['schema'] == HTTPS_SCHEMA:
             extra += self.request['https']['publisher_budget_bytes']
         if self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
-            extra += self.request['enhance_https']['publisher_budget_bytes']
             extra += self.request['serving']['binary_bytes']
             extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
-            # Ingress or another consumer can share the coordinator filesystem.
-            # Reserve its declared cache in addition to publisher preparation.
-            extra += sum(target.settings['synchronization']['cache_limit_bytes']
-                         for target in self.serving.deployer.targets if target.host == self.host)
-        resource = self.resources(extra)
+            allocations = {ROOT_DIR + '/.staging-budget': extra,
+                           self.request['configuration']['enhance']['settings']['data_dir'] + '/.staging-budget':
+                           self.request['enhance_https']['publisher_budget_bytes']}
+            # Charge each write to its actual filesystem; unchanged product
+            # volumes retain their free-space floor without an Enhance charge.
+            for target in self.serving.deployer.targets:
+                if target.host == self.host:
+                    path = target.settings['data_dir'] + '/.staging-budget'
+                    allocations[path] = allocations.get(path, 0) + target.settings['synchronization']['cache_limit_bytes']
+        resource = self.resources(extra, allocations)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')

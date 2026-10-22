@@ -187,6 +187,27 @@ class EnhanceTests(PublisherFixture, unittest.TestCase):
             self.target.plan()
         self.assertEqual(self.ex.effects, [])
 
+    def test_unchanged_product_volume_keeps_its_floor_without_an_enhance_charge(self):
+        display = self.request['configuration']['transaction_details']['settings']
+        separate = {display['journal'] + '/writer.lock', display['root'] + '/controller.lock'}
+        original = self.ex.publisher_resources
+        available = 20 << 30
+
+        def resources(host, paths):
+            result = original(host, paths)
+            if host == 'coordinator':
+                for path, disk in result['disks'].items():
+                    if path in separate:
+                        disk.update(device=2, available=available)
+            return result
+
+        self.ex.publisher_resources = resources
+        self.target.plan()
+        available -= 1
+        with self.assertRaisesRegex(DeployError, '20 percent disk headroom'):
+            self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
     def test_other_product_settings_cannot_be_changed(self):
         self.target.request['configuration']['status']['settings']['cookie'] = '/another-cookie'
         with self.assertRaisesRegex(DeployError, 'every other product'):
