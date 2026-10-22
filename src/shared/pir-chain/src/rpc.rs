@@ -171,12 +171,16 @@ impl NodeClient {
     }
 
     /// The node's raw `getblock` bytes for `block`, a height or a display-order hash.
+    // Unused by an RPC-only build that selects no product adapter.
+    #[allow(dead_code)]
     pub(crate) async fn raw_block(&self, block: String) -> Result<Vec<u8>, NodeError> {
         let raw: String = self.call("getblock", json!([block, 0])).await?;
         Ok(hex::decode(raw)?)
     }
 
     /// One JSON-RPC 1.0 call to the node.
+    // Unused by an RPC-only build that selects no product adapter.
+    #[allow(dead_code)]
     pub(crate) async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
