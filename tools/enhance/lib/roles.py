@@ -9,13 +9,13 @@ loopback management port, so the two processes do not share a configuration
 or a listener. The publication application runs on `pir-publisher` and is not rendered
 here.
 
-An Enhance worker is reserved, filled and activated by its coordinator and
-only serves once a packing router lists it. It has no staged inputs of its
-own, so it has no preflight input check: the product says so rather than
-manufacturing one.
+Each role independently follows its configured HTTPS publisher. Static domain
+responsibilities and private downstream peers belong to the operator inventory.
+Preflight validates configuration without opening caches or loading GPU drivers.
 """
 import re
 import zlib
+from urllib.parse import urlsplit
 
 from wallet_pir_ops.paths import ROOT
 from wallet_pir_ops.role_config import address, directory, number, settings_of, worker as render_worker
@@ -46,11 +46,62 @@ def _matvec(settings):
             'cuda_device': None if device is None else int(number(device, 'cuda_device'))}
 
 
-def _origin(value):
-    if (not isinstance(value, str) or any(character.isspace() for character in value)
-            or not value.startswith(('http://', 'https://'))):
-        raise ValueError('artifact_origin must be an http:// or https:// origin')
-    return value
+def _origin(value, scheme):
+    if not isinstance(value, str):
+        raise ValueError('peer origin must be a URL')
+    parsed = urlsplit(value)
+    if (parsed.scheme != scheme or not parsed.hostname or parsed.username or parsed.password
+            or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
+        raise ValueError('expected an ' + scheme + ' origin without credentials or a path')
+    return value.rstrip('/')
+
+
+def _synchronization(value, role):
+    required = {'publisher_origin', 'download_budget_bytes', 'cache_limit_bytes',
+                {'worker': 'shards', 'packing-router': 'workers', 'query-ingress': 'routers'}[role]}
+    optional = {'trusted_ca'} | ({'preferred'} if role == 'packing-router' else set())
+    if not isinstance(value, dict) or required - value.keys() or value.keys() - required - optional:
+        raise ValueError('incomplete or unknown Enhance synchronization settings')
+    config = dict(value)
+    config['publisher_origin'] = _origin(config['publisher_origin'], 'https')
+    for name, minimum in [('download_budget_bytes', 6 * 1024 * 1024), ('cache_limit_bytes', 1)]:
+        if type(config[name]) is not int or config[name] < minimum:
+            raise ValueError(name + ' is too small')
+    if config.get('trusted_ca') is not None:
+        config['trusted_ca'] = directory(config['trusted_ca'])
+    if role == 'worker':
+        shards = config['shards']
+        if (not isinstance(shards, list) or not shards or len(shards) > 7
+                or any(type(s) is not int or not 0 <= s < 24 for s in shards)
+                or len(set(shards)) != len(shards)):
+            raise ValueError('worker needs distinct domain responsibilities below 24')
+    else:
+        name = 'workers' if role == 'packing-router' else 'routers'
+        peers = config[name]
+        if not isinstance(peers, dict) or not peers or len(peers) > (6 if name == 'workers' else 24):
+            raise ValueError('invalid domain peer map')
+        for shard, origins in peers.items():
+            if not isinstance(shard, str) or not shard.isdecimal() or str(int(shard)) != shard or not 0 <= int(shard) < 24:
+                raise ValueError('domain keys must be canonical integers below 24')
+            if (not isinstance(origins, list) or not 1 <= len(origins) <= 2
+                    or (name == 'workers' and len(set(origins)) != len(origins))):
+                raise ValueError('each domain needs one or two distinct peers')
+            for origin in origins:
+                if name == 'workers':
+                    _origin(origin, 'http')
+                else:
+                    if not isinstance(origin, dict) or set(origin) != {'control_origin', 'query_origin'}:
+                        raise ValueError('router needs explicit control and query origins')
+                    _origin(origin['control_origin'], 'http')
+                    _origin(origin['query_origin'], 'http')
+            if name == 'routers' and len({(v['control_origin'], v['query_origin']) for v in origins}) != len(origins):
+                raise ValueError('router endpoints must be distinct')
+        preferred = config.get('preferred', {})
+        if not isinstance(preferred, dict) or any(
+                shard not in peers or not isinstance(origins, list) or not set(origins) <= set(peers[shard])
+                for shard, origins in preferred.items()):
+            raise ValueError('preferred workers must be configured replicas')
+    return config
 
 
 def _binding(role, unit, listen):
@@ -80,18 +131,19 @@ def _render(role, template, release, settings, body, writable, unit=None):
     path, management = _binding(role, unit, body.get('listen'))
     document = {'management_listen': management,
                 'enhance': {'enabled': True, 'settings': body}}
+    ca = body['synchronization'].get('trusted_ca')
     return render_worker(template, directory(release) + '/' + QUERY_BINARY, ['--config', path],
-                         configurations={path: document}, writable=writable, readonly=[path], settings=settings,
-                         check=['--config', path, '--check'] if role in ('packing-router', 'query-ingress') else ())
+                         configurations={path: document}, writable=writable, readonly=[path, *([ca] if ca else [])], settings=settings,
+                         check=['--config', path, '--check'])
 
 
 def _worker(role, settings, release, template, unit=None):
     """`pir-query-server` worker: CPU by default; CUDA only when the inventory says so."""
-    parsed = settings_of(settings, ('listen', 'data_dir'), ('sealed_shards', 'matvec_backend', 'cuda_device'))
+    parsed = settings_of(settings, ('listen', 'data_dir', 'synchronization'), ('sealed_shards', 'matvec_backend', 'cuda_device'))
     data = directory(parsed['data_dir'])
     body = {'role': 'worker', 'listen': address(parsed['listen'], 'listen'), 'data_dir': data,
             'sealed_shards': int(number(parsed.get('sealed_shards', 6), 'sealed_shards', 1)),
-            'matvec': _matvec(parsed)}
+            'matvec': _matvec(parsed), 'synchronization': _synchronization(parsed['synchronization'], 'worker')}
     text = WORKER_TEMPLATE.read_text() if template is None else template
     return _render(role, text, release, parsed, body, [data], unit)
 
@@ -108,10 +160,11 @@ def external_worker(settings, *, release, template=None, unit=None):
 
 def query_ingress(settings, *, release, template=None):
     """Public query ingress. `requests` and `uploads` keep the process defaults when omitted."""
-    parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir'), ('requests', 'uploads'))
+    parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'), ('requests', 'uploads'))
     data = directory(parsed['data_dir'])
     body = {'role': 'query-ingress', 'data_dir': data, 'listen': address(parsed['listen'], 'listen'),
-            'control_listen': address(parsed['control_listen'], 'control_listen')}
+            'control_listen': address(parsed['control_listen'], 'control_listen'),
+            'synchronization': _synchronization(parsed['synchronization'], 'query-ingress')}
     if 'requests' in parsed:
         body['requests'] = int(number(parsed['requests'], 'requests', 1))
     if 'uploads' in parsed:
@@ -122,10 +175,11 @@ def query_ingress(settings, *, release, template=None):
 
 def packing_router(settings, *, release, template=None):
     """Packing router. `max_objects` and `requests` keep the process defaults when omitted."""
-    parsed = settings_of(settings, ('data_dir', 'artifact_origin', 'listen', 'control_listen'),
+    parsed = settings_of(settings, ('data_dir', 'synchronization', 'listen', 'control_listen'),
                          ('max_objects', 'requests'))
     data = directory(parsed['data_dir'])
-    body = {'role': 'packing-router', 'data_dir': data, 'artifact_origin': _origin(parsed['artifact_origin']),
+    body = {'role': 'packing-router', 'data_dir': data,
+            'synchronization': _synchronization(parsed['synchronization'], 'packing-router'),
             'listen': address(parsed['listen'], 'listen'),
             'control_listen': address(parsed['control_listen'], 'control_listen')}
     if 'max_objects' in parsed:
@@ -142,15 +196,12 @@ def report(service, role, health, ready_status):
         return {'executable': {'binary_sha256': 'unobserved'}, 'publication': 'unobserved',
                 'preparation': 'unobserved', 'readiness': 'unobserved'}
     executable = {'binary_sha256': health.get('binary_sha256'), 'incarnation': health.get('incarnation')}
-    published = health.get('published') or []
-    preparation = health.get('preparation')
+    active = health.get('active')
+    ready = health.get('ready') is True and ready_status == 200
     return {
         'executable': executable,
-        'publication': {'assigned': health.get('candidate'), 'loaded': health.get('published_manifest_digests'),
-                        'generations': published},
-        'preparation': preparation if preparation is not None else 'none since start',
-        'readiness': {'verified': bool(published), 'warm': bool(published),
-                      # Activation and commit come only from the coordinator.
-                      'authorized': bool(published),
-                      'ready': 'unsupported; a packing router must also list it'},
+        'publication': {'loaded': active},
+        'preparation': health.get('preparing', 'none since start'),
+        'readiness': {'verified': bool(active), 'warm': bool(active),
+                      'authorized': ready, 'ready': ready},
     }

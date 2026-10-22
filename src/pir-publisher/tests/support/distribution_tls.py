@@ -123,6 +123,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             Path(control + ".entered").touch()
             while Path(control).read_text().strip() == "pause-artifact":
                 time.sleep(0.01)
+        if fault == "pause-authority" and self.command == "POST" and self.path.endswith("/authority"):
+            Path(control + ".entered").touch()
+            deadline = time.monotonic() + 10
+            while Path(control).read_text().strip() == fault and time.monotonic() < deadline:
+                time.sleep(0.01)
         if fault in {"runtime", "unsafe-path", "missing-runtime"} and self.path.endswith("/anchors/check"):
             # The forged current names a forged inventory; answer batches as a
             # publisher of that inventory would, from the real canonicality checks.

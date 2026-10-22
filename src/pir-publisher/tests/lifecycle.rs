@@ -40,8 +40,7 @@ async fn bind_failure_cannot_start_a_publisher_or_create_its_state() {
     }
     value["enhance"]["settings"]["data_dir"] = json!(temp.path().join("enhance"));
     value["enhance"]["settings"]["listen"] = json!(port().to_string());
-    value["enhance"]["settings"]["packing_router_config"] = Value::Null;
-    value["enhance"]["settings"]["artifact_listen"] = Value::Null;
+    value["enhance"]["settings"]["artifact_listen"] = json!(port().to_string());
     value["transaction_details"]["settings"]["status_listen"] =
         json!(occupied.local_addr().unwrap().to_string());
     let config = serde_json::from_value(value).unwrap();

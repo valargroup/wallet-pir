@@ -2,7 +2,7 @@
 name = "enhance-publisher"
 version = "0.0.1"
 edition = "2021"
-description = "Enhance PIR publication owner: chain reading, journals, durable control state, preparation, activation and recovery; hosted by pir-publisher"
+description = "Enhance PIR publication owner: chain reading, journals, durable publications, local preparation and recovery; hosted by pir-publisher"
 publish = false
 
 autobins = false
@@ -17,12 +17,6 @@ default = []
 native-reinspiring = ["enhance-query-server/native-reinspiring", "dep:zakura-pir-publisher", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 # Exposes the journal's injected I/O failure to the host's Enhance regressions.
 fault-injection = []
-# Widens private helpers for those regressions. Production builds leave it off.
-fixtures = []
-# In-process packing router and query ingress for tools and tests that drive
-# wallet traffic. Production runs those roles as pir-query-server processes.
-local-serving = []
-
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 # Query serving, which the publisher composes with chain reading and ingestion.

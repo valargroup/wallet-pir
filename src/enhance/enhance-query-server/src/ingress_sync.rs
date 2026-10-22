@@ -29,13 +29,21 @@ const MAINTENANCE: Duration = Duration::from_secs(5);
 const BODY_LIMIT: usize = 512 * 1024;
 const SESSION_LIMIT: usize = 32 * 1024 * 1024;
 
+/// The private readiness listener and the query listener can use different
+/// addresses. Both are operator configuration and bind the same incarnation.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct RouterPeer {
+    pub control_origin: String,
+    pub query_origin: String,
+}
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
-    #[serde(deserialize_with = "crate::synchronization::domains")]
-    pub routers: BTreeMap<u64, Vec<String>>,
+    #[serde(deserialize_with = "crate::synchronization::domain_map")]
+    pub routers: BTreeMap<u64, Vec<RouterPeer>>,
 }
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
@@ -43,7 +51,10 @@ impl Config {
         if self.routers.is_empty() || self.routers.len() > protocol::MAX_QUERY_SHARDS as usize {
             return Err("ingress needs configured router responsibilities".into());
         }
-        for origins in self.routers.values() {
+        for (shard, origins) in &self.routers {
+            if *shard >= protocol::MAX_QUERY_SHARDS {
+                return Err("ingress domain is outside the protocol ceiling".into());
+            }
             if origins.is_empty()
                 || origins.len() > 2
                 || origins.iter().collect::<BTreeSet<_>>().len() != origins.len()
@@ -51,7 +62,8 @@ impl Config {
                 return Err("ingress needs one or two distinct routers per domain".into());
             }
             for origin in origins {
-                crate::packing_router::valid_origin(origin)?;
+                crate::synchronization::peer_origin(&origin.control_origin)?;
+                crate::synchronization::peer_origin(&origin.query_origin)?;
             }
         }
         Ok(())
@@ -60,6 +72,7 @@ impl Config {
 #[derive(Clone)]
 struct Peer {
     url: String,
+    control_origin: String,
     incarnation: String,
     deadline: Instant,
 }
@@ -194,7 +207,7 @@ impl QueryIngress {
                 return Err("published domain has no configured router".into());
             };
             for origin in origins {
-                let (http, url, manifest, holder, shard) = (
+                let (http, endpoint, manifest, holder, shard) = (
                     self.http.clone(),
                     origin.clone(),
                     manifest.clone(),
@@ -205,7 +218,7 @@ impl QueryIngress {
                     let started = Instant::now();
                     let result = async {
                         let response = http
-                            .post(format!("{url}/internal/readiness"))
+                            .post(format!("{}/internal/readiness", endpoint.control_origin))
                             .timeout(Duration::from_secs(2))
                             .json(&ReadinessRequest {
                                 manifest_sha256: digest(&manifest),
@@ -230,7 +243,8 @@ impl QueryIngress {
                             );
                         }
                         Ok(Peer {
-                            url,
+                            url: endpoint.query_origin,
+                            control_origin: endpoint.control_origin,
                             incarnation: ready.incarnation,
                             deadline: started + PIN_LIFETIME,
                         })
@@ -259,7 +273,7 @@ impl QueryIngress {
         for (url, incarnation) in peers
             .values()
             .flatten()
-            .map(|p| (p.url.clone(), p.incarnation.clone()))
+            .map(|p| (p.control_origin.clone(), p.incarnation.clone()))
             .collect::<BTreeSet<_>>()
         {
             let http = self.http.clone();
@@ -378,12 +392,10 @@ impl Synchronizer {
         self.ingress.maintain().await;
         self.client.begin().await?;
         let response = self.client.current().await?;
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
-        let lease =
+        let Some(manifest) = response.current.manifest.clone() else {
+            return Ok(());
+        };
+        let observed =
             Lease::from_response(response.clone(), &manifest, &self.ingress.authority.safety)?;
         {
             let mut inner = self.ingress.inner.lock().unwrap();
@@ -392,7 +404,7 @@ impl Synchronizer {
                 .as_ref()
                 .is_some_and(|view| view.manifest == manifest)
             {
-                self.ingress.authority.install(manifest, lease)?;
+                self.ingress.authority.install(manifest, observed)?;
                 return Ok(());
             }
             // Make room before asking downstream to retain another generation.
@@ -406,8 +418,8 @@ impl Synchronizer {
             return Ok(());
         };
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("ingress publication superseded during readiness".into());
+        if !lease.continues(&observed) {
+            return Err("ingress publication withdrawn during readiness".into());
         }
         let guard = self.ingress.authority.install(manifest.clone(), lease)?;
         guard.check()?;
@@ -446,7 +458,7 @@ impl SyncTask for Synchronizer {
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
     let inner = r.inner.lock().unwrap();
     Json(
-        serde_json::json!({ "incarnation": r.incarnation, "generation": inner.active.as_ref().map(|v| v.manifest.generation),
+        serde_json::json!({ "binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": r.incarnation, "active": inner.active.as_ref().map(|v| digest(&v.manifest)), "generation": inner.active.as_ref().map(|v| v.manifest.generation),
         "ready": inner.active.as_ref().is_some_and(|v| r.authority.check(&v.manifest).is_ok()) }),
     )
 }
@@ -554,7 +566,10 @@ async fn forward_session(r: QueryIngress, id: String) -> Response {
         let bytes = crate::query_serving::bounded(response, SESSION_LIMIT)
             .await
             .map_err(peer_failed)?;
-        guard.check().map_err(unavailable)?;
+        let guard = guard
+            .fresh_for_release(&r.authority)
+            .await
+            .map_err(unavailable)?;
         let mut response = (
             status,
             crate::response_body::guarded(bytes, (permit, view), move || guard.check()),
@@ -631,7 +646,10 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, ApiError> 
         let bytes = crate::query_serving::bounded(response, 1024 * 1024)
             .await
             .map_err(peer_failed)?;
-        guard.check().map_err(unavailable)?;
+        let guard = guard
+            .fresh_for_release(&r.authority)
+            .await
+            .map_err(unavailable)?;
         let mut response = (
             status,
             crate::response_body::guarded(bytes, (permit, view), move || guard.check()),
@@ -661,7 +679,14 @@ mod tests {
                 download_budget_bytes: 8 * METADATA_LIMIT,
                 cache_limit_bytes: METADATA_LIMIT,
             },
-            routers: [(0, vec!["http://127.0.0.1:1".into()])].into(),
+            routers: [(
+                0,
+                vec![RouterPeer {
+                    control_origin: "http://127.0.0.1:1".into(),
+                    query_origin: "http://127.0.0.1:2".into(),
+                }],
+            )]
+            .into(),
         };
         let ingress = QueryIngress::open(root.path(), config, 1, 4).unwrap();
         (root, ingress)
@@ -710,9 +735,16 @@ mod tests {
         config.source.publisher_origin = "http://publisher.example".into();
         assert!(config.validate().is_err());
         let mut config = ingress.config.clone();
-        config
-            .routers
-            .insert(0, vec!["http://127.0.0.1:1".into(); 2]);
+        config.routers.insert(
+            0,
+            vec![
+                RouterPeer {
+                    control_origin: "http://127.0.0.1:1".into(),
+                    query_origin: "http://127.0.0.1:2".into(),
+                };
+                2
+            ],
+        );
         assert!(config.validate().is_err());
     }
 }

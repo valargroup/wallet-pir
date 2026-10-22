@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Run a CUDA query server and a native coordinator against fresh public fixture state.
+"""Run autonomous CUDA query hosts against a canonical native publisher.
 
 Workers are the CUDA `pir-query-server` in `--release-dir`. The coordinator is
-the native `pir-publisher` passed as `--publisher`. GPU hosts do not run
+the canonical publisher passed as `--publisher`. GPU hosts do not run
 the publisher as the worker. No production state, service units, or inventories
 are opened. Both isolated replicas use CUDA, so every successful encrypted
 fixture query executes on the GPU.
@@ -49,57 +49,9 @@ def get(url):
         return response.read().decode()
 
 
-def port():
-    with socket.socket() as listener:
-        listener.bind(('127.0.0.1', 0))
-        return listener.getsockname()[1]
-
-
-def worker_config(listen, data_dir, management, device):
-    """One Enhance worker role. The matrix backend lives in this file."""
-    return {
-        'management_listen': management,
-        'enhance': {'enabled': True, 'settings': {
-            'role': 'worker',
-            'listen': listen,
-            'data_dir': str(data_dir),
-            'matvec': {'matvec_backend': 'cuda', 'cuda_device': device},
-        }},
-    }
-
-
-def publisher_config(listen, data_dir, workers, management):
-    """One Enhance fixture publisher, with independent loopback management."""
-    return {
-        'management_listen': management,
-        'enhance': {'enabled': True, 'settings': {
-            'listen': listen, 'data_dir': str(data_dir), 'worker_config': str(workers),
-            'isolated_fixture': True, 'fixture_records': 67, 'fixture_append_records': 0,
-            'poll_seconds': 1, 'frontier_replicas': 2, 'sealed_shards': 6,
-            'zakura_rpc_url': 'http://127.0.0.1:8232', 'prevout_cache_outputs': 250000,
-            'capacity_fallback_rows_per_second': 1.0, 'capacity_readiness_seconds': 21600.0,
-            'capacity_burst_rows': 4096,
-        }},
-    }
-
-
-def fixture_endpoints():
-    ports = []
-    while len(ports) < 3:
-        candidate = port()
-        if candidate not in ports:
-            ports.append(candidate)
-    workers = [f'http://127.0.0.1:{value}' for value in ports[:2]]
-    origin = f'http://127.0.0.1:{ports[2]}'
-    inventory = {'groups': [{'name': 'isolated', 'replicas': [
-        {'name': f'isolated-cuda-{index}', 'url': url}
-        for index, url in enumerate(workers, 1)]}]}
-    return workers, origin, inventory
-
-
 def validate_worker_health(health, device):
     if (health.get('protocol') != PROTOCOL or health.get('matvec') != {
-            'matvec_backend': 'cuda', 'cuda_device': device} or not health.get('published')):
+            'matvec_backend': 'cuda', 'cuda_device': device} or health.get('ready') is not True or not health.get('active')):
         raise ValueError('isolated worker is not published native CUDA on the selected device')
 
 
@@ -107,7 +59,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-dir', type=Path, required=True)
     parser.add_argument('--publisher', type=Path, required=True,
-                        help='native pir-publisher; hosts the isolated Enhance application')
+                        help='matching canonical native publisher')
     parser.add_argument('--evidence-dir', type=Path, required=True)
     parser.add_argument('--cuda-device', type=int, default=0)
     parser.add_argument('--timeout', type=int, default=300)
@@ -129,10 +81,9 @@ def main():
     if any(evidence.iterdir()):
         parser.error('evidence directory must be empty')
     root = Path(tempfile.mkdtemp(prefix='enhance-cuda-smoke-'))
-    workers, origin, fixture = fixture_endpoints()
-    inventory = root / 'workers.json'
-    inventory.write_text(json.dumps(fixture))
-    processes, logs = [], []
+    from local_fleet import Fleet
+    fleet = Fleet(release, root, evidence, cuda_device=args.cuda_device, publisher=publisher_bin)
+    processes = fleet.processes
     deadline = time.monotonic() + args.timeout
 
     def remaining():
@@ -141,34 +92,11 @@ def main():
             raise TimeoutError('CUDA smoke deadline exceeded')
         return result
 
-    def launch(name, argv):
-        log = (evidence / (name + '.log')).open('wb')
-        logs.append(log)
-        processes.append(subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                                          env=os.environ.copy()))
-
     try:
-        used = {int(url.rsplit(':', 1)[1]) for url in (*workers, origin)}
-        for index, worker in enumerate(workers, 1):
-            while True:
-                management = port()
-                if management not in used:
-                    used.add(management)
-                    break
-            data = root / f'worker{index}'
-            config = root / f'worker{index}.json'
-            config.write_text(json.dumps(worker_config(
-                worker.removeprefix('http://'), data, f'127.0.0.1:{management}', args.cuda_device)))
-            launch(f'worker{index}', [str(query_server), '--config', str(config)])
-        while True:
-            management = port()
-            if management not in used:
-                break
-        config = root / 'publisher.json'
-        config.write_text(json.dumps(publisher_config(
-            origin.removeprefix('http://'), root / 'coordinator', inventory,
-            f'127.0.0.1:{management}')))
-        launch('coordinator', [str(publisher_bin), '--config', str(config)])
+        fleet.start_roles()
+        fleet.start_publisher(blocks=1)
+        origin = fleet.origin
+        workers = [replica['url'] for replica in fleet.workers]
         while True:
             remaining()
             if any(p.poll() is not None for p in processes):
@@ -191,7 +119,7 @@ def main():
         metadata = subprocess.check_output([str(client), '--server', origin, 'metadata'],
                                            timeout=remaining()).decode()
         (evidence / 'metadata.json').write_text(metadata)
-        result = subprocess.run([str(load), '--fixture-oracle', '--server', origin,
+        result = subprocess.run([str(load), '--oracle', str(fleet.oracle), '--server', origin,
             '--parallelism', '1', '--rate', '1', '--warmup', '2s', '--duration', '5s',
             '--max-error-rate', '0', '--fail-fast', '--seed', '0', '--json-out', str(evidence / 'queries.json')],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=remaining())
@@ -220,17 +148,7 @@ def main():
         (evidence / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(json.dumps(summary))
     finally:
-        for process in reversed(processes):
-            if process.poll() is None:
-                process.terminate()
-        for process in reversed(processes):
-            try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=10)
-        for log in logs:
-            log.close()
+        fleet.close()
         shutil.rmtree(root)
 
 
