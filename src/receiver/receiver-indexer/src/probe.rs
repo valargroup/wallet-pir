@@ -1284,41 +1284,50 @@ mod tests {
         }
     }
 
-    /// Wallets require history from Ironwood activation, so a publication starting
-    /// after it is an answer mismatch before any lookup, though it agrees with the node,
-    /// whether or not it still holds the fixture; one starting at activation reaches the
-    /// lookup.
-    #[tokio::test]
-    async fn a_publication_must_start_at_ironwood_activation() {
+    /// Probes an empty publication covering `start..=end`, against a node agreeing with
+    /// it, for the mainnet fixture moved to the block after Ironwood activation. Asserts
+    /// the answer mismatch, and that it reaches the lookup only when `reaches_lookup`.
+    async fn probe_coverage(start: u32, end: u32, reaches_lookup: bool) {
         let activation = crate::blocks::ironwood_activation();
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         fixture["height"] = (activation + 1).into();
         fixture["block_hash"] = hash::display(&[5; 32]).into();
         let fixture = fixture.to_string();
-        for (start, end, reaches_lookup) in [
-            (activation + 1, activation + 2, false),
-            (activation + 2, activation + 3, false),
-            (activation, activation + 2, true),
-        ] {
-            let end_node = u64::from(end);
-            let rpc = serve_node(Node {
-                end: end_node,
-                ..good(end_node)
-            })
-            .await;
-            let mut directory = anchored_directory();
-            (directory.start_height, directory.end_height) = (start, end);
-            let mut lookup = None;
-            let args = publish(directory, &rpc).await;
-            let (category, detail) = probe(args, fixture.as_bytes(), &mut lookup)
-                .await
-                .unwrap()
-                .unwrap();
-            // The empty publication lacks the fixture's payment once looked up.
-            assert_eq!(category, "answer_mismatch", "{start}");
-            assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
-            assert_eq!(detail.get("coverage").is_none(), reaches_lookup, "{start}");
-        }
+        let end_node = u64::from(end);
+        let rpc = serve_node(Node {
+            end: end_node,
+            ..good(end_node)
+        })
+        .await;
+        let mut directory = anchored_directory();
+        (directory.start_height, directory.end_height) = (start, end);
+        let mut lookup = None;
+        let args = publish(directory, &rpc).await;
+        let (category, detail) = probe(args, fixture.as_bytes(), &mut lookup)
+            .await
+            .unwrap()
+            .unwrap();
+        // The empty publication lacks the fixture's payment once looked up.
+        assert_eq!(category, "answer_mismatch", "{start}");
+        assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
+        assert_eq!(detail.get("coverage").is_none(), reaches_lookup, "{start}");
+    }
+
+    /// Wallets require history from Ironwood activation, so a publication starting
+    /// after it is an answer mismatch before any lookup, though it agrees with the node,
+    /// whether or not it still holds the fixture.
+    #[tokio::test]
+    async fn a_publication_starting_after_ironwood_activation_is_refused() {
+        let activation = crate::blocks::ironwood_activation();
+        probe_coverage(activation + 1, activation + 2, false).await;
+        probe_coverage(activation + 2, activation + 3, false).await;
+    }
+
+    /// A publication starting at Ironwood activation reaches the lookup.
+    #[tokio::test]
+    async fn a_publication_starting_at_ironwood_activation_reaches_the_lookup() {
+        let activation = crate::blocks::ironwood_activation();
+        probe_coverage(activation, activation + 2, true).await;
     }
 
     /// The node and witness payloads encode tree nodes alike: folding the fixture
@@ -1398,8 +1407,7 @@ mod tests {
     }
 
     /// The fixture's companion payload, read over live PIR by its record's ordinal, must
-    /// fold to the node's shard root once final; a provisional payload is unavailable to
-    /// check, and one supplying a noncanonical node is wrong.
+    /// fold to the node's shard root once final.
     #[tokio::test]
     async fn the_witness_payload_must_reach_the_nodes_shard_root() {
         let http = reqwest::Client::new();
@@ -1422,6 +1430,13 @@ mod tests {
         let mut wrong = record.clone();
         wrong.payment.cmx = [9; 32];
         assert!(check(wrong, Some(root)).await.is_some());
+    }
+
+    /// A provisional companion payload is unavailable to check, and one supplying a
+    /// noncanonical node is wrong.
+    #[tokio::test]
+    async fn a_provisional_witness_payload_is_unchecked_unless_malformed() {
+        let http = reqwest::Client::new();
         let (origin, publication, record, _) = witnessed(64, false).await;
         let provisional = check_witness(&http, &origin, &publication, &record, None).await;
         assert_eq!(provisional.unwrap().unwrap().0, "oracle_unavailable");
