@@ -1,5 +1,6 @@
 //! Status source capture and prepared HTTPS publications. Consumers never
 //! participate in publication completion or renew its source observation time.
+mod preparation;
 mod workflow;
 use crate::{authority, source, zakura::ZakuraClient};
 use axum::{
@@ -149,122 +150,12 @@ impl Publisher {
             }
         }
     }
-    async fn publish(
-        &self,
-        observed: Arc<source::Observation>,
-        authority: &mut authority::Authority,
-        cache: &mut Option<Generation>,
-        rpc: &ZakuraClient,
-    ) -> Result<Generation, Failure> {
-        let (expected, epoch) = self.published.read().unwrap().preparation_fence()?;
-        let generation = authority.next_generation()?;
-        let previous = cache.clone();
-        let result = pir_pipeline::publisher::PublicationPass::new(
-            async { Ok::<_, Failure>(Input::Work((expected, generation, epoch, previous))) },
-            |(expected, generation, epoch, previous)| async move {
-                let prepared =
-                    tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
-                        let (g, _) = Generation::prepare(
-                            &observed.snapshot,
-                            generation,
-                            epoch,
-                            observed.observed_ms,
-                            previous.as_ref(),
-                        )?;
-                        Ok(g)
-                    })
-                    .await??;
-                *cache = Some(prepared.clone());
-                let publisher = self.clone();
-                let candidate = prepared.clone();
-                let inventory =
-                    tokio::task::spawn_blocking(move || -> Result<Inventory, Failure> {
-                        let mut cache = publisher.exported.lock().unwrap();
-                        let inventory = if let Some(old) = cache.as_ref().filter(|i| {
-                            i.manifest.network == candidate.manifest().network
-                                && i.manifest.salt == candidate.manifest().salt
-                                && i.manifest.rows_digest == candidate.manifest().rows_digest
-                        }) {
-                            let mut inventory = old.clone();
-                            inventory.manifest = candidate.manifest().clone();
-                            inventory
-                        } else {
-                            candidate
-                                .export_prepared(|bytes| Ok(publisher.objects.store(bytes)?))?
-                        };
-                        *cache = Some(inventory.clone());
-                        Ok(inventory)
-                    })
-                    .await??;
-                let manifest = inventory.manifest.clone();
-                let object = self.objects.store(&serde_json::to_vec(&inventory)?)?;
-                Ok(Input::Work((
-                    expected, generation, epoch, prepared, inventory, manifest, object,
-                )))
-            },
-            |(expected, generation, epoch, prepared, inventory, manifest, object)| async move {
-                if rpc.block_hash(u64::from(manifest.anchor_height)).await? != manifest.anchor_hash
-                {
-                    self.withdraw();
-                    return Err("Status candidate anchor disconnected".into());
-                }
-                // A withdrawal while preparation was running must survive this pass.
-                // Hold the same lock through the durable commit and pointer switch so
-                // a concurrent withdrawal cannot be replaced by an eligible view.
-                {
-                    let mut published = self.published.write().unwrap();
-                    published.check_fence(expected)?;
-                    manifest.fresh(now_ms())?;
-                    // Authorize the referenced objects before any consumer can
-                    // see the pointer. Still-activatable predecessors stay
-                    // served so peers can finish handover; queries pin inodes.
-                    self.objects.retain_publication(
-                        std::iter::once(object.clone())
-                            .chain(inventory.referenced_objects().cloned()),
-                        manifest.observed_ms.saturating_add(MAX_AGE_MS),
-                        now_ms(),
-                    )?;
-                    authority.commit(&manifest)?;
-                    // The envelope is published only after all referenced objects and
-                    // the generation are durable. A restart starts a new recovery epoch.
-                    let publication = PublicationReference::new(
-                        inventory.material_identity(),
-                        object,
-                        StatusDescriptor {
-                            generation: manifest.generation,
-                        },
-                    );
-                    published
-                        .authority
-                        .as_mut()
-                        .ok_or("Status publication authority is not open")?
-                        .apply(AuthorityTransition::Publish(publication))?;
-                    published.manifest = Some(manifest.clone());
-                }
-                tracing::info!(
-                    generation,
-                    recovery_epoch = epoch,
-                    source_observed_ms = manifest.observed_ms,
-                    published_ms = now_ms(),
-                    "Status prepared publication"
-                );
-                Ok(prepared)
-            },
-        )
-        .run(&mut ())
-        .await?;
-        match result {
-            Input::Work(generation) => Ok(generation),
-            Input::Unchanged | Input::Deferred => {
-                unreachable!("Status preparation produces a candidate")
-            }
-        }
-    }
-    pub async fn run_managed(
+    pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
         &self,
         rpc: ZakuraClient,
         http: pir_pipeline::service::Http<Router>,
         shutdown: pir_pipeline::service::Shutdown,
+        executor: E,
     ) -> Result<(), Failure> {
         let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
         *self.rpc.write().unwrap() = Some(rpc.clone());
@@ -297,19 +188,23 @@ impl Publisher {
             pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending()).await
         });
         tasks.own(&observer);
-        pir_pipeline::publisher::PublisherService::new(Publication {
-            publisher: self,
-            rpc,
-            rx,
-            salt,
-            authority: None,
-            previous: None,
-            last_observed: 0,
-            server,
-            observer,
-        })
-        .run(shutdown.cancelled())
-        .await
+        executor
+            .run(
+                Publication {
+                    publisher: self,
+                    rpc,
+                    rx,
+                    salt,
+                    authority: None,
+                    previous: None,
+                    last_observed: 0,
+                    server,
+                    observer,
+                    shutdown: shutdown.clone(),
+                },
+                shutdown,
+            )
+            .await
     }
 }
 

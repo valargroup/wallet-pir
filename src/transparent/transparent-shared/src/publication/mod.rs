@@ -8,7 +8,8 @@ use crate::{
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
 use pir_publication::{
-    hash_object_file, open_object_file, FileIdentity, ObjectFileError, ObjectReference,
+    hash_object_file, open_object_file, verify_object_file, FileIdentity, ObjectFileError,
+    ObjectReference,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -1427,32 +1428,29 @@ fn listed_digest(
     known: Option<(&str, u64, FileIdentity)>,
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<Listing, Error> {
-    let started = std::time::SystemTime::now();
-    let stamp = FileIdentity::capture(path, file)?;
-    if let Some((sha256, bytes, known)) = known {
-        if known == stamp && file.metadata()?.len() == bytes {
-            return Ok(Listing {
-                sha256: sha256.to_owned(),
-                bytes,
-                stamp,
-                settled: true,
-                read: false,
-            });
-        }
-    }
-    #[cfg(test)]
-    LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
-    let (reference, stamp) =
-        hash_object_file(path, file, None, stop).map_err(|error| match error {
+    let reference = known.as_ref().map(|(sha256, bytes, _)| ObjectReference {
+        sha256: (*sha256).to_owned(),
+        bytes: *bytes,
+    });
+    let prior = known
+        .as_ref()
+        .zip(reference.as_ref())
+        .map(|((_, _, stamp), reference)| (reference, *stamp));
+    let verified =
+        verify_object_file(path, file, None, prior, stop).map_err(|error| match error {
             ObjectFileError::Cancelled => Box::new(Stopped) as Error,
             error => Box::new(error),
         })?;
+    #[cfg(test)]
+    if !verified.reused {
+        LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
+    }
     Ok(Listing {
-        sha256: reference.sha256,
-        bytes: reference.bytes,
-        stamp,
-        settled: stamp.settled_before(started),
-        read: true,
+        sha256: verified.reference.sha256,
+        bytes: verified.reference.bytes,
+        stamp: verified.identity,
+        settled: verified.reusable,
+        read: !verified.reused,
     })
 }
 

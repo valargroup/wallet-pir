@@ -65,22 +65,38 @@ impl Config {
         let mut publishers = Vec::new();
         #[allow(unused_macros)]
         macro_rules! register {
-            ($field:ident, $configure:path) => {
+            ($field:ident, $configure:path $(, $executor:expr)?) => {
                 if let Some(settings) = validation::active(&self.$field, stringify!($field))? {
-                    publishers.push($configure(settings.clone())?);
+                    publishers.push($configure(settings.clone() $(, $executor)?)?);
                 }
             };
         }
         #[cfg(feature = "enhance")]
-        register!(enhance, enhance_publisher::service::configure);
+        register!(
+            enhance,
+            enhance_publisher::service::configure,
+            crate::publisher::PublisherEngine
+        );
         #[cfg(feature = "status")]
-        register!(status, status_publisher::service::configure);
+        register!(
+            status,
+            status_publisher::service::configure,
+            crate::publisher::PublisherEngine
+        );
         #[cfg(feature = "transparent-history")]
-        register!(transparent_history, transparent_publisher::service::history);
+        register!(
+            transparent_history,
+            transparent_publisher::service::history,
+            crate::publisher::PublisherEngine
+        );
         #[cfg(feature = "transparent-history")]
         register!(transparent_filters, transparent_publisher::service::filters);
         #[cfg(feature = "transparent-detail")]
-        register!(transaction_details, transparent_publisher::service::details);
+        register!(
+            transaction_details,
+            transparent_publisher::service::details,
+            crate::publisher::PublisherEngine
+        );
         #[cfg(feature = "receiver")]
         register!(receiver, receiver::configure);
         Ok(publishers)

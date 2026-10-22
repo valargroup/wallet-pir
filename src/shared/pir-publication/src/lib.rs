@@ -17,6 +17,7 @@ mod object_cache;
 mod object_file;
 mod object_installation;
 mod object_reference;
+mod object_verification;
 mod publication_authority;
 mod publication_envelope;
 mod published_objects;
@@ -38,6 +39,7 @@ pub use object_installation::{InstalledObject, ObjectInstaller};
 pub use object_reference::{
     is_object_digest, object_digest, ObjectReference, ObjectReferenceError, OBJECTS_PATH,
 };
+pub use object_verification::{verify_object_file, ObjectVerification};
 pub use publication_authority::{
     AuthorityTransition, PublicationAuthority, PublicationAuthorityError,
 };

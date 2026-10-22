@@ -35,14 +35,20 @@ async fn withdrawal_rejects_bound_publication_before_a_runtime_exists() {
         publisher.distribution.durable_current().withdrawal_revision > before.withdrawal_revision,
         "withdrawal must fence preparation even before the first eligible publication"
     );
-    assert!(publisher.publish(stale).await.is_err());
+    assert!(publisher
+        .publish(stale, crate::host_engine::PublisherEngine)
+        .await
+        .is_err());
     assert!(
         !publisher_root.join("objects").exists(),
         "withdrawn work must not prepare a runtime"
     );
     let again = publisher.work(&journal).unwrap().unwrap();
     publisher.revoke_after(0).unwrap();
-    assert!(publisher.publish(again).await.is_err());
+    assert!(publisher
+        .publish(again, crate::host_engine::PublisherEngine)
+        .await
+        .is_err());
     drop(publisher);
     let publisher = EnhancePublisher::open(&publisher_root, rpc).unwrap();
     assert!(!publisher.distribution.durable_current().eligible);
@@ -53,7 +59,10 @@ async fn withdrawal_rejects_bound_publication_before_a_runtime_exists() {
     );
     publisher.revoke_after(0).unwrap();
     assert!(
-        publisher.publish(fresh).await.is_err(),
+        publisher
+            .publish(fresh, crate::host_engine::PublisherEngine)
+            .await
+            .is_err(),
         "restart work must also obey a later withdrawal"
     );
     assert!(!publisher_root.join("objects").exists());
@@ -84,9 +93,15 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
         publisher.distribution.durable_current().withdrawal_revision > before.withdrawal_revision,
         "withdrawal must fence preparation even before the first eligible publication"
     );
-    assert!(publisher.publish(stale).await.is_err());
+    assert!(publisher
+        .publish(stale, crate::host_engine::PublisherEngine)
+        .await
+        .is_err());
     let work = publisher.work(&journal).unwrap().unwrap();
-    publisher.publish(work).await.unwrap();
+    publisher
+        .publish(work, crate::host_engine::PublisherEngine)
+        .await
+        .unwrap();
     let first = publisher.distribution.durable_current();
     let manifest = first.manifest.as_ref().unwrap();
     assert!(first.eligible);
@@ -119,7 +134,10 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
     );
     publisher.revoke_after(0).unwrap();
     assert!(
-        publisher.publish(fresh).await.is_err(),
+        publisher
+            .publish(fresh, crate::host_engine::PublisherEngine)
+            .await
+            .is_err(),
         "restart work must also obey a later withdrawal"
     );
     node.abort();

@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 impl PublicationDistribution {
     /// Observe the chain node: the manifest's anchor must still be canonical.
     /// The observation starts before the lookup, so its lifetime covers it.
-    pub(super) async fn check_canonical_anchor(
+    pub(crate) async fn check_canonical_anchor(
         &self,
         manifest: &Manifest,
     ) -> Result<SourceObservation, String> {

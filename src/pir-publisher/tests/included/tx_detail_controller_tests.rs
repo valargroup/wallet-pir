@@ -73,10 +73,13 @@ async fn run_script(
     let status = settings.status.clone();
     let mut controller =
         Controller::open(root, store, Source::Script(Script::new(steps)), settings).unwrap();
-    let outcome = tokio::time::timeout(Duration::from_secs(120), controller.run())
-        .await
-        .unwrap_or_else(|_| panic!("the controller settles: {}", status.read().unwrap()))
-        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(120),
+        controller.run(crate::host_engine::PublisherEngine),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("the controller settles: {}", status.read().unwrap()))
+    .unwrap();
     Run {
         outcome,
         maps: controller.maps().to_vec(),
@@ -571,10 +574,13 @@ async fn a_restart_after_a_rollback_rewrites_what_it_replaced() {
         settings(),
     )
     .unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(120), controller.run())
-        .await
-        .unwrap()
-        .unwrap_err();
+    let error = tokio::time::timeout(
+        Duration::from_secs(120),
+        controller.run(crate::host_engine::PublisherEngine),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
     assert!(error.to_string().contains("scripted journal failure"));
     assert_eq!(controller.active().tip, 121);
     let activated = controller.active().map_sha256.clone();
@@ -697,7 +703,13 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
         "the undone seal is kept"
     );
     assert_eq!(controller.publishable(), after - started, "and waits");
-    assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+    assert_eq!(
+        controller
+            .run(crate::host_engine::PublisherEngine)
+            .await
+            .unwrap(),
+        Outcome::Idle
+    );
     assert_eq!(controller.active().seals.len(), after);
     let mut maps = controller.maps().to_vec();
     drop(controller);
@@ -766,10 +778,13 @@ async fn replay_paces_coalesces_and_stops_at_its_end() {
     let source = Source::Replay(ReplaySource::new(3, Duration::from_millis(1), 124), None);
     let mut controller =
         Controller::open(&root, open_writer(&journal).unwrap(), source, settings()).unwrap();
-    let outcome = tokio::time::timeout(Duration::from_secs(120), controller.run())
-        .await
-        .unwrap()
-        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(120),
+        controller.run(crate::host_engine::PublisherEngine),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(outcome, Outcome::Idle);
     assert_eq!(controller.map().covered_through(), Some(124));
     let events = read_timeline(&root).unwrap();
@@ -1071,10 +1086,13 @@ mod live {
                 }
             }
         });
-        let outcome = tokio::time::timeout(Duration::from_secs(60), controller.run())
-            .await
-            .expect("the controller halts")
-            .unwrap();
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(60),
+            controller.run(crate::host_engine::PublisherEngine),
+        )
+        .await
+        .expect("the controller halts")
+        .unwrap();
         driver.await.unwrap();
         assert!(
             matches!(outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
@@ -1348,10 +1366,12 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
     while controller.cache.tip().map(|t| t.0) <= Some(before.tip) {
         controller.poll_source().await.unwrap();
     }
-    let prepared = controller.prepare_cycle().await;
+    let prepared = crate::host_engine::PublisherEngine
+        .prepare(preparation::DisplayPreparation::new(&mut controller))
+        .await;
     assert!(
-        matches!(prepared, Ok(Input::Unchanged)),
-        "stopped as a normal outcome"
+        matches!(prepared, Err(ref error) if error.is::<transparent_shared::publication::Stopped>()),
+        "stopped before candidate installation"
     );
     assert_eq!(controller.active().tip, before.tip, "nothing activated");
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
@@ -1359,7 +1379,13 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
     // A requested stop also ends the loop before another cycle starts.
     let shutdown = pir_pipeline::service::Shutdown::default();
     shutdown.request();
-    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(
+        controller
+            .run_until(crate::host_engine::PublisherEngine, shutdown)
+            .await
+            .unwrap(),
+        Outcome::Idle
+    );
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
     drop(controller);
 
@@ -1410,7 +1436,9 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
     let running = tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
-            let outcome = controller.run_until(shutdown).await;
+            let outcome = controller
+                .run_until(crate::host_engine::PublisherEngine, shutdown)
+                .await;
             (controller, outcome)
         }
     });
@@ -1465,10 +1493,13 @@ async fn a_stop_before_activation_keeps_the_rollback_record() {
         settings(),
     )
     .unwrap();
-    let error = tokio::time::timeout(Duration::from_secs(120), controller.run())
-        .await
-        .unwrap()
-        .unwrap_err();
+    let error = tokio::time::timeout(
+        Duration::from_secs(120),
+        controller.run(crate::host_engine::PublisherEngine),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
     assert!(error.to_string().contains("scripted journal failure"));
     drop(controller);
     let before_record = saved_rollback(&root);
@@ -1491,7 +1522,7 @@ async fn a_stop_before_activation_keeps_the_rollback_record() {
     controller.shutdown.request();
     assert!(
         controller.activate_cycle(candidate).await.is_ok(),
-        "stopped as a normal outcome"
+        "stopped before candidate installation"
     );
     assert_eq!(controller.active().map_sha256, before.map_sha256);
     let stored = ActiveRecord::load(&root).unwrap();
@@ -1507,7 +1538,13 @@ async fn a_stop_before_activation_keeps_the_rollback_record() {
     // The stop also ends the loop before another cycle starts.
     let shutdown = pir_pipeline::service::Shutdown::default();
     shutdown.request();
-    assert_eq!(controller.run_until(shutdown).await.unwrap(), Outcome::Idle);
+    assert_eq!(
+        controller
+            .run_until(crate::host_engine::PublisherEngine, shutdown)
+            .await
+            .unwrap(),
+        Outcome::Idle
+    );
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
     drop(controller);
 

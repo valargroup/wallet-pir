@@ -52,7 +52,8 @@ pub async fn collect(
 /// Supervise acquisition, HTTP, and one coalescing publication task until
 /// shutdown. Journal commits continue during preparation; in-flight publication
 /// finishes its owner operation before the publication task exits.
-pub async fn run_until(
+pub async fn run_until<E: pir_pipeline::publisher::PublisherExecutor>(
+    executor: E,
     config: AcquisitionConfig,
     publisher: EnhancePublisher,
     journal: EnhanceJournal,
@@ -64,13 +65,18 @@ pub async fn run_until(
     let preparing = publisher.clone();
     let stop = shutdown.clone();
     let publication = tokio::spawn(async move {
-        pir_pipeline::publisher::PublisherService::new(PublicationWorkflow {
-            publisher: preparing,
-            pending,
-            closed: false,
-        })
-        .run(stop.cancelled())
-        .await
+        executor
+            .run(
+                PublicationWorkflow {
+                    publisher: preparing,
+                    shutdown: stop.clone(),
+                    pending,
+                    closed: false,
+                },
+                stop,
+            )
+            .await
+            .map_err(Into::into)
     });
     let result = pir_pipeline::supervise(
         &mut CanonicalAcquisition {
@@ -132,34 +138,45 @@ impl pir_pipeline::Task for CanonicalAcquisition<'_> {
 }
 
 struct PublicationWorkflow {
+    shutdown: pir_pipeline::service::Shutdown,
     publisher: EnhancePublisher,
     pending: tokio::sync::watch::Receiver<Option<PublicationWork>>,
     closed: bool,
 }
-impl pir_pipeline::publisher::Workflow for PublicationWorkflow {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control> {
-        use pir_pipeline::publisher::{Control, PublicationPass};
-        if self.closed {
-            return Ok(Control::Complete);
+impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
+    type Error = String;
+    type Report = ();
+    type Publication<'a>
+        = crate::publisher::preparation::EnhancePublication<'a>
+    where
+        Self: 'a;
+    async fn acquire(
+        &mut self,
+    ) -> std::result::Result<pir_pipeline::Input<Self::Publication<'_>>, String> {
+        match self.pending.borrow_and_update().clone() {
+            Some(work) => self
+                .publisher
+                .publication(work)
+                .map(|work| Input::Work(work.stopping(self.shutdown.clone()))),
+            None => Ok(Input::Unchanged),
         }
-        let work = self.pending.borrow_and_update().clone();
-        if let Some(work) = work {
-            PublicationPass::new(
-                async { Ok::<_, String>(Input::Work(work)) },
-                |work| async { Ok(Input::Work(work)) },
-                |work| self.publisher.publish(work),
-            )
-            .run(&mut ())
-            .await?;
-        }
-        Ok(Control::Continue)
+    }
+    fn settled(&mut self) -> std::result::Result<pir_pipeline::publisher::Control, String> {
+        Ok(if self.closed {
+            pir_pipeline::publisher::Control::Complete
+        } else {
+            pir_pipeline::publisher::Control::Continue
+        })
+    }
+    fn completed(&mut self, _: ()) {
+        self.publisher.publication_finished(None);
     }
     fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
+        self.publisher.publication_finished(Some(error.clone()));
         tracing::error!(%error, "Enhance local publication deferred");
         FailurePolicy::NextPoll
     }
-    async fn wait(&mut self) -> Result<()> {
+    async fn wait(&mut self) -> std::result::Result<(), String> {
         self.closed = self.pending.changed().await.is_err();
         Ok(())
     }

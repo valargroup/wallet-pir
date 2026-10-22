@@ -2,9 +2,10 @@
 
 `pir-publisher` is one process that runs any configured subset of Enhance,
 Status, Transparent history, transaction-detail and Receiver publishing. Its
-management server owns listener binding and process shutdown. Product libraries
-continue to own chain acquisition, journals, preparation, distribution, canonical
-checks and activation. Products do not wait for a common publication height.
+management server owns listener binding and process shutdown. For Status, Enhance,
+History and transaction details, the host also owns the preparation sequence and
+publication scheduler. Product libraries supply chain acquisition, journals,
+material construction, semantic checks and guarded authority updates. Products do not wait for a common publication height.
 
 ## Source and dependency ownership
 
@@ -44,13 +45,23 @@ credentials or product state. The generic `run_registered` host reserves all
 listeners before starting any factory; it contains no product-specific routing,
 controller settings or readiness response schemas.
 
-`pir-pipeline::publisher::PublisherService` runs product workflows. Products
-supply bounded operations, wake conditions and failure policies. Typed
-`PublicationPass` recipes carry work and candidates through acquisition,
-preparation and publication, including borrowed owner permits. The service
-observes shutdown between operations and always finishes the product drain;
-activation validation and durable authority updates stay inside product code.
-Enhance, Status, History, filters and transaction details use this engine.
+`pir-publisher::publisher::PublisherEngine` executes build, store, verify and
+candidate assembly in that order. Its prepared token retains the product's
+borrowed state or preparation permit. Commit rechecks the exact source, checks
+local invalidation and shutdown again after the await, then enters the product's
+guarded durable update. Preparation alone grants no distribution authority.
+
+The contracts live below products in `pir-pipeline::publisher`: `Publication`
+supplies bounded material and state operations; `Publisher` supplies input,
+wake conditions and failure policy. The root injects its executor into product
+construction, so production and integration callers use the same sequence
+without a normal dependency from product libraries back to the host. Product
+code keeps its algorithms, codecs, settings, routes and recovery rules; the
+root contains no product implementation modules. The common file verifier in
+`pir-publication` reuses exact-file evidence without weakening semantic checks.
+
+The engine finishes started operations before observing a service stop and
+always runs the product drain. Filters retain the ingestion-only pipeline;
 Receiver retains its existing implementation through a composition-layer bridge.
 
 ## Configuration and local use

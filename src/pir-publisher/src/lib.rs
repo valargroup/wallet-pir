@@ -1,7 +1,7 @@
 //! Unified application host. Product libraries retain publication authority.
 pub mod config;
 mod host;
-mod publisher;
+pub mod publisher;
 pub use host::run_registered;
 
 /// Compose the configured product facades, then delegate to the generic host.

@@ -1,6 +1,7 @@
 //! File integrity is established against both the open inode and its name.
 use pir_publication::{
-    hash_object_file, open_object_file, FileIdentity, ObjectFileError, ObjectReference,
+    hash_object_file, open_object_file, verify_object_file, FileIdentity, ObjectFileError,
+    ObjectReference,
 };
 use std::{
     cell::Cell,
@@ -74,6 +75,42 @@ fn whole_file_hashing_checks_digest_length_and_named_identity() {
     // Even a symlink to the opened inode cannot stand in for its physical name.
     let mut target = File::open(&replacement).unwrap();
     assert!(hash_object_file(&path, &mut target, None, &|| false).is_err());
+}
+
+#[test]
+fn reusable_verification_binds_expected_bytes_and_the_exact_file() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("object");
+    fs::write(&path, b"abc").unwrap();
+    let expected = ObjectReference::for_bytes(b"abc");
+    let check = |prior| {
+        verify_object_file(
+            &path,
+            &mut open_object_file(&path, None).unwrap(),
+            Some(&expected),
+            prior,
+            &|| false,
+        )
+    };
+    let fresh = check(None).unwrap();
+    assert!(!fresh.reused && !fresh.reusable);
+    std::thread::sleep(Duration::from_millis(1100));
+    let settled = check(None).unwrap();
+    assert!(settled.reusable && !settled.reused);
+    let prior = Some((&expected, settled.identity));
+    assert!(check(prior).unwrap().reused);
+    let replacement = root.path().join("replacement");
+    fs::write(&replacement, b"abc").unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    assert!(
+        !check(prior).unwrap().reused,
+        "another inode requires a full read"
+    );
+    fs::write(&path, b"def").unwrap();
+    assert!(matches!(
+        check(prior),
+        Err(ObjectFileError::DigestMismatch { .. })
+    ));
 }
 
 #[test]

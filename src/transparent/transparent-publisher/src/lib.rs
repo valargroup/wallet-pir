@@ -13,3 +13,9 @@ pub mod commands;
 
 /// Product service definitions used by the application composition root.
 pub mod service;
+
+// Exercise the host's actual executor without a product-to-application Cargo edge.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../pir-publisher/src/publisher/engine.rs"]
+mod host_engine;

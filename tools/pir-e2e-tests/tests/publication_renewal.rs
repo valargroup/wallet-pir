@@ -52,7 +52,11 @@ async fn delayed_response_renews_real_authority_but_cannot_cross_withdrawal_or_s
             .unwrap();
         fixture
             .distribution
-            .publish(fixture.manifest.clone(), fixture.inventory.clone())
+            .publish(
+                fixture.manifest.clone(),
+                fixture.inventory.clone(),
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(5200)).await;

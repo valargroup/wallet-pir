@@ -182,7 +182,11 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
         advanced.generation += 1;
         fixture
             .distribution
-            .publish(advanced.clone(), fixture.inventory.clone())
+            .publish(
+                advanced.clone(),
+                fixture.inventory.clone(),
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         worker_sync.poll_once().await.unwrap();
@@ -307,7 +311,11 @@ async fn autonomous_ingress_keeps_wallet_bindings_during_independent_router_upda
             latest.generation += 1;
             fixture
                 .distribution
-                .publish(latest.clone(), fixture.inventory.clone())
+                .publish(
+                    latest.clone(),
+                    fixture.inventory.clone(),
+                    pir_publisher::publisher::PublisherEngine,
+                )
                 .await
                 .unwrap();
             for _ in 0..3 {
@@ -511,7 +519,11 @@ async fn invalidated_router_releases_obsolete_packing_before_loading_recovery() 
             .insert(0, inventory.domains[0].plan.units.clone());
         fixture
             .distribution
-            .publish(recovery.clone(), inventory)
+            .publish(
+                recovery.clone(),
+                inventory,
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         worker_sync.poll_once().await.unwrap();
@@ -656,7 +668,11 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
         advanced.generation += 1;
         fixture
             .distribution
-            .publish(advanced.clone(), fixture.inventory.clone())
+            .publish(
+                advanced.clone(),
+                fixture.inventory.clone(),
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         router_sync.poll_once().await.unwrap();
@@ -841,7 +857,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
             anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
             sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
         };
-        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         let config = worker_sync::Config { source: SourceConfig { publisher_origin: transport.origin.clone(),
             trusted_ca: Some(scratch.path().join("ca.pem")), download_budget_bytes: 128 * 1024 * 1024,
             cache_limit_bytes: 128 * 1024 * 1024 }, shards: [0].into() };
@@ -898,7 +914,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let initial: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         let old_lease = enhance_query_server::synchronization::Lease::from_response(initial.clone(), &manifest, &safety).unwrap();
         distribution.withdraw(&Revocation::default()).unwrap();
-        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         let republished: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert_eq!(republished.current.recovery_epoch, initial.current.recovery_epoch);
         assert_eq!(republished.current.revoked, initial.current.revoked);
@@ -911,7 +927,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         synchronizer.poll_once().await.unwrap();
         let mut advanced = manifest.clone();
         advanced.generation += 1;
-        distribution.publish(advanced.clone(), inventory.clone()).await.unwrap();
+        distribution.publish(advanced.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         let before = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
         synchronizer.poll_once().await.unwrap();
         let after = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
@@ -1009,7 +1025,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
             anchor_block_hash: "01".repeat(32), geometry: Geometry::default(), coverage: inventory.coverage.clone(),
             sessions: vec![domain.reference().unwrap()], unit_identities: [(0, domain.plan.units.clone())].into(),
         };
-        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         let current: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
@@ -1049,7 +1065,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         broken.domains[0].rows[0].bytes -= 1;
         let mut later = manifest.clone();
         later.generation += 1;
-        assert!(distribution.publish(later, broken).await.is_err());
+        assert!(distribution.publish(later, broken, pir_publisher::publisher::PublisherEngine).await.is_err());
         let unchanged: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert_eq!(current.current, unchanged.current, "failed publication cannot change current");
         canonical.store(false, Ordering::Release);
@@ -1064,7 +1080,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         pending_manifest.generation += 1;
         let pending_inventory = inventory.clone();
         let publication = tokio::spawn(async move {
-            pending_distribution.publish(pending_manifest, pending_inventory).await
+            pending_distribution.publish(pending_manifest, pending_inventory, pir_publisher::publisher::PublisherEngine).await
         });
         tokio::time::timeout(Duration::from_secs(5), entered.notified()).await.unwrap();
         distribution.withdraw(&Revocation::default()).unwrap();
@@ -1073,10 +1089,10 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let withdrawn: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!withdrawn.current.eligible);
         assert_eq!(withdrawn.source.observed_unix_ms, 0);
-        distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
+        distribution.publish(manifest.clone(), inventory.clone(), pir_publisher::publisher::PublisherEngine).await.unwrap();
         distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [hex::encode(manifest.session_id(0).unwrap())].into() }).unwrap();
         assert_eq!(transport.client.post(&authority_url).json(&request).send().await.unwrap().status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
-        assert!(distribution.publish(manifest, inventory).await.is_err());
+        assert!(distribution.publish(manifest, inventory, pir_publisher::publisher::PublisherEngine).await.is_err());
         upstream.stop().await;
         drop(distribution);
         let reopened = PublicationDistribution::open(&root, rpc).unwrap();
@@ -1136,7 +1152,7 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
             let runtime = root.join("preparation/artifacts-9").join(domain.plan.units[0].digest());
             std::fs::create_dir_all(&runtime).unwrap();
             std::fs::write(runtime.join("retention-marker"), b"runtime identity").unwrap();
-            distribution.publish(manifest, inventory).await.unwrap();
+            distribution.publish(manifest, inventory, pir_publisher::publisher::PublisherEngine).await.unwrap();
         }
         assert_eq!(std::fs::read_dir(root.join("inventories")).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert_eq!(std::fs::read_dir(root.join("domains")).unwrap().count(), protocol::RETAINED_GENERATIONS);

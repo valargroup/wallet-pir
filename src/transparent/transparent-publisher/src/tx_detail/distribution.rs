@@ -1,5 +1,6 @@
 //! Publisher-owned HTTP authority for independently synchronized display servers.
-use crate::history::publication::{write_atomic, BoxError};
+mod restoration;
+use crate::history::publication::{write_durable, BoxError};
 use crate::ingest::zakura::NodeClient;
 use axum::{
     body::Body,
@@ -49,8 +50,19 @@ impl Distribution {
     pub fn router(&self) -> Router {
         Router::new().fallback(request).with_state(self.clone())
     }
-    pub fn commit(&self, finalized: Finalized) -> Result<(), BoxError> {
+    pub(super) fn commit(
+        &self,
+        finalized: Finalized,
+        expected: Option<u64>,
+        shutdown: &pir_pipeline::service::Shutdown,
+    ) -> Result<(), BoxError> {
         let mut active = self.0.active.write().unwrap();
+        if shutdown.requested() {
+            return Err(Stopped.into());
+        }
+        if active.as_ref().map(|(current, _)| current.revision) != expected {
+            return Err("display authority changed before commit".into());
+        }
         let current = Current {
             schema: SCHEMA.into(),
             revision: crate::history::distribution::advance_distribution_revision(&self.0.root)?,
@@ -63,7 +75,7 @@ impl Distribution {
             eligibility: Eligibility::Canonical,
             invalidated_from: None,
         };
-        write_atomic(
+        write_durable(
             &self.0.root.join("http-current.json"),
             &serde_json::to_vec(&current)?,
         )?;
@@ -80,58 +92,21 @@ impl Distribution {
             // Keep the same revision negative if reserving the next revision fails.
             current.revision =
                 crate::history::distribution::advance_distribution_revision(&self.0.root)?;
-            write_atomic(
+            write_durable(
                 &self.0.root.join("http-current.json"),
                 &serde_json::to_vec(current)?,
             )?;
         }
         Ok(())
     }
-    pub async fn finalize(
-        &self,
-        directory: PathBuf,
-        retained: Vec<PathBuf>,
-    ) -> Result<(), BoxError> {
-        if !self.restore(directory, retained).await? {
-            return Err("display publication anchor is not canonical".into());
-        }
-        Ok(())
-    }
-    /// Reuse a saved publication only while its anchor is canonical. A stale
-    /// tip returns false with authority withdrawn so startup can rebuild it;
-    /// invalid material, chain identity and RPC/storage failures remain errors.
-    pub(crate) async fn restore(
-        &self,
-        directory: PathBuf,
-        retained: Vec<PathBuf>,
-    ) -> Result<bool, BoxError> {
-        self.restore_until(directory, retained, Default::default())
-            .await
-    }
-    /// [`Self::restore`], ending with [`Stopped`] once `shutdown` is requested:
-    /// between the files, bounded reads and runtime segments of loading,
-    /// runtime preparation and finalization, and before authority is
-    /// withdrawn or committed. A stop commits nothing and keeps the earlier
-    /// verified set; the blocking work it interrupts has ended on return.
-    pub(crate) async fn restore_until(
-        &self,
-        directory: PathBuf,
-        retained: Vec<PathBuf>,
-        shutdown: pir_pipeline::service::Shutdown,
-    ) -> Result<bool, BoxError> {
-        let stopping = shutdown.clone();
-        self.restore_asking(directory, retained, shutdown, move || stopping.requested())
-            .await
-    }
-    /// [`Self::restore_until`], with `stop` asked between the units of the
-    /// blocking work in place of `shutdown`, which is still checked around it.
-    pub(super) async fn restore_asking(
+    /// Prepare verified display material without changing HTTP authority.
+    pub(super) async fn prepare(
         &self,
         directory: PathBuf,
         retained: Vec<PathBuf>,
         shutdown: pir_pipeline::service::Shutdown,
         stop: impl Fn() -> bool + Send + Sync + 'static,
-    ) -> Result<bool, BoxError> {
+    ) -> Result<Finalized, BoxError> {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
@@ -179,6 +154,25 @@ impl Distribution {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
+        Ok(finalized)
+    }
+    pub(super) fn revision(&self) -> Option<u64> {
+        self.0
+            .active
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|(current, _)| current.revision)
+    }
+    /// Recheck the exact source before the caller enters its commit guard.
+    pub(super) async fn canonical(
+        &self,
+        finalized: &Finalized,
+        shutdown: &pir_pipeline::service::Shutdown,
+    ) -> Result<bool, BoxError> {
+        if shutdown.requested() {
+            return Err(Stopped.into());
+        }
         if self.0.rpc.block_hash_display(0).await? != finalized.inventory.genesis_hash {
             self.withdraw(0)?;
             return Err("display publication genesis differs from the node".into());
@@ -197,8 +191,51 @@ impl Distribution {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
-        self.commit(finalized)?;
         Ok(true)
+    }
+    #[cfg(all(test, feature = "fixtures"))]
+    pub(crate) async fn restore<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        executor: E,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+    ) -> Result<bool, BoxError> {
+        self.restore_until(executor, directory, retained, Default::default())
+            .await
+    }
+    pub(crate) async fn restore_until<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        executor: E,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+        shutdown: pir_pipeline::service::Shutdown,
+    ) -> Result<bool, BoxError> {
+        let stopping = shutdown.clone();
+        self.restore_asking(executor, directory, retained, shutdown, move || {
+            stopping.requested()
+        })
+        .await
+    }
+    pub(super) async fn restore_asking<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        executor: E,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+        shutdown: pir_pipeline::service::Shutdown,
+        stop: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> Result<bool, BoxError> {
+        let revision = self.revision();
+        executor
+            .publish(restoration::DisplayRestoration {
+                distribution: self,
+                directory,
+                retained,
+                shutdown,
+                stop: Some(stop),
+                revision,
+                canonical: false,
+            })
+            .await
     }
     /// The map digest of the kept verified set, and how many runtimes the
     /// last inventory loaded and self-checked and how many it reused.

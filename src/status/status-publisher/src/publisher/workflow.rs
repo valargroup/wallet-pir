@@ -3,6 +3,7 @@ use super::*;
 
 /// Observation capture remains independent while publication prepares material.
 pub(super) struct Publication<'a> {
+    pub(super) shutdown: pir_pipeline::service::Shutdown,
     pub(super) publisher: &'a Publisher,
     pub(super) rpc: ZakuraClient,
     pub(super) rx: watch::Receiver<Option<Arc<source::Observation>>>,
@@ -13,9 +14,14 @@ pub(super) struct Publication<'a> {
     pub(super) server: tokio::task::JoinHandle<std::io::Result<()>>,
     pub(super) observer: tokio::task::JoinHandle<Result<(), ObservationError>>,
 }
-impl pir_pipeline::publisher::Workflow for Publication<'_> {
+impl pir_pipeline::publisher::Publisher for Publication<'_> {
     type Error = Failure;
-    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control, Failure> {
+    type Report = Generation;
+    type Publication<'a>
+        = super::preparation::StatusPublication<'a>
+    where
+        Self: 'a;
+    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, Failure> {
         if self.server.is_finished() || self.observer.is_finished() {
             return Err("Status background service stopped".into());
         }
@@ -46,31 +52,34 @@ impl pir_pipeline::publisher::Workflow for Publication<'_> {
                 )?);
             }
             self.last_observed = observed.observed_ms;
-            match self
-                .publisher
-                .publish(
-                    observed,
-                    self.authority.as_mut().unwrap(),
-                    &mut self.previous,
-                    &self.rpc,
-                )
-                .await
-            {
-                Ok(g) => self.previous = Some(g),
-                Err(error) => {
-                    if error.downcast_ref::<authority::AuthorityError>().is_some()
-                        || error
-                            .downcast_ref::<pir_publication::PublicationAuthorityError>()
-                            .is_some()
-                    {
-                        self.publisher.withdraw();
-                        self.authority = None;
-                    }
-                    tracing::warn!(%error, "Status publication deferred");
-                }
-            }
+            return Ok(Input::Work(super::preparation::StatusPublication::new(
+                self.publisher,
+                observed,
+                self.authority.as_mut().unwrap(),
+                self.previous.clone(),
+                &self.rpc,
+                self.shutdown.clone(),
+            )?));
         }
-        Ok(pir_pipeline::publisher::Control::Continue)
+        Ok(Input::Unchanged)
+    }
+    fn completed(&mut self, generation: Generation) {
+        self.previous = Some(generation);
+    }
+    fn failed(&mut self, error: &Failure) -> pir_pipeline::FailurePolicy {
+        if self.server.is_finished() || self.observer.is_finished() {
+            return pir_pipeline::FailurePolicy::Stop;
+        }
+        if error.downcast_ref::<authority::AuthorityError>().is_some()
+            || error
+                .downcast_ref::<pir_publication::PublicationAuthorityError>()
+                .is_some()
+        {
+            self.publisher.withdraw();
+            self.authority = None;
+        }
+        tracing::warn!(%error, "Status publication deferred");
+        pir_pipeline::FailurePolicy::NextPoll
     }
     async fn wait(&mut self) -> Result<(), Failure> {
         self.rx.changed().await?;

@@ -20,7 +20,10 @@ fn details_published(bytes: &[u8]) -> bool {
     })
 }
 /// Static declaration only; the startup factory retains publication authority.
-pub fn history(config: HistoryConfig) -> Result<PublisherDefinition<axum::Router>> {
+pub fn history<E: pir_pipeline::publisher::PublisherExecutor>(
+    config: HistoryConfig,
+    executor: E,
+) -> Result<PublisherDefinition<axum::Router>> {
     let mut writable_paths = vec![config.publication_root.clone()];
     if !config.follow_journal {
         writable_paths.push(config.data_dir.clone());
@@ -42,7 +45,12 @@ pub fn history(config: HistoryConfig) -> Result<PublisherDefinition<axum::Router
         "transparent_history",
         resources,
         move |context| {
-            crate::history::controller::run_managed(config, context.http, context.shutdown)
+            crate::history::controller::run_managed(
+                config,
+                executor,
+                context.http,
+                context.shutdown,
+            )
         },
     ))
 }
@@ -63,7 +71,10 @@ pub fn filters(config: FilterConfig) -> Result<PublisherDefinition<axum::Router>
         move |context| crate::history::filter_service::run(config, context.http, context.shutdown),
     ))
 }
-pub fn details(config: DetailConfig) -> Result<PublisherDefinition<axum::Router>> {
+pub fn details<E: pir_pipeline::publisher::PublisherExecutor>(
+    config: DetailConfig,
+    executor: E,
+) -> Result<PublisherDefinition<axum::Router>> {
     config.validate()?;
     let resources = PublisherResources {
         listeners: vec![config.status_listen],
@@ -77,6 +88,8 @@ pub fn details(config: DetailConfig) -> Result<PublisherDefinition<axum::Router>
     Ok(PublisherDefinition::new(
         "transaction_details",
         resources,
-        move |context| crate::tx_detail::service::run(config, context.http, context.shutdown),
+        move |context| {
+            crate::tx_detail::service::run(config, executor, context.http, context.shutdown)
+        },
     ))
 }

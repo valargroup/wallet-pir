@@ -5,6 +5,9 @@
 //! against same-size local corruption. Every reuse checks size and the opened
 //! file's identity; no body is hashed again. Receipts preserve first-load
 //! semantic checks across hard-linked publications and process restarts.
+mod source_catalog;
+pub(crate) use source_catalog::revision_directory;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{

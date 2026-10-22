@@ -43,8 +43,9 @@ impl EnhancePublisherConfig {
 }
 /// Lock the service directory, verify offline recovery, adopt any completed
 /// rebuild, and supervise the artifact listener and canonical publisher loop.
-pub async fn run(
+pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     config: EnhancePublisherConfig,
+    executor: E,
     http: Http<axum::Router>,
     shutdown: Shutdown,
 ) -> Result<()> {
@@ -95,6 +96,7 @@ pub async fn run(
     let serving = tokio::spawn(http.serve(config.listen, publisher.router()));
     tasks.own(&serving);
     application::run_until(
+        executor,
         application::AcquisitionConfig {
             poll: Duration::from_secs(config.poll_seconds),
         },
@@ -115,8 +117,9 @@ pub async fn run(
 }
 
 /// Validate and declare this publisher without opening credentials or state.
-pub fn configure(
+pub fn configure<E: pir_pipeline::publisher::PublisherExecutor>(
     config: EnhancePublisherConfig,
+    executor: E,
 ) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
     use pir_pipeline::publisher::{
         PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,
@@ -134,6 +137,6 @@ pub fn configure(
     Ok(PublisherDefinition::new(
         "enhance",
         resources,
-        move |context| run(config, context.http, context.shutdown),
+        move |context| run(config, executor, context.http, context.shutdown),
     ))
 }

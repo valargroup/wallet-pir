@@ -1,5 +1,6 @@
 //! Publisher-owned preparation and recovery, independent of consumer placement.
 mod http;
+pub(crate) mod preparation;
 mod recovery;
 mod work;
 
@@ -108,27 +109,25 @@ impl EnhancePublisher {
             sessions: state.durable.recovery.revoked.clone(),
         })
     }
-    /// Prepare a reserved prefix, bind its immutable objects to the manifest,
-    /// and publish only while the original withdrawal fence still holds.
-    /// Rejects another publisher's token, concurrent preparation, and poisoned
-    /// persistence. Preparation failure is recorded for health reporting.
-    pub async fn publish(&self, mut work: PublicationWork) -> Result<(), String> {
+    /// Reserve preparation ownership for the host engine; no preparation runs here.
+    pub(crate) fn publication(
+        &self,
+        work: PublicationWork,
+    ) -> Result<preparation::EnhancePublication<'_>, String> {
+        preparation::EnhancePublication::journal(self, work)
+    }
+    /// Execute through the supplied host engine, including offline integration callers.
+    pub async fn publish<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        work: PublicationWork,
+        executor: E,
+    ) -> Result<(), String> {
         if work.owner != self.incarnation {
             return Err("publication work belongs to another publisher".into());
         }
-        let _permit = self
-            .preparation
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| "publication preparation already owned")?;
-        if self.state.lock().unwrap().poisoned {
-            return Err("Enhance publisher persistence failed; reopen required".into());
-        }
         let current = self.distribution.durable_current();
-        if current.withdrawal_revision != work.withdrawal_revision {
-            return Err("publication withdrawn before preparation".into());
-        }
-        if current.eligible
+        if current.withdrawal_revision == work.withdrawal_revision
+            && current.eligible
             && current.manifest.as_ref().is_some_and(|m| {
                 m.anchor_height == work.manifest.anchor_height
                     && m.anchor_block_hash == work.manifest.anchor_block_hash
@@ -137,43 +136,12 @@ impl EnhancePublisher {
         {
             return Ok(());
         }
-        self.state.lock().unwrap().preparing = Some(work.manifest.anchor_height);
-        let result = async {
-            let root = self.distribution.root().to_path_buf();
-            let coverage = work.manifest.coverage.clone();
-            let epochs = work.manifest.domain_recovery_epochs.clone();
-            let snapshot = work.snapshot;
-            let prepared = tokio::task::spawn_blocking(move || {
-                crate::publication::prepare_publication(&root, coverage, &epochs, |start, count| {
-                    snapshot
-                        .read_records(start, count)
-                        .map_err(|e| e.to_string())
-                })
-            })
-            .await
-            .map_err(|e| e.to_string())??;
-            work.manifest.sessions = prepared
-                .inventory()
-                .domains
-                .iter()
-                .map(|d| d.reference())
-                .collect::<Result<_, _>>()?;
-            work.manifest.unit_identities = prepared
-                .inventory()
-                .domains
-                .iter()
-                .map(|d| (d.plan.shard.id, d.plan.units.clone()))
-                .collect();
-            work.manifest.validate()?;
-            self.distribution
-                .publish_if_unwithdrawn(work.manifest, prepared, work.withdrawal_revision)
-                .await
-        }
-        .await;
-        let mut state = self.state.lock().unwrap();
-        state.preparing = None;
-        state.error = result.as_ref().err().cloned();
+        let result = executor.publish(self.publication(work)?).await;
+        self.publication_finished(result.as_ref().err().cloned());
         result
+    }
+    pub(crate) fn publication_finished(&self, error: Option<String>) {
+        self.state.lock().unwrap().error = error;
     }
     pub fn router(&self) -> axum::Router {
         axum::Router::new()

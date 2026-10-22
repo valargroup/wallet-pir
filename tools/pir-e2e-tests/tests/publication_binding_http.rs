@@ -87,7 +87,11 @@ async fn shared_object_installation_preserves_enhance_publication_and_reuse() {
     );
     source
         .distribution
-        .publish_prepared(source.manifest.clone(), prepared)
+        .publish_prepared(
+            source.manifest.clone(),
+            prepared,
+            pir_publisher::publisher::PublisherEngine,
+        )
         .await
         .unwrap();
 
@@ -304,7 +308,11 @@ async fn advance_during_authorization(
         next.generation = generation;
         source
             .distribution
-            .publish(next, source.inventory.clone())
+            .publish(
+                next,
+                source.inventory.clone(),
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         std::fs::write(&fault, "").unwrap();

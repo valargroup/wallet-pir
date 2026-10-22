@@ -1,8 +1,8 @@
 //! Hash evidence is process-local and only reusable for unchanged, settled files.
 use crate::artifact;
 use enhance_shared::publication::{Inventory, Object};
-use pir_publication::{hash_object_file, open_object_file, FileIdentity};
-use std::{collections::BTreeMap, path::Path, time::SystemTime};
+use pir_publication::{open_object_file, verify_object_file, FileIdentity};
+use std::{collections::BTreeMap, path::Path};
 
 /// Work done by one verification pass: files hashed, bytes read to hash them,
 /// and files accepted from earlier evidence without reading.
@@ -112,18 +112,22 @@ pub(super) fn check_object(
     hashed: &mut VerificationStats,
 ) -> Result<Option<FileIdentity>, String> {
     let path = object.path(root)?;
-    let started = SystemTime::now();
     let mut file = open_object_file(&path, Some(object.bytes)).map_err(|e| e.to_string())?;
-    let identity = FileIdentity::capture(&path, &file).map_err(|e| e.to_string())?;
-    if prior == Some(&identity) {
+    let reference = object.reference();
+    let verified = verify_object_file(
+        &path,
+        &mut file,
+        Some(&reference),
+        prior.map(|identity| (&reference, *identity)),
+        &|| false,
+    )
+    .map_err(|e| e.to_string())?;
+    if verified.reused {
         hashed.reused += 1;
-        return Ok(Some(identity));
+    } else {
+        hashed.files += 1;
+        hashed.bytes += verified.reference.bytes;
+        artifact::release_file_cache(&file);
     }
-    let (reference, identity) =
-        hash_object_file(&path, &mut file, Some(&object.reference()), &|| false)
-            .map_err(|e| e.to_string())?;
-    hashed.files += 1;
-    hashed.bytes += reference.bytes;
-    artifact::release_file_cache(&file);
-    Ok(identity.settled_before(started).then_some(identity))
+    Ok(verified.reusable.then_some(verified.identity))
 }

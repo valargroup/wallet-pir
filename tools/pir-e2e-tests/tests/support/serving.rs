@@ -54,7 +54,9 @@ impl Roles {
             publisher_origin: transport.origin.clone(),
             trusted_ca: Some(root.join("ca.pem")),
             download_budget_bytes: scratch,
-            cache_limit_bytes: scratch,
+            // Handover retains the serving generation while downloading its
+            // successor. Both complete packing objects must fit in the fixture.
+            cache_limit_bytes: scratch * 2,
         };
         let mut workers = Vec::new();
         let mut origins = Vec::new();
