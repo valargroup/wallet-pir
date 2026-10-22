@@ -15,9 +15,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4] / 'tools/lib'))
 from wallet_pir_ops.deploy import cutover_operator as operator
 from wallet_pir_ops.deploy.cutover_guard import Decision
 from wallet_pir_ops.deploy.engine import DeployError
+from wallet_pir_ops.deploy import cli, enhance_https
 
 
 class OperatorTests(unittest.TestCase):
+    def test_approved_cleanup_dispatches_without_a_binary_cutover_request(self):
+        with patch.object(enhance_https, 'prune_qualification', return_value={'phase': 'complete'}) as cleanup:
+            output = []
+            self.assertEqual(cli.main(['--inventory', '/operator/inventory.json',
+                'publisher-cutover-prune-qualification', '--host', 'worker-01',
+                '--confirm-path', '/srv/enhance-pir-v7/qualification-worker'], out=output.append), 0)
+            self.assertEqual(cleanup.call_args.args[0].host, ['worker-01'])
+            self.assertEqual(json.loads(output[0])['phase'], 'complete')
+
     def test_launchd_identity_comes_from_the_running_job(self):
         text = 'job {\n pid = 123\n environment = {\n WALLET_PIR_CUTOVER_INVOCATION => owned\n }\n}'
         with patch.object(operator, 'launchctl', return_value=subprocess.CompletedProcess([], 0, text, '')):
