@@ -855,7 +855,7 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         let ready: Readiness = http.post(&readiness).json(&request).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
         assert_eq!(ready.shards, [0].into());
         assert_eq!(ready.manifest, manifest);
-        assert!(!worker_root.join("artifacts-9").exists(), "worker must not generate hint artifacts");
+        assert!(!worker_root.join("artifacts-10").exists(), "worker must not generate hint artifacts");
         let requests = std::fs::read_to_string(scratch.path().join("fault.requests")).unwrap();
         for object in [&domain.hint, &domain.public, &domain.packing_object()] {
             assert!(!requests.contains(&object.checksum), "worker must download only its rows");
@@ -1122,14 +1122,14 @@ async fn collection_keeps_retained_material_and_open_files_and_removes_interrupt
             std::fs::write(root.join("domains").join(format!("{}.json", protocol::digest(&domain.plan))), serde_json::to_vec(domain).unwrap()).unwrap();
             // Only retention uses these markers. Runtime loading is covered
             // independently without rebuilding identical bytes for each epoch.
-            let runtime = root.join("preparation/artifacts-9").join(domain.plan.units[0].digest());
+            let runtime = root.join("preparation/artifacts-10").join(domain.plan.units[0].digest());
             std::fs::create_dir_all(&runtime).unwrap();
             std::fs::write(runtime.join("retention-marker"), b"runtime identity").unwrap();
             distribution.publish(manifest, inventory).await.unwrap();
         }
         assert_eq!(std::fs::read_dir(root.join(pir_artifact::namespace("inventories"))).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert_eq!(std::fs::read_dir(root.join("domains")).unwrap().count(), protocol::RETAINED_GENERATIONS);
-        assert_eq!(std::fs::read_dir(root.join("preparation/artifacts-9")).unwrap().count(), protocol::RETAINED_GENERATIONS);
+        assert_eq!(std::fs::read_dir(root.join("preparation/artifacts-10")).unwrap().count(), protocol::RETAINED_GENERATIONS);
         assert!(!orphan_path.exists());
         assert!(!partial_path.exists());
         let mut bytes = String::new();
@@ -1213,7 +1213,9 @@ fn shared_publication(count: u64) -> std::path::PathBuf {
         "enhance-publication-{count}-{}-{}-{}",
         cfg!(feature = "native-reinspiring"),
         cfg!(feature = "cuda"),
-        hex::encode(Sha256::digest(serde_json::to_vec(&plan.units).unwrap()))
+        pir_artifact::checksum(&serde_json::to_vec(&plan.units).unwrap())
+            .key()
+            .unwrap()
     ));
     if !prepared.exists() {
         let started = std::time::Instant::now();

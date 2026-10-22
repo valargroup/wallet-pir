@@ -18,9 +18,9 @@ use std::{
     time::Duration,
 };
 
-const INCOMPATIBLE: &str = r#"{"service":"pir-publisher","version":"2.0.0"}"#;
+const INCOMPATIBLE: &str = r#"{"service":"pir-publisher","version":"3.0.0"}"#;
 
-/// Answer discovery compatibly `compatible` times, then as major version 2.
+/// Answer discovery compatibly `compatible` times, then as major version 3.
 fn stub(compatible: usize) -> axum::Router {
     let answered = Arc::new(AtomicUsize::new(0));
     axum::Router::new().route(
@@ -158,7 +158,7 @@ async fn autonomous_roles_refuse_an_incompatible_or_missing_publisher_before_lis
 async fn a_later_major_mismatch_stops_the_whole_host_with_its_typed_error() {
     for role in ["worker", "packing-router", "query-ingress"] {
         let scratch = tempfile::tempdir().unwrap();
-        // Startup accepts the publisher; the first pass sees major version 2.
+        // Startup accepts the publisher; the first pass sees major version 3.
         let upstream = serve(stub(1)).await;
         let transport = tls(scratch.path(), &upstream.url).await;
         let control = scratch.path().join("fault");

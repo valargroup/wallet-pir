@@ -960,7 +960,7 @@ impl std::error::Error for CorrectnessError {}
 
 /// Body verification owed by a publication's exact inventory, in the two
 /// phases preparation runs: integrity hashes every listed artifact against
-/// its saved SHA-256 (sources were bound to their manifests at restore), and
+/// its saved artifact checksum (sources were bound to their manifests at restore), and
 /// correctness loads each runtime in turn and checks it against its source
 /// rows with a sampled private query.
 pub struct Validation {
