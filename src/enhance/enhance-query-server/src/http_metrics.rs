@@ -178,9 +178,10 @@ pub(crate) async fn measure(
     request: Request,
     next: Next,
 ) -> Response {
-    let endpoint = match (request.method().as_str(), request.uri().path()) {
-        ("GET", "/v1/enhance/init") => "init",
-        ("POST", "/v1/enhance/query") => "query",
+    let operation = crate::PUBLIC_ROUTES.operation(request.uri().path());
+    let endpoint = match (request.method().as_str(), operation) {
+        ("GET", Some("/init")) => "init",
+        ("POST", Some("/query")) => "query",
         _ => return next.run(request).await,
     };
     metrics.arrivals.with_label_values(&[endpoint]).inc();
@@ -250,9 +251,14 @@ mod tests {
     fn app(metrics: &HttpMetrics) -> Router {
         metrics.endpoint("init");
         metrics.endpoint("query");
-        Router::new()
-            .route("/v1/enhance/query", post(echo))
-            .route("/v1/enhance/init", get(|| async { "manifest" }))
+        crate::PUBLIC_ROUTES
+            .mount(
+                Router::new(),
+                [
+                    ("/query", post(echo)),
+                    ("/init", get(|| async { "manifest" })),
+                ],
+            )
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
                 measure,
@@ -333,6 +339,37 @@ mod tests {
         assert_eq!(metrics.download.with_label_values(&["init"]).get(), 8);
         assert_eq!(metrics.upload.with_label_values(&["init"]).get(), 0);
         assert!(!metrics.render().contains("private-id"));
+    }
+    #[tokio::test]
+    async fn canonical_and_legacy_paths_share_one_bounded_label() {
+        let metrics = HttpMetrics::default();
+        let app = app(&metrics);
+        for path in ["/enhance/v1/init", "/v1/enhance/init"] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "{path}");
+            axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+        }
+        for path in ["/enhance/v1/query", "/v1/enhance/query"] {
+            let response = app
+                .clone()
+                .oneshot(Request::post(path).body(Body::from("ab")).unwrap())
+                .await
+                .unwrap();
+            axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+        }
+        assert_eq!(metrics.arrivals.with_label_values(&["init"]).get(), 2);
+        assert_eq!(metrics.download.with_label_values(&["init"]).get(), 16);
+        assert_eq!(metrics.arrivals.with_label_values(&["query"]).get(), 2);
+        assert_eq!(metrics.upload.with_label_values(&["query"]).get(), 4);
+        assert!(!metrics.render().contains("enhance/v1"));
     }
     #[tokio::test]
     async fn early_rejection_has_no_processing_sample_and_no_invented_upload() {

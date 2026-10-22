@@ -182,11 +182,16 @@ impl QueryIngress {
         })
     }
     pub fn public_router(&self) -> Router {
-        Router::new()
-            .route("/v1/enhance/init", get(init))
-            .route("/v1/enhance/sessions/:generation/:shard", get(session))
-            .route("/v1/enhance/session/:session_id", get(session_by_id))
-            .route("/v1/enhance/query", post(query))
+        crate::PUBLIC_ROUTES
+            .mount(
+                Router::new(),
+                [
+                    ("/init", get(init)),
+                    ("/sessions/:generation/:shard", get(session)),
+                    ("/session/:session_id", get(session_by_id)),
+                    ("/query", post(query)),
+                ],
+            )
             .layer(axum::middleware::from_fn_with_state(
                 self.metrics.clone(),
                 crate::http_metrics::measure,
@@ -727,6 +732,67 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(ingress.admission.available_permits(), 1);
+    }
+    async fn answer(
+        router: Router,
+        method: &str,
+        path: &str,
+        body: Vec<u8>,
+    ) -> (StatusCode, Vec<u8>) {
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(axum::body::Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, body.to_vec())
+    }
+    #[tokio::test]
+    async fn canonical_and_legacy_public_paths_reach_the_same_handlers() {
+        let (_root, ingress) = ingress();
+        let session = "00".repeat(32);
+        for (method, operation, body) in [
+            ("GET", "/init".to_string(), vec![]),
+            ("GET", "/sessions/1/0".to_string(), vec![]),
+            ("GET", format!("/session/{session}"), vec![]),
+            ("POST", "/query".to_string(), vec![0; 4]),
+        ] {
+            let canonical = answer(
+                ingress.public_router(),
+                method,
+                &format!("/enhance/v1{operation}"),
+                body.clone(),
+            )
+            .await;
+            let legacy = answer(
+                ingress.public_router(),
+                method,
+                &format!("/v1/enhance{operation}"),
+                body,
+            )
+            .await;
+            assert_ne!(canonical.0, StatusCode::NOT_FOUND, "{operation} is routed");
+            assert_eq!(canonical, legacy, "{operation}");
+        }
+    }
+    #[tokio::test]
+    async fn control_routes_are_not_public_under_either_prefix() {
+        let (_root, ingress) = ingress();
+        for prefix in ["", "/enhance/v1", "/v1/enhance"] {
+            for control in ["/internal/health", "/internal/metrics"] {
+                let path = format!("{prefix}{control}");
+                let (status, _) = answer(ingress.public_router(), "GET", &path, vec![]).await;
+                assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+            }
+        }
     }
     #[test]
     fn static_ingress_validation_rejects_insecure_publishers_and_duplicate_peers() {

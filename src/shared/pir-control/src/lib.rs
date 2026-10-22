@@ -8,7 +8,9 @@
 //! roles each enforced with their own copy of the constant.
 //!
 //! With the `admission` feature, [`admission`] holds the HTTP admission
-//! primitives the Enhance roles, Status and Receiver share. [`durable`] is how
+//! primitives the Enhance roles, Status and Receiver share, and
+//! [`public_routes`] mounts each product's wallet-facing operations at their
+//! canonical and legacy prefixes. [`durable`] is how
 //! each of them replaces a state file so that a crash leaves the old or the
 //! new contents, never a partial file.
 //!
@@ -19,6 +21,9 @@ pub mod admission;
 pub mod durable;
 #[cfg(feature = "admission")]
 pub mod http;
+// Shares the `admission` feature because that is what enables axum here.
+#[cfg(feature = "admission")]
+pub mod public_routes;
 
 use serde::Serialize;
 use std::sync::OnceLock;
