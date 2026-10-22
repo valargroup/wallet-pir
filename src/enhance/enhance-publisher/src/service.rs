@@ -78,10 +78,8 @@ pub async fn run(
     }
     let rpc = ZakuraClient::from_cookie_file(&config.zakura_rpc_url, &config.zakura_cookie)?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
-    let artifacts = tokio::spawn(http.serve(
-        config.artifact_listen,
-        publisher.distribution().router(),
-    ));
+    let artifacts =
+        tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));
     tasks.own(&artifacts);
     let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let artifact_failed = failed.clone();
@@ -125,10 +123,7 @@ pub fn configure(
     };
     config.validate()?;
     let resources = PublisherResources {
-        listeners: vec![
-            config.listen,
-            config.artifact_listen,
-        ],
+        listeners: vec![config.listen, config.artifact_listen],
         writable_paths: vec![config.data_dir.clone()],
         probes: vec![ReadinessProbe {
             address: config.listen,
