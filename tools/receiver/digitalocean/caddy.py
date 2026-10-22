@@ -30,9 +30,11 @@ It applies the candidate, checks the operator routes stay off the public edge,
 then runs that deploy tool command in this process under the same lock. A
 deploy's exact check already probes the new binary through the new routes. The
 inventory's probe then runs once more against whatever release is running. If
-the command fails, which leaves the earlier binary running, the predecessor
-Caddyfile comes back and is verified with it. A command that succeeds but whose
-probe then fails is an unknown outcome, since both changed.
+the command fails and the receiver still runs the binary it ran before, the
+predecessor Caddyfile comes back and is verified with it. A command that fails
+with another binary running, as when a deploy commits and then fails to refresh
+its baseline, or that succeeds but whose probe then fails, is an unknown
+outcome, since both changed; the candidate routes stay.
 """
 import contextlib
 import functools
@@ -88,6 +90,12 @@ if request["op"] == "probe":
     release = os.path.dirname(os.path.realpath("/proc/%s/exe" % pid))
     code, output = run([word.replace("{release_dir}", release) for word in request["argv"]], 150)
     reply(code == 0, output)
+if request["op"] == "release":
+    show = run(["systemctl", "show", "-p", "MainPID", request["unit"]], 30)[1]
+    pid = show.strip().partition("=")[2]
+    if not pid.isdigit() or pid == "0":
+        reply(False, request["unit"] + " has no main process")
+    reply(True, os.path.realpath("/proc/%s/exe" % pid))
 if request["op"] == "apply":
     with open(temp, "wb") as handle:
         handle.write(sys.stdin.buffer.read())
@@ -137,6 +145,14 @@ class Droplet:
         except (IndexError, ValueError):
             raise Unknown('%s gave no reply (ssh exit %d): %s' % (request['op'], result.returncode,
                           result.stderr.decode(errors='replace').strip()[-500:])) from None
+
+    def release(self):
+        """The binary the receiver's main process runs, or None if it cannot be read."""
+        try:
+            reply = self.call({'op': 'release', 'unit': self.unit})
+        except Unknown:
+            return None
+        return reply['output'] if reply['ok'] else None
 
     def verify(self):
         """Failures of the exact probe on the Droplet and of the public 404s; empty when all pass."""
@@ -264,6 +280,11 @@ def cutover(droplet, candidate, argv, lock, deploy):
     except Exception as error:
         print('caddy.py: nothing changed: %s' % error, file=sys.stderr)
         return 1
+    # The predecessor's routes come back only beside the binary they were installed for.
+    running = droplet.release()
+    if running is None:
+        print('caddy.py: nothing changed: the running receiver binary cannot be read', file=sys.stderr)
+        return 1
     backup, failures = install(droplet, candidate)
     if backup is None:
         return 1
@@ -282,6 +303,13 @@ def cutover(droplet, candidate, argv, lock, deploy):
             print('caddy.py: cut over on %s with %s; predecessor kept as %s' % (droplet.host, command, backup))
             return 0
         failures = ['%s exited %d' % (command, code)]
+        # A deploy can commit and still exit nonzero, as when the baseline refresh after
+        # its commit fails, leaving the new binary running behind the candidate routes.
+        now = droplet.release()
+        if now != running:
+            raise Unknown('%s exited %d and the receiver now runs %s, not %s, so the candidate routes stay; '
+                          'check wallet-pir-deploy.py status receiver for the transaction outcome'
+                          % (command, code, now or 'an unreadable binary', running))
     still_held(lock)
     return restore(droplet, backup, failures)
 

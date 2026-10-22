@@ -263,10 +263,11 @@ class ReceiverCutover(StubDroplet):
         (self.root / 'proc/4242/exe').unlink()
         (self.root / 'proc/4242/exe').symlink_to(release / 'receiver-directory')
 
-    def deploy(self, fails=False):
+    def deploy(self, fails=False, commits=False):
         """A stand-in for the deploy tool: `deploy` runs this release and its exact check,
         rolling back to the previous one when that fails or `fails`; `rollback` runs the
-        previous release."""
+        previous release. With `commits`, it keeps the new release and still exits 1, as a
+        deploy whose baseline refresh fails after its commit does."""
         def run(argv, lock, inventory):
             self.assertEqual(inventory, self.env['WALLET_PIR_DEPLOY_INVENTORY'])
             self.locks.append(lock)
@@ -276,6 +277,8 @@ class ReceiverCutover(StubDroplet):
             self.run_release(self.release)
             check = subprocess.run([str(self.release / 'receiver-directory'), 'probe'], env=self.env,
                                    capture_output=True)
+            if commits:
+                return 1
             if fails or check.returncode:
                 self.run_release(self.previous)
                 return 1
@@ -340,6 +343,13 @@ class ReceiverCutover(StubDroplet):
         self.assertIn('restored and verified the predecessor', output)
         self.assertEqual((self.live.read_text(), self.running.read_text()), (PREVIOUS, PREVIOUS))
         self.assertEqual(self.running_release(), self.previous)
+
+    def test_a_deploy_that_commits_then_fails_keeps_the_candidate_routes(self):
+        status, output = self.cutover(LIVE, ['deploy', 'receiver'], self.deploy(commits=True))
+        self.assertEqual(status, self.helper.UNKNOWN, output)
+        self.assertIn('so the candidate routes stay', output)
+        self.assertEqual((self.live.read_text(), self.running.read_text()), (LIVE, LIVE))
+        self.assertEqual(self.running_release(), self.release)
 
     def test_exposed_operator_routes_stop_the_cutover_before_the_deploy(self):
         deploy = self.deploy()
