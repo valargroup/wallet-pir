@@ -4,32 +4,19 @@ use super::*;
 impl Controller {
     pub(super) async fn poll_source(&mut self) -> Result<(), BoxError> {
         let floor = self.sealed_floor();
-        let distribution = self.settings.distribution.clone();
-        let (rollback, saved, root, active) = (
-            &mut self.rollback,
-            &mut self.saved_invalidations,
-            &self.root,
-            &self.active.map_sha256,
-        );
-        let mut before_rollback = |ancestor: u64, hash: BlockHash| {
-            if let Some(distribution) = &distribution {
-                distribution
-                    .withdraw(ancestor + 1)
-                    .map_err(|e| e.to_string())?;
-            }
-            note_rollback(rollback, active, ancestor, hash);
-            let next = Invalidations {
-                rollback: rollback.clone(),
-            };
-            next.store(root)
-                .map_err(|e| format!("recording the invalidation from {}: {e}", ancestor + 1))?;
-            *saved = next;
-            Ok(())
-        };
+        let fence = self.fence.clone();
+        let mut before_rollback =
+            |ancestor: u64, hash: BlockHash| fence.before_rollback(ancestor, hash);
         let polled = pir_pipeline::acquire(
             async {
                 self.source
-                    .poll(&mut self.store, &self.cache, floor, &mut before_rollback)
+                    .poll(
+                        &mut self.store,
+                        &self.cache,
+                        floor,
+                        &fence,
+                        &mut before_rollback,
+                    )
                     .await
                     .map(Input::Work)
             },
@@ -65,12 +52,7 @@ impl Controller {
             );
             // Sources that roll the journal back have recorded this already.
             if let Some(block) = self.store.block_at(ancestor) {
-                note_rollback(
-                    &mut self.rollback,
-                    &self.active.map_sha256,
-                    ancestor,
-                    block.block_hash,
-                );
+                self.fence.noted(ancestor, block.block_hash);
             }
             self.save_invalidations();
             self.cache.truncate_after(ancestor);

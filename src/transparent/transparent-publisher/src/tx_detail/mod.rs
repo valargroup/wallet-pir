@@ -9,8 +9,9 @@
 //!   sidecars.
 //! - [`publisher`] writes revisions and candidate publications, bootstraps a
 //!   root from the journal and verifies what is on disk.
-//! - [`source`] supplies blocks: live from the node, replayed from an ingested
-//!   journal, or scripted by tests.
+//! - [`ingestion`] is the display journal's root-scheduled writer.
+//! - [`source`] supplies blocks: committed by that writer, replayed from an
+//!   ingested journal, or scripted by tests.
 //! - [`controller`] supplies source-bound work to the root executor.
 //! - [`distribution`] serves finalized publications to query servers over HTTPS.
 //! - [`offline`] verifies a root against its journal, plans a bootstrap
@@ -22,6 +23,7 @@ mod activation;
 pub mod cache;
 pub mod controller;
 pub mod distribution;
+pub mod ingestion;
 pub mod metrics;
 pub mod offline;
 pub mod publisher;

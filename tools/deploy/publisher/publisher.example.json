@@ -44,9 +44,6 @@
     "settings": {
       "root": "/srv/pir-publisher/txid/root",
       "journal": "/srv/pir-publisher/txid/journal",
-      "rpc_url": "http://127.0.0.1:8232",
-      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "poll_ms": 1000,
       "status_listen": "127.0.0.1:8098",
       "max_recent_records": null
     }

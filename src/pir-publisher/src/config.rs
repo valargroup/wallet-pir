@@ -147,6 +147,7 @@ impl Config {
         register!(
             transaction_details,
             transparent_publisher::service::details,
+            chain,
             crate::publisher::PublisherEngine
         );
         #[cfg(feature = "receiver")]

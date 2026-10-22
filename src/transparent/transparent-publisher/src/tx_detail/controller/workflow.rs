@@ -39,7 +39,9 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
     }
     async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
         let controller = &mut *self.controller;
-        if controller.halted.is_some() {
+        // No new publication while the journal writer catches up; the
+        // still-valid predecessor keeps serving.
+        if controller.halted.is_some() || !controller.source.current() {
             return Ok(pir_pipeline::Input::Unchanged);
         }
         if controller.retry_at.is_none_or(|t| Instant::now() >= t) {

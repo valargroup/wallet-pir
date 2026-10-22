@@ -176,15 +176,18 @@ fn detail_publication_is_live_https_only_and_rejects_retired_modes() {
     ))
     .unwrap();
     let settings = example["transaction_details"]["settings"].clone();
-    let config: transparent_publisher::tx_detail::service::Config =
-        serde_json::from_value(settings.clone()).unwrap();
-    config.validate().unwrap();
+    serde_json::from_value::<transparent_publisher::tx_detail::service::Config>(settings.clone())
+        .unwrap();
     for (key, value) in [
         ("http_only", serde_json::json!(true)),
         ("ship_runtimes", serde_json::json!(true)),
         ("workers", serde_json::json!("/etc/workers.json")),
         ("mode", serde_json::json!("replay")),
         ("exit_when_idle", serde_json::json!(true)),
+        // The node and its polling come from the root chain settings.
+        ("rpc_url", serde_json::json!("http://127.0.0.1:8232")),
+        ("rpc_cookie", serde_json::json!("/run/cookie")),
+        ("poll_ms", serde_json::json!(1000)),
     ] {
         let mut retired = settings.clone();
         retired[key] = value;
@@ -194,11 +197,6 @@ fn detail_publication_is_live_https_only_and_rejects_retired_modes() {
             "{key}"
         );
     }
-    let mut uncredentialed = settings;
-    uncredentialed["rpc_cookie"] = serde_json::json!("");
-    let config: transparent_publisher::tx_detail::service::Config =
-        serde_json::from_value(uncredentialed).unwrap();
-    assert!(config.validate().is_err());
 }
 #[cfg(feature = "transparent-history")]
 #[test]

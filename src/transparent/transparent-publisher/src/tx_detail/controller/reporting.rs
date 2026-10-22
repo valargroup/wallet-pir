@@ -17,21 +17,12 @@ impl Controller {
     /// Mirrors the rollback record into `invalidate.json`. A failed write
     /// leaves it in memory, and the next change retries.
     pub(super) fn save_invalidations(&mut self) {
-        let next = Invalidations {
-            rollback: self.rollback.clone(),
-        };
-        if next == self.saved_invalidations {
-            return;
-        }
-        match next.store(&self.root) {
-            Ok(()) => self.saved_invalidations = next,
-            Err(error) => {
-                tracing::error!(%error, "invalidate.json write failed");
-                self.timeline.record(
-                    "error",
-                    json!({"stage": "invalidate_record", "error": error.to_string()}),
-                );
-            }
+        if let Err(error) = self.fence.save() {
+            tracing::error!(%error, "invalidate.json write failed");
+            self.timeline.record(
+                "error",
+                json!({"stage": "invalidate_record", "error": error.to_string()}),
+            );
         }
     }
 

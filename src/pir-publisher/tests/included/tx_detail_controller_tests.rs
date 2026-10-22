@@ -946,9 +946,27 @@ fn bench_records_follow_the_requested_case_mix() {
 
 #[cfg(feature = "qualification-tests")]
 mod live {
-    //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
+    //! Root-scheduled live follow against a mock node, as `controller.rs`'s
+    //! RPC fixture: the root follower observes the node, the display journal's
+    //! writer commits, and the controller publishes committed blocks.
     use super::*;
-    use crate::tx_detail::source::{LiveSource, ReplaySource};
+    use crate::tx_detail::ingestion::DetailIngestion;
+    use crate::tx_detail::source::{CommittedSource, ReplaySource};
+    use pir_pipeline::ingestion::{
+        CanonicalChain, ChainFollower, ChainFuture, ChainSource, IngestionExecutor,
+    };
+
+    struct Node(crate::ingest::zakura::NodeClient);
+    impl CanonicalChain for Node {
+        fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+            Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+        }
+    }
+    impl ChainSource for Node {
+        fn tip_height(&self) -> ChainFuture<'_, u64> {
+            Box::pin(async move { Ok(self.0.tip_height().await?) })
+        }
+    }
     use axum::{extract::State, routing::post, Json, Router};
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
@@ -1065,11 +1083,33 @@ mod live {
             ..Settings::default()
         };
         let status = settings.status.clone();
-        let live = LiveSource::new(client, Duration::from_millis(20));
+        let writer = open_writer(&journal).unwrap();
+        let view = Arc::default();
+        let (notify, updates) = tokio::sync::watch::channel(0u64);
+        let live = CommittedSource::new(Arc::clone(&view), updates);
         let replay = ReplaySource::new(1, Duration::from_millis(20), 5);
         let source = Source::Replay(replay, Some(live));
-        let mut controller =
-            Controller::open(&root, open_writer(&journal).unwrap(), source, settings).unwrap();
+        let mut controller = Controller::open(
+            &root,
+            EventStore::open_existing(&journal).unwrap(),
+            source,
+            settings,
+        )
+        .unwrap();
+        let stop = pir_pipeline::service::Shutdown::default();
+        let follower =
+            ChainFollower::new(Arc::new(Node(client.clone())), Duration::from_millis(20));
+        let feed = follower.feed();
+        let following = tokio::spawn(follower.run(stop.clone()));
+        let ingestion = DetailIngestion::new(client, writer, controller.fence(), view, notify);
+        let ingest = tokio::spawn({
+            let stop = stop.clone();
+            async move {
+                crate::host_engine::PublisherEngine
+                    .ingest(ingestion, feed, stop)
+                    .await
+            }
+        });
 
         let driver = tokio::spawn({
             let chain = chain.clone();
@@ -1105,6 +1145,13 @@ mod live {
         .expect("the controller halts")
         .unwrap();
         driver.await.unwrap();
+        stop.request();
+        // The writer refused the sealed rollback before changing the journal.
+        assert!(matches!(
+            ingest.await.unwrap(),
+            Err(crate::tx_detail::ingestion::IngestError::SealedReorg(..))
+        ));
+        following.await.unwrap();
         assert!(
             matches!(outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
             "{outcome:?}"

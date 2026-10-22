@@ -111,11 +111,17 @@ pub fn filters<E: IngestionExecutor>(
     )
     .following_chain())
 }
-pub fn details<E: pir_pipeline::publisher::PublisherExecutor>(
+pub fn details<E>(
     config: DetailConfig,
+    chain: Option<&ChainSettings>,
     executor: E,
-) -> Result<PublisherDefinition<axum::Router>> {
-    config.validate()?;
+) -> Result<PublisherDefinition<axum::Router>>
+where
+    E: pir_pipeline::publisher::PublisherExecutor + IngestionExecutor,
+{
+    let chain = chain
+        .cloned()
+        .ok_or("enabled transaction_details publisher needs the root chain settings")?;
     let resources = PublisherResources {
         listeners: vec![config.status_listen],
         writable_paths: vec![config.root.clone(), config.journal.clone()],
@@ -128,8 +134,21 @@ pub fn details<E: pir_pipeline::publisher::PublisherExecutor>(
     Ok(PublisherDefinition::new(
         "transaction_details",
         resources,
-        move |context| {
-            crate::tx_detail::service::run(config, executor, context.http, context.shutdown)
+        move |context| async move {
+            let feed = context
+                .chain
+                .ok_or("transaction-detail publisher started without the root chain")?;
+            let rpc = crate::ingest::zakura::connect(&chain.rpc_url, &chain.rpc_cookie)?;
+            crate::tx_detail::service::run(
+                config,
+                rpc,
+                feed,
+                executor,
+                context.http,
+                context.shutdown,
+            )
+            .await
         },
-    ))
+    )
+    .following_chain())
 }
