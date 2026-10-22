@@ -15,6 +15,10 @@ pub trait Floor {
     fn floor(&mut self) -> Result<u64, Self::Error>;
     /// Durably records `revision`, which is above the floor, as the new floor.
     fn record(&mut self, revision: u64) -> Result<(), Self::Error>;
+    /// Makes the floor that [`Floor::floor`] read durable. An earlier [`Floor::record`]
+    /// can fail after its new floor became readable but before it was durable, so a floor
+    /// read back is trusted only after this succeeds.
+    fn confirm(&mut self) -> Result<(), Self::Error>;
 }
 
 /// Why [`advance`] refused a revision.
@@ -29,7 +33,7 @@ pub enum Refused<E: std::fmt::Display> {
 }
 
 /// Accepts correction `revision`: refuses one below `floor`'s record, durably records a
-/// higher one, and only then advances `serving` to it.
+/// higher one or confirms an equal one durable, and only then advances `serving` to it.
 pub fn advance<F: Floor>(
     floor: &mut F,
     serving: Option<&Publications>,
@@ -44,6 +48,8 @@ pub fn advance<F: Floor>(
     }
     if revision > recorded {
         floor.record(revision).map_err(Refused::Floor)?;
+    } else {
+        floor.confirm().map_err(Refused::Floor)?;
     }
     if serving.is_some_and(|s| !s.advance_history_revision(revision)) {
         return Err(Refused::Lower {
@@ -54,10 +60,12 @@ pub fn advance<F: Floor>(
     Ok(())
 }
 
-/// Advances fresh serving state `serving` to `floor`'s record, so sessions of older
-/// revisions stay fenced across a restart.
+/// Advances fresh serving state `serving` to `floor`'s record, once confirmed durable, so
+/// sessions of older revisions stay fenced across a restart.
 pub fn restore<F: Floor>(floor: &mut F, serving: &Publications) -> Result<(), F::Error> {
-    serving.advance_history_revision(floor.floor()?);
+    let recorded = floor.floor()?;
+    floor.confirm()?;
+    serving.advance_history_revision(recorded);
     Ok(())
 }
 
@@ -70,6 +78,12 @@ impl Floor for receiver_store::Store {
 
     fn record(&mut self, revision: u64) -> Result<(), Self::Error> {
         self.raise_history_revision(revision)
+    }
+
+    /// A committed SQLite transaction is already durable under `synchronous=FULL`, and a
+    /// failed commit leaves the old floor readable.
+    fn confirm(&mut self) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -104,7 +118,13 @@ impl Floor for StateFile {
         temp.write_all(revision.to_string().as_bytes())?;
         temp.as_file().sync_all()?;
         temp.persist(&self.0).map_err(|e| e.error)?;
-        // The rename is durable only once the directory holding it is synced.
+        self.confirm()
+    }
+
+    /// Syncs the state directory, since a rename is durable only once the directory
+    /// holding it is.
+    fn confirm(&mut self) -> Result<(), Self::Error> {
+        let parent = self.0.parent().ok_or(std::io::ErrorKind::InvalidInput)?;
         std::fs::File::open(parent)?.sync_all()
     }
 }
@@ -113,11 +133,15 @@ impl Floor for StateFile {
 mod tests {
     use super::*;
 
-    /// A floor that records in memory and fails to record when told to.
+    /// A floor that records in memory and fails to record when told to. With
+    /// `fail_sync`, a record becomes readable but never durable, like a rename whose
+    /// directory sync fails.
     #[derive(Default)]
     struct Memory {
         floor: u64,
+        durable: u64,
         fail: bool,
+        fail_sync: bool,
     }
 
     impl Floor for Memory {
@@ -132,6 +156,16 @@ mod tests {
                 true => Err("disk full"),
                 false => {
                     self.floor = revision;
+                    self.confirm()
+                }
+            }
+        }
+
+        fn confirm(&mut self) -> Result<(), Self::Error> {
+            match self.fail_sync {
+                true => Err("directory sync failed"),
+                false => {
+                    self.durable = self.floor;
                     Ok(())
                 }
             }
@@ -160,6 +194,32 @@ mod tests {
             Err(Refused::Lower { floor: 2, .. })
         ));
         let restarted = Publications::default();
+        restore(&mut floor, &restarted).unwrap();
+        assert!(!restarted.advance_history_revision(1));
+    }
+
+    /// A floor that became readable but not durable is not trusted: a retry of the same
+    /// revision, or a restart, leaves serving untouched until the floor is synced.
+    #[test]
+    fn a_readable_but_unsynced_floor_does_not_advance_serving() {
+        let serving = Publications::default();
+        let mut floor = Memory {
+            fail_sync: true,
+            ..Memory::default()
+        };
+        assert!(advance(&mut floor, Some(&serving), 2).is_err());
+        assert_eq!((floor.floor, floor.durable), (2, 0), "renamed, not synced");
+        assert!(advance(&mut floor, Some(&serving), 2).is_err());
+        let restarted = Publications::default();
+        assert!(restore(&mut floor, &restarted).is_err());
+        assert_eq!(
+            (serving.epoch(), restarted.epoch()),
+            (0, 0),
+            "nothing was revoked"
+        );
+        floor.fail_sync = false;
+        advance(&mut floor, Some(&serving), 2).unwrap();
+        assert_eq!((floor.durable, serving.epoch()), (2, 1));
         restore(&mut floor, &restarted).unwrap();
         assert!(!restarted.advance_history_revision(1));
     }

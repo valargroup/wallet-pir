@@ -16,7 +16,8 @@ and `/v1/receiver/health`
 and `/metrics` answering exactly 404 at the public origin. On failure it puts
 the backup back, reloads and verifies again. Exit status: 0 applied and
 verified, 1 not applied (see the message), 75 outcome unknown: an SSH step
-timed out or lost its connection, and the remote step may still have run, or
+timed out, lost its connection or failed to sync a write to disk, and the
+remote step may still have run, or
 restoring the predecessor failed, so Caddy may still run the candidate.
 
 A release that changes the wallet routes changes the binary's probe with them,
@@ -76,6 +77,15 @@ def run(argv, seconds):
     return result.returncode, (result.stdout + result.stderr)[-2000:]
 
 
+def sync(path):
+    """Fsyncs the file or directory at `path`, so a write or rename in it survives a crash."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def reply(ok, output=""):
     """Prints the one reply line and exits."""
     print(json.dumps({"ok": ok, "output": output}))
@@ -99,15 +109,21 @@ if request["op"] == "release":
 if request["op"] == "apply":
     with open(temp, "wb") as handle:
         handle.write(sys.stdin.buffer.read())
+        handle.flush()
+        os.fsync(handle.fileno())
     code, output = run(["caddy", "validate", "--adapter", "caddyfile", "--config", temp], 60)
     if code:
         os.unlink(temp)
         print(json.dumps({"invalid": True, "output": output}))
         sys.exit(0)
     os.link(LIVE, request["backup"])
+    sync(os.path.dirname(LIVE))
 else:
     shutil.copy2(request["backup"], temp)
+    sync(temp)
 os.rename(temp, LIVE)
+# A failed sync raises, so the caller gets no reply and reports an unknown outcome.
+sync(os.path.dirname(LIVE))
 code, output = run(["systemctl", "reload", "caddy"], 90)
 reply(code == 0, "reload failed: " + output if code else "")
 '''

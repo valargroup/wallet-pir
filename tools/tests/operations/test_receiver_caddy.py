@@ -109,6 +109,34 @@ PREVIOUS = LIVE.replace(' '.join(wallet_routes(LIVE)), ' '.join(PREVIOUS_ROUTES)
 ADDED = {'/v1/receiver/block-filters/*', '/v1/receiver/inventory', '/v1/receiver/inventory/*',
          '/v1/receiver/shard-filters/*'}
 
+# Loaded as `sitecustomize` by the remote program, it logs each fsync, link, rename and
+# Caddy reload to STUB_FS_LOG in order, and fails directory fsyncs under STUB_DIR_SYNC_FAILS.
+FS_HOOK = '''\
+    import os, stat, subprocess
+    if os.environ.get('STUB_FS_LOG'):
+        def log(event):
+            with open(os.environ['STUB_FS_LOG'], 'a') as handle:
+                handle.write(event + '\\n')
+
+        def wrap(module, name, event):
+            original = getattr(module, name)
+
+            def logged(*args, **kwargs):
+                log(event(*args))
+                return original(*args, **kwargs)
+            setattr(module, name, logged)
+
+        def fsync(fd):
+            directory = stat.S_ISDIR(os.fstat(fd).st_mode)
+            if directory and os.environ.get('STUB_DIR_SYNC_FAILS'):
+                raise OSError('directory sync failed')
+            return 'fsync ' + ('directory' if directory else 'file')
+        wrap(os, 'fsync', fsync)
+        wrap(os, 'link', lambda *args: 'link')
+        wrap(os, 'rename', lambda *args: 'rename')
+        wrap(subprocess, 'run', lambda argv, *args: ' '.join(argv) if argv[0] == 'systemctl' else '')
+'''
+
 
 def script(path, body):
     """Writes an executable Python script at `path`."""
@@ -221,6 +249,27 @@ class ReceiverCaddy(StubDroplet):
         (backup,) = self.backups()
         self.assertIn(backup.name, run.stderr)
         self.assertEqual((backup.read_text(), self.live.read_text()), (original, original))
+
+    def test_each_replacement_is_durable_before_the_reload(self):
+        hooks = self.dir / 'hooks'
+        hooks.mkdir()
+        (hooks / 'sitecustomize.py').write_text(textwrap.dedent(FS_HOOK))
+        log = self.dir / 'fs.log'
+        self.env.update(PYTHONPATH=str(hooks), STUB_FS_LOG=str(log))
+        self.assert_restored(self.apply(LIVE + '# stub: probe fails\n'))
+        events = [event for event in log.read_text().splitlines() if event and not event.startswith('systemctl show')]
+        self.assertEqual(events, [
+            # Apply: the candidate, then the backup link and the replacement in the directory.
+            'fsync file', 'link', 'fsync directory', 'rename', 'fsync directory', 'systemctl reload caddy',
+            # Restore: the copied backup, then its replacement.
+            'fsync file', 'rename', 'fsync directory', 'systemctl reload caddy'])
+        # A failed directory sync never reports success, and nothing reloads.
+        log.unlink()
+        self.env['STUB_DIR_SYNC_FAILS'] = '1'
+        run = self.apply(LIVE + '# reviewed change\n')
+        self.assertEqual(run.returncode, 75, run.stderr)
+        self.assertNotIn('systemctl reload caddy', log.read_text())
+        self.assertEqual(self.running.read_text(), LIVE)
 
     def test_two_runs_in_one_second_keep_both_backups(self):
         spec = importlib.util.spec_from_file_location('receiver_caddy', SCRIPT)
