@@ -94,6 +94,7 @@ wallet-recovery-tests = [
 ]
 
 [dependencies]
+pir-artifact = { path = "../../src/shared/pir-artifact" }
 pir-service-discovery = { path = "../../src/shared/pir-service-discovery" }
 tempfile = { version = "3", optional = true }
 pir-publisher = { path = "../../src/pir-publisher", optional = true }

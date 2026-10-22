@@ -8,9 +8,9 @@ use transparent_shared::{history::shardset::SegmentSource, publication};
 pub fn damage_received(source: &SegmentSource) {
     let path = source.path();
     let artifact = publication::Artifact {
-        source_sha256: None,
+        source_sha256: Some(source.sha256().into()),
         path: String::new(),
-        sha256: source.sha256().into(),
+        checksum: publication::digest(&std::fs::read(path).unwrap()),
         bytes: source.bytes() as u64,
         kind: publication::Kind::RecentTable,
     };

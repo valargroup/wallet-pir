@@ -132,7 +132,7 @@ fn offline_publication_loads_and_answers_without_consumers() {
     invalid.domains[0].plan.units[0].setup_sha256 = "04".repeat(32);
     assert!(invalid.validate().is_err());
     invalid = inventory.clone();
-    invalid.domains[0].rows[0].sha256 = "../escape".into();
+    invalid.domains[0].rows[0].checksum = "../escape".into();
     assert!(invalid.validate().is_err());
     eprintln!(
         "offline preparation cold={cold:?} reuse={:?}",
@@ -146,7 +146,7 @@ fn offline_publication_loads_and_answers_without_consumers() {
             .iter()
             .chain([&domain.hint, &domain.public, &packing])
         {
-            objects.insert(object.sha256.clone(), object.bytes);
+            objects.insert(object.checksum.clone(), object.bytes);
         }
     }
     let every_object = VerificationStats {
@@ -181,7 +181,7 @@ fn offline_publication_loads_and_answers_without_consumers() {
     let mut aliased = inventory.clone();
     let rows = aliased.domains[0].rows[0].clone();
     assert_ne!(rows.bytes, aliased.domains[0].hint.bytes);
-    aliased.domains[0].hint.sha256 = rows.sha256;
+    aliased.domains[0].hint.checksum = rows.checksum;
     aliased.validate().unwrap();
     assert!(
         enhance_publisher::publication::verify_publication(root.path(), aliased).is_err(),

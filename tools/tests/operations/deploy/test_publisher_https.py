@@ -95,7 +95,8 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
             return original_run(host, argv, timeout)
         def get(host, url, timeout=5):
             if url.endswith('/current'):
-                return 200, json.dumps({'eligibility': 'canonical', 'network': 'main', 'inventory_sha256': 'a' * 64})
+                return 200, json.dumps({'eligibility': 'canonical', 'network': 'main',
+                    'inventory_checksum': {'algorithm':'blake3','digest':'a' * 64}})
             if ':1830' in url:
                 return 200, '{"ready":true}'
             return original_get(host, url, timeout)
@@ -320,14 +321,19 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         outside = self.root / 'outside'
         outside.write_bytes(b'outside the legacy tree')
         (source / 'link').symlink_to(outside)
+        helper = self.root / 'artifact-helper'
+        helper.write_text('#!/usr/bin/env python3\nimport hashlib,json,pathlib,sys\n'
+                          'assert sys.argv[1:3] == ["artifact-checksum","--input"]\n'
+                          'print(json.dumps({"algorithm":"fixture","digest":hashlib.sha256(pathlib.Path(sys.argv[3]).read_bytes()).hexdigest()}))\n')
+        helper.chmod(0o755)
         result = subprocess.run([sys.executable, '-c', publisher_https.SEED_OBJECTS,
-            json.dumps({'root': str(root), 'sources': [str(source)]})], capture_output=True, text=True)
+            json.dumps({'root': str(root), 'sources': [str(source)], 'hash_command':str(helper)})], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['linked_objects'], 2)
         digest = hashlib.sha256(b'immutable table').hexdigest()
-        self.assertEqual((root / 'objects' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
+        self.assertEqual((root / 'objects' / 'fixture' / digest).stat().st_ino, (source / 'table.bin').stat().st_ino)
         self.assertFalse((root / 'active.json').exists())
-        self.assertFalse((root / 'objects' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
+        self.assertFalse((root / 'objects' / 'fixture' / hashlib.sha256(outside.read_bytes()).hexdigest()).exists())
 
 
 if __name__ == '__main__':

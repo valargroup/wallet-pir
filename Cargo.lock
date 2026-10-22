@@ -2207,6 +2207,7 @@ dependencies = [
  "enhance-query-server",
  "hex",
  "libc",
+ "pir-artifact",
  "pir-pipeline",
  "pir-publisher",
  "pir-query-server",

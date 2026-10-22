@@ -1109,12 +1109,12 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
     assert_eq!((checked.loaded, checked.reused), (runtimes.len(), 0));
     let second = prepare(&mut checked).unwrap();
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
-    assert_eq!(second.sha256(), first.sha256());
+    assert_eq!(second.checksum(), first.checksum());
     assert_eq!(
-        second.sha256(),
+        second.checksum(),
         Finalized::prepare_full(source, &set, FIRST + 2)
             .unwrap()
-            .sha256()
+            .checksum()
     );
 
     // A replaced runtime is reloaded and its checksum refuses it, however
@@ -1141,7 +1141,7 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
         std::fs::remove_file(runtime).unwrap();
         std::fs::write(runtime, &original).unwrap();
         let restored = prepare(&mut checked).unwrap();
-        assert_eq!(restored.sha256(), first.sha256());
+        assert_eq!(restored.checksum(), first.checksum());
         assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
     }
 
@@ -1160,6 +1160,6 @@ fn distribution_reuses_only_unchanged_checked_runtimes() {
     assert!(error.contains("differs from its manifest"), "{error}");
     std::fs::remove_file(&segment).unwrap();
     std::fs::write(&segment, original).unwrap();
-    assert_eq!(prepare(&mut checked).unwrap().sha256(), first.sha256());
+    assert_eq!(prepare(&mut checked).unwrap().checksum(), first.checksum());
     assert_eq!((checked.loaded, checked.reused), (0, runtimes.len()));
 }

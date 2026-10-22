@@ -21,7 +21,7 @@ KINDS = ('history-archive', 'history-recent', 'transaction-details')
 # The old workers have stopped before this runs. Only immutable bytes are
 # reused: the provider still verifies every object against fresh HTTPS authority.
 SEED_OBJECTS = r'''
-import hashlib,json,os,pathlib,stat,sys
+import json,os,pathlib,stat,subprocess,sys
 request=json.loads(sys.argv[1]); root=pathlib.Path(request['root'])
 assert root.is_dir() and not root.is_symlink()
 objects=root/'objects'; objects.mkdir(mode=0o700,exist_ok=True)
@@ -38,8 +38,16 @@ for source in request['sources']:
             key=(metadata.st_dev,metadata.st_ino)
             if not stat.S_ISREG(metadata.st_mode) or key in seen:continue
             seen.add(key)
-            with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
-            target=objects/digest
+            result=subprocess.run([request['hash_command'],'artifact-checksum','--input',str(path)],
+                                  capture_output=True,text=True,check=True,timeout=300)
+            checksum=json.loads(result.stdout)
+            algorithm,digest=checksum['algorithm'],checksum['digest']
+            assert algorithm.isalnum() and len(digest)==64 and all(c in '0123456789abcdef' for c in digest)
+            namespace=objects/algorithm; namespace.mkdir(mode=0o700,exist_ok=True)
+            assert namespace.is_dir() and not namespace.is_symlink()
+            stamp=lambda value:(value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
+            assert stamp(path.lstat())==stamp(metadata)
+            target=namespace/digest
             if not target.exists():
                 os.link(path,target,follow_symlinks=False);count+=1;size+=metadata.st_size
 print(json.dumps({'linked_objects':count,'reused_bytes':size}))
@@ -369,7 +377,10 @@ class HttpsServing(Serving):
                     try:
                         current = json.loads(body)
                         available &= status == 200 and current.get('eligibility') == 'canonical'
-                        available &= current.get('network') == 'main' and len(current.get('inventory_sha256', '')) == 64
+                        checksum = current.get('inventory_checksum', {})
+                        available &= (current.get('network') == 'main' and isinstance(checksum, dict)
+                                      and isinstance(checksum.get('algorithm'), str)
+                                      and len(checksum.get('digest', '')) == 64)
                     except (ValueError, TypeError, AttributeError):
                         available = False
                 if available:
@@ -390,7 +401,8 @@ class HttpsServing(Serving):
                                     'legacy active bytes are outside /srv')
                             sources = [p for p in sources if p != consumer['legacy_shard_dir']] + [active]
                     code, output = owner.ex.run(consumer['host'], ['python3', '-c', SEED_OBJECTS,
-                        json.dumps({'root': consumer['root'], 'sources': sources})], 300)
+                        json.dumps({'root': consumer['root'], 'sources': sources,
+                                    'hash_command': '/opt/pir-query-server/releases/' + self.release['binary_sha256'] + '/pir-query-server'})], 300)
                     require(code == 0, 'could not reuse legacy immutable objects: ' + output[-1000:])
                     parent.setdefault('reused_objects', {})[consumer['unit']] = json.loads(output)
                 owner.effect(parent, 'reuse immutable objects ' + unit, seed)

@@ -1,6 +1,4 @@
-use clap::Parser;
-#[cfg(feature = "enhance")]
-use clap::Subcommand;
+use clap::{Parser, Subcommand};
 use pir_pipeline::service::Shutdown;
 
 #[derive(Parser)]
@@ -17,14 +15,18 @@ struct Args {
     /// binding management or wallet listeners.
     #[arg(long, requires = "config", conflicts_with = "check")]
     verify_only: bool,
-    #[cfg(feature = "enhance")]
     #[command(subcommand)]
-    command: Option<EnhanceCommand>,
+    command: Option<MaintenanceCommand>,
 }
 
-#[cfg(feature = "enhance")]
 #[derive(Subcommand)]
-enum EnhanceCommand {
+enum MaintenanceCommand {
+    /// Hash exact file bytes with the shared artifact checksum policy.
+    ArtifactChecksum {
+        #[arg(long)]
+        input: std::path::PathBuf,
+    },
+    #[cfg(feature = "enhance")]
     /// Check the selected evaluator and GPU driver without opening worker state.
     CheckBackend {
         #[command(flatten)]
@@ -32,19 +34,33 @@ enum EnhanceCommand {
     },
 }
 
-#[cfg(feature = "enhance")]
-fn enhance_command(command: EnhanceCommand) -> pir_query_server::Result<()> {
+fn maintenance_command(command: MaintenanceCommand) -> pir_query_server::Result<()> {
     match command {
-        EnhanceCommand::CheckBackend { matvec } => {
+        MaintenanceCommand::ArtifactChecksum { input } => {
+            let checksum = pir_query_server::hash_artifact(&input)?;
+            println!("{}", serde_json::to_string(&checksum)?);
+            Ok(())
+        }
+        #[cfg(feature = "enhance")]
+        MaintenanceCommand::CheckBackend { matvec } => {
             matvec.validate()?;
             Ok(())
         }
     }
 }
 
-#[tokio::main]
-async fn main() -> pir_query_server::Result<()> {
-    let args = Args::parse();
+fn main() -> pir_query_server::Result<()> {
+    let mut args = Args::parse();
+    if let Some(command) = args.command.take() {
+        return maintenance_command(command);
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(args))
+}
+
+async fn run(args: Args) -> pir_query_server::Result<()> {
     if args.verify_only {
         // Stdout carries only the verification report; diagnostics go to
         // stderr at the level the Transparent verifiers have always logged.
@@ -59,10 +75,6 @@ async fn main() -> pir_query_server::Result<()> {
         tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .init();
-    }
-    #[cfg(feature = "enhance")]
-    if let Some(command) = args.command {
-        return enhance_command(command);
     }
     let config_path = args.config.ok_or("query server requires --config FILE")?;
     let config: pir_query_server::config::Config =

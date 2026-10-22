@@ -230,6 +230,59 @@ but their mutation drivers remain product recipes: `schema-*` and
 a publication is more than replacing an executable. Their retained request,
 plan-digest, authority, quiescence and recovery requirements continue to apply.
 
+## Artifact checksum cutover
+
+Enhance, Status and Transparent distribution artifacts use tagged checksums:
+`{"algorithm":"blake3","digest":"<64 lowercase hex characters>"}`.
+The `pir-artifact::CURRENT` constant selects the algorithm for producers,
+consumers and maintenance. Object namespaces include the algorithm. Source
+manifests, wallet commitments, chain identities and executable or operations
+package SHA-256 pins keep their own contracts.
+
+`pir-publisher artifact-checksum prepare` verifies a predecessor inventory and
+its objects into a separate staging directory. Supply `--product`, the absolute
+publication `--root`, `--inventory`, its operational `--inventory-sha256` pin,
+and `--stage`. Multiple retained inventories can share `--checkpoints`.
+Preparation checks the previous digest and computes the current digest in one
+stream. Unchanged objects use hard links; Transparent runtime headers require
+separate files but reuse the prepared body without rebuilding PIR matrices.
+Checkpoints bind successful work to the file's device, inode, length and change
+times. Changed or replaced files are verified again.
+
+`prepare-cache --preparation FILE --root DIR --stage DIR` prepares a consumer's
+existing cache against that verified translation. Missing cache objects remain
+ordinary downloads. Converted runtime bytes must match the publisher's new
+complete-file checksum. Preparation never changes live authority records.
+
+`prepare-record` converts saved current, retention, high-water or History
+restore records using one or more `--preparation` files. Its `--kind` selects an
+explicit product adapter. Replay revisions, recovery epochs, withdrawals and
+revocations survive conversion. `--reverse` translates the latest record back;
+an unknown publication refuses instead of restoring an old authority snapshot.
+These are offline tools: the deployment transaction owns writer shutdown and
+atomic installation. Retain both original immutable files and preparation
+records until rollback is retired.
+
+Use `wallet-pir-deploy.py artifact-checksum-plan` and
+`artifact-checksum-preflight` with a pinned private request before
+`artifact-checksum-deploy --expect-plan-sha256 HASH`. The request names every
+affected target, separate CPU/CUDA executable groups, prepared trees, mutable
+record conversions and the existing publisher discovery origin. The first
+group is the shared publisher. Preparation and binary staging happen while
+predecessors serve; the final transaction joins all writers, translates their
+latest small records, starts the publisher, verifies discovery contract 2, and
+starts consumers. Each product retains its independent encrypted-answer check.
+An intervening publication without a prepared translation refuses the cutover;
+refresh preparation and retry while the predecessors serve.
+
+`artifact-checksum-status` reports the durable transaction.
+`artifact-checksum-rollback --transaction ID` uses the same request and state
+directory. It translates the latest authority records before restoring
+executables through the normal lifecycle. An unfinished transaction fences other
+deployments until recovery completes. Initial conversion reads existing data;
+its elapsed time and temporary space must be measured separately from service
+interruption and from any claimed hashing speedup.
+
 ## Configure a publisher and its sandbox together
 
 `role_config.RenderedRole` holds unit text and the configuration files that unit

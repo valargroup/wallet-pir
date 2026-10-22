@@ -95,6 +95,7 @@ pub fn add_crs_blocks_assign_mod(
 // Version 8 binds the plaintext profile and changes Enhance to p=2^16 with a
 // 46-bit minimum query width.
 // Version 9 invalidates full-ciphertext artifacts for schema 11 suffix records.
+// Version 10 tags artifact checksums independently of the protocol row binding.
 const ARTIFACT_VERSION: u16 = 10;
 
 #[derive(Serialize, Deserialize)]

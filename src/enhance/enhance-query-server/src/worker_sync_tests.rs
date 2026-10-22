@@ -5,7 +5,6 @@ use crate::{
     protocol::{Geometry, Lifecycle},
     publication::{AuthorityResponse, Current, Object},
 };
-use sha2::{Digest, Sha256};
 use std::sync::atomic::Ordering::SeqCst;
 use tower::ServiceExt;
 
@@ -55,15 +54,15 @@ async fn evaluation_failure(backend: MatvecConfig) {
     )
     .unwrap();
     let object = Object {
-        sha256: hex::encode(Sha256::digest(&rows)),
+        checksum: pir_artifact::digest(&rows),
         bytes: rows.len() as u64,
     };
-    fs::create_dir_all(root.path().join("objects")).unwrap();
+    fs::create_dir_all(root.path().join(pir_artifact::namespace("objects"))).unwrap();
     fs::write(object.path(root.path()).unwrap(), rows).unwrap();
     // Worker loading uses only verified rows. Public packing is never built on
     // this host, and the unused packing fields cannot grant serving authority.
     let unused = Object {
-        sha256: "02".repeat(32),
+        checksum: "02".repeat(32),
         bytes: 1,
     };
     let domain = Domain {
@@ -71,9 +70,10 @@ async fn evaluation_failure(backend: MatvecConfig) {
         rows: vec![object],
         hint: unused.clone(),
         public: unused,
+        public_params_sha256: "02".repeat(32),
         packing: crate::prepared_packing::Artifact {
             name: "unused".into(),
-            sha256: "03".repeat(32),
+            checksum: "03".repeat(32),
             bytes: 1,
             format: crate::prepared_packing::FORMAT,
         },
@@ -130,7 +130,7 @@ async fn evaluation_failure(backend: MatvecConfig) {
                 eligible: true,
                 manifest: Some(manifest.clone()),
                 inventory: Some(Object {
-                    sha256: "03".repeat(32),
+                    checksum: "03".repeat(32),
                     bytes: 1,
                 }),
             },

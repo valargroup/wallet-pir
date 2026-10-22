@@ -35,7 +35,7 @@ class DeployError(RuntimeError):
     pass
 
 
-def mutation_fence(inventory, executor, lock=None):
+def mutation_fence(inventory, executor, lock=None, artifact_transaction=None):
     """Refuse while a Transparent schema transaction is unfinished; read-only.
 
     Under the held production lock (`lock`) before every mutation; without one
@@ -48,6 +48,12 @@ def mutation_fence(inventory, executor, lock=None):
         schema_fence.local_schema_fence()
     elif host:
         schema_fence.schema_mutation_fence(lambda path: executor.read(host, path))
+    if host:
+        raw = executor.read(host, '/var/lib/wallet-pir/artifact-checksum-fence.json')
+        if raw is not None:
+            fence = json.loads(raw)
+            if fence.get('transaction') != artifact_transaction:
+                raise DeployError('artifact checksum cutover is unfinished; use its status and rollback before another deployment')
 
 
 def file_sha256(path):
