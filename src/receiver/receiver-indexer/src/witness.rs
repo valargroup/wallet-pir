@@ -340,6 +340,8 @@ mod tests {
     /// A correction adding payments to two completed shards repairs each from its own
     /// commitments in turn under its recorded root: every payload, old and added, folds
     /// from its commitment to that root, which pins it to the one path at its position.
+    /// Fast already completes one shard, restarts it and rewinds it.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_correction_across_completed_shards_repairs_each_in_turn() {
         let dir = tempfile::tempdir().unwrap();
@@ -409,6 +411,19 @@ mod tests {
         // A restart rebuilds the filling shard from its own commitments.
         let restarted = Witnesses::default().payloads(&mut store, &tip, &all);
         assert_eq!(restarted.unwrap(), built);
+        // Swapping two final payloads between ordinals is refused before serving,
+        // on this same completed shard.
+        let snapshot = store.snapshot(8, 0).unwrap();
+        let mut payloads = built;
+        let table = super::table(&snapshot, &payloads).unwrap();
+        let roots = crate::verify::check_publication(&snapshot, &table).unwrap();
+        assert_eq!(roots.get(&0), shard0.root().as_ref());
+        payloads.swap(0, 1);
+        let swapped = super::table(&snapshot, &payloads).unwrap();
+        assert!(matches!(
+            crate::verify::check_publication(&snapshot, &swapped),
+            Err(Error::Coverage)
+        ));
     }
 
     /// A rewind past the completing block drops the completed shard, and the cached paths
@@ -454,7 +469,8 @@ mod tests {
     /// A correction that adds a payment to a completed shard rebuilds only that shard,
     /// under its recorded root, to the oracle's payloads. A publication's final payloads
     /// then fold to that root, and swapping two of them between ordinals is refused
-    /// before serving.
+    /// before serving. Fast checks that refusal on the incremental build.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_correction_rebuilds_a_completed_shard_under_its_root() {
         let dir = tempfile::tempdir().unwrap();

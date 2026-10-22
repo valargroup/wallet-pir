@@ -690,7 +690,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "qualification-tests"))]
 mod fixture_cache_tests {
     use super::*;
     use receiver_directory::snapshot::Snapshot;

@@ -1192,7 +1192,9 @@ mod tests {
 
     /// A check that finds an anchor off the chain after a revocation and a new
     /// publication replaced it leaves the new one serving; a served anchor off the
-    /// chain is revoked.
+    /// chain is revoked. Fast already checks that refusal on the serving runtime;
+    /// this repeats it with two prepared publications.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_stale_failure_does_not_revoke_a_newer_publication() {
         let gate = Arc::new(Semaphore::new(0));
@@ -1640,6 +1642,8 @@ mod tests {
 
     /// Shards sealed under fewer rows than a restart's raised `min_rows` refuse the
     /// publication, serving or written, rather than publish tables serving refuses.
+    /// Fast already refuses a staged rows file that does not match its manifest.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_raised_min_rows_refuses_shards_sealed_below_it() {
         let mut paused = Paused::new(|_| {}).await;
@@ -1943,7 +1947,9 @@ mod tests {
 
     /// A displaced inventory that a request still holds keeps its stored tables through a
     /// pass after its retention ends, so the request can still load them; the first pass
-    /// after it is released deletes them.
+    /// after it is released deletes them. The serving crate checks the same reference
+    /// rule without preparing another inventory.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_held_inventory_keeps_its_stored_tables_until_released() {
         let publications = Publications::new(std::time::Duration::from_millis(1), 1 << 30);

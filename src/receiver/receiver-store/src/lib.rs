@@ -228,15 +228,17 @@ impl Store {
                 block.coinbase_actions
             ],
         )?;
-        for (offset, cmx) in block.commitments.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO commitments VALUES (?1,?2,?3)",
-                params![
+        // One prepared statement for the block. A completed shard inserts 2^16
+        // commitments, and preparing that statement per row dominated those cases.
+        {
+            let mut insert = tx.prepare("INSERT INTO commitments VALUES (?1,?2,?3)")?;
+            for (offset, cmx) in block.commitments.iter().enumerate() {
+                insert.execute(params![
                     block.start_position + offset as u64,
                     block.height,
                     cmx.as_slice()
-                ],
-            )?;
+                ])?;
+            }
         }
         insert_payments(&tx, block)?;
         tx.commit()?;

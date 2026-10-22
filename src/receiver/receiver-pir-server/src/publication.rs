@@ -673,6 +673,7 @@ mod tests {
     use super::*;
 
     /// An empty prepared publication whose salt starts with `salt`.
+    #[cfg(feature = "qualification-tests")]
     fn publication(salt: u8) -> Publication {
         publication_at(salt, 3)
     }
@@ -702,24 +703,27 @@ mod tests {
         assert!(!publications.revoke_serving(epoch, a));
         assert_eq!(publications.serving(), (epoch + 1, vec![b]));
         // An ordinary rotation keeps the epoch, but once A's retention ends a check that
-        // read A no longer revokes C.
+        // read A no longer revokes the publication that replaced it. Reuse B's prepared
+        // table rather than preprocess a third empty one.
         let publications = Publications::default();
         assert!(publications.publish(publication_at(1, 1), 0));
         let (epoch, _) = publications.serving();
-        assert!(publications.publish(publication_at(3, 3), 0));
+        assert!(publications.publish(publication_at(2, 2), 0));
         let ended = Instant::now()
             .checked_sub(Duration::from_millis(1))
             .unwrap();
         publications.0.write().unwrap().retained[0].1 = ended;
         assert!(!publications.revoke_serving(epoch, a));
-        assert_eq!(publications.anchors(), [(101, [3; 32])]);
+        assert_eq!(publications.anchors(), [b]);
         // A served anchor off the chain still revokes every session.
-        assert!(publications.revoke_serving(epoch, (101, [3; 32])));
+        assert!(publications.revoke_serving(epoch, b));
         assert_eq!(publications.serving(), (epoch + 1, vec![]));
     }
 
     /// A preparation overtaken by a newer publish cannot replace it, even once the
-    /// newer one's predecessor has left its retention.
+    /// newer one's predecessor has left its retention. Fast already refuses a stale
+    /// check once a newer anchor is current.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn an_overtaken_preparation_is_not_published() {
         let publications = Publications::default();
@@ -749,7 +753,9 @@ mod tests {
     }
 
     /// A displaced inventory is dropped once its retention ends, not kept until the next
-    /// publication, and its id is then 410.
+    /// publication, and its id is then 410. Fast already ends that retention on the
+    /// stale-anchor runtime.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn an_expired_previous_publication_is_dropped() {
         let publications = Publications::default();
@@ -770,6 +776,7 @@ mod tests {
 
     /// Republishing the current inventory replaces it without a new retention or epoch, keeps
     /// a predecessor's deadline, and still honors the epoch fence.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn republishing_the_current_session_replaces_it_in_place() {
         let publications = Publications::default();
@@ -836,6 +843,7 @@ mod tests {
     }
     /// A companion constructed at a later block than its payment table makes that block
     /// a served anchor too, so finding it off the chain revokes every session.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_later_witness_context_is_a_served_anchor() {
         let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
@@ -854,6 +862,7 @@ mod tests {
 
     /// A new companion beside an unchanged payment session displaces the old one
     /// through the ordinary retention, so a wallet that captured the old pair can finish.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_witness_only_replacement_keeps_the_displaced_companion() {
         let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
@@ -930,6 +939,7 @@ mod tests {
     }
 
     /// A correction fences direct lookups before the replacement PIR table is ready.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn correction_revokes_old_sessions_and_refuses_old_preparations() {
         let publications = Publications::default();

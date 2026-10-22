@@ -19,6 +19,10 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 
+[features]
+# Publication sequences that prepare another session only to assert one more
+# property. Fast keeps one stale-anchor revocation and one encrypted query.
+qualification-tests = []
 
 [dev-dependencies]
 tempfile = "3"
