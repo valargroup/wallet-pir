@@ -462,7 +462,7 @@ class RequestTests(Base):
             (('controller', 'mode'), 'fast'), (('controller', 'rpc_url'), 'http://10.0.0.1:8232'),
             (('ports', 'worker'), 8096), (('ports', 'controller_status'), 8094),
             (('hosts', 'archive', 'inventory'), 'coordinator'), (('hosts', 'archive', 'vpc_ip'), '8.8.8.8'),
-            (('release', 'binaries', 'txid-control'), KeyError), (('measure', 'public_url'), 'http://txid.example'),
+            (('release', 'binaries', 'txid-inventory'), KeyError), (('measure', 'public_url'), 'http://txid.example'),
             (('baseline', 'archive'), {}),
             (('history', 'adapter'), '/srv/transparent-activity/ops/sources/x/transparent-fleet-scaler.py'),
             (('history', 'fleet'), '/opt/transparent-publisher/v11/../fleet.json'), (('history', 'membership'), KeyError),
@@ -770,11 +770,6 @@ class StageTests(Base):
             for name in names:
                 self.assertEqual(self.fake.sha256(host, RELEASE_DIR + '/' + name),
                                  self.request['release']['binaries'].get(name) or self.request['release']['files'][name])
-                if name == 'txid-control':
-                    # Its contract has no --help; with no socket it prints its usage and exits 1.
-                    self.assertIn([RELEASE_DIR + '/' + name], self.fake.commands(host))
-                    self.assertNotIn([RELEASE_DIR + '/' + name, '--help'], self.fake.commands(host))
-                    continue
                 self.assertIn([RELEASE_DIR + '/' + name, '--help'] if not name.endswith('.py')
                               else ['/usr/bin/python3', RELEASE_DIR + '/' + name, '--help'], self.fake.commands(host))
         self.assertIsNone(self.fake.sha256('archive-03', RELEASE_DIR + '/pir-publisher'))
@@ -789,25 +784,24 @@ class StageTests(Base):
         run = self.fake.run
 
         def broken(host, argv, timeout):
-            if argv == [RELEASE_DIR + '/txid-control']:
+            if argv == [RELEASE_DIR + '/pir-query-server', '--help']:
                 return 127, 'exec format error'
             return run(host, argv, timeout)
         self.fake.run = broken
         poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'staged txid-control failed its self-check'):
+        with self.assertRaisesRegex(P.PocError, 'staged pir-query-server failed its self-check'):
             poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
 
     def test_stage_refuses_other_bytes(self):
         archive = self.bundle()
-        self.request['release']['binaries']['txid-control'] = 'e' * 64
+        self.request['release']['binaries']['txid-inventory'] = 'e' * 64
         poc = self.poc()
-        with self.assertRaisesRegex(P.PocError, 'txid-control differs'):
+        with self.assertRaisesRegex(P.PocError, 'txid-inventory differs'):
             poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
         self.assertFalse([m for m in self.fake.mutations() if m[1] == 'upload'])
         self.request = request()
         archive = self.bundle(2)
         self.request['release']['archive_sha256'] = sha256(archive.read_bytes())
-        self.fake.put('archive-03', RELEASE_DIR + '/txid-control', b'other')
         self.fake.put('archive-03', RELEASE_DIR + '/pir-query-server', b'x')
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'holds other bytes'):
