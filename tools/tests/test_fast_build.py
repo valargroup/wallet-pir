@@ -293,25 +293,32 @@ class FastBuildTests(unittest.TestCase):
     def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
         builds = self._cargo_tests(['enhance-query-server'])
         self.assertEqual(len(builds), 2)
-        stable, hosts = builds
+        stable, hint = builds
         stable_packages, bins, stable_tests, stable_features = self._command_parts(stable)
-        host_packages, host_bins, host_tests, host_features = self._command_parts(hosts)
-        self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS - fast_build.HOST_PACKAGES))
-        self.assertEqual(host_packages, sorted(fast_build.HOST_PACKAGES))
+        hint_packages, hint_bins, hint_tests, hint_features = self._command_parts(hint)
+        # Hosts stay named on the stable command. Taking them off for an Enhance
+        # diff and putting them back afterwards rebuilds the closure.
+        self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS))
+        self.assertEqual(hint_packages, ['pir-e2e-tests', 'pir-query-server'])
         self.assertIn('--lib', stable)
+        self.assertIn('--lib', hint)
         self.assertNotIn('--bins', stable)
         self.assertEqual(bins, [
             'enhance-pir-load-test',
             'hierarchical-filter-eval', 'journal-convert-v1', 'pir-monitor', 'rate-query',
             'txid-quality-canary', 'txid-rate'])
-        self.assertEqual(host_bins, [])
+        self.assertEqual(hint_bins, [])
         # Shared crates keep a feature set that does not name a product host.
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
-        self.assertEqual(host_features, ['pir-e2e-tests/enhance-fast'])
+        self.assertEqual(hint_features, ['pir-e2e-tests/enhance-fast'])
         # status-publisher stays in the stable closure, so its fast object-access
-        # HTTP target is compiled for every subset.
-        self.assertEqual(stable_tests, ['ci_smoke', 'immutable_objects', 'object_access_http'])
-        self.assertEqual(host_tests, ['ci_hint', 'commands', 'lifecycle', 'operator'])
+        # HTTP target is compiled for every subset. Host tests stay there too.
+        self.assertEqual(stable_tests, [
+            'ci_smoke', 'commands', 'immutable_objects', 'lifecycle', 'object_access_http', 'operator'])
+        self.assertEqual(hint_tests, ['ci_hint', 'operator'])
+        transparent = self._cargo_tests(['transparent-publisher'])
+        self.assertEqual(len(transparent), 1)
+        self.assertEqual(transparent[0], stable)
 
     def test_each_product_compiles_only_its_own_host_features(self):
         # History and detail reach the query host through the publisher
@@ -333,8 +340,11 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('pir-publisher/status-tests', features)
         self.assertNotIn('ci_hint', tests)
         builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
-        _packages, _bins, _tests, features = self._command_parts(builds[1])
+        self.assertEqual(self._command_parts(builds[0])[3], [])
+        _packages, _bins, tests, features = self._command_parts(builds[1])
+        self.assertEqual(tests, ['ci_hint', 'operator'])
         self.assertEqual(features, ['pir-e2e-tests/enhance-fast'])
+        self.assertIn('--lib', builds[1])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):
         # Dependents of a shared crate are selected, but the diff itself is not a product.

@@ -1516,12 +1516,14 @@ async fn a_stop_before_activation_keeps_the_rollback_record() {
     while controller.cache.tip().map(|t| t.0) < Some(122) {
         controller.poll_source().await.unwrap();
     }
-    let Ok(Input::Work(candidate)) = controller.prepare_cycle().await else {
-        panic!("a candidate is due");
-    };
-    controller.shutdown.request();
+    let shutdown = controller.shutdown.clone();
+    let candidate = crate::host_engine::PublisherEngine
+        .prepare(preparation::DisplayPreparation::new(&mut controller))
+        .await
+        .expect("a candidate is prepared");
+    shutdown.request();
     assert!(
-        controller.activate_cycle(candidate).await.is_ok(),
+        matches!(candidate.commit().await, Err(ref error) if error.is::<transparent_shared::publication::Stopped>()),
         "stopped before candidate installation"
     );
     assert_eq!(controller.active().map_sha256, before.map_sha256);
