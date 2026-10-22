@@ -49,9 +49,8 @@ to each worker. Workers verify source tables and prepared runtimes through the
 same cache operation used for local restore or build. Rejected or missing
 runtimes fall back to verified local preparation; corrupt sources fail.
 
-`ship_runtimes` defaults to `false`. Performance qualification and production
-adoption remain open: CPU, query latency, activation delay and freshness must
-pass together before a reviewed deployment plan enables shipping. See
+Since #343 the publisher prepares runtimes unconditionally; the switch no
+longer exists. This records source, not a deployment. See
 [remaining work](remaining-work.md#prepared-history-runtimes) and the
 [design](architecture.md#prepared-history-runtimes).
 

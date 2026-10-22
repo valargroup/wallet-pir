@@ -10,15 +10,15 @@ remain unchanged.
 
 ## Producer and inventory
 
-The history publication controller accepts `distribute_prepared: true` only
-with `ship_runtimes: true`. Both default false. Existing deployments keep their
-optional shipped-runtime fallback policy. Distribution finalization uses the
+The history publication controller always prepares runtimes and finalizes a
+full prepared distribution; the former `distribute_prepared` and `ship_runtimes`
+switches are rejected. Distribution finalization uses the
 same verified candidate and existing publication/chain checks; no Display
 publisher or universal artifact format is introduced.
 
 The publisher builds and verifies recent runtimes before attaching a finalized
 inventory to its active pointer, under `publication_gate`, after the existing
-fleet activation, epoch and canonical-hash checks. A missing, unfinished, corrupt
+epoch and canonical-hash checks. A missing, unfinished, corrupt
 or incompatible recent runtime prevents finalization. It verifies native body
 checksums, public-mask binding and source self-consistency through the production
 loader; a header/length match alone is insufficient.
@@ -490,7 +490,7 @@ case is reported missing rather than timing out itself. Shipping prepared runtim
 to that terminal, or a host with more CPU, is the remaining fix for the 30-second
 gate.
 
-## Controller update campaign (retired)
+## Controller update campaign
 
 The `controller_update_campaign` test and its `https-update-campaign.py` runner
 were deleted after `bee37567`: they depended on a fleet-era archive owner serving
