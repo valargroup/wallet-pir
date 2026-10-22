@@ -1256,7 +1256,7 @@ fn prepare_publication(root: &Path, count: u64) -> enhance_publisher::publicatio
 
 /// The shared 67-record publication, published through the real distribution.
 async fn published() -> Published {
-    Published::prepared_by(|root| prepare_publication(root, 67).inventory().clone()).await
+    Published::prepared_by(|root| prepare_publication(root, 67)).await
 }
 
 /// The ordinary-lane authority boundary needs no prepared material: an empty

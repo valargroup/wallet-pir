@@ -177,9 +177,9 @@ class Cutover:
                     'installed Status placement differs from the request')
             settings = dict(self.roles[name]['configuration']['status']['settings'])
             settings.pop('role')
-            if 'limits' in placements[0].get('vars', {}):
-                settings['limits'] = placements[0]['vars']['limits']
-            placements[0]['vars'] = settings
+            if 'limits' in placements[0].get('settings', {}):
+                settings['limits'] = placements[0]['settings']['limits']
+            placements[0]['settings'] = settings
         files.append(self.file(self.host, INVENTORY, json.dumps(installed, indent=2) + '\n'))
         listen = self.roles['publisher']['configuration']['status']['settings']['publisher']['private_listen']
         require(listen.startswith('127.0.0.1:'), 'distribution listener must stay loopback')

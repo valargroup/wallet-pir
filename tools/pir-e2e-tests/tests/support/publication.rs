@@ -29,15 +29,15 @@ impl Published {
                 |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
             )
             .unwrap()
-            .inventory()
-            .clone()
         })
         .await
     }
-    /// Publishes the inventory that `prepare` produces under the publication
-    /// root, on a blocking thread.
+    /// Publishes what `prepare` prepares under the publication root, on a
+    /// blocking thread.
     pub(crate) async fn prepared_by(
-        prepare: impl FnOnce(&std::path::Path) -> Inventory + Send + 'static,
+        prepare: impl FnOnce(&std::path::Path) -> enhance_publisher::publication::Prepared
+            + Send
+            + 'static,
     ) -> Self {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
@@ -56,9 +56,10 @@ impl Published {
         ))
         .await;
         let transport = tls(scratch.path(), &publisher.url).await;
-        let inventory = tokio::task::spawn_blocking(move || prepare(&root))
+        let prepared = tokio::task::spawn_blocking(move || prepare(&root))
             .await
             .unwrap();
+        let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {
             recovery_epoch: 0,
@@ -77,7 +78,7 @@ impl Published {
             unit_identities: [(0, domain.plan.units.clone())].into(),
         };
         distribution
-            .publish(manifest.clone(), inventory.clone())
+            .publish_prepared(manifest.clone(), prepared)
             .await
             .unwrap();
         Self {
