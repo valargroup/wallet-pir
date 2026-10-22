@@ -390,8 +390,22 @@ impl RollingWindow {
     }
 
     /// One self-contained observation for the diagnostic CLI: reconcile the
-    /// cached window with the node, extend it to the tip and snapshot it.
+    /// cached window with the node, extend it to the tip and snapshot it. A
+    /// failed pass, such as a tip that moved, leaves the window and its
+    /// checkpoint as they were, so a discarded candidate records no forks.
     pub async fn observe(&mut self, rpc: &ZakuraClient) -> Result<Observation, SourceError> {
+        let (network, blocks, forks) = (self.network, self.blocks.clone(), self.forks.clone());
+        let result = self.observe_pass(rpc).await;
+        if result.is_err() {
+            if let Some(network) = network {
+                self.persist(network, &blocks, &forks)?;
+            }
+            (self.network, self.blocks, self.forks) = (network, blocks, forks);
+        }
+        result
+    }
+
+    async fn observe_pass(&mut self, rpc: &ZakuraClient) -> Result<Observation, SourceError> {
         let began = Instant::now();
         let tip = rpc.tip_height().await?;
         let tip_height = u32::try_from(tip).map_err(|_| SourceError::Window)?;
