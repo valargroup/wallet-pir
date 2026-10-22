@@ -19,6 +19,7 @@ pub(super) struct StatusSync {
     floor: Floor,
     conditional: Option<Current>,
     retained: Vec<Object>,
+    loaded: Option<Inventory>,
     deferred: bool,
 }
 impl StatusSync {
@@ -58,6 +59,7 @@ impl StatusSync {
             floor,
             conditional: None,
             retained: Vec::new(),
+            loaded: None,
             deferred: false,
         })
     }
@@ -374,7 +376,24 @@ impl StatusSync {
             self.deferred = true;
             return Ok(Input::Deferred);
         }
-        if !unchanged {
+        // Reuse only the material already verified and loaded by this process.
+        // The new identity still passes live authority and freshness checks in
+        // publish; no bytes are read from disk on this metadata-only path.
+        let refreshed = previous
+            .as_ref()
+            .zip(self.loaded.as_ref())
+            .and_then(|(g, old)| {
+                if old.manifest != *g.manifest() || !old.same_prepared_material(&inventory) {
+                    return None;
+                }
+                let next = g.reidentified(
+                    inventory.manifest.generation,
+                    inventory.manifest.recovery_epoch,
+                    inventory.manifest.observed_ms,
+                );
+                (next.manifest() == &inventory.manifest).then_some(next)
+            });
+        if !unchanged && refreshed.is_none() {
             for object in
                 std::iter::once(&inventory.public).chain(if self.service.role == Role::Worker {
                     inventory.units.iter()
@@ -391,6 +410,7 @@ impl StatusSync {
             inventory_object,
             previous,
             unchanged,
+            refreshed,
         }))
     }
 }
@@ -403,6 +423,7 @@ struct Acquired<'a> {
     inventory_object: Object,
     previous: Option<Arc<Generation>>,
     unchanged: bool,
+    refreshed: Option<Generation>,
 }
 struct Prepared<'a> {
     sync: &'a mut StatusSync,
@@ -418,9 +439,12 @@ impl<'a> Acquired<'a> {
             inventory_object,
             previous,
             unchanged,
+            refreshed,
         } = self;
         let candidate = if unchanged {
             previous.as_ref().map(|g| g.as_ref().clone())
+        } else if refreshed.is_some() {
+            refreshed
         } else {
             let root = sync.service.dir.join("objects");
             let i = inventory.clone();
@@ -494,6 +518,7 @@ impl Prepared<'_> {
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
             }
+            sync.loaded = Some(inventory.clone());
             sync.retained.push(inventory_object.clone());
             if sync.retained.len() > 2 {
                 sync.retained.remove(0);
