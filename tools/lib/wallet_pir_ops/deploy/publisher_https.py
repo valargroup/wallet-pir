@@ -154,7 +154,8 @@ class HttpsServing(Serving):
         require('\n' + internal + ' {' in '\n' + before, 'history private listener differs')
         def site(address, upstream):
             return (address + ' {\n\trequest_body {\n\t\tmax_size 1MB\n\t}\n'
-                    '\t@wallet path /v1/ready /v2/*\n\thandle @wallet {\n'
+                    # `/transparent/v1/*` is the canonical alias of `/v2/*`.
+                    '\t@wallet path /v1/ready /v2/* /transparent/v1/*\n\thandle @wallet {\n'
                     '\t\treverse_proxy ' + upstream + '\n\t}\n'
                     '\thandle {\n\t\trespond 404\n\t}\n}\n')
         global_options = before.split(origin + ' {', 1)[0]

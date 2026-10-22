@@ -233,6 +233,7 @@ class HttpsTests(PublisherFixture, unittest.TestCase):
         edge = before['serving']['history_edge']
         self.assertEqual(self.ex.read(edge['host'], '/etc/caddy/Caddyfile'), edge['after'])
         self.assertNotIn('path_regexp', edge['after'])
+        self.assertEqual(edge['after'].count('\t@wallet path /v1/ready /v2/* /transparent/v1/*\n'), 2)
         self.assertEqual(self.target.rollback()['phase'], 'rolled-back')
         self.assertEqual(self.ex.read(edge['host'], '/etc/caddy/Caddyfile'), edge['before'])
         for consumer in before['serving']['https_consumers']:

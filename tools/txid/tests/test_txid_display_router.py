@@ -111,8 +111,17 @@ class RouterHookTests(unittest.TestCase):
                 v1, withdrawn = render(internal, guarded, api_version='v1')
                 self.assertEqual(hashlib.sha256(v1).hexdigest(), digests[0])
                 v2, withdrawn_v2 = render(internal, guarded, api_version='v2')
-                moved = v1.decode().replace('/v1/shards', '/v2/shards').replace('/v1/filters/shards', '/v2/filters/shards')
+                # v2 also routes its canonical `/transparent/v1/` alias to the
+                # same handlers, and nothing else moves.
+                metadata = '/v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest'
+                canonical = ' '.join(metadata.replace('/v1/', '/' + p + '/') for p in ('v2', 'transparent/v1'))
+                moved = (v1.decode().replace(metadata, canonical)
+                         .replace('path_regexp ^/v1/shards/', 'path_regexp ^/(?:v2|transparent/v1)/shards/'))
                 self.assertEqual(v2.decode(), moved)
+                if not guarded or internal:
+                    self.assertIn('/transparent/v1/shards/init /transparent/v1/filters/shards ', v2.decode())
+                    # Probes and operator surfaces are never routed under the canonical prefix.
+                    self.assertNotRegex(v2.decode(), r'/transparent/v1/(health|ready|metrics|provider|control|internal)')
                 # Probes are operational, not wallet API, and keep their path.
                 if not guarded or internal:
                     self.assertIn('health_uri /v1/ready', v2.decode())
