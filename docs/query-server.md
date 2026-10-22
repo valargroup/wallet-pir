@@ -51,11 +51,15 @@ configuration, not a production inventory. Sections are `enhance`, `status`,
 `settings`. An omitted or disabled section starts nothing.
 
 Enhance settings name one role: `worker`, `query-ingress`, or `packing-router`.
-A worker needs `listen`, an absolute `data_dir`, and optional `sealed_shards`
-(default 6) and `matvec` (`matvec_backend` `cpu` or `cuda`, and `cuda_device`
-only for CUDA). Query ingress needs `data_dir`, `listen`, `control_listen`,
-and optional `requests` (default 16) and `uploads` (default 256). A packing
-router needs `data_dir`, `artifact_origin`, `listen`, `control_listen`, and
+Every role takes a `synchronization` object naming its HTTPS
+`publisher_origin`, optional `trusted_ca`, `download_budget_bytes` and
+`cache_limit_bytes`: workers add their `shards`, query ingress its `routers`
+and packing routers their `workers` (and optional `preferred` workers) per
+domain. A worker also needs `listen`, an absolute `data_dir`, and optional
+`sealed_shards` (default 6) and `matvec` (`matvec_backend` `cpu` or `cuda`,
+and `cuda_device` only for CUDA). Query ingress needs `data_dir`, `listen`,
+`control_listen`, and optional `requests` (default 16) and `uploads` (default
+256). A packing router needs `data_dir`, `listen`, `control_listen`, and
 optional `max_objects` (default 6) and `requests` (default 4). Status settings
 name `worker` or `router`. Both require `publisher` (an HTTPS origin),
 `network_hex`, an exclusively owned `state_dir`, and loopback listeners.
@@ -72,12 +76,13 @@ bind sockets or open stores.
 
 ## Transparent
 
-A `transparent_history` or `transaction_details` section takes the former server
-settings: each command-line long flag becomes a field with `-` replaced by `_`.
-Boolean flags are `true` when set and omitted otherwise, numbers are integers,
-and repeated flags (`runtime_cache_prune_set`, `collect_root`) are arrays.
-Transaction details require `role` (`archive-owner`, `recent-replica`, or
-`combined`). Every object rejects unknown fields. A deployment renders one
+A serving `transparent_history` or `transaction_details` section synchronizes
+from its HTTPS publisher: it requires `publisher`, `publisher_network` and
+`publisher_genesis`, with optional `publisher_ca` and `bootstrap_max_bytes`.
+History keeps its downloaded state in `shard_dir` and may name an
+`archive_upstream` (with `archive_ca`) or `full_holdings`; transaction details
+keep theirs in `state_dir` and serve only `role` `combined`. Numbers are
+integers and every object rejects unknown fields. A deployment renders one
 Transparent section per file, so history and detail stay separate processes.
 
 ```json
@@ -88,6 +93,9 @@ Transparent section per file, so history and detail stay separate processes.
     "settings": {
       "listen": "127.0.0.1:8093",
       "shard_dir": "/srv/transparent-pir/shards",
+      "publisher": "https://publisher.example",
+      "publisher_network": "main",
+      "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
       "cache_bytes": 4294967296
     }
   }
@@ -102,8 +110,10 @@ Transparent section per file, so history and detail stay separate processes.
     "settings": {
       "listen": "127.0.0.1:8095",
       "role": "combined",
-      "publication_dir": "/srv/transparent-pir/txid",
-      "state_dir": "/srv/transparent-pir/txid-state"
+      "state_dir": "/srv/transparent-pir/txid-state",
+      "publisher": "https://publisher.example",
+      "publisher_network": "main",
+      "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
     }
   }
 }
@@ -111,7 +121,9 @@ Transparent section per file, so history and detail stay separate processes.
 
 `pir-query-server --config FILE --verify-only` replaces the former servers'
 `--verify-only`. The file must enable exactly one Transparent section and no
-other product. It binds no listener, prints the same JSON report and keeps the
+other product. With a publisher it synchronizes into the configured state
+before exiting; without one it verifies a local `shard_dir` or
+`publication_dir`. It binds no listener, prints the same JSON report and keeps the
 same exit status. It conflicts with `--check` and the Enhance subcommands.
 Configuration files never set `verify_only`; ordinary startup rejects
 `verify_only: true`.
