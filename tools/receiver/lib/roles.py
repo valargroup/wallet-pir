@@ -17,7 +17,7 @@ TEMPLATE = ROOT / 'tools/receiver/deploy/receiver-serve-publication.service'
 def serve_publication(settings, *, release, template=None):
     s = settings_of(settings, ('config_path', 'publication_record', 'publication_root', 'state_dir', 'bind',
                                'rpc_urls'),
-                    ('cookie', 'no_auth', 'poll_seconds', 'witnesses', 'min_rows'))
+                    ('cookie', 'no_auth', 'poll_seconds', 'min_rows'))
     config_path, record, root, state = (directory(s[name]) for name in
                                         ('config_path', 'publication_record', 'publication_root', 'state_dir'))
     urls = s['rpc_urls']
@@ -38,10 +38,6 @@ def serve_publication(settings, *, release, template=None):
     for name in ('poll_seconds', 'min_rows'):
         if name in s:
             config[name] = int(number(s[name], name, 1))
-    if 'witnesses' in s:
-        if type(s['witnesses']) is not bool:
-            raise ValueError('witnesses must be a boolean')
-        config['witnesses'] = s['witnesses']
     template = TEMPLATE.read_text() if template is None else template
     return render_worker(template, directory(release) + '/receiver-directory',
                          ['serve-publication', '--config', config_path],

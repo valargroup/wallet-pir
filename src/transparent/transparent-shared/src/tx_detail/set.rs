@@ -833,6 +833,9 @@ mod tests {
         assert_eq!(restored.verification().bytes_row_checked, 0);
     }
 
+    /// Reloading a finalized set rechecks every source. Fast already rehashes a
+    /// relinked candidate and refuses a replaced segment when the set is opened.
+    #[cfg(feature = "qualification-tests")]
     #[test]
     fn finalizing_an_opened_set_reuses_its_verification_but_not_its_bytes() {
         use crate::tx_detail::{distribution::Finalized, prebuild::build_shipped_verified};

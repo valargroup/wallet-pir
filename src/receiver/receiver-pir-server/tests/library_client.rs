@@ -6,23 +6,25 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/prepared.rs"]
+mod prepared;
+#[path = "common/router.rs"]
+mod router;
 use common::{manifest, receiver, record};
-use history::history;
+use history::{history, Accepted, Session};
 use receiver_directory::snapshot::Snapshot;
-use receiver_pir::{server::Server, MIN_ROWS};
-use receiver_pir::{
-    transport::{DirectoryClient, Transport},
-    AcceptedCoverage, Error,
-};
-use receiver_pir_server::{router_with_publications, Publication, Publications};
+use receiver_pir::MIN_ROWS;
+use receiver_pir::{transport::Transport, Error};
+use receiver_pir_server::{Publication, Publications};
+use router::router_with_publications;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 
 /// The chain anchor that [`manifest`] ends at.
-fn accepted() -> AcceptedCoverage {
-    AcceptedCoverage {
+fn accepted() -> Accepted {
+    Accepted {
         genesis: [1; 32],
         required_start: 100,
         height: 101,
@@ -35,7 +37,7 @@ fn snapshot(count: u32) -> Snapshot {
     let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
     let mut manifest = manifest(MIN_ROWS);
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records, &[]).unwrap()
+    Snapshot::build(manifest, &records).unwrap()
 }
 
 struct Running {
@@ -114,20 +116,15 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
 }
 
 /// Connects over PIR to the publication `origin` advertises.
-async fn connect<'a>(origin: &str, http: &'a Http) -> Result<DirectoryClient<&'a Http>, Error> {
-    let manifest = DirectoryClient::fetch_manifest(origin, http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted(), manifest).await
+async fn connect<'a>(origin: &str, http: &'a Http) -> Result<Session<&'a Http>, Error> {
+    history::connect(origin, http, accepted()).await
 }
 
 /// The library client reads a two-page history over this service's PIR, one encrypted
 /// query per page.
 #[tokio::test]
 async fn the_library_client_looks_up_over_pir() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(2)).unwrap(),
-        None,
-    ))
-    .await;
+    let server = serve(prepared::prepare_payments(snapshot(2)).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
     let payments = history(&client, receiver()).await.unwrap();
@@ -156,60 +153,31 @@ async fn the_library_client_looks_up_over_pir() {
     assert!(history(&client, other).await.unwrap().is_empty());
 }
 
-/// The library client checks the publication's filter file against its manifest and
-/// tests receivers against it.
+/// The library client reads a payment's companion payload over this service's PIR by
+/// the ordinal its record carries, one encrypted query per payload.
 #[tokio::test]
-async fn the_library_client_reads_the_publication_filters() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(1)).unwrap(),
-        None,
-    ))
-    .await;
-    let http = Http::new();
-    let manifest = DirectoryClient::fetch_manifest(&server.origin, &http)
-        .await
-        .unwrap();
-    let filters = DirectoryClient::fetch_filters(&server.origin, &http, &manifest)
-        .await
-        .unwrap();
-    let paid = filters.get(receiver_directory::filter::PAID).unwrap();
-    assert_eq!(
-        paid.matches(&manifest.directory.salt, &[receiver()]),
-        [true]
-    );
-}
-
-/// The common witness file reaches the library client byte for byte; a publication
-/// without one serves none.
-#[tokio::test]
-async fn the_library_client_downloads_the_common_witness_file() {
-    let proof = b"IWPROOF1 opaque to the server".to_vec();
-    let server = serve(Publication::verified(
-        Server::new(snapshot(0)).unwrap(),
-        Some(proof.clone()),
-    ))
-    .await;
+async fn the_library_client_reads_companion_payloads_over_pir() {
+    let snapshot = snapshot(2);
+    let payloads = [[3; 512], [4; 512]];
+    let table = prepared::companion_table(&snapshot, &payloads);
+    let server = serve(prepared::prepare(snapshot, table).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
-    assert_eq!(client.witnesses().await.unwrap(), proof);
-    let server = serve(Publication::verified(
-        Server::new(snapshot(0)).unwrap(),
-        None,
-    ))
-    .await;
-    let client = connect(&server.origin, &http).await.unwrap();
-    assert!(client.witnesses().await.is_err());
+    for page in 0..2 {
+        let record = client.page(receiver(), page).await.unwrap().unwrap();
+        assert_eq!(
+            client.witness(record.ordinal).await.unwrap(),
+            payloads[record.ordinal as usize]
+        );
+    }
+    assert_eq!(http.queries.load(Ordering::Relaxed), 4);
 }
 
 /// A revoked publication answers the library client's next query 410, which it
 /// reports as a revision change rather than a result.
 #[tokio::test]
 async fn a_revoked_publication_is_a_revision_to_the_library_client() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(1)).unwrap(),
-        None,
-    ))
-    .await;
+    let server = serve(prepared::prepare_payments(snapshot(1)).unwrap()).await;
     let http = Http::new();
     let client = connect(&server.origin, &http).await.unwrap();
     server.publications.revoke();
@@ -217,5 +185,5 @@ async fn a_revoked_publication_is_a_revision_to_the_library_client() {
         history(&client, receiver()).await,
         Err(Error::Revision)
     ));
-    assert!(matches!(client.witnesses().await, Err(Error::Revision)));
+    assert!(matches!(client.witness(0).await, Err(Error::Revision)));
 }

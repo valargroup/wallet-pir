@@ -261,8 +261,12 @@ class MatrixTests(unittest.TestCase):
                     def command(command, **options):
                         if command[:3] == ['cargo', 'test', '--no-run']:
                             package = command[command.index('-p') + 1]
+                            selected = (command[command.index('--features') + 1].split(',')
+                                        if '--features' in command else [])
+                            features = sorted(feature.split('/', 1)[1] for feature in selected
+                                              if feature.startswith(package + '/'))
                             return [dict(executable=str(script), package_id=packages[package]['id'],
-                                         target=dict(name=t['target'], kind=[t['kind']]), features=[])
+                                         target=dict(name=t['target'], kind=[t['kind']]), features=features)
                                     for key in registry[shard]['targets']
                                     if (t := targets[key])['package'] == package and t['kind'] in ('lib', 'bin', 'test')]
                         if 'tools/ci/unit_tests.py' in command:

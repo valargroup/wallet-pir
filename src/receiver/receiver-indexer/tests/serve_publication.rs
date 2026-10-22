@@ -1,15 +1,15 @@
 //! `receiver-directory serve-publication`: the real binary, real files and real HTTP,
 //! against a JSON-RPC node the test controls.
+#[path = "common/bound.rs"]
+mod bound;
 #[path = "../../receiver-store/tests/common/mod.rs"]
 mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
 use axum::{extract::State, routing::post, Json, Router};
+use receiver_directory::witness;
 use receiver_directory::{snapshot::Snapshot, Hash};
-use receiver_pir::{
-    transport::{DirectoryClient, Transport},
-    AcceptedCoverage, Error, MIN_ROWS,
-};
+use receiver_pir::{transport::Transport, Error, MIN_ROWS};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -17,7 +17,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -27,11 +26,13 @@ fn mainnet() -> Hash {
     zakura_server_chain::Network::Mainnet.genesis_hash()
 }
 
-/// The node: its tip and the hash it reports at each height.
+/// The node: its tip and the hash it reports at each height, and the Ironwood tree size
+/// after a block where it differs from the fixtures' 8.
 #[derive(Clone, Default)]
 struct Node(
     Arc<Mutex<(u64, HashMap<u64, Hash>)>>,
     Arc<Mutex<Option<RecordReplacement>>>,
+    Arc<Mutex<HashMap<u64, u64>>>,
 );
 
 struct RecordReplacement {
@@ -66,15 +67,29 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
                 json!(zakura_server_chain::hash::display(&hash))
             }
         }
+        "getblock" => {
+            let named =
+                zakura_server_chain::hash::parse_display(request["params"][0].as_str().unwrap())
+                    .unwrap();
+            let height = hashes.iter().find(|(_, h)| **h == named).map(|(h, _)| *h);
+            let size = height.and_then(|h| node.2.lock().unwrap().get(&h).copied());
+            json!({"trees": {"ironwood": {"size": size.unwrap_or(8)}}})
+        }
         method => panic!("serve-publication must not call {method}"),
     };
     Json(json!({"result": result, "error": null, "id": request["id"]}))
 }
 
 /// A publication ending `offset` blocks after activation at `hash`, with two payments
-/// to the fixture receiver and their witness file.
-fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
+/// to the fixture receiver and their companion witness table.
+fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
+    corrected_publication(offset, hash, 0)
+}
+
+/// [`publication`] under history correction revision `revision`.
+fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, witness::Table) {
     let mut manifest = common::manifest(MIN_ROWS);
+    manifest.history_revision = revision;
     manifest.genesis = mainnet();
     manifest.start_height = activation();
     manifest.end_height = activation() + offset;
@@ -93,28 +108,42 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
             record
         })
         .collect();
-    let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
+    let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(
-        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
-        &tree,
-        &[0, 5].into_iter().collect(),
-    )
-    .unwrap()
-    .encode();
-    (snapshot, proof)
+    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
+    (snapshot, table)
 }
 
-/// Stages `snapshot` as a complete publication directory, in the indexer's file
-/// layout, and returns the directory and revision.
+/// Stages `snapshot` as a complete one-shard publication directory, in the indexer's
+/// file layout, and returns the directory and layout identity.
 fn stage(
     root: &Path,
     name: &str,
     snapshot: &Snapshot,
-    witness: Option<&[u8]>,
+    witness: Option<&witness::Table>,
 ) -> (PathBuf, String) {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
+    let companion = witness.map_or([0; 32], |w| w.manifest.revision().unwrap());
+    let layout = receiver_indexer::application::Layout {
+        genesis: snapshot.manifest.genesis,
+        history_revision: snapshot.manifest.history_revision,
+        shards: vec![receiver_indexer::application::LayoutShard {
+            sealed: false,
+            segments: vec![receiver_indexer::application::LayoutSegment {
+                payments: snapshot.manifest.revision().unwrap(),
+                witnesses: companion,
+            }],
+            filter: None,
+        }],
+    };
+    let (id, bytes) = layout.encode().unwrap();
+    std::fs::write(
+        dir.join(format!("{}.inventory.json", hex::encode(id))),
+        bytes,
+    )
+    .unwrap();
     let revision = hex::encode(snapshot.manifest.revision().unwrap());
     std::fs::write(
         dir.join(format!("{revision}.json")),
@@ -122,11 +151,22 @@ fn stage(
     )
     .unwrap();
     std::fs::write(dir.join(format!("{revision}.rows")), &snapshot.data).unwrap();
-    std::fs::write(dir.join(format!("{revision}.filters")), &snapshot.filters).unwrap();
     if let Some(witness) = witness {
-        std::fs::write(dir.join(format!("{revision}.witness")), witness).unwrap();
+        let companion = hex::encode(companion);
+        std::fs::write(dir.join(format!("{companion}.witness")), &witness.data).unwrap();
+        std::fs::write(
+            dir.join(format!("{companion}.witness.json")),
+            serde_json::to_vec_pretty(&witness.manifest).unwrap(),
+        )
+        .unwrap();
     }
-    (dir, revision)
+    (dir, hex::encode(id))
+}
+
+/// The layout identity of the inventory `health` reports serving, if any.
+fn serving(health: &Value) -> Option<&str> {
+    health["serving"].as_str()?;
+    health["indexer"]["revision"].as_str()
 }
 
 /// Replaces the record atomically, as an operator does.
@@ -192,9 +232,6 @@ impl World {
             .with_state(node.clone());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let root = tempfile::tempdir().unwrap();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let bind = listener.local_addr().unwrap();
-        drop(listener);
         let record = root.path().join("input/publication.json");
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
         let config = root.path().join("input/config.json");
@@ -202,12 +239,11 @@ impl World {
             &config,
             json!({
                 "publication_record": record,
-                "bind": bind,
+                "bind": "127.0.0.1:0",
                 "state_dir": root.path().join("state"),
                 "rpc_urls": [rpc],
                 "no_auth": true,
                 "poll_seconds": 1,
-                "witnesses": true,
             })
             .to_string(),
         )
@@ -217,7 +253,7 @@ impl World {
             node,
             record,
             config,
-            origin: format!("http://{bind}"),
+            origin: String::new(),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -225,24 +261,31 @@ impl World {
         }
     }
 
-    fn start(&self) -> Worker {
-        Worker(
+    /// Starts the worker on a port of its own choosing and points `origin` at it.
+    async fn start(&mut self) -> Worker {
+        let log = self.root.path().join("worker.log");
+        let from = std::fs::metadata(&log).map_or(0, |m| m.len() as usize);
+        let worker = Worker(
             std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
                 .args(["serve-publication", "--config"])
                 .arg(&self.config)
                 // A partner key in the environment is never read in this mode.
                 .env("NEAR_INTENTS_EXPLORER", "must-not-be-read")
+                .env("RUST_LOG", "info")
                 .stdout(std::process::Stdio::null())
                 .stderr(
                     std::fs::OpenOptions::new()
                         .create(true)
                         .append(true)
-                        .open(self.root.path().join("worker.log"))
+                        .open(&log)
                         .unwrap(),
                 )
                 .spawn()
                 .unwrap(),
-        )
+        );
+        let address = bound::address(&log, from, "serve-publication listening").await;
+        self.origin = format!("http://{address}");
+        worker
     }
 
     async fn health(&self) -> Option<Value> {
@@ -255,7 +298,7 @@ impl World {
         response.json().await.ok()
     }
 
-    /// Polls health until `done` holds, recording every session served meanwhile.
+    /// Polls health until `done` holds, recording every layout served meanwhile.
     async fn until(
         &self,
         what: &str,
@@ -265,7 +308,7 @@ impl World {
         let deadline = std::time::Instant::now() + Duration::from_secs(150);
         loop {
             if let Some(health) = self.health().await {
-                if let Some(id) = health["serving"].as_str() {
+                if let Some(id) = serving(&health) {
                     if served.last().map(String::as_str) != Some(id) {
                         served.push(id.to_string());
                     }
@@ -296,20 +339,19 @@ impl World {
 
     /// Looks the fixture receiver up over encrypted PIR at the served anchor.
     async fn lookup(&self, height: u32, hash: Hash) -> Vec<receiver_directory::Payment> {
-        let accepted = AcceptedCoverage {
+        let accepted = history::Accepted {
             genesis: mainnet(),
             required_start: activation(),
             height,
             hash,
         };
         let http = Http(self.client.clone());
-        let manifest = DirectoryClient::fetch_manifest(&self.origin, &http)
+        let session = history::connect(&self.origin, http, accepted)
             .await
             .unwrap();
-        let client = DirectoryClient::connect_manifest(&self.origin, http, accepted, manifest)
+        history::inventory_history(&session.client, common::receiver())
             .await
-            .unwrap();
-        history::history(&client, common::receiver()).await.unwrap()
+            .unwrap()
     }
 }
 
@@ -317,7 +359,7 @@ async fn rpc_handler(state: State<Node>, request: Json<Value>) -> Json<Value> {
     rpc(state, request).await
 }
 
-/// Session id of a prepared publication, as health reports it.
+/// Payment session id of a staged publication's one segment.
 fn session(snapshot: &Snapshot) -> String {
     hex::encode(
         receiver_pir::server::Server::new(snapshot.clone())
@@ -336,7 +378,7 @@ fn refusal(health: &Value) -> (&str, &str) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn replacing_the_record_during_the_canonical_rpc_prevents_activation() {
-    let world = World::new().await;
+    let mut world = World::new().await;
     let (snapshot, witness) = publication(1, [0xa1; 32]);
     world.node.set(activation() + 1, [0xa1; 32]);
     let (dir, revision) = stage(world.root.path(), "candidate", &snapshot, Some(&witness));
@@ -346,7 +388,7 @@ async fn replacing_the_record_during_the_canonical_rpc_prevents_activation() {
         path: world.record.clone(),
         value: json!({"directory": dir, "revision": "invalid"}),
     });
-    let _worker = world.start();
+    let _worker = world.start().await;
     let mut served = Vec::new();
     let health = world
         .until("replacement refused", &mut served, |h| {
@@ -375,6 +417,8 @@ enum StagedCase {
     Network,
     Noncanonical,
     Witness,
+    WitnessContext,
+    WitnessSize,
     Rows,
     Relative,
     Rotation,
@@ -412,6 +456,20 @@ async fn a_corrupt_witness_keeps_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Witness).await;
 }
 
+/// A companion constructed at a later block than its payment table is activated only
+/// once that block is canonical too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_noncanonical_witness_context_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WitnessContext).await;
+}
+
+/// A companion whose construction block is canonical but whose claimed Ironwood tree
+/// size after it is not the node's is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_witness_tree_size_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WitnessSize).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn corrupt_rows_keep_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Rows).await;
@@ -423,12 +481,12 @@ async fn a_relative_record_keeps_the_valid_publication_serving() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_valid_rotation_keeps_its_predecessors_grace() {
+async fn a_valid_rotation_retains_its_predecessor() {
     check_staged_publication(StagedCase::Rotation).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_latest_record_activates_after_a_reorg_during_grace() {
+async fn the_latest_record_activates_after_a_reorg_during_retention() {
     check_staged_publication(StagedCase::LatestRecord).await;
 }
 
@@ -437,8 +495,98 @@ async fn restart_rechecks_the_record_and_reorgs_revoke_serving() {
     check_staged_publication(StagedCase::Restart).await;
 }
 
+/// A correction record that raises the history revision and then fails its rows is
+/// refused once. Raising the revision revoked the served publication, and that
+/// self-revocation is not mistaken for an outside one, so the same invalid record is
+/// not loaded again on every poll.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_correction_is_loaded_once() {
+    let mut world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start().await;
+    world
+        .until("first publication", &mut served, |h| {
+            serving(h) == Some(a_rev.as_str())
+        })
+        .await;
+    let mut manifest = a.manifest.clone();
+    manifest.history_revision = 1;
+    let corrected = Snapshot {
+        manifest,
+        data: a.data.clone(),
+    };
+    let (dir, rev) = stage(&root, "corrected", &corrected, Some(&a_witness));
+    let payments = hex::encode(corrected.manifest.revision().unwrap());
+    let rows = dir.join(format!("{payments}.rows"));
+    let mut bytes = std::fs::read(&rows).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&rows, bytes).unwrap();
+    world.assign(&dir, &rev);
+    world
+        .until("refused correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == rev.as_str()
+                && refusal(h).0 == "invalid_source"
+        })
+        .await;
+    // Several record polls later the record has still been prepared only once.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let log = std::fs::read_to_string(world.root.path().join("worker.log")).unwrap();
+    let prepared = log
+        .lines()
+        .filter(|l| l.contains("publication prepared") && l.contains(rev.as_str()))
+        .count();
+    assert_eq!(prepared, 1, "{log}");
+}
+
+/// A correction whose floor cannot be recorded yet is deferred, not refused: once the
+/// state directory takes the floor again, the next poll activates it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrecordable_floor_defers_the_correction() {
+    let mut world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start().await;
+    world
+        .until("first publication", &mut served, |h| {
+            serving(h) == Some(a_rev.as_str())
+        })
+        .await;
+    // A directory where the floor file goes makes recording it fail.
+    let floor = world
+        .root
+        .path()
+        .join("state")
+        .join(receiver_indexer::serve_publication::HISTORY_FILE);
+    std::fs::create_dir(&floor).unwrap();
+    let (b, b_witness) = corrected_publication(2, [0xb2; 32], 1);
+    world.node.set(activation() + 2, [0xb2; 32]);
+    let (b_dir, b_rev) = stage(&root, "b", &b, Some(&b_witness));
+    world.assign(&b_dir, &b_rev);
+    world
+        .until("deferred correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == b_rev.as_str()
+                && refusal(h).0 == "unavailable"
+        })
+        .await;
+    std::fs::remove_dir(&floor).unwrap();
+    world
+        .until("corrected publication", &mut served, |h| {
+            serving(h) == Some(b_rev.as_str())
+        })
+        .await;
+}
+
 async fn check_staged_publication(case: StagedCase) {
-    let world = World::new().await;
+    let mut world = World::new().await;
     let root = world.root.path().join("publications");
     let mut served = Vec::new();
 
@@ -448,14 +596,29 @@ async fn check_staged_publication(case: StagedCase) {
     world.node.set(activation() + 1, [0xa1; 32]);
     let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
     world.assign(&a_dir, &a_rev);
-    let worker = world.start();
+    let worker = world.start().await;
     let a_id = session(&a);
+    // The record is reported loaded just after the publication starts serving, so
+    // health can briefly show one without the other.
     let health = world
-        .until("first publication", &mut served, |h| h["serving"] == a_id)
+        .until("first publication", &mut served, |h| {
+            serving(h) == Some(a_rev.as_str())
+                && h["publication"]["loaded"]["revision"] == a_rev.as_str()
+        })
         .await;
-    assert_eq!(health["publication"]["loaded"]["revision"], a_rev);
     assert_eq!(health["indexer"]["mode"], "serve-publication");
     if case == StagedCase::Payments {
+        assert!(!a_dir.join(format!("{a_id}.filters")).exists());
+        assert_eq!(
+            world
+                .client
+                .get(format!("{}/v1/receiver/block-filters/head", world.origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
         let mut found = world.lookup(activation() + 1, [0xa1; 32]).await;
         found.sort_by_key(|payment| payment.position);
         let expected: Vec<_> = (0..2)
@@ -481,10 +644,11 @@ async fn check_staged_publication(case: StagedCase) {
                 .to_string(),
         )
         .unwrap();
-        let _worker = world.start();
+        let _worker = world.start().await;
         world
             .until("restart", &mut served, |h| {
-                h["serving"] == a_id && h["publication"]["loaded"]["revision"] == a_rev.as_str()
+                serving(h) == Some(a_rev.as_str())
+                    && h["publication"]["loaded"]["revision"] == a_rev.as_str()
             })
             .await;
         world.node.set(activation() + 1, [0x0a; 32]);
@@ -496,7 +660,7 @@ async fn check_staged_publication(case: StagedCase) {
         assert!(health["epoch"].as_u64().unwrap() >= 1);
         let init = world
             .client
-            .get(format!("{}/v1/receiver/init", world.origin))
+            .get(format!("{}/v1/receiver/inventory", world.origin))
             .send()
             .await
             .unwrap();
@@ -515,25 +679,29 @@ async fn check_staged_publication(case: StagedCase) {
         let wrong = root.join("wrong-revision");
         std::fs::create_dir_all(&wrong).unwrap();
         let other_rev = "cd".repeat(32);
-        for ext in ["json", "rows", "filters", "witness"] {
-            std::fs::copy(
-                b_dir.join(format!("{b_rev}.{ext}")),
-                wrong.join(format!("{other_rev}.{ext}")),
-            )
-            .unwrap();
+        let b_segment = hex::encode(b.manifest.revision().unwrap());
+        for entry in std::fs::read_dir(&b_dir).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, wrong.join(path.file_name().unwrap())).unwrap();
         }
+        std::fs::copy(
+            b_dir.join(format!("{b_rev}.inventory.json")),
+            wrong.join(format!("{other_rev}.inventory.json")),
+        )
+        .unwrap();
         // Partial staging: the manifest without its rows.
         let partial = root.join("partial");
         std::fs::create_dir_all(&partial).unwrap();
-        std::fs::copy(
-            b_dir.join(format!("{b_rev}.json")),
-            partial.join(format!("{b_rev}.json")),
-        )
-        .unwrap();
+        for name in [
+            format!("{b_rev}.inventory.json"),
+            format!("{b_segment}.json"),
+        ] {
+            std::fs::copy(b_dir.join(&name), partial.join(&name)).unwrap();
+        }
         // Another network.
         let (mut other_net, _) = publication(2, [0xb2; 32]);
         other_net.manifest.genesis = [1; 32];
-        let other_net = Snapshot::build(other_net.manifest, &[], &[]).unwrap();
+        let other_net = Snapshot::build(other_net.manifest, &[]).unwrap();
         let (net_dir, net_rev) = stage(&root, "network", &other_net, None);
         // An anchor the node does not have.
         let (fork, fork_witness) = publication(3, [0xf0; 32]);
@@ -541,12 +709,33 @@ async fn check_staged_publication(case: StagedCase) {
         let (fork_dir, fork_rev) = stage(&root, "fork", &fork, Some(&fork_witness));
         // A corrupt witness.
         let mut bad_witness = b_witness.clone();
-        let last = bad_witness.len() - 1;
-        bad_witness[last] ^= 1;
+        let last = bad_witness.data.len() - 1;
+        bad_witness.data[last] ^= 1;
         let (witness_dir, witness_rev) = stage(&root, "witness", &b, Some(&bad_witness));
+        // A companion constructed at a later block the node does not have.
+        let mut later = b_witness.manifest.clone();
+        (later.tree_height, later.tree_hash) = (activation() + 3, [0xe3; 32]);
+        let payloads = b_witness.data[..2 * 512]
+            .chunks(512)
+            .map(|p| p.try_into().unwrap())
+            .collect::<Vec<[u8; 512]>>();
+        let late = witness::Table::build(later, &payloads).unwrap();
+        let (late_dir, late_rev) = stage(&root, "late", &b, Some(&late));
+        // A companion at a canonical later block, claiming a tree size the node does not
+        // have after it.
+        let mut sized = b_witness.manifest.clone();
+        (sized.tree_height, sized.tree_hash) = (activation() + 3, [0xc3; 32]);
+        world
+            .node
+            .2
+            .lock()
+            .unwrap()
+            .insert(u64::from(activation() + 3), 9);
+        let sized = witness::Table::build(sized, &payloads).unwrap();
+        let (sized_dir, sized_rev) = stage(&root, "sized", &b, Some(&sized));
         // A same-length corrupt rows file.
         let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
-        let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
+        let rows_path = rows_dir.join(format!("{b_segment}.rows"));
         let mut rows = std::fs::read(&rows_path).unwrap();
         rows[0] ^= 1;
         std::fs::write(&rows_path, rows).unwrap();
@@ -578,6 +767,20 @@ async fn check_staged_publication(case: StagedCase) {
                 refuse("corrupt witness", "invalid_source", "witness"),
             ),
             (
+                StagedCase::WitnessContext,
+                (late_dir, late_rev),
+                refuse(
+                    "noncanonical witness context",
+                    "noncanonical",
+                    "canonical chain",
+                ),
+            ),
+            (
+                StagedCase::WitnessSize,
+                (sized_dir, sized_rev),
+                refuse("wrong witness tree size", "invalid_source", "tree size"),
+            ),
+            (
                 StagedCase::Rows,
                 (rows_dir, rows_rev),
                 refuse("corrupt rows", "invalid_source", "publication"),
@@ -598,7 +801,8 @@ async fn check_staged_publication(case: StagedCase) {
             assert_eq!(refusal(&health).0, kind, "{name}: {health:#}");
             assert!(refusal(&health).1.contains(contains), "{name}: {health:#}");
             assert_eq!(
-                health["serving"], a_id,
+                serving(&health),
+                Some(a_rev.as_str()),
                 "{name} left the valid publication serving"
             );
         }
@@ -610,7 +814,7 @@ async fn check_staged_publication(case: StagedCase) {
             );
             world
                 .until("malformed record", &mut served, |h| {
-                    refusal(h).1.contains("absolute") && h["serving"] == a_id
+                    refusal(h).1.contains("absolute") && serving(h) == Some(a_rev.as_str())
                 })
                 .await;
         }
@@ -618,11 +822,13 @@ async fn check_staged_publication(case: StagedCase) {
         return;
     }
 
-    // A valid update activates; the displaced revision keeps its grace.
+    // A valid update activates; the displaced inventory is retained.
     world.assign(&b_dir, &b_rev);
     let b_id = session(&b);
     world
-        .until("update", &mut served, |h| h["serving"] == b_id)
+        .until("update", &mut served, |h| {
+            serving(h) == Some(b_rev.as_str())
+        })
         .await;
     let old = world
         .client
@@ -632,14 +838,14 @@ async fn check_staged_publication(case: StagedCase) {
         .unwrap();
     assert!(
         old.status().is_success(),
-        "the predecessor serves its grace"
+        "the predecessor serves while retained"
     );
     if case == StagedCase::Rotation {
         assert_eq!(world.lookup(activation() + 2, [0xb2; 32]).await.len(), 2);
         return;
     }
 
-    // Rapid replacement while B's predecessor is in its grace: C is superseded by D
+    // Rapid replacement while B's predecessor is retained: C is superseded by D
     // before it can activate. A confirmed reorg of B, found by the independent guard
     // while D waits, revokes everything; D, still canonical, then activates.
     let (c, c_witness) = publication(3, [0xc3; 32]);
@@ -650,20 +856,23 @@ async fn check_staged_publication(case: StagedCase) {
     let (d_dir, d_rev) = stage(&root, "d", &d, Some(&d_witness));
     world.assign(&c_dir, &c_rev);
     world.assign(&d_dir, &d_rev);
-    world
+    let pending = world
         .until("D pending", &mut served, |h| {
             h["publication"]["preparing"]["revision"] == d_rev.as_str()
                 || h["publication"]["assigned"]["revision"] == d_rev.as_str()
         })
         .await;
     world.node.set(activation() + 2, [0x0b; 32]);
-    let d_id = session(&d);
+    // D's own anchors do not include B's block, so D may activate before the guard
+    // finds the reorg; it then serves again once that revocation has run.
+    let epoch = pending["epoch"].as_u64().unwrap();
     world
-        .until("reorg then D", &mut served, |h| h["serving"] == d_id)
+        .until("reorg then D", &mut served, |h| {
+            serving(h) == Some(d_rev.as_str()) && h["epoch"].as_u64() > Some(epoch)
+        })
         .await;
-    let c_id = session(&c);
     assert!(
-        !served.contains(&c_id),
+        !served.contains(&c_rev),
         "a superseded record never activates"
     );
     let gone = world
@@ -706,8 +915,9 @@ async fn check_mode_verifies_without_serving() {
         !world.root.path().join("state").exists(),
         "check writes nothing"
     );
-    std::fs::remove_file(a_dir.join(format!("{a_rev}.witness"))).unwrap();
+    let companion = hex::encode(a_witness.manifest.revision().unwrap());
+    std::fs::remove_file(a_dir.join(format!("{companion}.witness"))).unwrap();
     let output = run();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no witness file"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("witness: "));
 }

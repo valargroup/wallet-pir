@@ -37,35 +37,23 @@ members = [
     "tools/transparent",
 ]
 
-# Consume the library-only dependency cleanup at one exact upstream revision.
+# Consume the wallet libraries at the main revision with the sealed Receiver shard change.
 [patch.crates-io]
+zakura-filters = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-receiver-directory = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zakura-receiver-pir = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 inspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 reinspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 
-# Keep transitive Common dependencies on the same main revision.
-zakura-address = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-bellman = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-bls12-381 = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-equihash = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-halo2-gadgets = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-halo2-legacy-pdqsort = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-halo2-poseidon = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-halo2-proofs = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-jubjub = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-note-encryption = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-orchard = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-orchard-legacy = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-pairing = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-pasta-curves = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-primitives = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-protocol = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-reddsa = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-redjubjub = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-sapling-crypto = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-sinsemilla = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
-zakura-transparent = { git = "https://github.com/zakura-core/common.git", rev = "36c0f2134ee028545d822ac9abdc764cef0f8dcb" }
+# Common uses the published 4.0.0 release, so it needs no patch.
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That

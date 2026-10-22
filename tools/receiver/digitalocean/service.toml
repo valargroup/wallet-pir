@@ -30,7 +30,7 @@ template = "../deploy/receiver-serve-publication.service"
 renderer = "tools.receiver.lib.roles:serve_publication"
 optional = true
 # Settings: config_path, publication_record, publication_root, state_dir, bind,
-# rpc_urls, cookie | no_auth, poll_seconds?, witnesses?, min_rows?, limits?.
+# rpc_urls, cookie | no_auth, poll_seconds?, min_rows?, limits?.
 # Serves once the recorded publication verifies and its anchor is canonical.
 health = "http://{listen}/v1/receiver/health"
 ready = { field = "serving", nonempty = true }

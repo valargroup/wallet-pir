@@ -44,9 +44,9 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 hex = "0.4"
 # Native server helpers size the wire-contract regression's requests.
-zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["status"] }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["status"] }
 # Independent wallet client exercises the serving wire contract.
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, features = ["native", "status"] }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native", "status"] }
 
 
 [dev-dependencies.status-query-server]

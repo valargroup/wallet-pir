@@ -64,6 +64,61 @@ pub async fn guard(
     }
 }
 
+/// A block a served table depends on: its height and hash, and the Ironwood tree size
+/// the table claims after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeAnchor {
+    pub height: u32,
+    pub hash: Hash,
+    pub size: u64,
+}
+
+impl TreeAnchor {
+    /// A payment table's end.
+    pub fn payments(m: &receiver_directory::snapshot::Manifest) -> Self {
+        Self {
+            height: m.end_height,
+            hash: m.end_hash,
+            size: m.end_position,
+        }
+    }
+
+    /// A companion witness table's construction block.
+    pub fn witnesses(m: &receiver_directory::witness::Manifest) -> Self {
+        Self {
+            height: m.tree_height,
+            hash: m.tree_hash,
+            size: m.tree_size,
+        }
+    }
+}
+
+/// How a node's chain differs from a [`TreeAnchor`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TreeMismatch {
+    /// The node has another block at that height.
+    OffChain,
+    /// The node has the block, with this Ironwood tree size after it.
+    Size(u64),
+}
+
+/// How `anchor` differs from `rpc`'s chain, `None` when the node has its block with its
+/// tree size. Both are read by that block's hash, so a reorg during the read cannot mix
+/// two blocks; a node that cannot give the size proves nothing and is an error.
+pub async fn tree_mismatch(
+    rpc: &ZakuraClient,
+    anchor: TreeAnchor,
+) -> std::result::Result<Option<TreeMismatch>, zakura_server_chain::NodeError> {
+    let boundary = crate::blocks::boundary(rpc, anchor.height).await?;
+    Ok(if boundary.hash != anchor.hash {
+        Some(TreeMismatch::OffChain)
+    } else if boundary.position != anchor.size {
+        Some(TreeMismatch::Size(boundary.position))
+    } else {
+        None
+    })
+}
+
 /// Whether `hash` is the node's canonical block at `height`.
 pub async fn is_canonical(rpc: &ZakuraClient, height: u32, hash: [u8; 32]) -> Result<bool> {
     Ok(rpc.block_hash(u64::from(height)).await? == hash)

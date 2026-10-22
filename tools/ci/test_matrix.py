@@ -42,7 +42,7 @@ def variants(groups):
                           features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'])),
         'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-query-server', 'status-material', 'status-query-server',
                                              'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
-        'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
+        'receiver': dict(family='receiver', packages=groups['receiver'], features=qualification_features(groups['receiver'])),
     }
 
 
@@ -219,7 +219,7 @@ def test_programs(artifacts, variant, packages, env):
     actual, programs, cases = set(), [], {}
     for artifact in artifacts:
         package = next(p for p in packages.values() if p['id'] == artifact['package_id'])
-        if (variant in ('transparent', 'native', 'reference')
+        if (variant in ('transparent', 'native', 'reference', 'receiver')
                 and 'qualification-tests' in package.get('features', {})
                 and 'qualification-tests' not in artifact.get('features', [])):
             raise ValueError(f"{package['name']}: qualification fixture feature missing from executable")

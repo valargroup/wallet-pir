@@ -39,7 +39,10 @@ async fn main() -> Result<()> {
     receiver_indexer::service::run(
         args,
         pir_pipeline::service::Http::new(|addr, app| async move {
-            axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            // The bound address, which differs from `addr` for port 0.
+            tracing::info!(address = %listener.local_addr()?, "receiver PIR bound");
+            axum::serve(listener, app).await
         }),
         stop,
     )
