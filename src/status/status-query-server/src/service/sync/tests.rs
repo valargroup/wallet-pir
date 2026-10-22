@@ -10,7 +10,7 @@ use axum::{
 use pir_publication::{
     conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
-use pir_sync_manager::SyncTask;
+use pir_sync_manager::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use status_material::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
@@ -606,37 +606,92 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     server.abort();
 }
 
-/// The publisher advanced to C while the worker still serves predecessor B,
-/// whose material differs. The router must accept B for handover and go on to
-/// download it; an inventory the latest publication does not authorize is
-/// refused before any of its material is requested.
-#[tokio::test]
-async fn router_follows_its_workers_retained_predecessor_but_not_a_forged_one() {
-    use status_material::fixture::{geometric_inventory, publishing};
+/// Publish `inventory` observed now and return its object reference.
+fn publish_inventory(origin: &Origin, inventory: &mut Inventory) -> ObjectReference {
+    inventory.manifest.observed_ms = now_ms();
+    let bytes = serde_json::to_vec(inventory).unwrap();
+    let object = ObjectReference::for_bytes(&bytes);
+    origin
+        .objects
+        .write()
+        .unwrap()
+        .insert(object.sha256.clone(), bytes);
+    object
+}
+/// Store prepared `generation`'s objects at the origin. The objects do not
+/// depend on the observation time, so a slow export cannot age the inventory.
+fn export(origin: &Origin, generation: &Generation) -> Inventory {
+    generation
+        .export_prepared(|bytes| {
+            let object = ObjectReference::for_bytes(bytes);
+            origin
+                .objects
+                .write()
+                .unwrap()
+                .insert(object.sha256.clone(), bytes.to_vec());
+            Ok(object)
+        })
+        .unwrap()
+}
+fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
+    match pass {
+        PublicationPass::Committed { report, handover } => (report, handover),
+        PublicationPass::Deferred { report } => panic!("deferred at generation {report}"),
+    }
+}
+
+/// Router A is pinned at its worker, which already serves B, while the
+/// publisher advanced to C with other material. The router commits B through
+/// the real lifecycle and worker routes, its release frees A at the worker,
+/// and the worker then advances to C. An equal-generation inventory the
+/// latest publication does not authorize is refused before any of its
+/// material is requested.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker() {
+    use status_material::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let fresh = |(mut inventory, _): (Inventory, ObjectReference)| {
-        inventory.manifest.observed_ms = now_ms();
-        let object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
-        (inventory, object)
-    };
-    let (b, b_object) = fresh(geometric_inventory(0x10, 4));
-    let (c, c_object) = fresh(geometric_inventory(0x20, 5));
-    let (forged, forged_object) = fresh(geometric_inventory(0x30, 5));
+    let (b, _) = Generation::prepare(
+        &fixture::snapshot(32, false).unwrap(),
+        4,
+        2,
+        now_ms(),
+        None,
+        MatvecBackend::Cpu,
+    )
+    .unwrap();
+    let (c, _) = Generation::prepare(
+        &fixture::snapshot(32, true).unwrap(),
+        5,
+        2,
+        now_ms(),
+        Some(&b),
+        MatvecBackend::Cpu,
+    )
+    .unwrap();
+    let (mut b_inventory, mut c_inventory) = (export(&source, &b), export(&source, &c));
+    assert_ne!(
+        b_inventory.material_identity(),
+        c_inventory.material_identity()
+    );
+    let mut forged = b_inventory.clone();
+    forged.manifest.generation = c_inventory.manifest.generation;
+    let forged_object = publish_inventory(&source, &mut forged);
+    let b_object = publish_inventory(&source, &mut b_inventory);
+    let c_object = publish_inventory(&source, &mut c_inventory);
+    let b = b.reobserved(b_inventory.manifest.observed_ms);
     *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
         sequence: 7,
-        ..publishing(&c, &c_object)
+        ..fixture::publishing(&c_inventory, &c_object)
     };
-    for (inventory, object) in [(&b, &b_object), (&c, &c_object), (&forged, &forged_object)] {
-        source.objects.write().unwrap().insert(
-            object.sha256.clone(),
-            serde_json::to_vec(inventory).unwrap(),
-        );
-    }
+    let mut a = b_inventory.manifest.clone();
+    a.generation = 3;
+    let a = Generation::public_only(a, Arc::new(vec![]));
 
     let worker = Service::open(
         Role::Worker,
-        [1; 32],
+        NETWORK,
         root.path().join("peer"),
         String::new(),
     )
@@ -647,47 +702,162 @@ async fn router_follows_its_workers_retained_predecessor_but_not_a_forged_one() 
     let peer = tokio::spawn(async move { axum::serve(listener, peer_routes).await.unwrap() });
     let router = Service::open(
         Role::Router,
-        [1; 32],
+        NETWORK,
         root.path().join("router"),
         worker_origin,
     )
     .unwrap();
-    let mut task = synchronization(
+    router.state.lock().await.controller = Some(Controller::new(a.clone()));
+    let mut router_task = synchronization(
         router.clone(),
         &role_config(Role::Router, root.path().join("router"), &tls),
     )
     .unwrap();
-    let worker_serves = |inventory: &Inventory, object: &ObjectReference| {
-        let worker = worker.clone();
-        let (manifest, object) = (inventory.manifest.clone(), object.clone());
-        async move {
-            let mut state = worker.state.lock().await;
-            state.controller = Some(Controller::new(Generation::public_only(
-                manifest,
-                Arc::new(vec![]),
-            )));
-            state.inventory = Some(object);
-        }
-    };
 
-    worker_serves(&forged, &forged_object).await;
-    let error = task.synchronize().await.unwrap_err();
+    {
+        let mut state = worker.state.lock().await;
+        state.controller = Some(Controller::new(Generation::public_only(
+            forged.manifest.clone(),
+            Arc::new(vec![]),
+        )));
+        state.inventory = Some(forged_object.clone());
+    }
+    let error = router_task.synchronize().await.unwrap_err();
     assert!(error.to_string().contains("not authorized"), "{error}");
-    assert!(!source
-        .requested_objects
-        .read()
-        .unwrap()
-        .contains(&forged.public.sha256));
+    assert_eq!(
+        *source.requested_objects.read().unwrap(),
+        std::slice::from_ref(&forged_object.sha256)
+    );
+    assert_eq!(serving_manifest_id(&router).await, a.manifest().id());
 
-    // B is authorized by its own reference and its material is requested;
-    // this fixture serves no real material, so loading B fails afterwards.
-    worker_serves(&b, &b_object).await;
-    assert!(task.synchronize().await.is_err());
-    assert!(source
-        .requested_objects
-        .read()
-        .unwrap()
-        .contains(&b.public.sha256));
+    // The worker activated B while the router still holds A.
+    let worker_controller = Controller::new(a.clone());
+    worker.state.lock().await.controller = Some(worker_controller.clone());
+    let _ = provider_pin(State(worker.clone()), Path(hex::encode(a.manifest().id())))
+        .await
+        .unwrap();
+    worker_controller.activate(b).unwrap();
+    worker.state.lock().await.inventory = Some(b_object);
+    assert!(!worker_controller.can_prepare());
+
+    let (generation, handover) = committed(router_task.synchronize().await.unwrap());
+    assert_eq!((generation, handover), (4, PeerHandover::Complete));
+    assert_eq!(
+        serving_manifest_id(&router).await,
+        b_inventory.manifest.id()
+    );
+    assert_eq!(router.state.lock().await.synchronization, "synchronized");
+    let holds = worker
+        .state
+        .lock()
+        .await
+        .router_holds
+        .iter()
+        .map(|g| g.manifest().id())
+        .collect::<Vec<_>>();
+    assert_eq!(holds, [b_inventory.manifest.id()]);
+    assert!(worker_controller.can_prepare());
+
+    let mut worker_task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+    assert_eq!(committed(worker_task.synchronize().await.unwrap()).0, 5);
+    assert_eq!(
+        serving_manifest_id(&worker).await,
+        c_inventory.manifest.id()
+    );
+    // The router's committed view stays resolvable at the worker.
+    assert!(worker_controller.resolve(b_inventory.manifest.id()).is_ok());
     peer.abort();
+    server.abort();
+}
+
+/// A publication that re-identifies already verified material commits without
+/// downloading or loading the material again, but still needs live authority.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
+    use status_material::fixture::{self, NETWORK, SALT};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let (generation, _) = Generation::prepare(
+        &fixture::snapshot(32, false).unwrap(),
+        4,
+        2,
+        now_ms(),
+        None,
+        MatvecBackend::Cpu,
+    )
+    .unwrap();
+    let mut inventory = export(&source, &generation);
+    let publish = |inventory: &mut Inventory, sequence: u64| {
+        let object = publish_inventory(&source, inventory);
+        *source.current.write().unwrap() = Current {
+            scope: scope(NETWORK, SALT),
+            sequence,
+            ..fixture::publishing(inventory, &object)
+        };
+        object
+    };
+    publish(&mut inventory, 7);
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let mut task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 4);
+    let loaded = worker
+        .state
+        .lock()
+        .await
+        .controller
+        .clone()
+        .unwrap()
+        .current();
+
+    let mut refreshed = inventory.clone();
+    refreshed.manifest.generation = 5;
+    let refreshed_object = publish(&mut refreshed, 8);
+    assert_eq!(refreshed.material_identity(), inventory.material_identity());
+    let requested = source.requested_objects.read().unwrap().len();
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    assert_eq!(
+        &source.requested_objects.read().unwrap()[requested..],
+        std::slice::from_ref(&refreshed_object.sha256)
+    );
+    assert_eq!(serving_manifest_id(&worker).await, refreshed.manifest.id());
+    let current = worker
+        .state
+        .lock()
+        .await
+        .controller
+        .clone()
+        .unwrap()
+        .current();
+    assert!(Arc::ptr_eq(current.public(), loaded.public()));
+    // Held generations would make the controller defer the next preparation.
+    drop((current, loaded));
+
+    // Reusing material never skips the live authority check.
+    let mut withheld = refreshed.clone();
+    withheld.manifest.generation = 6;
+    publish(&mut withheld, 9);
+    source.canonical.store(false, Ordering::SeqCst);
+    let error = task.synchronize().await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<PublicationLifecycleError>(),
+        Some(&PublicationLifecycleError::CandidateInvalidated),
+        "{error}"
+    );
+    assert_ne!(serving_manifest_id(&worker).await, withheld.manifest.id());
+    assert!(worker.serving().await.is_err());
     server.abort();
 }
