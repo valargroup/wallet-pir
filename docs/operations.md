@@ -298,14 +298,17 @@ without changing any service unit. Review a fresh activation plan afterward.
 `artifact-checksum-status` reports the durable transaction.
 `artifact-checksum-rollback --transaction ID` uses the same request and state
 directory. It translates the latest authority records before restoring
-executables through the normal lifecycle. The request's `incidents` list names
-every Transparent History publisher's `integrity-failures.json` (`host`,
-`path`), required for each History preparation host whether or not the file
-exists yet. A failure recorded by the current release has no predecessor form,
-so rollback refuses before stopping anything; one recorded while writers stop
-restarts the current executables on the latest records and refuses. Either way
-keep the current release serving, publish verified replacement bytes so it
-clears the failure, then retry. An unfinished transaction fences other
+executables through the normal lifecycle. Before stopping anything it reads
+each publisher unit's `--config` document and checks `integrity-failures.json`
+under every enabled Transparent History `publication_root`, plus the roots
+pinned when the cutover was planned; the request names none. A publisher whose
+configuration cannot be read refuses rollback. A failure recorded by the
+current release has no predecessor form, so rollback refuses before stopping
+anything. One recorded while writers stop restarts every current executable on
+the latest records, accepting each once the exact executable runs and answers
+health (a retained incident keeps publisher readiness false), and refuses; a
+retry repeats that restart. Either way keep the current release serving,
+publish verified replacement bytes so it clears the failure, then retry. An unfinished transaction fences other
 deployments until recovery completes. Initial conversion reads existing data;
 its elapsed time and temporary space must be measured separately from service
 interruption and from any claimed hashing speedup.

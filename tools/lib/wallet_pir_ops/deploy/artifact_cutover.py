@@ -6,11 +6,12 @@ the latest records; saved pre-deployment authority snapshots are never restored.
 """
 import contextlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import shlex
 
 from .. import durable
-from . import artifact_preparation, descriptors
-from .engine import Deployer, DeployError, file_sha256, mutation_fence
+from . import artifact_preparation, descriptors, units
+from .engine import Deployer, DeployError, file_sha256, mutation_fence, unit_files
 from .remote import production_lock
 from .transaction import Journal
 
@@ -18,7 +19,8 @@ NAME = 'artifact-checksum'
 FENCE = '/var/lib/wallet-pir/artifact-checksum-fence.json'
 SERVICES = {'publisher', 'enhance', 'status', 'transparent-history', 'transparent-display'}
 KINDS = {'enhance-state', 'status-state', 'status-retained', 'transparent-state', 'transparent-restore'}
-# Transparent History integrity failures, written by a serving publisher.
+# Transparent History integrity failures, written by a serving publisher in
+# its configured `publication_root`.
 INCIDENTS = 'integrity-failures.json'
 ROLL_FORWARD = ('keep the current release serving and roll forward: publish freshly verified replacement '
                 'bytes so it clears the recorded failure, then retry the rollback')
@@ -35,8 +37,7 @@ def require(condition, message):
 def load_request(path, expected):
     require(file_sha256(path) == expected, 'artifact cutover request pin differs')
     request = json.loads(Path(path).read_bytes())
-    require(set(request) == {'schema', 'source_sha', 'groups', 'preparations', 'records', 'incidents',
-                             'discovery'},
+    require(set(request) == {'schema', 'source_sha', 'groups', 'preparations', 'records', 'discovery'},
             'artifact cutover request fields differ')
     require(request['schema'] == 'artifact-checksum-cutover/1', 'unsupported artifact cutover schema')
     require(isinstance(request['source_sha'], str) and len(request['source_sha']) == 40
@@ -70,14 +71,6 @@ def load_request(path, expected):
         require(record['input'] != record['output'], 'record output cannot replace its live input')
         require(all(descriptors.PLAIN_PATH.fullmatch(path) is not None for path in record['preparations']),
                 'record preparations must be absolute plain paths')
-    for incident in request['incidents']:
-        require(set(incident) == {'host', 'path'} and descriptors.PLAIN_PATH.fullmatch(incident['path'])
-                and Path(incident['path']).name == INCIDENTS, 'incident records must name an absolute ' + INCIDENTS)
-    # Declared whether or not the file exists yet: a failure can be recorded
-    # after deployment, and rollback must check it before stopping anything.
-    history = {p['host'] for p in request['preparations'] if p.get('source', {}).get('product') == 'transparent-history'}
-    require(history <= {incident['host'] for incident in request['incidents']},
-            'every Transparent History preparation host must declare its ' + INCIDENTS)
     require(set(request['discovery']) == {'host', 'url'}, 'publisher discovery must be explicit')
     return request
 
@@ -109,7 +102,7 @@ class Cutover:
         require(request['groups'][0]['service'] == 'publisher'
                 and sum(group['service'] == 'publisher' for group in request['groups']) == 1,
                 'one complete publisher group must precede every query group')
-        for entry in request['preparations'] + request['records'] + request['incidents'] + [request['discovery']]:
+        for entry in request['preparations'] + request['records'] + [request['discovery']]:
             require(entry['host'] in inventory.hosts, 'artifact cutover names an unknown host')
         for index, entry in enumerate(request['preparations']):
             source = entry.get('source', {})
@@ -166,7 +159,8 @@ class Cutover:
                 preparations.append({'state':'not-prepared'})
             else:
                 preparations.append(self.command(entry, 'verify-prepared', '--stage', entry['stage']))
-        return {'request': self.request, 'groups': groups, 'preparations': preparations}
+        return {'request': self.request, 'groups': groups, 'preparations': preparations,
+                'incidents': self.history_incidents(groups[0])}
 
     def plan(self):
         plan = self.capture(allow_unprepared=True)
@@ -258,7 +252,7 @@ class Cutover:
             require(durable.digest(plan) == expected_plan, 'artifact cutover plan changed; review a fresh plan')
             journal = Journal.create(self.state_dir, NAME, durable.digest(self.request),
                                      self.request['source_sha'], [], None)
-            journal.data.update(request=self.request, groups=[], records=[])
+            journal.data.update(request=self.request, groups=[], records=[], incidents=plan['incidents'])
             for index, (group, deployer) in enumerate(self.groups):
                 journal.data['groups'].append({'id':journal.id + '-' + str(index),
                     'service':group['service'], 'binary_sha256':group['binary_sha256'],
@@ -348,7 +342,10 @@ class Cutover:
                 if guard is not None:
                     problems.extend(guard.before_restore(deployer, child, record))
         require(not problems, 'artifact rollback refused before interruption: ' + '; '.join(problems))
-        incidents = self.incident_problems()
+        # The configured roots now, and those pinned at deployment.
+        records = self.history_incidents(self.child(journal, 0).hosts)
+        records += [entry for entry in journal.data['incidents'] if entry not in records]
+        incidents = self.incident_problems(records)
         if incidents:
             if journal.data.get('rollback') is None:
                 raise DeployError('artifact rollback refused before interruption: ' + '; '.join(incidents)
@@ -369,7 +366,7 @@ class Cutover:
             journal.set_status('rolling-back')
             self.stop(journal)
             # A validator can record a failure while it shuts down.
-            incidents = self.incident_problems()
+            incidents = self.incident_problems(records)
             if incidents:
                 self.resume_current(journal, incidents)
             for entry in self.request['preparations']:
@@ -406,14 +403,56 @@ class Cutover:
         self.clear_fence(journal)
         journal.set_status('rolled-back')
 
-    def incident_problems(self):
-        """Declared incident records the predecessor could not read.
+    def history_incidents(self, records):
+        """Every History publisher's incident record, from its running configuration.
+
+        Derived from each publisher unit's effective `--config` document on its
+        own host, never from the request, so no preparation form can omit one.
+        A file need not exist yet: a failure can be recorded after deployment.
+        """
+        incidents = []
+        for record in records:
+            prefix = record['key'] + ': cannot derive Transparent History incident records: '
+            state = self.ex.probe_unit(record['host'], record['unit'])
+            try:
+                command = units.exec_start(units.effective(text for _, text in unit_files(state)))
+                launcher = tuple(item['path'] for item in record.get('launcher', []))
+                arguments = shlex.split(units.split_exec(command, launcher)[2])
+            except (units.UnitError, ValueError, TypeError, AttributeError) as error:
+                raise DeployError(prefix + str(error)) from error
+            configs = [value for flag, value in zip(arguments, arguments[1:]) if flag == '--config']
+            configs += [argument[len('--config='):] for argument in arguments if argument.startswith('--config=')]
+            require(len(configs) == 1 and descriptors.PLAIN_PATH.fullmatch(configs[0]) is not None,
+                    prefix + 'the unit must name one absolute --config')
+            raw = self.ex.read(record['host'], configs[0])
+            try:
+                config = json.loads(raw)
+            except (TypeError, ValueError):
+                config = None
+            require(isinstance(config, dict), prefix + configs[0] + ' is not a readable publisher configuration')
+            history = config.get('transparent_history')
+            if history is None:
+                continue
+            require(isinstance(history, dict) and type(history.get('enabled')) is bool,
+                    prefix + 'transparent_history must state whether it is enabled')
+            if not history['enabled']:
+                continue
+            root = (history.get('settings') or {}).get('publication_root')
+            require(isinstance(root, str) and descriptors.PLAIN_PATH.fullmatch(root) is not None,
+                    prefix + 'publication_root must be an absolute plain path')
+            entry = {'host':record['host'], 'path':str(PurePosixPath(root) / INCIDENTS)}
+            if entry not in incidents:
+                incidents.append(entry)
+        return incidents
+
+    def incident_problems(self, incidents):
+        """Incident records the predecessor could not read.
 
         A current-format failure has no predecessor form. It is never dropped
         or relabelled; rollback waits until the current release clears it.
         """
         problems = []
-        for incident in self.request['incidents']:
+        for incident in incidents:
             raw = self.ex.read(incident['host'], incident['path'])
             if raw is None:
                 continue
@@ -426,12 +465,30 @@ class Cutover:
                                 + ' holds integrity failures the predecessor cannot read')
         return problems
 
+    def resumed_process(self, journal, record, expected):
+        """The exact process this resume started, if it still runs.
+
+        Only an acknowledged restart is reused after a lost runner; anything
+        else, including a dead or different executable, is restarted again.
+        """
+        receipt = next((event for event in reversed(journal.data['events'])
+                        if event['message'] in ('resume process started', 'resume process reset')
+                        and event.get('target') == record['key']), None)
+        if receipt is None or receipt['message'] != 'resume process started':
+            return False
+        state = self.ex.probe_unit(record['host'], record['unit'])
+        return (state['active_state'] == 'active' and state['main_pid'] and state['exe_sha256'] == expected
+                and not state.get('need_daemon_reload') and state.get('invocation_id')
+                and state['invocation_id'] == receipt['invocation_id'])
+
     def resume_current(self, journal, incidents):
         """Restart the current executables on the current records, then refuse.
 
         Only before any reverse record is installed: writers were merely
         stopped, so the latest records, withdrawals and incidents are intact.
-        Repeating this after a lost runner restarts the same executables.
+        Each target must run its exact current executable from the current
+        unit and answer health. Readiness is not awaited: a retained History
+        incident holds the publisher's aggregate readiness false by design.
         """
         message = '; '.join(incidents) + '; ' + ROLL_FORWARD
         require(not any('reverse' in item for item in journal.data['records']),
@@ -439,21 +496,33 @@ class Cutover:
         journal.event('rollback resuming current release', incidents=incidents)
         for index, (group, deployer) in enumerate(self.groups):
             child = self.child(journal, index)
+            expected = group['binary_sha256']
             for number, record in enumerate(child.hosts):
-                if record.get('restart_issued'):
+                if not record.get('restart_issued'):
+                    deployer.activate(child, number, expected, verify=False)
+                elif not self.resumed_process(child, record, expected):
+                    require(all(self.ex.sha256(record['host'], change['path']) == change['new_sha256']
+                                for change in record['changes']),
+                            record['key'] + ': current unit configuration changed; inspect before resuming')
+                    # A lost restart reply stays uncertain until a new receipt.
+                    child.event('resume process reset', target=record['key'])
                     deployer.lock.verify()
                     self.ex.systemctl(record['host'], 'restart', record['unit'])
                     child.set_phase(number, 'verifying')
-                else:
-                    deployer.activate(child, number, group['binary_sha256'], verify=False)
+                state = self.ex.probe_unit(record['host'], record['unit'])
+                if state['active_state'] == 'active' and state['exe_sha256'] == expected and state.get('invocation_id'):
+                    child.event('resume process started', target=record['key'], exe_sha256=expected,
+                                invocation_id=state['invocation_id'])
             if index == 0:
                 # Publisher first, as in the forward cutover.
                 for record in child.hosts:
-                    deployer.wait_verified(record, group['binary_sha256'])
+                    deployer.wait_verified(record, expected, live_only=True)
         for index, (group, deployer) in enumerate(self.groups):
             child = self.child(journal, index)
             for number, record in enumerate(child.hosts):
-                deployer.wait_verified(record, group['binary_sha256'])
+                deployer.wait_verified(record, group['binary_sha256'], live_only=True)
+                require(self.resumed_process(child, record, group['binary_sha256']),
+                        record['key'] + ': the resumed process is not the one this rollback started')
                 child.set_phase(number, 'verified')
         journal.set_status(journal.data.pop('rollback')['status'])
         raise DeployError('artifact rollback resumed the current release: ' + message)
