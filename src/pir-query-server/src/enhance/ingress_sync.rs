@@ -1,8 +1,5 @@
 //! Public wallet routing follows publisher metadata and privately pinned routers.
 use crate::enhance::{
-    admission::{client_key, read_body, BodyError, ClientSlots},
-    protocol::{self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS},
-    publication::METADATA_LIMIT,
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
@@ -13,6 +10,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use enhance_shared::{
+    protocol::{self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS},
+    publication::METADATA_LIMIT,
+};
+use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
 use pir_sync_manager::SyncTask;
 use serde::Deserialize;
 use std::{
@@ -182,7 +184,7 @@ impl QueryIngress {
         })
     }
     pub fn public_router(&self) -> Router {
-        crate::enhance::PUBLIC_ROUTES
+        enhance_query_server::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [

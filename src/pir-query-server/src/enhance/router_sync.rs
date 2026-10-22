@@ -1,11 +1,6 @@
 //! Consumer-owned packing activation and exact worker handover.
 use crate::enhance::{
-    admission::{read_body, BodyError, Queue, Refusal},
-    protocol::{self, digest, Manifest, QueryBinding},
-    publication::{Object, METADATA_LIMIT},
-    runtime::Packing,
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
-    worker::Evaluate,
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
 use axum::{
@@ -15,6 +10,13 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use enhance_query_server::worker::Evaluate;
+use enhance_shared::{
+    protocol::{self, digest, Manifest, QueryBinding},
+    publication::{Object, METADATA_LIMIT},
+    runtime::Packing,
+};
+use pir_control::admission::{read_body, BodyError, Queue, Refusal};
 use pir_sync_manager::SyncTask;
 use serde::Deserialize;
 use std::{
@@ -119,7 +121,7 @@ pub struct PackingRouter {
     admission: Arc<Semaphore>,
     waiters: Arc<Semaphore>,
     synchronization: Arc<Semaphore>,
-    budget: crate::enhance::PackingBudget,
+    budget: enhance_shared::PackingBudget,
     loader: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
     max_objects: usize,
     timing: crate::enhance::query_timing::QueryTiming,
@@ -179,7 +181,7 @@ impl PackingRouter {
             admission: Arc::new(Semaphore::new(requests)),
             waiters: Arc::new(Semaphore::new(16)),
             synchronization: Arc::new(Semaphore::new(1)),
-            budget: crate::enhance::PackingBudget::router(),
+            budget: enhance_shared::PackingBudget::router(),
             loader,
             max_objects,
             timing: Default::default(),
@@ -203,7 +205,7 @@ impl PackingRouter {
         })
     }
     pub fn public_router(&self) -> Router {
-        crate::enhance::PUBLIC_ROUTES
+        enhance_query_server::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [
@@ -633,7 +635,7 @@ impl Synchronizer {
                 self.router
                     .loader
                     .send(Box::new(move || {
-                        let result = crate::enhance::prepared_packing::load(
+                        let result = enhance_shared::prepared_packing::load(
                             &path,
                             &descriptor,
                             rows,

@@ -1,5 +1,14 @@
 //! Autonomous workers load published rows; they never prepare public hints.
-use crate::enhance::{
+use crate::enhance::synchronization::{Client, Config as SourceConfig, Error, Lease, Safety};
+use axum::{
+    extract::{Request, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use enhance_query_server::worker::{Evaluate, Intermediate};
+use enhance_shared::{
     ipir::{RowPlaintextIter, ShardRuntime},
     matvec::MatvecConfig,
     placement::{PlacementPolicy, MIB, OVERHEAD, RESIDENT_LIMIT},
@@ -8,15 +17,6 @@ use crate::enhance::{
     },
     publication::Domain,
     runtime::{rlwe, DomainPlan},
-    synchronization::{Client, Config as SourceConfig, Error, Lease, Safety},
-    worker::{Evaluate, Intermediate},
-};
-use axum::{
-    extract::{Request, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
 };
 use pir_runtime::evaluation::{add_intermediate_assign_mod, PreparedDatabase};
 use pir_sync_manager::SyncTask;
@@ -72,7 +72,7 @@ impl Loaded {
         if coefficients.len() != params.db_rows
             || coefficients
                 .iter()
-                .any(|q| *q >= crate::enhance::runtime::modulus())
+                .any(|q| *q >= enhance_shared::runtime::modulus())
         {
             return Err("invalid query coefficients".into());
         }
@@ -85,7 +85,7 @@ impl Loaded {
                     &coefficients[start..start + identity.allocated_rows as usize],
                 )
                 .map_err(|e| e.to_string())?;
-            add_intermediate_assign_mod(&mut output, &answer, crate::enhance::runtime::modulus())
+            add_intermediate_assign_mod(&mut output, &answer, enhance_shared::runtime::modulus())
                 .map_err(|e| e.to_string())?;
         }
         Ok(output)
@@ -291,7 +291,7 @@ impl Worker {
             for unit in &plan.units {
                 let bytes = unit
                     .allocated_rows
-                    .checked_mul(crate::enhance::ROW_BYTES as u64)
+                    .checked_mul(enhance_shared::ROW_BYTES as u64)
                     .ok_or("unit size overflow")?;
                 sizes.insert(unit.digest(), bytes);
                 current = current.checked_add(bytes).ok_or("worker size overflow")?;
@@ -329,9 +329,9 @@ impl Worker {
                 let unit = if let Some(unit) = existing {
                     unit
                 } else {
-                    let layout = crate::enhance::types::DatabaseLayout {
+                    let layout = enhance_shared::types::DatabaseLayout {
                         shard_rows: identity.allocated_rows as usize,
-                        ..crate::enhance::types::ENHANCE_LAYOUT
+                        ..enhance_shared::types::ENHANCE_LAYOUT
                     };
                     let file = File::open(object.path(&self.root)?)?;
                     if file.metadata()?.len() != object.bytes {
@@ -344,7 +344,7 @@ impl Worker {
                     if hex::encode(Sha256::digest(&map)) != object.sha256 {
                         return Err("cached rows have wrong checksum".into());
                     }
-                    let (_, params) = crate::enhance::ipir::shard_parameters(&layout)?;
+                    let (_, params) = enhance_shared::ipir::shard_parameters(&layout)?;
                     let coefficients = RowPlaintextIter::new(
                         &map,
                         layout.row_bytes(),
@@ -360,7 +360,7 @@ impl Worker {
                         rows_sha256: object.sha256.clone(),
                         server,
                     });
-                    crate::enhance::artifact::release_file_cache(&file);
+                    enhance_shared::artifact::release_file_cache(&file);
                     self.inner
                         .lock()
                         .unwrap()
@@ -647,7 +647,7 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             .clone()
             .try_acquire_owned()
             .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-        let bytes = crate::enhance::admission::read_body(
+        let bytes = pir_control::admission::read_body(
             request.into_body(),
             1024 * 1024,
             Duration::from_secs(30),
@@ -705,7 +705,7 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             || query
                 .coefficients
                 .iter()
-                .any(|q| *q >= crate::enhance::runtime::modulus())
+                .any(|q| *q >= enhance_shared::runtime::modulus())
         {
             return Err((StatusCode::BAD_REQUEST, "invalid query coefficients".into()));
         }
@@ -802,9 +802,9 @@ mod tests {
         let coverage = protocol::Lifecycle::default()
             .coverage(1, geometry)
             .unwrap();
-        let plan = crate::enhance::runtime::plan(
+        let plan = enhance_shared::runtime::plan(
             coverage.shards[0].clone(),
-            crate::enhance::test_support::records,
+            enhance_shared::test_support::records,
         )
         .unwrap();
         let manifest = Manifest {
@@ -829,16 +829,16 @@ mod tests {
         };
         let id = digest(&manifest);
         let lease = Lease::from_response(
-            crate::enhance::publication::AuthorityResponse {
-                current: crate::enhance::publication::Current {
-                    version: crate::enhance::publication::VERSION,
+            enhance_shared::publication::AuthorityResponse {
+                current: enhance_shared::publication::Current {
+                    version: enhance_shared::publication::VERSION,
                     revision: 1,
                     withdrawal_revision: 1,
                     recovery_epoch: 0,
                     revoked: Default::default(),
                     eligible: true,
                     manifest: Some(manifest.clone()),
-                    inventory: Some(crate::enhance::publication::Object {
+                    inventory: Some(enhance_shared::publication::Object {
                         sha256: "03".repeat(32),
                         bytes: 1,
                     }),

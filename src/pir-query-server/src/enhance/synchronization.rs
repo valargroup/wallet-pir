@@ -1,5 +1,5 @@
 //! Enhance-owned replay floors and authority over the shared HTTPS transport.
-use crate::enhance::{
+use enhance_shared::{
     protocol::{digest, Manifest},
     publication::{
         AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 #[cfg(test)]
-use {crate::enhance::publication::SOURCE_AUTHORITY_LIFETIME, pir_publication::SourceObservation};
+use {enhance_shared::publication::SOURCE_AUTHORITY_LIFETIME, pir_publication::SourceObservation};
 
 pub type Error = pir_sync_manager::Error;
 
@@ -50,7 +50,7 @@ where
         .into_iter()
         .map(|(key, value)| {
             let id: u64 = key.parse().map_err(serde::de::Error::custom)?;
-            if id.to_string() != key || id >= crate::enhance::protocol::MAX_QUERY_SHARDS {
+            if id.to_string() != key || id >= enhance_shared::protocol::MAX_QUERY_SHARDS {
                 return Err(serde::de::Error::custom(
                     "domain key must be canonical and below the protocol ceiling",
                 ));
@@ -196,7 +196,7 @@ impl Safety {
             publisher: state.floor.publisher.clone(),
             current: Some(current.clone()),
         };
-        let saved = crate::enhance::artifact::write_atomic(&self.root, "sync.json", |file| {
+        let saved = enhance_shared::artifact::write_atomic(&self.root, "sync.json", |file| {
             serde_json::to_writer(file, &floor).map_err(std::io::Error::other)
         })
         .and_then(|_| File::open(&self.root)?.sync_all());
@@ -303,7 +303,7 @@ impl Authority {
         guard.check()?;
         let mut leases = self.leases.lock().unwrap();
         leases.retain(|_, lease| lease.check().is_ok());
-        if leases.len() >= 2 * crate::enhance::protocol::RETAINED_GENERATIONS
+        if leases.len() >= 2 * enhance_shared::protocol::RETAINED_GENERATIONS
             && !leases.contains_key(&digest(&guard.manifest))
         {
             return Err("Enhance authority retention capacity reached".into());
@@ -545,7 +545,7 @@ fn remove_digest_part_transfers(objects: &Path) -> std::io::Result<()> {
         if entry.file_type()?.is_file()
             && name
                 .strip_suffix(".part")
-                .is_some_and(crate::enhance::protocol::canonical_hash)
+                .is_some_and(enhance_shared::protocol::canonical_hash)
         {
             fs::remove_file(entry.path())?;
         }
@@ -558,21 +558,21 @@ mod tests {
     use super::*;
 
     fn manifest() -> Manifest {
-        let geometry = crate::enhance::protocol::Geometry::default();
-        let coverage = crate::enhance::protocol::Lifecycle::default()
+        let geometry = enhance_shared::protocol::Geometry::default();
+        let coverage = enhance_shared::protocol::Lifecycle::default()
             .coverage(1, geometry)
             .unwrap();
-        let plan = crate::enhance::runtime::plan(
+        let plan = enhance_shared::runtime::plan(
             coverage.shards[0].clone(),
-            crate::enhance::test_support::records,
+            enhance_shared::test_support::records,
         )
         .unwrap();
         Manifest {
             recovery_epoch: 0,
             placement_revision: 1,
             domain_recovery_epochs: [(0, "0".into())].into(),
-            schema_version: crate::enhance::protocol::SCHEMA_VERSION,
-            protocol_revision: crate::enhance::protocol::PROTOCOL_REVISION.into(),
+            schema_version: enhance_shared::protocol::SCHEMA_VERSION,
+            protocol_revision: enhance_shared::protocol::PROTOCOL_REVISION.into(),
             network: "main".into(),
             pool: "ironwood".into(),
             generation: 1,
@@ -580,10 +580,10 @@ mod tests {
             anchor_block_hash: "01".repeat(32),
             geometry,
             coverage,
-            sessions: vec![crate::enhance::protocol::SessionRef {
+            sessions: vec![enhance_shared::protocol::SessionRef {
                 shard_id: 0,
                 public_params_sha256: "02".repeat(32),
-                parameter_id: crate::enhance::protocol::parameter_id(plan.shard.logical_rows)
+                parameter_id: enhance_shared::protocol::parameter_id(plan.shard.logical_rows)
                     .unwrap(),
             }],
             unit_identities: [(0, plan.units)].into(),
@@ -593,7 +593,7 @@ mod tests {
     fn response(manifest: &Manifest) -> AuthorityResponse {
         AuthorityResponse {
             current: Current {
-                version: crate::enhance::publication::VERSION,
+                version: enhance_shared::publication::VERSION,
                 revision: 1,
                 withdrawal_revision: 1,
                 recovery_epoch: 0,

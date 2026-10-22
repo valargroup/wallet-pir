@@ -5,12 +5,6 @@
 //! Records, the wire protocol, the publication contract and prepared runtimes
 //! come from `enhance-shared`; the private evaluation messages and public
 //! route mounts come from `enhance-query-server`.
-#[allow(unused_imports)]
-use enhance_query_server::{worker, PUBLIC_ROUTES};
-#[allow(unused_imports)]
-use enhance_shared::*;
-use pir_control::admission;
-
 pub mod internal_auth;
 pub mod telemetry;
 

@@ -1,11 +1,11 @@
 //! Shared worker-evaluation contract for remote and compatibility serving.
-use crate::enhance::protocol::{Manifest, QueryBinding};
-use crate::enhance::worker::{Evaluate, Intermediate};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
+use enhance_query_server::worker::{Evaluate, Intermediate};
+use enhance_shared::protocol::{Manifest, QueryBinding};
 
 pub(crate) type Error = (StatusCode, String);
 fn unavailable(message: impl ToString) -> Error {

@@ -1,5 +1,5 @@
 //! One independently synchronizing Enhance serving role per process.
-use crate::enhance::{matvec::MatvecConfig, placement::PlacementPolicy};
+use enhance_shared::{matvec::MatvecConfig, placement::PlacementPolicy};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -76,13 +76,13 @@ impl ServingRole {
                 c.synchronization.validate(PlacementPolicy {
                     sealed_shards: c.sealed_shards,
                 })?;
-                if c.matvec.matvec_backend == crate::enhance::matvec::Backend::Cpu
+                if c.matvec.matvec_backend == enhance_shared::matvec::Backend::Cpu
                     && c.matvec.cuda_device.is_some()
                 {
                     return Err("CUDA device requires CUDA evaluator".into());
                 }
-                if c.matvec.matvec_backend == crate::enhance::matvec::Backend::Cuda
-                    && !crate::enhance::matvec::CUDA_COMPILED
+                if c.matvec.matvec_backend == enhance_shared::matvec::Backend::Cuda
+                    && !enhance_shared::matvec::CUDA_COMPILED
                 {
                     return Err("CUDA evaluator is not compiled".into());
                 }

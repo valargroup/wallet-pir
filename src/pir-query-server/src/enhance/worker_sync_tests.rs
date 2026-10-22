@@ -1,6 +1,6 @@
 //! Device failure must release admission without changing loaded authority.
 use super::*;
-use crate::enhance::{
+use enhance_shared::{
     matvec::testing::{scoped, Faults},
     protocol::{Geometry, Lifecycle},
     publication::{AuthorityResponse, Current, Object},
@@ -19,7 +19,7 @@ async fn backend_evaluation_failure_over_http_releases_permit_and_recovers() {
 #[ignore = "requires NVIDIA GPU and NVRTC"]
 async fn cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers() {
     evaluation_failure(MatvecConfig {
-        matvec_backend: crate::enhance::matvec::Backend::Cuda,
+        matvec_backend: enhance_shared::matvec::Backend::Cuda,
         cuda_device: None,
     })
     .await;
@@ -46,15 +46,15 @@ async fn evaluation_failure(backend: MatvecConfig) {
     let coverage = Lifecycle::default()
         .coverage(67, Geometry::default())
         .unwrap();
-    let plan = crate::enhance::runtime::plan(
+    let plan = enhance_shared::runtime::plan(
         coverage.shards[0].clone(),
-        crate::enhance::test_support::records,
+        enhance_shared::test_support::records,
     )
     .unwrap();
-    let rows = crate::enhance::runtime::unit_rows(
+    let rows = enhance_shared::runtime::unit_rows(
         &plan.shard,
         &plan.shard.units[0],
-        &mut crate::enhance::test_support::records,
+        &mut enhance_shared::test_support::records,
     )
     .unwrap();
     let object = Object {
@@ -74,11 +74,11 @@ async fn evaluation_failure(backend: MatvecConfig) {
         rows: vec![object],
         hint: unused.clone(),
         public: unused,
-        packing: crate::enhance::prepared_packing::Artifact {
+        packing: enhance_shared::prepared_packing::Artifact {
             name: "unused".into(),
             sha256: "03".repeat(32),
             bytes: 1,
-            format: crate::enhance::prepared_packing::FORMAT,
+            format: enhance_shared::prepared_packing::FORMAT,
         },
     };
     let faults = Arc::new(Faults::default());
@@ -125,7 +125,7 @@ async fn evaluation_failure(backend: MatvecConfig) {
     let lease = Lease::from_response(
         AuthorityResponse {
             current: Current {
-                version: crate::enhance::publication::VERSION,
+                version: enhance_shared::publication::VERSION,
                 revision: 1,
                 withdrawal_revision: 1,
                 recovery_epoch: 0,
@@ -183,7 +183,7 @@ async fn evaluation_failure(backend: MatvecConfig) {
     assert_eq!(body, b"matrix-vector evaluation unavailable");
     assert_eq!(faults.evaluation_calls.load(SeqCst), before + 1);
     assert_eq!(worker.evaluation.available_permits(), 1);
-    for coefficients in [vec![1], vec![crate::enhance::runtime::modulus(); 4096]] {
+    for coefficients in [vec![1], vec![enhance_shared::runtime::modulus(); 4096]] {
         assert_eq!(
             request(
                 &router,
@@ -212,8 +212,8 @@ async fn evaluation_failure(backend: MatvecConfig) {
 #[test]
 fn cuda_without_feature_fails_before_creating_worker_state() {
     let root = tempfile::tempdir().unwrap();
-    let config = crate::enhance::matvec::MatvecConfig {
-        matvec_backend: crate::enhance::matvec::Backend::Cuda,
+    let config = enhance_shared::matvec::MatvecConfig {
+        matvec_backend: enhance_shared::matvec::Backend::Cuda,
         cuda_device: None,
     };
     let result = crate::enhance::worker_sync::Worker::open(
