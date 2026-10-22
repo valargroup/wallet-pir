@@ -3,10 +3,11 @@
 //! The publisher stub serves only discovery; every product route is refused, so
 //! no publication is prepared. The TLS terminator logs discovery and product
 //! requests separately and applies `discovery-*` faults.
-use super::{encrypted::serve, publication::tls};
+use super::encrypted::serve;
 use enhance_query_server::{
     ingress_sync, router_sync, service::ServingRole, synchronization, worker_sync,
 };
+use pir_e2e_tests::enhance_fixture::tls;
 use pir_sync_manager::{DiscoveryError, SyncTask};
 use std::{
     path::Path,
@@ -64,7 +65,10 @@ fn host_json(root: &Path, origin: &str, role: &str) -> serde_json::Value {
     let assignment = match role {
         "worker" => ("shards", serde_json::json!([0])),
         "packing-router" => ("workers", serde_json::json!({"0": ["http://127.0.0.1:1"]})),
-        "query-ingress" => ("routers", serde_json::json!({"0": ["http://127.0.0.1:1"]})),
+        "query-ingress" => (
+            "routers",
+            serde_json::json!({"0": [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]}),
+        ),
         _ => panic!("unsupported role"),
     };
     synchronization.insert(assignment.0.into(), assignment.1);
@@ -90,17 +94,19 @@ fn ingress_host_configuration_parses_domain_keys_and_rejects_invalid_assignments
     let config = host(root, "https://publisher.example", "query-ingress");
     let role = config.enhance.unwrap().settings.unwrap();
     role.validate().unwrap();
-    let ServingRole::QueryIngress {
-        synchronization: Some(sync),
-        ..
-    } = role
-    else {
+    let ServingRole::QueryIngress(config) = role else {
         panic!("expected autonomous ingress");
     };
-    assert_eq!(sync.routers[&0], ["http://127.0.0.1:1"]);
+    assert_eq!(
+        config.synchronization.routers[&0][0].control_origin,
+        "http://127.0.0.1:1"
+    );
+    assert_eq!(
+        config.synchronization.routers[&0][0].query_origin,
+        "http://127.0.0.1:2"
+    );
     for key in ["invalid", "18446744073709551616"] {
-        json["enhance"]["settings"]["synchronization"]["routers"] =
-            serde_json::json!({key: ["http://127.0.0.1:1"]});
+        json["enhance"]["settings"]["synchronization"]["routers"] = serde_json::json!({key: [{"control_origin":"http://127.0.0.1:1", "query_origin":"http://127.0.0.1:2"}]});
         assert!(
             serde_json::from_str::<pir_query_server::config::Config>(&json.to_string()).is_err()
         );
@@ -221,7 +227,14 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
         &scratch.path().join("ingress"),
         ingress_sync::Config {
             source: source(scratch.path(), &transport.origin),
-            routers: [(0, vec!["http://127.0.0.1:1".into()])].into(),
+            routers: [(
+                0,
+                vec![ingress_sync::RouterPeer {
+                    control_origin: "http://127.0.0.1:1".into(),
+                    query_origin: "http://127.0.0.1:2".into(),
+                }],
+            )]
+            .into(),
         },
         1,
         4,
@@ -260,13 +273,10 @@ async fn every_pass_checks_discovery_and_retries_only_transient_failures() {
 }
 
 #[test]
-fn legacy_push_roles_do_not_require_discovery() {
-    let role: ServingRole = serde_json::from_value(serde_json::json!({"role": "worker",
+fn worker_configuration_requires_its_publisher_source() {
+    assert!(
+        serde_json::from_value::<ServingRole>(serde_json::json!({"role": "worker",
         "listen": "127.0.0.1:1", "data_dir": "/unused"}))
-    .unwrap();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    runtime.block_on(role.discover()).unwrap();
+        .is_err()
+    );
 }

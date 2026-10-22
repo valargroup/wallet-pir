@@ -617,8 +617,10 @@ def standalone_metadata(names, features=None):
 def common_family_violations(packages, patches):
     """Reject stale Common releases and mixed sources, including unused lock entries.
 
-    A root protocol patch selects a development family. Without it, the published
-    4.0.0 release is required. Both modes reject mixed sources and stale releases.
+    A root protocol patch selects a development family, which every Common patch and
+    resolved package must use. Without one, every Common package must be the
+    published 4.0.0 release. Either way, updating a direct dependency cannot leave an
+    older copy hidden behind a transitive or optional dependency.
     """
     names = {name for name in COMMON if name.startswith('zakura-')}
     patches = {name: patch for name, patch in patches.items() if name in names}

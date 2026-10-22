@@ -6,6 +6,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, io::Read};
 
+#[derive(Debug)]
+struct PublicationAdvanced;
+impl std::fmt::Display for PublicationAdvanced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Status publication advanced during coordination")
+    }
+}
+impl std::error::Error for PublicationAdvanced {}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Floor {
@@ -19,6 +28,7 @@ pub(super) struct StatusSync {
     floor: Floor,
     conditional: Option<Current>,
     retained: Vec<Object>,
+    loaded: Option<Inventory>,
     deferred: bool,
 }
 impl StatusSync {
@@ -58,6 +68,7 @@ impl StatusSync {
             floor,
             conditional: None,
             retained: Vec::new(),
+            loaded: None,
             deferred: false,
         })
     }
@@ -218,6 +229,9 @@ impl StatusSync {
             ))
             .send()
             .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            return Err(Box::new(PublicationAdvanced));
+        }
         let bytes = serving::bounded(response, 16)
             .await
             .map_err(|_| "Status worker cannot evaluate candidate generation")?;
@@ -253,6 +267,13 @@ impl StatusSync {
             .source
             .post_json("anchors/check", serde_json::to_vec(&request)?)
             .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            response.discard().await?;
+            // Observe withdrawal or epoch changes before retaining any old view.
+            drop(response);
+            self.current().await?;
+            return Err(Box::new(PublicationAdvanced));
+        }
         if !response.status().is_success() {
             response.discard().await?;
             return Err("Status authority changed during synchronization".into());
@@ -374,7 +395,24 @@ impl StatusSync {
             self.deferred = true;
             return Ok(Input::Deferred);
         }
-        if !unchanged {
+        // Reuse only the material already verified and loaded by this process.
+        // The new identity still passes live authority and freshness checks in
+        // publish; no bytes are read from disk on this metadata-only path.
+        let refreshed = previous
+            .as_ref()
+            .zip(self.loaded.as_ref())
+            .and_then(|(g, old)| {
+                if old.manifest != *g.manifest() || !old.same_prepared_material(&inventory) {
+                    return None;
+                }
+                let next = g.reidentified(
+                    inventory.manifest.generation,
+                    inventory.manifest.recovery_epoch,
+                    inventory.manifest.observed_ms,
+                );
+                (next.manifest() == &inventory.manifest).then_some(next)
+            });
+        if !unchanged && refreshed.is_none() {
             for object in
                 std::iter::once(&inventory.public).chain(if self.service.role == Role::Worker {
                     inventory.units.iter()
@@ -391,6 +429,7 @@ impl StatusSync {
             inventory_object,
             previous,
             unchanged,
+            refreshed,
         }))
     }
 }
@@ -403,6 +442,7 @@ struct Acquired<'a> {
     inventory_object: Object,
     previous: Option<Arc<Generation>>,
     unchanged: bool,
+    refreshed: Option<Generation>,
 }
 struct Prepared<'a> {
     sync: &'a mut StatusSync,
@@ -418,9 +458,12 @@ impl<'a> Acquired<'a> {
             inventory_object,
             previous,
             unchanged,
+            refreshed,
         } = self;
         let candidate = if unchanged {
             previous.as_ref().map(|g| g.as_ref().clone())
+        } else if refreshed.is_some() {
+            refreshed
         } else {
             let root = sync.service.dir.join("objects");
             let i = inventory.clone();
@@ -494,6 +537,7 @@ impl Prepared<'_> {
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
             }
+            sync.loaded = Some(inventory.clone());
             sync.retained.push(inventory_object.clone());
             if sync.retained.len() > 2 {
                 sync.retained.remove(0);
@@ -531,7 +575,23 @@ impl SyncTask for StatusSync {
     async fn synchronize(&mut self) -> Result<u64, Failure> {
         self.deferred = false;
         self.service.state.lock().await.synchronization = "synchronizing".into();
-        let result = self.update().await;
+        let result = match self.update().await {
+            // A newer pointer won the authority handshake. Nothing was activated;
+            // retry at the normal cadence rather than spending half the serving
+            // freshness window in transport-failure backoff.
+            Err(error) if error.is::<PublicationAdvanced>() => {
+                self.deferred = true;
+                Ok(self
+                    .service
+                    .state
+                    .lock()
+                    .await
+                    .controller
+                    .as_ref()
+                    .map_or(0, |c| c.current().manifest().generation))
+            }
+            result => result,
+        };
         self.service.state.lock().await.synchronization = if result.is_ok() && self.deferred {
             "waiting_for_peer"
         } else if result.is_ok() {

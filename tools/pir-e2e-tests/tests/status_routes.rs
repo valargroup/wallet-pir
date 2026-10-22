@@ -1,33 +1,23 @@
-//! The Enhance coordinator answers only operator routes on its own listener.
+//! The Enhance publisher answers only operator routes on its own listener.
 //! Wallets reach query ingress, and Status is a separate process.
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use enhance_publisher::{
-    control::{Group, Ledger, Replica},
-    coordinator::Coordinator,
-};
+use enhance_publisher::{publisher::Publisher, zakura::ZakuraClient};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn unready_coordinator_serves_operator_routes_and_never_wallets() {
+async fn unready_publisher_serves_operator_routes_and_never_wallets() {
     let root = tempfile::tempdir().unwrap();
-    let groups = vec![Group {
-        placement_policy: Default::default(),
-        id: "g0".into(),
-        sequence: 0,
-        replicas: (0..2)
-            .map(|i| Replica {
-                name: format!("r{i}"),
-                url: format!("http://127.0.0.1:{}", 9 + i),
-                incarnation: String::new(),
-                ledger: Ledger::default(),
-            })
-            .collect(),
-    }];
-    let coordinator = Coordinator::open(&root.path().join("coordinator"), groups).unwrap();
-    let routes = coordinator.router();
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let publisher = Publisher::open(
+        &root.path().join("publisher"),
+        ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap(),
+    )
+    .unwrap();
+    let routes = publisher.router();
     let request = |method: &str, uri: &str| {
         Request::builder()
             .method(method)
@@ -58,7 +48,8 @@ async fn unready_coordinator_serves_operator_routes_and_never_wallets() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(health["registered_groups"], 1);
-    assert_eq!(health["registered_workers"], 2);
+    assert!(health.get("registered_groups").is_none());
+    assert!(health.get("registered_workers").is_none());
+    assert_eq!(health["eligible"], false);
     assert_eq!(health["generation"], serde_json::Value::Null);
 }

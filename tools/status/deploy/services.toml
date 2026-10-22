@@ -7,7 +7,7 @@ artifact_kinds = ["status-pir"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["worker", "external-worker", "router"]
-# The supervised control sessions that carry the controller's forwards.
+# The supervised SSH sessions carry private monitoring and wallet-query forwards.
 ancillary = ["supervision"]
 
 [services.status.roles.worker]

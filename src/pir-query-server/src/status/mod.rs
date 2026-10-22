@@ -145,7 +145,10 @@ pub async fn serve_role_on(
         config.worker_origin.clone(),
     )?;
     let task = sync::StatusSync::new(service.clone(), &config)?;
-    let mut manager = pir_sync_manager::SyncManager::new(task);
+    // The worker and router each poll the publisher. Their combined delay must
+    // leave room for preparation inside Status's twenty-second freshness limit.
+    let mut manager = pir_sync_manager::SyncManager::new(task)
+        .with_success_interval(std::time::Duration::from_secs(1));
     if let Err(error) = manager.poll_once().await {
         if pir_sync_manager::is_incompatible(error.as_ref()) {
             return Err(error);

@@ -99,7 +99,7 @@
   "templates": {
     "cloud-init-coordinator.yaml.tftpl": "14bf52d1834fe181714c0d83a2014c79836dbc8fcf396bad8d2edc525dce916e",
     "enhance/cloud-init-worker.yaml.tftpl": "bdfb72d770735e6ac91fdd3143b09db05ab3134d0269b44d719b4da8aca11102",
-    "status/cloud-init.yaml.tftpl": "bd68a4c1da998da4e9f71171f8feb5339e22717b998da53f88a0745be66cc485",
+    "status/cloud-init.yaml.tftpl": "7f89118fec2a7f12c3d2613c7e9f3d40753de6c8323bea10f08508a1a81c17f5",
     "transparent/cloud-init-transparent-router.yaml.tftpl": "9512dc8a044f76d617abec8e6e39a7766cb1f0fba3f3d5063b912d8fa1cb172c",
     "transparent/cloud-init-transparent-worker.yaml.tftpl": "9679a528e44f85592c668461dc0c5c714d1c02000c8890a97778aff448d2fd5c"
   },

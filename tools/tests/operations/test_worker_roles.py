@@ -85,7 +85,7 @@ class WorkerRoles(unittest.TestCase):
         self.assertEqual(check('receiver', 'serve-publication')[:2], ('serve-publication', '--check'))
         self.assertEqual(check('transparent-history', 'external-worker')[-1], '--verify-only')
         # No staged inputs, so no check is manufactured.
-        self.assertEqual(check('enhance', 'external-worker'), ())
+        self.assertEqual(check('enhance', 'external-worker'), ('--config', '/etc/enhance-pir/external-worker.json', '--check'))
         self.assertEqual(check('status', 'external-worker'), ('--config', '/etc/status-pir/external-worker.json', '--check'))
         self.assertEqual(check('transparent-display', 'external-worker'), ())
         initial = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/publications/c0'}
@@ -200,6 +200,21 @@ class StatusInstalledRoles(unittest.TestCase):
                 self.assertIn(path, paths(effective['ReadOnlyPaths']))
                 self.assertEqual(paths(effective['ReadWritePaths']), ['/var/lib/status-' + role])
                 self.assertEqual(effective['MemoryMax'], '12G' if role == 'worker' else '3G')
+
+    def test_inventory_example_renders_https_status_consumers(self):
+        inventory = json.loads((ROOT / 'tools/enhance/deploy/deploy-inventory.example.json').read_text())
+        for role in ('worker', 'router'):
+            with self.subTest(role=role):
+                settings = inventory['services']['status']['roles'][role][0]['settings']
+                rendered = REGISTRY['status'].roles[role].render(settings, RELEASE)
+                document = json.loads(rendered.files['/etc/status-pir/' + role + '.json'])
+                actual = document['status']['settings']
+                self.assertEqual(actual['publisher'], 'https://enhance.example')
+                self.assertNotIn('artifact_origin', actual)
+                self.assertEqual(actual['worker_origin'], 'http://127.0.0.1:8481')
+                self.assertEqual(actual['listen'], '127.0.0.1:' + ('8481' if role == 'worker' else '8482'))
+                if role == 'router':
+                    self.assertEqual(actual['query_listen'], '127.0.0.1:8484')
 
     def test_invalid_network_or_non_loopback_peers_refuse_before_deployment(self):
         for role in ('worker', 'router'):

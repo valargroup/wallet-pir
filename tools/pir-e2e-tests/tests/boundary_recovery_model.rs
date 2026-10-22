@@ -1,4 +1,4 @@
-//! Executable D8 reference model for composed-routing publication states.
+//! Executable reference model for composed-routing publication states.
 //! These row-level assertions complement, but do not exercise, the implementation.
 
 use std::collections::{BTreeMap, BTreeSet};

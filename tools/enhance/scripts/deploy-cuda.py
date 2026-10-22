@@ -343,7 +343,9 @@ def main():
             # publisher, staged beside them and never built with CUDA.
             publisher = installed_native_publisher()
             payloads = [(bundle / name, name) for name in (
-                'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'cuda-smoke.py')]
+                'pir-query-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'local_fleet.py', 'fixture_node.py',
+                'ironwood-fee-expiry.hex', 'ironwood-canonical-record-0.hex',
+                'ironwood-canonical-record-1.hex', 'distribution_tls.py', 'cuda-smoke.py')]
             payloads.append((publisher, 'pir-publisher'))
             for source, name in payloads:
                 held.verify()

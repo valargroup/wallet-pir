@@ -2,7 +2,7 @@
 
 The source now supports autonomous HTTPS distribution through `pir-sync-manager`:
 the publisher prepares complete material once, and worker/router roles verify and
-activate it locally. [Distribution and cutover](status_distributed.md) owns that
+activate it locally. [Distribution](status_distributed.md) owns that
 interface. Dated deployment records below describe the predecessor; this source
 change is not evidence of a production switch.
 

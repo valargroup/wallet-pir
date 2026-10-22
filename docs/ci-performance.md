@@ -71,6 +71,12 @@ distinct validation rules and meaningful boundaries; additional interior values
 do not need another encrypted retrieval. Roster-loop tests wait for observed
 membership and cancellation with test-local polling, rather than sleeping through
 production intervals. Production deadlines and the correctness budgets are unchanged.
+The fast 67-record hint oracle prepares one reference runtime, serves the
+encoded hint over HTTP, and checks the pinned digest. It does not build the
+reference packing artifact: that object is larger than 512 MiB for the smallest
+domain and stays on the qualification publication path. Withdrawal fencing is
+checked before preparation for the same reason; qualification publishes the
+full artifact and checks it again after restart.
 
 Transparent history distribution tests stay in one process so their immutable
 producer fixtures are prepared once. Each consumer still owns its mutable

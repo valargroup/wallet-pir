@@ -295,14 +295,6 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
-        command = commands.add_parser('status-https-' + operation, help='Status autonomous HTTPS cutover')
-        command.add_argument('--request', type=Path, required=True)
-        command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
-            command.add_argument('--expect-plan-sha256', required=True)
-        if operation in ('status', 'rollback'):
-            command.add_argument('--transaction')
     command = commands.add_parser('ancillary-status', help='read-only state of ancillary units')
     command.add_argument('name', nargs='?', help='one ancillary unit (default: all)')
     for name in ('ops-package-plan', 'ops-package-preflight', 'ops-package-install'):
@@ -350,6 +342,8 @@ def parser():
                                  help='under the lock, upload the release directory and run its self-check')
         if name == 'deploy':
             command.add_argument('--skip-exact-check', action='store_true')
+            command.add_argument('--hold-on-failure', action='store_true',
+                                 help='leave changed targets in place for operator repair instead of rolling back')
     command = commands.add_parser('rollback')
     command.add_argument('service')
     command.add_argument('--transaction')
@@ -433,7 +427,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-', 'status-https-'))
+                                                   'ops-package-', 'publisher-cutover-', 'status-routing-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
@@ -442,9 +436,10 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
-            request, _inventory = publisher.load_request(args.request, args.request_sha256,
-                recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
-            check_installed(mutation=mutation, revision=request['release']['git_sha'])
+            if not args.command.endswith(('-run', '-watchdog')):
+                request, _inventory = publisher.load_request(args.request, args.request_sha256,
+                    recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
+                check_installed(mutation=mutation, revision=request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))
             return 0
@@ -455,16 +450,6 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
-        if args.command.startswith('status-https-'):
-            from tools.status.lib.https_cutover import Cutover, load_request
-            inventory = descriptors.load_inventory(args.inventory)
-            request = load_request(args.request, args.request_sha256)
-            check_installed(mutation=mutation, revision=request['source_sha'])
-            cutover = Cutover(inventory, executor or SSHExecutor(inventory), args.state_dir, request, lock=options.get('lock'))
-            operation = args.command.removeprefix('status-https-')
-            arguments = [args.expect_plan_sha256] if operation == 'deploy' else [args.transaction] if operation in ('status', 'rollback') else []
-            out(json.dumps(getattr(cutover, operation)(*arguments), sort_keys=True))
-            return 0
         if args.command.startswith('status-routing-'):
             from .engine import mutation_fence
             from tools.status.lib.routing import Routing, load_request, digest
@@ -543,7 +528,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
                         label = '%s (%s)' % (group.binary_name, group.kind or 'archive')
                     log('== %s: %s' % (label, ', '.join(keys)))
                 deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=log,
-                                    only=keys, **options)
+                                    only=keys, hold_on_failure=getattr(args, 'hold_on_failure', False), **options)
                 code = run_release(args.command, group, service, inventory, executor, deployer, out)
                 if code:
                     return code
