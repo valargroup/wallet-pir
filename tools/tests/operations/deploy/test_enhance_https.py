@@ -214,6 +214,28 @@ class EnhanceTests(PublisherFixture, unittest.TestCase):
             self.target.plan()
         self.assertEqual(self.ex.effects, [])
 
+    def test_identity_repair_preserves_the_predecessor_account_and_only_new_cache_paths(self):
+        from wallet_pir_ops.deploy import enhance_repair
+        parent = self.deploy()
+        parent['phase'] = 'verifying'
+        parent['plan']['serving']['group_units']['cpu'][0]['fragment_text'] += '\n[Service]\nUser=existing-worker\nGroup=existing-worker\nEnvironmentFile=/etc/existing-worker.env\n'
+        original = self.ex.run
+        def run(host, argv, timeout):
+            if enhance_repair.IDENTITY in argv:
+                paths = json.loads(argv[-1])
+                return 0, json.dumps({'uid': 999, 'gid': 999, 'directories':
+                    [{'path': p, 'uid': 0, 'gid': 0, 'mode': 0o750} for p in paths]})
+            return original(host, argv, timeout)
+        self.ex.run = run
+        repairs = enhance_repair.plan(self.target, parent)
+        self.assertIn('User=existing-worker\n', repairs[0]['after'])
+        self.assertIn('Group=existing-worker\n', repairs[0]['after'])
+        self.assertIn('EnvironmentFile=/etc/existing-worker.env\n', repairs[0]['after'])
+        record = parent['enhance_journals']['cpu']['hosts'][0]
+        self.assertEqual([d['path'] for d in repairs[0]['ownership']['directories']], record['directories'])
+        for program in (enhance_repair.IDENTITY, enhance_repair.OWNERSHIP):
+            compile(program, '<remote repair>', 'exec')
+
     def test_lost_handoff_reply_still_requires_rollback_floor_transfer(self):
         original = self.ex.run
 
