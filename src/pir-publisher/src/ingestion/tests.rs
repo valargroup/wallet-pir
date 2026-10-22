@@ -87,7 +87,11 @@ impl Ingestion for Journal {
         self.blocks.last().cloned()
     }
     fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
-        self.blocks.iter().rev().find(|b| b.height <= height).cloned()
+        self.blocks
+            .iter()
+            .rev()
+            .find(|b| b.height <= height)
+            .cloned()
     }
     async fn withdraw_above(&mut self, keep: Option<&BlockId>) -> Result<(), String> {
         self.events
@@ -109,9 +113,16 @@ impl Ingestion for Journal {
         if *self.fail_ingest.lock().unwrap() {
             return Err("extraction failed".into());
         }
-        self.events.lock().unwrap().push(Event::Ingest(from, through));
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::Ingest(from, through));
         for height in from..=through {
-            let hash = self.chain.hash_at(height).await.map_err(|e| e.to_string())?;
+            let hash = self
+                .chain
+                .hash_at(height)
+                .await
+                .map_err(|e| e.to_string())?;
             self.blocks.push(BlockId { height, hash });
         }
         Ok(())
@@ -248,7 +259,11 @@ async fn ordinary_extension_goes_through_the_live_scheduler() {
     let events = harness.until(|e| caught_up(e, 52)).await;
     assert_eq!(
         events,
-        vec![Event::CaughtUp(50), Event::Ingest(51, 52), Event::CaughtUp(52)]
+        vec![
+            Event::CaughtUp(50),
+            Event::Ingest(51, 52),
+            Event::CaughtUp(52)
+        ]
     );
     harness.stop().await;
 }
@@ -366,7 +381,9 @@ async fn reorg_during_backfill_is_withdrawn_between_batches() {
     // The committed prefix is orphaned while the backfill is still running.
     chain.reorg(5, tip, "b");
     harness.observe();
-    let events = harness.until(|e| e.contains(&Event::Withdraw(Some(4)))).await;
+    let events = harness
+        .until(|e| e.contains(&Event::Withdraw(Some(4))))
+        .await;
     let withdrawn = events.iter().position(|e| *e == Event::Withdraw(Some(4)));
     assert_eq!(events[withdrawn.unwrap() + 1], Event::Rewind(Some(4)));
     harness.stop().await;

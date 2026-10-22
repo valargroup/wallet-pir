@@ -92,7 +92,8 @@ pub trait Ingestion: Send {
     }
 }
 
-pub type IngestionRun<'a, E> = Pin<Box<dyn Future<Output = std::result::Result<(), E>> + Send + 'a>>;
+pub type IngestionRun<'a, E> =
+    Pin<Box<dyn Future<Output = std::result::Result<(), E>> + Send + 'a>>;
 
 /// The root injects ingestion scheduling without a product-to-host dependency.
 /// The returned future owns the writer until both schedulers have drained.

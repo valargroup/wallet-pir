@@ -78,7 +78,9 @@ impl Ingestion for EnhanceIngestion {
         Ok(self.publisher.revoke_after(retained)?)
     }
     async fn rewind(&mut self, keep: Option<&BlockId>) -> Result<()> {
-        Ok(self.journal.rewind_to_height(keep.map(|keep| keep.height))?)
+        Ok(self
+            .journal
+            .rewind_to_height(keep.map(|keep| keep.height))?)
     }
     async fn ingest(&mut self, from: u64, through: u64) -> Result<()> {
         for height in from..=through {
@@ -243,7 +245,8 @@ mod tests {
         let cookie = root.path().join("cookie");
         fs::write(&cookie, "fixture:fixture").unwrap();
         let rpc = ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
-        let publisher = EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
+        let publisher =
+            EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
         let (mut ingestion, _pending) = EnhanceIngestion::new(
             EnhanceJournal::open(root.path()).unwrap(),
             publisher,
@@ -259,9 +262,14 @@ mod tests {
         };
         assert_eq!(ingestion.start_height(), first);
         assert_eq!(ingestion.committed(), Some(tip.clone()));
-        assert_eq!(ingestion.checkpoint_at_or_below(first + 10), Some(tip.clone()));
         assert_eq!(
-            ingestion.checkpoint_at_or_below(first + 1).map(|b| b.height),
+            ingestion.checkpoint_at_or_below(first + 10),
+            Some(tip.clone())
+        );
+        assert_eq!(
+            ingestion
+                .checkpoint_at_or_below(first + 1)
+                .map(|b| b.height),
             Some(first + 1)
         );
         assert_eq!(ingestion.checkpoint_at_or_below(first - 1), None);

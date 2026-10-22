@@ -6,10 +6,10 @@ use crate::{
     ingest::EnhanceJournal,
     publisher::EnhancePublisher,
 };
-use pir_pipeline::service::{Http, Shutdown, Tasks};
-use serde::Deserialize;
 use pir_pipeline::ingestion::{ChainFeed, ChainSettings, IngestionExecutor};
 use pir_pipeline::publisher::PublisherExecutor;
+use pir_pipeline::service::{Http, Shutdown, Tasks};
+use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 /// Durable state directory and local publisher listeners; the canonical source
@@ -130,9 +130,21 @@ pub fn configure<E: PublisherExecutor + IngestionExecutor>(
             rule: ReadinessRule::HttpSuccess,
         }],
     };
-    Ok(PublisherDefinition::new("enhance", resources, move |context| async move {
-        let feed = context.chain.ok_or("Enhance publisher started without the root chain")?;
-        run(config, chain, feed, executor, context.http, context.shutdown).await
-    })
-    .following_chain())
+    Ok(
+        PublisherDefinition::new("enhance", resources, move |context| async move {
+            let feed = context
+                .chain
+                .ok_or("Enhance publisher started without the root chain")?;
+            run(
+                config,
+                chain,
+                feed,
+                executor,
+                context.http,
+                context.shutdown,
+            )
+            .await
+        })
+        .following_chain(),
+    )
 }

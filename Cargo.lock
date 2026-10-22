@@ -2301,6 +2301,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
+ "zakura-server-chain",
 ]
 
 [[package]]

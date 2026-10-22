@@ -44,7 +44,8 @@ impl ChainFollower {
         while !shutdown.requested() {
             match observe(&*self.source).await {
                 Ok((observed_genesis, tip)) => {
-                    if genesis.get_or_insert_with(|| observed_genesis.clone()) != &observed_genesis {
+                    if genesis.get_or_insert_with(|| observed_genesis.clone()) != &observed_genesis
+                    {
                         tracing::error!(%observed_genesis, "chain source changed network; observation refused");
                     } else {
                         pass += 1;

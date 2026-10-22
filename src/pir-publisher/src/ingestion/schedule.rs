@@ -58,7 +58,10 @@ pub(crate) async fn reconcile<I: Ingestion>(
             .withdraw_above(keep.as_ref())
             .await
             .map_err(Outcome::Writer)?;
-        writer.rewind(keep.as_ref()).await.map_err(Outcome::Writer)?;
+        writer
+            .rewind(keep.as_ref())
+            .await
+            .map_err(Outcome::Writer)?;
     }
     Ok(match writer.committed() {
         Some(block) if block.height > tip.height => Coverage::Ahead,
@@ -89,7 +92,10 @@ async fn anchored<I: Ingestion>(
     from: u64,
     through: u64,
 ) -> Result<bool, Outcome<I::Error>> {
-    writer.ingest(from, through).await.map_err(Outcome::Writer)?;
+    writer
+        .ingest(from, through)
+        .await
+        .map_err(Outcome::Writer)?;
     let Some(committed) = writer.committed() else {
         return Ok(false);
     };
@@ -111,7 +117,12 @@ pub(crate) fn run<'a, I: Ingestion + 'a>(
     Box::pin(async move {
         let writer = Arc::new(Mutex::new(ingestion));
         let targets = Arc::new(watch::channel::<Option<BlockId>>(None).0);
-        let live = live(writer.clone(), feed.clone(), targets.clone(), shutdown.clone());
+        let live = live(
+            writer.clone(),
+            feed.clone(),
+            targets.clone(),
+            shutdown.clone(),
+        );
         let pending = targets.subscribe();
         let backfill = backfill(writer, feed, targets, pending, shutdown.clone());
         let (live, backfill) = tokio::join!(

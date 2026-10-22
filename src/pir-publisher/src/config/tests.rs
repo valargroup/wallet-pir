@@ -81,7 +81,10 @@ fn chain_following_products_require_valid_root_chain_settings() {
     for (field, value) in [
         ("poll_ms", serde_json::json!(0)),
         ("rpc_cookie", serde_json::json!("relative/cookie")),
-        ("rpc_url", serde_json::json!("http://user:secret@127.0.0.1:8232")),
+        (
+            "rpc_url",
+            serde_json::json!("http://user:secret@127.0.0.1:8232"),
+        ),
     ] {
         let mut chain = example["chain"].clone();
         chain[field] = value;
