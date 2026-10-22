@@ -41,9 +41,10 @@ INVENTORY = '/etc/wallet-pir/transparent-fleet.json'
 SAMPLER = '/etc/pir-quality/hosts.json'
 LOAD_DROP = '/etc/systemd/system/' + LOAD + '.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-publisher.conf'
 UNIT_PATH = '/etc/systemd/system/' + UNIT
-# The completed Status HTTPS cutover (tools/status/lib/https_cutover.py) leaves
-# this ExecStart-only override on the publisher. An ordinary update owns it only
-# when its bytes are exactly that renderer's output for the running executable.
+# The completed Status HTTPS cutover (tools/status/lib/https_cutover.py, retired
+# after 6b6b923b) left this ExecStart-only override on the publisher. An ordinary
+# update owns it only when its bytes are exactly that renderer's output for the
+# running executable.
 STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
 
