@@ -32,6 +32,7 @@ fixtures = [
 ]
 
 [dependencies]
+pir-publication = { path = "../../shared/pir-publication" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-observability = { path = "../../shared/pir-observability" }

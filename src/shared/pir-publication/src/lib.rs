@@ -14,6 +14,7 @@
 mod authority_check;
 mod authority_floor;
 mod object_cache;
+mod object_installation;
 mod object_reference;
 mod publication_authority;
 mod publication_envelope;
@@ -31,6 +32,7 @@ pub use authority_floor::{
     StaleSuccessionCheck, WrittenFloor,
 };
 pub use object_cache::{ObjectCache, PartialObject};
+pub use object_installation::{InstalledObject, ObjectInstallError, ObjectInstaller};
 pub use object_reference::{
     is_object_digest, object_digest, ObjectReference, ObjectReferenceError, OBJECTS_PATH,
 };

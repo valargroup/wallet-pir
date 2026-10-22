@@ -13,6 +13,7 @@
 //! under its final name, which fails rather than replaces an installed one,
 //! and are never written in place. The loader and the artifact resolver
 //! accept only the exact links written here.
+use pir_publication::{InstalledObject, ObjectInstallError, ObjectInstaller};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -80,40 +81,40 @@ fn replace_with_link(path: &Path, target: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-/// Installs the complete file `path` as `object`, unless one is installed.
-/// Returns whether it installed it.
-fn install(path: &Path, object: &Path) -> Result<bool, BoxError> {
-    std::fs::File::open(path)?.sync_all()?;
-    match std::fs::hard_link(path, object) {
-        Ok(()) => {
-            sync_directory(object.parent().ok_or("object has no parent")?)?;
-            Ok(true)
+fn installed(
+    result: Result<InstalledObject, ObjectInstallError>,
+) -> Result<InstalledObject, BoxError> {
+    result.map_err(|error| match error {
+        ObjectInstallError::Cancelled => {
+            Box::new(transparent_shared::publication::Stopped) as BoxError
         }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error.into()),
+        error => Box::new(error),
+    })
+}
+
+impl Adopted {
+    fn record(&mut self, object: &InstalledObject) {
+        self.bytes_hashed += object.bytes_hashed;
+        if object.installed {
+            self.installed += 1;
+        } else {
+            self.shared += 1;
+        }
     }
 }
 
-/// SHA-256 of `path`, asking `stop` before each bounded read.
-fn sha256_file(path: &Path, stop: &dyn Fn() -> bool) -> Result<(String, u64), BoxError> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut file = std::fs::File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    let mut total = 0u64;
-    loop {
-        if stop() {
-            return Err(Box::new(transparent_shared::publication::Stopped));
-        }
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        total += read as u64;
-        hash.update(&buffer[..read]);
+/// An existing object can be referenced without another installation. This
+/// checks only its storage entry, not its bytes: the candidate's subsequent
+/// ShardSet load must verify them or reuse its exact-file evidence before any
+/// preparation can succeed. In particular, this never changes inode metadata.
+fn can_reference(installer: &ObjectInstaller, digest: &str) -> Result<bool, BoxError> {
+    let object = installer.directory().join(digest);
+    match std::fs::symlink_metadata(&object) {
+        Ok(metadata) if metadata.is_file() => Ok(true),
+        Ok(_) => Err(format!("{} is not a regular stored object", object.display()).into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
     }
-    Ok((hex::encode(hash.finalize()), total))
 }
 
 /// Every table segment file of a revision directory, with its digest.
@@ -136,12 +137,13 @@ fn segments(dir: &Path) -> Result<Vec<(String, String)>, BoxError> {
 }
 
 /// Moves every table segment of the revisions in `output` into the object
-/// store and links it from there. A segment whose object is installed is
-/// linked without being read; any other is hashed against its manifest
-/// first, so the store never holds an object under another digest. Existing
-/// links must already be exact. Revision metadata stays local.
+/// store and links it from there. New objects pass the shared installer;
+/// already stored objects become references without another hard link or hash.
+/// The later publisher preparation must reuse or establish their verification
+/// evidence before succeeding. Existing links stay exact. Metadata stays local.
 pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
     let objects = store(output, OBJECT_STORE)?;
+    let installer = ObjectInstaller::open(objects)?;
     let mut adopted = Adopted::default();
     for entry in std::fs::read_dir(output)? {
         let entry = entry?;
@@ -170,21 +172,12 @@ pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted,
             if !meta.is_file() {
                 return Err(format!("{} is not a regular file", path.display()).into());
             }
-            let object = objects.join(&sha256);
-            if std::fs::symlink_metadata(&object).is_ok() {
-                real(&object, false)?;
+            if can_reference(&installer, &sha256)? {
                 adopted.shared += 1;
             } else {
-                let (found, bytes) = sha256_file(&path, stop)?;
-                if found != sha256 {
-                    return Err(format!("{} does not match its manifest", path.display()).into());
-                }
-                adopted.bytes_hashed += bytes;
-                if install(&path, &object)? {
-                    adopted.installed += 1;
-                } else {
-                    adopted.shared += 1;
-                }
+                let object =
+                    installed(installer.install_prepared_file(&path, Some(&sha256), stop))?;
+                adopted.record(&object);
             }
             replace_with_link(&path, &target)?;
         }
@@ -199,6 +192,7 @@ pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted,
 /// the inventory hashes or vouches for that object like any other.
 pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
     let objects = store(directory, OBJECT_STORE)?;
+    let installer = ObjectInstaller::open(objects)?;
     let mut adopted = Adopted::default();
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
@@ -227,16 +221,14 @@ pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopt
         if !kind.is_file() {
             return Err(format!("{} is not a regular file", path.display()).into());
         }
-        let (sha256, bytes) = sha256_file(&path, stop)?;
-        adopted.bytes_hashed += bytes;
-        let object = objects.join(&sha256);
-        if install(&path, &object)? {
-            adopted.installed += 1;
-        } else {
-            real(&object, false)?;
-            adopted.shared += 1;
-        }
-        replace_with_link(&path, &Path::new("..").join(OBJECT_STORE).join(&sha256))?;
+        let object = installed(installer.install_prepared_file(&path, None, stop))?;
+        adopted.record(&object);
+        replace_with_link(
+            &path,
+            &Path::new("..")
+                .join(OBJECT_STORE)
+                .join(&object.reference.sha256),
+        )?;
     }
     sync_directory(directory)?;
     Ok(adopted)
