@@ -67,7 +67,27 @@ impl Management {
         let Ok(response) = request.send().await else {
             return false;
         };
-        response.status().is_success()
+        if !response.status().is_success() {
+            return false;
+        }
+        // Enhance and Status health answer HTTP 200 while they cannot serve;
+        // only their `ready` field reports serving eligibility.
+        let Ok(body) = response.bytes().await else {
+            return false;
+        };
+        eligible(&body)
+    }
+}
+
+/// Whether a successful product health body reports serving eligibility. A
+/// body with a `ready` field must set it to `true`; other bodies rely on the
+/// HTTP status alone.
+fn eligible(body: &[u8]) -> bool {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(fields)) => fields
+            .get("ready")
+            .is_none_or(|ready| ready == &Value::Bool(true)),
+        _ => true,
     }
 }
 
@@ -394,6 +414,49 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
 #[cfg(test)]
 mod shutdown_tests {
     use super::*;
+
+    #[test]
+    fn health_that_reports_not_ready_is_not_eligible() {
+        assert!(!eligible(br#"{"role":"worker","ready":false}"#));
+        assert!(!eligible(br#"{"ready":null}"#));
+        assert!(eligible(br#"{"role":"router","ready":true}"#));
+        assert!(eligible(br#"{"status":"ok"}"#));
+        assert!(eligible(b"ok"));
+    }
+
+    /// Aggregate readiness reads a product's `ready` field, not its HTTP 200.
+    #[tokio::test]
+    async fn aggregate_readiness_requires_product_eligibility() {
+        let ready = Arc::new(Mutex::new(false));
+        let flag = ready.clone();
+        let product = Router::new().route(
+            "/internal/health",
+            get(move || {
+                let ready = *flag.lock().unwrap();
+                async move { Json(json!({"ready": ready})) }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, product).await });
+        let management = Management {
+            phases: Arc::new(Mutex::new(BTreeMap::from([("enhance", "running")]))),
+            probes: Arc::new(BTreeMap::from([(
+                "enhance",
+                vec![Probe {
+                    address,
+                    path: "/internal/health",
+                }],
+            )])),
+            client: reqwest::Client::new(),
+        };
+        let (aggregate, report) = management.snapshot().await;
+        assert!(!aggregate, "{report}");
+        assert_eq!(report["products"]["enhance"]["ready"], json!(false));
+        *ready.lock().unwrap() = true;
+        assert!(management.snapshot().await.0);
+        server.abort();
+    }
 
     #[tokio::test]
     async fn shutdown_releases_management_listener_before_returning() {
