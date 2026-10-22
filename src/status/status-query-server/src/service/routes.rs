@@ -182,7 +182,7 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
     }
     let controller = service.serving().await?;
     let http_state = HttpState {
-        controller: controller,
+        controller,
         origin: String::new(),
         http: service.serving_http.clone(),
         permits: service.permits.clone(),
@@ -233,7 +233,7 @@ async fn router_query(
         return Err(StatusCode::TOO_MANY_REQUESTS);
     };
     let http_state = HttpState {
-        controller: controller,
+        controller,
         origin: service.worker_origin.clone(),
         http: service.serving_http.clone(),
         permits: service.permits.clone(),
