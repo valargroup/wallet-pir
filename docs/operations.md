@@ -239,6 +239,11 @@ consumers and maintenance. Object namespaces include the algorithm. Source
 manifests, wallet commitments, chain identities and executable or operations
 package SHA-256 pins keep their own contracts.
 
+Enhance publisher authorization also uses tagged `manifest_checksum` and
+`authorized_manifest_checksum` values from this policy. These identify the
+distribution metadata only; the wallet-visible manifest and session identities
+retain their existing protocol encodings and commitments.
+
 `pir-publisher artifact-checksum prepare` verifies a predecessor inventory and
 its objects into a separate staging directory. Supply `--product`, the absolute
 publication `--root`, `--inventory`, its operational `--inventory-sha256` pin,

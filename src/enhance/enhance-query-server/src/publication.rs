@@ -67,14 +67,14 @@ impl Current {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityRequest {
-    pub manifest_sha256: String,
+    pub manifest_checksum: pir_artifact::Checksum,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityResponse {
     pub current: Current,
-    pub authorized_manifest_sha256: String,
+    pub authorized_manifest_checksum: Option<pir_artifact::Checksum>,
     /// Time of an actual successful node check, not an HTTP heartbeat.
     pub observed_unix_ms: u64,
 }
@@ -85,7 +85,10 @@ impl AuthorityResponse {
     pub fn fresh(&self, now_unix_ms: u64) -> Result<(), String> {
         self.current.validate()?;
         if !self.current.eligible
-            || !protocol::canonical_hash(&self.authorized_manifest_sha256)
+            || self
+                .authorized_manifest_checksum
+                .as_ref()
+                .is_none_or(|checksum| checksum.require_current().is_err())
             || self.observed_unix_ms == 0
             || now_unix_ms
                 .checked_sub(self.observed_unix_ms)
@@ -245,6 +248,12 @@ impl Inventory {
         }
         Ok(true)
     }
+}
+
+/// Checksum used only by publisher authorization. Wallet manifest identities
+/// keep their existing protocol hash and are never derived through this API.
+pub fn manifest_checksum(manifest: &Manifest) -> pir_artifact::Checksum {
+    pir_artifact::checksum(&serde_json::to_vec(manifest).expect("manifest serializes"))
 }
 
 /// Hash distribution metadata without changing protocol manifest commitments.
