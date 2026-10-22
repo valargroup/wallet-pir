@@ -789,16 +789,19 @@ mod tests {
     /// publication waits for the oldest to expire instead of dropping it early.
     #[test]
     fn a_full_retained_set_holds_back_the_next_publication() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication_at(1, 1), 0));
-        let held = publications.current().unwrap();
-        let until = Instant::now() + Duration::from_secs(5);
-        publications.0.write().unwrap().retained = vec![(held, until); MAX_RETAINED];
-        assert_eq!(publications.ready_at(), Some(until));
+        // Both inventories are prepared before the retention starts, and the retention
+        // outlasts any test run, so preparation time cannot expire it.
+        let first = publication_at(1, 1);
         let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
         let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[]).unwrap();
         let newer = crate::prepared::prepare_payments(snapshot).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(first, 0));
+        let held = publications.current().unwrap();
+        let until = Instant::now() + Duration::from_secs(24 * 60 * 60);
+        publications.0.write().unwrap().retained = vec![(held, until); MAX_RETAINED];
+        assert_eq!(publications.ready_at(), Some(until));
         assert!(!publications.publish(newer, 0));
         publications.0.write().unwrap().retained[0].1 = Instant::now();
         assert!(publications.ready_at().is_none());
