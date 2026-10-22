@@ -3270,7 +3270,6 @@ dependencies = [
  "ipir-sp",
  "pir-control",
  "pir-pipeline",
- "pir-query-server",
  "pir-service-discovery",
  "reqwest",
  "serde",
