@@ -37,7 +37,7 @@ use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::revision::Refused;
 use receiver_directory::Hash;
 use receiver_directory::{
-    shards::{ShardFilter, MAX_FILTER_BYTES},
+    shards::{Coverage, ShardFilter, MAX_FILTER_BYTES},
     snapshot::{Manifest, Snapshot, ROW_BYTES},
     witness,
 };
@@ -433,7 +433,18 @@ pub fn load(
                 let path = file(&name);
                 let bytes = read_bounded(&path, MAX_FILTER_BYTES as u64)
                     .map_err(|e| invalid(format!("filter: {e}")))?;
-                let source = staged_filter(path, bytes.into(), digest)
+                let m = &segments
+                    .first()
+                    .and_then(|s| s.payments.payment_manifest())
+                    .ok_or_else(|| invalid("a sealed shard without segments".into()))?
+                    .directory;
+                let coverage = Coverage {
+                    start_height: m.start_height,
+                    end_height: m.end_height,
+                    end_hash: m.end_hash,
+                };
+                let shard = (layout.genesis, layout.history_revision, coverage);
+                let source = staged_filter(path, bytes.into(), digest, shard)
                     .map_err(|e| invalid(format!("filter {name}: {e}")))?;
                 Some(Arc::new(source))
             }
@@ -468,17 +479,23 @@ pub fn load(
 }
 
 /// Verifies `bytes`, read from the staged filter file `path`, as the filter `digest`
-/// names, and returns a source that serves it from that file within the table budget.
-/// The source keeps the path and length only, never `bytes`.
+/// names for `shard`, its network, correction revision and coverage, as a wallet checks
+/// it, and returns a source that serves it from that file within the table budget. The
+/// source keeps the path and length only, never `bytes`.
 fn staged_filter(
     path: PathBuf,
     bytes: Arc<[u8]>,
     digest: &Hash,
+    shard: (Hash, u64, Coverage),
 ) -> std::result::Result<FilterSource, String> {
     let filter = ShardFilter::decode(&bytes).map_err(|e| e.to_string())?;
     if filter.digest() != *digest {
         return Err("it does not hold its digest".into());
     }
+    let (genesis, revision, coverage) = shard;
+    filter
+        .check(&genesis, revision, &coverage)
+        .map_err(|e| format!("it is for another shard, network or revision: {e}"))?;
     let len = bytes.len();
     Ok(FilterSource::stored(
         filter.digest(),
@@ -1091,14 +1108,33 @@ mod tests {
         std::fs::write(&path, filter.bytes()).unwrap();
         let bytes: Arc<[u8]> = filter.bytes().into();
         let verified = Arc::downgrade(&bytes);
-        let source = staged_filter(path, bytes, &filter.digest()).unwrap();
+        let shard = ([1; 32], 0, coverage);
+        let source = staged_filter(path, bytes, &filter.digest(), shard).unwrap();
         assert!(verified.upgrade().is_none());
         let tables = receiver_pir_server::tables::Tables::new(1 << 30);
         let served = tables.filter(&source).unwrap();
         assert_eq!(served.filter().unwrap(), filter.bytes());
-        assert!(
-            staged_filter(dir.path().join("filter"), [0u8; 4].into(), &filter.digest()).is_err()
-        );
+        let staged = |bytes: &[u8], shard| {
+            staged_filter(
+                dir.path().join("filter"),
+                bytes.into(),
+                &filter.digest(),
+                shard,
+            )
+        };
+        assert!(staged(&[0u8; 4], shard).is_err());
+        // A valid filter for another shard, network or revision is refused too.
+        let other = Coverage {
+            end_hash: [4; 32],
+            ..coverage
+        };
+        for shard in [
+            ([1; 32], 0, other),
+            ([2; 32], 0, coverage),
+            ([1; 32], 1, coverage),
+        ] {
+            assert!(staged(filter.bytes(), shard).is_err(), "{shard:?}");
+        }
     }
 
     /// A correction's revision outlives a restart: once revision 1 was accepted, a fresh
