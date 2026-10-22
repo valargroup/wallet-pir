@@ -21,6 +21,7 @@ class Fleet(FakeFleet):
         self.unknown = False
         self.events = []
         self.interrupt_stop = False
+        self.interrupt_reverse = False
 
     def systemctl(self, host, *arguments):
         super().systemctl(host, *arguments)
@@ -46,6 +47,9 @@ class Fleet(FakeFleet):
                 value = json.loads(self.read(host, argument('--input')))
                 if '--reverse' in argv and self.unknown:
                     return 1, 'latest publication has no verified reverse translation'
+                if '--reverse' in argv and value['algorithm'] != 'blake3':
+                    # Like the real converter: reverse input needs tagged checksums.
+                    return 1, 'reverse input is not a current-format record'
                 value['algorithm'] = 'sha256' if '--reverse' in argv else 'blake3'
                 self.put(host, argument('--output'), json.dumps(value))
                 return 0, '{}'
@@ -54,6 +58,9 @@ class Fleet(FakeFleet):
                 if self.sha256(host, target) != argument('--destination-sha256'):
                     return 1, 'record changed'
                 self.put(host, target, self.host(host).files[argument('--input')])
+                if self.interrupt_reverse and json.loads(self.read(host, target))['algorithm'] == 'sha256':
+                    self.interrupt_reverse = False
+                    raise KeyboardInterrupt('lost rollback owner after reverse record installation')
                 return 0, '{}'
         if argv[0] == '/bin/exact' and self.fail_exact:
             self.fail_exact = False
@@ -142,6 +149,39 @@ class ArtifactCutoverTests(unittest.TestCase):
         for name in A.SERVICES:
             self.assertEqual(self.ex.probe_unit('coordinator', name + '.service')['exe_sha256'],
                              sha256(('old-' + name).encode()))
+
+    def test_interrupted_reverse_installation_resumes_and_keeps_newer_withdrawal(self):
+        for window in ('before-install', 'after-install'):
+            with self.subTest(window=window):
+                self.setUp()
+                result = self.target.deploy(self.target.plan()['plan_sha256'])
+                advanced = {'algorithm':'blake3', 'revision':108, 'eligible':False, 'revoked':['new withdrawal']}
+                self.ex.put('coordinator', '/state/current.json', json.dumps(advanced))
+                if window == 'after-install':
+                    self.ex.interrupt_reverse = True
+                else:
+                    def lost(entry, evidence):
+                        raise KeyboardInterrupt('lost rollback owner before reverse record installation')
+                    self.target.install_record = lost
+                with self.assertRaises(KeyboardInterrupt):
+                    self.target.rollback(result['id'])
+                for name in A.SERVICES:
+                    self.assertFalse(self.ex.probe_unit('coordinator', name + '.service')['main_pid'])
+                self.assertEqual(self.make_target().rollback(result['id'])['status'], 'rolled-back')
+                current = json.loads(self.ex.read('coordinator', '/state/current.json'))
+                self.assertEqual(current, {**advanced, 'algorithm':'sha256'})
+                for name in A.SERVICES:
+                    self.assertEqual(self.ex.probe_unit('coordinator', name + '.service')['exe_sha256'],
+                                     sha256(('old-' + name).encode()))
+
+    def test_unjournaled_predecessor_format_record_is_not_accepted_as_reversed(self):
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        foreign = {'algorithm':'sha256', 'revision':108, 'eligible':True, 'revoked':[]}
+        self.ex.put('coordinator', '/state/current.json', json.dumps(foreign))
+        before = len(self.ex.log)
+        with self.assertRaisesRegex(DeployError, 'current-format'):
+            self.target.rollback(result['id'])
+        self.assertFalse(any(op == 'systemctl' for _, op, _ in self.ex.log[before:]))
 
     def test_unknown_reverse_translation_refuses_before_stopping_candidate(self):
         result = self.target.deploy(self.target.plan()['plan_sha256'])
