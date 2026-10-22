@@ -48,8 +48,13 @@ async fn retained_detail_artifacts_are_checked_and_stay_withdrawn_after_reopenin
     next.revision = 1;
     next.supersedes = old.digest.clone();
     let new = synth::write_shard(root.path(), &next, &records).unwrap();
-    let (dir, _) =
-        synth::write_candidate(root.path(), &params(1), &[new.clone()], "retained").unwrap();
+    let (dir, _) = synth::write_candidate(
+        root.path(),
+        &params(1),
+        std::slice::from_ref(&new),
+        "retained",
+    )
+    .unwrap();
     synth::link_revision(&old.dir, &dir.join(&old.digest)).unwrap();
     let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
     let retained = set.held(&old.digest).unwrap();
