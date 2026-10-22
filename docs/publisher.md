@@ -173,13 +173,20 @@ uses publisher heartbeats. The twenty-second wallet observation-age limit is
 unchanged. See [Status distribution](status/status_distributed.md).
 This describes source capability, not a production cutover record.
 
-## Autonomous Transparent HTTP prototype
+## Transparent HTTPS publication
 
-History and transaction details can use `http_only: true` in their existing
-settings. History also requires `ship_runtimes: true` and
-`distribute_prepared: true`; transaction details requires `ship_runtimes: true`.
-In this mode the publisher does not contact or activate query servers, so the
-history fleet command/configuration and display workers file can be omitted.
+History and transaction details always publish full prepared publications over
+HTTPS. Runtime preparation and the distribution API are unconditional, and the
+publisher never contacts, prepares or activates query servers. History has no
+fleet command, fleet configuration or shadow mode; transaction details has no
+workers file and publishes only from its live node (`rpc_cookie` is required).
+The retired `http_only`, `distribute_prepared`, `ship_runtimes`, `shadow`,
+`fleet_command` and `fleet_config` History settings and the `http_only`,
+`ship_runtimes`, `workers`, `mode`, `blocks_per_step`, `step_interval_ms`,
+`replay_end` and `exit_when_idle` transaction-detail settings are rejected at
+startup. Remove them from installed configurations during a separately approved
+publisher update; the deployment tool accepts that removal only when the
+installed values already selected HTTPS-only publication.
 The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.
@@ -344,70 +351,13 @@ schemas remain accepted for status, restart and recovery of retained journals;
 they cannot create new ownership migrations. Keep their original request,
 journals and binaries until their rollback guarantees are retired.
 
-To switch Transparent distribution, use `publisher-https-cutover/1` with the same
-release, serving and exact-check fields. Only `http_only` and `ship_runtimes` may
-change to true for both Transparent products, plus `distribute_prepared` for
-history. All other installed product settings must match. The additional `https`
-object contains the existing publisher TLS `origin`, a `publisher_budget_bytes`
-positive allowance for additional staging writes, and three ordered `consumers`: history
-archive, history recent, and combined transaction details. Choose the additional
-allowance using the remaining work after completed runtime files are reused;
-the tool reserves 20 percent free disk and checks native cache capacity before
-switching the live fleet. Each consumer names
-its existing `host` and `unit`, a root-owned `config_path`, its root query-server
-`configuration`, and a disk `budget_bytes`. Consumer configurations use the
-publisher's main-network identity, their existing wallet listeners and separate
-new state directories under `/srv`. The archive holds all shards; recent uses
-the archive's existing TLS origin. The archive's `cache_bytes` memory budget is
-explicit so complete holdings can be checked before cutover. Fleet-controlled serving authority cannot be
-reused. After stopping each predecessor, the tool hashes its immutable tables
-and runtime files into the new private object cache by hard link. The provider
-still checks every reused object against fresh HTTPS authority; no active-state
-or withdrawal record is imported. Each consumer's `bootstrap_max_bytes` must
-equal its explicit incremental disk budget. The cutover checks the memory and
-disk reserves again after synchronization.
+The completed `publisher-https-cutover/1` and `enhance-https-cutover/1`
+migrations cannot start new transactions. Their retained requests and journals
+still load for `publisher-cutover-status`, `-restart`, `-verify`, `-continue`,
+`-rollback`, `-reconcile` and Enhance repair, which restore the saved edges,
+consumers and publisher as recorded. Ordinary updates use `publisher-cutover/3`.
 
-Pin `https.history_edge` with its `host`, existing archive TLS `origin` and
-installed Caddyfile `before_sha256`. The cutover replaces the frozen shard-number
-routes: the archive TLS origin goes to the full-holdings consumer and the private
-history edge goes to recent. The publisher edge exposes only the two distribution
-prefixes. No DNS change is needed. Both edges and the worker units, including
-managed executable overlays, join the publisher's recovery journal. Resource
-limits and credential references remain intact. Archive readiness precedes the
-edge switch and recent startup; all product probes precede commit. Rollback
-restores the previous edges, executable overlays, workers and publisher together,
-while retaining the separate HTTPS state and its observed withdrawals.
-A stalled candidate receives sixty seconds for cooperative shutdown during
-rollback. The locked controller may then terminate that same executable and
-service invocation; changed ownership is refused. It verifies that the process
-has stopped and the writer locks are free before restoring the previous owner.
-Ordinary predecessor stops keep their existing shutdown behavior.
-
-Before stopping the publisher, the HTTPS path checks artifact identities,
-configuration, resource reserves and publication map metadata. It pins both
-active public snapshots with hard links and records their source directories,
-map digests and executable digests. These immutable files do not open another
-writer on the live journals.
-
-Staging reuses completed runtime files from the preceding transaction by hard
-link, including across builds. Native format, parameter, source and checksum
-checks still validate reused files during actual startup. The additional staging
-allowance covers new writes rather than files already present and preserves the
-twenty percent disk reserve. Staging does not load another full archive or start
-temporary query servers.
-
-The actual publisher and consumers load their state once during startup. The
-cutover waits for their readiness and checks encrypted answers before committing
-the cutover. A failed startup or answer check restores the saved fleet. Recovery
-also cleans up transaction-owned temporary validators retained by older attempts.
-
-After the old publisher stops and releases its writer locks, the cutover links
-the reusable cache files into its current publication. It then starts the new
-publisher and waits for canonical HTTPS metadata before starting consumers.
-Consumer readiness requires warmed HTTPS state. Wallet acceptance still uses
-the unchanged wallet at its existing TLS origin.
-
-Neither path deploys GPU artifacts or replaces production-snapshot, native-wallet
+Publisher updates do not deploy GPU artifacts or replaces production-snapshot, native-wallet
 and sustained-service qualification.
 
 The APM sidecar must match the wallet ownership change: its init and query
@@ -448,9 +398,7 @@ Maintenance uses root subcommands:
 | `transparent-publisher --check-shard-dir` | `pir-publisher verify-filters --shard-dir DIR` |
 
 The standalone history controller and display `run` command are removed. Their
-services run through the root configuration. Display settings retain `mode`
-(`live`, `replay`, `replay-then-live`), replay timing and `exit_when_idle` for
-bounded rehearsals. HTTP-only distribution requires live canonicality checks.
+services run through the root configuration and publish live over HTTPS.
 No executable aliases or data conversion are needed. Install the matching binary,
 configuration and unit together through the supported deployment tooling.
 

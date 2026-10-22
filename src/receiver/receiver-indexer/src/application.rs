@@ -1587,6 +1587,21 @@ mod tests {
             let at = r.ordinal as usize * receiver_directory::witness::PAYLOAD_BYTES;
             (r.payment, self.payloads[at..at + 512].try_into().unwrap())
         }
+
+        /// Whether this segment wrote a payment to `receiver`.
+        fn contains(&self, receiver: [u8; 43]) -> bool {
+            self.rows
+                .chunks(receiver_directory::snapshot::ROW_BYTES)
+                .any(|row| {
+                    let slots = &row
+                        [..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES];
+                    slots.chunks(receiver_directory::RECORD_BYTES).any(|slot| {
+                        zakura_receiver_crypto::Record::decode(slot)
+                            .unwrap()
+                            .is_some_and(|record| *record.receiver.as_bytes() == receiver)
+                    })
+                })
+        }
     }
 
     /// Runs a one-shot pass with `state` into an emptied publications directory, as an
@@ -2431,8 +2446,50 @@ mod tests {
         assert_eq!(payload, fresh(&paused.store(), &[omitted.position])[0]);
     }
 
+    /// A reorg across a seal drops the sealed shard, and the replacement chain seals
+    /// again with its own payment and a different end. Written passes prepare no PIR
+    /// tables. `a_reorg_across_a_seal_reseals_the_replacement` also revokes the served
+    /// session under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_written_reorg_across_a_seal_reseals_the_replacement() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[receiver()], 0, 0);
+        paused.extend(&[], 1, 0);
+        let (old, old_shards) = one_shot(&paused, &mut State::default()).await;
+        assert!(old.shards[0].sealed);
+        let old_end = old_shards[0][0].payments.end_hash;
+        let activation = paused
+            .store()
+            .checkpoint(crate::blocks::ironwood_activation())
+            .unwrap();
+        paused
+            .store()
+            .rewind(activation.height, activation.hash)
+            .unwrap();
+        assert!(paused.store().sealed_shards().unwrap().is_empty());
+        let replaced = seeded_receiver(1);
+        paused.extend(&[replaced], 0, 7);
+        paused.extend(&[], 1, 7);
+        let (layout, shards) = one_shot(&paused, &mut State::default()).await;
+        assert!(layout.shards[0].sealed);
+        assert_ne!(shards[0][0].payments.end_hash, old_end);
+        assert!(!shards
+            .iter()
+            .flatten()
+            .any(|segment| segment.contains(receiver())));
+        assert!(shards
+            .iter()
+            .flatten()
+            .any(|segment| segment.contains(replaced)));
+        shards[0][0].payment(replaced);
+    }
+
     /// A reorg across a seal removes the sealed shard and revokes its sessions, and the
-    /// replacement chain is sealed afresh.
+    /// replacement chain is sealed afresh. Fast already reseals that replacement through
+    /// a written pass.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_reorg_across_a_seal_reseals_the_replacement() {
         use super::common::{receiver, seeded_receiver};

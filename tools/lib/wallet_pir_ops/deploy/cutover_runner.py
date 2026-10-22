@@ -1,15 +1,13 @@
-"""Execute one reviewed cutover with a separate, boot-persistent rollback owner.
+"""Finish one already launched cutover with a separate, boot-persistent rollback owner.
 
-The public deploy command must run on the existing coordinator from a verified
-operations release. It stages immutable inputs and two transaction-owned units,
-then returns their identities. The forward unit holds the normal production
-lock. The independent watchdog fences and stops only that unit before invoking
-the same CLI rollback path; it never steals another transaction's lock.
+New supervised cutovers are retired; this keeps saved transactions recoverable.
+The forward unit holds the normal production lock. The independent watchdog
+fences and stops only that unit before invoking the same CLI rollback path; it
+never steals another transaction's lock.
 """
 import json
 import os
 from pathlib import Path
-import shutil
 import stat
 import subprocess
 import sys
@@ -17,11 +15,9 @@ import time
 
 from .. import bundle, durable
 from ..paths import ROOT
-from .cutover_guard import Decision, services, unit_name
-from .engine import DeployError, file_sha256
+from .cutover_guard import Decision, unit_name
 from .publisher import Cutover, ENHANCE_HTTPS_SCHEMA, ROOT_DIR, load_request, require
-from .remote import SSHExecutor, production_lock
-from .transaction import new_id
+from .remote import SSHExecutor
 
 SYSTEM = Path('/etc/systemd/system')
 
@@ -55,77 +51,6 @@ def require_coordinator(request):
     require((ROOT / 'operations.json').is_file(),
             'supervised deployment requires an immutable verified operations release')
     bundle.check_installed(mutation=True, revision=request['release']['git_sha'])
-
-
-def copy_executable(source, target, expected):
-    require(source is not None and file_sha256(source) == expected['binary_sha256']
-            and Path(source).stat().st_size == expected['binary_bytes'],
-            'supervised executable differs from the reviewed release')
-    with target.open('xb') as handle, Path(source).open('rb') as original:
-        shutil.copyfileobj(original, handle)
-        os.fchmod(handle.fileno(), 0o755)
-        handle.flush()
-        os.fsync(handle.fileno())
-    require(file_sha256(target) == expected['binary_sha256'], 'supervised executable copy differs')
-
-
-def launch(target, args, publisher_binary):
-    request = target.request
-    require_coordinator(request)
-    with production_lock(target.inventory, target.ex) as target.lock:
-        pointer = Path(ROOT_DIR) / 'supervised-latest.json'
-        if pointer.is_file():
-            previous = json.loads(pointer.read_text())
-            unit_name(previous['id'])
-            decision = json.loads((Path(ROOT_DIR) / 'transactions' / previous['id'] / 'decision.json').read_text())
-            require(decision['phase'] in ('accepted', 'restored'), 'another supervised cutover is unfinished')
-        plan = target.capture()
-        require(durable.digest(plan) == args.expect_plan_sha256, 'publisher plan is stale; review a fresh plan')
-        identifier = new_id('publisher', request['release']['binary_sha256'])
-        root = Path(ROOT_DIR) / 'transactions' / identifier
-        root.mkdir(mode=0o700, parents=True, exist_ok=False)
-        decision = Decision(root, identifier)
-        decision.create(args.request_sha256)
-        raw = Path(args.request).read_text()
-        write_text(root / 'request.json', raw, 0o600)
-        metadata = {'id': identifier, 'ops_root': str(ROOT.resolve()),
-            'request_sha256': args.request_sha256, 'plan_sha256': args.expect_plan_sha256,
-            'state_dir': str(Path(args.state_dir).resolve())}
-        for name, source, release in [('publisher', publisher_binary, request['release']),
-                ('cpu', args.serving_binary, request['serving']),
-                ('cuda', args.cuda_binary, request['enhance_https']['cuda_release'])]:
-            if release is not None:
-                path = root / ('executable-' + name)
-                copy_executable(source, path, release)
-                metadata[name] = str(path)
-        script = ROOT.resolve() / 'tools/scripts/wallet-pir-deploy.py'
-        prefix = [sys.executable, str(script), '--state-dir', metadata['state_dir']]
-        units = services(identifier,
-            [*prefix, 'publisher-cutover-run', '--transaction', identifier],
-            [*prefix, 'publisher-cutover-watchdog', '--transaction', identifier])
-        metadata['units'] = units
-        durable.atomic_json(root / 'runner.json', metadata, mode=0o600)
-        durable.atomic_json(pointer, {'id': identifier, 'request_sha256': args.request_sha256}, mode=0o600)
-        for name, text in units.items():
-            require(not (SYSTEM / name).exists(), 'supervised unit already exists')
-            write_text(SYSTEM / name, text, 0o644)
-        systemctl('daemon-reload')
-        # Enable the independent watchdog before the forward owner can stop
-        # anything. It resumes on boot using the same durable deadline.
-        name = unit_name(identifier)
-        systemctl('enable', '--now', name + '-rollback.service')
-        require(systemctl('is-active', name + '-rollback.service').strip() == 'active',
-                'independent rollback watchdog did not start')
-    # The child takes the same production lock itself. Release ours before it
-    # starts; its fresh capture refuses any intervening change.
-    try:
-        systemctl('start', '--no-block', name + '.service')
-    except Exception:
-        decision.cancel_before_start()
-        raise
-    return {'transaction': identifier, 'phase': 'supervised',
-            'forward_unit': name + '.service', 'watchdog_unit': name + '-rollback.service',
-            'decision': str(decision.path)}
 
 
 class Runner:

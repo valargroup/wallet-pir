@@ -5,7 +5,6 @@ separate from the fleet's state; rollback keeps it, including observed withdrawa
 Wallet origins, listener addresses, unit credentials and resource limits stay put.
 """
 import base64
-import copy
 import json
 from pathlib import PurePosixPath
 import shlex
@@ -124,18 +123,6 @@ def validate(request, inventory):
         body = consumer['configuration'][section]['settings']
         require(body.get('listen') == listeners[(consumer['host'], consumer['unit'])],
                 'HTTPS cutover must preserve every existing wallet listener')
-
-
-def validate_settings(current, desired):
-    """Permit only the requested distribution change in the installed publisher."""
-    expected = copy.deepcopy(current)
-    for product in ('transparent_history', 'transaction_details'):
-        body = expected[product]['settings']
-        require(body.get('http_only') is False, 'HTTPS cutover requires the fleet-controlled publisher')
-        body.update(http_only=True, ship_runtimes=True)
-        if product == 'transparent_history':
-            body['distribute_prepared'] = True
-    require(desired == expected, 'HTTPS cutover may change only Transparent distribution flags')
 
 
 class HttpsServing(Serving):

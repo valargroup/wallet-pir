@@ -40,6 +40,9 @@ def publisher_runs_alone(name, kinds):
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
 # packages define the fast closure. Their feature set does not follow the diff.
+# Receiver and Status libraries stay named here: adding them only on a diff
+# that touches them changes feature unification and rebuilds wallet-libraries
+# crates, which leaves the fast job on the plain three-minute budget.
 # Only affected packages are executed.
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
@@ -51,7 +54,10 @@ FAST_FEATURE_ROOTS = frozenset({
     'pir-monitor',
     'pir-publisher',
     'pir-query-server',
+    'receiver-indexer',
+    'receiver-pir-server',
     'status-publisher',
+    'status-query-server',
     'transparent-publisher',
     'transparent-query-server',
     'transparent-shared',
@@ -231,9 +237,13 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    if program['integration'] or program['exclusive'] or len(names) <= 48:
+    # Status pays for one process-local generation per group. Two groups let
+    # those prepares overlap. Every other suite keeps about forty-eight cases
+    # so immutable fixtures stay together.
+    group = 31 if program.get('package') == 'status-query-server' else 48
+    if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
-    lanes = min(3, (len(names) + 47) // 48)
+    lanes = min(3, (len(names) + group - 1) // group)
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]

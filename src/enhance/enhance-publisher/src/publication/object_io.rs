@@ -1,6 +1,7 @@
 //! Install immutable objects and durably replace bounded publication metadata.
 use crate::{artifact, prepared_packing};
 use enhance_shared::publication::{Object, METADATA_LIMIT};
+use pir_publication::ObjectInstaller;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
@@ -44,23 +45,48 @@ pub(super) fn persist_metadata(
         .map_err(|e| e.to_string())
 }
 
-pub(super) fn install_object_bytes(root: &Path, bytes: &[u8]) -> Result<Object, String> {
+/// Referencing an existing object does not alter its inode or hash it here.
+/// The complete inventory verification must establish its contents before
+/// preparation succeeds; this check establishes only its type and length.
+fn object_exists(objects: &ObjectInstaller, object: &Object) -> Result<bool, String> {
+    object.validate()?;
+    let path = objects.directory().join(&object.sha256);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() == object.bytes => Ok(true),
+        Ok(_) => Err(format!(
+            "{} is not a regular object of the expected length",
+            path.display()
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn release_object_cache(objects: &ObjectInstaller, object: &Object) -> Result<(), String> {
+    let file = File::open(objects.directory().join(&object.sha256)).map_err(|e| e.to_string())?;
+    artifact::release_file_cache(&file);
+    Ok(())
+}
+
+pub(super) fn install_object_bytes(
+    objects: &ObjectInstaller,
+    bytes: &[u8],
+) -> Result<Object, String> {
     let object = Object {
         sha256: hex::encode(Sha256::digest(bytes)),
         bytes: bytes.len() as u64,
     };
-    // An existing object is hashed with the complete inventory.
-    if !object.path(root)?.exists() {
-        artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
-            f.write_all(bytes)
-        })
-        .map_err(|e| e.to_string())?;
+    if !object_exists(objects, &object)? {
+        objects
+            .install_stream(bytes, &|| false)
+            .map_err(|e| e.to_string())?;
+        release_object_cache(objects, &object)?;
     }
     Ok(object)
 }
 
 pub(super) fn install_packing_object(
-    root: &Path,
+    objects: &ObjectInstaller,
     source: &Path,
     prepared: &prepared_packing::Artifact,
 ) -> Result<(), String> {
@@ -68,14 +94,14 @@ pub(super) fn install_packing_object(
         sha256: prepared.sha256.clone(),
         bytes: prepared.bytes,
     };
-    // The copy is hashed with the complete inventory.
-    if object.path(root)?.exists() {
+    if object_exists(objects, &object)? {
         return Ok(());
     }
-    artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
-        io::copy(&mut File::open(source)?, f)?;
-        Ok(())
-    })
-    .map(drop)
-    .map_err(|e| e.to_string())
+    let installed = objects
+        .install_prepared_file(source, Some(&object.sha256), &|| false)
+        .map_err(|e| e.to_string())?;
+    if installed.reference.bytes != object.bytes {
+        return Err("prepared packing object length differs from its descriptor".into());
+    }
+    release_object_cache(objects, &object)
 }

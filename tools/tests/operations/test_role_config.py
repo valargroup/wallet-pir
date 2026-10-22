@@ -14,8 +14,7 @@ class PublisherRoleTests(unittest.TestCase):
     def config(self, follow=False):
         return dict(data_dir='/srv/history/journal', publication_root='/srv/publications',
                     initial_publication='/srv/publications/initial', follow_journal=follow,
-                    fleet_command='/opt/operations/ops/transparent/scripts/transparent-live-fleet.py',
-                    fleet_config='/etc/history/fleet.json', listen='127.0.0.1:8096')
+                    listen='127.0.0.1:8096')
 
     def role(self, config, **kwargs):
         return publisher(config, config_path='/etc/history/controller.json',

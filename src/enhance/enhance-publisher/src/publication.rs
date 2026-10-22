@@ -15,6 +15,7 @@ mod verification;
 
 use object_io::persist_metadata;
 pub use object_io::read_metadata;
+use pir_publication::ObjectInstaller;
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -53,7 +54,8 @@ pub fn prepare_publication(
     owner
         .try_lock()
         .map_err(|_| "publication preparation already owned")?;
-    let domains = preparation::prepare_domains(root, &coverage, epochs, &mut read)?;
+    let objects = ObjectInstaller::open(root.join("objects")).map_err(|e| e.to_string())?;
+    let domains = preparation::prepare_domains(root, &objects, &coverage, epochs, &mut read)?;
     let inventory = Inventory {
         version: VERSION,
         network: "main".into(),

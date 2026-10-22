@@ -681,10 +681,14 @@ mod tests {
     /// An empty prepared publication whose salt starts with `salt`, ending at a block
     /// hash of `hash` bytes.
     fn publication_at(salt: u8, hash: u8) -> Publication {
-        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
-        manifest.salt[0] = salt;
-        manifest.end_hash = [hash; 32];
-        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
+        let snapshot = if salt == hash {
+            crate::empty_snapshot(salt)
+        } else {
+            let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+            manifest.salt[0] = salt;
+            manifest.end_hash = [hash; 32];
+            receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap()
+        };
         crate::prepared::prepare_payments(snapshot).unwrap()
     }
 

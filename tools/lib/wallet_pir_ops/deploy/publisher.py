@@ -47,6 +47,16 @@ UNIT_PATH = '/etc/systemd/system/' + UNIT
 # running executable.
 STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
+# Publisher settings removed with fleet-controlled Transparent publication, and
+# the value each had to hold for its product to already publish over HTTPS only.
+# None accepts any value of a setting that HTTPS-only publication ignored.
+RETIRED_SETTINGS = {
+    'transparent_history': {'http_only': True, 'distribute_prepared': True, 'ship_runtimes': True,
+                            'shadow': False, 'fleet_command': None, 'fleet_config': None},
+    'transaction_details': {'http_only': True, 'ship_runtimes': True, 'workers': None, 'mode': 'live',
+                            'blocks_per_step': None, 'step_interval_ms': None, 'replay_end': None,
+                            'exit_when_idle': False},
+}
 
 
 def require(condition, message):
@@ -82,8 +92,8 @@ def load_request(path, expected, *, recovery=False):
     if 'resume_load' in request:
         require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and type(request['resume_load']) is bool,
                 'resume_load must be a boolean for a publisher update or Enhance HTTPS cutover')
-    require(recovery or request['schema'] in SERVING_SCHEMAS,
-            'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
+    require(recovery or request['schema'] == SERVING_SCHEMA,
+            'completed ownership and HTTPS migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
     require(isinstance(request['machine_id'], str) and re.fullmatch('[a-f0-9]{32}', request['machine_id']), 'invalid machine id')
     version = request['release']
@@ -104,13 +114,10 @@ def load_request(path, expected, *, recovery=False):
         if name not in PRODUCTS:
             continue
         settings = product['settings']
-        require(type(settings.get('http_only')) is bool, 'Transparent publishing mode must be explicit')
-        if settings['http_only']:
-            require(settings.get('ship_runtimes') is True
-                    and (name != 'transparent_history' or settings.get('distribute_prepared') is True),
-                    'HTTP publishing requires complete prepared distribution')
-        if request['schema'] == HTTPS_SCHEMA:
-            require(settings['http_only'] is True, 'HTTPS cutover must enable autonomous publishing')
+        # Saved transactions keep the settings their publisher ran with.
+        require(recovery or not set(settings) & set(RETIRED_SETTINGS[name]),
+                'Transparent publishing is HTTPS-only; remove retired settings: '
+                + ', '.join(sorted(set(settings) & set(RETIRED_SETTINGS[name]))))
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
@@ -143,6 +150,23 @@ def load_request(path, expected, *, recovery=False):
         from .enhance_https import validate
         validate(request, inventory)
     return request, inventory
+
+
+def without_retired_settings(installed):
+    """The installed configuration with retired settings removed.
+
+    Removal is accepted only where the installed value already selected
+    HTTPS-only publication, so an update never changes what is published.
+    """
+    current = json.loads(json.dumps(installed))
+    for name, retired in RETIRED_SETTINGS.items():
+        settings = current.get(name, {}).get('settings', {})
+        for key, required in retired.items():
+            if key in settings:
+                value = settings.pop(key)
+                require(required is None or value == required,
+                        f'{name}.{key}={value!r} is not HTTPS-only publication; reconcile before updating')
+    return current
 
 
 def exec_override(command):
@@ -245,27 +269,11 @@ class Cutover:
         return value
 
     def capture(self):
-        require(self.request['schema'] in SERVING_SCHEMAS,
-                'completed ownership migrations are recovery-only')
+        require(self.request['schema'] == SERVING_SCHEMA,
+                'completed ownership and HTTPS migrations are recovery-only')
         previous = self.latest()
         require(previous is None or previous['phase'] in FINAL, 'unfinished publisher cutover; reconcile or rollback first')
-        extra = self.request['release']['binary_bytes']
-        allocations = None
-        if self.request['schema'] == HTTPS_SCHEMA:
-            extra += self.request['https']['publisher_budget_bytes']
-        if self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
-            extra += self.request['serving']['binary_bytes']
-            extra += (self.request['enhance_https']['cuda_release'] or {}).get('binary_bytes', 0)
-            allocations = {ROOT_DIR + '/.staging-budget': extra,
-                           self.request['configuration']['enhance']['settings']['data_dir'] + '/.staging-budget':
-                           self.request['enhance_https']['publisher_budget_bytes']}
-            # Charge each write to its actual filesystem; unchanged product
-            # volumes retain their free-space floor without an Enhance charge.
-            for target in self.serving.deployer.targets:
-                if target.host == self.host:
-                    path = target.settings['data_dir'] + '/.staging-budget'
-                    allocations[path] = allocations.get(path, 0) + target.settings['synchronization']['cache_limit_bytes']
-        resource = self.resources(extra, allocations)
+        resource = self.resources(self.request['release']['binary_bytes'], None)
         states = {name: stable_unit(self.ex.probe_unit(self.host, name)) for name in (*self.old, UNIT, LOAD)}
         for state in states.values():
             require(not state['need_daemon_reload'], 'unit changed without daemon-reload')
@@ -273,21 +281,11 @@ class Cutover:
         require(unified['active_state'] == 'active' and unified['main_pid'], 'unified publisher must already be running')
         require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
                 'standalone and unified publishers both own state')
-        override = None
-        if self.request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA):
-            override = status_https_override(unified, unified['exe_sha256'])
-        else:
-            require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
+        override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
         installed = json.loads(self.read(CONFIG))
-        if self.request['schema'] == HTTPS_SCHEMA:
-            from .publisher_https import validate_settings
-            validate_settings(installed, config)
-        elif self.request['schema'] == ENHANCE_HTTPS_SCHEMA:
-            from .enhance_https import validate_settings
-            validate_settings(installed, config)
-        else:
-            require(config == installed, 'publisher updates must preserve every product setting')
+        require(config == without_retired_settings(installed),
+                'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
             if state['active_state'] == 'active':
@@ -800,7 +798,8 @@ def dispatch(args, executor=None, **_options):
         from .cutover_runner import dispatch as supervised
         return supervised(args)
     request, inventory = load_request(args.request, args.request_sha256,
-                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify', 'continue'))
+                                      recovery=operation in ('status', 'rollback', 'reconcile', 'restart', 'verify', 'continue',
+                                                         'repair-enhance-plan', 'repair-enhance'))
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     if target.serving:
@@ -856,12 +855,6 @@ def dispatch(args, executor=None, **_options):
             return target.plan()
         if target.serving:
             target.serving.binary = args.serving_binary
-        if request['schema'] == ENHANCE_HTTPS_SCHEMA:
-            if args.supervision == 'operator':
-                from .cutover_operator import launch
-                return launch(target, args, binary)
-            from .cutover_runner import launch
-            return launch(target, args, binary)
         try:
             return target.deploy(binary, args.expect_plan_sha256, args.serving_binary)
         except Exception:

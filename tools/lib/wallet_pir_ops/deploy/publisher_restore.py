@@ -57,7 +57,8 @@ class HistoryRestore:
         self.owner = owner
         history = owner.request['configuration'][SECTION]
         self.root = history['settings']['publication_root']
-        self.enabled = history.get('enabled', True) and history['settings'].get('distribute_prepared') is True
+        # Saved fleet-era transactions without prepared distribution keep it disabled.
+        self.enabled = history.get('enabled', True) and history['settings'].get('distribute_prepared', True) is True
 
     def active(self):
         return self.owner.read(self.root + '/active.json')
