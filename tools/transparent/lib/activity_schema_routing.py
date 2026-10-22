@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -31,7 +32,6 @@ def module(name, path):
 
 H = module('routing_host', HERE/'lib/activity_schema_host.py')
 L = module('routing_fleet', HERE/'scripts/transparent-live-fleet.py')
-U = module('routing_upgrade', HERE/'scripts/upgrade-transparent-fleet.py')
 P = module('routing_recovery_proof', HERE/'lib/activity_recovery_proof.py')
 C = module('routing_candidate', HERE/'lib/activity_candidate.py')
 READER = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
@@ -66,6 +66,54 @@ def warm_active(status, digest, *, continuous=False):
     return (status.get('warm') is True and status.get('invalidated') is False and
             status.get('active',{}).get('map_sha256') == digest and
             (continuous or status.get('candidate') is None and status.get('preparing') is None))
+
+
+def guard_coordinator(text):
+    """Replace only the known transparent handlers, preserving other services."""
+    required = ['handle @transparent_publication {', 'handle @legacy_transparent_filters {']
+    optional = ['handle_path /v1/filters/parents/* {', 'handle @transparent_queries {']
+    for marker in required + optional:
+        count = text.count(marker)
+        if count == 0 and marker in optional:
+            continue
+        if count != 1:
+            raise ValueError('cannot identify unique transparent handler: '+marker)
+        start = text.index(marker)+len(marker)
+        depth, end = 1, start
+        while end < len(text) and depth:
+            depth += (text[end] == '{') - (text[end] == '}')
+            end += 1
+        if depth:
+            raise ValueError('unbalanced coordinator configuration')
+        text = text[:start]+'\n\t\theader Retry-After 1\n\t\trespond "transparent fleet maintenance" 503\n\t'+text[end-1:]
+    return text
+
+
+def atomic_bytes(path, data):
+    temporary = path.with_suffix('.tmp')
+    with temporary.open('wb') as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def execute(args):
+    subprocess.run(list(map(str, args)), check=True, **inherited_lock.options())
+
+
+def apply_coordinator(data):
+    """Validate the candidate coordinator Caddyfile, install it atomically and reload Caddy."""
+    candidate = Path('/etc/caddy/Caddyfile.maintenance-next')
+    atomic_bytes(candidate, data)
+    execute(['caddy', 'validate', '--config', candidate, '--adapter', 'caddyfile'])
+    atomic_bytes(Path('/etc/caddy/Caddyfile'), data)
+    execute(['systemctl', 'reload', 'caddy'])
 
 
 def relay(router, *, rewrite_host=True):
@@ -223,7 +271,7 @@ class Routing:
         require(hashlib.sha256(original).hexdigest()==self.plan['original_coordinator_sha256'],
                 'partial captured original routing identity changed')
         current=Path('/etc/caddy/Caddyfile')
-        expected=(U.guard_coordinator(original.decode())+relay(self.plan['private_router'])).encode()
+        expected=(guard_coordinator(original.decode())+relay(self.plan['private_router'])).encode()
         require(current.read_bytes()==expected and all(self.commands.metadata_status(url)==503 for url in H.PUBLIC_METADATA),
                 'partial public routing is not exact owned withdrawal')
         return {'captured':H.B.entries(saved),'guarded':H.B.entries(current)}
@@ -273,7 +321,7 @@ class Routing:
         endpoint = self.plan['private_router']
         if getattr(self,'predecessor_continuous',False) and not original_endpoint:
             endpoint = self.private_router()
-        return (U.guard_coordinator(self.original().decode())+relay(endpoint,rewrite_host=not legacy_header)).encode()
+        return (guard_coordinator(self.original().decode())+relay(endpoint,rewrite_host=not legacy_header)).encode()
 
     def check_guard(self, allow_original=False):
         allowed = [self.guarded()]
@@ -290,7 +338,7 @@ class Routing:
         require(current in (original, guarded, self.canonical()), 'unrelated coordinator routing update requires reconciliation')
         # Guard the authority first. A router reload cannot expose metadata
         # until the only metadata authority has passed independent verification.
-        U.apply_coordinator(guarded)
+        apply_coordinator(guarded)
         async with fleet.lock('routing'):
             L.atomic_json(fleet.root/'maintenance.json', {'enabled':True})
             await fleet.route([])
@@ -491,10 +539,10 @@ class Routing:
                     require(kind == 'v10', 'original router restoration is rollback-only')
                     restore_router()
                 # Keep the authority guarded through the router handoff.
-                U.apply_coordinator(self.canonical())
+                apply_coordinator(self.canonical())
                 await self.public(kind, fleet)
             except BaseException:
-                U.apply_coordinator(self.guarded())
+                apply_coordinator(self.guarded())
                 L.atomic_json(fleet.root/'maintenance.json', {'enabled':True})
                 await fleet.route([])
                 raise

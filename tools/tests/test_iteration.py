@@ -59,7 +59,7 @@ class PlannerTests(unittest.TestCase):
     def test_transparent_schema_helpers_are_not_misclassified_as_parent_filters(self):
         for path in ['tools/transparent/lib/activity_source_stage.py',
                      'tools/transparent/tests/test_activity_schema_operation.py',
-                     'tools/transparent/scripts/deploy-transparent-publisher.py']:
+                     'tools/transparent/scripts/transparent-activity-routing.py']:
             result = fast.plan(self.packages, [path])
             self.assertNotIn('check-ops-deploy', result['helpers'], path)
             self.assertIn('check-ops-publication', result['helpers'], path)

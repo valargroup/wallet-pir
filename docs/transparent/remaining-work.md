@@ -144,25 +144,11 @@ the last two were found during the redeploy.
 - [x] Retire the changed-native candidate `c3c66b9b` (2026-10-22). Its v11
   qualification path was removed with the candidate tooling; historical
   identities, retained evidence and the 12ce publication stay unchanged.
-- [ ] Port the standard deploy paths to v11; the v11 fleet lives under
-  `/opt/transparent-publisher/v11/`.
-  - `deploy-transparent-publisher.py` `shadow` and `activate` write
-    `/opt/transparent-publisher/controller.json` and `fleet.json`. They default to the
-    v7 publication, the version-2 journal and `/srv/zakura/transparent-publications`.
-    `deploy-transparent-publisher.yml` runs it with those defaults.
-  - `upgrade-transparent-fleet.py` defaults to `/opt/transparent-publisher/fleet.json`.
-  - `deploy-transparent-shard.yml` reads `/opt/transparent-publisher/state/inventory.json`
-    and `roster.json`.
-
-  Run now, they would point the controller back at pre-v11 configuration. The
-  2026-10-09 redeploy used a manual runbook instead (its `raw/steps/`), reusing only
-  `install_worker`.
-- [ ] Give `roll-recent-replicas.py` a reviewed floor for a two-replica tier. It
-  restarts a replica only while two other recent replicas serve
-  (`MIN_OTHER_SERVING = 2`). The tier has two replicas, and the actuator that used to add
-  a temporary third is disabled. The 2026-10-09 roll therefore set the floor to 1 for
-  that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
-  Add an explicit, logged override, or bring up a temporary third replica for each roll.
+- [x] Retire the push deploy paths instead of porting them to v11 (2026-10-22).
+  `deploy-transparent-publisher.py`/`.yml`, `upgrade-transparent-fleet.py`,
+  `deploy-transparent-shard.sh`/`.yml` and `roll-recent-replicas.py` pushed
+  binaries and shard sets to workers over SSH and were removed with HTTPS-only
+  publication. Their pre-v11 defaults and the two-replica roll floor no longer apply.
 
 ## 8-bit history profile
 

@@ -97,19 +97,14 @@ check-ops-observation:
 check-ops-stage-timing:
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_stage_timing.py'
 
-# Fleet membership, managed preparation, the archive standby and the rollouts
-# that rewrite fleet config.
+# Fleet membership, managed preparation, the reconciler, the inventory, the
+# actuator and the continuous quality load.
 check-ops-membership:
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_membership.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_managed_preparation.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_reconciler.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_maintenance.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_worker_upgrade.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_rolling.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_inventory.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_actuator.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_archive_standby.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_quality_rollout_load.py'
 	python3 -m unittest discover -s tools/transparent/scripts -p 'test_transparent_quality_load.py'
 
 # The txid display proof of concept's deploy family against an in-memory fleet,

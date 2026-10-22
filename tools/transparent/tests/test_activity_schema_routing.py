@@ -47,6 +47,36 @@ class HttpRefusal(unittest.TestCase):
         self.assertEqual(len(caught.exception.activity_body),2049)
 
 
+class CoordinatorGuard(unittest.TestCase):
+    def test_guard_preserves_other_services_and_withdraws_parent_artifacts(self):
+        config = '''example.test {
+ handle @transparent_publication {
+  reverse_proxy 127.0.0.1:8094
+ }
+ handle @legacy_transparent_filters {
+  reverse_proxy 127.0.0.1:8090
+ }
+ handle_path /v1/filters/parents/* {
+  root * /public
+  file_server
+ }
+ handle /apm* { reverse_proxy 127.0.0.1:3002 }
+ handle { reverse_proxy 127.0.0.1:8080 }
+}
+'''
+        guarded = M.guard_coordinator(config)
+        self.assertEqual(guarded.count('503'), 3)
+        self.assertNotIn('8094', guarded)
+        self.assertNotIn('8090', guarded)
+        self.assertNotIn('file_server', guarded)
+        self.assertIn('handle /apm* { reverse_proxy 127.0.0.1:3002 }', guarded)
+        self.assertIn('handle { reverse_proxy 127.0.0.1:8080 }', guarded)
+
+    def test_unknown_coordinator_config_is_refused_before_mutation(self):
+        with self.assertRaises(ValueError):
+            M.guard_coordinator('example.test { reverse_proxy 127.0.0.1:8080 }')
+
+
 class RepairIdentity(unittest.TestCase):
     def test_repair_routing_requires_owning_journal_and_checksum_bound_source(self):
         p=object.__new__(M.Routing);p.plan={'source_sha':'a'*40,'transaction':'tx'}
@@ -145,7 +175,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
             'coordinator_baseline':'/opt/transparent-publisher/schema-rollback/'+txn,
             'original_coordinator_sha256':hashlib.sha256(self.original).hexdigest(),
             'private_router':'10.142.0.11:8093','recovery':{'v10':copy.deepcopy(inp),'v11':inp}}
-        self.current=(M.U.guard_coordinator(self.original.decode())+M.relay(self.plan['private_router'])).encode()
+        self.current=(M.guard_coordinator(self.original.decode())+M.relay(self.plan['private_router'])).encode()
         self.schema='transparent-shard-v11';self.bad_binary=False;self.other_origin=False;self.bad_assignment=False
         commands=type('Commands',(),{'metadata_status':lambda _,url:503 if b'transparent fleet maintenance' in self.current else 200})()
         def proof(*args):
@@ -160,7 +190,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         real_read=Path.read_bytes
         def read(path):return self.current if str(path)=='/etc/caddy/Caddyfile' else real_read(path)
         p=patch.object(Path,'read_bytes',read);p.start();self.addCleanup(p.stop)
-        p=patch.object(M.U,'apply_coordinator',side_effect=lambda data:setattr(self,'current',data));p.start();self.addCleanup(p.stop)
+        p=patch.object(M,'apply_coordinator',side_effect=lambda data:setattr(self,'current',data));p.start();self.addCleanup(p.stop)
         p=patch.object(M.H.B,'verify',return_value={});p.start();self.addCleanup(p.stop)
 
     def fetch(self,url,expected_digest=None):
@@ -188,7 +218,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
         self.routing.original=lambda:result
         self.assertEqual(self.routing.canonical(),result)
-        guarded=M.U.guard_coordinator(result.decode())
+        guarded=M.guard_coordinator(result.decode())
         self.assertNotIn('reverse_proxy '+self.plan['private_router'],guarded)
         self.routing.original=lambda:result.replace(b'10.142.0.11:8093',b'10.142.0.12:8093')
         with self.assertRaisesRegex(ValueError,'bound router'):self.routing.canonical()
@@ -217,7 +247,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.endswith(b' handle { reverse_proxy 127.0.0.1:8080 }\n}\n'))
         self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
         self.assertIn(b'handle @transparent_publication { reverse_proxy 127.0.0.1:8094 }',result)
-        guarded=M.U.guard_coordinator(result.decode())
+        guarded=M.guard_coordinator(result.decode())
         self.assertNotIn('reverse_proxy 10.142.0.11:8080',guarded)
         self.assertIn('handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',guarded)
 

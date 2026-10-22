@@ -27,7 +27,6 @@ def load(name, path):
 
 B = load('baseline', ROOT/'tools/transparent/lib/activity_schema_baseline.py')
 L = load('live', ROOT/'tools/transparent/scripts/transparent-live-fleet.py')
-D = load('publisher', ROOT/'tools/transparent/scripts/deploy-transparent-publisher.py')
 
 
 class BaselineTests(unittest.TestCase):
@@ -383,7 +382,8 @@ class InheritanceTests(unittest.TestCase):
             program.write_text('import os; os.fstat(int(os.environ["WALLET_PIR_PRODUCTION_LOCK_FDS"])); '
                                'assert os.environ["PYTHONDONTWRITEBYTECODE"] == "1"; print("inherited")')
             with patch.dict(os.environ, {inherited_lock.VARIABLE: str(fd)}):
-                D.execute([sys.executable, program], stdout=subprocess.DEVNULL)
+                subprocess.run([sys.executable, program], check=True, stdout=subprocess.DEVNULL,
+                               **inherited_lock.options())
                 self.assertEqual(asyncio.run(L.run([sys.executable, program])), b'inherited\n')
 
     def test_surviving_grandchild_keeps_lock_after_parent_and_owner_exit(self):
