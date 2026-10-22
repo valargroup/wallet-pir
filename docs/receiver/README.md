@@ -160,7 +160,9 @@ table seals the open shard, then becomes a shard of its own split into up to eig
 segments, each of which places; a block needing more publishes nothing, so coverage
 never passes it. The store records each seal with the geometry and witness capacity
 it used, a rewind past a shard's end removes it, and restart replays only the open
-shard, so a restart rebuilds identical tables.
+shard, so a restart rebuilds identical tables. Raising `--min-rows` above the rows
+of an existing seal publishes nothing until it is lowered again or the index is
+rebuilt, since serving refuses tables below it.
 
 A sealed shard's companion tables are rebuilt at each publication's tip until every
 payment's Ironwood shard has completed, reusing final payloads, then frozen at the

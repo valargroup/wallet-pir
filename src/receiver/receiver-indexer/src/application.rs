@@ -480,6 +480,22 @@ impl<'a> Collected<'a> {
         }
         let started = std::time::Instant::now();
         let policy = Policy::new(args.shard_rows, args.shard_target)?;
+        // A sealed shard keeps the rows it was sealed under, and serving refuses tables
+        // below `min_rows`, so a raised `min_rows` would publish shards every server
+        // refuses. Resealing would discard sealed history on a configuration edit, so it
+        // is the operator's call: lower `min_rows` again or rebuild the index.
+        if let Some(shard) = store
+            .sealed_shards()?
+            .into_iter()
+            .find(|shard| shard.rows < args.min_rows)
+        {
+            return Err(format!(
+                "the shard sealed over blocks {}..={} has {} rows, fewer than min_rows {}; \
+                 lower min_rows or rebuild the index",
+                shard.start_height, shard.end_height, shard.rows, args.min_rows
+            )
+            .into());
+        }
         if sealer.as_ref().is_none_or(|s| *s.policy() != policy) {
             *sealer = Some(Sealer::new(policy));
         }
@@ -1542,6 +1558,33 @@ mod tests {
             .flat_map(|s| store.commitments(s << 16, size.min((s + 1) << 16)).unwrap())
             .collect();
         zakura_receiver_crypto::witness::payloads(&tree, positions).unwrap()
+    }
+
+    /// Shards sealed under fewer rows than a restart's raised `min_rows` refuse the
+    /// publication, serving or written, rather than publish tables serving refuses.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_raised_min_rows_refuses_shards_sealed_below_it() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        paused.extend(&[super::common::receiver()], 0, 0);
+        paused.extend(&[], 1, 0);
+        paused.refresh().await.unwrap();
+        let sealed = paused.store().sealed_shards().unwrap();
+        assert!(!sealed.is_empty());
+        assert!(sealed.iter().all(|s| s.rows == receiver_pir::MIN_ROWS));
+        paused.restart().await;
+        paused.args.min_rows = 2 * receiver_pir::MIN_ROWS;
+        paused.args.shard_rows = 2 * receiver_pir::MIN_ROWS;
+        let refused = paused.refresh().await.unwrap_err().to_string();
+        assert!(refused.contains("fewer than min_rows 16384"), "{refused}");
+        assert!(paused.publications.ready_at().is_none());
+        let written = paused.dir.path().join("publications");
+        let before = std::fs::read_dir(&written).map_or(0, |d| d.count());
+        let rpc = std::slice::from_ref(&paused.rpc);
+        let genesis = Network::Mainnet.genesis_hash();
+        let one_shot = refresh(&paused.args, rpc, genesis, None, &mut State::default()).await;
+        assert!(one_shot.unwrap_err().to_string().contains("min_rows"));
+        assert_eq!(std::fs::read_dir(&written).map_or(0, |d| d.count()), before);
     }
 
     /// Blocks that each reach the target seal into shards. A wallet's library client
