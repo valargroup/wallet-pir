@@ -1445,8 +1445,21 @@ impl RuntimeCache {
     /// Reclaim idle revisions before a publication build needs scratch memory.
     /// Current residency pins, in-flight queries and builds remain accounted.
     pub fn evict_unpinned(&self) {
+        self.evict_unpinned_except(|_| false);
+    }
+
+    /// [`Self::evict_unpinned`], keeping idle entries `keep` selects: a
+    /// serving snapshot's current runtimes stay resident while a candidate is
+    /// prepared beside it.
+    pub fn evict_unpinned_except(&self, keep: impl Fn(&RuntimeKey) -> bool) {
         let mut inner = self.inner.lock().expect("runtime cache");
-        while let Some(key) = Self::least_recently_used_unpinned(&inner) {
+        let victims: Vec<RuntimeKey> = inner
+            .entries
+            .iter()
+            .filter(|(key, entry)| Arc::strong_count(&entry.slot) == 1 && !keep(key))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in victims {
             let entry = inner.entries.remove(&key).expect("victim exists");
             inner.resident -= entry.reserved;
             Metrics::incr(&self.metrics.evictions);
@@ -1509,6 +1522,37 @@ impl RuntimeCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
+
+    #[test]
+    fn eviction_keeps_selected_idle_entries_and_pinned_ones() {
+        let cache = RuntimeCache::new(1024, 1, Arc::new(Metrics::default()));
+        let entry = |reserved| Entry {
+            slot: Arc::new(Slot {
+                runtime: tokio::sync::OnceCell::new(),
+            }),
+            reserved,
+            last_used: 0,
+        };
+        let current = ("current".to_string(), Table::Directory, 0);
+        let retired = ("retired".to_string(), Table::Directory, 0);
+        let in_use = ("in-use".to_string(), Table::Directory, 0);
+        let held = entry(40);
+        let pin = held.slot.clone();
+        {
+            let mut inner = cache.inner.lock().unwrap();
+            inner.entries.insert(current.clone(), entry(10));
+            inner.entries.insert(retired.clone(), entry(20));
+            inner.entries.insert(in_use.clone(), held);
+            inner.resident = 70;
+        }
+        cache.evict_unpinned_except(|key| key.0 == "current");
+        let inner = cache.inner.lock().unwrap();
+        assert!(inner.entries.contains_key(&current));
+        assert!(inner.entries.contains_key(&in_use), "a query holds it");
+        assert!(!inner.entries.contains_key(&retired));
+        assert_eq!(inner.resident, 50);
+        drop(pin);
+    }
 
     #[test]
     fn repair_evicts_only_affected_idle_runtime_entries() {
