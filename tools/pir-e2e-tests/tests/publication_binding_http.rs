@@ -7,6 +7,164 @@ use pir_e2e_tests::enhance_fixture::{record, System};
 #[path = "support/publication.rs"]
 mod publication_source;
 
+async fn prepare_again(
+    source: &publication_source::Published,
+) -> Result<enhance_publisher::publication::PreparedPublication, String> {
+    let root = source.scratch.path().join("publication");
+    let coverage = source.inventory.coverage.clone();
+    let epochs = source.manifest.domain_recovery_epochs.clone();
+    tokio::task::spawn_blocking(move || {
+        enhance_publisher::publication::prepare_publication(
+            &root,
+            coverage,
+            &epochs,
+            |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
+        )
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_object_installation_preserves_enhance_publication_and_reuse() {
+    use enhance_publisher::publication::{prepare_publication, VerificationStats};
+    use std::{
+        fs,
+        os::unix::fs::{FileExt, MetadataExt, PermissionsExt},
+        time::Duration,
+    };
+
+    let source = publication_source::Published::new().await;
+    let root = source.scratch.path().join("publication");
+    let domain = &source.inventory.domains[0];
+    let packing = domain.packing_object();
+    let prepared_file = root
+        .join(enhance_query_server::prepared_packing::DIRECTORY)
+        .join(&domain.packing.name);
+    assert_eq!(
+        fs::metadata(&prepared_file).unwrap().ino(),
+        fs::metadata(packing.path(&root).unwrap()).unwrap().ino(),
+        "packing adoption must not copy its body"
+    );
+    let identities = || {
+        let mut entries: Vec<_> = fs::read_dir(root.join("objects"))
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let metadata = entry.metadata().unwrap();
+                (
+                    entry.file_name(),
+                    metadata.ino(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec(),
+                    metadata.nlink(),
+                )
+            })
+            .collect();
+        entries.sort();
+        entries
+    };
+    let original = identities();
+    let prepared = prepare_again(&source).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(prepared.inventory()).unwrap(),
+        serde_json::to_value(&source.inventory).unwrap()
+    );
+    assert_eq!(
+        identities(),
+        original,
+        "references must not alter stored inode metadata"
+    );
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let prepared = prepared.recheck(&root).unwrap().recheck(&root).unwrap();
+    assert_eq!(
+        prepared.verification_stats(),
+        VerificationStats {
+            files: 0,
+            bytes: 0,
+            reused: original.len() as u64
+        }
+    );
+    source
+        .distribution
+        .publish_prepared(source.manifest.clone(), prepared)
+        .await
+        .unwrap();
+
+    let rows = &domain.rows[0];
+    let downloaded = source
+        .transport
+        .client
+        .get(format!(
+            "{}/provider/enhance/v1/objects/{}",
+            source.transport.origin, rows.sha256
+        ))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(
+        downloaded.as_ref(),
+        fs::read(rows.path(&root).unwrap()).unwrap()
+    );
+    let current = fs::read(root.join("current.json")).unwrap();
+    let failed = prepare_publication(
+        &root,
+        source.inventory.coverage.clone(),
+        &source.manifest.domain_recovery_epochs,
+        |_, _| Err("source read interrupted".into()),
+    );
+    assert!(failed.is_err());
+    assert_eq!(fs::read(root.join("current.json")).unwrap(), current);
+    prepare_again(&source).await.unwrap();
+
+    // A changed byte must fail even when the file still has the expected size.
+    for object in [rows, &packing] {
+        let path = object.path(&root).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        let file = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut byte = [0];
+        file.read_exact_at(&mut byte, 0).unwrap();
+        file.write_all_at(&[byte[0] ^ 1], 0).unwrap();
+        assert!(prepare_again(&source).await.is_err());
+        let mut corrupted = [0];
+        file.read_exact_at(&mut corrupted, 0).unwrap();
+        assert_eq!(
+            corrupted[0],
+            byte[0] ^ 1,
+            "preparation must not replace a conflicting object"
+        );
+        assert_eq!(fs::read(root.join("current.json")).unwrap(), current);
+        file.write_all_at(&byte, 0).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    let path = rows.path(&root).unwrap();
+    let held = root.join("held-object");
+    fs::rename(&path, &held).unwrap();
+    fs::write(&path, b"wrong length").unwrap();
+    assert!(prepare_again(&source).await.is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"wrong length");
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(&held, &path).unwrap();
+    assert!(prepare_again(&source).await.is_err());
+    assert!(fs::symlink_metadata(&path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    fs::remove_file(&path).unwrap();
+    fs::rename(&held, &path).unwrap();
+    assert_eq!(fs::read(root.join("current.json")).unwrap(), current);
+    prepare_again(&source).await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn first_publication_preparation_defers_without_transport_backoff_or_serving_authority() {
     use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
