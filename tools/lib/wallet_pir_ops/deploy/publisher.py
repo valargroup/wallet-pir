@@ -17,7 +17,7 @@ import time
 from .. import durable, release
 from ..fleet import Fleet
 from ..paths import ROOT
-from . import descriptors, units
+from . import descriptors, publisher_products, units
 from .engine import DeployError, file_sha256
 from .remote import RemoteError, production_lock
 from .transaction import new_id
@@ -101,6 +101,8 @@ def load_request(path, expected, *, recovery=False):
         require(isinstance(product, dict) and set(product) == {'enabled', 'settings'} and product['enabled'] is True
                 and isinstance(product['settings'], dict),
                 'every cutover product must be enabled')
+    if not recovery:
+        publisher_products.require_current_configuration(config)
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
@@ -249,7 +251,7 @@ class Cutover:
                 'standalone and unified publishers both own state')
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
-        require(config == json.loads(self.read(CONFIG)),
+        require(config == publisher_products.configuration_for_update(json.loads(self.read(CONFIG))),
                 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
