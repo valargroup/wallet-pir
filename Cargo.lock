@@ -839,41 +839,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
-name = "enhance-shared"
-version = "0.0.1"
-dependencies = [
- "base64",
- "bytes",
- "clap",
- "enhance-shared",
- "hex",
- "inspiring",
- "ipir-sp",
- "libc",
- "memmap2",
- "pir-control",
- "pir-cuda",
- "pir-publication",
- "pir-runtime",
- "pir-serving",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "reinspiring",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "simplepir-kernel",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tracing",
- "zakura-pir-client",
- "zakura-pir-query-server",
-]
-
-[[package]]
 name = "enhance-pir-client"
 version = "0.0.1"
 dependencies = [
@@ -931,8 +896,8 @@ name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
- "enhance-shared",
  "enhance-query-server",
+ "enhance-shared",
  "hdrhistogram",
  "hex",
  "http-body",
@@ -953,6 +918,41 @@ dependencies = [
  "tokio-stream",
  "tower",
  "tracing",
+]
+
+[[package]]
+name = "enhance-shared"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "bytes",
+ "clap",
+ "enhance-shared",
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "libc",
+ "memmap2",
+ "pir-control",
+ "pir-cuda",
+ "pir-publication",
+ "pir-runtime",
+ "pir-serving",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "reinspiring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "simplepir-kernel",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "zakura-pir-client",
+ "zakura-pir-query-server",
 ]
 
 [[package]]
