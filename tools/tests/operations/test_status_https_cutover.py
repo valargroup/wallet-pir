@@ -112,7 +112,7 @@ class CutoverTests(unittest.TestCase):
         self.host.put('coordinator', CADDY, 'wallet.example {\n handle /v1/status/* {\n reverse_proxy 127.0.0.1:8492\n }\n handle /v1/enhance/* { reverse_proxy 127.0.0.1:8080 }\n}\n')
         self.host.install('coordinator', 'caddy.service', '[Service]\nExecStart=/usr/bin/caddy\n', files={'/usr/bin/caddy': b'caddy'})
         installed = {'services': {'publisher': self.inventory.services['publisher'], 'status': {'roles': {
-            name: [{'host': 'status', 'vars': {'artifact_origin': 'http://127.0.0.1:8495'}}] for name in ('worker', 'router')}}}}
+            name: [{'host': 'status', 'settings': {'artifact_origin': 'http://127.0.0.1:8495'}}] for name in ('worker', 'router')}}}}
         self.host.put('coordinator', INVENTORY, json.dumps(installed))
         self.before = {(host, path): data for host, h in self.host.hosts.items() for path, data in h.files.items()}
         self.cutover = Cutover(self.inventory, self.host, Path(self.root.name), self.request, lock=self.lock,
@@ -142,6 +142,12 @@ class CutoverTests(unittest.TestCase):
         self.assertEqual(len(self.host.log), mark)
         result = self.cutover.deploy(plan['plan_sha256'])
         self.assertEqual(result['phase'], 'committed')
+        installed = json.loads(self.host.read('coordinator', INVENTORY))
+        for role in ('worker', 'router'):
+            placement = installed['services']['status']['roles'][role][0]
+            self.assertEqual(placement['settings']['publisher'], self.request['public_origin'])
+            self.assertNotIn('artifact_origin', placement['settings'])
+            self.assertNotIn('vars', placement)
         text = self.host.read('coordinator', CADDY)
         self.assertIn('handle /provider/status/v1/*', text)
         self.assertIn('handle /v1/enhance/* { reverse_proxy 127.0.0.1:8080 }', text)
