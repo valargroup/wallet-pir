@@ -3,10 +3,10 @@
 Settings come from the operator inventory; the template owns the sandbox. The
 renderer writes `/etc/status-pir/external-worker.json` and a unit whose
 command is `{release}/pir-query-server --config` that file. A Status worker is
-fenced, prepared and activated by the Status controller and pulls its artifact
-from the router's artifact origin. It has no staged inputs of its own, so it
-has no preflight input check: the product says so rather than manufacturing
-one.
+an autonomous HTTPS consumer: it fetches publisher-prepared material, verifies
+it and activates it locally. It has no staged inputs of its own, so it has no
+preflight input check. Private listeners remain available for monitoring and
+encrypted evaluation.
 """
 import ipaddress
 
@@ -32,8 +32,8 @@ def report(service, role, health, ready_status):
         return {'executable': {'binary_sha256': 'unobserved'}, 'publication': 'unobserved',
                 'preparation': 'unobserved', 'readiness': 'unobserved'}
     executable = {'binary_sha256': health.get('binary_sha256'), 'incarnation': health.get('incarnation')}
-    # The identity route carries no publication; control health is the
-    # controller's to interpret and its schema is closed.
+    # The identity route carries no publication; serving readiness is checked
+    # separately after autonomous HTTPS synchronization.
     return {'executable': executable, 'publication': 'unsupported', 'preparation': 'unsupported',
             'readiness': {'verified': 'unsupported', 'warm': 'unsupported', 'authorized': 'unsupported',
                           'ready': 'unsupported'}}

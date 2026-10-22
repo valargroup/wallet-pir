@@ -29,15 +29,10 @@ async fn ordinary_success_and_failure_stop_only_the_finished_owner() {
         let mut supervisor = ProductSupervisor::new(status.clone());
         let first = Shutdown::default();
         let second = Shutdown::default();
-        supervisor.start(
-            PublisherProduct::Enhance,
-            vec![],
-            async { outcome },
-            first.clone(),
-        );
+        supervisor.start("enhance", vec![], async { outcome }, first.clone());
         let held = second.clone();
         supervisor.start(
-            PublisherProduct::Status,
+            "status",
             vec![],
             async move {
                 held.cancelled().await;
@@ -50,13 +45,10 @@ async fn ordinary_success_and_failure_stop_only_the_finished_owner() {
         let (mut management, _guard) = management_service();
         let task =
             tokio::spawn(async move { supervisor.supervise(&mut management, &requested).await });
-        wait_for_phase(&status, PublisherProduct::Enhance, "failed").await;
+        wait_for_phase(&status, "enhance", "failed").await;
         assert!(first.requested());
         assert!(!second.requested());
-        assert_eq!(
-            status.snapshot()[&PublisherProduct::Status].phase.name(),
-            "running"
-        );
+        assert_eq!(status.snapshot()[&"status"].phase.name(), "running");
         assert!(!task.is_finished());
         shutdown.request();
         tokio::time::timeout(Duration::from_secs(2), task)
@@ -79,7 +71,7 @@ async fn shutdown_requests_all_owners_and_waits_for_their_operations() {
     let second = Shutdown::default();
     let first_owner = first.clone();
     supervisor.start(
-        PublisherProduct::Enhance,
+        "enhance",
         vec![],
         async move {
             first_owner.cancelled().await;
@@ -91,7 +83,7 @@ async fn shutdown_requests_all_owners_and_waits_for_their_operations() {
     );
     let second_owner = second.clone();
     supervisor.start(
-        PublisherProduct::Status,
+        "status",
         vec![],
         async move {
             second_owner.cancelled().await;
@@ -120,7 +112,7 @@ async fn shutdown_requests_all_owners_and_waits_for_their_operations() {
         .unwrap()
         .unwrap()
         .unwrap();
-    for product in [PublisherProduct::Enhance, PublisherProduct::Status] {
+    for product in ["enhance", "status"] {
         assert_eq!(status.snapshot()[&product].phase.name(), "stopped");
     }
 }
@@ -131,7 +123,7 @@ async fn panic_and_management_exit_stop_the_host_after_other_owners_finish() {
         let mut supervisor = ProductSupervisor::new(PublisherStatus::default());
         if panic_product {
             supervisor.start(
-                PublisherProduct::Enhance,
+                "enhance",
                 vec![],
                 async { panic!("expected product panic") },
                 Shutdown::default(),
@@ -142,7 +134,7 @@ async fn panic_and_management_exit_stop_the_host_after_other_owners_finish() {
         let (stopped, observed) = oneshot::channel();
         let (release, held) = oneshot::channel();
         supervisor.start(
-            PublisherProduct::Status,
+            "status",
             vec![],
             async move {
                 owner.cancelled().await;

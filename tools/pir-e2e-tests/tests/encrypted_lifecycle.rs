@@ -6,6 +6,7 @@ mod encrypted;
 #[path = "encrypted_lifecycle/publication.rs"]
 mod publication;
 #[path = "support/publication.rs"]
+#[allow(dead_code)]
 mod publication_source;
 use encrypted::record;
 

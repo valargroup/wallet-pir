@@ -20,7 +20,7 @@ Enhance can embed the publisher. This package layout does not change the wire
 protocol, saved state, configuration or deployed binary name.
 
 - [Architecture](architecture_status.md): generations, controller, workers and observation publication.
-- [Distributed runbook](status_distributed.md): deploy and operate the distributed controller and workers.
+- [Distributed runbook](status_distributed.md): HTTPS publication, autonomous consumers and operating guidance.
 - [Qualification gate](status_qualification.md): release qualification and its tooling.
 - [APM rollout](status_apm_rollout.md): dashboard and alert coverage.
 - [Synthetic backend](status_backend.md): test-only serving mode.

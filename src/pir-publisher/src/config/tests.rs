@@ -1,6 +1,5 @@
 use super::layout::PublisherLayout;
 use super::*;
-use crate::publisher::PublisherProduct;
 #[cfg(all(
     feature = "enhance",
     feature = "status",
@@ -76,28 +75,26 @@ fn overlapping_and_symlinked_state_is_rejected() {
     let temp = tempfile::tempdir().unwrap();
     let mut layout = PublisherLayout::default();
     layout
-        .declare_writable_path(PublisherProduct::Enhance, temp.path())
+        .declare_writable_path("enhance", temp.path())
         .unwrap();
     assert!(layout
-        .declare_writable_path(PublisherProduct::Status, &temp.path().join("child"))
+        .declare_writable_path("status", &temp.path().join("child"))
         .is_err());
     #[cfg(unix)]
     {
         let link = temp.path().join("alias");
         std::os::unix::fs::symlink(temp.path(), &link).unwrap();
-        assert!(layout
-            .declare_writable_path(PublisherProduct::Status, &link)
-            .is_err());
+        assert!(layout.declare_writable_path("status", &link).is_err());
         let child = temp.path().join("real/child");
         std::fs::create_dir_all(&child).unwrap();
         let alias = temp.path().join("child-alias");
         std::os::unix::fs::symlink(&child, &alias).unwrap();
         let mut layout = PublisherLayout::default();
         layout
-            .declare_writable_path(PublisherProduct::Enhance, &temp.path().join("real/state"))
+            .declare_writable_path("enhance", &temp.path().join("real/state"))
             .unwrap();
         assert!(layout
-            .declare_writable_path(PublisherProduct::Status, &alias.join("../state"))
+            .declare_writable_path("status", &alias.join("../state"))
             .is_err());
     }
 }
@@ -178,10 +175,10 @@ fn writable_path_conflicts_name_both_product_owners() {
     let directory = tempfile::tempdir().unwrap();
     let mut layout = PublisherLayout::default();
     layout
-        .declare_writable_path(PublisherProduct::Enhance, directory.path())
+        .declare_writable_path("enhance", directory.path())
         .unwrap();
     let error = layout
-        .declare_writable_path(PublisherProduct::Status, &directory.path().join("nested"))
+        .declare_writable_path("status", &directory.path().join("nested"))
         .unwrap_err();
     let message = error.to_string();
     assert!(message.contains("enhance"));

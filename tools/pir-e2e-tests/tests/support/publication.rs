@@ -19,6 +19,26 @@ impl Published {
         Self::with_records(67).await
     }
     pub(crate) async fn with_records(count: u64) -> Self {
+        Self::prepared_by(move |root| {
+            enhance_publisher::publication::prepare(
+                root,
+                Lifecycle::default()
+                    .coverage(count, Geometry::default())
+                    .unwrap(),
+                &[(0, "0".into())].into(),
+                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
+            )
+            .unwrap()
+        })
+        .await
+    }
+    /// Publishes the verified preparation that `prepare` produces under the publication
+    /// root, on a blocking thread.
+    pub(crate) async fn prepared_by(
+        prepare: impl FnOnce(&std::path::Path) -> enhance_publisher::publication::Prepared
+            + Send
+            + 'static,
+    ) -> Self {
         let scratch = tempfile::tempdir().unwrap();
         let root = scratch.path().join("publication");
         let node = serve(axum::Router::new().route("/", axum::routing::post(|axum::Json(request): axum::Json<serde_json::Value>| async move {
@@ -36,19 +56,9 @@ impl Published {
         ))
         .await;
         let transport = tls(scratch.path(), &publisher.url).await;
-        let prepared = tokio::task::spawn_blocking(move || {
-            enhance_publisher::publication::prepare(
-                &root,
-                Lifecycle::default()
-                    .coverage(count, Geometry::default())
-                    .unwrap(),
-                &[(0, "0".into())].into(),
-                |start, count| Ok((start..start + count as u64).flat_map(record).collect()),
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let prepared = tokio::task::spawn_blocking(move || prepare(&root))
+            .await
+            .unwrap();
         let inventory = prepared.inventory().clone();
         let domain = &inventory.domains[0];
         let manifest = Manifest {

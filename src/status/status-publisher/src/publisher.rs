@@ -1,5 +1,6 @@
 //! Status source capture and prepared HTTPS publications. Consumers never
 //! participate in publication completion or renew its source observation time.
+mod workflow;
 use crate::{authority, source, zakura::ZakuraClient};
 use axum::{
     body::Body,
@@ -21,6 +22,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::watch;
+use workflow::Publication;
 
 type Failure = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Clone, Deserialize)]
@@ -162,85 +164,106 @@ impl Publisher {
         let expected = self.published.read().unwrap().fence.clone();
         let (generation, epoch) = authority.next_identity()?;
         let previous = cache.clone();
-        let prepared = tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
-            let (g, _) = Generation::prepare(
-                &observed.snapshot,
-                generation,
-                epoch,
-                observed.observed_ms,
-                previous.as_ref(),
-                MatvecBackend::Cpu,
-            )?;
-            Ok(g)
-        })
-        .await??;
-        *cache = Some(prepared.clone());
-        let publisher = self.clone();
-        let candidate = prepared.clone();
-        let inventory = tokio::task::spawn_blocking(move || -> Result<Inventory, Failure> {
-            let mut cache = publisher.exported.lock().unwrap();
-            let inventory = if let Some(old) = cache.as_ref().filter(|i| {
-                i.manifest.network == candidate.manifest().network
-                    && i.manifest.salt == candidate.manifest().salt
-                    && i.manifest.rows_digest == candidate.manifest().rows_digest
-            }) {
-                let mut inventory = old.clone();
-                inventory.manifest = candidate.manifest().clone();
-                inventory
-            } else {
-                candidate.export_prepared(|bytes| publisher.store(bytes))?
-            };
-            *cache = Some(inventory.clone());
-            Ok(inventory)
-        })
-        .await??;
-        let manifest = inventory.manifest.clone();
-        let object = self.store(&serde_json::to_vec(&inventory)?)?;
-        if rpc.block_hash(u64::from(manifest.anchor_height)).await? != manifest.anchor_hash {
-            self.withdraw();
-            return Err("Status candidate anchor disconnected".into());
+        let result = pir_pipeline::publisher::PublicationPass::new(
+            async { Ok::<_, Failure>(Input::Work((expected, generation, epoch, previous))) },
+            |(expected, generation, epoch, previous)| async move {
+                let prepared =
+                    tokio::task::spawn_blocking(move || -> Result<Generation, Failure> {
+                        let (g, _) = Generation::prepare(
+                            &observed.snapshot,
+                            generation,
+                            epoch,
+                            observed.observed_ms,
+                            previous.as_ref(),
+                            MatvecBackend::Cpu,
+                        )?;
+                        Ok(g)
+                    })
+                    .await??;
+                *cache = Some(prepared.clone());
+                let publisher = self.clone();
+                let candidate = prepared.clone();
+                let inventory =
+                    tokio::task::spawn_blocking(move || -> Result<Inventory, Failure> {
+                        let mut cache = publisher.exported.lock().unwrap();
+                        let inventory = if let Some(old) = cache.as_ref().filter(|i| {
+                            i.manifest.network == candidate.manifest().network
+                                && i.manifest.salt == candidate.manifest().salt
+                                && i.manifest.rows_digest == candidate.manifest().rows_digest
+                        }) {
+                            let mut inventory = old.clone();
+                            inventory.manifest = candidate.manifest().clone();
+                            inventory
+                        } else {
+                            candidate.export_prepared(|bytes| publisher.store(bytes))?
+                        };
+                        *cache = Some(inventory.clone());
+                        Ok(inventory)
+                    })
+                    .await??;
+                let manifest = inventory.manifest.clone();
+                let object = self.store(&serde_json::to_vec(&inventory)?)?;
+                Ok(Input::Work((
+                    expected, generation, epoch, prepared, inventory, manifest, object,
+                )))
+            },
+            |(expected, generation, epoch, prepared, inventory, manifest, object)| async move {
+                if rpc.block_hash(u64::from(manifest.anchor_height)).await? != manifest.anchor_hash
+                {
+                    self.withdraw();
+                    return Err("Status candidate anchor disconnected".into());
+                }
+                // A withdrawal while preparation was running must survive this pass.
+                // Hold the same lock through the durable commit and pointer switch so
+                // a concurrent withdrawal cannot be replaced by an eligible view.
+                {
+                    let mut published = self.published.write().unwrap();
+                    published.check_fence(&expected)?;
+                    manifest.fresh(now_ms())?;
+                    authority.commit(&manifest)?;
+                    let current = Current {
+                        schema: SCHEMA.into(),
+                        revision: self.revision()?,
+                        recovery_epoch: epoch,
+                        network: manifest.network,
+                        salt: manifest.salt,
+                        generation: manifest.generation,
+                        inventory: Some(object),
+                        eligible: true,
+                    };
+                    // The current pointer is durable only after all referenced objects and
+                    // authority. A restart allocates a new revision and recovery epoch.
+                    durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
+                    *published = Published {
+                        current: Some(current),
+                        manifest: Some(manifest.clone()),
+                        fence: expected,
+                    };
+                }
+                tracing::info!(
+                    generation,
+                    recovery_epoch = epoch,
+                    source_observed_ms = manifest.observed_ms,
+                    published_ms = now_ms(),
+                    "Status prepared publication"
+                );
+                let publisher = self.clone();
+                if let Err(error) =
+                    tokio::task::spawn_blocking(move || publisher.collect(inventory)).await?
+                {
+                    tracing::warn!(%error, "Status artifact collection deferred");
+                }
+                Ok(prepared)
+            },
+        )
+        .run(&mut ())
+        .await?;
+        match result {
+            Input::Work(generation) => Ok(generation),
+            Input::Unchanged | Input::Deferred => {
+                unreachable!("Status preparation produces a candidate")
+            }
         }
-        // A withdrawal while preparation was running must survive this pass.
-        // Hold the same lock through the durable commit and pointer switch so
-        // a concurrent withdrawal cannot be replaced by an eligible view.
-        {
-            let mut published = self.published.write().unwrap();
-            published.check_fence(&expected)?;
-            manifest.fresh(now_ms())?;
-            authority.commit(&manifest)?;
-            let current = Current {
-                schema: SCHEMA.into(),
-                revision: self.revision()?,
-                recovery_epoch: epoch,
-                network: manifest.network,
-                salt: manifest.salt,
-                generation: manifest.generation,
-                inventory: Some(object),
-                eligible: true,
-            };
-            // The current pointer is durable only after all referenced objects and
-            // authority. A restart allocates a new revision and recovery epoch.
-            durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
-            *published = Published {
-                current: Some(current),
-                manifest: Some(manifest.clone()),
-                fence: expected,
-            };
-        }
-        tracing::info!(
-            generation,
-            recovery_epoch = epoch,
-            source_observed_ms = manifest.observed_ms,
-            published_ms = now_ms(),
-            "Status prepared publication"
-        );
-        let publisher = self.clone();
-        if let Err(error) =
-            tokio::task::spawn_blocking(move || publisher.collect(inventory)).await?
-        {
-            tracing::warn!(%error, "Status artifact collection deferred");
-        }
-        Ok(prepared)
     }
     pub async fn run_managed(
         &self,
@@ -269,7 +292,7 @@ impl Publisher {
             salt,
             self.config.window_blocks,
         )?;
-        let (tx, mut rx) = watch::channel(None::<Arc<source::Observation>>);
+        let (tx, rx) = watch::channel(None::<Arc<source::Observation>>);
         let source_rpc = rpc.clone();
         let observer = tokio::spawn(async move {
             let mut task = ObservationTask {
@@ -280,64 +303,19 @@ impl Publisher {
             pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending()).await
         });
         tasks.own(&observer);
-        let mut authority = None;
-        let mut previous = None;
-        let mut last_observed = 0;
-        loop {
-            if shutdown.requested() {
-                return Ok(());
-            }
-            if server.is_finished() || observer.is_finished() {
-                return Err("Status background service stopped".into());
-            }
-            let observed = rx.borrow().clone();
-            if let Some(observed) = observed.filter(|o| o.observed_ms > last_observed) {
-                // Detect invalidation independently of the publication outcome.
-                let (active, withdrawn) = {
-                    let published = self.published.read().unwrap();
-                    (
-                        published.manifest.clone(),
-                        published.current.as_ref().is_some_and(|c| !c.eligible),
-                    )
-                };
-                // Candidate validation can withdraw after the active-anchor
-                // check. Its cleared manifest must not hide the recovery fence.
-                if withdrawn {
-                    authority = None;
-                    previous = None;
-                }
-                if let Some(active) = active {
-                    if rpc.block_hash(u64::from(active.anchor_height)).await? != active.anchor_hash
-                    {
-                        self.withdraw();
-                        authority = None;
-                        previous = None;
-                    }
-                }
-                if authority.is_none() {
-                    authority = Some(authority::Authority::open(
-                        self.config.state_dir.join("authority"),
-                        observed.snapshot.network,
-                        salt,
-                    )?);
-                }
-                last_observed = observed.observed_ms;
-                match self
-                    .publish(observed, authority.as_mut().unwrap(), &mut previous, &rpc)
-                    .await
-                {
-                    Ok(g) => previous = Some(g),
-                    Err(error) => {
-                        if error.downcast_ref::<authority::AuthorityError>().is_some() {
-                            self.withdraw();
-                            authority = None;
-                        }
-                        tracing::warn!(%error, "Status publication deferred");
-                    }
-                }
-            }
-            tokio::select! { result = rx.changed() => result?, _ = shutdown.cancelled() => return Ok(()) }
-        }
+        pir_pipeline::publisher::PublisherService::new(Publication {
+            publisher: self,
+            rpc,
+            rx,
+            salt,
+            authority: None,
+            previous: None,
+            last_observed: 0,
+            server,
+            observer,
+        })
+        .run(shutdown.cancelled())
+        .await
     }
 }
 

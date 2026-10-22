@@ -28,10 +28,7 @@ impl Management {
                 }
             }
             all_ready &= ready;
-            products.insert(
-                product.name(),
-                json!({"phase":status.phase.name(),"ready":ready}),
-            );
+            products.insert(product, json!({"phase":status.phase.name(),"ready":ready}));
         }
         (all_ready, json!({"ready":all_ready,"products":products}))
     }
@@ -60,20 +57,9 @@ impl Management {
                 _ => return false,
             }
         }
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
-            return false;
-        };
         match probe.rule {
-            ReadinessRule::ServingPhase => value["phase"] == "serving",
-            ReadinessRule::TransactionDetailsPublished => {
-                value["phase"] == "running"
-                    && value["halted"].is_null()
-                    && value["stalled"] == false
-                    && !value["published"].is_null()
-            }
-            ReadinessRule::HttpSuccess => {
-                unreachable!("HTTP success checked before reading the body")
-            }
+            ReadinessRule::Body(check) => check(&bytes),
+            ReadinessRule::HttpSuccess => unreachable!("HTTP status checked before reading body"),
         }
     }
 }
