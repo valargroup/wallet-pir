@@ -1,5 +1,5 @@
 //! Filter ingestion and HTTP publication owned by the root publisher host.
-use super::service::{router, Phase, ServiceState};
+use super::service::{router, ServiceState};
 use super::shard_filters::ShardFilters;
 use crate::ingest::{self, store::FilterStore};
 use pir_pipeline::service::{Http, Shutdown, Tasks};
@@ -100,25 +100,14 @@ pub async fn run(
     let ingest_state = state.clone();
     let ingest_cli = cli.clone();
     let ingestion = tokio::spawn(async move {
-        loop {
-            if let Err(error) = ingest::run(
-                zakura.clone(),
-                ingest_state.clone(),
-                ingest_cli.cache_outputs,
-                ingest_cli.poll_seconds,
-                ingest_cli.commit_every,
-            )
-            .await
-            {
-                tracing::error!(%error, "filter ingestion stopped");
-                ingest_state
-                    .set_phase(Phase::Failed {
-                        reason: "ingestion failed; retrying; inspect local logs".to_string(),
-                    })
-                    .await;
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            }
-        }
+        ingest::run(
+            zakura,
+            ingest_state,
+            ingest_cli.cache_outputs,
+            ingest_cli.poll_seconds,
+            ingest_cli.commit_every,
+        )
+        .await
     });
 
     let mut tasks = Tasks::default();

@@ -37,12 +37,21 @@ journal, database or runtime-cache format. Maintenance is available through
 root subcommands; the product crates have no standalone executables. Crate relocation does not relocate deployed data or change upstream
 wallet-libraries revisions.
 
-The host library exposes `config::Config`, `config::Product`, `run` and its
-`Result` alias. `Config::validate()` checks static configuration and returns no
-runtime layout. Layouts, readiness rules and task bookkeeping are private host
-implementation details. The host facade shows startup and shutdown order;
-private modules handle listener reservations, product adapters, management
-observations and supervision. Product libraries keep publication authority.
+The binary composes product service facades into `PublisherDefinition` values.
+Each definition declares listeners, writable paths and readiness probes, and owns
+a startup factory. Static checks inspect those declarations without opening
+credentials or product state. The generic `run_registered` host reserves all
+listeners before starting any factory; it contains no product-specific routing,
+controller settings or readiness response schemas.
+
+`pir-pipeline::publisher::PublisherService` runs product workflows. Products
+supply bounded operations, wake conditions and failure policies. Typed
+`PublicationPass` recipes carry work and candidates through acquisition,
+preparation and publication, including borrowed owner permits. The service
+observes shutdown between operations and always finishes the product drain;
+activation validation and durable authority updates stay inside product code.
+Enhance, Status, History, filters and transaction details use this engine.
+Receiver retains its existing implementation through a composition-layer bridge.
 
 ## Configuration and local use
 

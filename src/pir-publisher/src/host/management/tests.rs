@@ -1,6 +1,6 @@
 //! HTTP fixtures exercise the readiness contract without starting product libraries.
 use super::*;
-use crate::{host::status::ProductPhase, publisher::PublisherProduct};
+use crate::host::status::ProductPhase;
 use axum::response::Redirect;
 use std::{
     net::SocketAddr,
@@ -38,7 +38,7 @@ async fn readiness(rule: ReadinessRule, routes: Router) -> (StatusCode, Value) {
     let product = Server::start(routes).await;
     let status = PublisherStatus::default();
     status.register(
-        PublisherProduct::TransparentHistory,
+        "transparent_history",
         vec![ReadinessProbe {
             address: product.address,
             path: "/probe",
@@ -64,41 +64,45 @@ fn body_route(status: StatusCode, body: impl Into<String>) -> Router {
 async fn readiness_preserves_each_product_response_predicate() {
     let cases = [
         (ReadinessRule::HttpSuccess, "not json", true),
-        (ReadinessRule::ServingPhase, r#"{"phase":"serving"}"#, true),
-        (ReadinessRule::ServingPhase, r#"{"phase":"running"}"#, false),
-        (ReadinessRule::ServingPhase, "not json", false),
+        (ReadinessRule::Body(serving), r#"{"phase":"serving"}"#, true),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(serving),
+            r#"{"phase":"running"}"#,
+            false,
+        ),
+        (ReadinessRule::Body(serving), "not json", false),
+        (
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","halted":null,"stalled":false,"published":{}}"#,
             true,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","stalled":false,"published":{}}"#,
             true,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","halted":"source failed","stalled":false,"published":{}}"#,
             false,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","stalled":true,"published":{}}"#,
             false,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","stalled":false,"published":null}"#,
             false,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"running","published":{}}"#,
             false,
         ),
         (
-            ReadinessRule::TransactionDetailsPublished,
+            ReadinessRule::Body(details_published),
             r#"{"phase":"serving","stalled":false,"published":{}}"#,
             false,
         ),
@@ -148,14 +152,14 @@ async fn only_json_probes_enforce_the_body_limit() {
     let mut body = r#"{"phase":"serving"}"#.to_owned();
     body.extend(std::iter::repeat_n(' ', MAX_PROBE_BYTES - body.len()));
     let (status, _) = readiness(
-        ReadinessRule::ServingPhase,
+        ReadinessRule::Body(serving),
         body_route(StatusCode::OK, body.clone()),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     body.push(' ');
     let (status, _) = readiness(
-        ReadinessRule::ServingPhase,
+        ReadinessRule::Body(serving),
         body_route(StatusCode::OK, body.clone()),
     )
     .await;
@@ -190,12 +194,12 @@ async fn every_probe_is_required_and_failed_products_are_not_probed() {
     .await;
     let status = PublisherStatus::default();
     status.register(
-        PublisherProduct::TransparentHistory,
+        "transparent_history",
         vec![
             ReadinessProbe {
                 address: probes.address,
                 path: "/first",
-                rule: ReadinessRule::ServingPhase,
+                rule: ReadinessRule::Body(serving),
             },
             ReadinessProbe {
                 address: probes.address,
@@ -208,7 +212,7 @@ async fn every_probe_is_required_and_failed_products_are_not_probed() {
     let client = reqwest::Client::new();
     let response = client.get(management.url("/ready")).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    status.set_phase(PublisherProduct::TransparentHistory, ProductPhase::Failed);
+    status.set_phase("transparent_history", ProductPhase::Failed);
     let response = client.get(management.url("/health")).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
@@ -245,7 +249,7 @@ async fn a_stalled_json_body_is_also_bounded() {
     let probe = ReadinessProbe {
         address,
         path: "/probe",
-        rule: ReadinessRule::ServingPhase,
+        rule: ReadinessRule::Body(serving),
     };
     assert!(
         !tokio::time::timeout(Duration::from_secs(4), state.probe(&probe))
@@ -271,11 +275,11 @@ async fn management_preserves_product_and_probe_order_and_skips_failed_owners() 
     let status = PublisherStatus::default();
     for (product, paths) in [
         (
-            PublisherProduct::TransparentHistory,
+            "transparent_history",
             vec!["/history-status", "/history-init"],
         ),
-        (PublisherProduct::Enhance, vec!["/enhance"]),
-        (PublisherProduct::Receiver, vec!["/receiver"]),
+        ("enhance", vec!["/enhance"]),
+        ("receiver", vec!["/receiver"]),
     ] {
         status.register(
             product,
@@ -305,7 +309,7 @@ async fn management_preserves_product_and_probe_order_and_skips_failed_owners() 
         ["/enhance", "/receiver", "/history-status", "/history-init"]
     );
     visits.lock().unwrap().clear();
-    status.set_phase(PublisherProduct::TransparentHistory, ProductPhase::Failed);
+    status.set_phase("transparent_history", ProductPhase::Failed);
     assert_eq!(
         client
             .get(management.url("/ready"))
@@ -316,4 +320,16 @@ async fn management_preserves_product_and_probe_order_and_skips_failed_owners() 
         StatusCode::SERVICE_UNAVAILABLE
     );
     assert_eq!(*visits.lock().unwrap(), ["/enhance", "/receiver"]);
+}
+
+fn serving(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(bytes).is_ok_and(|v| v["phase"] == "serving")
+}
+fn details_published(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(bytes).is_ok_and(|v| {
+        v["phase"] == "running"
+            && v["halted"].is_null()
+            && v["stalled"] == false
+            && !v["published"].is_null()
+    })
 }

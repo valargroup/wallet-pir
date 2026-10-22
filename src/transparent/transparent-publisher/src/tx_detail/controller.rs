@@ -21,6 +21,8 @@
 //! acknowledges it, and a replica is offered nothing newer until then. A
 //! restart that finds the journal off the activated chain without such a
 //! record withdraws the whole recent range.
+mod workflow;
+use workflow::DetailPublication;
 
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
@@ -776,90 +778,62 @@ impl Controller {
             .await;
         self.record_worker_errors("status", errors);
         self.plan();
-        loop {
-            if shutdown.requested() {
-                // Builders and stage transports must finish before the root lock is released.
-                while self.building || self.staging {
-                    if let Some(event) = self.receiver.recv().await {
-                        self.background(event);
-                    }
+        pir_pipeline::publisher::PublisherService::new(DetailPublication {
+            controller: self,
+            wake: None,
+        })
+        .run(shutdown.cancelled())
+        .await?;
+        Ok(match &self.halted {
+            Some(reason) => Outcome::Halted(reason.clone()),
+            None => Outcome::Idle,
+        })
+    }
+
+    async fn publication_step(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
+        while let Ok(event) = self.receiver.try_recv() {
+            self.background(event);
+        }
+        if self.halted.is_some() {
+            return Ok(pir_pipeline::publisher::Control::Complete);
+        }
+        self.schedule();
+        if self.retry_at.is_none_or(|t| Instant::now() >= t) {
+            let result = if self.needs_cycle() {
+                let result = self.cycle().await;
+                self.settings.metrics.cycle_finished(result.is_ok());
+                Some(result)
+            } else if self.fleet.stale(&self.active.map_sha256, &self.map) {
+                Some(self.sync_workers().await)
+            } else {
+                None
+            };
+            match result {
+                None | Some(Ok(())) => {
+                    self.failures = 0;
+                    self.retry_at = None;
                 }
-                return Ok(Outcome::Idle);
-            }
-            while let Ok(event) = self.receiver.try_recv() {
-                self.background(event);
-            }
-            if let Some(reason) = &self.halted {
-                return Ok(Outcome::Halted(reason.clone()));
-            }
-            self.schedule();
-            if self.retry_at.is_none_or(|t| Instant::now() >= t) {
-                let result = if self.needs_cycle() {
-                    let result = self.cycle().await;
-                    self.settings.metrics.cycle_finished(result.is_ok());
-                    Some(result)
-                } else if self.fleet.stale(&self.active.map_sha256, &self.map) {
-                    Some(self.sync_workers().await)
-                } else {
-                    None
-                };
-                match result {
-                    None | Some(Ok(())) => {
-                        self.failures = 0;
-                        self.retry_at = None;
-                    }
-                    Some(Err(CycleError::Halt(halt))) => self.halt(halt),
-                    Some(Err(CycleError::Retry(error))) => {
-                        tracing::warn!(%error, "display publication failed; retrying");
-                        self.timeline
-                            .record("error", json!({"stage": "cycle", "error": error}));
-                        self.retry_at = Some(Instant::now() + backoff(self.failures));
-                        self.failures += 1;
-                        self.stalled(&error);
-                        self.collect_local();
-                    }
+                Some(Err(CycleError::Halt(halt))) => self.halt(halt),
+                Some(Err(CycleError::Retry(error))) => {
+                    tracing::warn!(%error, "display publication failed; retrying");
+                    self.timeline
+                        .record("error", json!({"stage": "cycle", "error": error}));
+                    self.retry_at = Some(Instant::now() + backoff(self.failures));
+                    self.failures += 1;
+                    self.stalled(&error);
+                    self.collect_local();
                 }
-            }
-            self.check_recent_bound();
-            self.update_status();
-            if let Some(reason) = &self.halted {
-                return Ok(Outcome::Halted(reason.clone()));
-            }
-            if self.settings.exit_when_idle && self.retry_at.is_none() && self.idle() {
-                return Ok(Outcome::Idle);
-            }
-            let now = Instant::now();
-            let wake_at = self
-                .queue
-                .iter()
-                .filter_map(|j| j.retry_at)
-                .chain(self.retry_at)
-                .min()
-                .unwrap_or(now + Duration::from_secs(3600));
-            enum Wake {
-                Background(Option<Background>),
-                Source,
-                Timer,
-            }
-            let mut wake = Wake::Timer;
-            pir_pipeline::wait(
-                wake_at.max(now).into(),
-                async {
-                    wake = tokio::select! {
-                        event = self.receiver.recv() => Wake::Background(event),
-                        () = self.source.wait() => Wake::Source,
-                    };
-                },
-                shutdown.cancelled(),
-            )
-            .await;
-            match wake {
-                Wake::Background(Some(event)) => self.background(event),
-                Wake::Background(None) => unreachable!("the controller holds a sender"),
-                Wake::Source => self.poll_source().await?,
-                Wake::Timer => {}
             }
         }
+        self.check_recent_bound();
+        self.update_status();
+        if self.halted.is_some() {
+            return Ok(pir_pipeline::publisher::Control::Complete);
+        }
+        if self.settings.exit_when_idle && self.retry_at.is_none() && self.idle() {
+            return Ok(pir_pipeline::publisher::Control::Complete);
+        }
+        Ok(pir_pipeline::publisher::Control::Continue)
     }
 
     async fn poll_source(&mut self) -> Result<(), BoxError> {
@@ -1286,8 +1260,8 @@ impl Controller {
     /// Publishes the current tip and every publishable seal at the queue's
     /// head.
     async fn cycle(&mut self) -> Result<(), CycleError> {
-        pir_pipeline::advance(
-            Input::Work(self),
+        pir_pipeline::publisher::PublicationPass::new(
+            async { Ok::<_, CycleError>(Input::Work(self)) },
             |controller| async move {
                 match controller.prepare_cycle().await? {
                     Input::Work(candidate) => Ok(Input::Work((controller, candidate))),
@@ -1296,8 +1270,8 @@ impl Controller {
                 }
             },
             |(controller, candidate)| async move { controller.activate_cycle(candidate).await },
-            &mut DisplayProgress,
         )
+        .run(&mut DisplayProgress)
         .await?;
         Ok(())
     }

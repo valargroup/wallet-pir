@@ -110,28 +110,9 @@ pub async fn supervise<T: Task>(
     poll: Duration,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), T::Error> {
-    tokio::pin!(shutdown);
-    loop {
-        // Poll cancellation before entering a new pass, without racing it
-        // against acquisition or an activation that must finish atomically.
-        tokio::select! {
-            biased;
-            _ = &mut shutdown => return Ok(()),
-            _ = std::future::ready(()) => {},
-        }
-        let started = Instant::now();
-        let result = task.run().await;
-        task.finished(started.elapsed());
-        if let Err(error) = result {
-            if task.failed(&error) == FailurePolicy::Stop {
-                return Err(error);
-            }
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(poll) => {},
-            _ = &mut shutdown => return Ok(()),
-        }
-    }
+    publisher::PublisherService::new(publisher::workflow::Polling { task, poll })
+        .run(shutdown)
+        .await
 }
 
 /// A boundary wait for independently supervised tasks. Products supply their
@@ -433,3 +414,6 @@ mod tests {
 
 /// Managed application shutdown and injected HTTP serving.
 pub mod service;
+
+/// Generic publisher service, typed phase recipes and host registration.
+pub mod publisher;

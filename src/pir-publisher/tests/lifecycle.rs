@@ -154,3 +154,94 @@ async fn product_startup_failure_is_visible_without_stopping_management() {
         .unwrap();
     assert!(observed);
 }
+
+/// A product unknown to the application runs through the real host without any
+/// compiled product feature, controller import or product-specific match arm.
+#[tokio::test]
+async fn a_registered_workflow_runs_without_any_builtin_product() {
+    use pir_pipeline::publisher::{
+        Control, PublicationPass, PublisherDefinition, PublisherResources, PublisherService,
+        ReadinessProbe, ReadinessRule, Workflow,
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct FakePublication(Arc<AtomicUsize>);
+    impl Workflow for FakePublication {
+        type Error = pir_pipeline::publisher::Error;
+        async fn step(&mut self) -> Result<Control, Self::Error> {
+            PublicationPass::new(
+                async { Ok::<_, Self::Error>(pir_pipeline::Input::Work(3)) },
+                |work| async move { Ok(pir_pipeline::Input::Work(work + 1)) },
+                |candidate| async move {
+                    self.0.store(candidate, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .run(&mut ())
+            .await?;
+            Ok(Control::Continue)
+        }
+        async fn wait(&mut self) -> Result<(), Self::Error> {
+            std::future::pending().await
+        }
+    }
+    let management = port();
+    let product = port();
+    let published = Arc::new(AtomicUsize::new(0));
+    let observed = published.clone();
+    let definition = PublisherDefinition::new(
+        "example_publisher",
+        PublisherResources {
+            listeners: vec![product],
+            writable_paths: vec![],
+            probes: vec![ReadinessProbe {
+                address: product,
+                path: "/product-ready",
+                rule: ReadinessRule::HttpSuccess,
+            }],
+        },
+        move |context| async move {
+            let serving = tokio::spawn(
+                context.http.serve(
+                    product,
+                    axum::Router::new()
+                        .route("/product-ready", axum::routing::get(|| async { "ready" })),
+                ),
+            );
+            let mut tasks = pir_pipeline::service::Tasks::default();
+            tasks.own(&serving);
+            PublisherService::new(FakePublication(published))
+                .run(context.shutdown.cancelled())
+                .await
+        },
+    );
+    let shutdown = Shutdown::default();
+    let task = tokio::spawn(pir_publisher::run_registered(
+        management,
+        vec![definition],
+        shutdown.clone(),
+    ));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let value = report(&format!("http://{management}/ready")).await;
+            if value["ready"] == true {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(observed.load(Ordering::SeqCst), 4);
+    shutdown.request();
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    tokio::task::yield_now().await;
+    tokio::net::TcpListener::bind(product).await.unwrap();
+    tokio::net::TcpListener::bind(management).await.unwrap();
+}

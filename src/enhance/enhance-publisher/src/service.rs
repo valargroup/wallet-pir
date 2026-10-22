@@ -106,3 +106,30 @@ pub async fn run(config: Config, http: Http<axum::Router>, shutdown: Shutdown) -
     }
     Ok(())
 }
+
+/// Validate and declare this publisher without opening credentials or state.
+pub fn configure(
+    config: Config,
+) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
+    use pir_pipeline::publisher::{
+        PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,
+    };
+    config.validate()?;
+    let resources = PublisherResources {
+        listeners: vec![
+            config.listen,
+            config.artifact_listen.ok_or("artifact listener missing")?,
+        ],
+        writable_paths: vec![config.data_dir.clone()],
+        probes: vec![ReadinessProbe {
+            address: config.listen,
+            path: "/ready",
+            rule: ReadinessRule::HttpSuccess,
+        }],
+    };
+    Ok(PublisherDefinition::new(
+        "enhance",
+        resources,
+        move |context| run(config, context.http, context.shutdown),
+    ))
+}

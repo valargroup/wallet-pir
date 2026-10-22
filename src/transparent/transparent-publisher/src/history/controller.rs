@@ -1,5 +1,7 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots and activation is delegated to the private fleet tool.
+mod workflow;
+use workflow::HistoryPublication;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent::layout::Geometry;
 use zakura_pir_publisher::transparent::seal::DecoupledPolicy;
@@ -442,14 +444,14 @@ pub async fn run_managed(
     let mut tasks = pir_pipeline::service::Tasks::default();
     let server = tokio::spawn(http.serve(config.listen, authority.router()));
     tasks.own(&server);
-    let (notify, mut updates) = tokio::sync::watch::channel(0u64);
+    let (notify, updates) = tokio::sync::watch::channel(0u64);
     let ingest_config = config.clone();
     let ingest_authority = authority.clone();
     let ingest_store = store.clone();
     let ingest_rpc = rpc.clone();
     let input_stop = shutdown.clone();
     let failed_authority = authority.clone();
-    let mut ingest = tokio::spawn(async move {
+    let ingest = tokio::spawn(async move {
         let mut task = HistoryInputTask {
             config: ingest_config,
             rpc: ingest_rpc,
@@ -496,64 +498,18 @@ pub async fn run_managed(
             ),
         }
     }
-    loop {
-        if shutdown.requested() {
-            ingest.await??;
-            return Ok(());
-        }
-        if server.is_finished() || ingest.is_finished() {
-            shutdown.request();
-            if !ingest.is_finished() {
-                (&mut ingest).await??;
-            }
-            return Err("history publisher background service stopped".into());
-        }
-        if let Err(error) = withdraw_fleet(&config, &authority).await {
-            tracing::error!(%error, "fleet withdrawal of corrupt bytes failed; retrying");
-            authority.0.status.write().unwrap()["fleet_withdrawal_error"] =
-                error.to_string().into();
-        }
-        if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
-            if shutdown.requested() {
-                tracing::info!(%error, "publication cycle ended by shutdown");
-                continue;
-            }
-            authority
-                .0
-                .publication_failures
-                .fetch_add(1, Ordering::Relaxed);
-            tracing::error!(%error,"publication failed; keeping valid coverage and retrying");
-            authority.0.status.write().unwrap()["publication_error"] = error.to_string().into();
-        }
-        let public_height = authority.0.active.read().unwrap().publication.height;
-        let oldest = authority
-            .0
-            .observed
-            .read()
-            .unwrap()
-            .range((public_height.saturating_add(1))..)
-            .map(|(_, t)| t.elapsed().as_secs())
-            .max()
-            .unwrap_or(0);
-        if oldest > 30 {
-            tracing::error!(
-                alert = "transparent_publication_stale",
-                oldest_unpublished_seconds = oldest,
-                "publication freshness target exceeded"
-            );
-        }
-        if let Err(error) = collect_candidates(&config, &authority) {
-            tracing::warn!(%error,"candidate collection failed");
-        }
-        pir_pipeline::wait(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
-            async {
-                let _ = updates.changed().await;
-            },
-            shutdown.cancelled(),
-        )
-        .await;
-    }
+    pir_pipeline::publisher::PublisherService::new(HistoryPublication {
+        config,
+        rpc,
+        store,
+        authority,
+        shutdown: shutdown.clone(),
+        server,
+        ingest,
+        updates,
+    })
+    .run(shutdown.cancelled())
+    .await
 }
 
 // Independent from publication: backpressure or slow fleet preparation cannot
@@ -948,8 +904,8 @@ async fn publish_candidate(
         authority.0.foreground.fetch_add(1, Ordering::AcqRel);
         Foreground(&authority.0.foreground)
     });
-    pir_pipeline::advance(
-        input,
+    pir_pipeline::publisher::PublicationPass::new(
+        async { Ok::<_, BoxError>(input) },
         |work| {
             prepare_candidate(
                 config,
@@ -962,8 +918,8 @@ async fn publish_candidate(
             )
         },
         |candidate| activate_history(config, rpc, authority, candidate),
-        &mut HistoryProgress,
     )
+    .run(&mut HistoryProgress)
     .await?;
     Ok(())
 }

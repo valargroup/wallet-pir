@@ -1,12 +1,4 @@
 //! Static resource declarations, never bound sockets or opened product stores.
-#[cfg(any(
-    feature = "enhance",
-    feature = "status",
-    feature = "transparent-history",
-    feature = "transparent-detail",
-    feature = "receiver"
-))]
-use crate::publisher::ReadinessRule;
 use crate::{
     publisher::{PublisherProduct, ReadinessProbe},
     Result,
@@ -73,7 +65,7 @@ impl PublisherLayout {
         if !root.is_absolute() {
             return Err(format!(
                 "{} writable path must be absolute: {}",
-                owner.name(),
+                owner,
                 root.display()
             )
             .into());
@@ -88,38 +80,15 @@ impl PublisherLayout {
         }) {
             return Err(format!(
                 "{} writable path {} overlaps {} writable path {}",
-                owner.name(),
+                owner,
                 path.display(),
-                other.name(),
+                other,
                 existing.display()
             )
             .into());
         }
         self.writable_paths.push((owner, path));
         Ok(())
-    }
-    #[cfg(any(
-        feature = "enhance",
-        feature = "status",
-        feature = "transparent-history",
-        feature = "transparent-detail",
-        feature = "receiver"
-    ))]
-    pub(super) fn declare_readiness_probe(
-        &mut self,
-        product: PublisherProduct,
-        address: SocketAddr,
-        path: &'static str,
-        rule: ReadinessRule,
-    ) {
-        self.probes
-            .entry(product)
-            .or_default()
-            .push(ReadinessProbe {
-                address,
-                path,
-                rule,
-            });
     }
 }
 #[cfg_attr(
@@ -163,7 +132,7 @@ impl std::fmt::Display for PathValidationError {
         write!(
             formatter,
             "cannot resolve {} writable path {}: {}",
-            self.product.name(),
+            self.product,
             self.path.display(),
             self.source
         )
