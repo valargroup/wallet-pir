@@ -376,31 +376,15 @@ worker can therefore retain its older audit document. New publications still
 restart workers because map metadata is held in memory. Unmanaged systemd drop-ins
 must be reconciled before deployment. `force_redeploy=true` disables worker skips.
 
-After the continuous-publisher workflow enables worker control sockets, binary
-rollouts preserve its canonical control socket, active-record path and runtime
-directory. This fixed-publication workflow requires the publisher to remain in
-shadow and every controlled worker to serve the planned map and logical assignment. It refuses active
-continuous publication and routing changes; publication advancement belongs to
-the publisher. Binary rollouts leave controlled workers' prepared and retired
-publication files and runtime cache entries intact. Coordinate a shadow-mode
-validation window before activation of the publisher.
-
-The runner retains transaction JSON under
-`~/.local/state/transparent-pir-deploy` (override with
-`TRANSPARENT_TRANSACTION_DIR`); each touched host retains its previous files under
-`/opt/transparent-pir/transactions/<transaction-id>`. An interrupted transaction is
-recoverable via `fleet-rollback`; a no-op does not replace the last rollback target.
-The workflow preserves `deploy-plan.json` and `deploy-timings.tsv`. Readiness
-reports disk cache bytes/hits/misses/write failures, and Prometheus reports restore
-counts and cumulative restore time separately from cold builds.
+Workers take no control commands: each query server synchronizes publications
+from its HTTPS publisher and reports status on its loopback `management_listen`.
+Readiness reports disk cache bytes/hits/misses/write failures, and Prometheus
+reports restore counts and cumulative restore time separately from cold builds.
 
 Acceptance is a measured compatible-binary deployment below ten minutes for the
-deployment phases, excluding build/CI time. Validate one replica and one owner
-before expanding: use `canary_worker_ids` with one worker ID per run, first a
-replica and then an owner. Canary mode requires the same publication, healthy
-existing workers and unchanged routing; deferred workers retain their state and
-are verified afterwards. Clear the input for the fleet rollout, then repeat with compatible cache entries and verify the wallet
-regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesystem
+deployment phases, excluding build/CI time. Validate one replica and then one
+owner before expanding, then repeat with compatible cache entries and verify the
+wallet regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesystem
 cache state alongside phase timings. See [remaining work](remaining-work.md) for
 open rollout gates and [evidence](../../evidence/transparent/README.md) for recorded measurements.
 
@@ -554,7 +538,7 @@ operational `fleet.json` settings over (`OPERATIONAL_KEYS` in
 already warm quorum. An unchanged router configuration skips
 reload only when its successful application marker matches; an interrupted
 rename/reload is retried.
-Workers prepare through a root-only Unix control socket, keep current runtimes
+Workers synchronize each publication from their HTTPS publisher, keep current runtimes
 resident within their existing cache budgets, and swap snapshots without a
 restart. Preparation evicts unpinned runtimes from retired generations before
 building and warms only current revisions. Retained revisions remain available
@@ -564,7 +548,7 @@ publication. The controller keeps three unused candidate directories; workers
 keep the newest three retired serving snapshots plus any older snapshot still
 held by a request. An old reader does not prevent collection of other idle
 snapshots. The server releases its startup snapshot after launching prewarm;
-private control status reports `retired_snapshots` so a growing backlog is
+provider status reports `retired_snapshots` so a growing backlog is
 visible. Three superseded normal tail revisions may also accompany the current set.
 History workers stage under `worker_root/workers/<worker-id>/`. Each revision
 is transferred once into `.sources/<manifest-digest>`; publication directories

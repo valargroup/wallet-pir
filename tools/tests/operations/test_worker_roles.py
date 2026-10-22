@@ -65,7 +65,8 @@ class WorkerRoles(unittest.TestCase):
                     {**SETTINGS[('enhance', 'external-worker')], **bad}, RELEASE)
 
     def test_inputs_cannot_sit_inside_state(self):
-        settings = {**SETTINGS[('transparent-history', 'external-worker')], 'shard_dir': '/var/lib/history-worker/set'}
+        settings = {**SETTINGS[('transparent-history', 'external-worker')],
+                    'publisher_ca': '/var/lib/history-worker/publisher-ca.pem'}
         with self.assertRaisesRegex(ValueError, 'overlaps'):
             REGISTRY['transparent-history'].roles['external-worker'].render(settings, RELEASE)
 
@@ -91,43 +92,36 @@ class WorkerRoles(unittest.TestCase):
                     if isinstance(value, int) and not isinstance(value, bool):
                         self.assertIs(type(body[name]), int, name)
                         self.assertEqual(body[name], value)
-                if service == 'transparent-history':
+                if role in ('provider', 'https-recent'):
                     self.assertEqual(result.check, ('--config', path, '--verify-only'))
+                else:
+                    # `--verify-only` with a publisher would synchronize into live state.
+                    self.assertEqual(result.check, ())
         self.assertEqual(len(managements), len(configs))
-        worker = REGISTRY['transparent-history'].roles['external-worker'].render(
-            SETTINGS[('transparent-history', 'external-worker')], RELEASE)
-        body = json.loads(worker.files['/etc/transparent-pir/history-worker.json'])['transparent_history']['settings']
-        self.assertEqual(body, {'listen': '127.0.0.1:8093', 'shard_dir': '/srv/history/set',
-                                'cache_bytes': 8 << 30, 'assignment': '/srv/history/assignment.json',
-                                'worker_id': 'external-1',
-                                'control_socket': '/run/transparent-history-worker/control.sock',
-                                'active_record': '/var/lib/history-worker/active.json'})
 
-    def test_display_check_verifies_the_initial_publication_without_control_state(self):
-        role = REGISTRY['transparent-display'].roles['external-worker']
-        settings = {**SETTINGS[('transparent-display', 'external-worker')], 'publication_dir': '/srv/display/c0',
-                    'collect_roots': ['/srv/display/publications', '/srv/display/staged'], 'loaded_only': True,
-                    'cache_bytes': 1 << 30, 'runtime_cache_dir': '/var/cache/display',
-                    'runtime_cache_max_bytes': 2 << 30}
-        result = role.render(settings, RELEASE)
-        config, check = '/etc/transparent-pir/display-worker.json', '/etc/transparent-pir/display-worker.check.json'
-        self.assertEqual(set(result.files), {config, check})
-        self.assertEqual(result.check, ('--config', check, '--verify-only'))
-        readonly = paths(units.effective([result.unit])['Service']['ReadOnlyPaths'])
-        self.assertLessEqual({config, check}, set(readonly))
-        serving = assert_history_config(self, result.files[config], settings['listen'], 'transaction_details')
-        verified = assert_history_config(self, result.files[check], settings['listen'], 'transaction_details')
-        self.assertEqual(serving['collect_root'], settings['collect_roots'])
-        self.assertEqual(serving['control_socket'], '/run/transparent-display-worker/control.sock')
-        self.assertEqual(serving['active_record'], '/var/lib/display-worker/active.json')
-        self.assertEqual({k: v for k, v in serving.items()
-                          if k not in ('control_socket', 'active_record', 'collect_root')}, verified)
-        self.assertEqual(verified, {'listen': '127.0.0.1:8095', 'role': 'combined', 'cache_bytes': 1 << 30,
-                                    'runtime_cache_dir': '/var/cache/display', 'runtime_cache_max_bytes': 2 << 30,
-                                    'loaded_only': True, 'publication_dir': '/srv/display/c0'})
-        without = role.render(SETTINGS[('transparent-display', 'external-worker')], RELEASE)
-        self.assertEqual(set(without.files), {config})
-        self.assertEqual(without.check, ())
+    def test_external_transparent_workers_render_the_current_https_consumer(self):
+        expected = {
+            'transparent-history': ('/etc/transparent-pir/history-worker.json', 'transparent_history',
+                                    {'listen': '127.0.0.1:8093', 'shard_dir': '/var/lib/history-worker',
+                                     'publisher': 'https://publisher.example.invalid', 'publisher_network': 'main',
+                                     'publisher_genesis': '00' * 32, 'cache_bytes': 8 << 30}),
+            'transparent-display': ('/etc/transparent-pir/display-worker.json', 'transaction_details',
+                                    {'listen': '127.0.0.1:8095', 'role': 'combined',
+                                     'state_dir': '/var/lib/display-worker',
+                                     'publisher': 'https://publisher.example.invalid', 'publisher_network': 'main',
+                                     'publisher_genesis': '00' * 32}),
+        }
+        for service, (path, section, body) in expected.items():
+            with self.subTest(service=service):
+                role = REGISTRY[service].roles['external-worker']
+                result = role.render(SETTINGS[(service, 'external-worker')], RELEASE)
+                self.assertEqual(set(result.files), {path})
+                self.assertEqual(json.loads(result.files[path])[section]['settings'], body)
+                self.assertEqual(list(result.directories), [body.get('state_dir', body.get('shard_dir'))])
+                for bad in ({'publisher': 'http://publisher.example.invalid'}, {'publisher_network': 'test'},
+                            {'publisher_genesis': 'AB' * 32}, {'control_socket': '/run/x.sock'}):
+                    with self.subTest(bad=bad), self.assertRaises(ValueError):
+                        role.render({**SETTINGS[(service, 'external-worker')], **bad}, RELEASE)
 
     def test_two_external_workers_on_one_host_do_not_share_a_config(self):
         role = REGISTRY['enhance'].roles['external-worker']

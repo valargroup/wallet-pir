@@ -22,7 +22,7 @@ ready_url = "http://{listen}/v1/ready"
 # An external worker: rendered by tools/transparent/lib/roles.py from the
 # inventory entry's settings and installed only where the entry says
 # `"install": true`. The shared engine installs, verifies and rolls back the
-# unit; publications, assignments and activation stay with the controller.
+# unit; the worker takes its publications from its HTTPS publisher.
 [services.transparent-history.roles.external-worker]
 unit = "transparent-history-worker.service"
 mode = "role"
