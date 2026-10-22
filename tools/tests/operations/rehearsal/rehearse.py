@@ -4,7 +4,7 @@
 Run from a copy outside the source checkout:
 
     rehearse.py --ops UNPACKED_OPERATIONS --binaries DIR --work DIR --out EVIDENCE.json \
-        --forbid SOURCE_CHECKOUT [--roles receiver,enhance,history,status,display]
+        --forbid SOURCE_CHECKOUT [--roles receiver,enhance,status]
 
 Every deploy, rollback and report goes through the unpacked operations
 package's own engine and product adapters; an audit hook refuses any file
@@ -12,10 +12,7 @@ open under --forbid, so nothing is read from the source checkout. Binaries
 are copies of release builds; fixture controllers, nodes and oracles are the
 release's own tools or the rehearsal's fixture programs. Nothing here is a
 GPU qualification, and the local executor does not enforce the sandbox.
-Status, history and display run --binaries' one `pir-query-server`, so it must
-be built with the features of every selected role (`status`,
-`transparent-history`, `transparent-detail`); otherwise rehearse those roles
-from separate --binaries directories.
+Status runs --binaries' `pir-query-server`, built with its `status` feature.
 """
 import argparse
 import http.server
@@ -105,15 +102,6 @@ class Node:
         """Puts every block a staged publication depends on on the chain, with its tree size."""
         for anchor in published['anchors']:
             self.set(anchor['height'], anchor['hash'], anchor['size'])
-
-
-def last_preparation(status):
-    """The worker's last preparation from a control status reply, flat (display) or wrapped (history)."""
-    try:
-        reply = json.loads(status)
-    except ValueError:
-        return status
-    return reply.get('last_preparation', reply.get('result', {}).get('last_preparation'))
 
 
 def free_port():
@@ -309,69 +297,6 @@ def enhance():
     return r.finish()
 
 
-def history():
-    r = Rehearsal('transparent-history-external-worker')
-    # The release's pir-query-server, built with transparent-history and transparent-detail.
-    binary = r.binary('pir-query-server')
-    sha = sha256(binary)
-    p1 = r.work / 'publications/p1'
-    p1.mkdir(parents=True)
-    first = json.loads(r.run(r.binary('history_fixture'), p1, 60).stdout)
-    port = free_port()
-    listen = '127.0.0.1:%d' % port
-    url = 'http://' + listen
-    settings = {'listen': listen, 'shard_dir': str(p1), 'state_dir': str(r.work / 'worker-state'),
-                'cache_bytes': 6 << 30}
-    # soak-query reads the expected rows from the publication files under this root.
-    exact = [r.binary('soak-query'), '--url', url, '--publications', str(r.work / 'publications'), '--shard', '0',
-             '--seconds', '3']
-    inventory = r.inventory('transparent-history', 'external-worker', settings, listen, exact)
-    deployer = r.deployer('transparent-history', inventory)
-    deployer.capture_baseline()
-    journal = deployer.deploy(sha, binary)
-    r.step('fresh-install', transaction=journal.id, status=journal.status, binary_sha256=sha,
-           product_check='pir-query-server --config <staged transparent_history> --verify-only on the staged set',
-           exact_answer='deploy exact_check passed (soak-query against the published files)')
-    r.executor.systemctl('local', 'restart', 'transparent-history-worker.service')
-    r.wait('ready after restart', lambda: r.executor.http_get('local', url + '/v1/ready')[0] == 200)
-    r.run(*exact)
-    r.step('restart', exact_answer=True)
-    # The fixture controller: prepare and activate a new publication over the
-    # root-only control socket, as the publication controller does.
-    p2 = r.work / 'publications/p2'
-    p2.mkdir(parents=True)
-    second = json.loads(r.run(r.binary('history_fixture'), p2, 90).stdout)
-    socket = r.executor.path('/run/transparent-history-worker/control.sock')
-    def control(command):
-        result = subprocess.run([r.binary('shard-control'), socket], input=json.dumps(command), capture_output=True,
-                                text=True, timeout=600)
-        return result.returncode, result.stdout.strip()
-    code, prepared = control({'operation': 'prepare', 'expected': first['map_sha256'],
-                              'publication': {'directory': str(p2), 'assignment': None,
-                                              'map_sha256': second['map_sha256']}})
-    r.step('prepare', returncode=code, reply=json.loads(prepared) if prepared.startswith('{') else prepared)
-    code, activated = control({'operation': 'activate', 'expected': first['map_sha256'],
-                               'map_sha256': second['map_sha256']})
-    r.run(*exact)
-    r.step('publication-update', returncode=code, exact_answer=True)
-    code, refused = control({'operation': 'prepare', 'expected': second['map_sha256'],
-                             'publication': {'directory': str(r.work / 'publications/missing'), 'assignment': None,
-                                             'map_sha256': '00' * 32}})
-    # A prepare evicts the active publication's unpinned runtimes before it
-    # loads (foundation behavior), so a loaded-only worker rebuilds them on
-    # the next query: the oracle gets a window that covers a rebuild.
-    r.run(*exact[:-1], '60')
-    status_code, status = control({'operation': 'status'})
-    r.step('failed-publication-update', returncode=code, reply=refused[-300:],
-           last_preparation=last_preparation(status),
-           still_exact=True)
-    report = r.report('transparent-history', inventory)
-    r.step('report', report=report)
-    r.deployer('transparent-history', inventory).rollback(journal.id)
-    r.step('rollback-install', absent=r.absent('transparent-history-worker.service'))
-    return r.finish()
-
-
 def status_worker():
     r = Rehearsal('status-external-worker')
     binary = r.binary('pir-query-server')
@@ -406,62 +331,7 @@ def status_worker():
     return r.finish()
 
 
-def display():
-    r = Rehearsal('transparent-display-external-worker')
-    binary = r.binary('pir-query-server')
-    fixture = r.binary('display_fixture')
-    sha = sha256(binary)
-    port = free_port()
-    listen = '127.0.0.1:%d' % port
-    url = 'http://' + listen
-    root = r.work / 'publications'
-    root.mkdir()
-    settings = {'listen': listen, 'role': 'combined', 'state_dir': str(r.work / 'worker-state'),
-                'publication_root': str(root), 'cache_bytes': 2 << 30}
-    inventory = r.inventory('transparent-display', 'external-worker', settings, listen)
-    deployer = r.deployer('transparent-display', inventory)
-    deployer.capture_baseline()
-    journal = deployer.deploy(sha, binary, skip_exact_check=True)
-    health = r.health(url + '/v1/health')
-    r.step('fresh-install', transaction=journal.id, status=journal.status, phase=health.get('phase'))
-    socket = r.executor.path('/run/transparent-display-worker/control.sock')
-    def control(command):
-        result = subprocess.run([r.binary('txid-control'), socket], input=json.dumps(command), capture_output=True,
-                                text=True, timeout=900)
-        return result.returncode, result.stdout.strip()
-    def publish(expected, candidate):
-        code, prepared = control({'operation': 'prepare', 'expected': expected,
-                                  'publication': {'directory': candidate['directory'],
-                                                  'map_sha256': candidate['map_sha256']}})
-        if code:
-            return code, prepared
-        return control({'operation': 'activate', 'expected': expected, 'map_sha256': candidate['map_sha256']})
-    # The fixture controller: stage a candidate and prepare/activate it over the
-    # root-only control socket, as the display controller does.
-    p0 = json.loads(r.run(fixture, 'stage', root, 'p0', 0).stdout)
-    code, reply = publish('', p0)
-    exact = json.loads(r.run(fixture, 'lookup', url, 0).stdout)
-    r.step('controller-activation', returncode=code, exact_answer=exact)
-    r.executor.systemctl('local', 'restart', 'transparent-display-worker.service')
-    r.wait('ready after restart', lambda: r.executor.http_get('local', url + '/v1/ready')[0] == 200, 600)
-    r.step('restart', exact_answer=json.loads(r.run(fixture, 'lookup', url, 0).stdout),
-           note='the active record restored the publication')
-    p1 = json.loads(r.run(fixture, 'stage', root, 'p1', 1).stdout)
-    code, reply = publish(p0['map_sha256'], p1)
-    r.step('publication-update', returncode=code, exact_answer=json.loads(r.run(fixture, 'lookup', url, 1).stdout))
-    code, refused = publish(p1['map_sha256'], {'directory': str(root / 'missing'), 'map_sha256': '00' * 32})
-    _, status = control({'operation': 'status'})
-    r.step('failed-publication-update', returncode=code, reply=refused[-300:],
-           last_preparation=last_preparation(status),
-           exact_answer=json.loads(r.run(fixture, 'lookup', url, 1).stdout))
-    report = r.report('transparent-display', inventory)
-    r.step('report', report=report)
-    r.deployer('transparent-display', inventory).rollback(journal.id)
-    r.step('rollback-install', absent=r.absent('transparent-display-worker.service'))
-    return r.finish()
-
-
-ROLES = {'receiver': receiver, 'enhance': enhance, 'history': history, 'status': status_worker, 'display': display}
+ROLES = {'receiver': receiver, 'enhance': enhance, 'status': status_worker}
 
 
 def main():

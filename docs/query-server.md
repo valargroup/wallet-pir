@@ -40,8 +40,8 @@ without opening worker state. `repair-rows` repairs journal-referenced rows
 from a peer row archive while the worker is stopped. `status-pir` remains its
 own command. Transparent history and transaction details have no separate
 server executables; they run only as `pir-query-server --config FILE`. The
-Transparent administration tools `shard-assign`, `shard-prune`,
-`shard-control`, and `txid-control` are built from `transparent-tools`.
+Transparent administration tools `shard-assign` and `shard-prune` are built
+from `transparent-tools`.
 
 ## Configuration
 

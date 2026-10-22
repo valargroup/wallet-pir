@@ -282,7 +282,7 @@ Source:
 - `src/transparent/transparent-publisher/src/tx_detail/` (`txid-display-controller`);
 - `src/transparent/transparent-query-server/src/tx_detail/` (serving, run by
   `pir-query-server` with feature `transparent-detail`);
-- `tools/transparent` (`txid-control`, `txid-inventory`);
+- `tools/transparent` (`txid-inventory`);
 - the `txid-display-*` deploy commands.
 
 The v1 publication has run in production beside history since 2026-10-06

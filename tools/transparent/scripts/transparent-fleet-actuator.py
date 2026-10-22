@@ -592,10 +592,9 @@ def bootstrap(actuator, op, name):
     remote.run(host, f'mkdir -p {staging} /opt/transparent-pir/assignments /opt/transparent-publisher '
                      f"{actuator.c['publication_root']}")
     binary = release_binary(release)
-    remote.copy(host, [Path(release['dir'])/binary, Path(release['dir'])/'shard-control'], staging + '/')
+    remote.copy(host, [Path(release['dir'])/binary], staging + '/')
     remote.run(host, f"echo '{release['binary_sha256']}  {staging}/{binary}' | sha256sum -c --quiet && "
-                     f'install -m755 {staging}/{binary} /usr/local/bin/{binary} && '
-                     f'install -m755 {staging}/shard-control /usr/local/bin/shard-control')
+                     f'install -m755 {staging}/{binary} /usr/local/bin/{binary}')
     plan = newest_plan_naming(actuator.state, name)
     if plan is None:
         log('bootstrap_waiting', member=name, reason='no publication has been planned with this member yet')
