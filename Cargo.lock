@@ -875,6 +875,7 @@ dependencies = [
  "ipir-sp",
  "pir-control",
  "pir-pipeline",
+ "pir-publication",
  "reinspiring",
  "reqwest",
  "serde",

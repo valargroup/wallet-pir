@@ -6,14 +6,20 @@ use crate::{
     runtime::DomainPlan,
     ROW_BYTES,
 };
-use pir_publication::ObjectReference;
+use pir_publication::{ObjectReference, SourceObservation};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 pub const VERSION: u16 = 1;
+
+/// How long one actual chain-node observation lets an Enhance view serve.
+/// Enhance's contract leases serving from the publisher's node check itself,
+/// so a role must renew it through a new check; nothing else extends it.
+pub const SOURCE_AUTHORITY_LIFETIME: Duration = pir_control::CONTROL_WATCHDOG;
 pub const PREFIX: &str = "/provider/enhance/v1/";
 pub const METADATA_LIMIT: u64 = 2 * 1024 * 1024;
 pub const MAX_OBJECT_BYTES: u64 = 32768 * ROW_BYTES as u64;
@@ -79,25 +85,22 @@ pub struct AuthorityRequest {
 pub struct AuthorityResponse {
     pub current: Current,
     pub authorized_manifest_sha256: String,
-    /// Time of an actual successful node check, not an HTTP heartbeat.
-    pub observed_unix_ms: u64,
+    /// An actual successful node check, not an HTTP heartbeat; none when the
+    /// response grants no authority.
+    pub source: SourceObservation,
 }
 
 impl AuthorityResponse {
-    /// The existing five-second serving-authority window, measured from a
-    /// source observation. Receiving or caching this response cannot renew it.
-    pub fn fresh(&self, now_unix_ms: u64) -> Result<(), String> {
+    /// Serving authority left at `now`, [`SOURCE_AUTHORITY_LIFETIME`] after
+    /// the node check. Receiving or caching this response cannot renew it.
+    pub fn remaining_at(&self, now: SystemTime) -> Result<Duration, String> {
         self.current.validate()?;
-        if !self.current.eligible
-            || !protocol::canonical_hash(&self.authorized_manifest_sha256)
-            || self.observed_unix_ms == 0
-            || now_unix_ms
-                .checked_sub(self.observed_unix_ms)
-                .is_none_or(|age| age > pir_control::CONTROL_WATCHDOG.as_millis() as u64)
-        {
-            return Err("Enhance source authority is absent or expired".into());
+        if !self.current.eligible || !protocol::canonical_hash(&self.authorized_manifest_sha256) {
+            return Err("Enhance source authority is absent".into());
         }
-        Ok(())
+        self.source
+            .remaining_at(SOURCE_AUTHORITY_LIFETIME, now)
+            .ok_or_else(|| "Enhance source authority is absent or expired".into())
     }
 }
 

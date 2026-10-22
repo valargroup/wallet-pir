@@ -18,12 +18,13 @@ mod object_reference;
 mod publication_authority;
 mod publication_envelope;
 mod published_objects;
+mod source_observation;
 
 use serde::{Deserialize, Serialize};
 
 pub use authority_check::{
-    AuthorityCheckRefusal, AuthorityCheckRequest, AuthorityCheckResponse, AUTHORITY_CHECK_PATH,
-    MAX_AUTHORITY_SUBJECTS,
+    AuthorityCheckRefusal, AuthorityCheckRequest, AuthorityCheckResponse,
+    AuthorityResponseMismatch, SubjectAnswer, AUTHORITY_CHECK_PATH, MAX_AUTHORITY_SUBJECTS,
 };
 pub use authority_floor::{
     AuthorityFloor, AuthorityFloorError, CheckedSuccession, PendingFloorWrite, SourceBinding,
@@ -42,6 +43,7 @@ pub use publication_envelope::{
     PublicationReplay, PublicationScope, CURRENT_PATH,
 };
 pub use published_objects::PublishedObjectStore;
+pub use source_observation::SourceObservation;
 
 /// Identity of reusable material bytes, independent of the publication that
 /// names them: a metadata-only refresh keeps it.

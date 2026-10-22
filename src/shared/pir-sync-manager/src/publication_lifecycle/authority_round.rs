@@ -13,7 +13,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// publication and fence of the eligible `envelope`. A conflict
     /// re-observes the envelope, so a withdrawal or new fence fences serving
     /// before the pass defers. Every negative answer fences serving, then
-    /// permanently invalidates that view in the persisted floor.
+    /// permanently invalidates that view in the persisted floor. A response
+    /// that answers anything other than exactly `subjects`, in order, under
+    /// that authority confirms and invalidates nothing.
     pub(super) async fn check_authority(
         &mut self,
         envelope: &Envelope<A>,
@@ -44,17 +46,15 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                 status,
             )));
         }
-        let answer: AuthorityCheckResponse =
+        let answer: AuthorityCheckResponse<A::AuthoritySubject> =
             serde_json::from_slice(&response.read_limited(ENVELOPE_LIMIT).await?)?;
         drop(response);
-        if answer.authority != authority || answer.still_authoritative.len() != identities.len() {
-            return Err(Box::new(
-                PublicationLifecycleError::AuthorityResponseMismatch,
-            ));
-        }
+        let verdicts = request
+            .verdicts(answer)
+            .map_err(|_| PublicationLifecycleError::AuthorityResponseMismatch)?;
         let refuted: Vec<ViewIdentity> = identities
             .into_iter()
-            .zip(answer.still_authoritative)
+            .zip(verdicts)
             .filter_map(|(identity, authoritative)| (!authoritative).then_some(identity))
             .collect();
         if !refuted.is_empty() {

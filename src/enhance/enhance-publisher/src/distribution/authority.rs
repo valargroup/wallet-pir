@@ -2,16 +2,19 @@
 use super::PublicationDistribution;
 use enhance_shared::{
     protocol::{canonical_hash, digest, Manifest},
-    publication::AuthorityResponse,
+    publication::{AuthorityResponse, SOURCE_AUTHORITY_LIFETIME},
 };
-use std::{
-    sync::atomic::Ordering,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use pir_publication::SourceObservation;
+use std::sync::atomic::Ordering;
 
 impl PublicationDistribution {
-    pub(super) async fn check_canonical_anchor(&self, manifest: &Manifest) -> Result<u64, String> {
-        let started = now_ms()?;
+    /// Observe the chain node: the manifest's anchor must still be canonical.
+    /// The observation starts before the lookup, so its lifetime covers it.
+    pub(super) async fn check_canonical_anchor(
+        &self,
+        manifest: &Manifest,
+    ) -> Result<SourceObservation, String> {
+        let observation = SourceObservation::starting_now();
         let elapsed = std::time::Instant::now();
         if self
             .rpc
@@ -22,10 +25,10 @@ impl PublicationDistribution {
         {
             return Err("Enhance publication anchor is no longer canonical".into());
         }
-        if elapsed.elapsed() > pir_control::CONTROL_WATCHDOG {
+        if elapsed.elapsed() > SOURCE_AUTHORITY_LIFETIME {
             return Err("Enhance source check exceeded authority lifetime".into());
         }
-        Ok(started)
+        Ok(observation)
     }
 
     pub(crate) async fn authority(
@@ -54,7 +57,7 @@ impl PublicationDistribution {
             return Ok(AuthorityResponse {
                 current,
                 authorized_manifest_sha256: String::new(),
-                observed_unix_ms: 0,
+                source: SourceObservation::NONE,
             });
         }
         let manifest = target.ok_or("Enhance publication is no longer retained")?;
@@ -67,7 +70,7 @@ impl PublicationDistribution {
         {
             return Err("Enhance publication is withdrawn".into());
         }
-        let observed_unix_ms = self.check_canonical_anchor(&manifest).await?;
+        let source = self.check_canonical_anchor(&manifest).await?;
         // Recheck after the RPC: a withdrawal concurrent with the node check
         // must be visible before the response grants any authority.
         let disk = self.disk.lock().unwrap();
@@ -93,16 +96,7 @@ impl PublicationDistribution {
         Ok(AuthorityResponse {
             current: latest.clone(),
             authorized_manifest_sha256: digest(&manifest),
-            observed_unix_ms,
+            source,
         })
     }
-}
-fn now_ms() -> Result<u64, String> {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_millis(),
-    )
-    .map_err(|e| e.to_string())
 }
