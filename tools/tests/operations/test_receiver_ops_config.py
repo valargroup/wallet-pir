@@ -63,9 +63,32 @@ def caddy_tree(text):
     return root
 
 
+def coordinator_ipv4():
+    """The coordinator address the fleet publishes, which fronts the unified wallet host."""
+    variables = (INFRA / 'variables.tf').read_text()
+    block = variables.split('variable "wallet_pir_coordinator_dns_ipv4" {', 1)[1].split('\n}', 1)[0]
+    return re.search(r'default\s*=\s*"([0-9.]+)"', block)[1]
+
+
+def receiver_site(text):
+    """Return the one site block, after checking the optional global options.
+
+    The only global option allowed trusts the coordinator, and nothing else, to
+    forward `X-Forwarded-For`: the unified wallet host proxies Receiver from
+    there, and per-client admission must still key on the wallet.
+    """
+    tree = caddy_tree(text)
+    if tree and tree[0][0] == '':
+        trust = [('servers', [(f'trusted_proxies static {coordinator_ipv4()}/32', [])])]
+        assert tree[0][1] == trust, tree[0][1]
+        tree = tree[1:]
+    (site, body), = tree
+    return site, body
+
+
 def check_caddyfile(text):
     """Return the upstream the wallet routes proxy to; fail on any other public route."""
-    (site, body), = caddy_tree(text)
+    site, body = receiver_site(text)
     assert site == 'receiver-pir.valargroup.dev', site
     names = sorted(line.split()[0] for line, _ in body)
     assert names == ['@wallet', 'handle', 'handle', 'request_body'], names
@@ -173,7 +196,7 @@ def check_exact_check(service, unit, caddy):
     argv = check['argv']
     assert argv[:2] == PROBE and not any('{' in word for word in argv[2:]), argv
     option = lambda name: argv[argv.index(name) + 1]
-    (site, _), = caddy_tree(caddy)
+    site, _ = receiver_site(caddy)
     assert option('--origin') == 'https://' + site, argv
     assert option('--health-url') == 'http://%s/v1/receiver/health' % bind, argv
     # The nodes and authentication the service itself uses, the only ones the host reaches.
