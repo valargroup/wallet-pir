@@ -21,7 +21,7 @@ pub fn prepare(catalog: &mut Catalog, mut value: Value, display: bool) -> Result
         return Err("expected predecessor Transparent inventory".into());
     }
     catalog.publication_layout();
-    let root = catalog.root().to_path_buf();
+    let root = catalog.source_root().to_path_buf();
     let source_runtimes = ShippedRuntimes::required(root.clone());
     let target_runtimes = ShippedRuntimes::required(catalog.stage().to_path_buf());
     let mut runtimes = BTreeMap::<String, Runtime>::new();

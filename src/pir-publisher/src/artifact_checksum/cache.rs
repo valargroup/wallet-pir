@@ -39,7 +39,7 @@ pub fn prepare(preparation: &Path, root: &Path, stage: &Path) -> crate::Result<P
             .ok_or("invalid predecessor cache key")?;
         let previous = migration::sha256(digest.into())?;
         let relative = Path::new("objects").join(digest);
-        let source = catalog.root().join(&relative);
+        let source = catalog.source_root().join(&relative);
         match std::fs::symlink_metadata(&source) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error.into()),

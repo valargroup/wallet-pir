@@ -150,7 +150,7 @@ impl Catalog {
         })
     }
 
-    pub fn root(&self) -> &Path {
+    pub fn source_root(&self) -> &Path {
         &self.source_root
     }
 
@@ -309,10 +309,7 @@ impl Catalog {
             .join(crate::namespace("objects"))
             .join(&checksum.digest);
         self.metadata_at(
-            &path
-                .strip_prefix(&self.stage)
-                .map_err(io::Error::other)?
-                .to_path_buf(),
+            path.strip_prefix(&self.stage).map_err(io::Error::other)?,
             bytes,
         )?;
         Ok(Object {
