@@ -210,7 +210,7 @@ pub struct ProviderStatus {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn status_scope_changes_are_replays() {
@@ -308,7 +308,10 @@ mod tests {
 
     /// An inventory with valid Status geometry whose objects are all derived
     /// from `material`, published as `generation`.
-    fn geometric_inventory(material: u8, generation: u64) -> (Inventory, ObjectReference) {
+    pub(crate) fn geometric_inventory(
+        material: u8,
+        generation: u64,
+    ) -> (Inventory, ObjectReference) {
         let object = |tag: u8, bytes: u64| ObjectReference {
             sha256: hex::encode([material ^ tag; 32]),
             bytes,
@@ -346,7 +349,7 @@ mod tests {
         let inventory_object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
         (inventory, inventory_object)
     }
-    fn publishing(inventory: &Inventory, inventory_object: &ObjectReference) -> Current {
+    pub(crate) fn publishing(inventory: &Inventory, inventory_object: &ObjectReference) -> Current {
         Current {
             scope: scope([1; 32], [2; 32]),
             sequence: 10,

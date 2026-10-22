@@ -23,6 +23,10 @@ struct Origin {
     advance_during_check: AtomicBool,
     withdraw_during_check: AtomicBool,
     version: RwLock<String>,
+    /// Objects served by digest; any other id serves a non-inventory.
+    objects: RwLock<std::collections::HashMap<String, Vec<u8>>>,
+    /// Every object id requested, in order.
+    requested_objects: RwLock<Vec<String>>,
 }
 #[path = "../../../tests/support/status_tls.rs"]
 mod tls;
@@ -105,10 +109,13 @@ async fn setup() -> (
         advance_during_check: AtomicBool::new(false),
         withdraw_during_check: AtomicBool::new(false),
         version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
+        objects: RwLock::default(),
+        requested_objects: RwLock::default(),
     });
     let shared = current.clone();
     let anchors = current.clone();
     let discovery = current.clone();
+    let objects = current.clone();
     let app = Router::new()
         .route(
             pir_sync_manager::service_discovery::PATH,
@@ -163,7 +170,14 @@ async fn setup() -> (
         );
     let app = app.route(
         &format!("{PREFIX}{OBJECTS_PATH}:id"),
-        get(|| async { "not an inventory" }),
+        get(move |Path(id): Path<String>| {
+            let objects = objects.clone();
+            async move {
+                objects.requested_objects.write().unwrap().push(id.clone());
+                let served = objects.objects.read().unwrap().get(&id).cloned();
+                served.unwrap_or_else(|| b"not an inventory".to_vec())
+            }
+        }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -589,5 +603,91 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     let mut older = pointer();
     older.sequence -= 1;
     assert!(reopened.classify(older).is_err());
+    server.abort();
+}
+
+/// The publisher advanced to C while the worker still serves predecessor B,
+/// whose material differs. The router must accept B for handover and go on to
+/// download it; an inventory the latest publication does not authorize is
+/// refused before any of its material is requested.
+#[tokio::test]
+async fn router_follows_its_workers_retained_predecessor_but_not_a_forged_one() {
+    use crate::publication::tests::{geometric_inventory, publishing};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let fresh = |(mut inventory, _): (Inventory, ObjectReference)| {
+        inventory.manifest.observed_ms = now_ms();
+        let object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
+        (inventory, object)
+    };
+    let (b, b_object) = fresh(geometric_inventory(0x10, 4));
+    let (c, c_object) = fresh(geometric_inventory(0x20, 5));
+    let (forged, forged_object) = fresh(geometric_inventory(0x30, 5));
+    *source.current.write().unwrap() = Current {
+        sequence: 7,
+        ..publishing(&c, &c_object)
+    };
+    for (inventory, object) in [(&b, &b_object), (&c, &c_object), (&forged, &forged_object)] {
+        source.objects.write().unwrap().insert(
+            object.sha256.clone(),
+            serde_json::to_vec(inventory).unwrap(),
+        );
+    }
+
+    let worker = Service::open(
+        Role::Worker,
+        [1; 32],
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let worker_origin = format!("http://{}", listener.local_addr().unwrap());
+    let peer_routes = worker.control_routes();
+    let peer = tokio::spawn(async move { axum::serve(listener, peer_routes).await.unwrap() });
+    let router = Service::open(
+        Role::Router,
+        [1; 32],
+        root.path().join("router"),
+        worker_origin,
+    )
+    .unwrap();
+    let mut task = synchronization(
+        router.clone(),
+        &role_config(Role::Router, root.path().join("router"), &tls),
+    )
+    .unwrap();
+    let worker_serves = |inventory: &Inventory, object: &ObjectReference| {
+        let worker = worker.clone();
+        let (manifest, object) = (inventory.manifest.clone(), object.clone());
+        async move {
+            let mut state = worker.state.lock().await;
+            state.controller = Some(Controller::new(Generation::public_only(
+                manifest,
+                Arc::new(vec![]),
+            )));
+            state.inventory = Some(object);
+        }
+    };
+
+    worker_serves(&forged, &forged_object).await;
+    let error = task.synchronize().await.unwrap_err();
+    assert!(error.to_string().contains("not authorized"), "{error}");
+    assert!(!source
+        .requested_objects
+        .read()
+        .unwrap()
+        .contains(&forged.public.sha256));
+
+    // B is authorized by its own reference and its material is requested;
+    // this fixture serves no real material, so loading B fails afterwards.
+    worker_serves(&b, &b_object).await;
+    assert!(task.synchronize().await.is_err());
+    assert!(source
+        .requested_objects
+        .read()
+        .unwrap()
+        .contains(&b.public.sha256));
+    peer.abort();
     server.abort();
 }
