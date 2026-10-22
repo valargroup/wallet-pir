@@ -353,8 +353,10 @@ async fn collect_inner<'a>(
 /// Activates the rolling filter window ending at `tip` on `serving`, fenced by `epoch`,
 /// before witness and PIR preparation; the canonical guard also checks its anchor while
 /// that runs. Only serving builds one: a one-shot run writes no filter artifact. A
-/// window `serving` already holds over the same blocks under the same correction
-/// revision is kept, so a caught-up service does not rebuild it every poll.
+/// window `serving` already holds for the same network, correction revision and tip,
+/// within the requested retention, is kept, so a caught-up service does not rebuild it
+/// every poll. The stored chain ending at that tip is fixed, so a rebuild would read the
+/// same blocks, and stop at the same one when the byte bound shortens the window.
 async fn publish_filters(
     args: &Config,
     rpc: &NodeClient,
@@ -372,13 +374,9 @@ async fn publish_filters(
     let current = serving.filter_window();
     if current.is_some_and(|window| {
         let head = window.head();
-        (
-            head.genesis,
-            head.revision,
-            head.first,
-            head.tip.height,
-            head.tip.hash,
-        ) == (genesis, args.history_revision, first, tip.height, tip.hash)
+        head.first >= first
+            && (head.genesis, head.revision, head.tip.height, head.tip.hash)
+                == (genesis, args.history_revision, tip.height, tip.hash)
     }) {
         return Ok(());
     }
@@ -1047,6 +1045,52 @@ mod tests {
             .insert(u64::from(next), [4; 32]);
         paused.refresh().await.unwrap();
         assert!(!Arc::ptr_eq(
+            &window,
+            &paused.publications.filter_window().unwrap()
+        ));
+    }
+
+    /// A window the byte bound shortened starts after the block count's first block, and
+    /// is still kept while the tip and correction revision stay put.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unchanged_tip_keeps_a_byte_shortened_window() {
+        let mut paused = Paused::new(|_| {}).await;
+        let next = crate::blocks::ironwood_activation() + 1;
+        paused
+            .store()
+            .append(&receiver_store::IndexedBlock {
+                height: next,
+                hash: [4; 32],
+                parent: [3; 32],
+                start_position: 0,
+                end_position: 0,
+                coinbase_actions: 0,
+                payments: Vec::new(),
+                commitments: Vec::new(),
+            })
+            .unwrap();
+        *paused.node.tip.lock().unwrap() = u64::from(next);
+        paused
+            .node
+            .hashes
+            .lock()
+            .unwrap()
+            .insert(u64::from(next), [4; 32]);
+        paused.refresh().await.unwrap();
+        assert_eq!(
+            paused.publications.filter_window().unwrap().head().first,
+            next - 1
+        );
+        // The same tip's window as the byte bound would leave it, without its first block.
+        let filters = paused.store().block_filters(1, 0).unwrap();
+        let genesis = Network::Mainnet.genesis_hash();
+        let shortened = receiver_pir_server::blocks::BlockWindow::new(genesis, 0, filters).unwrap();
+        let epoch = paused.publications.epoch();
+        assert!(paused.publications.publish_filters(shortened, epoch));
+        let window = paused.publications.filter_window().unwrap();
+        assert_eq!(window.head().first, next);
+        paused.refresh().await.unwrap();
+        assert!(Arc::ptr_eq(
             &window,
             &paused.publications.filter_window().unwrap()
         ));
