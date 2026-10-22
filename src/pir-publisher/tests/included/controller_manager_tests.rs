@@ -1763,3 +1763,188 @@ async fn manager_double_intent_write_failure_retains_exact_negative_revision() {
     query(&origin, &set).await;
     task.stop().await;
 }
+
+/// The controller advances through successive stored publications
+/// (the first changes the row the oracle queries, the next two add empty
+/// blocks) while a full-holdings consumer follows it over TLS. After every
+/// update the consumer's worker answers a fresh private query for that row:
+/// the decoded row equals the producer's bytes of the publication just
+/// activated, and repeating the request returns the identical encrypted
+/// answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn http_consumers_answer_from_successive_stored_publications() {
+    use transparent_shared::history::shardset::{TableRef, OBJECT_STORE};
+    let root = tempfile::tempdir().unwrap();
+    copy_fixture_tree(
+        &prepared_fixture(2).join("journal"),
+        &root.path().join("journal"),
+    );
+    // Every runtime is already prepared, so each update builds only what
+    // it changes.
+    let initial = root.path().join("initial");
+    copy_archive_publication(2, &initial);
+    let tip = Arc::new(AtomicU64::new(2));
+    let node_tip = tip.clone();
+    let rpc_app = axum::Router::new().route(
+        "/",
+        axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+            let tip = node_tip.clone();
+            async move {
+                let value = match request["method"].as_str().unwrap() {
+                    "getblockcount" => serde_json::json!(tip.load(Ordering::Acquire)),
+                    "getblockhash" => {
+                        let h = request["params"][0].as_u64().unwrap();
+                        serde_json::json!(if h == 0 {
+                            transparent_filter::MAINNET_GENESIS_DISPLAY.to_string()
+                        } else {
+                            BlockHash::from_internal_bytes([h as u8; 32]).to_display_hex()
+                        })
+                    }
+                    other => panic!("unexpected source method {other}"),
+                };
+                axum::Json(serde_json::json!({"result":value,"error":null,"id":request["id"]}))
+            }
+        }),
+    );
+    let (rpc_origin, _node) = serve_worker(rpc_app).await;
+    let cookie = root.path().join("cookie");
+    std::fs::write(&cookie, "fixture:fixture").unwrap();
+    let rpc = crate::ingest::zakura::connect(&rpc_origin, &cookie).unwrap();
+    let owner = authority(&initial, None, rpc.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let publications = root.path().join("publications");
+    std::fs::create_dir(&publications).unwrap();
+    let config = Config {
+        data_dir: root.path().join("journal"),
+        publication_root: publications.clone(),
+        initial_publication: initial,
+        recent_from: 2,
+        recent_geometry: "decoupled-2k-8k".into(),
+        archive_geometry: "decoupled-32k-32k".into(),
+        rpc_url: rpc_origin,
+        rpc_cookie: cookie,
+        listen: "127.0.0.1:0".parse().unwrap(),
+        source_sha: "fixture".into(),
+        directory_choice: publication::DirectoryChoice::Off,
+        range_profile: transparent_filter::RANGE_PROFILE.into(),
+        follow_journal: true,
+        snapshot_dir: None,
+    };
+    let reader = Arc::new(tokio::sync::Mutex::new(
+        EventStore::open_existing(&config.data_dir).unwrap(),
+    ));
+    let mut writer = EventStore::open(
+        &config.data_dir,
+        transparent_filter::MAINNET_GENESIS_DISPLAY,
+        0,
+    )
+    .unwrap();
+    let (notify, _) = tokio::sync::watch::channel(0);
+    let mut input = HistoryInputTask {
+        config: config.clone(),
+        rpc: rpc.clone(),
+        store: reader.clone(),
+        authority: owner.clone(),
+        notify,
+        cache: OutputCache::new(100),
+        pending_invalidation: None,
+    };
+    let mut consumer = manager(&tls, &root.path().join("consumer"))
+        .await
+        .with_full_holdings();
+    let mut first_download = None;
+    // The initial publication's row.
+    let mut previous_row = {
+        let set = ShardSet::open(&config.initial_publication, 0).unwrap();
+        let rows = set
+            .get(1)
+            .unwrap()
+            .segment(TableRef::Directory, 0)
+            .unwrap()
+            .load()
+            .unwrap();
+        let width = set.get(1).unwrap().geometry.directory_row_bytes;
+        rows.chunks_exact(width)
+            .find(|r| r.iter().any(|b| *b != 0))
+            .map(<[u8]>::to_vec)
+    };
+    for height in 3..=5u64 {
+        // The oracle's script receives again once, so its row changes.
+        let mut added = Vec::new();
+        if height == 3 {
+            added = writer.events_at(2).unwrap().unwrap();
+            let TransparentEvent::Receive(event) = &mut added[0].1 else {
+                unreachable!()
+            };
+            event.height = 3;
+            event.txid = transparent_events::Txid([8; 32]);
+            event.value = 60_000;
+        }
+        writer
+            .append_block(
+                height,
+                BlockHash::from_internal_bytes([height as u8; 32]),
+                &added,
+            )
+            .unwrap();
+        writer.commit().unwrap();
+        tip.store(height, Ordering::Release);
+        pir_pipeline::Task::run(&mut input).await.unwrap();
+        publish_candidate(
+            &config,
+            &rpc,
+            &reader,
+            &owner,
+            |geometry| {
+                let mut policy = DecoupledPolicy::for_geometry(geometry);
+                policy.scripts.target = 2;
+                policy
+            },
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        collect_candidates(&config, &owner).unwrap();
+        let active = owner.0.active.read().unwrap().publication.clone();
+        assert_eq!(active.height, height);
+        assert_eq!(active.directory.parent(), Some(publications.as_path()));
+        // The publication links its tables into the store; HTTP serves the
+        // bytes those links name.
+        let set = ShardSet::open(
+            &active.directory,
+            transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS,
+        )
+        .unwrap();
+        let shard = set.get(1).unwrap();
+        let source = shard.segment(TableRef::Directory, 0).unwrap();
+        let link = std::fs::read_link(source.path()).unwrap();
+        assert_eq!(
+            link,
+            Path::new("../..").join(OBJECT_STORE).join(source.sha256())
+        );
+        let progress = consumer.poll_once().await.unwrap();
+        assert!(!progress.unchanged, "{progress:?}");
+        // Later updates send only what changed.
+        let first = *first_download.get_or_insert(progress.downloaded_bytes);
+        if height > 3 {
+            assert!(progress.downloaded_bytes < first, "{progress:?}");
+        }
+        let (origin, listening) = worker(consumer.live().unwrap()).await;
+        let answer = CheckedAnswer::new(&origin, &set).await;
+        answer.check(&origin).await;
+        listening.stop().await;
+        // The oracle row the answer decoded to is this publication's.
+        let rows = source.load().unwrap();
+        let width = shard.geometry.directory_row_bytes;
+        let row = rows
+            .chunks_exact(width)
+            .find(|r| r.iter().any(|b| *b != 0))
+            .unwrap()
+            .to_vec();
+        // Rows are bound to their revision: an answer from the replaced
+        // publication would not decode to this one.
+        assert_ne!(previous_row.as_ref(), Some(&row), "height {height}");
+        previous_row = Some(row);
+    }
+}
