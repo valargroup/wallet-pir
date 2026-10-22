@@ -200,9 +200,14 @@ impl PackingRouter {
         })
     }
     pub fn public_router(&self) -> Router {
-        Router::new()
-            .route("/v1/enhance/query", post(query))
-            .route("/v1/enhance/session/:session_id", get(session))
+        crate::PUBLIC_ROUTES
+            .mount(
+                Router::new(),
+                [
+                    ("/query", post(query)),
+                    ("/session/:session_id", get(session)),
+                ],
+            )
             .with_state(self.clone())
     }
     pub fn control_router(&self) -> Router {

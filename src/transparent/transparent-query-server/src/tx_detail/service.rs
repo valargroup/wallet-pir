@@ -682,24 +682,40 @@ pub fn body_limit() -> usize {
 }
 
 pub fn router(state: DisplayState) -> Router {
-    const SETUP: &str = "shards/:shard_id/revisions/:digest/setup/:table/:segment";
-    const QUERY: &str = "shards/:shard_id/revisions/:digest/query/:table";
-    Router::new()
+    let private = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
-        .route("/metrics", get(metrics))
-        .route("/v2/txid/init", get(init))
-        .route("/v2/txid/shards", get(shard_map))
-        .route("/v2/txid/map", get(recent_map))
-        .route("/v2/txid/map/:base/:digest", get(index_chunk))
-        .route(
-            "/v2/txid/shards/:shard_id/revisions/:digest/manifest",
-            get(manifest),
+        .route("/metrics", get(metrics));
+    crate::PUBLIC_ROUTES
+        .mount(
+            private,
+            [
+                ("/txid/init", get(init)),
+                ("/txid/shards", get(shard_map)),
+                ("/txid/map", get(recent_map)),
+                ("/txid/map/:base/:digest", get(index_chunk)),
+                (
+                    "/txid/shards/:shard_id/revisions/:digest/manifest",
+                    get(manifest),
+                ),
+                (
+                    "/txid/archive/shards/:shard_id/revisions/:digest/setup/:table/:segment",
+                    get(setup_archive),
+                ),
+                (
+                    "/txid/recent/shards/:shard_id/revisions/:digest/setup/:table/:segment",
+                    get(setup_recent),
+                ),
+                (
+                    "/txid/archive/shards/:shard_id/revisions/:digest/query/:table",
+                    post(query_archive),
+                ),
+                (
+                    "/txid/recent/shards/:shard_id/revisions/:digest/query/:table",
+                    post(query_recent),
+                ),
+            ],
         )
-        .route(&format!("/v2/txid/archive/{SETUP}"), get(setup_archive))
-        .route(&format!("/v2/txid/recent/{SETUP}"), get(setup_recent))
-        .route(&format!("/v2/txid/archive/{QUERY}"), post(query_archive))
-        .route(&format!("/v2/txid/recent/{QUERY}"), post(query_recent))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             validate_request,

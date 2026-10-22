@@ -2069,21 +2069,24 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
             .into_response();
     }
     let active = authority.0.active.read().unwrap().clone();
-    let body = if path == "/v2/shards" || path == "/v2/filters/shards" {
+    // Wallet-facing operations answer under `/transparent/v1` and the deployed
+    // `/v2` alias alike; status, metrics and distribution matched above.
+    let operation = transparent_shared::http::shard_operation(path).unwrap_or_default();
+    let body = if operation == "/shards" || operation == "/filters/shards" {
         Some(("application/json", active.filters.map_json().to_vec()))
-    } else if path == "/v2/shards/init" {
+    } else if operation == "/shards/init" {
         // Query servers answer setup themselves; this publisher has no
         // workers to assemble it from.
         return unavailable();
     } else {
-        let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
+        let parts: Vec<_> = operation.trim_start_matches('/').split('/').collect();
         match parts.as_slice() {
-            ["v2", "filters", "shards", id, "filter"] => id
+            ["filters", "shards", id, "filter"] => id
                 .parse()
                 .ok()
                 .and_then(|id| active.filters.filter(id))
                 .map(|b| ("application/octet-stream", b.to_vec())),
-            ["v2", "shards", id, "revisions", digest, "manifest"]
+            ["shards", id, "revisions", digest, "manifest"]
                 if digest.len() == 64 && digest.bytes().all(|c| c.is_ascii_hexdigit()) =>
             {
                 if active
@@ -2524,6 +2527,33 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::OK);
+        let legacy_map = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let canonical = public_request(
+            State(authority.clone()),
+            Request::builder()
+                .uri("/transparent/v1/shards")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(canonical.status(), StatusCode::OK);
+        let canonical_map = axum::body::to_bytes(canonical.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert_eq!(canonical_map, legacy_map);
+        for private in ["/transparent/v1/status", "/transparent/v1/metrics"] {
+            let response = public_request(
+                State(authority.clone()),
+                Request::builder()
+                    .uri(private)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{private}");
+        }
         assert!(prepare_follow(&config, &client, &authority, work)
             .await
             .err()

@@ -6,6 +6,10 @@ output "enhance_public_url" {
   value = "https://${local.enhance_public_hostname}"
 }
 
+output "wallet_pir_public_url" {
+  value = "https://${local.wallet_pir_public_hostname}"
+}
+
 output "wallet_pir_coordinator_private_ipv4" {
   value = digitalocean_droplet.coordinator.ipv4_address_private
 }

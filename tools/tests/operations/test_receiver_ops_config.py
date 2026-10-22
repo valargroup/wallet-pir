@@ -26,8 +26,10 @@ ROOT = Path(__file__).resolve().parents[3]
 DIR = ROOT / 'tools/receiver/digitalocean'
 SERVER = ROOT / 'src/receiver/receiver-pir-server/src/lib.rs'
 OPERATOR_ROUTES = {'/v1/receiver/health', '/metrics'}
-WALLET_ROUTES = {'/v1/receiver/inventory', '/v1/receiver/inventory/*', '/v1/receiver/query',
-                 '/v1/receiver/public/*', '/v1/receiver/shard-filters/*', '/v1/receiver/block-filters/*'}
+# The wallet routes the server mounts at each public prefix: canonical, then deployed.
+WALLET_PREFIXES = ['/receiver/v1', '/v1/receiver']
+WALLET_OPERATIONS = ['/inventory', '/inventory/*', '/query', '/public/*', '/shard-filters/*', '/block-filters/*']
+WALLET_ROUTES = {prefix + operation for prefix in WALLET_PREFIXES for operation in WALLET_OPERATIONS}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'tools/receiver/digitalocean/service.toml'
 INVENTORY = ROOT / 'tools/enhance/deploy/deploy-inventory.example.json'
@@ -63,9 +65,32 @@ def caddy_tree(text):
     return root
 
 
+def coordinator_ipv4():
+    """The coordinator address the fleet publishes, which fronts the unified wallet host."""
+    variables = (INFRA / 'variables.tf').read_text()
+    block = variables.split('variable "wallet_pir_coordinator_dns_ipv4" {', 1)[1].split('\n}', 1)[0]
+    return re.search(r'default\s*=\s*"([0-9.]+)"', block)[1]
+
+
+def receiver_site(text):
+    """Return the one site block, after checking the optional global options.
+
+    The only global option allowed trusts the coordinator, and nothing else, to
+    forward `X-Forwarded-For`: the unified wallet host proxies Receiver from
+    there, and per-client admission must still key on the wallet.
+    """
+    tree = caddy_tree(text)
+    if tree and tree[0][0] == '':
+        trust = [('servers', [(f'trusted_proxies static {coordinator_ipv4()}/32', [])])]
+        assert tree[0][1] == trust, tree[0][1]
+        tree = tree[1:]
+    (site, body), = tree
+    return site, body
+
+
 def check_caddyfile(text):
     """Return the upstream the wallet routes proxy to; fail on any other public route."""
-    (site, body), = caddy_tree(text)
+    site, body = receiver_site(text)
     assert site == 'receiver-pir.valargroup.dev', site
     names = sorted(line.split()[0] for line, _ in body)
     assert names == ['@wallet', 'handle', 'handle', 'request_body'], names
@@ -88,8 +113,12 @@ def check_server_routes(source, caddy):
     adding a route also adds it to the Caddyfile its cutover installs, and each wallet
     route must match a registered one.
     """
-    served = set(re.findall(r'\.route\(\s*"([^"]+)"', source))
-    assert OPERATOR_ROUTES <= served, sorted(served)
+    routes = set(re.findall(r'\.route\(\s*"([^"]+)"', source))
+    assert OPERATOR_ROUTES <= routes, sorted(routes)
+    # Wallet operations are registered once, relative, and mounted at each prefix.
+    prefixes = re.findall(r'\.nest\(\s*"([^"]+)"', source)
+    assert prefixes == WALLET_PREFIXES, prefixes
+    served = OPERATOR_ROUTES | {prefix + route for prefix in prefixes for route in routes - OPERATOR_ROUTES}
     matcher = next(line for line in caddy.splitlines() if line.split()[:1] == ['@wallet'])
     edge = matcher.split()[2:]
     matches = lambda pattern, route: route.startswith(pattern[:-1]) if pattern.endswith('*') else route == pattern
@@ -173,7 +202,7 @@ def check_exact_check(service, unit, caddy):
     argv = check['argv']
     assert argv[:2] == PROBE and not any('{' in word for word in argv[2:]), argv
     option = lambda name: argv[argv.index(name) + 1]
-    (site, _), = caddy_tree(caddy)
+    site, _ = receiver_site(caddy)
     assert option('--origin') == 'https://' + site, argv
     assert option('--health-url') == 'http://%s/v1/receiver/health' % bind, argv
     # The nodes and authentication the service itself uses, the only ones the host reaches.
@@ -255,12 +284,14 @@ class ReceiverOpsContract(unittest.TestCase):
     def test_the_edge_serves_every_wallet_route_and_only_those(self):
         source = SERVER.read_text()
         check_server_routes(source, self.caddy)
-        unexposed = source.replace('.route("/v1/receiver/query"', '.route("/v1/receiver/unrouted", get(health))\n'
-                                   '        .route("/v1/receiver/query"', 1)
+        unexposed = source.replace('.route("/query"', '.route("/unrouted", get(health))\n'
+                                   '        .route("/query"', 1)
         self.assertNotEqual(unexposed, source)
         for server, caddy in [
             (unexposed, self.caddy),
             (source, self.caddy.replace('/v1/receiver/query ', '/v1/receiver/query /v1/receiver/gone/* ')),
+            (source, self.caddy.replace(' /receiver/v1/query', '')),
+            (source.replace('.nest("/receiver/v1", wallet.clone())', ''), self.caddy),
         ]:
             with self.assertRaises(AssertionError):
                 check_server_routes(server, caddy)
@@ -307,6 +338,8 @@ class ReceiverOpsContract(unittest.TestCase):
             self.caddy.replace(matcher, matcher + ' /metrics'),
             self.caddy.replace(matcher, matcher + ' /v1/receiver/health'),
             self.caddy.replace(matcher, matcher + ' /v1/receiver/*'),
+            self.caddy.replace(matcher, matcher + ' /receiver/v1/*'),
+            self.caddy.replace(matcher, matcher + ' /receiver/v1/metrics'),
             self.caddy.replace('\thandle {', '\thandle /metrics {\n\t\treverse_proxy 10.70.0.11:18380\n\t}\n\thandle {'),
             self.caddy.replace('respond 404', 'reverse_proxy 10.70.0.11:18380'),
         ]:

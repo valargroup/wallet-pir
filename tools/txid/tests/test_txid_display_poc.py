@@ -7,15 +7,23 @@ adapter on the coordinator and the site host's Caddy.
 """
 import contextlib
 import hashlib
+import http.server
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
 import re
+import shutil
+import socket
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+import urllib.error
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
@@ -604,16 +612,73 @@ class PlanTests(Base):
         site = files['routes.caddy']
         self.assertTrue(site.split('\n')[2] == 'txid.example {', site)
         self.assertIn('\thandle {\n\t\trespond 404\n\t}\n}\n', site)
-        self.assertEqual(site.count(LIVE.ROUTER_HEALTH), 2)
-        # Every /v2/txid/ path reaches the one combined worker; nothing names /v1/txid.
-        archive = site.index('\thandle /v2/txid/archive/* {\n')
-        rest = site.index('\thandle /v2/txid/* {\n')
-        self.assertLess(archive, rest)
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[archive:rest])
-        self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[rest:])
-        self.assertNotIn('/v1/txid', site + files['withdrawn.caddy'])
+        # Every canonical /transparent/v1/txid/ path and every path on its
+        # legacy /v2/txid/ alias reaches the one combined worker; nothing names /v1/txid.
+        self.assertEqual(site.count(LIVE.ROUTER_HEALTH), 4)
+        for prefix in ('/transparent/v1/txid', '/v2/txid'):
+            archive = site.index('\thandle %s/archive/* {\n' % prefix)
+            rest = site.index('\thandle %s/* {\n' % prefix)
+            self.assertLess(archive, rest)
+            self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[archive:rest])
+            self.assertIn('reverse_proxy 10.142.0.5:8095 {', site[rest:])
+            self.assertIn('\thandle %s/* {\n\t\theader Retry-After 1' % prefix, files['withdrawn.caddy'])
+        self.assertNotIn('/v1/txid', site.replace('/transparent/v1/txid', '') + files['withdrawn.caddy'].replace('/transparent/v1/txid', ''))
         self.assertIn('respond "transparent txid display withdrawn" 503', files['withdrawn.caddy'])
         self.assertIn('txid.example {', files['withdrawn.caddy'])
+
+    def test_site_forwards_canonical_and_legacy_txid_routes_with_caddy_when_available(self):
+        caddy = shutil.which('caddy')
+        if not caddy:
+            self.skipTest('caddy is not installed')
+        seen = []
+
+        class Worker(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'worker')
+
+            def log_message(self, *args):
+                pass
+
+        worker = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Worker)
+        threading.Thread(target=worker.serve_forever, daemon=True).start()
+        self.addCleanup(worker.server_close)
+        self.addCleanup(worker.shutdown)
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0))
+            port = probe.getsockname()[1]
+        site = self.poc().render()['routes.caddy'].replace('10.142.0.5:8095', '127.0.0.1:%d' % worker.server_port)
+        site = site.replace('txid.example {', 'http://127.0.0.1:%d {' % port)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'Caddyfile').write_text('{\n\tadmin off\n}\n' + site)
+            server = subprocess.Popen([caddy, 'run', '--adapter', 'caddyfile', '--config', tmp + '/Caddyfile'],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.addCleanup(server.wait)
+            self.addCleanup(server.terminate)
+
+            def get(path):
+                try:
+                    with urllib.request.urlopen('http://127.0.0.1:%d%s' % (port, path), timeout=5) as reply:
+                        return reply.status
+                except urllib.error.HTTPError as error:
+                    return error.code
+
+            for _ in range(100):
+                try:
+                    get('/')
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            routed = ['/transparent/v1/txid/map', '/transparent/v1/txid/archive/shards/0/revisions/d/setup/t/0',
+                      '/v2/txid/map', '/v2/txid/archive/shards/0/revisions/d/setup/t/0']
+            for path in routed:
+                self.assertEqual(get(path), 200, path)
+            # Probes, metrics and every other product stay off the public site.
+            for path in ('/v1/ready', '/metrics', '/transparent/v1/shards', '/v1/txid/map'):
+                self.assertEqual(get(path), 404, path)
+        self.assertEqual([path for path in seen if path != '/v1/ready'], routed)
 
     def test_transient_units_carry_their_limits(self):
         transient = self.poc().plan()['transient']

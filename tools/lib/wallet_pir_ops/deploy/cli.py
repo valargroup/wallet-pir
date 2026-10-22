@@ -264,6 +264,15 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+        command = commands.add_parser('coordinator-edge-' + operation,
+                                      help='add or update only the unified wallet site on the coordinator Caddy')
+        command.add_argument('--request', type=Path, required=True)
+        command.add_argument('--request-sha256', required=True)
+        if operation == 'deploy':
+            command.add_argument('--expect-plan-sha256', required=True)
+        if operation in ('status', 'rollback'):
+            command.add_argument('--transaction')
     command = commands.add_parser('ancillary-status', help='read-only state of ancillary units')
     command.add_argument('name', nargs='?', help='one ancillary unit (default: all)')
     for name in ('ops-package-plan', 'ops-package-preflight', 'ops-package-install'):
@@ -396,7 +405,8 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-'))
+                                                   'ops-package-', 'publisher-cutover-', 'status-routing-',
+                                                   'coordinator-edge-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
@@ -441,6 +451,30 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
                 result = {'transaction': journal.id if journal else None,
                           'phase': journal.status if journal else None,
                           'caddyfile_sha256': routing.ex.sha256(routing.host, '/etc/caddy/Caddyfile')}
+            out(json.dumps(result, sort_keys=True))
+            return 0
+        if args.command.startswith('coordinator-edge-'):
+            from .engine import mutation_fence
+            from .unified_edge import SERVICE, UnifiedEdge, load_request, digest
+            inventory = descriptors.load_inventory(args.inventory)
+            request = load_request(args.request, args.request_sha256)
+            edge = UnifiedEdge(inventory, executor or SSHExecutor(inventory), args.state_dir, request,
+                               lock=options.get('lock'))
+            operation = args.command.removeprefix('coordinator-edge-')
+            if operation in ('plan', 'preflight'):
+                mutation_fence(inventory, edge.ex)
+                plan, _before, _after = edge.plan()
+                result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
+            elif operation == 'deploy':
+                result = edge.deploy(args.expect_plan_sha256)
+            elif operation == 'rollback':
+                result = edge.rollback(args.transaction)
+            else:
+                from .transaction import Journal
+                journal = Journal.load(args.state_dir, SERVICE, args.transaction)
+                result = {'transaction': journal.id if journal else None,
+                          'phase': journal.status if journal else None,
+                          'caddyfile_sha256': edge.ex.sha256(edge.host, '/etc/caddy/Caddyfile')}
             out(json.dumps(result, sort_keys=True))
             return 0
         if args.command == 'fleet':

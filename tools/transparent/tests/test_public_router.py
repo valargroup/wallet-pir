@@ -34,8 +34,15 @@ class PublicRouterTests(unittest.TestCase):
         for site in ('pir.example {', 'http://10.0.0.9:8080 {'):
             self.assertIn(site, text)
         self.assertEqual(text.count('respond `{"error":"api_version_retired","retired":"/v1","use":"/v2"}` 410'), 2)
-        self.assertEqual(text.count('reverse_proxy 10.142.0.18:8095'), 2)
-        self.assertEqual(text.count('reverse_proxy 10.142.0.9:8080 {'), 2)
+        # Each upstream is reached by the legacy `/v2/` and canonical
+        # `/transparent/v1/` prefix in both sites, and by nothing else.
+        self.assertEqual(text.count('reverse_proxy 10.142.0.18:8095'), 4)
+        self.assertEqual(text.count('reverse_proxy 10.142.0.9:8080 {'), 4)
+        self.assertEqual(text.count('handle /transparent/v1/txid/* {\n\t\treverse_proxy 10.142.0.18:8095'), 2)
+        self.assertEqual(text.count('handle /transparent/v1/* {\n\t\treverse_proxy 10.142.0.9:8080 {'), 2)
+        handled = sorted({line.strip() for line in text.splitlines() if line.strip().startswith('handle /')})
+        self.assertEqual(handled, ['handle /transparent/v1/* {', 'handle /transparent/v1/txid/* {',
+                                   'handle /v1/* {', 'handle /v2/* {', 'handle /v2/txid/* {'])
         # Versions come in numeric order and before the catch-all.
         self.assertLess(text.index('handle /v1/*'), text.index('handle /v2/txid/*'))
         self.assertLess(text.index('handle /v2/*'), text.index('\thandle {\n\t\trespond 404'))
@@ -51,13 +58,17 @@ class PublicRouterTests(unittest.TestCase):
     def test_withdrawal_touches_one_prefix(self):
         text = ROUTER.render(CONFIG, withdrawn=['v2'])
         self.assertNotIn('10.142.0.9:8080', text)
-        self.assertEqual(text.count('respond "transparent v2 maintenance" 503'), 2)
+        self.assertEqual(text.count('respond "transparent v2 maintenance" 503'), 4)
+        self.assertEqual(text.count('handle /transparent/v1/* {\n\t\theader Retry-After 1'), 2)
         self.assertIn('api_version_retired', text)
         with self.assertRaisesRegex(ValueError, 'no route file to withdraw'):
             ROUTER.render(CONFIG, withdrawn=['v3'])
 
     def test_a_file_cannot_route_another_prefix(self):
         for name, text in (('v3.caddy', 'handle /v2/* {\n\trespond 200\n}\n'),
+                           ('v3.caddy', 'handle /transparent/v1/* {\n\trespond 200\n}\n'),
+                           ('v1.caddy', 'handle /transparent/v1/* {\n\trespond 200\n}\n'),
+                           ('v2.caddy', 'handle /transparent/* {\n\trespond 200\n}\n'),
                            ('v3.caddy', 'handle {\n\trespond 200\n}\n'),
                            ('v3.conf', ''), ('routes.caddy', '')):
             with self.subTest(name=name, text=text), routes(**{name: text}) as tmp, self.assertRaises(ValueError):

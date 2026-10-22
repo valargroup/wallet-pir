@@ -860,3 +860,162 @@ async fn a_stored_shard_filter_is_read_into_the_table_budget() {
     assert!(fresh.filter(&corrupt).is_err());
     assert_eq!(fresh.resident(), 0);
 }
+
+/// Wallets reach every receiver operation at the canonical `/receiver/v1/<operation>` and
+/// at the deployed `/v1/receiver/<operation>`, with identical answers: the inventory head
+/// and a chunk, both sessions' public setup, a shard filter, a payment and a witness
+/// query, and the block-filter head and a batch. Operator routes stay outside the
+/// canonical namespace.
+#[tokio::test]
+async fn canonical_and_legacy_receiver_routes_answer_identically() {
+    use receiver_directory::blocks::{BlockFilter, BlockId};
+    use receiver_directory::shards::{Coverage, ShardFilter};
+    let snapshot = snapshot(2);
+    let table = prepared::companion_table(&snapshot, &[[7; 512], [9; 512]]);
+    let coverage = Coverage {
+        start_height: 100,
+        end_height: 101,
+        end_hash: [3; 32],
+    };
+    let filter = ShardFilter::build([1; 32], 0, coverage, &[receiver()]).unwrap();
+    let publication =
+        prepared::inventory(vec![(true, vec![(snapshot, table)], Some(filter.clone()))]).unwrap();
+    let inventory = hex::encode(publication.id());
+    let segment = &publication.segments()[0];
+    let (payments, witnesses) = (segment.payments.clone(), segment.witnesses.clone());
+    let publications = Publications::default();
+    assert!(publications.publish(publication, 0));
+    let tip = BlockId {
+        height: 101,
+        hash: [3; 32],
+    };
+    let block = BlockFilter::build(&[1; 32], tip, [2; 32], [&receiver()]).unwrap();
+    let window = receiver_pir_server::blocks::BlockWindow::new([1; 32], 0, vec![block]).unwrap();
+    assert!(publications.publish_filters(window, publications.epoch()));
+    let server = serve_router(router_with_publications(publications)).await;
+
+    let payment_query = Client::new(
+        payments.payment_manifest().unwrap().clone(),
+        payments.public(),
+    )
+    .unwrap()
+    .prepare(receiver(), 0)
+    .unwrap();
+    let witness_query = receiver_pir::WitnessClient::new(
+        witnesses.witness_manifest().unwrap().clone(),
+        witnesses.public(),
+    )
+    .unwrap()
+    .prepare(1)
+    .unwrap();
+    let gets = [
+        "/inventory".to_owned(),
+        format!("/inventory/{inventory}/0"),
+        format!("/public/{}", hex::encode(payments.id())),
+        format!("/public/{}", hex::encode(witnesses.id())),
+        format!("/shard-filters/{}", hex::encode(filter.digest())),
+        "/block-filters/head".to_owned(),
+        "/block-filters/0/101/1".to_owned(),
+    ];
+    let answer = |response: reqwest::Response| async move {
+        let status = response.status();
+        let headers = [
+            header_value(&response, "content-type"),
+            header_value(&response, "cache-control"),
+        ];
+        (status, headers, response.bytes().await.unwrap())
+    };
+    for operation in &gets {
+        let canonical = answer(
+            http()
+                .get(format!("{}/receiver/v1{operation}", server.origin))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        let legacy = answer(
+            http()
+                .get(format!("{}/v1/receiver{operation}", server.origin))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(canonical.0, reqwest::StatusCode::OK, "{operation}");
+        assert_eq!(canonical, legacy, "{operation}");
+    }
+    for body in [payment_query.body(), witness_query.body()] {
+        let canonical = answer(
+            http()
+                .post(format!("{}/receiver/v1/query", server.origin))
+                .body(body.to_vec())
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        let legacy = answer(
+            http()
+                .post(format!("{}/v1/receiver/query", server.origin))
+                .body(body.to_vec())
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(canonical.0, reqwest::StatusCode::OK);
+        assert_eq!(canonical, legacy);
+    }
+
+    // Operator routes keep their own paths and never join the canonical namespace.
+    for path in ["/v1/receiver/health", "/metrics"] {
+        let response = http()
+            .get(format!("{}{path}", server.origin))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK, "{path}");
+    }
+    for path in [
+        "/receiver/v1/health",
+        "/receiver/v1/metrics",
+        "/receiver/v1/v1/receiver/health",
+        "/receiver/v1/",
+    ] {
+        let response = http()
+            .get(format!("{}{path}", server.origin))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::NOT_FOUND, "{path}");
+    }
+
+    // Both prefixes count under the same bounded labels.
+    let metrics = http()
+        .get(format!("{}/metrics", server.origin))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for (label, count) in [
+        ("receiver_inventory", 4),
+        ("receiver_public", 4),
+        ("receiver_shard_filters", 2),
+        ("receiver_block_filters", 4),
+        ("receiver_query", 4),
+    ] {
+        let line = format!("pir_http_responses_total{{endpoint=\"{label}\",code=\"2xx\"}} {count}");
+        assert!(metrics.contains(&line), "{line} in {metrics}");
+    }
+}
+
+/// `name`'s value in `response`, if present.
+fn header_value(response: &reqwest::Response, name: &str) -> Option<String> {
+    response
+        .headers()
+        .get(name)
+        .map(|value| value.to_str().unwrap().to_owned())
+}

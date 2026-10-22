@@ -1,10 +1,20 @@
 # Wallet API v2: /v2/txid goes to the one-query txid display site; every
 # other /v2 path goes to the v12 fleet's router, whose site answers under its
-# own address. Caddy orders the longer path first.
+# own address. Caddy orders the longer path first. `/transparent/v1/` is the
+# canonical name of this API and reaches the same upstreams; `/v2/` remains its
+# legacy alias. The fleet router and display worker keep their own allowlists.
 handle /v2/txid/* {
 	reverse_proxy 10.142.0.18:8095
 }
+handle /transparent/v1/txid/* {
+	reverse_proxy 10.142.0.18:8095
+}
 handle /v2/* {
+	reverse_proxy 10.142.0.9:8080 {
+		header_up Host {upstream_hostport}
+	}
+}
+handle /transparent/v1/* {
 	reverse_proxy 10.142.0.9:8080 {
 		header_up Host {upstream_hostport}
 	}

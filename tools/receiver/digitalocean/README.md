@@ -6,7 +6,7 @@ polls every 10 seconds and publishes two blocks below the tip. The service liste
 on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
 proxies only the wallet routes (`inventory`, `shard-filters`, `public`, `query` and
-`block-filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
+`block-filters` under the canonical `/receiver/v1/` and the deployed `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.

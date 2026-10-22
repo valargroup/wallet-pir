@@ -1,6 +1,9 @@
-# Rendered during Enhance coordinator deploys: ENHANCE_PUBLIC_HOST is replaced with
-# the host of ENHANCE_PUBLIC_URL before the file is validated and installed.
-# (deploy-enhance-pir.sh, which used to do this, was removed in afdb4b6d.)
+# Rendered by `wallet_pir_ops.deploy.coordinator_edge`: ENHANCE_PUBLIC_HOST is
+# replaced with the host of ENHANCE_PUBLIC_URL, and the renderer refuses a
+# result that lacks either site below. The live file is not replaced with this
+# template: product cutovers edit their own site in place, and
+# `wallet-pir-deploy coordinator-edge-{plan,preflight,deploy,status,rollback}`
+# adds or updates only the unified `wallet-pir.valargroup.dev` site.
 ENHANCE_PUBLIC_HOST {
 	tls {
 		issuer acme {
@@ -14,11 +17,17 @@ ENHANCE_PUBLIC_HOST {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
+	handle_path /transparent/v1/filters/parents/* {
+		root * /srv/transparent-parent-filters/public
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
 	# Public transparent activity filters. Only the wallet-facing paths are
 	# routed: the filter service's own /metrics, /ready and /v1/health are not
-	# under this prefix and stay unreachable from the internet. Requests here
-	# carry chain range information only.
-	@legacy_transparent_filters path /v1/filters/*
+	# under these prefixes and stay unreachable from the internet. Requests here
+	# carry chain range information only. `/transparent/v1/filters/*` is the
+	# canonical path; `/v1/filters/*` remains its legacy alias.
+	@legacy_transparent_filters path /v1/filters/* /transparent/v1/filters/*
 	handle @legacy_transparent_filters {
 		reverse_proxy 127.0.0.1:8090
 	}
@@ -27,7 +36,11 @@ ENHANCE_PUBLIC_HOST {
 		reverse_proxy 127.0.0.1:3002
 	}
 	# Status wallets reach the query router through the existing loopback tunnel.
+	# `/status/v1/*` is canonical; `/v1/status/*` remains its legacy alias.
 	handle /v1/status/* {
+		reverse_proxy 127.0.0.1:8492
+	}
+	handle /status/v1/* {
 		reverse_proxy 127.0.0.1:8492
 	}
 	# Only publication artifacts and bounded authority are exposed here.
@@ -37,8 +50,16 @@ ENHANCE_PUBLIC_HOST {
 	# Wallets reach only query ingress: manifest, session reads and queries.
 	# Query admission can reject overload before evaluation. Use a fresh local
 	# upstream connection so a stale keepalive socket cannot turn that response
-	# into a public 502.
+	# into a public 502. `/enhance/v1/*` is canonical; `/v1/enhance/*` remains
+	# its legacy alias.
 	handle /v1/enhance/query {
+		reverse_proxy 127.0.0.1:8082 {
+			transport http {
+				keepalive off
+			}
+		}
+	}
+	handle /enhance/v1/query {
 		reverse_proxy 127.0.0.1:8082 {
 			transport http {
 				keepalive off
@@ -48,8 +69,78 @@ ENHANCE_PUBLIC_HOST {
 	handle /v1/enhance/* {
 		reverse_proxy 127.0.0.1:8082
 	}
+	handle /enhance/v1/* {
+		reverse_proxy 127.0.0.1:8082
+	}
 	# The coordinator's health, readiness and metrics stay on loopback for
 	# operators and the pir-apm sidecar; nothing else is public.
+	handle {
+		respond 404
+	}
+}
+
+# The unified wallet entry point. Only canonical product prefixes are served
+# here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v1/filters`, `/v2`,
+# `/v1/receiver`) stay on the product hosts above and on their own hosts, which
+# remain in service for released wallets. Enhance, Status and Transparent
+# filters reach the same loopback services as the Enhance host. Transparent
+# queries and Receiver cross to their own public origins over verified HTTPS,
+# naming each origin as Host and SNI; nothing here proxies back to this host.
+wallet-pir.valargroup.dev {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+
+	handle /transparent/v1/filters/parents/* {
+		uri strip_prefix /transparent/v1/filters/parents
+		root * /srv/transparent-parent-filters/public
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+	# History filter shards are a Transparent router operation; every other
+	# canonical filter operation is the coordinator's filter service.
+	handle /transparent/v1/filters/shards* {
+		reverse_proxy https://transparent-pir.valargroup.dev {
+			header_up Host transparent-pir.valargroup.dev
+			transport http {
+				tls_server_name transparent-pir.valargroup.dev
+			}
+		}
+	}
+	handle /transparent/v1/filters/* {
+		reverse_proxy 127.0.0.1:8090
+	}
+	handle /transparent/v1/* {
+		reverse_proxy https://transparent-pir.valargroup.dev {
+			header_up Host transparent-pir.valargroup.dev
+			transport http {
+				tls_server_name transparent-pir.valargroup.dev
+			}
+		}
+	}
+	handle /status/v1/* {
+		reverse_proxy 127.0.0.1:8492
+	}
+	handle /enhance/v1/query {
+		reverse_proxy 127.0.0.1:8082 {
+			transport http {
+				keepalive off
+			}
+		}
+	}
+	handle /enhance/v1/* {
+		reverse_proxy 127.0.0.1:8082
+	}
+	handle /receiver/v1/* {
+		reverse_proxy https://receiver-pir.valargroup.dev {
+			header_up Host receiver-pir.valargroup.dev
+			transport http {
+				tls_server_name receiver-pir.valargroup.dev
+			}
+		}
+	}
 	handle {
 		respond 404
 	}

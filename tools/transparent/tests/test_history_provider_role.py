@@ -87,10 +87,13 @@ class ProviderRole(unittest.TestCase):
         text = (ROOT / 'tools/transparent/deploy/history-provider.caddy').read_text()
         self.assertIn('/v2/filters/shards', text)
         self.assertIn('/v2/shards', text)
-        self.assertIn('@display path /v2/txid /v2/txid/*', text)
+        self.assertIn('@display path /v2/txid /v2/txid/* /transparent/v1/txid /transparent/v1/txid/*\n', text)
+        self.assertIn(' /transparent/v1/shards /transparent/v1/shards/* /transparent/v1/filters/shards '
+                      '/transparent/v1/filters/shards/*\n', text)
         self.assertIn('reverse_proxy {$TRANSPARENT_DISPLAY_UPSTREAM}', text)
         self.assertLess(text.index('handle @display'), text.index('respond 404'))
-        self.assertNotIn('/v1/', text)
+        self.assertNotRegex(text, r'(?<!/transparent)/v1/')
+        self.assertNotRegex(text, r'/transparent/v1/(health|ready|provider|control|internal)')
         self.assertNotIn('/metrics', text)
         self.assertIn('respond 404', text)
 

@@ -154,10 +154,22 @@ pub fn stage(operation: &'static str, elapsed: std::time::Duration, success: boo
 
 /// The wallet-facing or role operation a request path counts as, if any.
 pub fn operation(role: &str, path: &str) -> Option<&'static str> {
+    if role == "router" {
+        // The canonical `/status/v1` namespace and the deployed `/v1/status`
+        // alias count as the same operations (`status-query-server`'s
+        // `PUBLIC_ROUTES`); this package stays free of HTTP dependencies.
+        let operation = path
+            .strip_prefix("/status/v1")
+            .or_else(|| path.strip_prefix("/v1/status"))
+            .filter(|o| o.starts_with('/'))?;
+        return match operation {
+            "/init" => Some("init"),
+            "/query" => Some("router_query"),
+            o if o.starts_with("/session/") => Some("public_material"),
+            _ => None,
+        };
+    }
     match (role, path) {
-        ("router", "/v1/status/init") => Some("init"),
-        ("router", p) if p.starts_with("/v1/status/session/") => Some("public_material"),
-        ("router", "/v1/status/query") => Some("router_query"),
         ("worker", "/evaluate") => Some("worker_evaluate"),
         _ => None,
     }
@@ -370,6 +382,16 @@ mod tests {
             operation("router", "/v1/status/query"),
             Some("router_query")
         );
+        assert_eq!(operation("router", "/status/v1/init"), Some("init"));
+        assert_eq!(
+            operation("router", "/status/v1/session/00"),
+            Some("public_material")
+        );
+        assert_eq!(
+            operation("router", "/status/v1/query"),
+            Some("router_query")
+        );
+        assert_eq!(operation("router", "/status/v1/evaluate"), None);
         assert_eq!(operation("worker", "/evaluate"), Some("worker_evaluate"));
         assert_eq!(operation("worker", "/v1/status/query"), None);
         assert_eq!(operation("router", "/control/health"), None);

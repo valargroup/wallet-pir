@@ -528,7 +528,7 @@ class HttpsRecentTests(unittest.IsolatedAsyncioTestCase):
         await self.f.reconcile_https(self.https)
         self.assertEqual(self.routed(), ['h1', 'owner', 'r1'])
         self.assertIn('reverse_proxy r1:8093 h1:8443', self.rendered[-1])
-        self.assertIn('/v2/shards/(1)/revisions', self.rendered[-1])
+        self.assertIn('^/(?:v2|transparent/v1)/shards/(1)/revisions', self.rendered[-1])
         self.assertTrue(all(kwargs.get('multiplex') is False for host, _, kwargs in self.commands if host == 'h1'))
         self.assertIn('http://127.0.0.1:8092/v2/shards/init', next(c for h, c, _ in self.commands if h == 'h1'))
         self.f.write_membership()

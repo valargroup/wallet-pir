@@ -4,8 +4,9 @@ Runs one txid display site side by side with history on production: a
 controller and a fresh display journal on the coordinator, under coordinator
 paths and unit names of the site's own, and one worker with role `combined` on
 the site's archive host, holding both the sealed archives and the recent shard.
-Caddy on that host serves the site's own hostname, and every `/v2/txid/`
-request goes to the worker. History units and data are never changed.
+Caddy on that host serves the site's own hostname, and every canonical
+`/transparent/v1/txid/` request and every request on its legacy `/v2/txid/`
+alias goes to the worker. History units and data are never changed.
 
 A request must name its `site`. The `/v1/txid/` lineage served through the
 history router, with its split archive/recent layout, router import hook and
@@ -107,6 +108,9 @@ HISTORY_STATUS = 'http://127.0.0.1:8094/v1/status'
 NODE_STATE = 'state/v29/mainnet'
 # The public txid prefix: a site serves its release's own /v2 paths.
 SITE_API = '/v2/txid'
+# Every prefix a site forwards to its worker: the canonical Transparent route
+# first, then the legacy alias existing clients use. The worker serves both.
+SITE_PREFIXES = ('/transparent/v1/txid', SITE_API)
 WITHDRAWN = ('# Written by `wallet-pir-deploy.py txid-display-stop`: display withdrawn.\n'
              '\thandle %s/* {\n\t\theader Retry-After 1\n'
              '\t\trespond "transparent txid display withdrawn" 503\n\t}\n')
@@ -562,8 +566,8 @@ class Poc:
     def site_file(self, body):
         """The whole Caddyfile of a site's worker host around one display snippet."""
         return ('# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase route`: the %s txid display\n'
-                '# site. Anything outside %s/ is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
-                % (self.site['name'], self.api, self.site['hostname'], body))
+                '# site. Anything outside %s is not served here.\n%s {\n%s\thandle {\n\t\trespond 404\n\t}\n}\n'
+                % (self.site['name'], ' and '.join(p + '/' for p in SITE_PREFIXES), self.site['hostname'], body))
 
     def upstream(self, key):
         return '%s:%d' % (self.request['hosts'][key]['vpc_ip'], self.request['ports']['worker'])
@@ -629,11 +633,11 @@ class Poc:
                               'staged': STAGED, 'control_socket': CONTROL_SOCKET,
                               'control_binary': self.binary('txid-control')} for key in self.worker_keys},
         }, indent=2, sort_keys=True) + '\n'
-        files['routes.caddy'] = units.render(self.template('txid-display-routes.caddy.in'), {
+        routes = self.template('txid-display-routes.caddy.in')
+        files['routes.caddy'] = self.site_file(''.join(units.render(routes, {
             'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream('archive'),
-            'TXID': self.api})
-        files['routes.caddy'] = self.site_file(files['routes.caddy'])
-        files['withdrawn.caddy'] = self.site_file(WITHDRAWN % self.api)
+            'TXID': prefix}) for prefix in SITE_PREFIXES))
+        files['withdrawn.caddy'] = self.site_file(''.join(WITHDRAWN % prefix for prefix in SITE_PREFIXES))
         return files
 
     def targets(self):
