@@ -109,9 +109,16 @@ pub trait PublicationAdapter: Send {
         &mut self,
         loaded: Self::Loaded,
     ) -> Result<(PreparedCommit<Self::Report>, Self::InstalledView), Error>;
-    /// The engine installed the view prepared with `view`.
+    /// The engine installed the view prepared with `view`. Called exactly
+    /// once per installed commit, even when the pass that installed it was
+    /// cancelled; it is local and must not fail.
     fn installed(&mut self, view: Self::InstalledView);
-    /// Tell a dependent peer the commit happened.
+    /// Tell a dependent peer the commit happened. The outcome of a network
+    /// release can be uncertain, so it must be idempotent: a release cut off
+    /// by cancellation is retried before the next pass observes anything, and
+    /// a [`PeerHandover::Pending`] answer ends the pass so the next pass
+    /// observes fresh authority first and releases again when it recommits
+    /// the serving view.
     fn release_peer(&mut self, report: &Self::Report) -> impl Future<Output = PeerHandover> + Send;
     /// The report of the view still serving, for deferred passes.
     fn serving_report(&mut self) -> impl Future<Output = Self::Report> + Send;
