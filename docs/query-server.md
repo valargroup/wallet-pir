@@ -29,11 +29,11 @@ pir-query-server check-backend [--matvec-backend cpu|cuda] [--cuda-device N]
 pir-query-server repair-rows --data-dir DIR --source-rows DIR
 ```
 
-A process includes at most one Enhance role. `enhance-pir-server` does not start a
-worker, query ingress, or packing router. Those roles are only
-`pir-query-server --config FILE`. `enhance-pir-server` keeps `rebuild-journal`, `prepare-packing-artifacts`, `restore-legacy-placement`, and
-`build-info`. `build-info` reports native reinspiring and the source revision;
-it has no CUDA field.
+A process includes at most one Enhance role. Workers, query ingress and packing
+routers run only as `pir-query-server --config FILE`. Offline Enhance maintenance
+runs as `pir-publisher enhance` (`build-info`, `prepare-publication`,
+`rebuild-journal` and the HTTPS cutover's `handoff-https-state`). `build-info`
+reports native reinspiring and the source revision; it has no CUDA field.
 
 `check-backend` validates the selected evaluator, and for CUDA the driver,
 without opening worker state. `repair-rows` repairs journal-referenced rows
