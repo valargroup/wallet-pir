@@ -1,14 +1,16 @@
 {
   "management_listen": "127.0.0.1:18080",
+  "chain": {
+    "rpc_url": "http://127.0.0.1:8232",
+    "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+    "poll_ms": 1000
+  },
   "enhance": {
     "enabled": true,
     "settings": {
       "artifact_listen": "127.0.0.1:8084",
       "listen": "127.0.0.1:8080",
       "data_dir": "/srv/pir-publisher/enhance",
-      "zakura_rpc_url": "http://127.0.0.1:8232",
-      "zakura_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "poll_seconds": 10,
       "prevout_cache_outputs": 250000
     }
   },

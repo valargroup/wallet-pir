@@ -417,3 +417,4 @@ pub mod service;
 
 /// Generic publisher service, typed phase recipes and host registration.
 pub mod publisher;
+pub mod ingestion;

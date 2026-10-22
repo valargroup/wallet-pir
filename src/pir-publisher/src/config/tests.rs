@@ -44,6 +44,7 @@ fn each_compiled_product_can_be_enabled_independently() {
         if compiled {
             let config: Config = serde_json::from_value(serde_json::json!({
                 "management_listen": "127.0.0.1:18080",
+                "chain": example["chain"].clone(),
                 product: example[product].clone(),
             }))
             .unwrap();
@@ -54,6 +55,45 @@ fn each_compiled_product_can_be_enabled_independently() {
             );
         }
     }
+}
+#[cfg(feature = "enhance")]
+#[test]
+fn chain_following_products_require_valid_root_chain_settings() {
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let configured = |chain: serde_json::Value| {
+        let mut raw = serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            "enhance": example["enhance"].clone(),
+        });
+        if !chain.is_null() {
+            raw["chain"] = chain;
+        }
+        serde_json::from_value::<Config>(raw).unwrap().validate()
+    };
+    assert!(configured(serde_json::Value::Null).is_err());
+    assert!(configured(example["chain"].clone()).is_ok());
+    let mut chain = example["chain"].clone();
+    chain.as_object_mut().unwrap().remove("poll_ms");
+    assert!(configured(chain).is_ok(), "poll_ms defaults to one second");
+    for (field, value) in [
+        ("poll_ms", serde_json::json!(0)),
+        ("rpc_cookie", serde_json::json!("relative/cookie")),
+        ("rpc_url", serde_json::json!("http://user:secret@127.0.0.1:8232")),
+    ] {
+        let mut chain = example["chain"].clone();
+        chain[field] = value;
+        assert!(configured(chain).is_err(), "{field}");
+    }
+    // The removed product-local source settings are refused, not ignored.
+    let mut enhance = example["enhance"]["settings"].clone();
+    enhance["zakura_rpc_url"] = serde_json::json!("http://127.0.0.1:8232");
+    assert!(
+        serde_json::from_value::<enhance_publisher::service::EnhancePublisherConfig>(enhance)
+            .is_err()
+    );
 }
 #[cfg(feature = "enhance")]
 #[test]
