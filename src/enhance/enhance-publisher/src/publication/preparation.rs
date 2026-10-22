@@ -14,7 +14,7 @@ pub(super) fn prepare_domains(
     epochs: &BTreeMap<u64, String>,
     read: &mut impl FnMut(u64, usize) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<Domain>, String> {
-    let mut engine = runtime::Engine::new(&root.join("preparation"));
+    let mut engine = runtime::Engine::new(&super::engine_root(root));
     let mut domains = Vec::new();
     for shard in &coverage.shards {
         let mut plan = runtime::plan(shard.clone(), &mut *read)?;

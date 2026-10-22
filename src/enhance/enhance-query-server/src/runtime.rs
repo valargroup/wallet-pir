@@ -441,6 +441,10 @@ impl PublishedPacking {
     }
 }
 
+/// Directory under an [`Engine`] root holding one subdirectory per prepared
+/// unit, named by the unit's digest. Collectors must use the same name.
+pub const UNIT_DIRECTORY: &str = "artifacts-9";
+
 pub struct Engine {
     backend: MatvecConfig,
     root: PathBuf,
@@ -455,7 +459,7 @@ impl Engine {
     pub fn with_backend(root: &Path, backend: MatvecConfig) -> Self {
         Self {
             backend,
-            root: root.join("artifacts-9"),
+            root: root.join(UNIT_DIRECTORY),
             units: BTreeMap::new(),
         }
     }
