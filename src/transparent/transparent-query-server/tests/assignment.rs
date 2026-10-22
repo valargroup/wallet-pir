@@ -325,59 +325,44 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     assert_eq!(declared, ["decoupled-2k-8k"]);
 }
 
+/// Readiness checks metadata and file sizes only: a worker is ready before
+/// background warming finishes, and warming then loads every assigned runtime.
 #[tokio::test(flavor = "multi_thread")]
-async fn ready_waits_for_every_assigned_runtime_in_warm_mode_and_not_in_pilot_mode() {
+async fn ready_does_not_wait_for_background_warming() {
     let dir = tempfile::tempdir().unwrap();
     let map = publish(dir.path());
     let assignment = planned(&map);
     let set = load_as(dir.path(), &assignment, "recent-01", LoadOptions::whole(3));
     let state = ServiceState::build(set, warm_config()).unwrap();
     let (status, body) = get(&state, "/v1/ready").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(ready["ready"], false);
-    assert_eq!(ready["reason"], "prewarming");
+    assert_eq!(ready["mode"], "loaded-only");
+    assert_eq!(ready["warm_runtimes"], 0);
+    assert_eq!(ready["prewarm_finished"], false);
     assert_eq!(
         ready["target_runtimes"], 4,
         "two shards, two tables, one segment each"
     );
     assert_eq!(ready["assignment_sha256"], assignment.digest());
+    assert_eq!(ready["role"], "recent-replica");
     state.spawn_prewarm().await.unwrap();
     let (status, body) = get(&state, "/v1/ready").await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(ready["warm_runtimes"], 4);
     assert_eq!(ready["prewarm_finished"], true);
-    assert_eq!(ready["role"], "recent-replica");
-
-    let pilot = load_as(dir.path(), &assignment, "recent-01", LoadOptions::whole(3));
-    let pilot = ServiceState::build(pilot, ServiceConfig::default()).unwrap();
-    let (status, body) = get(&pilot, "/v1/ready").await;
-    assert_eq!(status, StatusCode::OK);
-    let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(ready["mode"], "loaded-only");
-    assert_eq!(ready["warm_runtimes"], 0);
 }
 
-#[test]
-fn an_assignment_that_does_not_fit_the_cache_is_refused_in_warm_mode() {
+/// Runtimes load on demand under the cache budget, so an assignment whose
+/// runtimes do not all fit the cache at once is accepted and ready.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_assignment_larger_than_the_cache_is_accepted_and_ready() {
     let dir = tempfile::tempdir().unwrap();
     let map = publish(dir.path());
     let assignment = planned(&map);
     let set = load_as(dir.path(), &assignment, "recent-01", LoadOptions::whole(3));
-    let error = ServiceState::build(
-        set,
-        ServiceConfig {
-            cache_bytes: 64 << 20,
-            ..ServiceConfig::default()
-        },
-    )
-    .err()
-    .expect("refused");
-    assert!(error.contains("cache budget"), "{error}");
-    // The same budget is accepted in loaded-only mode, cold and slow.
-    let set = load_as(dir.path(), &assignment, "recent-01", LoadOptions::whole(3));
-    ServiceState::build(
+    let state = ServiceState::build(
         set,
         ServiceConfig {
             cache_bytes: 64 << 20,
@@ -385,6 +370,8 @@ fn an_assignment_that_does_not_fit_the_cache_is_refused_in_warm_mode() {
         },
     )
     .unwrap();
+    let (status, body) = get(&state, "/v1/ready").await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 }
 
 #[test]

@@ -4034,20 +4034,24 @@ async fn prepared_and_built_runtimes_answer_identically_at_populated_empty_and_b
 }
 
 /// A prepared file whose database differs from its segment in a single row
-/// is refused by the full database comparison, whichever row the
-/// self-check's query happens to sample, and the worker builds that one
-/// runtime itself: the wallet still recovers exactly.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact() {
+/// is refused by the publisher's full database comparison, whichever row the
+/// self-check's query happens to sample. Query servers trust prepared bytes
+/// after their length and digest checks, so this comparison is what keeps a
+/// one-row-off runtime out of a publication.
+#[test]
+fn a_prepared_runtime_one_row_off_is_refused_before_publication() {
     use transparent_shared::history::shardset::TableRef;
+    use transparent_shared::publication::Finalized;
     use transparent_shared::runtime::disk::ShippedRuntimes;
     use transparent_shared::runtime::{SharedParams, TableRuntime};
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
-    let map = publish(dir.path(), &per_shard);
+    publish(dir.path(), &per_shard);
     prepare_runtimes(dir.path());
     let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).unwrap();
-    // The first shard's directory, which the sync below queries.
+    let recent_from = set.map.shards[0].start_height;
+    Finalized::prepare_full(dir.path(), &set, recent_from)
+        .expect("the prepared runtimes are published");
     let shard = set.get(0).unwrap();
     let shared = SharedParams::build(
         shard.geometry,
@@ -4079,14 +4083,9 @@ async fn a_prepared_runtime_one_row_off_is_refused_and_the_sync_stays_exact() {
     ShippedRuntimes::new(dir.path().to_path_buf())
         .write(&key, &shared, source.sha256(), &forged)
         .unwrap();
-    let (base, state) = serve_prepared(dir.path(), true).await;
-    let wallet = vec![script(1), script(2), script(3), script(999)];
-    let outcome = run_sync(dir.path(), base, wallet.clone(), FIRST, map).await;
-    compare(&outcome.ledger, &traverse(&per_shard, &wallet, 0));
-    assert_eq!(counter(&state, |m| &m.shipped_fallbacks), 1);
-    assert_eq!(
-        counter(&state, |m| &m.builds),
-        1,
-        "only the refused runtime is built"
-    );
+    let refused = Finalized::prepare_full(dir.path(), &set, recent_from)
+        .err()
+        .expect("the forged runtime is refused")
+        .to_string();
+    assert!(refused.contains("differs from the segment"), "{refused}");
 }
