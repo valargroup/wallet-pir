@@ -7,7 +7,7 @@
 //! installing, so a fence raised while a commit was recording wins.
 use crate::Error;
 use pir_publication::WrittenFloor;
-use std::{fmt, future::Future, io, pin::Pin, sync::Arc};
+use std::{collections::BTreeSet, fmt, future::Future, io, pin::Pin, sync::Arc};
 use tokio::task::JoinHandle;
 
 type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -34,10 +34,21 @@ pub(super) enum CommitOutcome<R> {
     RecordFailed(io::Error),
 }
 
+/// An owned commit together with what the engine applies once it installed.
+/// The operation carries it, so whichever pass awaits the commit (its own, or
+/// a later one settling it after cancellation) completes it exactly once.
+pub(super) struct OwnedCommit<R, V> {
+    pub(super) outcome: CommitOutcome<R>,
+    /// Handed to the adapter once the install succeeded.
+    pub(super) view: V,
+    /// Objects the installed view keeps referenced.
+    pub(super) retained: BTreeSet<String>,
+}
+
 /// The outcome of the one durable operation a lifecycle may have outstanding.
-pub(super) enum DurableOutcome<R> {
+pub(super) enum DurableOutcome<R, V> {
     FloorWritten(io::Result<WrittenFloor>),
-    Commit(CommitOutcome<R>),
+    Commit(OwnedCommit<R, V>),
 }
 
 /// Serializes revocation against installation. Every fence raises the
@@ -247,20 +258,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_cancelled_waiter_never_abandons_an_owned_commit() {
+    async fn a_cancelled_waiter_never_abandons_an_owned_commit_or_its_completion() {
         let fence = CommitFence::default();
         let installed = Arc::new(AtomicBool::new(false));
         let (release, blocked) = mpsc::channel();
         let mut slot = OwnedOperationSlot::new();
-        let commit = run_commit(fence, 0, blocked_commit(blocked, installed.clone()));
+        let prepared = blocked_commit(blocked, installed.clone());
+        let commit = async move {
+            OwnedCommit {
+                outcome: run_commit(fence, 0, prepared).await,
+                view: "installed view",
+                retained: BTreeSet::from(["object".to_string()]),
+            }
+        };
         assert!(
             tokio::time::timeout(Duration::from_millis(20), slot.run(commit))
                 .await
                 .is_err()
         );
         release.send(()).unwrap();
-        let outcome = slot.settle().await.unwrap().unwrap();
-        assert!(matches!(outcome, CommitOutcome::Installed(Ok(()))));
+        let settled = slot.settle().await.unwrap().unwrap();
+        assert!(matches!(settled.outcome, CommitOutcome::Installed(Ok(()))));
         assert!(installed.load(Ordering::SeqCst));
+        assert_eq!(settled.view, "installed view");
+        assert_eq!(settled.retained, BTreeSet::from(["object".to_string()]));
+        assert!(slot.settle().await.is_none(), "settled exactly once");
     }
 }

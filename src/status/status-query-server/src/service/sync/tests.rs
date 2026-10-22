@@ -170,19 +170,17 @@ async fn setup() -> (
     let task = synchronization(service.clone(), &config).unwrap();
     (root, service, task, current, tls, server)
 }
-fn serving_manifest_id(service: &Service) -> impl std::future::Future<Output = [u8; 32]> + '_ {
-    async move {
-        service
-            .state
-            .lock()
-            .await
-            .controller
-            .as_ref()
-            .unwrap()
-            .current()
-            .manifest()
-            .id()
-    }
+async fn serving_manifest_id(service: &Service) -> [u8; 32] {
+    service
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .current()
+        .manifest()
+        .id()
 }
 
 #[tokio::test]

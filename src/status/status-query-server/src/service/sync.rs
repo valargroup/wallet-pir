@@ -82,7 +82,7 @@ enum CandidateMaterial {
     /// The serving generation already is this inventory.
     AlreadyServing,
     /// The serving material under a new publication identity.
-    Reidentified(Generation),
+    Reidentified(Box<Generation>),
     /// Load the material from verified cached objects.
     LoadFromCache,
 }
@@ -204,7 +204,7 @@ impl PublicationAdapter for StatusPublication {
         let (material, required_objects) = if already_serving {
             (CandidateMaterial::AlreadyServing, Vec::new())
         } else if let Some(generation) = reidentified {
-            (CandidateMaterial::Reidentified(generation), Vec::new())
+            (CandidateMaterial::Reidentified(Box::new(generation)), Vec::new())
         } else {
             let role_objects = if self.service.role == Role::Worker {
                 &inventory.units
@@ -246,7 +246,7 @@ impl PublicationAdapter for StatusPublication {
                 .as_deref()
                 .cloned()
                 .ok_or("Status serving generation disappeared")?,
-            CandidateMaterial::Reidentified(generation) => generation,
+            CandidateMaterial::Reidentified(generation) => *generation,
             CandidateMaterial::LoadFromCache => {
                 let cache = cache.clone();
                 let loading = inventory.clone();

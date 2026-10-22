@@ -44,7 +44,7 @@ pub trait PublicationAdapter: Send {
     type AuthoritySubject: Serialize + Send + Sync;
     /// What the adapter keeps about a view once it is installed (for Status,
     /// the inventory whose material may later be re-identified).
-    type InstalledView: Send;
+    type InstalledView: Send + 'static;
     /// Planned material whose objects the engine fetches before loading.
     type Candidate: Send;
     /// Material loaded from verified objects, ready to install.
@@ -220,7 +220,7 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     /// Object sets of the last two commits; everything else is collected.
     retained_commits: Vec<BTreeSet<String>>,
     commit_fence: CommitFence,
-    durable_operation: OwnedOperationSlot<DurableOutcome<A::Report>>,
+    durable_operation: OwnedOperationSlot<DurableOutcome<A::Report, A::InstalledView>>,
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -257,7 +257,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 
     async fn run_pass(&mut self) -> Result<PublicationPass<A::Report>, Error> {
-        self.settle_durable_operation().await;
+        self.settle_durable_operation().await?;
         self.source.discover().await?;
         self.source.reset_budget();
         // Observe and fence.
