@@ -20,6 +20,7 @@ members = [
     "src/shared/pir-chain",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-query-server",
+    "src/status/status-material",
     "src/status/status-query-server",
     "src/status/status-publisher",
     "src/transparent/transparent-shared",

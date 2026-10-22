@@ -1,16 +1,13 @@
 //! A router's loopback coordination with its worker: which inventory the
 //! worker serves, pinning it during the authority check, and releasing the pin.
 use super::super::{serving, Service};
-use crate::{
-    now_ms,
-    protocol::Manifest,
-    publication::{ProviderStatus, METADATA_LIMIT},
-};
+use crate::distributed::ProviderStatus;
 use pir_publication::ObjectReference;
 use pir_sync_manager::{
     publication_lifecycle::{PeerHandover, PeerReservation},
     Error,
 };
+use status_material::{now_ms, protocol::Manifest, publication::METADATA_LIMIT};
 
 /// The inventory the worker serves, or `None` while it is still loading. A
 /// loading worker is ordinary coordination, not a transport failure.

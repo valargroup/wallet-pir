@@ -1,10 +1,19 @@
 //! Private Status role protocol. Transport authentication is supplied by restricted
 //! SSH forwarding; every listener and configured peer must be loopback-only.
-use crate::protocol::*;
 use serde::{Deserialize, Serialize};
+use status_material::protocol::*;
 use std::{net::SocketAddr, path::PathBuf};
 
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
+
+/// What a worker tells its router: the inventory and manifest it serves.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderStatus {
+    pub inventory: Option<pir_publication::ObjectReference>,
+    pub manifest: Option<Manifest>,
+    pub synchronization: String,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

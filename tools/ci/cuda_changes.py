@@ -19,8 +19,8 @@ CONTRACTS = (
     'src/enhance/enhance-query-server/src/matvec',
     'src/enhance/enhance-query-server/src/runtime',
     'src/enhance/enhance-query-server/src/worker',
-    'src/status/status-query-server/src/backend.rs',
-    'src/status/status-query-server/src/generation.rs',
+    'src/status/status-material/src/backend.rs',
+    'src/status/status-material/src/generation.rs',
     'src/status/status-query-server/src/distributed.rs',
     'src/shared/pir-runtime/src/evaluation.rs',
     'src/pir-query-server/tests/operator.rs',
@@ -45,6 +45,7 @@ WORKFLOWS = {'.github/workflows/ci.yml', '.github/workflows/ci-full.yml',
              '.github/workflows/ci-qualify.yml', '.github/workflows/ci-matrix-audit.yml'}
 FORWARDERS = {
     'src/enhance/enhance-query-server/Cargo.toml',
+    'src/status/status-material/Cargo.toml',
     'src/status/status-query-server/Cargo.toml',
     'src/status/status-publisher/Cargo.toml', 'src/pir-query-server/Cargo.toml',
     'tools/pir-e2e-tests/Cargo.toml',

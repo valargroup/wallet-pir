@@ -12,11 +12,9 @@ mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]
 mod wallet_tests;
 
-use crate::{
-    distributed::RoleConfig,
-    publication::{attempt_limit, Failure, PREFIX},
-};
+use crate::distributed::RoleConfig;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
+use status_material::publication::{attempt_limit, Failure, PREFIX};
 
 fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {
     let roots = match &config.publisher_ca {

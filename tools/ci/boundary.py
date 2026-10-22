@@ -100,13 +100,14 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime',
     'transparent-shared', 'transparent-query-server',
-    'enhance-query-server', 'status-query-server', 'pir-serving', 'pir-publication',
+    'enhance-query-server', 'status-query-server', 'status-material', 'pir-serving',
+    'pir-publication',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-query-server', 'status-query-server', 'transparent-shared', 'pir-runtime',
-           'pir-serving', 'pir-cuda'}
+SERVING = {'enhance-query-server', 'status-query-server', 'status-material', 'transparent-shared',
+           'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
     'transparent-publisher', 'status-publisher',
@@ -173,7 +174,7 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 # Shared foundations and the host-only features that alone may reach TRANSPORT.
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
-    'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store',
+    'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-material',
     'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',

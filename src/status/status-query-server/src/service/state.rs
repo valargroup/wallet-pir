@@ -2,13 +2,12 @@
 use super::{admission, serving::serving_http_client};
 use crate::{
     distributed::{loopback_origin, Role},
-    protocol::Hash,
-    publication::Failure,
-    Controller, Generation,
+    Controller,
 };
 use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
 use pir_publication::ObjectReference;
+use status_material::{protocol::Hash, publication::Failure, Generation};
 use std::{fs::File, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 

@@ -1,8 +1,8 @@
 //! The native Status profile, checked with the in-repo client over real server material.
 #![cfg(feature = "native-reinspiring")]
 use ipir_sp::server::MatvecBackend;
-use status_query_server::protocol as server;
-use status_query_server::{fixture, now_ms, Generation};
+use status_material::protocol as server;
+use status_material::{fixture, now_ms, Generation};
 
 #[test]
 fn native_client_decodes_real_server_two_mask_material() {

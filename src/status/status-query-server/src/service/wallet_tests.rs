@@ -1,13 +1,13 @@
 //! Independent wallet client over real Status router and worker listeners.
 use super::Service;
-use crate::fixture;
-use crate::{
-    distributed::Role,
+use crate::{distributed::Role, Controller};
+use ipir_sp::server::MatvecBackend;
+use status_material::fixture;
+use status_material::{
     now_ms,
     protocol::{Observation, HEADER_BYTES, QUERY_MAGIC},
-    Controller, Generation,
+    Generation,
 };
-use ipir_sp::server::MatvecBackend;
 use std::path::Path as FsPath;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

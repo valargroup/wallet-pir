@@ -3,19 +3,18 @@ use super::{
     serving::{evaluate, query, shared_bytes, HttpState},
     telemetry, Service,
 };
-use crate::{
-    distributed::{Binding, Health, Role},
-    now_ms,
-    protocol::{Hash, Manifest},
-    publication::ProviderStatus,
-    telemetry as counters,
-};
+use crate::distributed::{Binding, Health, ProviderStatus, Role};
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
+};
+use status_material::{
+    now_ms,
+    protocol::{Hash, Manifest},
+    telemetry as counters,
 };
 
 impl Service {

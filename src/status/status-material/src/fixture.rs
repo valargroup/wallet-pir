@@ -1,6 +1,11 @@
 //! Deterministic synthetic source for isolated backend qualification. Not chain ingestion.
 use super::index::{Block, ForkRecord, Snapshot};
-use crate::protocol::*;
+use crate::{
+    profile,
+    protocol::*,
+    publication::{scope, Current, Inventory, SCHEMA},
+};
+use pir_publication::ObjectReference;
 use sha2::{Digest, Sha256};
 pub const NETWORK: Hash = [0x31; 32];
 pub const SALT: Hash = [0x72; 32];
@@ -71,6 +76,60 @@ pub fn cases(entries: usize, advanced: bool) -> Vec<(Hash, Observation)> {
         (txid(u64::MAX - 2), Observation::Forked),
         (txid(u64::MAX), Observation::NotFound),
     ]
+}
+
+/// An inventory with valid Status geometry whose objects are all derived
+/// from `material`, published as `generation`.
+pub fn geometric_inventory(material: u8, generation: u64) -> (Inventory, ObjectReference) {
+    let object = |tag: u8, bytes: u64| ObjectReference {
+        sha256: hex::encode([material ^ tag; 32]),
+        bytes,
+    };
+    let units = (0..ROWS / profile().rlwe().d)
+        .map(|_| object(1, (profile().rlwe().d * ROW_BYTES) as u64))
+        .collect();
+    let packing_blocks = if cfg!(feature = "native-reinspiring") {
+        profile().ypir().db_cols.div_ceil(profile().rlwe().d)
+    } else {
+        1
+    };
+    let packing = (0..packing_blocks).map(|_| object(2, 1)).collect();
+    let public = object(3, 1);
+    let inventory = Inventory {
+        schema: SCHEMA.into(),
+        manifest: Manifest {
+            protocol: PROTOCOL.into(),
+            network: [1; 32],
+            salt: [2; 32],
+            generation,
+            recovery_epoch: 2,
+            coverage_start: 1,
+            anchor_height: 1,
+            anchor_hash: [3; 32],
+            observed_ms: 1,
+            entries: 0,
+            rows_digest: [material; 32],
+            public_digest: [material ^ 3; 32],
+        },
+        units,
+        packing,
+        public,
+    };
+    let inventory_object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
+    (inventory, inventory_object)
+}
+/// An eligible envelope publishing exactly `inventory` as `inventory_object`.
+pub fn publishing(inventory: &Inventory, inventory_object: &ObjectReference) -> Current {
+    Current {
+        scope: scope([1; 32], [2; 32]),
+        sequence: 10,
+        eligible: true,
+        fence: pir_publication::AuthorityFence {
+            recovery_epoch: 2,
+            latest_withdrawal: 0,
+        },
+        publication: Some(inventory.publication_reference(inventory_object)),
+    }
 }
 
 #[cfg(test)]

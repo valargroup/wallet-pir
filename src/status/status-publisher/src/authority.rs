@@ -2,7 +2,7 @@
 //! publication authority; restored metadata alone never makes a serving
 //! generation ready.
 use serde::{Deserialize, Serialize};
-use status_query_server::protocol::{Error as StatusError, Hash, Manifest};
+use status_material::protocol::{Error as StatusError, Hash, Manifest};
 use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
@@ -130,7 +130,7 @@ fn persist(dir: &Path, state: &State) -> Result<(), AuthorityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use status_query_server::protocol::PROTOCOL;
+    use status_material::protocol::PROTOCOL;
 
     fn manifest(generation: u64, recovery_epoch: u64) -> Manifest {
         Manifest {

@@ -18,7 +18,7 @@ use pir_publication::{
     CURRENT_PATH, OBJECTS_PATH,
 };
 use serde::Deserialize;
-use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
+use status_material::{now_ms, protocol::*, publication::*, telemetry, Generation};
 use std::{
     net::SocketAddr,
     path::PathBuf,

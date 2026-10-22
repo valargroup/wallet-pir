@@ -166,7 +166,8 @@ async fn checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source() {
 async fn live_rpc_candidate_revalidates_before_durable_publication() {
     use crate::authority::Authority;
     use ipir_sp::server::MatvecBackend;
-    use status_query_server::{Controller, Generation};
+    use status_material::Generation;
+    use status_query_server::Controller;
 
     let dir = tempfile::tempdir().unwrap();
     let (client, job) = fixture(false, false).await;
@@ -178,7 +179,8 @@ async fn live_rpc_candidate_revalidates_before_durable_publication() {
         [1; 32],
     )
     .unwrap();
-    let (number, epoch) = authority.next_identity().unwrap();
+    // Recovery epochs belong to the shared publication authority.
+    let (number, epoch) = (authority.next_generation().unwrap(), 1);
     let (candidate, _) = Generation::prepare(
         &observed.snapshot,
         number,
@@ -203,7 +205,7 @@ async fn live_rpc_candidate_revalidates_before_durable_publication() {
         [1; 32],
     )
     .unwrap();
-    assert_eq!(restarted.next_identity().unwrap(), (2, 2));
+    assert_eq!(restarted.next_generation().unwrap(), 2);
     job.abort();
 }
 

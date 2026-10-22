@@ -1,5 +1,4 @@
 use super::*;
-use crate::protocol::{MAX_AGE_MS, PROTOCOL};
 use crate::service::routes::{provider_commit, provider_pin};
 use axum::extract::{Path, State};
 use axum::{
@@ -12,6 +11,7 @@ use pir_publication::{
     conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
 use pir_sync_manager::SyncTask;
+use status_material::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -612,7 +612,7 @@ async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
 /// refused before any of its material is requested.
 #[tokio::test]
 async fn router_follows_its_workers_retained_predecessor_but_not_a_forged_one() {
-    use crate::publication::tests::{geometric_inventory, publishing};
+    use status_material::fixture::{geometric_inventory, publishing};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
     let fresh = |(mut inventory, _): (Inventory, ObjectReference)| {

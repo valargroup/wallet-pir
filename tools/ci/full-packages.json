@@ -13,6 +13,7 @@
   ],
   "enhance": [
     "enhance-query-server",
+    "status-material",
     "status-query-server",
     "status-publisher",
     "enhance-pir-client",

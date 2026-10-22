@@ -126,6 +126,8 @@
       "native:pir-monitor:bin:pir-monitor",
       "native:status-publisher:doc:status_publisher",
       "native:status-publisher:lib:status_publisher",
+      "native:status-material:doc:status_material",
+      "native:status-material:lib:status_material",
       "native:status-query-server:doc:status_query_server",
       "native:status-query-server:lib:status_query_server"
     ]
@@ -183,6 +185,7 @@
       "reference:pir-e2e-tests:test:ci_hint",
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
       "reference:enhance-query-server:lib:enhance_query_server",
+      "reference:status-material:lib:status_material",
       "reference:status-query-server:lib:status_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
     ]
@@ -193,6 +196,7 @@
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
+      "cuda:status-material:check:status_material",
       "cuda:status-publisher:check:status_publisher",
       "cuda:status-query-server:check:status_query_server",
       "cuda:pir-cuda:check:pir_cuda"

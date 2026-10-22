@@ -201,17 +201,10 @@ pub fn attempt_limit() -> u64 {
     packing_limit() + (ROWS * ROW_BYTES) as u64 + (4 << 20)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProviderStatus {
-    pub inventory: Option<ObjectReference>,
-    pub manifest: Option<Manifest>,
-    pub synchronization: String,
-}
-
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
+    use crate::fixture::{geometric_inventory, publishing};
     #[test]
     fn status_scope_changes_are_replays() {
         use pir_publication::{AuthorityFence, EnvelopeSuccession, PublicationReference};
@@ -304,62 +297,6 @@ pub(crate) mod tests {
             None,
         );
         assert!(result.is_err());
-    }
-
-    /// An inventory with valid Status geometry whose objects are all derived
-    /// from `material`, published as `generation`.
-    pub(crate) fn geometric_inventory(
-        material: u8,
-        generation: u64,
-    ) -> (Inventory, ObjectReference) {
-        let object = |tag: u8, bytes: u64| ObjectReference {
-            sha256: hex::encode([material ^ tag; 32]),
-            bytes,
-        };
-        let units = (0..ROWS / profile().rlwe().d)
-            .map(|_| object(1, (profile().rlwe().d * ROW_BYTES) as u64))
-            .collect();
-        let packing_blocks = if cfg!(feature = "native-reinspiring") {
-            profile().ypir().db_cols.div_ceil(profile().rlwe().d)
-        } else {
-            1
-        };
-        let packing = (0..packing_blocks).map(|_| object(2, 1)).collect();
-        let public = object(3, 1);
-        let inventory = Inventory {
-            schema: SCHEMA.into(),
-            manifest: Manifest {
-                protocol: PROTOCOL.into(),
-                network: [1; 32],
-                salt: [2; 32],
-                generation,
-                recovery_epoch: 2,
-                coverage_start: 1,
-                anchor_height: 1,
-                anchor_hash: [3; 32],
-                observed_ms: 1,
-                entries: 0,
-                rows_digest: [material; 32],
-                public_digest: [material ^ 3; 32],
-            },
-            units,
-            packing,
-            public,
-        };
-        let inventory_object = ObjectReference::for_bytes(&serde_json::to_vec(&inventory).unwrap());
-        (inventory, inventory_object)
-    }
-    pub(crate) fn publishing(inventory: &Inventory, inventory_object: &ObjectReference) -> Current {
-        Current {
-            scope: scope([1; 32], [2; 32]),
-            sequence: 10,
-            eligible: true,
-            fence: pir_publication::AuthorityFence {
-                recovery_epoch: 2,
-                latest_withdrawal: 0,
-            },
-            publication: Some(inventory.publication_reference(inventory_object)),
-        }
     }
 
     /// A router's worker may still serve predecessor B while the publisher

@@ -4,7 +4,7 @@ use super::{
     now_ms,
 };
 use crate::zakura::{ZakuraClient, ZakuraError};
-use status_query_server::protocol::{Error as StatusError, Hash};
+use status_material::protocol::{Error as StatusError, Hash};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},

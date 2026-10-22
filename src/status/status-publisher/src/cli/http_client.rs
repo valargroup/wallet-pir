@@ -1,5 +1,5 @@
 //! HTTP session handling for the standalone Status diagnostic commands.
-use status_query_server::protocol::*;
+use status_material::protocol::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HttpError {

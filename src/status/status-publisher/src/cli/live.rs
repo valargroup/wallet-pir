@@ -2,7 +2,7 @@
 use super::{require, AnyError};
 use crate::zakura::ZakuraClient;
 use serde_json::json;
-use status_query_server::protocol::*;
+use status_material::protocol::*;
 use std::{path::PathBuf, time::Duration};
 
 pub async fn observe_live(
