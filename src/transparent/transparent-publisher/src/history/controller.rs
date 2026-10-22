@@ -2632,7 +2632,9 @@ mod integrity_tests {
         // The predecessor's own record refuses it; deployment rollback keys
         // on exactly this boundary before stopping a current release.
         assert!(serde_json::from_value::<PredecessorFailure>(value.clone()).is_err());
-        assert!(serde_json::from_value::<PredecessorFailure>(predecessor(&"44".repeat(32))).is_ok());
+        assert!(
+            serde_json::from_value::<PredecessorFailure>(predecessor(&"44".repeat(32))).is_ok()
+        );
         assert_eq!(
             serde_json::from_value::<IntegrityFailure>(value.clone()).unwrap(),
             current
