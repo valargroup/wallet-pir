@@ -490,64 +490,15 @@ case is reported missing rather than timing out itself. Shipping prepared runtim
 to that terminal, or a host with more CPU, is the remaining fix for the 30-second
 gate.
 
-## Controller update campaign
+## Controller update campaign (retired)
 
-`tools/transparent/scripts/https-update-campaign.py` runs the ignored
-`controller_update_campaign` test in
-`tools/pir-e2e-tests/tests/`. Run it through the repository's
-build wrapper with `--consumers 10,100`. It builds the packaged
-`pir-query-server` with Transparent history serving, the controller built with that test, the
-isolated released391 client (with `verify-sources.py` receipts) and the
-in-process publisher tests with one profile (default `release-fast`). Each run is
-written to a new ignored `.local-pir/https-update-campaign/<utc>-<sha>/` and is
-never committed.
-
-The test follows a synthetic journal through real controller revisions. It uses
-three TLS terminators forwarding to the controller: one for each provider, so
-faults target one provider, and one for the campaign and its distribution
-consumers. A fixed archive owner serves its own copy of the initial publication's
-32k archive tier under a planned `archive-01` assignment, behind its own
-terminator. Two packaged providers run with `archive_upstream` and separate
-state roots.
-
-Correctness comes from fresh released391 client processes recovering one wallet
-through each provider for the whole run. The wallet is paid at every height, so
-recovery spans the archive and the recent tier. The complete ledger (UTXOs,
-spends, history, unresolved) must equal the ledger read back from the committed
-journal events at the client's reported anchor. Controller tables, `active.json`
-and provider output are never the oracle. Each recovery is recorded as ok, wrong,
-refusal, timeout, unreachable or error with its latency. Any wrong ledger fails the
-campaign.
-
-The phases are:
-
-1. Bootstrap, then a check that both providers report the archive as
-   `identity-checked`.
-2. Updates under continuous recovery, then an unchanged no-update window.
-3. Supersession: both providers stall mid-transfer, provider-b is killed, and a
-   newer revision is published. The stalled map must never activate on either
-   provider.
-4. A provider-b restart while its activation anchor checks stall.
-5. Two missed revisions while provider-b is down.
-6. A source outage that stops every publisher terminator. Both providers keep
-   serving, the publisher TLS restarts on the same ports, resynchronization is
-   timed, and one more revision must converge on both providers.
-
-Providers now report the wall seconds of each changed pass as
-`synchronization.progress.stages` and keep the last change as
-`synchronization.last_change`. The stages are transfer, staging, loading,
-prewarm and activation (final source/anchor checks, CAS and collection). These
-are diagnostics, not authority.
-
-`manifest.json` records source, binary and host identity, the released-client
-provenance and, after the run, `dataset`. That is the digest of every committed
-journal file at each commit, the initial and archive map digests, the archive
-assignment and every observed revision's inventory and map digests.
-`summary.json` is computed only from `observations.jsonl` and distribution
-receipts. Fork/invalidation, replay, durable fencing, write failure and
-interrupted in-process staging stay with the in-process
-`history::controller::distribution_tests` cases, which the runner executes and
-records in `in-process.log`.
+The `controller_update_campaign` test and its `https-update-campaign.py` runner
+were deleted after `bee37567`: they depended on a fleet-era archive owner serving
+a planned assignment from local files, which query servers no longer support.
+Read them at that revision. The unified HTTPS campaign
+(`unified_http_sync_campaign`) covers current provider interruption, publication
+advancement and archive/recent recovery with the frozen released clients. The
+dated result below remains a historical observation of that removed campaign.
 
 ### 2026-10-19 local run
 

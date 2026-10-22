@@ -49,7 +49,6 @@
       "transparent:pir-publisher:bin:pir-publisher",
       "transparent:pir-publisher:doc:pir_publisher",
       "transparent:pir-publisher:lib:pir_publisher",
-      "transparent:pir-e2e-tests:test:controller_update_campaign",
       "transparent:pir-publisher:test:lifecycle",
       "transparent:pir-e2e-tests:test:event_codec_bounds",
       "transparent:pir-e2e-tests:test:service_round_trip",

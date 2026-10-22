@@ -212,11 +212,6 @@ path = "tests/enhance_wallet_native.rs"
 required-features = ["enhance-tests", "native-reinspiring"]
 
 [[test]]
-name = "controller_update_campaign"
-path = "tests/controller_update_campaign.rs"
-required-features = ["transparent-tests"]
-
-[[test]]
 name = "event_codec_bounds"
 path = "tests/event_codec_bounds.rs"
 required-features = ["transparent-tests"]

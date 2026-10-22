@@ -77,7 +77,6 @@
     ],
     "full": [
       "canonical_record",
-      "controller_update_campaign",
       "encrypted_lifecycle",
       "enhance_wallet_native",
       "event_codec_bounds",
