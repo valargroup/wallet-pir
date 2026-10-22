@@ -231,9 +231,13 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    if program['integration'] or program['exclusive'] or len(names) <= 48:
+    # Status pays for one process-local generation per group. Two groups let
+    # those prepares overlap. Every other suite keeps about forty-eight cases
+    # so immutable fixtures stay together.
+    group = 31 if program.get('package') == 'status-query-server' else 48
+    if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
-    lanes = min(3, (len(names) + 47) // 48)
+    lanes = min(3, (len(names) + group - 1) // group)
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]

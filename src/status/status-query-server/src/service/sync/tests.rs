@@ -15,7 +15,7 @@ use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    RwLock,
+    Mutex, OnceLock, RwLock,
 };
 struct Origin {
     current: RwLock<Current>,
@@ -734,6 +734,34 @@ fn committed(pass: PublicationPass<u64>) -> (u64, PeerHandover) {
     }
 }
 
+/// One prepared generation for this snapshot and identity, stamped at `observed_ms`.
+///
+/// The units do not depend on the observation time. Cases in this process share
+/// the prepared material and only restamp freshness.
+fn cached_generation(
+    snapshot: &status_shared::index::Snapshot,
+    generation: u64,
+    recovery_epoch: u64,
+    observed_ms: u64,
+    previous: Option<&Generation>,
+) -> Generation {
+    type Key = ([u8; 32], u64, u64, Option<[u8; 32]>);
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<Key, Generation>>> = OnceLock::new();
+    let key = (
+        snapshot.digest,
+        generation,
+        recovery_epoch,
+        previous.map(|prior| prior.manifest().rows_digest),
+    );
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let prepared = cache.entry(key).or_insert_with(|| {
+        Generation::prepare(snapshot, generation, recovery_epoch, 1, previous)
+            .unwrap()
+            .0
+    });
+    prepared.clone().reobserved(observed_ms)
+}
+
 /// Router A is pinned at its worker, which already serves B, while the
 /// publisher advanced to C with other material. The router commits B through
 /// the real lifecycle and worker routes, its release frees A at the worker,
@@ -745,16 +773,14 @@ async fn router_commits_its_workers_retained_predecessor_and_releases_the_worker
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (b, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
-    let (c, _) = Generation::prepare(
+    let b = cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
+    let c = cached_generation(
         &fixture::snapshot(32, true).unwrap(),
         5,
         2,
         now_ms(),
         Some(&b),
-    )
-    .unwrap();
+    );
     let (mut b_inventory, mut c_inventory) = (export(&source, &b), export(&source, &c));
     assert_ne!(
         b_inventory.material_identity(),
@@ -867,8 +893,8 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let publish = |inventory: &mut Inventory, sequence: u64| {
         let object = publish_inventory(&source, inventory);
@@ -965,8 +991,8 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {
@@ -1071,8 +1097,8 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
     use status_shared::fixture::{self, NETWORK, SALT};
     let (root, _service, task, source, tls, server) = setup().await;
     drop(task);
-    let (generation, _) =
-        Generation::prepare(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None).unwrap();
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
     let mut inventory = export(&source, &generation);
     let object = publish_inventory(&source, &mut inventory);
     *source.current.write().unwrap() = Current {
