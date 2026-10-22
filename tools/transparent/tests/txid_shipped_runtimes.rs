@@ -1,15 +1,16 @@
 //! Runtimes shipped beside a display publication, end to end on a worker.
 //!
 //! The publisher writes the recent revision's runtimes as plain files at the
-//! candidate root. The candidate must still open and verify as before, a
-//! recent replica must load and self-check those runtimes instead of building
-//! them, publish exactly what a local build publishes, and fall back to a
-//! counted build for a file it cannot use; collection removes the candidate
-//! with its files.
+//! candidate root. The candidate must still open and verify as before; a
+//! recent replica's preparation checks sizes only, and its background warming
+//! loads those runtimes instead of building them, publishing exactly what a
+//! local build publishes and falling back to a counted build for a file it
+//! cannot use; collection removes the candidate with its files.
 
 use zakura_pir_publisher::transparent as transparent_shard;
 
 use std::path::{Path, PathBuf};
+use std::sync::{atomic::Ordering, Arc};
 use transparent_publisher::tx_detail::publisher::verify_dir;
 use transparent_query_server::config::ServiceConfig;
 use transparent_query_server::tx_detail::live::{
@@ -70,16 +71,40 @@ fn runtime_files(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn worker(root: &Path) -> DisplayLive {
-    DisplayLive::new(
-        DisplayRuntime::new(ServiceConfig::default(), None),
+fn worker(root: &Path) -> (DisplayLive, Arc<DisplayRuntime>) {
+    let runtime = DisplayRuntime::new(ServiceConfig::default(), None);
+    let live = DisplayLive::new(
+        runtime.clone(),
         DisplayRole::RecentReplica,
         3,
         root.join("worker/active.json"),
         vec![root.to_path_buf()],
         None,
     )
-    .unwrap()
+    .unwrap();
+    (live, runtime)
+}
+
+/// How the worker came by its runtimes so far: local builds, shipped loads
+/// and shipped files refused and built instead.
+fn produced(runtime: &DisplayRuntime) -> (u64, u64, u64) {
+    let metrics = &runtime.metrics;
+    (
+        metrics.builds.load(Ordering::Relaxed),
+        metrics.shipped_loads.load(Ordering::Relaxed),
+        metrics.shipped_fallbacks.load(Ordering::Relaxed),
+    )
+}
+
+/// Waits for the prepared candidate's background warming to finish.
+async fn candidate_warmed(live: &DisplayLive) {
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while live.command(DisplayCommand::Status).await.unwrap()["candidate"]["warm"] != true {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the candidate warms");
 }
 
 async fn metrics(live: &DisplayLive) -> String {
@@ -130,20 +155,20 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     let archive_owner = DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap();
     assert!(archive_owner.held(&shards[0].digest).is_some());
 
-    let live = worker(root);
+    let (live, runtime) = worker(root);
     let reply = prepare(&live, &dir, &sha).await;
-    assert_eq!(reply["built"], targets.len() as u64, "{reply:?}");
-    assert_eq!(reply["shipped"], targets.len() as u64, "{reply:?}");
-    assert_eq!(reply["shipped_fallbacks"], 0, "{reply:?}");
-    assert!(reply["self_check_ms"].as_f64().unwrap() > 0.0);
-    // Before any activation the worker's own `/metrics` counts the prepare
-    // and its self-check.
+    assert_eq!(reply["ready"], true, "{reply:?}");
+    assert_eq!(
+        reply["built"], 0,
+        "preparation checks sizes only: {reply:?}"
+    );
+    // Before any activation the worker's own `/metrics` counts the prepare.
     let text = metrics(&live).await;
-    for family in ["prepare", "self_check"] {
-        let count =
-            format!("transparent_display_{family}_seconds_count{{role=\"recent-replica\"}} 1\n");
-        assert!(text.contains(&count), "{family}:\n{text}");
-    }
+    let count = "transparent_display_prepare_seconds_count{role=\"recent-replica\"} 1\n";
+    assert!(text.contains(count), "{text}");
+    // Warming loads every target from its shipped file and builds none.
+    candidate_warmed(&live).await;
+    assert_eq!(produced(&runtime), (0, targets.len() as u64, 0));
 
     // Each file is the runtime a local build of its segment makes, named by
     // the identity the worker looks it up by.
@@ -192,9 +217,15 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
         std::fs::remove_file(&runtime_files(&dir)[0]).unwrap();
         (dir, sha)
     };
-    let reply = prepare(&live, &partial, &partial_sha).await;
-    assert_eq!(reply["shipped"], 1, "{reply:?}");
-    assert_eq!(reply["shipped_fallbacks"], 1, "{reply:?}");
+    let before = produced(&runtime);
+    prepare(&live, &partial, &partial_sha).await;
+    candidate_warmed(&live).await;
+    let after = produced(&runtime);
+    assert_eq!(
+        (after.0 - before.0, after.1 - before.1, after.2 - before.2),
+        (1, 1, 1),
+        "one target loads from its file, the other is built and counted"
+    );
     live.command(DisplayCommand::Activate {
         expected: sha.clone(),
         map_sha256: partial_sha.clone(),
@@ -203,13 +234,12 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     .unwrap();
 
     // A candidate without shipped files is not a shipped one: no fallbacks.
-    let fresh = worker(&temp.path().join("elsewhere"));
+    let (fresh, fresh_runtime) = worker(&temp.path().join("elsewhere"));
     let (plain, plain_sha) = synth::write_candidate(root, &params(), &shards, "plain").unwrap();
     assert!(runtime_files(&plain).is_empty());
-    let reply = prepare(&fresh, &plain, &plain_sha).await;
-    assert_eq!(reply["built"], targets.len() as u64);
-    assert_eq!(reply["shipped"], 0);
-    assert_eq!(reply["shipped_fallbacks"], 0);
+    prepare(&fresh, &plain, &plain_sha).await;
+    candidate_warmed(&fresh).await;
+    assert_eq!(produced(&fresh_runtime), (targets.len() as u64, 0, 0));
 
     // Collection removes an unused candidate whole, shipped files included:
     // the newest three unused candidates stay, older ones go. The first
