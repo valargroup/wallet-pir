@@ -50,9 +50,11 @@ pub(super) fn install_object_bytes(root: &Path, bytes: &[u8]) -> Result<Object, 
     };
     // An existing object is hashed with the complete inventory.
     if !object.path(root)?.exists() {
-        artifact::write_atomic_cold(&root.join(pir_artifact::namespace("objects")), &object.checksum, |f| {
-            f.write_all(bytes)
-        })
+        artifact::write_atomic_cold(
+            &root.join(pir_artifact::namespace("objects")),
+            &object.checksum,
+            |f| f.write_all(bytes),
+        )
         .map_err(|e| e.to_string())?;
     }
     Ok(object)
@@ -71,10 +73,14 @@ pub(super) fn install_packing_object(
     if object.path(root)?.exists() {
         return Ok(());
     }
-    artifact::write_atomic_cold(&root.join(pir_artifact::namespace("objects")), &object.checksum, |f| {
-        io::copy(&mut File::open(source)?, f)?;
-        Ok(())
-    })
+    artifact::write_atomic_cold(
+        &root.join(pir_artifact::namespace("objects")),
+        &object.checksum,
+        |f| {
+            io::copy(&mut File::open(source)?, f)?;
+            Ok(())
+        },
+    )
     .map(drop)
     .map_err(|e| e.to_string())
 }

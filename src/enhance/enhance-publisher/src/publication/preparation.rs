@@ -4,10 +4,7 @@ use super::{
     read_metadata,
 };
 use crate::{prepared_packing, runtime, PackingBudget};
-use enhance_query_server::{
-    protocol::Coverage,
-    publication::Domain,
-};
+use enhance_query_server::{protocol::Coverage, publication::Domain};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, path::Path};
 

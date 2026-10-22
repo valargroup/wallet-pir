@@ -22,7 +22,8 @@ impl PublicationDistribution {
                     .join(pir_artifact::namespace("inventories"))
                     .join(format!("{}.json", retained.inventory.checksum)),
             )?;
-            if enhance_query_server::publication::inventory_digest(&inventory) != retained.inventory.checksum
+            if enhance_query_server::publication::inventory_digest(&inventory)
+                != retained.inventory.checksum
                 || !inventory.supports(&retained.manifest)?
             {
                 return Err("retained Enhance inventory differs".into());
@@ -53,15 +54,24 @@ impl PublicationDistribution {
         let mut objects = BTreeSet::new();
         for retained in retained {
             let name = format!("{}.json", retained.inventory.checksum);
-            let inventory: Inventory = read_metadata(&self.root.join(pir_artifact::namespace("inventories")).join(&name))?;
-            if enhance_query_server::publication::inventory_digest(&inventory) != retained.inventory.checksum
+            let inventory: Inventory = read_metadata(
+                &self
+                    .root
+                    .join(pir_artifact::namespace("inventories"))
+                    .join(&name),
+            )?;
+            if enhance_query_server::publication::inventory_digest(&inventory)
+                != retained.inventory.checksum
                 || !inventory.supports(&retained.manifest)?
             {
                 return Err("cannot collect: retained Enhance inventory differs".into());
             }
             inventories.insert(name);
             for domain in inventory.domains {
-                domains.insert(format!("{}.json", enhance_query_server::publication::inventory_digest(&domain.plan)));
+                domains.insert(format!(
+                    "{}.json",
+                    enhance_query_server::publication::inventory_digest(&domain.plan)
+                ));
                 units.extend(domain.plan.units.iter().map(|unit| unit.digest()));
                 packing.insert(domain.packing.name.clone());
                 packing.insert(format!("{}.json", domain.packing.name));
