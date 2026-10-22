@@ -5,52 +5,51 @@ mod boundary_recovery_model;
 mod record_layout;
 #[path = "status_routes.rs"]
 mod status_routes;
-use enhance_query_server::publication::{AuthorityResponse, Inventory, PREFIX};
-#[cfg(feature = "native-reinspiring")]
-use enhance_query_server::{runtime::Engine, wire::encode_crs_blocks};
-#[cfg(feature = "native-reinspiring")]
+use enhance_query_server::protocol::{Geometry, Lifecycle};
+use enhance_query_server::runtime::{plan, Engine};
+use enhance_query_server::wire::encode_crs_blocks;
 use pir_e2e_tests::enhance_fixture::record;
-#[path = "support/publication.rs"]
-#[allow(dead_code)]
-mod publication_source;
+fn rows(start: u64, count: usize) -> Result<Vec<u8>, String> {
+    Ok((start..start + count as u64).flat_map(record).collect())
+}
+/// One reference runtime for the pinned 67-record hint. The reference packing
+/// artifact is larger than 512 MiB even for this domain, so this oracle does
+/// not build it; qualification publications do.
 async fn hint_matches_oracle(count: u64) {
-    let fixture = publication_source::Published::with_records(count).await;
-    let source = fixture.source();
-    let certificate = reqwest::Certificate::from_pem(
-        &std::fs::read(source.trusted_ca.as_ref().unwrap()).unwrap(),
-    )
-    .unwrap();
-    let http = reqwest::Client::builder()
-        .add_root_certificate(certificate)
-        .build()
-        .unwrap();
-    let current: AuthorityResponse = http
-        .get(format!("{}{PREFIX}current", source.publisher_origin))
-        .send()
-        .await
+    let root = tempfile::tempdir().unwrap();
+    let shard = Lifecycle::default()
+        .coverage(count, Geometry::default())
         .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let object = current.current.inventory.unwrap();
-    let inventory: Inventory = http
-        .get(format!(
-            "{}{PREFIX}inventories/{}",
-            source.publisher_origin, object.sha256
-        ))
-        .send()
-        .await
+        .shards[0]
+        .clone();
+    let domain = plan(shard, rows).unwrap();
+    #[cfg(feature = "native-reinspiring")]
+    let again = domain.clone();
+    let evaluation = Engine::new(&root.path().join("oracle"))
+        .prepare(domain, rows)
         .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let domain = &inventory.domains[0];
-    let actual = http
-        .get(format!(
-            "{}{PREFIX}objects/{}",
-            source.publisher_origin, domain.hint.sha256
-        ))
-        .send()
+        .0;
+    let expected = encode_crs_blocks(&evaluation.hint().unwrap());
+    #[cfg(feature = "native-reinspiring")]
+    {
+        let other = Engine::new(&root.path().join("other"))
+            .prepare(again, rows)
+            .unwrap()
+            .0;
+        assert_eq!(expected, encode_crs_blocks(&other.hint().unwrap()));
+    }
+    let path = root.path().join("hint.bin");
+    std::fs::write(&path, &expected).unwrap();
+    let served = path.clone();
+    let listener = pir_e2e_tests::enhance_fixture::serve(axum::Router::new().route(
+        "/hint",
+        axum::routing::get(move || {
+            let served = served.clone();
+            async move { std::fs::read(served).unwrap() }
+        }),
+    ))
+    .await;
+    let actual = reqwest::get(format!("{}/hint", listener.url))
         .await
         .unwrap()
         .error_for_status()
@@ -58,21 +57,11 @@ async fn hint_matches_oracle(count: u64) {
         .bytes()
         .await
         .unwrap();
-    #[cfg(feature = "native-reinspiring")]
-    {
-        let root = tempfile::tempdir().unwrap();
-        let oracle = Engine::new(root.path())
-            .prepare(domain.plan.clone(), |start, n| {
-                Ok((start..start + n as u64).flat_map(record).collect())
-            })
-            .unwrap()
-            .0;
-        assert_eq!(actual.as_ref(), encode_crs_blocks(&oracle.hint().unwrap()));
-    }
+    assert_eq!(actual.as_ref(), expected.as_slice());
     #[cfg(not(feature = "native-reinspiring"))]
     {
         // These existing fixed vectors pin the independently verified reference
-        // bytes. Native preparation uses the generic oracle above.
+        // bytes. Native preparation uses the second engine above.
         use sha2::{Digest, Sha256};
         assert_eq!(
             hex::encode(Sha256::digest(&actual)),
@@ -83,6 +72,7 @@ async fn hint_matches_oracle(count: u64) {
             }
         );
     }
+    listener.stop().await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn published_hint_matches_independent_oracle_67() {
