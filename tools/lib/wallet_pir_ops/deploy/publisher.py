@@ -753,6 +753,9 @@ class Cutover:
 
 
 def register(commands):
+    cleanup = commands.add_parser('publisher-cutover-prune-qualification', allow_abbrev=False)
+    cleanup.add_argument('--host', action='append', required=True)
+    cleanup.add_argument('--confirm-path', required=True, choices=('/srv/enhance-pir-v7/qualification-worker',))
     for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
@@ -774,6 +777,9 @@ def register(commands):
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
+    if operation == 'prune-qualification':
+        from .enhance_https import prune_qualification
+        return prune_qualification(args, executor)
     if operation in ('run', 'watchdog'):
         if args.supervision == 'operator':
             from .cutover_operator import dispatch as supervised
