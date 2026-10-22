@@ -1361,12 +1361,14 @@ mod tests {
         }
 
         /// The service's `/v1/receiver/{path}` response.
+        #[cfg(feature = "qualification-tests")]
         async fn get(&self, path: &str) -> Value {
             let url = format!("{}/v1/receiver/{path}", self.origin);
             reqwest::get(url).await.unwrap().json().await.unwrap()
         }
 
         /// The current inventory's last shard's first segment, from its first chunk.
+        #[cfg(feature = "qualification-tests")]
         async fn segment(&self) -> receiver_pir::Publication {
             let head: receiver_pir::inventory::Head =
                 serde_json::from_value(self.get("inventory").await).unwrap();
@@ -1391,6 +1393,7 @@ mod tests {
         }
 
         /// The provider store.
+        #[cfg(feature = "qualification-tests")]
         fn provider(&self) -> PayoutStore {
             PayoutStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
