@@ -606,6 +606,7 @@ impl ShippedRuntimes {
     /// Copy the existing prepared body; no database or PIR matrix is rebuilt.
     /// Both its predecessor checksum and identity must match before the new
     /// header is installed in a separate inode.
+    #[allow(clippy::too_many_arguments)]
     pub fn migrate_previous(
         &self,
         destination: &Self,
@@ -648,7 +649,7 @@ impl ShippedRuntimes {
                 "runtime conversion requires a separate output file",
             ));
         }
-        pir_artifact::migration::prepare(checkpoints, &source, previous, bytes)?;
+        pir_artifact::migration::prepare(checkpoints, source, previous, bytes)?;
         let directory = target
             .parent()
             .ok_or_else(|| invalid("converted runtime has no parent"))?;
@@ -664,7 +665,7 @@ impl ShippedRuntimes {
                 m.ctime_nsec()
             ])
         };
-        if let (Ok(raw), Ok(metadata)) = (fs::read(&proof), fs::symlink_metadata(&target)) {
+        if let (Ok(raw), Ok(metadata)) = (fs::read(&proof), fs::symlink_metadata(target)) {
             let saved: serde_json::Value = serde_json::from_slice(&raw)?;
             if metadata.is_file()
                 && saved["previous"] == serde_json::to_value(previous)?
@@ -679,7 +680,7 @@ impl ShippedRuntimes {
                 return Ok((target.to_path_buf(), checksum));
             }
         }
-        let mut input = File::open(&source)?;
+        let mut input = File::open(source)?;
         let before = input.metadata()?;
         let mut header = [0u8; 64];
         input.read_exact(&mut header)?;
@@ -735,7 +736,7 @@ impl ShippedRuntimes {
             return Err(invalid("predecessor runtime body checksum differs"));
         }
         if stamp(&before) != stamp(&input.metadata()?)
-            || stamp(&before) != stamp(&fs::symlink_metadata(&source)?)
+            || stamp(&before) != stamp(&fs::symlink_metadata(source)?)
         {
             return Err(invalid("predecessor runtime changed during conversion"));
         }
@@ -755,12 +756,12 @@ impl ShippedRuntimes {
         if length != bytes {
             return Err(invalid("converted runtime length differs"));
         }
-        temporary.persist(&target).map_err(|error| error.error)?;
+        temporary.persist(target).map_err(|error| error.error)?;
         File::open(directory)?.sync_all()?;
         pir_artifact::migration::persist(
             &proof,
             &serde_json::to_vec(&serde_json::json!({
-                "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(&target)?),
+                "previous": previous, "checksum": checksum, "stamp": stamp(&fs::symlink_metadata(target)?),
                 "previous_identity":previous_identity,"current_identity":current_identity,
                 "shared_blocks":shared_blocks
             }))?,
