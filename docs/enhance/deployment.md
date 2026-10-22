@@ -89,6 +89,16 @@ Keep control/evaluation listeners on the private network and process management
 on loopback. Preserve the existing internal bearer-token credential references;
 all private peers must use the same installed policy.
 
+For an installed serving role, deployment preserves the effective `User`,
+`Group` and credential environment-file references unless the inventory explicitly
+sets `limits.User`, `limits.Group` or `credentials`. Fresh installations use the
+template account, which must already exist. Plan and preflight check account and
+group availability, credential-file availability and cache access as the service
+account before any serving process stops. Activation creates only missing cache
+directories with that account's ownership; existing directories must already be
+owned by the selected account and accessible to it. Deployment never recursively
+changes ownership of existing state.
+
 ### Internal control token
 
 `ENHANCE_INTERNAL_TOKEN` protects private evaluation, readiness and peer handover.

@@ -221,6 +221,9 @@ class Deployer:
                     plan.refusals.append('template roles replace %s, but systemd loads %s' % (path, state['fragment_path']))
                 if role.mode == 'role':
                     rendered = role.render(target.settings, self.service.release_dir(sha), target.unit)
+                    guard = role.product_guard()
+                    if guard is not None and hasattr(guard, 'rendered_role'):
+                        rendered = guard.rendered_role(target, state, rendered)
                     fragment = rendered.unit
                     plan.directories, plan.check = rendered.directories, rendered.check
                     plan.changes += self.file_changes(plan, rendered.files, fresh=False)
@@ -252,7 +255,8 @@ class Deployer:
         """
         guard = plan.target.role.product_guard()
         if guard is not None and plan.action in CHANGING:
-            plan.directories = ()
+            if not getattr(guard, 'manages_directories', False):
+                plan.directories = ()
             plan.refusals += guard.plan(self, plan)
         return plan
 
@@ -549,8 +553,11 @@ class Deployer:
                               change['previous'].encode(), 0o600)
         self.ex.write(host, directory + '/record.json', json.dumps(record, indent=2, sort_keys=True).encode(), 0o600)
         journal.set_phase(index, 'installing')
-        for path in record.get('directories', []):
-            self.ex.mkdir(host, path, 0o750)
+        if guard is not None and hasattr(guard, 'prepare_directories'):
+            guard.prepare_directories(self, journal, record)
+        else:
+            for path in record.get('directories', []):
+                self.ex.mkdir(host, path, 0o750)
         for change in record['changes']:
             if change['op'] == 'write':
                 self.ex.mkdir(host, os.path.dirname(change['path']), 0o755)
@@ -591,25 +598,29 @@ class Deployer:
                 guard.preflight(self, journal, record, sha)
                 self.out('%s: product check passed in disposable state' % record['key'])
                 continue
-            host = record['host']
-            self.lock.verify()
-            staged = '%s/%s/check' % (self.service.transaction_dir(journal.id), record['unit'])
-            argv = [self.release_binary(sha), *record['check']]
-            renamed = {}
-            for number, change in enumerate(record['changes']):
-                if change['op'] == 'write' and not change['path'].startswith(SYSTEM + '/'):
-                    copy = '%s/%d-%s' % (staged, number, os.path.basename(change['path']))
-                    self.ex.mkdir(host, staged, 0o700)
-                    self.ex.write(host, copy, change['new'].encode(), 0o600)
-                    renamed[change['path']] = copy
-            argv = [renamed.get(argument, argument) for argument in argv]
-            journal.event('product check', host=host, unit=record['unit'], argv=argv)
-            code, output = self.ex.run(host, argv, PRODUCT_CHECK_SECONDS)
-            journal.event('product check finished', host=host, returncode=code, output=output[-2000:])
-            if code:
-                raise DeployError('%s: the product check refused the staged configuration or input (exit %d): %s'
-                                  % (record['key'], code, output[-1000:]))
-            self.out('%s: product check passed' % record['key'])
+            self.configuration_check(journal, record, sha)
+
+    def configuration_check(self, journal, record, sha):
+        """Check staged configuration without opening the role's writable state."""
+        host = record['host']
+        self.lock.verify()
+        staged = '%s/%s/check' % (self.service.transaction_dir(journal.id), record['unit'])
+        argv = [self.release_binary(sha), *record['check']]
+        renamed = {}
+        for number, change in enumerate(record['changes']):
+            if change['op'] == 'write' and not change['path'].startswith(SYSTEM + '/'):
+                copy = '%s/%d-%s' % (staged, number, os.path.basename(change['path']))
+                self.ex.mkdir(host, staged, 0o700)
+                self.ex.write(host, copy, change['new'].encode(), 0o600)
+                renamed[change['path']] = copy
+        argv = [renamed.get(argument, argument) for argument in argv]
+        journal.event('product check', host=host, unit=record['unit'], argv=argv)
+        code, output = self.ex.run(host, argv, PRODUCT_CHECK_SECONDS)
+        journal.event('product check finished', host=host, returncode=code, output=output[-2000:])
+        if code:
+            raise DeployError('%s: the product check refused the staged configuration or input (exit %d): %s'
+                              % (record['key'], code, output[-1000:]))
+        self.out('%s: product check passed' % record['key'])
 
     def run_exact_check(self, check, journal, sha):
         if 'products' in check:
