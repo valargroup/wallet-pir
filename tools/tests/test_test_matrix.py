@@ -64,8 +64,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('enhance-query-server/native-reinspiring', cuda)
         self.assertIn('enhance-query-server/cuda', cuda)
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
-        self.assertEqual(reference_features, ['enhance-query-server/client',
-                                              'enhance-query-server/qualification-tests',
+        self.assertEqual(reference_features, ['enhance-query-server/qualification-tests',
                                               'enhance-shared/client',
                                               'enhance-shared/qualification-tests'])
         self.assertIn('pir-e2e-tests/qualification-tests', contexts['reference']['features'])
