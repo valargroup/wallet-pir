@@ -152,7 +152,7 @@ runtime prebuild of a cycle. Blocking work is awaited before state is released:
 the unit already running when the stop arrives, one shard's files, one runtime
 build or self-check, or one Display recent-shard build or prebuild, finishes
 first. Activation that has begun still completes, including the Display
-inventory finalized after its workers activate.
+inventory it finalizes.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
