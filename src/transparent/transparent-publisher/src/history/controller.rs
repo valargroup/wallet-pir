@@ -697,6 +697,7 @@ struct HistoryCandidate {
     published_unix: f64,
     prepared_unix: f64,
     runtimes: serde_json::Value,
+    storage: serde_json::Value,
 }
 
 type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
@@ -861,6 +862,9 @@ async fn prepare_candidate(
                 .as_nanos()
         ))
     };
+    // What storing this candidate's segments and runtimes, verifying its
+    // tables and listing its inventory cost, for the cycle record.
+    let mut storage = serde_json::json!({});
     // Prefix equality, not publication height alone, determines reuse after forks.
     if !same {
         std::fs::create_dir(&directory)?;
@@ -892,7 +896,7 @@ async fn prepare_candidate(
             )?;
             let adopted = crate::history::store::adopt_segments(&output, &stop)?;
             tracing::info!(?adopted, "stored candidate table segments");
-            Ok::<_, BoxError>(())
+            Ok::<_, BoxError>(adopted)
         })
         .await?;
         match published {
@@ -900,7 +904,7 @@ async fn prepare_candidate(
             Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
                 return Err("candidate invalidated while preparing".into())
             }
-            result => drop(result?),
+            result => storage["segments"] = serde_json::to_value(result?)?,
         }
     }
     if authority.0.shutdown.requested() {
@@ -909,7 +913,8 @@ async fn prepare_candidate(
     let mut candidate = read_public(directory.clone(), Vec::new())?;
     authority.0.status.write().unwrap()["candidate_height"] = height.into();
     let published_unix = unix_now();
-    let runtimes = match prepare_runtimes(config, authority, &directory, epoch).await {
+    let runtimes = match prepare_runtimes(config, authority, &directory, epoch, &mut storage).await
+    {
         Err(_) if authority.0.shutdown.requested() => return stopped(),
         result => result?,
     };
@@ -947,6 +952,12 @@ async fn prepare_candidate(
             seconds = started.elapsed().as_secs_f64(),
             "prepared distribution inventory"
         );
+        storage["inventory"] = serde_json::json!({
+            "runtimes_loaded": checked.loaded,
+            "runtimes_reused": checked.reused,
+            "bytes_hashed": checked.bytes_hashed,
+            "bytes_reused": checked.bytes_reused,
+        });
         *authority.0.checked_runtimes.lock().unwrap() = checked;
         *authority.0.prepared_set.lock().unwrap() = Some(set);
         candidate.distribution = Some(match distribution {
@@ -979,8 +990,15 @@ async fn prepare_candidate(
         published_unix,
         prepared_unix,
         runtimes,
+        storage,
     }))
 }
+
+/// Publication roots whose next activation a test interrupts once its intent
+/// is written, as a process dying there would.
+#[cfg(test)]
+static INTERRUPT_AFTER_INTENT: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 async fn activate_history(
     config: &Config,
@@ -997,6 +1015,7 @@ async fn activate_history(
         published_unix,
         prepared_unix,
         runtimes,
+        storage,
     } = ready;
     // The candidate is only evidence. Recheck at the owner boundary before
     // writing activation intent.
@@ -1039,6 +1058,14 @@ async fn activate_history(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
     )?;
+    #[cfg(test)]
+    if INTERRUPT_AFTER_INTENT
+        .lock()
+        .unwrap()
+        .remove(&config.publication_root)
+    {
+        return Err("interrupted after writing activation intent".into());
+    }
     if authority.0.epoch.load(Ordering::Acquire) != epoch
         || rpc.block_hash_display(height).await? != hash
     {
@@ -1132,8 +1159,9 @@ async fn activate_history(
                 "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
         }
         // What this cycle did, for operators and measurements: when its
-        // candidate was published, prepared and activated, and what its
-        // runtimes cost here.
+        // candidate was published, prepared and activated, what its runtimes
+        // cost here, and what storing and verifying its objects hashed or
+        // took over from earlier evidence.
         let cycle = serde_json::json!({
             "height": height,
             "hash": hash,
@@ -1144,6 +1172,7 @@ async fn activate_history(
             "activated_unix": unix_now(),
             "cycle_seconds": started.elapsed().as_secs_f64(),
             "runtime_preparation": runtimes,
+            "storage": storage,
         });
         tracing::info!(%cycle, "publication cycle");
         status["last_cycle"] = cycle;
@@ -1500,12 +1529,14 @@ fn validation_event(
 /// completed file of its identity, and built otherwise; a runtime that
 /// cannot be built or written is reported and left to the workers. An
 /// invalidation stops the preparation between segments, and the candidate
-/// is then never offered.
+/// is then never offered. A candidate under the publication root stores its
+/// runtimes; what that and the table verification cost is added to `storage`.
 async fn prepare_runtimes(
     config: &Config,
     authority: &Authority,
     directory: &Path,
     epoch: u64,
+    storage: &mut serde_json::Value,
 ) -> Result<serde_json::Value, BoxError> {
     use transparent_shared::history::shardset::{LoadOptions, ShardSet};
     let mut retained = vec![authority
@@ -1553,12 +1584,15 @@ async fn prepare_runtimes(
                 )
                 .map_err(|e| e.to_string())
                 .and_then(|prepared| {
-                    if stored {
+                    let adopted = if stored {
                         let adopted = crate::history::store::adopt_runtimes(&directory, &stop)
                             .map_err(|e| format!("storing prepared runtimes: {e}"))?;
                         tracing::info!(?adopted, "stored candidate runtimes");
-                    }
-                    Ok(prepared)
+                        Some(adopted)
+                    } else {
+                        None
+                    };
+                    Ok((prepared, adopted, set.verification().clone()))
                 });
                 (Some(set), prepared)
             }
@@ -1575,7 +1609,9 @@ async fn prepare_runtimes(
     })
     .await?;
     *authority.0.prepared_set.lock().unwrap() = previous;
-    let prepared = prepared?;
+    let (prepared, adopted, verification) = prepared?;
+    storage["runtimes"] = serde_json::to_value(adopted)?;
+    storage["verification"] = serde_json::to_value(verification)?;
     authority
         .0
         .runtime_preparations
@@ -2694,7 +2730,7 @@ mod tests {
                 .filter_map(Result::ok)
                 .filter(|e| e.file_name().to_string_lossy().ends_with(".runtime"))
                 .map(|e| {
-                    let meta = e.metadata().unwrap();
+                    let meta = std::fs::metadata(e.path()).unwrap();
                     (
                         e.file_name().to_string_lossy().into_owned(),
                         (meta.dev(), meta.ino()),
@@ -2785,9 +2821,15 @@ mod tests {
             std::fs::remove_file(candidate.join(name)).unwrap();
         }
         let stale = authority.0.epoch.load(Ordering::Acquire) + 1;
-        let error = prepare_runtimes(&config, &authority, &candidate, stale)
-            .await
-            .unwrap_err();
+        let error = prepare_runtimes(
+            &config,
+            &authority,
+            &candidate,
+            stale,
+            &mut Default::default(),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("invalidated"), "{error}");
         assert!(runtime_files(&candidate).is_empty());
         assert!(authority.0.prepared_set.lock().unwrap().is_some());
@@ -2822,9 +2864,15 @@ mod tests {
             corrupted += 1;
         }
         assert!(corrupted > 0);
-        let error = prepare_runtimes(&config, &authority, &candidate, epoch)
-            .await
-            .unwrap_err();
+        let error = prepare_runtimes(
+            &config,
+            &authority,
+            &candidate,
+            epoch,
+            &mut Default::default(),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("did not verify"), "{error}");
 
         // A runtime that cannot be written is reported, not fatal.
@@ -2852,9 +2900,15 @@ mod tests {
             }
         }
         std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o555)).unwrap();
-        let report = prepare_runtimes(&config, &authority, &unwritable, epoch)
-            .await
-            .unwrap();
+        let report = prepare_runtimes(
+            &config,
+            &authority,
+            &unwritable,
+            epoch,
+            &mut Default::default(),
+        )
+        .await
+        .unwrap();
         std::fs::set_permissions(&unwritable, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
             !report["failures"].as_array().unwrap().is_empty(),
@@ -2878,6 +2932,8 @@ mod tests {
         client: NodeClient,
         config: Config,
         store: Arc<tokio::sync::Mutex<EventStore>>,
+        /// The node's chain; a test extends it to advance the tip.
+        chain: Chain,
     }
     async fn follow_fixture() -> Follow {
         let root = tempfile::tempdir().unwrap();
@@ -2960,6 +3016,7 @@ mod tests {
             client,
             config,
             store,
+            chain,
         }
     }
     /// The seal policy [`publish_follow`] publishes under.
@@ -3095,6 +3152,8 @@ mod tests {
         assert_eq!(restarted.0.active.read().unwrap().publication.height, 4);
         follow.server.abort();
     }
+
+    mod store;
 }
 
 #[cfg(all(test, feature = "fixtures"))]

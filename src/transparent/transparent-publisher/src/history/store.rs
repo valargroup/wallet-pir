@@ -23,8 +23,8 @@ use zakura_pir_publisher::transparent::manifest::ShardManifest;
 
 use crate::history::publication::{page_segment_file, BoxError};
 
-/// What one adoption did, for logs and tests.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// What one adoption did, for logs, the cycle record and tests.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Adopted {
     /// Files installed as new objects, and the bytes hashed to install them.
     pub installed: u64,
@@ -34,6 +34,13 @@ pub struct Adopted {
     /// Entries already linked.
     pub linked: u64,
 }
+
+/// Publication roots whose next object install a test interrupts, as a
+/// process dying just before it would: the adoption ends with an error and
+/// changes nothing more.
+#[cfg(test)]
+pub(crate) static INTERRUPT_INSTALL: std::sync::Mutex<BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(BTreeSet::new());
 
 fn is_digest(name: &str) -> bool {
     transparent_shared::publication::is_digest(name)
@@ -90,6 +97,22 @@ fn installed(
         }
         error => Box::new(error),
     })
+}
+
+/// Installs the complete file `path` through the shared installer.
+fn install(
+    installer: &ObjectInstaller,
+    path: &Path,
+    digest: Option<&str>,
+    stop: &dyn Fn() -> bool,
+) -> Result<InstalledObject, BoxError> {
+    #[cfg(test)]
+    if let Some(root) = installer.directory().parent() {
+        if INTERRUPT_INSTALL.lock().unwrap().remove(root) {
+            return Err("interrupted before installing an object".into());
+        }
+    }
+    installed(installer.install_prepared_file(path, digest, stop))
 }
 
 impl Adopted {
@@ -175,8 +198,7 @@ pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted,
             if can_reference(&installer, &sha256)? {
                 adopted.shared += 1;
             } else {
-                let object =
-                    installed(installer.install_prepared_file(&path, Some(&sha256), stop))?;
+                let object = install(&installer, &path, Some(&sha256), stop)?;
                 adopted.record(&object);
             }
             replace_with_link(&path, &target)?;
@@ -221,7 +243,7 @@ pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopt
         if !kind.is_file() {
             return Err(format!("{} is not a regular file", path.display()).into());
         }
-        let object = installed(installer.install_prepared_file(&path, None, stop))?;
+        let object = install(&installer, &path, None, stop)?;
         adopted.record(&object);
         replace_with_link(
             &path,
