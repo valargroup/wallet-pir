@@ -505,13 +505,12 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     );
 }
 
-/// A publication's commitments and payment positions come from one database view and
-/// follow appends, rewinds, reopening and replacement blocks; the caller's commitment
-/// limit admits exactly the history's length.
+/// Commitment ranges and payment positions follow appends, rewinds, reopening and
+/// replacement blocks, and a range past the stored tip or larger than one Ironwood shard
+/// is refused.
 #[test]
-fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
-    use receiver_directory::snapshot::TREE_SIZE;
-    use receiver_store::{Config, IndexedBlock, Store, WitnessInputs};
+fn commitment_ranges_follow_rewinds_reopen_and_replacement_blocks() {
+    use receiver_store::{Config, IndexedBlock, Store, SHARD_LEAVES};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
     let config = Config {
@@ -522,9 +521,7 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
     };
     let mut store = Store::open(&path, config.clone()).unwrap();
     let mut payment = record(0, 1).payment;
-    payment.height = 100;
-    payment.block_hash = [3; 32];
-    payment.position = 2;
+    (payment.height, payment.block_hash, payment.position) = (100, [3; 32], 2);
     let mut block = IndexedBlock {
         height: 100,
         hash: [3; 32],
@@ -536,71 +533,98 @@ fn store_witness_inputs_follow_rewinds_reopen_and_replacement_blocks() {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
     };
     store.append(&block).unwrap();
-    let first = store.snapshot(8, 0).unwrap();
-    let expected = WitnessInputs {
-        commitments: vec![[1; 32], [2; 32], payment.cmx],
-        positions: [2].into_iter().collect(),
-    };
-    let len = first.manifest.end_position;
-    assert_eq!(
-        store.witness_inputs(&first.manifest, len).unwrap(),
-        expected
-    );
+    assert_eq!(store.commitments(0, 3).unwrap(), block.commitments);
+    assert_eq!(store.commitments(1, 2).unwrap(), [[2; 32]]);
+    assert_eq!(store.payment_positions(0, 3).unwrap(), [2]);
+    assert!(store.commitments(0, 4).is_err());
     assert!(matches!(
-        store.witness_inputs(&first.manifest, len - 1),
+        store.commitments(0, SHARD_LEAVES + 1),
         Err(Error::Capacity)
     ));
-    block.height = 101;
-    block.hash = [4; 32];
-    block.parent = [3; 32];
-    block.start_position = 3;
-    block.end_position = 5;
+    (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
+    (block.start_position, block.end_position) = (3, 5);
     block.commitments = vec![[3; 32], [4; 32]];
     block.payments.clear();
     store.append(&block).unwrap();
-    let second = store.snapshot(8, 0).unwrap();
-    let mut longer = expected.clone();
-    longer.commitments.extend([[3; 32], [4; 32]]);
-    assert_eq!(
-        store.witness_inputs(&second.manifest, TREE_SIZE).unwrap(),
-        longer
-    );
-    // The earlier publication still reads only its own history.
-    assert_eq!(
-        store.witness_inputs(&first.manifest, TREE_SIZE).unwrap(),
-        expected
-    );
+    assert_eq!(store.commitments(2, 5).unwrap()[1..], [[3; 32], [4; 32]]);
     store.rewind(100, [3; 32]).unwrap();
-    assert!(store.witness_inputs(&second.manifest, TREE_SIZE).is_err());
-    assert_eq!(
-        store.witness_inputs(&first.manifest, TREE_SIZE).unwrap(),
-        expected
-    );
+    assert!(store.commitments(0, 4).is_err());
     drop(store);
     let mut store = Store::open(&path, config).unwrap();
     block.hash = [5; 32];
     block.commitments[0] = [9; 32];
     store.append(&block).unwrap();
-    let replacement = store.snapshot(8, 0).unwrap();
-    let mut replaced = expected.clone();
-    replaced.commitments.extend([[9; 32], [4; 32]]);
-    assert_eq!(
-        store
-            .witness_inputs(&replacement.manifest, TREE_SIZE)
-            .unwrap(),
-        replaced
-    );
-    assert!(store.witness_inputs(&second.manifest, TREE_SIZE).is_err());
-    let mut wrong = replacement.manifest;
-    wrong.end_position -= 1;
-    assert!(store.witness_inputs(&wrong, TREE_SIZE).is_err());
+    assert_eq!(store.commitments(3, 5).unwrap(), [[9; 32], [4; 32]]);
 }
 
-/// Indexed blocks before the first commitment give an empty history, and the inputs
-/// follow a commitment and a rewind back.
+/// Completed Ironwood shards are recorded in order with their final payloads, an
+/// identical record is accepted again and a different root refused, and rewinding the
+/// block that completed a shard removes it with its payloads.
 #[test]
-fn store_witness_inputs_cover_empty_indexed_blocks() {
-    use receiver_directory::snapshot::TREE_SIZE;
+fn completed_shards_follow_their_completing_block() {
+    use receiver_store::{Config, IndexedBlock, Store, SHARD_LEAVES};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let mut payment = record(0, 1).payment;
+    (payment.height, payment.block_hash, payment.position) = (100, [3; 32], 7);
+    let mut commitments = vec![[1; 32]; SHARD_LEAVES as usize - 1];
+    commitments[7] = payment.cmx;
+    store
+        .append(&IndexedBlock {
+            height: 100,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 0,
+            end_position: SHARD_LEAVES - 1,
+            coinbase_actions: 0,
+            payments: vec![(receiver(), payment)],
+            commitments,
+        })
+        .unwrap();
+    // The shard's last leaf is not stored yet.
+    assert!(store.complete_shard(0, [8; 32], &[]).is_err());
+    store
+        .append(&IndexedBlock {
+            height: 101,
+            hash: [4; 32],
+            parent: [3; 32],
+            start_position: SHARD_LEAVES - 1,
+            end_position: SHARD_LEAVES + 1,
+            coinbase_actions: 0,
+            payments: vec![],
+            commitments: vec![[1; 32]; 2],
+        })
+        .unwrap();
+    assert!(store.complete_shard(1, [8; 32], &[]).is_err());
+    store.complete_shard(0, [8; 32], &[(7, [6; 512])]).unwrap();
+    store.complete_shard(0, [8; 32], &[(7, [6; 512])]).unwrap();
+    assert!(store.complete_shard(0, [9; 32], &[]).is_err());
+    assert!(store
+        .complete_shard(0, [8; 32], &[(SHARD_LEAVES, [6; 512])])
+        .is_err());
+    assert_eq!(store.completed_shards().unwrap(), 1);
+    let shard = store.completed_shard(0).unwrap().unwrap();
+    assert_eq!(
+        (shard.root, shard.height, shard.hash),
+        ([8; 32], 101, [4; 32])
+    );
+    assert_eq!(store.payloads(&[7, 8]).unwrap(), [Some([6; 512]), None]);
+    store.rewind(100, [3; 32]).unwrap();
+    assert_eq!(store.completed_shards().unwrap(), 0);
+    assert_eq!(store.payloads(&[7]).unwrap(), [None]);
+}
+
+/// A correction replaces a stored block's payments under a higher revision, dropping
+/// the replaced payments' final payloads; a block that differs from the stored one, a
+/// revision that does not advance or an invalid payment changes nothing.
+#[test]
+fn corrections_replace_payments_on_an_unchanged_chain() {
     use receiver_store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -610,33 +634,38 @@ fn store_witness_inputs_cover_empty_indexed_blocks() {
         start_position: 0,
     };
     let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let mut payment = record(0, 1).payment;
+    (payment.height, payment.block_hash, payment.position) = (100, [3; 32], 1);
     let mut block = IndexedBlock {
         height: 100,
         hash: [3; 32],
         parent: [2; 32],
         start_position: 0,
-        end_position: 0,
-        coinbase_actions: 0,
-        payments: Vec::new(),
-        commitments: Vec::new(),
+        end_position: 3,
+        coinbase_actions: 1,
+        payments: vec![],
+        commitments: vec![[1; 32], payment.cmx, payment.cmx],
     };
     store.append(&block).unwrap();
-    (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
-    store.append(&block).unwrap();
-    let empty = store.snapshot(8, 0).unwrap().manifest;
-    assert_eq!((empty.records, empty.end_position), (0, 0));
-    let inputs = store.witness_inputs(&empty, TREE_SIZE).unwrap();
-    assert!(inputs.commitments.is_empty() && inputs.positions.is_empty());
-    (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
-    (block.end_position, block.commitments) = (1, vec![[1; 32]]);
-    store.append(&block).unwrap();
-    let one = store.snapshot(8, 0).unwrap().manifest;
-    assert_eq!(
-        store.witness_inputs(&one, TREE_SIZE).unwrap().commitments,
-        [[1; 32]]
-    );
-    store.rewind(101, [4; 32]).unwrap();
-    assert_eq!(store.witness_inputs(&empty, TREE_SIZE).unwrap(), inputs);
+    assert_eq!(store.snapshot(8, 0).unwrap().manifest.records, 0);
+    block.payments = vec![(receiver(), payment.clone())];
+    assert!(store.correct(0, std::slice::from_ref(&block)).is_err());
+    let mut changed = block.clone();
+    changed.commitments[0] = [9; 32];
+    assert!(store.correct(1, &[changed]).is_err());
+    let mut coinbase = block.clone();
+    coinbase.payments[0].1.position = 0;
+    assert!(store.correct(1, &[coinbase]).is_err());
+    assert_eq!(store.history_revision().unwrap(), 0);
+    store.correct(1, std::slice::from_ref(&block)).unwrap();
+    assert_eq!(store.history_revision().unwrap(), 1);
+    assert!(store.snapshot(8, 0).is_err());
+    assert_eq!(store.snapshot(8, 1).unwrap().manifest.records, 1);
+    let mut second = payment.clone();
+    (second.position, second.tx_index, second.txid) = (2, 2, [2; 32]);
+    block.payments.push((receiver(), second));
+    store.correct(2, &[block]).unwrap();
+    assert_eq!(store.payment_positions(0, 3).unwrap(), [1, 2]);
 }
 
 /// A history with more payments than the table has slots fails with
@@ -675,4 +704,134 @@ fn a_history_beyond_the_slots_is_a_capacity_failure() {
         .unwrap();
     assert!(matches!(store.snapshot(1, 0), Err(Error::Capacity)));
     assert_eq!(store.snapshot(4, 0).unwrap().manifest.records, u64::from(n));
+}
+
+/// Writes an earlier release's version 2 store at `legacy` holding one payment in block
+/// 100, and returns its configuration and that payment's record.
+fn legacy_store(
+    legacy: &std::path::Path,
+) -> (receiver_store::Config, receiver_directory::RawRecord) {
+    let config = receiver_store::Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut paid = record(0, 1);
+    (
+        paid.payment.height,
+        paid.payment.block_hash,
+        paid.payment.position,
+    ) = (100, [3; 32], 0);
+    let encoded = paid.encode().unwrap();
+    let old = rusqlite::Connection::open(legacy).unwrap();
+    old.execute_batch(
+        "CREATE TABLE filter_revision (revision INTEGER NOT NULL);
+        INSERT INTO filter_revision VALUES (0);
+        CREATE TABLE config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        CREATE TABLE blocks (height INTEGER PRIMARY KEY, hash BLOB NOT NULL, end_position INTEGER NOT NULL, coinbase_actions INTEGER NOT NULL);
+        CREATE TABLE payments (height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
+            receiver BLOB NOT NULL, position INTEGER NOT NULL UNIQUE, txid BLOB NOT NULL, action INTEGER NOT NULL, record BLOB NOT NULL,
+            UNIQUE(txid,action));
+        CREATE TABLE commitments (position INTEGER PRIMARY KEY, height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, cmx BLOB NOT NULL CHECK(length(cmx)=32));
+        PRAGMA user_version=2;",
+    )
+    .unwrap();
+    old.execute(
+        "INSERT INTO config VALUES (1,?1)",
+        [serde_json::to_string(&config).unwrap()],
+    )
+    .unwrap();
+    old.execute(
+        "INSERT INTO blocks VALUES (100,?1,1,0)",
+        [[3u8; 32].as_slice()],
+    )
+    .unwrap();
+    old.execute(
+        "INSERT INTO commitments VALUES (0,100,?1)",
+        [paid.payment.cmx.as_slice()],
+    )
+    .unwrap();
+    old.execute(
+        "INSERT INTO payments VALUES (100,?1,0,?2,0,?3)",
+        rusqlite::params![
+            paid.receiver.as_slice(),
+            paid.payment.txid.as_slice(),
+            &encoded[..285]
+        ],
+    )
+    .unwrap();
+    drop(old);
+    (config, paid)
+}
+
+/// A correction or any other entry point opening a data directory that holds only a
+/// version 2 store converts it first, rather than starting an empty version 3 store
+/// beside it, and one that may not create a store refuses an empty directory.
+#[test]
+fn opening_a_data_directory_converts_its_version_2_store_first() {
+    use receiver_store::open_in;
+    let dir = tempfile::tempdir().unwrap();
+    let (config, _) = legacy_store(&dir.path().join(receiver_store::LEGACY_STORE_FILE));
+    let (store, converted) = open_in(dir.path(), config.clone(), false).unwrap();
+    assert!(converted);
+    assert_eq!(store.tip().unwrap().height, 100);
+    drop(store);
+    let (_, converted) = open_in(dir.path(), config.clone(), false).unwrap();
+    assert!(!converted);
+    let empty = tempfile::tempdir().unwrap();
+    assert!(matches!(
+        open_in(empty.path(), config, false),
+        Err(Error::Coverage)
+    ));
+    assert!(!empty.path().join(receiver_store::STORE_FILE).exists());
+}
+
+/// An earlier release's version 2 store, with 285-byte records, is refused in place,
+/// copied once into a version 3 store whose records gain a zero ordinal, and left
+/// unchanged for a rollback; a leftover from an interrupted copy is redone, and a later
+/// start keeps the converted store.
+#[test]
+fn a_version_2_store_converts_once_and_stays_for_rollback() {
+    use receiver_store::{upgrade, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join(receiver_store::LEGACY_STORE_FILE);
+    let path = dir.path().join(receiver_store::STORE_FILE);
+    let (config, paid) = legacy_store(&legacy);
+    let legacy_bytes = |path: &std::path::Path| {
+        let db = rusqlite::Connection::open(path).unwrap();
+        let version: u32 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        let length: usize = db
+            .query_row("SELECT length(record) FROM payments", [], |r| r.get(0))
+            .unwrap();
+        (version, length)
+    };
+    assert!(matches!(
+        Store::open(&legacy, config.clone()),
+        Err(Error::Malformed)
+    ));
+    assert_eq!(legacy_bytes(&legacy), (2, 285));
+    // A copy interrupted before its rename is discarded and redone.
+    std::fs::write(path.with_extension("upgrading"), b"partial").unwrap();
+    assert!(upgrade(&legacy, &path).unwrap());
+    assert_eq!(legacy_bytes(&legacy), (2, 285));
+    assert_eq!(legacy_bytes(&path), (3, receiver_directory::RECORD_BYTES));
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    let snapshot = store.snapshot(8, 0).unwrap();
+    assert_eq!(
+        lookup_row(
+            &snapshot.manifest,
+            &paid.receiver,
+            0,
+            row(&snapshot, &paid.receiver, 0)
+        )
+        .unwrap()
+        .unwrap(),
+        paid
+    );
+    drop(store);
+    assert!(!upgrade(&legacy, &path).unwrap());
+    Store::open(&path, config).unwrap();
 }

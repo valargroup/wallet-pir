@@ -75,8 +75,8 @@ STUBS = {
     ''',
 }
 # The running release's `receiver-directory`, whose `probe` misses while the
-# running file has `# stub: probe fails`, or lacks the wallet route named in a
-# `route` file beside the binary.
+# running file has `# stub: probe fails`, or its `@wallet` matcher lacks one of the
+# routes named in a `route` file beside the binary, the routes that release reads.
 PROBE = '''\
     import json, os, sys
     with open(os.environ['STUB_PROBE_LOG'], 'a') as log:
@@ -85,10 +85,29 @@ PROBE = '''\
     if '# stub: probe fails' in running:
         sys.exit('lookup missed the pinned payment')
     route = os.path.join(os.path.dirname(sys.argv[0]), 'route')
-    if os.path.exists(route) and open(route).read() not in running:
-        sys.exit('the edge does not serve ' + open(route).read())
+    if os.path.exists(route):
+        served = [l.split()[2:] for l in running.splitlines() if l.split()[:2] == ['@wallet', 'path']]
+        missing = [r for r in open(route).read().split() if r not in sum(served, [])]
+        if missing:
+            sys.exit('the edge does not serve ' + ' '.join(missing))
     print('{"passed":true}')
 '''
+
+
+def wallet_routes(caddyfile):
+    """The paths the `@wallet` matcher of `caddyfile` sends to the receiver."""
+    (routes,) = [line.split()[2:] for line in caddyfile.splitlines() if line.split()[:2] == ['@wallet', 'path']]
+    return routes
+
+
+# The production edge before this release, which served aggregate filters and the
+# witness file instead of block filters and witnesses over PIR, and the routes the
+# release adds to it.
+PREVIOUS_ROUTES = ['/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
+                   '/v1/receiver/witness/*', '/v1/receiver/filters/*']
+PREVIOUS = LIVE.replace(' '.join(wallet_routes(LIVE)), ' '.join(PREVIOUS_ROUTES))
+ADDED = {'/v1/receiver/block-filters/*'}
+
 # Loaded as `sitecustomize` by the remote program, it logs each fsync, link, rename and
 # Caddy reload to STUB_FS_LOG in order, and fails directory fsyncs under STUB_DIR_SYNC_FAILS.
 FS_HOOK = '''\
@@ -116,8 +135,6 @@ FS_HOOK = '''\
         wrap(os, 'rename', lambda *args: 'rename')
         wrap(subprocess, 'run', lambda argv, *args: ' '.join(argv) if argv[0] == 'systemctl' else '')
 '''
-# The previous release's edge, which served aggregate filters instead of block filters.
-PREVIOUS = LIVE.replace('/v1/receiver/block-filters/*', '/v1/receiver/filters/*')
 
 
 def script(path, body):
@@ -288,7 +305,7 @@ class ReceiverCaddy(StubDroplet):
 
 
 class ReceiverCutover(StubDroplet):
-    """The previous release, serving aggregate filters, upgrades to block filters."""
+    """The previous release, on the `PREVIOUS` edge, upgrades to this one."""
 
     def setUp(self):
         super().setUp()
@@ -296,8 +313,8 @@ class ReceiverCutover(StubDroplet):
         self.previous.mkdir(parents=True)
         self.previous, self.release = self.previous.resolve(), self.release.resolve()
         script(self.previous / 'receiver-directory', PROBE)
-        (self.previous / 'route').write_text('/v1/receiver/filters/*')
-        (self.release / 'route').write_text('/v1/receiver/block-filters/*')
+        (self.previous / 'route').write_text(' '.join(PREVIOUS_ROUTES))
+        (self.release / 'route').write_text(' '.join(wallet_routes(LIVE)))
         self.live.write_text(PREVIOUS)
         self.running.write_text(PREVIOUS)
         self.run_release(self.previous)
@@ -358,7 +375,9 @@ class ReceiverCutover(StubDroplet):
     def test_neither_change_alone_upgrades(self):
         # The new routes break the running binary's probe, so they are restored.
         run = self.apply(LIVE)
-        self.assertIn('the edge does not serve /v1/receiver/filters/*', run.stderr)
+        removed = [route for route in PREVIOUS_ROUTES if route not in wallet_routes(LIVE)]
+        self.assertTrue({'/v1/receiver/witness/*', '/v1/receiver/filters/*'} <= set(removed), removed)
+        self.assertIn('the edge does not serve ' + ' '.join(removed), run.stderr)
         self.assertEqual(run.returncode, 1, run.stderr)
         self.assertEqual((self.live.read_text(), self.running.read_text()), (PREVIOUS, PREVIOUS))
         # The new binary's own check, as its deploy runs it, fails through the old routes.
@@ -367,6 +386,8 @@ class ReceiverCutover(StubDroplet):
         self.assertEqual(self.live.read_text(), PREVIOUS)
 
     def test_a_cutover_changes_the_binary_and_routes_together(self):
+        # The new release's probe reads every route this Caddyfile adds.
+        self.assertEqual(set(wallet_routes(LIVE)) - set(PREVIOUS_ROUTES), ADDED)
         status, output = self.cutover(LIVE, ['deploy', 'receiver', '--sha', 'x'], self.deploy())
         self.assertEqual((status, len(self.locks)), (0, 1), output)
         self.assertEqual((self.live.read_text(), self.running.read_text()), (LIVE, LIVE))

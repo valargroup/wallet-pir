@@ -2,15 +2,15 @@
 //! publications an operator stages, without indexing.
 //!
 //! The operator stages a complete publication directory, in the files a one-shot
-//! indexer run writes (`<revision>.json`, `.rows` and optionally
-//! `.witness`), and then atomically replaces a small record naming it:
+//! indexer run writes (`<revision>.json`, `.rows`, `.witness.json` and `.witness`),
+//! and then atomically replaces a small record naming it:
 //! `{"directory": "/abs/path", "revision": "<hex>"}`. The record is a private, local
 //! control input: there is no update route. This mode opens no index database,
 //! ingests no blocks and reads no partner key.
 //!
 //! Each record is loaded and verified in full before it can be served: the manifest
 //! must digest to the expected revision, cover history from Ironwood activation on
-//! mainnet, and commit to the row and witness files beside it, which the
+//! mainnet, and commit to the row and companion witness files beside it, which the
 //! Receiver server library re-validates record by record while preparing PIR. Its
 //! anchor must then be canonical on the freshest node. Throughout, an independent
 //! guard checks every served anchor and revokes on a confirmed reorg, as the
@@ -29,10 +29,13 @@
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
-use crate::canonical::{freshest, is_canonical};
+use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::revision::Refused;
-use receiver_directory::snapshot::{Manifest, Snapshot, ROW_BYTES};
 use receiver_directory::Hash;
+use receiver_directory::{
+    snapshot::{Manifest, Snapshot, ROW_BYTES},
+    witness,
+};
 use receiver_pir_server::{Publication, Publications};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -43,7 +46,6 @@ use std::{
     time::Duration,
 };
 use tracing::{info, warn};
-use zakura_receiver_crypto::witness::MAX_WITNESS_BYTES;
 use zakura_server_chain::Network;
 use zakura_server_chain::NodeClient as ZakuraClient;
 
@@ -96,9 +98,6 @@ pub struct Config {
     /// How often served anchors are checked against the node, in seconds.
     #[serde(default = "default_poll_seconds")]
     pub poll_seconds: u64,
-    /// Refuse a publication without a witness file.
-    #[serde(default)]
-    pub witnesses: bool,
     /// The fewest rows a served publication may have.
     #[serde(default = "default_min_rows")]
     pub min_rows: u32,
@@ -257,6 +256,18 @@ impl VerifiedPublication {
         self.anchor
     }
 
+    /// Every block it depends on, with the Ironwood tree size it claims after it, which
+    /// must all match the node before it activates: its terminal block and its
+    /// companion's construction block.
+    pub fn anchors(&self) -> Vec<TreeAnchor> {
+        let end = TreeAnchor::payments(self.publication.manifest());
+        let context = TreeAnchor::witnesses(self.publication.witness_manifest());
+        match context == end {
+            true => vec![end],
+            false => vec![end, context],
+        }
+    }
+
     pub fn manifest(&self) -> &Manifest {
         self.publication.manifest()
     }
@@ -333,19 +344,21 @@ pub fn load(
     let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
     let data =
         read_exact_len(&file("rows"), rows_bytes).map_err(|e| invalid(format!("rows: {e}")))?;
-    let witness_path = file("witness");
-    let witnesses = match std::fs::symlink_metadata(&witness_path) {
-        Ok(_) => Some(
-            read_bounded(&witness_path, MAX_WITNESS_BYTES as u64)
-                .map_err(|e| invalid(format!("witness: {e}")))?,
-        ),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if config.witnesses {
-                return Err(invalid("the publication has no witness file".into()));
-            }
-            None
-        }
-        Err(e) => return Err(invalid(format!("witness: {e}"))),
+    let raw = read_bounded(
+        &file("witness.json"),
+        receiver_pir::MAX_MANIFEST_BYTES as u64,
+    )
+    .map_err(|e| invalid(format!("witness manifest: {e}")))?;
+    let table: witness::Manifest =
+        serde_json::from_slice(&raw).map_err(|e| invalid(format!("witness manifest: {e}")))?;
+    table
+        .validate()
+        .map_err(|e| invalid(format!("witness manifest: {e}")))?;
+    let witness_bytes = u64::from(table.rows) * ROW_BYTES as u64;
+    let witnesses = witness::Table {
+        manifest: table,
+        data: read_exact_len(&file("witness"), witness_bytes)
+            .map_err(|e| invalid(format!("witness: {e}")))?,
     };
     let anchor = (manifest.end_height, manifest.end_hash);
     let publication = crate::verify::prepare(Snapshot { manifest, data }, witnesses)
@@ -584,30 +597,48 @@ impl Updater {
             return;
         };
         let record = pending.record.clone();
-        let (height, hash) = pending.verified.anchor();
+        let (height, _) = pending.verified.anchor();
+        let anchors = pending.verified.anchors();
         let epoch = self.publications.epoch();
         let confirmed = async {
             let (tip, rpc) = freshest(&self.nodes, self.genesis).await?;
-            if u64::from(height) > tip {
-                return Ok(None);
+            let mut off_chain = None;
+            for anchor in &anchors {
+                if u64::from(anchor.height) > tip {
+                    return Ok(Err(anchor.height));
+                }
+                if off_chain.is_none() {
+                    off_chain = tree_mismatch(&rpc, *anchor)
+                        .await?
+                        .map(|mismatch| (anchor, mismatch));
+                }
             }
-            let canonical = is_canonical(&rpc, height, hash).await?;
             // Ranking read the genesis earlier, and an endpoint can be repointed.
             rpc.check_network(self.genesis).await?;
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Some(canonical))
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Ok(off_chain))
         }
         .await;
         match confirmed {
-            Ok(Some(true)) => {}
-            Ok(Some(false)) => {
+            Ok(Ok(None)) => {}
+            Ok(Ok(Some((anchor, TreeMismatch::OffChain)))) => {
+                let height = anchor.height;
                 return self.refuse(
                     record,
                     Refusal::Noncanonical(format!(
                         "the anchor at height {height} is not on the node's canonical chain"
                     )),
-                )
+                );
             }
-            Ok(None) => {
+            Ok(Ok(Some((anchor, TreeMismatch::Size(size))))) => {
+                return self.refuse(
+                    record,
+                    Refusal::InvalidSource(format!(
+                        "the publication claims Ironwood tree size {} after block {}, the node has {size}",
+                        anchor.size, anchor.height
+                    )),
+                );
+            }
+            Ok(Err(height)) => {
                 self.pending = Some(pending);
                 return self.report_waiting(Refusal::Unavailable(format!(
                     "the node is behind the anchor at height {height}"
@@ -830,8 +861,9 @@ mod tests {
         manifest.start_height = crate::blocks::ironwood_activation();
         manifest.end_height = manifest.start_height;
         let old = receiver_directory::snapshot::Snapshot::build(manifest.clone(), &[]).unwrap();
+        let table = crate::witness::table(&old, &[]).unwrap();
         let publications = Publications::default();
-        assert!(publications.publish(crate::verify::prepare(old, None).unwrap(), 0));
+        assert!(publications.publish(crate::verify::prepare(old, table).unwrap(), 0));
         manifest.history_revision = 1;
         let revision = hex::encode(manifest.revision().unwrap());
         std::fs::write(

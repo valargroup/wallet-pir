@@ -16,7 +16,7 @@ EnvironmentFile=-/etc/receiver-pir/near-@NEAR_KEY@.env
 # wallet-pir-deploy.py renders this whole unit with the binary's release
 # directory, /opt/receiver-pir/releases/<sha256>, so an argument change ships as
 # a deploy (see README.md).
-ExecStart=@RELEASE@/receiver-directory --serve --bind 10.70.0.11:18380 --data-dir /srv/receiver-pir/index --rpc-url http://10.70.0.19:8232 --rpc-url http://10.70.0.6:8232 --no-auth --witnesses --min-rows 8192 --concurrency 12 --poll-seconds 10 --near-since 1790640000
+ExecStart=@RELEASE@/receiver-directory --serve --bind 10.70.0.11:18380 --data-dir /srv/receiver-pir/index --rpc-url http://10.70.0.19:8232 --rpc-url http://10.70.0.6:8232 --no-auth --min-rows 8192 --concurrency 12 --poll-seconds 10 --near-since 1790640000
 Environment=RUST_LOG=info
 Restart=on-failure
 RestartSec=15

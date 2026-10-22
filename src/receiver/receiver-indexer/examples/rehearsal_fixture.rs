@@ -3,19 +3,20 @@
 //! `stage DIR NAME OFFSET HASH_BYTE` writes a complete publication directory, in the
 //! indexer's file layout, ending `OFFSET` blocks after Ironwood activation at a block
 //! hash of `HASH_BYTE` repeated, with two payments to the shared fixture receiver,
-//! and prints its record and anchor. `lookup ORIGIN OFFSET HASH_BYTE` retrieves the
+//! and prints its record and the blocks it depends on, each with the Ironwood tree size
+//! a node must report after it. `lookup ORIGIN OFFSET HASH_BYTE` retrieves the
 //! fixture receiver's payments over encrypted PIR and exits zero only if they are
 //! exactly the two this fixture staged: the oracle is the construction, not the server.
 #[path = "../../receiver-store/tests/common/mod.rs"]
 mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
+use receiver_directory::witness;
 use receiver_directory::{snapshot::Snapshot, Hash, Payment};
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error, MIN_ROWS,
 };
-use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -36,7 +37,7 @@ fn payments(offset: u32, hash: Hash) -> Vec<Payment> {
         .collect()
 }
 
-fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
+fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
     let mut manifest = common::manifest(MIN_ROWS);
     manifest.genesis = zakura_server_chain::Network::Mainnet.genesis_hash();
     manifest.start_height = activation();
@@ -55,14 +56,9 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
         .collect();
     let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(
-        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
-        &tree,
-        &[0, 5].into_iter().collect(),
-    )
-    .unwrap()
-    .encode();
-    (snapshot, proof)
+    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
+    (snapshot, table)
 }
 
 struct Http(reqwest::Client);
@@ -111,14 +107,31 @@ async fn main() {
             )
             .unwrap();
             std::fs::write(file("rows"), &snapshot.data).unwrap();
-            std::fs::write(file("witness"), witness).unwrap();
+            std::fs::write(file("witness"), &witness.data).unwrap();
+            std::fs::write(
+                file("witness.json"),
+                serde_json::to_vec_pretty(&witness.manifest).unwrap(),
+            )
+            .unwrap();
+            use receiver_indexer::canonical::TreeAnchor;
+            let anchors: Vec<_> = [
+                TreeAnchor::payments(&snapshot.manifest),
+                TreeAnchor::witnesses(&witness.manifest),
+            ]
+            .iter()
+            .map(|anchor| {
+                serde_json::json!({"height": anchor.height,
+                    "hash": zakura_server_chain::hash::display(&anchor.hash),
+                    "size": anchor.size})
+            })
+            .collect();
             let session = receiver_pir::server::Server::new(snapshot).unwrap().id();
             println!(
                 "{}",
                 serde_json::json!({"directory": dir, "revision": revision,
                     "end_height": activation() + offset,
                     "end_hash": zakura_server_chain::hash::display(&hash),
-                    "session": hex::encode(session)})
+                    "anchors": anchors, "session": hex::encode(session)})
             );
         }
         Some("lookup") => {

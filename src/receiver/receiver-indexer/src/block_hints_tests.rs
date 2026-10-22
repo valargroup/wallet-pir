@@ -70,9 +70,8 @@ fn rolling_hints_preserve_full_history_across_restart_and_reorg() {
     assert_eq!(before.manifest.records, 2);
     assert_eq!(
         store
-            .witness_inputs(&before.manifest, 1 << 24)
+            .payment_positions(before.manifest.start_position, before.manifest.end_position)
             .unwrap()
-            .positions
             .len(),
         2
     );

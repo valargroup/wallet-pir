@@ -1,4 +1,6 @@
-//! Bounded real PIR, witness and rolling-filter checks against an independent node.
+//! Bounded real PIR, companion witness and rolling-filter checks against an independent
+//! node.
+use crate::canonical::{tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::read_limited;
 use clap::Parser;
 use receiver_directory::{
@@ -6,13 +8,13 @@ use receiver_directory::{
     Hash, Payment, ReceiverBytes,
 };
 use receiver_pir::{
-    public_bytes, response_bytes, transport::MAX_WITNESS_BYTES, AcceptedCoverage, Client, Manifest,
+    public_bytes, response_bytes, AcceptedCoverage, Client, Publication, WitnessClient,
     MAX_MANIFEST_BYTES,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use zakura_receiver_crypto::{recovery::Action, witness::WitnessSnapshot, Receiver};
+use zakura_receiver_crypto::{recovery::Action, Receiver};
 use zakura_server_chain::{hash, Network, NodeClient, NodeError};
 
 /// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
@@ -49,12 +51,6 @@ pub struct Args {
     /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
     #[arg(long, default_value_t = 12)]
     max_lag: u64,
-    /// The service serves witness files, as the indexer does with `--witnesses`: each
-    /// run then checks the session's file against the nodes' Ironwood root. The probe
-    /// cannot infer this from the service, which would answer a lost file as one never
-    /// configured, so the deployment states it.
-    #[arg(long)]
-    witnesses: bool,
     /// Check a staged PIR-only service that intentionally publishes no rolling hints.
     /// Indexing deployments must retain the default filter checks.
     #[arg(long)]
@@ -167,15 +163,16 @@ async fn probe(
 
     let origin = args.origin.trim_end_matches('/');
     let init = http.get(format!("{origin}/v1/receiver/init"));
-    let manifest = fetch(init, MAX_MANIFEST_BYTES, "manifest", |bytes| {
-        let manifest: Manifest = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-        manifest.validate().map_err(|e| e.to_string())?;
-        Ok::<_, String>(manifest)
+    let publication = fetch(init, MAX_MANIFEST_BYTES, "manifest", |bytes| {
+        let publication: Publication = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        publication.validate().map_err(|e| e.to_string())?;
+        Ok::<_, String>(publication)
     });
-    let manifest = match manifest.await? {
-        Ok(manifest) => manifest,
+    let publication = match publication.await? {
+        Ok(publication) => publication,
         Err(failure) => return Ok(Some(failure)),
     };
+    let manifest = &publication.payments;
     let directory = &manifest.directory;
     // Another network's publication is wrong whatever the nodes or the fixture say.
     let genesis = Network::Mainnet.genesis_hash();
@@ -201,7 +198,16 @@ async fn probe(
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let pinned = (fixture.height, block_hash);
     // A session displaced during a slow ranking fails this run; the next starts from /init.
-    let (rpc, root, tip) = match oracle(&nodes, directory, pinned, args.witnesses).await {
+    let shard = u16::try_from(fixture.position >> 16)?;
+    let (rpc, root, tip) = match oracle(
+        &nodes,
+        directory,
+        &publication.witnesses.table,
+        pinned,
+        shard,
+    )
+    .await
+    {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
@@ -257,7 +263,7 @@ async fn probe(
             }
         };
         if record.payment.position >= fixture.position || queries == record.total {
-            break Some(record.payment);
+            break Some(record);
         }
         if queries == MAX_PROBE_PAGES {
             return Err("pinned receiver's history exceeds the probe's page bound".into());
@@ -275,19 +281,21 @@ async fn probe(
             && p.ephemeral_key == action.ephemeral_key
             && p.ciphertext_prefix[..] == action.enc_ciphertext[..52]
     };
-    let correct = found.as_ref().is_some_and(expected);
+    let correct = found.as_ref().is_some_and(|r| expected(&r.payment));
     *lookup = Some((queries, correct));
-    if !correct {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"lookup": found.map(|p| (p.height, p.position)), "queries": queries}),
-        )));
-    }
-    if let (Some(root), Some(payment)) = (root, &found) {
-        let check = check_witnesses(&http, origin, &id, directory, payment, root);
-        if let Some(failure) = check.await? {
-            return Ok(Some(failure));
+    let record = match found {
+        Some(record) if correct => record,
+        found => {
+            let found = found.map(|r| (r.payment.height, r.payment.position));
+            return Ok(Some((
+                "answer_mismatch",
+                json!({"lookup": found, "queries": queries}),
+            )));
         }
+    };
+    let check = check_witness(&http, origin, &publication, &record, root);
+    if let Some(failure) = check.await? {
+        return Ok(Some(failure));
     }
     if let Some(failure) = check_filters(
         &http,
@@ -295,46 +303,75 @@ async fn probe(
         &rpc,
         directory,
         &receiver,
-        found.as_ref(),
+        Some(&record.payment),
         args.without_block_filters,
     )
     .await?
     {
         return Ok(Some(failure));
     }
-    // The node's checks hold for the whole lookup only if the terminal block is still
-    // its own.
-    if rpc.block_hash(u64::from(directory.end_height)).await? != directory.end_hash {
-        return Err("chain changed during the probe".into());
-    }
+    still_anchored(&rpc, directory, &publication.witnesses.table).await?;
     indexer_report(&http, &args.health_url, &id).await
 }
 
-/// Checks the publication's anchor against `rpc`: its hash and the tree size after it
-/// (read by that hash, see [`NodeClient::receiver_boundary`]), which is the coverage
-/// the manifest claims. A read that fails, a chain that changes during it, or a node
-/// not on mainnet ([`NodeError::OtherNetwork`]) is an error, which proves nothing
-/// against the publication.
+/// Checks the publication's anchors against `rpc`: the payment table's end and the
+/// companion witness table `table`'s construction block, each by hash and the tree size
+/// after it (see [`tree_mismatch`]), which is the coverage each manifest claims. A read
+/// that fails, a chain that changes during it, or a node not on mainnet
+/// ([`NodeError::OtherNetwork`]) is an error, which proves nothing against the
+/// publication.
 async fn check_anchor(
     rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
 ) -> std::result::Result<Option<Failure>, NodeError> {
     rpc.check_network(Network::Mainnet.genesis_hash()).await?;
-    let height = directory.end_height;
-    let boundary = crate::blocks::boundary(rpc, height).await?;
-    if boundary.hash != directory.end_hash {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"anchor_off_chain": height}),
-        )));
-    }
-    if boundary.position != directory.end_position {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"end_position": directory.end_position, "node_tree_size": boundary.position}),
-        )));
+    let anchors = [
+        (
+            TreeAnchor::payments(directory),
+            "anchor_off_chain",
+            "end_position",
+        ),
+        (
+            TreeAnchor::witnesses(table),
+            "witness_anchor_off_chain",
+            "witness_tree_size",
+        ),
+    ];
+    for (anchor, off_chain, claimed) in anchors {
+        match tree_mismatch(rpc, anchor).await? {
+            None => {}
+            Some(TreeMismatch::OffChain) => {
+                return Ok(Some(("answer_mismatch", json!({off_chain: anchor.height}))))
+            }
+            Some(TreeMismatch::Size(node)) => {
+                return Ok(Some((
+                    "answer_mismatch",
+                    json!({claimed: anchor.size, "node_tree_size": node}),
+                )))
+            }
+        }
     }
     Ok(None)
+}
+
+/// Errs unless `rpc` still has both blocks [`check_anchor`] checked: the payment table's
+/// end and the companion witness table `table`'s construction block. The node's checks
+/// hold for the whole lookup only if neither changed during it.
+async fn still_anchored(
+    rpc: &NodeClient,
+    directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
+) -> Result<()> {
+    for anchor in [
+        TreeAnchor::payments(directory),
+        TreeAnchor::witnesses(table),
+    ] {
+        if rpc.block_hash(u64::from(anchor.height)).await? != anchor.hash {
+            return Err("chain changed during the probe".into());
+        }
+    }
+    Ok(())
 }
 
 /// Whether the publication trails `tip`, the highest any node reported, by more than
@@ -355,8 +392,8 @@ fn check_lag(
 
 /// The outcome of [`verify`] on one node.
 enum Verdict {
-    /// Every check passed, with the Ironwood root after the publication's terminal
-    /// block when witness files are checked.
+    /// Every check passed, with the root of the fixture's Ironwood shard once the node
+    /// has completed it.
     Verified(Option<Hash>),
     /// Valid evidence against the publication or the fixture. It is final.
     Failed(Failure),
@@ -367,30 +404,24 @@ enum Verdict {
 
 /// Checks the publication against one node: the anchor ([`check_anchor`]), then the
 /// fixture's `pinned` height and block hash, which must be the node's (a fixture off
-/// the chain is invalid), and, with `witnesses`, the Ironwood root after the terminal
-/// block, read by its hash. Reads by hash or of deep history need no recheck; the
-/// probe rechecks the terminal block once its lookup ends.
+/// the chain is invalid), and reads the root of the fixture's Ironwood `shard`, `None`
+/// while the node has not completed it. Reads by hash or of deep history need no
+/// recheck; the probe rechecks both anchors once its lookup ends ([`still_anchored`]).
 async fn verify(
     rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
     pinned: (u32, Hash),
-    witnesses: bool,
+    shard: u16,
 ) -> Verdict {
     let checks = async {
-        if let Some(failure) = check_anchor(rpc, directory).await? {
+        if let Some(failure) = check_anchor(rpc, directory, table).await? {
             return Ok(Err(failure));
         }
         if rpc.block_hash(u64::from(pinned.0)).await? != pinned.1 {
             return Ok(Err(("oracle_invalid", json!({"fixture": "block hash"}))));
         }
-        let root = if witnesses {
-            Some(
-                rpc.ironwood_root(directory.end_hash, directory.end_height)
-                    .await?,
-            )
-        } else {
-            None
-        };
+        let root = rpc.ironwood_subtree(shard).await?.map(|(root, _)| root);
         Ok(Ok(root))
     };
     match checks.await {
@@ -400,43 +431,64 @@ async fn verify(
     }
 }
 
-/// Checks the session's common witness file, which wallets prove their payments with:
-/// it must bind to the publication, prove `payment`, the fixture's as served, at its
-/// position, and have `root`, the node's Ironwood root after the terminal block, so a
-/// self-consistent file over another tree fails too. A file the service cannot send
-/// is an error.
-async fn check_witnesses(
+/// Reads `record`'s companion witness payload over live encrypted PIR, as wallets do,
+/// by the ordinal the record carries. It must supply exactly the siblings its position
+/// has at the witness table's tree size, each a canonical node, and once final it must
+/// fold from the record's commitment to `root`, the node's root for that Ironwood shard,
+/// so a self-consistent path over another tree fails too. A final payload for a shard
+/// the node has not completed is wrong. A provisional payload has no independent oracle
+/// here, so the check is unavailable rather than passed. A session the service cannot
+/// answer is an error.
+async fn check_witness(
     http: &reqwest::Client,
     origin: &str,
-    id: &str,
-    directory: &receiver_directory::snapshot::Manifest,
-    payment: &Payment,
-    root: Hash,
+    publication: &Publication,
+    record: &receiver_directory::RawRecord,
+    root: Option<Hash>,
 ) -> Result<Option<Failure>> {
-    let request = http.get(format!("{origin}/v1/receiver/witness/{id}"));
-    let proof = fetch(request, MAX_WITNESS_BYTES, "witnesses", |bytes| {
-        let publication = crate::verify::publication(directory).map_err(|e| e.to_string())?;
-        WitnessSnapshot::decode(bytes, &publication).map_err(|e| e.to_string())
+    let witnesses = &publication.witnesses;
+    let rows = witnesses.table.rows;
+    let id = hex::encode(witnesses.id()?);
+    let public = http.get(format!("{origin}/v1/receiver/public/{id}"));
+    let client = fetch(public, public_bytes(rows)?, "witness_public", |bytes| {
+        WitnessClient::new(witnesses.clone(), bytes)
     });
-    let proof = match proof.await? {
-        Ok(proof) => proof,
+    let client = match client.await? {
+        Ok(client) => client,
         Err(failure) => return Ok(Some(failure)),
     };
-    let proved = u32::try_from(payment.position)
-        .is_ok_and(|position| proof.path(position, payment.cmx).is_ok());
-    if !proved {
-        return Ok(Some((
+    let query = client.prepare(record.ordinal)?;
+    let request = http
+        .post(format!("{origin}/v1/receiver/query"))
+        .body(query.body().to_vec());
+    let payload = fetch(request, response_bytes(rows)?, "witness", |bytes| {
+        client.decode(query, bytes)
+    });
+    let payload = match payload.await? {
+        Ok(payload) => payload,
+        Err(failure) => return Ok(Some(failure)),
+    };
+    let position = record.payment.position;
+    let folded = crate::witness::shard_root(
+        &payload,
+        position,
+        &record.payment.cmx,
+        witnesses.table.tree_size,
+    );
+    match (folded, root) {
+        // No independent oracle covers a filling shard's siblings, so this run cannot
+        // vouch for the payload: unavailable, never passed.
+        (Ok(None), _) => Ok(Some((
+            "oracle_unavailable",
+            json!({"witness": "provisional", "witness_path": position}),
+        ))),
+        (Ok(Some(folded)), Some(root)) if folded == root => Ok(None),
+        (Ok(Some(folded)), root) => Ok(Some((
             "answer_mismatch",
-            json!({"witness_path": payment.position}),
-        )));
+            json!({"witness_root": hex::encode(folded), "node_root": root.map(hex::encode)}),
+        ))),
+        (Err(_), _) => Ok(Some(("answer_mismatch", json!({"witness_path": position})))),
     }
-    if proof.root() != root {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"witness_root": hex::encode(proof.root()), "node_root": hex::encode(root)}),
-        )));
-    }
-    Ok(None)
 }
 
 /// Checks current rolling hints independently of PIR readiness. A pruned fixture is
@@ -542,10 +594,12 @@ async fn indexer_report(
 async fn oracle(
     nodes: &[NodeClient],
     directory: &receiver_directory::snapshot::Manifest,
+    table: &receiver_directory::witness::Manifest,
     pinned: (u32, Hash),
-    witnesses: bool,
+    shard: u16,
 ) -> std::result::Result<(NodeClient, Option<Hash>, u64), Failure> {
-    let height = u64::from(directory.end_height);
+    // A node must have both anchors; see [`check_anchor`].
+    let height = u64::from(directory.end_height.max(table.tree_height));
     let unavailable = |detail: Value| ("oracle_unavailable", detail);
     let ranked = NodeClient::ranked(nodes, Network::Mainnet.genesis_hash())
         .await
@@ -553,7 +607,7 @@ async fn oracle(
     let top = ranked[0].0;
     let mut attempts = Vec::new();
     for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
-        match verify(rpc, directory, pinned, witnesses).await {
+        match verify(rpc, directory, table, pinned, shard).await {
             Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
             Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
@@ -645,6 +699,15 @@ mod tests {
         directory
     }
 
+    /// The companion witness manifest of `directory`, built at its end.
+    fn companion(
+        directory: &receiver_directory::snapshot::Manifest,
+    ) -> receiver_directory::witness::Manifest {
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(directory.clone(), &[]).unwrap();
+        crate::witness::table(&snapshot, &[]).unwrap().manifest
+    }
+
     /// The anchor must have the node's hash and the tree size after that block. A node
     /// that cannot give the size, or whose chain changes during the read, proves
     /// nothing against the publication.
@@ -652,16 +715,20 @@ mod tests {
     async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
         let directory = anchored();
         let tip = u64::from(directory.end_height);
-        let check = |rpc: NodeClient| {
+        let check = |rpc: NodeClient, table: receiver_directory::witness::Manifest| {
             let directory = directory.clone();
             async move {
-                match check_anchor(&rpc, &directory).await {
+                match check_anchor(&rpc, &directory, &table).await {
                     Ok(failure) => failure.map(|failure| failure.0),
                     Err(_) => Some("unverified"),
                 }
             }
         };
-        assert_eq!(check(chain(tip, 3, Some(300), false).await).await, None);
+        let table = companion(&directory);
+        assert_eq!(
+            check(chain(tip, 3, Some(300), false).await, table.clone()).await,
+            None
+        );
         for (hash, size, reorg, expected) in [
             (3, Some(301), false, "answer_mismatch"),
             (4, Some(300), false, "answer_mismatch"),
@@ -669,8 +736,32 @@ mod tests {
             (3, Some(300), true, "unverified"),
         ] {
             let rpc = chain(tip, hash, size, reorg).await;
-            assert_eq!(check(rpc).await, Some(expected), "{hash} {size:?} {reorg}");
+            assert_eq!(
+                check(rpc, table.clone()).await,
+                Some(expected),
+                "{hash} {size:?} {reorg}"
+            );
         }
+        // The companion's construction block is checked the same way, even with the
+        // payment table's end on the chain.
+        let rpc = chain(tip, 3, Some(300), false).await;
+        let mut wrong = table.clone();
+        wrong.tree_size = 299;
+        let failure = check_anchor(&rpc, &directory, &wrong)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            failure.1,
+            json!({"witness_tree_size": 299, "node_tree_size": 300})
+        );
+        wrong = table.clone();
+        wrong.tree_hash = [4; 32];
+        let failure = check_anchor(&rpc, &directory, &wrong)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failure.1, json!({"witness_anchor_off_chain": tip}));
     }
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
@@ -679,8 +770,8 @@ mod tests {
     /// `[fixture; 32]`. With `fails` set to `"getblockhash"` it refuses every
     /// `getblockhash` but genesis. With `moved`, the anchor's height holds `[9; 32]`
     /// after the boundary's first read, as when the chain changes during the checks. Its
-    /// `z_gettreestate` gives `root`, or no root for `None`, and names another block
-    /// when `fails` is `"treestate block"`.
+    /// `z_getsubtreesbyindex` gives `root` as the requested completed subtree, or none
+    /// for `None`, and answers for another index when `fails` is `"subtree index"`.
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
@@ -745,16 +836,16 @@ mod tests {
                             Some(size) => json!({"trees": {"ironwood": {"size": size}}}),
                             None => json!({"trees": {}}),
                         },
-                        ("z_gettreestate", _) => {
-                            let hash = match node.fails {
-                                "treestate block" => json!(display(9)),
-                                _ => params[0].clone(),
+                        ("z_getsubtreesbyindex", _) => {
+                            let index = params[1].as_u64().unwrap()
+                                + u64::from(node.fails == "subtree index");
+                            let subtrees = match node.root {
+                                Some(root) => {
+                                    json!([{"root": hex::encode(root), "end_height": end}])
+                                }
+                                None => json!([]),
                             };
-                            let commitments = match node.root {
-                                Some(root) => json!({"finalRoot": hex::encode(root)}),
-                                None => json!({}),
-                            };
-                            json!({"hash": hash, "height": end, "ironwood": {"commitments": commitments}})
+                            json!({"pool": "ironwood", "start_index": index, "subtrees": subtrees})
                         }
                         _ => panic!("unexpected {request}"),
                     };
@@ -769,19 +860,17 @@ mod tests {
     }
 
     /// What [`oracle`] decides over `nodes`, listed in this order, for a fixture pinned
-    /// to `[5; 32]` below the anchor, reading roots with `witnesses`: the highest tip
-    /// and the root once a node verifies, or the failure.
-    async fn decide(
-        nodes: &[Node],
-        witnesses: bool,
-    ) -> std::result::Result<(u64, Option<Hash>), Failure> {
+    /// to `[5; 32]` below the anchor in Ironwood shard zero: the highest tip and the
+    /// shard's root once a node verifies, or the failure.
+    async fn decide(nodes: &[Node]) -> std::result::Result<(u64, Option<Hash>), Failure> {
         let mut clients = Vec::new();
         for node in nodes {
             clients.push(NodeClient::new(serve_node(*node).await, None).unwrap());
         }
         let directory = anchored();
         let pinned = (directory.end_height - 1, [5; 32]);
-        let (_, root, top) = oracle(&clients, &directory, pinned, witnesses).await?;
+        let table = companion(&directory);
+        let (_, root, top) = oracle(&clients, &directory, &table, pinned, 0).await?;
         Ok((top, root))
     }
 
@@ -813,18 +902,18 @@ mod tests {
                 ..good(end + 20)
             },
         ];
-        let (top, _) = decide(&nodes, false).await.unwrap();
+        let (top, _) = decide(&nodes).await.unwrap();
         assert_eq!(top, end + 50);
         assert_eq!(
             check_lag(top, &anchored(), 12).unwrap().0,
             "stale_publication"
         );
         // With every node that reached the publication failing, each attempt is listed.
-        let (category, detail) = decide(&nodes[2..], false).await.unwrap_err();
+        let (category, detail) = decide(&nodes[2..]).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert_eq!(detail["attempts"].as_array().unwrap().len(), 3);
         assert_eq!(detail["node_tip"], end + 50);
-        let (category, detail) = decide(&[behind], false).await.unwrap_err();
+        let (category, detail) = decide(&[behind]).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert!(detail["attempts"].as_array().unwrap().is_empty());
     }
@@ -839,8 +928,8 @@ mod tests {
             anchor: 4,
             ..good(end + 100)
         };
-        assert_eq!(decide(&[other, good(end)], false).await, Ok((end, None)));
-        let (category, detail) = decide(&[other], false).await.unwrap_err();
+        assert_eq!(decide(&[other, good(end)]).await, Ok((end, Some([7; 32]))));
+        let (category, detail) = decide(&[other]).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert_eq!(detail["error"], "node is on another network");
     }
@@ -869,45 +958,69 @@ mod tests {
             (short, "answer_mismatch"),
             (unpinned, "oracle_invalid"),
         ] {
-            let (category, _) = decide(&[good(end + 1), first], false).await.unwrap_err();
+            let (category, _) = decide(&[good(end + 1), first]).await.unwrap_err();
             assert_eq!(category, expected);
-            let (category, _) = decide(&[first, good(end + 2)], false).await.unwrap_err();
+            let (category, _) = decide(&[first, good(end + 2)]).await.unwrap_err();
             assert_eq!(category, expected);
             assert_eq!(
-                decide(&[good(end + 2), first], false).await,
-                Ok((end + 2, None))
+                decide(&[good(end + 2), first]).await,
+                Ok((end + 2, Some([7; 32])))
             );
         }
     }
 
-    /// With witness files checked, the root comes from the first node that gives one for
-    /// the terminal block: a node without root data, or whose tree state names another
-    /// block as when the chain moves during the read, hands over to the next, and with
-    /// none giving it the probe is unavailable, never passing. Without witness files,
-    /// no root is read.
+    /// The fixture shard's root comes from the node that decides: a node whose subtree
+    /// answer is for another index hands over to the next, and one that has not
+    /// completed the shard decides with no root, which a final payload then fails.
     #[tokio::test]
-    async fn the_root_comes_from_a_node_that_has_it() {
+    async fn the_shard_root_comes_from_the_deciding_node() {
         let end = u64::from(anchored().end_height);
-        let rootless = Node {
-            root: None,
+        let wrong = Node {
+            fails: "subtree index",
             ..good(end + 3)
-        };
-        let moved = Node {
-            fails: "treestate block",
-            ..good(end + 2)
         };
         let other = Node {
             root: Some([8; 32]),
             ..good(end + 1)
         };
-        assert_eq!(
-            decide(&[rootless, moved, other], true).await,
-            Ok((end + 3, Some([8; 32])))
-        );
-        let (category, detail) = decide(&[rootless, moved], true).await.unwrap_err();
+        assert_eq!(decide(&[wrong, other]).await, Ok((end + 3, Some([8; 32]))));
+        let (category, detail) = decide(&[wrong]).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
-        assert_eq!(detail["attempts"].as_array().unwrap().len(), 2);
-        assert_eq!(decide(&[rootless, moved], false).await, Ok((end + 3, None)));
+        assert_eq!(detail["attempts"].as_array().unwrap().len(), 1);
+        let incomplete = Node {
+            root: None,
+            ..good(end + 2)
+        };
+        assert_eq!(decide(&[incomplete, other]).await, Ok((end + 2, None)));
+    }
+
+    /// After the lookup, a reorg of either anchor's block fails the probe, including the
+    /// companion witness table's construction block below an unchanged payment end.
+    #[tokio::test]
+    async fn a_reorg_of_either_anchor_during_the_lookup_fails_the_probe() {
+        let directory = anchored();
+        let end = u64::from(directory.end_height);
+        let mut table = companion(&directory);
+        table.tree_height = directory.end_height - 1;
+        table.tree_hash = [5; 32];
+        let recheck = |node: Node| {
+            let (directory, table) = (directory.clone(), table.clone());
+            async move {
+                let rpc = NodeClient::new(serve_node(node).await, None).unwrap();
+                still_anchored(&rpc, &directory, &table).await.is_ok()
+            }
+        };
+        assert!(recheck(good(end)).await);
+        let witness_reorged = Node {
+            fixture: 6,
+            ..good(end)
+        };
+        let end_reorged = Node {
+            anchor: 4,
+            ..good(end)
+        };
+        assert!(!recheck(witness_reorged).await);
+        assert!(!recheck(end_reorged).await);
     }
 
     /// Serves an empty publication of `directory`. Returns the probe's arguments for it,
@@ -915,7 +1028,8 @@ mod tests {
     async fn publish(directory: receiver_directory::snapshot::Manifest, rpc: &str) -> Args {
         let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
         let publications = receiver_pir_server::Publications::default();
-        let publication = crate::verify::prepare(snapshot, None).unwrap();
+        let table = crate::witness::table(&snapshot, &[]).unwrap();
+        let publication = crate::verify::prepare(snapshot, table).unwrap();
         assert!(publications.publish(publication, 0));
         let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1070,139 +1184,135 @@ mod tests {
         }
     }
 
-    /// The node's Ironwood root and the witness file's agree byte for byte: the pinned
-    /// node's tree over the fixture refund's commitment gives, through
-    /// `Root::bytes_in_display_order`, the root `WitnessSnapshot` builds, not its reverse.
+    /// The node and witness payloads encode tree nodes alike: folding the fixture
+    /// refund's commitment with empty subtrees through `combine` gives the root the pinned
+    /// node's tree reports through `Root::bytes_in_display_order`, not its reverse. The
+    /// node encodes subtree roots the same way (`Node::bytes_in_display_order`).
     #[test]
-    fn the_node_and_the_witness_file_encode_roots_alike() {
+    fn the_node_and_witness_payloads_encode_nodes_alike() {
+        use zakura_receiver_crypto::witness::{combine, empty_root};
         use zakura_server_chain::testing::{ironwood_root_of, Tx};
         let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
         let refund = Tx::from_bytes(&raw.unwrap());
-        let cmx = refund.ironwood_commitments()[0];
+        let mut node = refund.ironwood_commitments()[0];
         let node_root = ironwood_root_of(&[refund]);
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
-        (manifest.start_position, manifest.end_position) = (0, 1);
-        let positions = Default::default();
-        let file = WitnessSnapshot::build(
-            &crate::verify::publication(&manifest).unwrap(),
-            &[cmx],
-            &positions,
-        )
-        .unwrap();
-        assert_eq!(file.root(), node_root);
+        for level in 0..32 {
+            node = combine(level, &node, &empty_root(level).unwrap()).unwrap();
+        }
+        assert_eq!(node, node_root);
         let mut reversed = node_root;
         reversed.reverse();
-        assert_ne!(file.root(), reversed);
+        assert_ne!(node, reversed);
     }
 
-    /// A publication with records at positions 0 and 5 of `tree`, the witness file for
-    /// it built from `served`, and the payment at position 5.
-    fn witnessed(
-        tree: &[Hash],
-        served: &[Hash],
-    ) -> (receiver_directory::snapshot::Manifest, Vec<u8>, Payment) {
+    /// Serves a publication whose one record, at position 5, has a final payload of
+    /// siblings `[level + 1; 32]` in a tree of `tree_size` leaves. Returns the origin,
+    /// the publication, the record and its shard's root.
+    async fn witnessed(
+        tree_size: u64,
+        corrupt: bool,
+    ) -> (String, Publication, receiver_directory::RawRecord, Hash) {
+        use zakura_receiver_crypto::{wire::encode_payload, witness::combine};
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
-        manifest.start_position = 0;
-        manifest.end_position = tree.len() as u64;
-        let records: Vec<_> = [0u8, 5]
-            .into_iter()
-            .enumerate()
-            .map(|(page, position)| {
-                let mut record = super::common::record(page as u32, 2);
-                record.payment.position = position.into();
-                record.payment.cmx = tree[usize::from(position)];
-                record
-            })
-            .collect();
-        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &records).unwrap();
-        let positions = [0, 5].into_iter().collect();
-        let proof = WitnessSnapshot::build(
-            &crate::verify::publication(&snapshot.manifest).unwrap(),
-            served,
-            &positions,
-        )
-        .unwrap();
-        (
-            snapshot.manifest,
-            proof.encode(),
-            records[1].payment.clone(),
-        )
+        (manifest.start_position, manifest.end_position) = (0, tree_size);
+        let mut record = super::common::record(0, 1);
+        record.payment.position = 5;
+        let siblings: [Option<Hash>; 16] = std::array::from_fn(|level| {
+            zakura_receiver_crypto::wire::supplied(5, tree_size, level as u8)
+                .then_some([level as u8 + 1; 32])
+        });
+        let mut root = record.payment.cmx;
+        for (level, sibling) in siblings.iter().enumerate() {
+            let sibling = sibling.unwrap_or([0; 32]);
+            root = match (5u64 >> level) & 1 {
+                0 => combine(level as u8, &root, &sibling),
+                _ => combine(level as u8, &sibling, &root),
+            }
+            .unwrap();
+        }
+        let mut siblings = siblings;
+        if corrupt {
+            siblings[0] = Some([0xff; 32]);
+        }
+        let payload = encode_payload(&siblings, 5, tree_size).unwrap();
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(manifest, &[record.clone()]).unwrap();
+        let table = crate::witness::table(&snapshot, &[payload]).unwrap();
+        // A corrupt payload would be refused by the publisher's checks; serve it anyway.
+        let publication = match corrupt {
+            false => crate::verify::prepare(snapshot, table).unwrap(),
+            true => crate::prepared::prepare(snapshot, table).unwrap(),
+        };
+        let session = publication.session();
+        let publications = receiver_pir_server::Publications::default();
+        assert!(publications.publish(publication, 0));
+        let app = crate::router::router_with_publications(publications);
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        (origin, session, record, root)
     }
 
-    /// The witness file must bind to the probed publication, prove the fixture's
-    /// commitment at its position and have the node's root.
+    /// The fixture's companion payload, read over live PIR by its record's ordinal, must
+    /// fold to the node's shard root once final; a provisional payload is unavailable to
+    /// check, and one supplying a noncanonical node is wrong.
     #[tokio::test]
-    async fn the_witness_file_must_prove_the_fixture_under_the_nodes_root() {
-        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-        let (directory, proof, payment) = witnessed(&tree, &tree);
-        let root =
-            WitnessSnapshot::decode(&proof, &crate::verify::publication(&directory).unwrap())
-                .unwrap()
-                .root();
-        let serve = |status: u16, bytes: Vec<u8>| async move {
-            let status = axum::http::StatusCode::from_u16(status).unwrap();
-            let app = Router::new().route(
-                "/v1/receiver/witness/x",
-                routing::get(move || async move { (status, bytes) }),
-            );
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", socket.local_addr().unwrap());
-            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-            origin
-        };
+    async fn the_witness_payload_must_reach_the_nodes_shard_root() {
         let http = reqwest::Client::new();
-        let check = |origin: String, payment: Payment| {
-            let (http, directory) = (http.clone(), directory.clone());
+        let (origin, publication, record, root) = witnessed(1 << 17, false).await;
+        let check = |record: receiver_directory::RawRecord, root: Option<Hash>| {
+            let (http, origin, publication) = (http.clone(), origin.clone(), publication.clone());
             async move {
-                check_witnesses(&http, &origin, "x", &directory, &payment, root)
+                check_witness(&http, &origin, &publication, &record, root)
                     .await
-                    .map(|failure| failure.map(|f| f.1))
-                    .map_err(|e| e.to_string())
+                    .unwrap()
+                    .map(|failure| failure.1)
             }
         };
+        assert_eq!(check(record.clone(), Some(root)).await, None);
+        let detail = check(record.clone(), Some([9; 32])).await.unwrap();
+        assert_eq!(detail["node_root"], hex::encode([9; 32]));
+        // A final payload for a shard the node has not completed.
+        assert!(check(record.clone(), None).await.is_some());
+        // Another commitment at the position folds elsewhere.
+        let mut wrong = record.clone();
+        wrong.payment.cmx = [9; 32];
+        assert!(check(wrong, Some(root)).await.is_some());
+        let (origin, publication, record, _) = witnessed(64, false).await;
+        let provisional = check_witness(&http, &origin, &publication, &record, None).await;
+        assert_eq!(provisional.unwrap().unwrap().0, "oracle_unavailable");
+        let (origin, publication, record, _) = witnessed(64, true).await;
+        let corrupt = check_witness(&http, &origin, &publication, &record, None).await;
+        let (category, detail) = corrupt.unwrap().unwrap();
         assert_eq!(
-            check(serve(200, proof.clone()).await, payment.clone()).await,
-            Ok(None)
+            (category, &detail["witness_path"]),
+            ("answer_mismatch", &json!(5))
         );
-        let truncated = proof[..proof.len() - 1].to_vec();
-        let detail = check(serve(200, truncated).await, payment.clone()).await;
-        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
-        // Another revision's file, for the same tree under another salt.
-        let mut other = directory.clone();
-        other.salt[0] ^= 1;
-        let stale = WitnessSnapshot::build(
-            &crate::verify::publication(&other).unwrap(),
-            &tree,
-            &[0, 5].into_iter().collect(),
-        );
-        let detail = check(serve(200, stale.unwrap().encode()).await, payment.clone()).await;
-        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
-        let mut wrong = payment.clone();
-        wrong.cmx = [9; 32];
-        let detail = check(serve(200, proof.clone()).await, wrong).await;
-        assert_eq!(detail.unwrap().unwrap()["witness_path"], 5);
-        // A file over another tree that still holds the payment proves it, but under a
-        // root the node does not have.
-        let mut forged = tree.clone();
-        forged[2] = [20; 32];
-        let (_, forged, _) = witnessed(&tree, &forged);
-        let detail = check(serve(200, forged).await, payment).await;
-        assert_eq!(detail.unwrap().unwrap()["node_root"], hex::encode(root));
     }
 
-    /// The hex ID of `m`, as health reports it.
-    fn id(m: &Manifest) -> String {
-        hex::encode(m.id().unwrap())
+    /// The hex payment session ID of `p`, as health reports it.
+    fn id(p: &Publication) -> String {
+        hex::encode(p.payments.id().unwrap())
     }
 
-    /// A session manifest whose directory salt starts with `salt`.
-    fn manifest(salt: u8) -> Manifest {
+    /// Session manifests whose directory salt starts with `salt`, with an empty
+    /// companion table.
+    fn manifest(salt: u8) -> Publication {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
         directory.salt[0] = salt;
-        Manifest {
-            protocol: receiver_pir::PROTOCOL.into(),
-            directory,
-            public_digest: [0; 32],
+        let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
+        let table = crate::witness::table(&snapshot, &[]).unwrap();
+        Publication {
+            payments: receiver_pir::Manifest {
+                protocol: receiver_pir::PROTOCOL.into(),
+                directory: snapshot.manifest,
+                public_digest: [0; 32],
+            },
+            witnesses: receiver_pir::WitnessManifest {
+                protocol: receiver_pir::PROTOCOL.into(),
+                table: table.manifest,
+                public_digest: [0; 32],
+            },
         }
     }
 
@@ -1250,10 +1360,10 @@ mod tests {
     #[tokio::test]
     async fn an_invalid_served_manifest_is_an_answer_mismatch() {
         let mut protocol = manifest(0);
-        protocol.protocol = "other".into();
+        protocol.payments.protocol = "other".into();
         let mut geometry = manifest(0);
-        geometry.directory.rows = receiver_pir::MIN_ROWS + 1;
-        let json = |m: &Manifest| serde_json::to_string(m).unwrap();
+        geometry.payments.directory.rows = receiver_pir::MIN_ROWS + 1;
+        let json = |m: &Publication| serde_json::to_string(m).unwrap();
         for body in ["{".to_owned(), json(&protocol), json(&geometry)] {
             let app = Router::new().route(
                 "/v1/receiver/init",
@@ -1412,8 +1522,9 @@ mod tests {
     }
 
     /// Against an indexer serving a synthetic chain that holds the public refund, a
-    /// fixture pinned where the refund was indexed passes with one encrypted query and
-    /// its witness, even when the first node is unreachable. A misplaced pin is an
+    /// fixture pinned where the refund was indexed is found with one encrypted query, and
+    /// its provisional companion payload is reported unchecked, even when the first node
+    /// is unreachable. A misplaced pin is an
     /// answer mismatch, and nodes behind the publication leave it unchecked.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_live_lookup_finds_the_indexed_refund() {
@@ -1422,7 +1533,7 @@ mod tests {
             atomic::{AtomicU64, Ordering},
             Arc,
         };
-        use zakura_server_chain::testing::receiver::{ironwood_root, RefundBlock};
+        use zakura_server_chain::testing::receiver::RefundBlock;
         #[derive(Clone)]
         struct Chain {
             blocks: Arc<[RefundBlock; 2]>,
@@ -1453,11 +1564,9 @@ mod tests {
                 }
                 "getblockheader" => json!({"time": 1_800_000_000}),
                 "getblock" => json!(block.raw_hex()),
-                "z_gettreestate" => {
-                    let blocks: &[&RefundBlock] =
-                        if extended { &[first, second] } else { &[first] };
-                    json!({"hash": r["params"][0], "height": height + u64::from(extended),
-                        "ironwood": {"commitments": {"finalRoot": hex::encode(ironwood_root(blocks))}}})
+                // The synthetic chain never completes an Ironwood shard.
+                "z_getsubtreesbyindex" => {
+                    json!({"pool": "ironwood", "start_index": r["params"][1], "subtrees": []})
                 }
                 method => panic!("unexpected {method}"),
             };
@@ -1488,8 +1597,6 @@ mod tests {
         let config = crate::application::Config {
             data_dir: dir.path().to_owned(),
             min_rows: receiver_pir::MIN_ROWS,
-            witnesses: true,
-            max_witness_commitments: 1 << 24,
             start_height: activation,
             end_height: None,
             depth: 0,
@@ -1544,7 +1651,7 @@ mod tests {
         let run = |fixture: &Value, rpc: &[&str]| {
             let mut args = vec!["probe", "--origin", &origin, "--health-url", &health];
             args.extend(rpc.iter().flat_map(|node| ["--rpc-url", node]));
-            args.extend(["--no-auth", "--witnesses"]);
+            args.push("--no-auth");
             let args = Args::parse_from(args);
             let fixture = fixture.to_string();
             async move {
@@ -1553,9 +1660,15 @@ mod tests {
                 (failure.unwrap(), lookup)
             }
         };
-        assert_eq!(run(&fixture, &[&url]).await, (None, Some((1, true))));
+        // The synthetic chain never completes the refund's Ironwood shard, so the lookup
+        // passes and the provisional witness is reported unchecked.
+        let unchecked = |(failure, lookup): (Option<Failure>, _)| {
+            (failure.map(|f| f.1["witness"].clone()), lookup)
+        };
+        let provisional = (Some(json!("provisional")), Some((1, true)));
+        assert_eq!(unchecked(run(&fixture, &[&url]).await), provisional);
         let fallback = run(&fixture, &["http://127.0.0.1:1", &url]).await;
-        assert_eq!(fallback, (None, Some((1, true))));
+        assert_eq!(unchecked(fallback), provisional);
         let mut moved = fixture.clone();
         moved["position"] = (payment.position + 1).into();
         let (failure, lookup) = run(&moved, &[&url]).await;

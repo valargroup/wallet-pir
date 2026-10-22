@@ -35,17 +35,17 @@ members = [
     "tools/transparent",
 ]
 
-# Consume the wallet libraries at the main revision with the PIR-only publisher change.
+# Consume the wallet libraries at the main revision with the companion witness table change.
 [patch.crates-io]
-zakura-filters = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-receiver-directory = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
-zakura-receiver-pir = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "fc99f90a2f32810d5a38ff4412f336dcbf2fbffe" }
+zakura-filters = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-pir-protocol = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-pir-query-server = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-pir-server-core = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-receiver-crypto = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-receiver-directory = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
+zakura-receiver-pir = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
 ipir-sp = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 inspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 reinspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }

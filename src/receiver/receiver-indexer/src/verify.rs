@@ -1,20 +1,19 @@
 //! The cryptographic checks the receiver protocol crates leave to their caller: every
-//! payment's receiver and Action fields before it is stored, and every record and the
-//! common witness file before a publication is served. The checks are
+//! payment's receiver and Action fields before it is stored, and every record and its
+//! companion witness payload before a publication is served. The checks are
 //! `zakura-receiver-crypto`'s; this module maps the local protocol types onto its
 //! types and its canonical record bytes.
 use receiver_directory::{
-    snapshot::{Manifest, Snapshot, ROW_BYTES, SLOTS},
-    Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
+    snapshot::{Snapshot, ROW_BYTES, SLOTS},
+    witness::{self, PAYLOAD_BYTES},
+    Hash, Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
 #[cfg(not(test))]
-use receiver_pir::server::Server;
+use receiver_pir::server::{Server, WitnessServer};
 use receiver_pir_server::Publication;
-use receiver_store::{Error, IndexedBlock, Store};
-use zakura_receiver_crypto::{
-    witness::{self, WitnessCache, WitnessSnapshot},
-    Record,
-};
+use receiver_store::{Error, IndexedBlock, Store, SHARD_LEAVES};
+use std::collections::BTreeMap;
+use zakura_receiver_crypto::Record;
 
 /// The library's refusal, as the directory error a caller already handles.
 pub fn directory_error(error: zakura_receiver_crypto::Error) -> Error {
@@ -39,6 +38,7 @@ pub fn check_payment(receiver: &ReceiverBytes, payment: &Payment) -> Result<(), 
         page: 0,
         total: 1,
         payment: payment.clone(),
+        ordinal: 0,
     }
     .encode()
     .map_err(|_| Error::Malformed)?;
@@ -53,67 +53,45 @@ pub fn append(store: &mut Store, block: &IndexedBlock) -> Result<(), Error> {
     store.append(block)
 }
 
-/// The fields of a validated `manifest` that its witness file binds to.
-pub fn publication(manifest: &Manifest) -> Result<witness::Publication, Error> {
-    Ok(witness::Publication {
-        genesis: manifest.genesis,
-        directory_revision: manifest.revision()?,
-        end_height: manifest.end_height,
-        end_hash: manifest.end_hash,
-        start_position: manifest.start_position,
-        end_position: manifest.end_position,
-        records: manifest.records,
-    })
-}
-
-/// Builds the publication's common witness file from `store`'s commitment history,
-/// reusing unchanged subtrees from `cache`. A history of more than `max_commitments`
-/// commitments, or a file over the node limit, is [`Error::Capacity`].
-pub fn build_witnesses(
-    store: &Store,
-    manifest: &Manifest,
-    cache: &mut WitnessCache,
-    max_commitments: u64,
-) -> Result<Vec<u8>, Error> {
-    let inputs = store.witness_inputs(manifest, max_commitments)?;
-    let proof = cache
-        .build(
-            &publication(manifest)?,
-            &inputs.commitments,
-            &inputs.positions,
-        )
-        .map_err(directory_error)?;
-    Ok(proof.encode())
-}
-
-/// The `(position, cmx)` of every record in `rows`, each slot checked by
+/// The `(position, cmx, ordinal)` of every record in `rows`, each slot checked by
 /// [`check_slot`].
-fn leaves(rows: &[u8]) -> Result<Vec<(u32, [u8; 32])>, Error> {
+fn leaves(rows: &[u8]) -> Result<Vec<(u64, Hash, u32)>, Error> {
     let mut leaves = Vec::new();
     for row in rows.as_chunks::<ROW_BYTES>().0 {
         // Bytes after the last slot are row padding, not a record.
         for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
             if let Some(record) = Record::decode(slot).map_err(directory_error)? {
-                // A validated publication holds positions within the tree.
-                let position =
-                    u32::try_from(record.payment.position).map_err(|_| Error::Malformed)?;
-                leaves.push((position, record.payment.cmx));
+                leaves.push((record.payment.position, record.payment.cmx, record.ordinal));
             }
         }
     }
     Ok(leaves)
 }
 
-/// Checks every record of `snapshot`, and that `witnesses`, when given, binds to its
-/// manifest and proves every record.
-pub fn check_publication(snapshot: &Snapshot, witnesses: Option<&[u8]>) -> Result<(), Error> {
+/// Checks every record of `snapshot` and that `witnesses` is its companion table: bound
+/// to it, one payload per record by ordinal, each supplying exactly the siblings its
+/// position has at the table's tree size, and every final payload folding from its
+/// record's commitment to one root per Ironwood shard. Returns those roots for the caller
+/// to compare with its own.
+pub fn check_publication(
+    snapshot: &Snapshot,
+    witnesses: &witness::Table,
+) -> Result<BTreeMap<u64, Hash>, Error> {
     let leaves = leaves(&snapshot.data)?;
-    if let Some(proof) = witnesses {
-        WitnessSnapshot::decode(proof, &publication(&snapshot.manifest)?)
-            .and_then(|proof| proof.check_paths(leaves))
-            .map_err(directory_error)?;
+    witnesses.validate()?;
+    let table = &witnesses.manifest;
+    table.check_payments(&snapshot.manifest)?;
+    let payloads = witnesses.data.as_chunks::<PAYLOAD_BYTES>().0;
+    let mut roots = BTreeMap::new();
+    for (position, cmx, ordinal) in leaves {
+        let payload = payloads.get(ordinal as usize).ok_or(Error::Malformed)?;
+        if let Some(root) = crate::witness::shard_root(payload, position, &cmx, table.tree_size)? {
+            if *roots.entry(position / SHARD_LEAVES).or_insert(root) != root {
+                return Err(Error::Coverage);
+            }
+        }
     }
-    Ok(())
+    Ok(roots)
 }
 
 /// Checks a publication before serving, returning the PIR protocol's error type.
@@ -121,34 +99,39 @@ pub fn check_publication(snapshot: &Snapshot, witnesses: Option<&[u8]>) -> Resul
 /// cannot arise from the check and are refused as malformed data.
 pub fn check_publication_for_serving(
     snapshot: &Snapshot,
-    witnesses: Option<&[u8]>,
+    witnesses: &witness::Table,
 ) -> Result<(), receiver_pir::Error> {
-    check_publication(snapshot, witnesses).map_err(|error| {
-        receiver_pir::Error::Directory(match error {
-            Error::Malformed => receiver_directory::Error::Malformed,
-            Error::Coverage => receiver_directory::Error::Coverage,
-            Error::Capacity => receiver_directory::Error::Capacity,
-            Error::MissingPage => receiver_directory::Error::MissingPage,
-            Error::Json(error) => receiver_directory::Error::Json(error),
-            // A publication check reads no database.
-            Error::Sql(_) => receiver_directory::Error::Malformed,
+    check_publication(snapshot, witnesses)
+        .map(|_| ())
+        .map_err(|error| {
+            receiver_pir::Error::Directory(match error {
+                Error::Malformed => receiver_directory::Error::Malformed,
+                Error::Coverage => receiver_directory::Error::Coverage,
+                Error::Capacity => receiver_directory::Error::Capacity,
+                Error::MissingPage => receiver_directory::Error::MissingPage,
+                Error::Json(error) => receiver_directory::Error::Json(error),
+                // A publication check reads no database or file.
+                Error::Sql(_) | Error::Io(_) => receiver_directory::Error::Malformed,
+            })
         })
-    })
 }
 
-/// Prepares `snapshot` for serving once [`check_publication_for_serving`] accepts it.
+/// Prepares `snapshot` and its companion `witnesses` for serving once
+/// [`check_publication_for_serving`] accepts them.
 pub fn prepare(
     snapshot: Snapshot,
-    witnesses: Option<Vec<u8>>,
+    witnesses: witness::Table,
 ) -> Result<Publication, receiver_pir::Error> {
-    check_publication_for_serving(&snapshot, witnesses.as_deref())?;
+    check_publication_for_serving(&snapshot, &witnesses)?;
     #[cfg(test)]
     {
         crate::prepared::prepare(snapshot, witnesses)
     }
     #[cfg(not(test))]
     {
-        Ok(Publication::verified(Server::new(snapshot)?, witnesses))
+        let server = Server::new(snapshot)?;
+        let witnesses = WitnessServer::new(witnesses, &server)?;
+        Ok(Publication::verified(server, witnesses))
     }
 }
 
@@ -156,65 +139,77 @@ pub fn prepare(
 mod tests {
     use super::*;
     use crate::probe::common;
-    use receiver_directory::{snapshot::TREE_SIZE, Hash};
     use receiver_store::{Config, IndexedBlock};
+    use zakura_receiver_crypto::witness::{combine, empty_root, payloads};
 
-    /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
-    /// witness file built from `tree` for those positions.
-    fn witnessed(tree: &[Hash]) -> (Snapshot, Vec<u8>) {
+    /// A provisional companion table for `snapshot`: zero payloads built at its end, whose
+    /// positions lie in a filling shard well past the records' supplied siblings.
+    fn placeholder(snapshot: &Snapshot) -> witness::Table {
+        let payloads = vec![[0; PAYLOAD_BYTES]; snapshot.manifest.records as usize];
+        crate::witness::table(snapshot, &payloads).unwrap()
+    }
+
+    /// An 8-leaf tree of canonical commitments.
+    fn tree() -> Vec<Hash> {
+        (1..=8u8).map(|i| [i; 32]).collect()
+    }
+
+    /// A publication over `tree` with records at positions 0 and 5, and its companion
+    /// table built at its end from `served`.
+    fn witnessed(tree: &[Hash], served: &[Hash]) -> (Snapshot, witness::Table) {
         let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
         manifest.start_position = 0;
-        manifest.end_position = 8;
-        let records: Vec<_> = [0u8, 5]
+        manifest.end_position = tree.len() as u64;
+        let mut records: Vec<_> = [0u64, 5]
             .into_iter()
             .enumerate()
             .map(|(page, position)| {
                 let mut record = common::record(page as u32, 2);
-                record.payment.position = position.into();
-                record.payment.cmx = [position + 1; 32];
+                record.payment.position = position;
+                record.payment.cmx = tree[position as usize];
                 record
             })
             .collect();
+        receiver_directory::snapshot::assign_ordinals(&mut records);
         let snapshot = Snapshot::build(manifest, &records).unwrap();
-        let positions = [0, 5].into_iter().collect();
-        let proof =
-            WitnessSnapshot::build(&publication(&snapshot.manifest).unwrap(), tree, &positions)
-                .unwrap()
-                .encode();
-        (snapshot, proof)
+        let table = crate::witness::table(&snapshot, &payloads(served, &[0, 5]).unwrap()).unwrap();
+        (snapshot, table)
     }
 
-    /// A file that binds to the publication but lacks a sibling a record needs, or
-    /// whose tree holds another commitment at a record's position, is refused before
-    /// serving.
+    /// A companion table bound to another payment table, one supplying a sibling its
+    /// position does not have at the table's tree size, or one with a payload missing is
+    /// refused before serving.
     #[test]
-    fn witnesses_must_prove_every_served_record() {
+    fn companion_tables_must_serve_their_payment_table() {
         use receiver_directory::Error::{Coverage, Malformed};
         use receiver_pir::Error::Directory;
-        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-        let (snapshot, proof) = witnessed(&tree);
-        prepare(snapshot.clone(), Some(proof.clone())).unwrap();
-        // Drop position 5's level-0 sibling, (0, 4), which position 0 does not use, and
-        // correct the node count, without going through the builder.
-        let mut incomplete = proof;
-        let node = incomplete[152..]
-            .chunks_exact(37)
-            .position(|n| n[0] == 0 && n[1..5] == 4u32.to_le_bytes())
-            .unwrap();
-        incomplete.drain(152 + node * 37..152 + (node + 1) * 37);
-        let count = u32::from_le_bytes(incomplete[148..152].try_into().unwrap()) - 1;
-        incomplete[148..152].copy_from_slice(&count.to_le_bytes());
+        let (snapshot, table) = witnessed(&tree(), &tree());
+        prepare(snapshot.clone(), table.clone()).unwrap();
+        let mut other = snapshot.clone();
+        other.manifest.salt[0] ^= 1;
+        let (_, stale) = witnessed(&tree(), &tree());
+        let stale = witness::Table::build(
+            witness::Manifest {
+                payments: other.manifest.revision().unwrap(),
+                ..stale.manifest
+            },
+            &payloads(&tree(), &[0, 5]).unwrap(),
+        )
+        .unwrap();
         assert!(matches!(
-            prepare(snapshot, Some(incomplete)),
+            prepare(snapshot.clone(), stale),
             Err(Directory(Coverage))
         ));
-        let mut other = tree;
-        other[5] = [9; 32];
-        let (snapshot, proof) = witnessed(&other);
+        // Position 0's level-3 sibling, positions 8 to 15, is not in an 8-leaf tree.
+        let mut extra = payloads(&tree(), &[0, 5]).unwrap();
+        extra[0][3 * 32] = 1;
+        let extra = crate::witness::table(&snapshot, &extra).unwrap();
         assert!(matches!(
-            prepare(snapshot, Some(proof)),
+            prepare(snapshot.clone(), extra),
             Err(Directory(Malformed))
         ));
+        let short = crate::witness::table(&snapshot, &payloads(&tree(), &[0]).unwrap()).unwrap();
+        assert!(prepare(snapshot, short).is_err());
     }
 
     /// A publication whose row holds a structurally valid record with an invalid
@@ -224,11 +219,9 @@ mod tests {
     fn cryptographically_invalid_records_are_never_stored_or_served() {
         let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_position = 300;
-        prepare(
-            Snapshot::build(manifest.clone(), &[common::record(0, 1)]).unwrap(),
-            None,
-        )
-        .unwrap();
+        let valid = Snapshot::build(manifest.clone(), &[common::record(0, 1)]).unwrap();
+        let table = placeholder(&valid);
+        prepare(valid, table).unwrap();
         for field in 0..4 {
             let mut record = common::record(0, 1);
             let p = &mut record.payment;
@@ -239,7 +232,8 @@ mod tests {
                 _ => p.ephemeral_key = [255; 32],
             }
             let snapshot = Snapshot::build(manifest.clone(), &[record.clone()]).unwrap();
-            assert!(prepare(snapshot, None).is_err(), "{field}");
+            let table = placeholder(&snapshot);
+            assert!(prepare(snapshot, table).is_err(), "{field}");
             assert!(matches!(
                 check_payment(&record.receiver, &record.payment),
                 Err(Error::Malformed)
@@ -272,104 +266,44 @@ mod tests {
         assert_eq!(store.tip().unwrap().height, 99);
     }
 
-    /// Proofs built from the store through a reused cache match fresh builds byte for
-    /// byte across appends, rewinds, reopening and replacement blocks.
-    #[test]
-    fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("directory.sqlite");
-        let config = Config {
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-        };
-        let mut store = Store::open(&path, config.clone()).unwrap();
-        let mut payment = common::record(0, 1).payment;
-        (payment.height, payment.block_hash, payment.position) = (100, [3; 32], 2);
-        let mut block = IndexedBlock {
-            height: 100,
-            hash: [3; 32],
-            parent: [2; 32],
-            start_position: 0,
-            end_position: 3,
-            coinbase_actions: 1,
-            payments: vec![(common::receiver(), payment.clone())],
-            commitments: vec![[1; 32], [2; 32], payment.cmx],
-        };
-        append(&mut store, &block).unwrap();
-        let mut cache = WitnessCache::default();
-        let check = |store: &Store, cache: &mut WitnessCache, snapshot: &Snapshot| {
-            let fresh = build_witnesses(
-                store,
-                &snapshot.manifest,
-                &mut WitnessCache::default(),
-                TREE_SIZE,
-            )
-            .unwrap();
-            let cached = build_witnesses(store, &snapshot.manifest, cache, TREE_SIZE).unwrap();
-            assert_eq!(cached, fresh);
-            check_publication(snapshot, Some(&cached)).unwrap();
-            cached
-        };
-        let first = store.snapshot(8, 0).unwrap();
-        let expected = check(&store, &mut cache, &first);
-        let len = first.manifest.end_position;
-        assert!(matches!(
-            build_witnesses(&store, &first.manifest, &mut cache, len - 1),
-            Err(Error::Capacity)
-        ));
-        (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
-        (block.start_position, block.end_position) = (3, 5);
-        block.commitments = vec![[3; 32], [4; 32]];
-        block.payments.clear();
-        append(&mut store, &block).unwrap();
-        let second = store.snapshot(8, 0).unwrap();
-        check(&store, &mut cache, &second);
-        store.rewind(100, [3; 32]).unwrap();
-        assert_eq!(check(&store, &mut cache, &first), expected);
-        drop(store);
-        let mut store = Store::open(&path, config).unwrap();
-        block.hash = [5; 32];
-        block.commitments[0] = [9; 32];
-        append(&mut store, &block).unwrap();
-        let replacement = store.snapshot(8, 0).unwrap();
-        let proof = check(&store, &mut cache, &replacement);
-        // The replaced block's proof does not prove the replacement publication.
-        assert!(check_publication(&second, Some(&proof)).is_err());
-    }
-
-    /// A wallet's transport fetches the served file over real HTTP, and the library
-    /// verifies the served record's path under the publication.
+    /// A wallet's transport reads the record over encrypted PIR, then its companion
+    /// payload by the record's ordinal over encrypted PIR, and the payload's siblings with
+    /// the empty subtrees above the tree reach the root an independent full-tree
+    /// computation gives, which another commitment at the position does not reach.
     #[tokio::test]
     async fn served_witnesses_verify_through_the_wallet_transport() {
         use receiver_pir::{
             transport::{DirectoryClient, Transport},
             AcceptedCoverage, Error as PirError,
         };
+        use zakura_receiver_crypto::wire::decode_payload;
         struct Http(reqwest::Client);
-        impl Transport for Http {
-            async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, PirError> {
-                let response = self.0.get(url).send().await;
-                let response = response.map_err(|e| PirError::Transport(e.to_string()))?;
-                crate::read_limited(
-                    response
-                        .error_for_status()
-                        .map_err(|e| PirError::Transport(e.to_string()))?,
-                    limit,
-                )
+        /// Reads one response within `limit`.
+        async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, PirError> {
+            let failed = |e: reqwest::Error| PirError::Transport(e.to_string());
+            let response = request.send().await.map_err(failed)?;
+            crate::read_limited(response.error_for_status().map_err(failed)?, limit)
                 .await
                 .map_err(|e| PirError::Transport(e.to_string()))
+        }
+        impl Transport for Http {
+            async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, PirError> {
+                read(self.0.get(url), limit).await
             }
-            async fn post(&self, _: &str, _: Vec<u8>, _: usize) -> Result<Vec<u8>, PirError> {
-                unreachable!("this test reads only files")
+            async fn post(
+                &self,
+                url: &str,
+                body: Vec<u8>,
+                limit: usize,
+            ) -> Result<Vec<u8>, PirError> {
+                read(self.0.post(url).body(body), limit).await
             }
         }
-        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-        let (snapshot, proof) = witnessed(&tree);
+        let tree = tree();
+        let (snapshot, table) = witnessed(&tree, &tree);
         let manifest = snapshot.manifest.clone();
         let publications = receiver_pir_server::Publications::default();
-        assert!(publications.publish(prepare(snapshot, Some(proof)).unwrap(), 0));
+        assert!(publications.publish(prepare(snapshot, table).unwrap(), 0));
         let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -387,9 +321,38 @@ mod tests {
         let client = DirectoryClient::connect_manifest(&origin, http, accepted, served)
             .await
             .unwrap();
-        let bytes = client.witnesses().await.unwrap();
-        let proof = WitnessSnapshot::decode(&bytes, &publication(&manifest).unwrap()).unwrap();
-        proof.path(5, tree[5]).unwrap();
-        assert!(proof.path(5, [9; 32]).is_err());
+        let record = client.page(common::receiver(), 1).await.unwrap().unwrap();
+        assert_eq!((record.payment.position, record.ordinal), (5, 1));
+        let payload = client.witness(record.ordinal).await.unwrap();
+        // The independent oracle: every level of the 8-leaf tree, then empty subtrees.
+        let mut level = tree.clone();
+        for height in 0..3 {
+            level = level
+                .chunks(2)
+                .map(|pair| combine(height, &pair[0], &pair[1]).unwrap())
+                .collect();
+        }
+        let mut root = level[0];
+        for height in 3..32 {
+            root = combine(height, &root, &empty_root(height).unwrap()).unwrap();
+        }
+        let fold = |cmx: Hash| {
+            let siblings = decode_payload(&payload, 5, 8).unwrap();
+            let mut node = cmx;
+            for height in 0..32u8 {
+                let sibling = match siblings.get(usize::from(height)).copied().flatten() {
+                    Some(sibling) => sibling,
+                    None => empty_root(height).unwrap(),
+                };
+                node = match (5u64 >> height) & 1 {
+                    0 => combine(height, &node, &sibling),
+                    _ => combine(height, &sibling, &node),
+                }
+                .unwrap();
+            }
+            node
+        };
+        assert_eq!(fold(tree[5]), root);
+        assert_ne!(fold([9; 32]), root);
     }
 }

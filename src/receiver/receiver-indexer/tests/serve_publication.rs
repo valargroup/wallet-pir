@@ -5,6 +5,7 @@ mod common;
 #[path = "../../receiver-pir-server/tests/common/history.rs"]
 mod history;
 use axum::{extract::State, routing::post, Json, Router};
+use receiver_directory::witness;
 use receiver_directory::{snapshot::Snapshot, Hash};
 use receiver_pir::{
     transport::{DirectoryClient, Transport},
@@ -17,7 +18,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use zakura_receiver_crypto::witness::WitnessSnapshot;
 
 fn activation() -> u32 {
     receiver_indexer::blocks::ironwood_activation()
@@ -27,11 +27,13 @@ fn mainnet() -> Hash {
     zakura_server_chain::Network::Mainnet.genesis_hash()
 }
 
-/// The node: its tip and the hash it reports at each height.
+/// The node: its tip and the hash it reports at each height, and the Ironwood tree size
+/// after a block where it differs from the fixtures' 8.
 #[derive(Clone, Default)]
 struct Node(
     Arc<Mutex<(u64, HashMap<u64, Hash>)>>,
     Arc<Mutex<Option<RecordReplacement>>>,
+    Arc<Mutex<HashMap<u64, u64>>>,
 );
 
 struct RecordReplacement {
@@ -66,19 +68,27 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
                 json!(zakura_server_chain::hash::display(&hash))
             }
         }
+        "getblock" => {
+            let named =
+                zakura_server_chain::hash::parse_display(request["params"][0].as_str().unwrap())
+                    .unwrap();
+            let height = hashes.iter().find(|(_, h)| **h == named).map(|(h, _)| *h);
+            let size = height.and_then(|h| node.2.lock().unwrap().get(&h).copied());
+            json!({"trees": {"ironwood": {"size": size.unwrap_or(8)}}})
+        }
         method => panic!("serve-publication must not call {method}"),
     };
     Json(json!({"result": result, "error": null, "id": request["id"]}))
 }
 
 /// A publication ending `offset` blocks after activation at `hash`, with two payments
-/// to the fixture receiver and their witness file.
-fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
+/// to the fixture receiver and their companion witness table.
+fn publication(offset: u32, hash: Hash) -> (Snapshot, witness::Table) {
     corrected_publication(offset, hash, 0)
 }
 
 /// [`publication`] under history correction revision `revision`.
-fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, Vec<u8>) {
+fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, witness::Table) {
     let mut manifest = common::manifest(MIN_ROWS);
     manifest.history_revision = revision;
     manifest.genesis = mainnet();
@@ -101,14 +111,9 @@ fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, V
         .collect();
     let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
-    let proof = WitnessSnapshot::build(
-        &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
-        &tree,
-        &[0, 5].into_iter().collect(),
-    )
-    .unwrap()
-    .encode();
-    (snapshot, proof)
+    let payloads = zakura_receiver_crypto::witness::payloads(&tree, &[0, 5]).unwrap();
+    let table = receiver_indexer::witness::table(&snapshot, &payloads).unwrap();
+    (snapshot, table)
 }
 
 /// Stages `snapshot` as a complete publication directory, in the indexer's file
@@ -117,7 +122,7 @@ fn stage(
     root: &Path,
     name: &str,
     snapshot: &Snapshot,
-    witness: Option<&[u8]>,
+    witness: Option<&witness::Table>,
 ) -> (PathBuf, String) {
     let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -129,7 +134,12 @@ fn stage(
     .unwrap();
     std::fs::write(dir.join(format!("{revision}.rows")), &snapshot.data).unwrap();
     if let Some(witness) = witness {
-        std::fs::write(dir.join(format!("{revision}.witness")), witness).unwrap();
+        std::fs::write(dir.join(format!("{revision}.witness")), &witness.data).unwrap();
+        std::fs::write(
+            dir.join(format!("{revision}.witness.json")),
+            serde_json::to_vec_pretty(&witness.manifest).unwrap(),
+        )
+        .unwrap();
     }
     (dir, revision)
 }
@@ -212,7 +222,6 @@ impl World {
                 "rpc_urls": [rpc],
                 "no_auth": true,
                 "poll_seconds": 1,
-                "witnesses": true,
             })
             .to_string(),
         )
@@ -380,6 +389,8 @@ enum StagedCase {
     Network,
     Noncanonical,
     Witness,
+    WitnessContext,
+    WitnessSize,
     Rows,
     Relative,
     Rotation,
@@ -415,6 +426,20 @@ async fn a_noncanonical_candidate_keeps_the_valid_publication_serving() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_corrupt_witness_keeps_the_valid_publication_serving() {
     check_staged_publication(StagedCase::Witness).await;
+}
+
+/// A companion constructed at a later block than its payment table is activated only
+/// once that block is canonical too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_noncanonical_witness_context_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WitnessContext).await;
+}
+
+/// A companion whose construction block is canonical but whose claimed Ironwood tree
+/// size after it is not the node's is refused.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_wrong_witness_tree_size_keeps_the_valid_publication_serving() {
+    check_staged_publication(StagedCase::WitnessSize).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -622,7 +647,7 @@ async fn check_staged_publication(case: StagedCase) {
         let wrong = root.join("wrong-revision");
         std::fs::create_dir_all(&wrong).unwrap();
         let other_rev = "cd".repeat(32);
-        for ext in ["json", "rows", "witness"] {
+        for ext in ["json", "rows", "witness", "witness.json"] {
             std::fs::copy(
                 b_dir.join(format!("{b_rev}.{ext}")),
                 wrong.join(format!("{other_rev}.{ext}")),
@@ -648,9 +673,30 @@ async fn check_staged_publication(case: StagedCase) {
         let (fork_dir, fork_rev) = stage(&root, "fork", &fork, Some(&fork_witness));
         // A corrupt witness.
         let mut bad_witness = b_witness.clone();
-        let last = bad_witness.len() - 1;
-        bad_witness[last] ^= 1;
+        let last = bad_witness.data.len() - 1;
+        bad_witness.data[last] ^= 1;
         let (witness_dir, witness_rev) = stage(&root, "witness", &b, Some(&bad_witness));
+        // A companion constructed at a later block the node does not have.
+        let mut later = b_witness.manifest.clone();
+        (later.tree_height, later.tree_hash) = (activation() + 3, [0xe3; 32]);
+        let payloads = b_witness.data[..2 * 512]
+            .chunks(512)
+            .map(|p| p.try_into().unwrap())
+            .collect::<Vec<[u8; 512]>>();
+        let late = witness::Table::build(later, &payloads).unwrap();
+        let (late_dir, late_rev) = stage(&root, "late", &b, Some(&late));
+        // A companion at a canonical later block, claiming a tree size the node does not
+        // have after it.
+        let mut sized = b_witness.manifest.clone();
+        (sized.tree_height, sized.tree_hash) = (activation() + 3, [0xc3; 32]);
+        world
+            .node
+            .2
+            .lock()
+            .unwrap()
+            .insert(u64::from(activation() + 3), 9);
+        let sized = witness::Table::build(sized, &payloads).unwrap();
+        let (sized_dir, sized_rev) = stage(&root, "sized", &b, Some(&sized));
         // A same-length corrupt rows file.
         let (rows_dir, rows_rev) = stage(&root, "rows", &b, Some(&b_witness));
         let rows_path = rows_dir.join(format!("{rows_rev}.rows"));
@@ -683,6 +729,20 @@ async fn check_staged_publication(case: StagedCase) {
                 StagedCase::Witness,
                 (witness_dir, witness_rev),
                 refuse("corrupt witness", "invalid_source", "witness"),
+            ),
+            (
+                StagedCase::WitnessContext,
+                (late_dir, late_rev),
+                refuse(
+                    "noncanonical witness context",
+                    "noncanonical",
+                    "canonical chain",
+                ),
+            ),
+            (
+                StagedCase::WitnessSize,
+                (sized_dir, sized_rev),
+                refuse("wrong witness tree size", "invalid_source", "tree size"),
             ),
             (
                 StagedCase::Rows,
@@ -816,5 +876,5 @@ async fn check_mode_verifies_without_serving() {
     std::fs::remove_file(a_dir.join(format!("{a_rev}.witness"))).unwrap();
     let output = run();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no witness file"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("witness: "));
 }

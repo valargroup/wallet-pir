@@ -3,13 +3,14 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/prepared.rs"]
+mod prepared;
 #[path = "common/router.rs"]
 mod router;
 use common::{manifest, receiver, record};
 use history::history;
 use receiver_directory::snapshot::Snapshot;
 use receiver_pir::{
-    server::Server,
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error, MIN_ROWS,
 };
@@ -47,7 +48,7 @@ impl Drop for Running {
     }
 }
 async fn serve(snapshot: Snapshot) -> Running {
-    serve_publication(Publication::verified(Server::new(snapshot).unwrap(), None)).await
+    serve_publication(prepared::prepare_payments(snapshot).unwrap()).await
 }
 /// Serve one prepared publication through the production router.
 async fn serve_publication(publication: Publication) -> Running {
