@@ -110,55 +110,51 @@ class CoordinatorPreflight(unittest.TestCase):
                 self.check()
 
 
-class CudaPublicationConvergence(unittest.TestCase):
+class CudaReadiness(unittest.TestCase):
     def setUp(self):
         self.now = 0.0
-        self.poll = 0
         self.worker_url = 'http://gpu'
-        self.config = {'router_url':'http://router','coordinator_url':'http://coordinator'}
-        self.members = [[10],[11]]
+        self.config = {'router_url': 'http://router'}
+        self.worker_ready = [False, True]
         self.router_ready = True
-        self.identity = {'pid':7,'oom':0,'restarts':0}
+        self.identity = {'pid': 7, 'oom': 0, 'restarts': 0}
 
-    def fetch(self,url):
+    def fetch(self, url):
         if url.startswith(self.worker_url):
-            index = min(self.poll,len(self.members)-1)
-            self.poll += 1
-            return json.dumps({'protocol':deploy.PROTOCOL,'published':self.members[index],
-                               'matvec':{'matvec_backend':'cuda','cuda_device':0}})
-        if url.startswith(self.config['router_url']):
-            return json.dumps({'protocol':deploy.PROTOCOL,'ready':self.router_ready,
-                               'preferred_workers':{self.worker_url:True}})
-        return json.dumps({'generation':11})
+            ready = self.worker_ready.pop(0) if len(self.worker_ready) > 1 else self.worker_ready[0]
+            return json.dumps({'protocol': deploy.PROTOCOL, 'active': 'generation-11', 'ready': ready,
+                               'matvec': {'matvec_backend': 'cuda', 'cuda_device': 0}})
+        return json.dumps({'active': 'ab' * 32, 'ready': self.router_ready})
 
-    def wait(self,budget=60,**extra):
-        def sleep(seconds):self.now += seconds
-        return verify.wait_for_publication(self.worker_url,self.config,lambda:self.identity,
-                                           {'pid':7,'oom':0,'restarts':0},budget,
-                                           fetcher=self.fetch,clock=lambda:self.now,sleep=sleep,**extra)
+    def wait(self, budget=60, **extra):
+        def sleep(seconds):
+            self.now += seconds
+        return verify.wait_for_readiness(self.worker_url, self.config, lambda: self.identity,
+                                         {'pid': 7, 'oom': 0, 'restarts': 0}, budget,
+                                         fetcher=self.fetch, clock=lambda: self.now, sleep=sleep, **extra)
 
-    def test_generation_that_advances_during_queries_must_converge_before_commit(self):
-        coordinator,worker,_,remaining = self.wait()
-        self.assertIn(coordinator['generation'],worker['published'])
-        self.assertEqual(self.now,2)
-        self.assertEqual(remaining,58)
+    def test_restarted_worker_may_recover_within_the_shared_budget(self):
+        worker, router, remaining = self.wait(recover=True)
+        self.assertTrue(worker['ready'] and router['ready'])
+        self.assertEqual(self.now, 2)
+        self.assertEqual(remaining, 58)
 
-    def test_both_convergence_checks_share_one_existing_wait_budget(self):
-        _,_,_,remaining = self.wait()
-        self.now += 70  # The paced queries are outside the readiness wait budget.
-        self.members = [[10]]
-        with self.assertRaisesRegex(ValueError,'shared readiness budget'):
-            self.wait(budget=remaining)
-        self.assertEqual(self.now,130)
+    def test_recovery_cannot_exceed_the_shared_budget(self):
+        self.worker_ready = [False]
+        with self.assertRaisesRegex(ValueError, 'shared readiness budget'):
+            self.wait(budget=10, recover=True)
+        self.assertEqual(self.now, 10)
 
     def test_post_query_readiness_loss_and_identity_drift_are_immediate_failures(self):
+        self.worker_ready = [True]
         self.router_ready = False
-        with self.assertRaisesRegex(ValueError,'router is not ready'):self.wait()
-        self.assertEqual(self.now,0)
+        with self.assertRaisesRegex(ValueError, 'router is not ready'):
+            self.wait()
+        self.assertEqual(self.now, 0)
         self.router_ready = True
-        self.identity = {'pid':8,'oom':0,'restarts':0}
-        with self.assertRaisesRegex(ValueError,'identity, OOM or restart'):self.wait()
-        self.assertEqual(self.now,0)
+        self.identity = {'pid': 8, 'oom': 0, 'restarts': 0}
+        with self.assertRaisesRegex(ValueError, 'identity, OOM or restart'):
+            self.wait()
 
 
 class FeeOracleRepair(unittest.TestCase):
@@ -384,8 +380,7 @@ class CudaInventory(unittest.TestCase):
             'services': {'enhance': {'roles': {'worker': [{'host': 'enhance-pir-gpu-01',
                 'unit': 'enhance-pir-gpu-worker.service', 'vars': {'listen': '192.0.2.2:8091'},
                 'health_equals': deploy.EXPECTED}]}, 'cuda_validation': {'origin': 'https://example.test',
-                'oracle': '/oracle.json', 'router_url': 'http://192.0.2.3:8093',
-                'coordinator_url': 'http://127.0.0.1:8080'}}}}
+                'oracle': '/oracle.json', 'router_url': 'http://192.0.2.3:8093'}}}}
 
     def test_target_restrictions_and_pinned_jump(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -416,7 +411,7 @@ class CudaInventory(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SSHExecutor(inventory).transport('enhance-pir-gpu-01')
 
-    def test_verifier_rejects_cpu_routing_and_warmup_failures(self):
+    def test_verifier_rejects_cpu_unready_and_warmup_failures(self):
         report = {'protocol': deploy.PROTOCOL, 'exact_answer_oracle': True, 'completed': 60,
                   'succeeded': 60, 'incorrect_answers': 0, 'errors': {}, 'unstarted_arrivals': 0,
                   'warmup_incorrect_answers': 0, 'warmup_errors': {}}
@@ -425,10 +420,15 @@ class CudaInventory(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify.validate_report(report)
         worker = {'protocol': deploy.PROTOCOL, 'matvec': {'matvec_backend': 'cuda', 'cuda_device': 0},
-                  'published': [1]}
-        router = {'protocol': deploy.PROTOCOL, 'ready': True, 'preferred_workers': {'http://gpu': False}}
-        with self.assertRaises(ValueError):
-            verify.validate_health(worker, router, 'http://gpu')
+                  'active': 'generation-1', 'ready': True}
+        router = {'active': 'ab' * 32, 'ready': True}
+        verify.validate_health(worker, router)
+        for name, change in {'cpu': {'matvec': {'matvec_backend': 'cpu', 'cuda_device': None}},
+                             'unready': {'ready': False}, 'no publication': {'active': None}}.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                verify.validate_health({**worker, **change}, router)
+        with self.assertRaisesRegex(ValueError, 'router is not ready'):
+            verify.validate_health(worker, {**router, 'ready': False})
 
 
 if __name__ == '__main__':

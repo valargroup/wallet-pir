@@ -16,9 +16,6 @@ import urllib.error
 spec = importlib.util.spec_from_file_location('live_fleet', Path(__file__).parents[1]/'scripts'/'transparent-live-fleet.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-deploy_spec = importlib.util.spec_from_file_location('publisher_deploy', Path(__file__).parents[1]/'scripts'/'deploy-transparent-publisher.py')
-deploy = importlib.util.module_from_spec(deploy_spec)
-deploy_spec.loader.exec_module(deploy)
 
 
 class FleetTests(unittest.IsolatedAsyncioTestCase):
@@ -55,38 +52,6 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
             await self.fleet.route([])
         self.assertFalse(self.fleet.routing_availability()['available'])
         self.assertEqual(self.fleet.routing_availability()['unavailable_events'], 2)
-
-    def test_publisher_sandbox_uses_selected_v3_volume_paths(self):
-        journal = Path('/srv/transparent-activity/full-v3/journal')
-        publication = Path('/srv/transparent-activity/full-v11/publications')
-        initial = publication/'initial set'
-        service = deploy.publisher_service(journal, publication, initial)
-        writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
-        import shlex
-        self.assertCountEqual(shlex.split(writable.removeprefix('ReadWritePaths=')),
-                         [str(journal), str(publication), str(initial), str(deploy.ROOT/'state')])
-        self.assertIn('ProtectSystem=strict', service)
-        self.assertNotIn('/srv/zakura/transparent-event-data-v2', service)
-        self.assertNotIn('/srv/zakura/transparent-publications', service)
-
-    def test_publisher_sandbox_rejects_relative_root_and_unit_injection(self):
-        for path in ('relative', '/', '/srv/%i', '/srv/bad\nReadWritePaths=/'):
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                deploy.publisher_service(Path(path), Path('/srv/publications'), Path('/srv/initial'))
-
-    def test_v11_publisher_uses_separate_config_and_state(self):
-        service = deploy.publisher_service(Path('/srv/transparent-activity/full-v3/journal'),
-            Path('/srv/transparent-activity/full-v11/publications'), Path('/srv/transparent-activity/full-v11/publications/initial'),
-            state_dir=Path('/opt/transparent-publisher/v11/state'), config_path=Path('/opt/transparent-publisher/v11/controller.json'))
-        import shlex
-        command = next(line.partition('=')[2] for line in service.splitlines() if line.startswith('ExecStart='))
-        self.assertEqual(shlex.split(command)[-2:], ['--config', '/opt/transparent-publisher/v11/controller.json'])
-        writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
-        self.assertIn('"/opt/transparent-publisher/v11/state"', writable)
-        self.assertNotIn('controller.json', writable)
-        self.assertNotIn('"/opt/transparent-publisher/state"', writable)
-        with self.assertRaisesRegex(ValueError, 'configuration'):
-            deploy.publisher_service(Path('/journal'),Path('/publications'),Path('/initial'),config_path=Path('/journal'))
 
     async def test_read_only_fleet_preflight_does_not_create_owned_sessions(self):
         config = dict(self.fleet.c, state_dir=str(self.root/'absent'), control_sessions=True, status_socket_forwarding=True)
@@ -137,35 +102,6 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         self.fleet.ssh=local_ssh
         with self.assertRaisesRegex(RuntimeError,'candidate map digest mismatch'):
             await self.fleet.control({'id':'fixture','ssh_host':'unused'}, {'operation':'status'})
-
-    @unittest.skipUnless(shutil.which('ssh-keygen'),'requires OpenSSH parser')
-    def test_secret_without_final_newline_is_an_openssh_key_file(self):
-        source=self.root/'generated-key'
-        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(source)],check=True)
-        target=self.root/'installed-key'
-        deploy.secret_file(target,source.read_text().rstrip('\n'))
-        subprocess.run(['ssh-keygen','-y','-f',str(target)],check=True,stdout=subprocess.DEVNULL)
-        self.assertEqual(target.stat().st_mode & 0o777,0o600)
-
-    async def test_failed_router_backup_is_completed_on_retry(self):
-        saved=self.root/'backup'
-        coordinator=self.root/'Caddyfile'
-        coordinator.write_text('original coordinator')
-        (self.root/'controller.json').write_text('{}')
-        async def fail(*args,**kwargs):
-            raise RuntimeError('SSH unavailable')
-        self.fleet.ssh=fail
-        with patch.object(deploy,'ROOT',self.root):
-            with self.assertRaisesRegex(RuntimeError,'SSH unavailable'):
-                await deploy.save_baseline(self.fleet,saved,coordinator)
-            coordinator.write_text('later coordinator')
-            async def succeed(*args,**kwargs):
-                return b'original router'
-            self.fleet.ssh=succeed
-            await deploy.save_baseline(self.fleet,saved,coordinator)
-        self.assertEqual((saved/'Caddyfile.coordinator').read_text(),'original coordinator')
-        self.assertEqual((saved/'Caddyfile.router').read_bytes(),b'original router')
-        self.assertEqual((saved/'controller.json').read_text(),'{}')
 
     async def test_slow_replica_does_not_hold_quorum(self):
         async def prepare(worker):

@@ -248,13 +248,8 @@ jobs:
         with:
           toolchain: ${{ steps.helper-toolchain.outputs.toolchain }}
           components: rustfmt, clippy
-      # Parses and lints every ops script, compiles every jq program the deploy
-      # scripts run, and evaluates the transparent ones against payloads
-      # `operator_payloads.rs` serialized from the server's own types. This
-      # replaces the bare shellcheck runs it subsumes, and covers what the
-      # `validate` invocations below cannot: they reach only the three programs
-      # that read shards.json, and neither of the two bugs that shipped on
-      # 2026-09-07 was in those three.
+      # Parses and lints every ops shell script (check-ops-contracts) and runs
+      # the other selected helper suites.
       - name: Run selected full helper suites
         env:
           HELPERS: ${{ needs.select.outputs.helpers }}
@@ -265,10 +260,6 @@ jobs:
         # Exercise valid inputs and refusal cases; the retired shell wrapper is
         # no longer an executable deployment contract.
         run: umask 022 && python3 -B tools/transparent/tests/test_activity_candidate.py
-
-      - name: Validate transparent shard inputs
-        if: contains(needs.select.outputs.helpers, 'check-ops-contracts')
-        run: umask 022 && python3 -B tools/tests/operations/deploy/test_transparent_inputs.py
 
   enhance-lint:
     needs: select

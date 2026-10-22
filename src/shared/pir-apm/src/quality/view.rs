@@ -509,9 +509,7 @@ fn rebuild_block(
             false,
         ));
         if svc.kind == super::services::Kind::Txid {
-            for stage in [
-                "build", "verify", "digest", "write", "prebuild", "ship", "prepare", "activate",
-            ] {
+            for stage in ["build", "verify", "digest", "write", "prebuild", "activate"] {
                 let key = format!("txid_display_cycle_stage_seconds|stage={stage}");
                 out.push_str(&timing_row(
                     &format!("Stage: {stage}"),

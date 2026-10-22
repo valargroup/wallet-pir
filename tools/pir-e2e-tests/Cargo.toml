@@ -147,12 +147,6 @@ path = "../transparent/src/bin/shard-prune.rs"
 required-features = ["transparent-tests"]
 test = false
 
-[[bin]]
-name = "txid-control-test"
-path = "../transparent/src/bin/txid-control.rs"
-required-features = ["transparent-tests"]
-test = false
-
 [dev-dependencies]
 # Address fixtures belong to the wallet consumer tests, never serving libraries.
 transparent = { package = "zakura-transparent", version = "=4.0.0", default-features = false }

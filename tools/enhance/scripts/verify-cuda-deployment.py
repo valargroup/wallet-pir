@@ -57,42 +57,42 @@ def worker_snapshot(executor, target):
             'main_pid': state['main_pid'], 'active_state': state['active_state']}
 
 
-def validate_health(worker, router, worker_url):
+def validate_health(worker, router):
+    """The GPU worker and the packing router both serve an active, ready publication.
+
+    Health carries no per-worker routing state; the CUDA evaluation counter
+    proves the GPU answered measured queries.
+    """
     if (worker.get('protocol') != PROTOCOL or worker.get('matvec') !=
-            {'matvec_backend': 'cuda', 'cuda_device': 0} or not worker.get('published')):
-        raise ValueError('worker is not published native CUDA device 0')
-    if (router.get('protocol') != PROTOCOL or router.get('ready') is not True
-            or router.get('preferred_workers', {}).get(worker_url) is not True):
-        raise ValueError('router is not ready with the GPU available')
+            {'matvec_backend': 'cuda', 'cuda_device': 0} or worker.get('ready') is not True
+            or not worker.get('active')):
+        raise ValueError('worker is not ready on native CUDA device 0')
+    if router.get('ready') is not True or not router.get('active'):
+        raise ValueError('router is not ready')
 
 
-def wait_for_publication(worker_url, config, identity, baseline, budget, *, recover_router=False,
-                         fetcher=fetch, clock=time.monotonic, sleep=time.sleep, samples=None):
-    """Require current publication membership while sharing the existing recovery budget.
+def wait_for_readiness(worker_url, config, identity, baseline, budget, *, recover=False,
+                       fetcher=fetch, clock=time.monotonic, sleep=time.sleep, samples=None):
+    """Require a ready worker and router, recovering within the shared budget only when asked.
 
-    Publication may advance during the measured query run. It must converge
-    before commit; process, OOM and restart drift remain immediate failures.
+    Process, OOM and restart drift remain immediate failures.
     """
     started = clock()
     while True:
         worker = json.loads(fetcher(worker_url + '/internal/health'))
         router = json.loads(fetcher(config['router_url'] + '/internal/health'))
-        coordinator = json.loads(fetcher(config['coordinator_url'] + '/v1/health'))
         if identity() != baseline:
             raise ValueError('worker identity, OOM or restart evidence changed during recovery')
         if samples is not None:
-            samples.append({'at':time.time(), 'generation':coordinator.get('generation'),
-                            'published':worker.get('published')})
-        problem = 'GPU has not rejoined the current published generation'
+            samples.append({'at': time.time(), 'worker_active': worker.get('active'),
+                            'router_active': router.get('active')})
         try:
-            validate_health(worker, router, worker_url)
+            validate_health(worker, router)
+            return worker, router, max(0, budget - (clock() - started))
         except ValueError as error:
-            if not recover_router:
+            if not recover:
                 raise
             problem = str(error)
-        else:
-            if coordinator.get('generation') in worker.get('published', []):
-                return coordinator, worker, router, max(0, budget - (clock() - started))
         remaining = budget - (clock() - started)
         if remaining <= 0:
             raise ValueError(problem + ' within the shared readiness budget')
@@ -125,12 +125,11 @@ def main():
         evidence['before'] = baseline
         if baseline['active_state'] != 'active' or baseline['exe_sha256'] != args.sha256:
             raise ValueError('running binary does not match CUDA artifact')
-        # Recovery requires two successful router probes after restart. Wait
-        # for eligibility before measurement, then fail on any readiness loss.
-        evidence['publication_samples'] = []
-        _, _, _, publication_budget = wait_for_publication(
+        # Wait for readiness before measurement, then fail on any readiness loss.
+        evidence['readiness_samples'] = []
+        _, _, readiness_budget = wait_for_readiness(
             worker_url, config, lambda:worker_snapshot(executor,target), baseline, 60,
-            recover_router=True, samples=evidence['publication_samples'])
+            recover=True, samples=evidence['readiness_samples'])
         before = counter(fetch(worker_url + '/internal/metrics'))
         evidence['evaluations_before'] = before
         command = [str(args.client), '--server', config['origin'], '--oracle', config['oracle'],
@@ -144,7 +143,7 @@ def main():
             while True:
                 worker = json.loads(fetch(worker_url + '/internal/health'))
                 router = json.loads(fetch(config['router_url'] + '/internal/health'))
-                validate_health(worker, router, worker_url)
+                validate_health(worker, router)
                 current = worker_snapshot(executor, target)
                 if current != baseline:
                     raise ValueError('worker identity, readiness, OOM or restart evidence changed')
@@ -169,12 +168,11 @@ def main():
         evidence['evaluations_after'] = after
         if measured_before is None or after <= measured_before:
             raise ValueError('no CUDA evaluations observed during the measured exact-query phase')
-        coordinator, worker, router, publication_budget = wait_for_publication(
-            worker_url, config, lambda:worker_snapshot(executor,target), baseline, publication_budget,
-            samples=evidence['publication_samples'])
-        evidence['publication_wait_remaining_seconds'] = publication_budget
+        worker, router, readiness_budget = wait_for_readiness(
+            worker_url, config, lambda:worker_snapshot(executor,target), baseline, readiness_budget,
+            samples=evidence['readiness_samples'])
+        evidence['readiness_wait_remaining_seconds'] = readiness_budget
         evidence['final_router'] = router
-        evidence['coordinator'] = coordinator
         evidence['final_worker'] = worker
         evidence['passed'] = True
     except BaseException as error:

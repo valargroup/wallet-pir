@@ -82,7 +82,7 @@ pub async fn verify(config: Config) -> Result<Report, Error> {
         }
         let runtime_preparation = state.preparation();
         drop(state);
-        crate::control::persist(&stage.join("verified-inventory.json"), &inventory)?;
+        crate::durable::persist(&stage.join("verified-inventory.json"), &inventory)?;
         Ok(Report {
             current,
             map_sha256: inventory.map_sha256,
@@ -234,7 +234,7 @@ pub(crate) async fn stage_holdings(
         }
         let options = holdings(config, &map, &inventory, full)?;
         if let LoadScope::Assigned { assignment, .. } = &options.scope {
-            crate::control::persist(&stage.join("assignment.json"), assignment.as_ref())?;
+            crate::durable::persist(&stage.join("assignment.json"), assignment.as_ref())?;
         }
         if cache {
             sync_tree(&stage)?;

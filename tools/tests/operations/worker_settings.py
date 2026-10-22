@@ -18,11 +18,13 @@ SETTINGS = {
         'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'publisher': 'https://publisher.example',
         'state_dir': '/var/lib/status-worker'},
     ('transparent-history', 'external-worker'): {
-        'listen': '127.0.0.1:8093', 'shard_dir': '/srv/history/set', 'state_dir': '/var/lib/history-worker',
-        'assignment': '/srv/history/assignment.json', 'worker_id': 'external-1', 'cache_bytes': 8 << 30},
+        'listen': '127.0.0.1:8093', 'state_dir': '/var/lib/history-worker',
+        'publisher': 'https://publisher.example.invalid', 'publisher_network': 'main',
+        'publisher_genesis': '00' * 32, 'cache_bytes': 8 << 30},
     ('transparent-display', 'external-worker'): {
-        'listen': '127.0.0.1:8095', 'role': 'combined', 'state_dir': '/var/lib/display-worker',
-        'publication_root': '/srv/display/publications'},
+        'listen': '127.0.0.1:8095', 'state_dir': '/var/lib/display-worker',
+        'publisher': 'https://publisher.example.invalid', 'publisher_network': 'main',
+        'publisher_genesis': '00' * 32},
     ('receiver', 'serve-publication'): {
         'config_path': '/etc/receiver-serve/config.json',
         'publication_record': '/etc/receiver-serve/record/publication.json',

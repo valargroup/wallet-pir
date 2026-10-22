@@ -2,7 +2,7 @@
 
 CUDA is an opt-in build and a per-worker runtime choice. The default build and
 normal release bundles remain CPU-only. The CUDA worker is `pir-query-server`,
-not the publisher. GPU hosts do not run `enhance-pir-server` as the worker.
+not the publisher. GPU hosts do not run the publisher as the worker.
 Build it with:
 
 ```sh
@@ -11,7 +11,7 @@ cargo build --locked --release -p pir-query-server --bin pir-query-server \
 ```
 
 One process, one Enhance role. The worker config names the listener, data
-directory, and matrix backend:
+directory, matrix backend and the HTTPS synchronization of its shards:
 
 ```json
 {
@@ -22,7 +22,14 @@ directory, and matrix backend:
       "role": "worker",
       "listen": "127.0.0.1:8091",
       "data_dir": "/srv/enhance-pir/worker",
-      "matvec": {"matvec_backend": "cuda", "cuda_device": 0}
+      "matvec": {"matvec_backend": "cuda", "cuda_device": 0},
+      "synchronization": {
+        "publisher_origin": "https://enhance-pir.valargroup.dev",
+        "trusted_ca": null,
+        "download_budget_bytes": 8589934592,
+        "cache_limit_bytes": 8589934592,
+        "shards": [0]
+      }
     }
   }
 }
@@ -45,7 +52,7 @@ custom CUDA build for serving capacity.
 CPU is the default when the worker config omits `matvec`, even in a
 CUDA-capable binary. Device zero is selected when CUDA is requested without an
 ordinal. An explicit device with CPU is rejected. Backend options belong to the
-worker role config, not the coordinator. `enhance-pir-server build-info` has no
+worker role config, not the publisher. `pir-publisher enhance build-info` has no
 CUDA field. Startup checks the CUDA driver, NVRTC, and selected device before
 opening worker state or binding a listener. Missing feature support, missing
 libraries, or an invalid device fails explicitly, without falling back to CPU.
@@ -72,10 +79,9 @@ invalid query coefficients remain HTTP 400. Detailed backend errors are logged
 server-side without query contents. Health output reports the configured backend
 and resolved device ordinal (zero when omitted for CUDA).
 
-Packing and coordinator behavior remain on CPU. Matrix-only speedups must not be
+Packing and publisher preparation remain on CPU. Matrix-only speedups must not be
 reported as whole-request PIR speedups. CPU capacity qualification does not qualify
-a GPU worker. The optional-worker pool policy lets a GPU mirror a CPU worker's
-domains without making GPU availability part of the publication quorum.
+a GPU worker.
 
 ## Deployment
 
@@ -94,33 +100,14 @@ deploy inventory lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
 `wallet-pir-deploy.py deploy enhance` takes the full-CI CUDA bundle through
 `--extra-archive`; see [deployment](deployment.md#deploy-cli).
 
-## Optional pool assignment
+## Shard assignment
 
-The coordinator accepts `--pool-policy /etc/enhance-pir/pool-policy.json` alongside
-`--pool-placement`. The policy file is loaded on each reconciliation loop. For a
-three-worker pool with two required CPU replicas, this policy mirrors the second
-CPU worker onto a GPU while preserving the two-copy publication requirement:
-
-```json
-{
-  "domain_replication": {},
-  "optional_mirrors": {"enhance-pir-gpu-01": "enhance-pir-worker-02"},
-  "domain_optional_workers": {}
-}
-```
-
-`domain_replication` overrides the required CPU count for a domain ID; an entry
-such as `"7": 3` requires three non-optional workers for domain 7.
-`domain_optional_workers` assigns additional optional workers by domain ID.
-Both settings allow later domains to use different counts and GPUs. Mirror rules
-follow the source worker's actual placement, including sealed domains, subject
-to the GPU's own admission limit. Inventory additions remain append-only.
-
-The packing router probes optional workers every two seconds. It removes a
-worker from new query selection after two failed one-second probes, or immediately
-after an explicit rejection or connection failure, and restores it after two
-successful probes confirming the exact published generation. An ambiguous
-in-flight evaluation is never replayed. CPU replicas remain eligible throughout.
+A GPU worker synchronizes the shards its `synchronization.shards` names from
+the publisher, like a CPU worker. Packing routers name the workers that serve
+each domain in their own `synchronization.workers`, optionally marking
+`preferred` workers (which must also be assigned): an idle preferred worker
+takes the next query, otherwise the least-loaded ordinary worker does. A GPU
+worker is added there rather than through publisher placement.
 
 ## Validation
 
@@ -215,10 +202,11 @@ Deployment swaps the CUDA `pir-query-server` transactionally, verifies native v9
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
 GPU evaluation counter growth, router availability, and no worker restart or OOM.
-The verifier shares one existing 60-second publication recovery budget between
-initial eligibility and final current-generation membership. A generation that
-advances during the measured queries must converge before commit. Router readiness
-loss after measurement and any process, restart or OOM drift still fail immediately.
+Before measurement the verifier gives the restarted worker one 60-second budget
+to report a ready active publication on CUDA device 0 beside a ready packing
+router; after measurement both must still be ready.
+Readiness loss after measurement and any process, restart or OOM drift fail
+immediately.
 Repeat deploys rerun validation without restarting an unchanged unit. No deliberate
 production failover or throughput qualification is part of this workflow.
 

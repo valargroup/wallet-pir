@@ -4,7 +4,7 @@ use super::{
     service::DisplayRuntime,
 };
 use crate::{
-    control::persist,
+    durable::persist,
     source::{Config, Source},
 };
 use std::{

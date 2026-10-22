@@ -45,11 +45,8 @@ check-full: check-hygiene check-ops check-docs check-reports check-tools
 	python3 tools/ci/full_packages.py --group all --lint
 	tools/ci/full-test.sh --locked --workspace --profile release-fast --features enhance-shared/qualification-tests,enhance-publisher/qualification-tests,enhance-query-server/qualification-tests,transparent-publisher/qualification-tests,transparent-shared/qualification-tests,receiver-indexer/qualification-tests,transparent-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/compact-export,transparent-query-server/transparent-history,transparent-query-server/transparent-detail
 
-# The deploy scripts' jq programs, compiled and run against payloads the server
-# serializes. Part of `check` because both of the bugs it exists to catch got
-# through a green `check`: CI exercises the scripts only in `validate` mode,
-# which never parses a served document. Cheap, and it needs no build, so it runs
-# first and fails in seconds rather than after the release test suite.
+# Parses and lints the operations shell scripts. Cheap, and it needs no build,
+# so it runs first and fails in seconds rather than after the release test suite.
 .PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 
@@ -71,13 +68,12 @@ check-ops-deploy:
 	python3 tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
 
 check-ops-contracts:
-	tools/scripts/check-jq-contracts.sh
+	tools/scripts/check-shell-scripts.sh
 
 check-ops-parents:
 	python3 tools/transparent/tests/test_transparent_parents.py
 
 check-ops-fleet:
-	python3 tools/transparent/tests/test_transparent_fleet.py
 	python3 tools/txid/tests/test_txid_display_router.py
 	python3 tools/transparent/tests/test_public_router.py
 
@@ -101,19 +97,14 @@ check-ops-observation:
 check-ops-stage-timing:
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_stage_timing.py'
 
-# Fleet membership, managed preparation, the archive standby and the rollouts
-# that rewrite fleet config.
+# Fleet membership, managed preparation, the reconciler, the inventory, the
+# actuator and the continuous quality load.
 check-ops-membership:
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_membership.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_managed_preparation.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_reconciler.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_maintenance.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_worker_upgrade.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_rolling.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_inventory.py'
 	python3 -m unittest discover -s tools/transparent/tests -p 'test_transparent_actuator.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_archive_standby.py'
-	python3 -m unittest discover -s tools/transparent/tests -p 'test_quality_rollout_load.py'
 	python3 -m unittest discover -s tools/transparent/scripts -p 'test_transparent_quality_load.py'
 
 # The txid display proof of concept's deploy family against an in-memory fleet,

@@ -52,8 +52,9 @@ binary = "pir-query-server"
 mode = "role"
 template = "enhance-pir-worker.role.service"
 renderer = "tools.enhance.lib.roles:worker"
-# Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
-# credentials (the ENHANCE_INTERNAL_TOKEN environment file). Health uses vars.listen.
+# Settings: listen, data_dir, synchronization, sealed_shards?, matvec_backend?,
+# cuda_device?, credentials (the ENHANCE_INTERNAL_TOKEN environment file). Health
+# uses vars.listen.
 health = "http://{listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300

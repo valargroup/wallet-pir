@@ -6,8 +6,8 @@ use std::sync::RwLock;
 
 /// Why a publication command was refused, by what the controller must do.
 ///
-/// Internal: the control socket carries only the text, as it always has, so
-/// no reply changes shape. The kind is what the private status report shows.
+/// Internal: a refused command reports only the text. The kind is what the
+/// private status report shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
     /// The supplied publication or assignment does not verify. Retrying the

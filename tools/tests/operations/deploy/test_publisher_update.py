@@ -1,5 +1,4 @@
 """Publisher updates preserve product settings and recover after interrupted effects."""
-import copy
 import json
 import unittest
 from publisher_fixture import PublisherFixture
@@ -126,9 +125,10 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         self.target.plan()
         self.assertEqual(self.ex.mutations(), [])
 
-    def test_stale_input_refuses_before_staging(self):
+    def test_stale_managed_file_refuses_before_staging(self):
         plan = self.target.plan()
-        self.ex.put('coordinator', '/etc/enhance/workers.json', '{"changed":true}')
+        sampler = json.loads(self.ex.read('coordinator', publisher.SAMPLER))
+        self.ex.put('coordinator', publisher.SAMPLER, json.dumps({**sampler, 'changed': True}))
         with self.assertRaisesRegex(DeployError, 'stale'):
             self.target.deploy(self.binary, plan['plan_sha256'], self.serving_binary)
         self.assertEqual(self.ex.effects, [])
@@ -184,21 +184,10 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
             self.deploy()
         self.assertNotIn(('start', publisher.UNIT), self.ex.effects)
 
-    def test_each_product_check_is_required_and_retired_settings_are_refused(self):
-        original = copy.deepcopy(self.request)
+    def test_each_product_check_is_required(self):
         self.request['checks'].pop('status')
         with self.assertRaisesRegex(DeployError, 'independent exact check'):
             self.make_target()
-        self.request = original
-        for product, key in (('transparent_history', 'http_only'), ('transparent_history', 'fleet_command'),
-                             ('transaction_details', 'workers'), ('transaction_details', 'ship_runtimes')):
-            request = copy.deepcopy(original)
-            request['configuration'][product]['settings'][key] = True
-            self.request = request
-            with self.assertRaisesRegex(DeployError, 'remove retired settings: ' + key):
-                self.make_target()
-        # A saved transaction keeps the settings its publisher ran with.
-        self.make_target(recovery=True)
 
     def test_old_ownership_requests_are_recovery_only(self):
         self.request['schema'] = publisher.EXPANDED_SCHEMA
@@ -209,20 +198,12 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         with self.assertRaisesRegex(DeployError, 'recovery-only'):
             recovered.plan()
 
-    def test_update_removes_only_retired_settings_that_already_published_over_https(self):
+    def test_update_refuses_an_installed_configuration_it_would_change(self):
+        # An installed fleet-era setting is not carried or dropped silently.
         installed = json.loads(self.ex.read('coordinator', publisher.CONFIG))
-        installed['transparent_history']['settings'].update(
-            http_only=True, distribute_prepared=True, ship_runtimes=True,
-            fleet_command='/opt/history/fleet.py', fleet_config='/opt/history/fleet.json')
-        installed['transaction_details']['settings'].update(
-            http_only=True, ship_runtimes=True, workers='/opt/display/workers.json')
+        installed['transparent_history']['settings']['fleet_command'] = '/opt/history/fleet.py'
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
-        self.deploy()
-        self.assertEqual(json.loads(self.ex.read('coordinator', publisher.CONFIG)), self.request['configuration'])
-        # A setting that did not already select HTTPS-only publication is refused.
-        installed['transaction_details']['settings']['http_only'] = False
-        self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
-        with self.assertRaisesRegex(DeployError, 'transaction_details.http_only=False is not HTTPS-only'):
+        with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
             self.make_target().plan()
 
     def test_default_mode_resumes_the_checker_after_deploy_restart_and_rollback(self):

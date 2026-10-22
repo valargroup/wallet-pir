@@ -152,7 +152,7 @@ runtime prebuild of a cycle. Blocking work is awaited before state is released:
 the unit already running when the stop arrives, one shard's files, one runtime
 build or self-check, or one Display recent-shard build or prebuild, finishes
 first. Activation that has begun still completes, including the Display
-inventory finalized after its workers activate.
+inventory it finalizes.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -184,9 +184,9 @@ The retired `http_only`, `distribute_prepared`, `ship_runtimes`, `shadow`,
 `fleet_command` and `fleet_config` History settings and the `http_only`,
 `ship_runtimes`, `workers`, `mode`, `blocks_per_step`, `step_interval_ms`,
 `replay_end` and `exit_when_idle` transaction-detail settings are rejected at
-startup. Remove them from installed configurations during a separately approved
-publisher update; the deployment tool accepts that removal only when the
-installed values already selected HTTPS-only publication.
+startup. A publisher update requires the installed configuration to equal the
+reviewed request exactly, so an installed configuration that still carries one
+of them must be corrected and reviewed separately before an ordinary update.
 The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.

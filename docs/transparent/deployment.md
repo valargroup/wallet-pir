@@ -156,9 +156,8 @@ Operator commands on the coordinator:
   Terraform state and DigitalOcean are reconciled by hand.
 - Pause the scaler (`mode: observe`) during a canary soak or full-fleet upgrade:
   the canary gate binds the whole roster.
-- `transparent-archive-standby.py`, then `transparent-fleet-inventory.py --archive
-  repartition|restore`: replace archive owners; see
-  [archive owner changes](#archive-owner-changes).
+- `transparent-fleet-inventory.py --archive repartition|restore`: replace archive
+  owners; see [archive owner changes](#archive-owner-changes).
 
 Each worker schema has its own fleet configuration, state and scaler directories
 (v11: `/opt/transparent-publisher/v11/fleet.json`, `v11/state`, `v11/scaler`).
@@ -229,22 +228,14 @@ publication until the new ones activate.
    Set `transparent_worker_deploy_public_key` in the same tfvars so the fleet
    key reaches the new host at first boot; it was unset on 2026-09-29 and the
    key was installed by hand.
-2. **Standby.** Pin the new host's key (verified out of band) in a known_hosts
-   file and run, from `/opt/transparent-publisher/releases/current/repo`:
-   `tools/transparent/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
-   It checks the droplet id and x86-64-v3, installs the release against its
-   SHA256SUMS, plans the active publication with the new host pinned to the
-   whole archive, copies at `--bwlimit-kbps` (pausing while freshness is over
-   20 s), starts the archive unit and waits (40 minutes by default) until the
-   host attests the publication warm, then checks that the router reaches
-   the host's `/v1/ready` (a reused VPC address can leave a stale neighbour
-   entry on the router). Rerunning is safe: it hard-links what the host already
-   holds. Qualify it with low-rate exact queries to its private `:8093` and
-   record memory and warm time. Measured on 2026-09-29: 1,596 s cold at one
-   build slot; 291 s to restart onto a newer publication from the disk runtime
-   cache. The coordinator keeps only about nine publications, so a copy that
-   outlives its source fails and is rerun; `repartition` checks the standby
-   against the worker's own copy of the map it serves.
+2. **Standby.** The new owner must serve the active publication warm before
+   the cutover. The SSH standby installer (`transparent-archive-standby.py`),
+   which copied a publication to the host, was removed with HTTPS-only
+   publication on 2026-10-22, and no replacement HTTPS standby procedure is
+   documented yet. Measured on 2026-09-29: 1,596 s cold at one build slot;
+   291 s to restart onto a newer publication from the disk runtime cache.
+   `repartition` checks the standby against the worker's own copy of the map
+   it serves.
 3. **Cutover.** `transparent-fleet-inventory.py --archive repartition --ranges a2:0-76 --owner transparent-pir-archive-NN=<ssh_host>,<ssh_host>:8093,<host key or file>,51539607552,56G,1`.
    It refuses unless the new owner is ready and warm on the active archive
    shards. The next publication plans the new owner; the reconciler stages it
@@ -315,27 +306,16 @@ This excludes existing node/indexer/publisher, CDN/object storage, backups, taxe
 
 ## Publication and rollout procedure
 
-The hardening upgrader repairs legacy units missing both runtime-cache options
-using the fleet generator's cache directory and a disk limit of twice the worker's
-memory-cache reservation. Explicit cache settings are preserved; a partial pair
-is rejected. Check disk headroom before activating this repair. The first build
-populates the cache; only subsequent compatible starts benefit from restoration.
-
-For planned hardening maintenance, installation is bounded at 40 minutes,
-including staging and validation, with a 30-minute post-start warm-up allowance.
-Rollback verification has a 30-minute recovery allowance. These operational
-timeouts do not establish or relax the beta's 15-minute single-failure recovery
-target, nor the canary freshness limits or observation durations. The original
-failure is recorded before rollback begins, and public maintenance remains in
-place until canonical warm service and exact private queries are verified.
+Operational timeouts do not establish or relax the beta's 15-minute
+single-failure recovery target, nor the canary freshness limits or observation
+durations.
 
 1. Verify live state and journal identity. Pin source SHA, schema, anchor hash/time, explicit cutoff height and cutoff derivation algorithm in candidate metadata.
 2. Use a new publication directory; never overwrite the rollback set or switch an existing schema in place. Publish through `.github/workflows/publish-transparent-shards.yml`, which takes the commit, journal, fresh output directory, anchor height, recorded `recent_from` and both geometries, re-derives the cutoff with `shard-cutoff --expect-cutoff` and refuses a disagreement, publishes `--through` the anchor, and stores `publication.json` and `cutoff.json` beside `shards.json`.
 3. Validate complete coverage, manifests, tables, filters, true directory placement and exact replay before touching running services. Stage verified bytes at assigned owners.
-4. Run `.github/workflows/deploy-transparent-shard.yml` in `fleet-preflight` with the tested main SHA, the set, `recent_from` = the recorded cutoff height and the roster variable set. It plans the assignment, ships each worker its subset, and has the staged binary load and verify that subset under the worker's own unit arguments while the running service is untouched.
-5. Run `fleet-deploy`. The deploy compares each worker's actual binary, normalized unit, recorded unit digest, publication, stable worker assignment and warm readiness. Unchanged workers skip staging, subset verification and restart; helper-only changes install the tool without a restart. Changed workers stage and verify in parallel before activation. Archive owners activate first (serial by default; `owner_activation=parallel` accepts simultaneous archive interruption), then recent replicas in healthy pairs (`replica_activation=serial` restores single-worker batches). Each group retains at least half its members healthy; degraded groups reduce concurrency or block. A batch must finish readiness and the router health settling interval before the next batch. The router reloads only when effective configuration changes. Public/internal verification and a final readiness check include skipped workers. Pruning follows verification and protects rollback publications. Failures restore only hosts touched by the persisted deployment transaction; `fleet-rollback` restores that same transaction and checks previous readiness.
-6. Canary real wallet recovery, tail republishing and outage handling, then expand only after workload gates pass. Record actual deployment state and measurement artifacts.
-7. Roll back binary, publication and routing together. Preserve the previously valid revision/coverage relationship; a wallet must explicitly recover from an incompatible or lower anchor rather than silently accept it.
+4. Query servers fetch the publication from the publisher over HTTPS. The shard-push worker workflow (`deploy-transparent-shard.yml` and its shell installer) was removed with HTTPS-only publication on 2026-10-22; no repository workflow ships shard sets to workers.
+5. Canary real wallet recovery, tail republishing and outage handling, then expand only after workload gates pass. Record actual deployment state and measurement artifacts.
+6. Roll back binary, publication and routing together. Preserve the previously valid revision/coverage relationship; a wallet must explicitly recover from an incompatible or lower anchor rather than silently accept it.
 
 The standalone filter deployment workflow and its installer have been removed.
 They targeted the superseded standalone deployment; current v12 publication and
@@ -396,31 +376,15 @@ worker can therefore retain its older audit document. New publications still
 restart workers because map metadata is held in memory. Unmanaged systemd drop-ins
 must be reconciled before deployment. `force_redeploy=true` disables worker skips.
 
-After the continuous-publisher workflow enables worker control sockets, binary
-rollouts preserve its canonical control socket, active-record path and runtime
-directory. This fixed-publication workflow requires the publisher to remain in
-shadow and every controlled worker to serve the planned map and logical assignment. It refuses active
-continuous publication and routing changes; publication advancement belongs to
-the publisher. Binary rollouts leave controlled workers' prepared and retired
-publication files and runtime cache entries intact. Coordinate a shadow-mode
-validation window before activation of the publisher.
-
-The runner retains transaction JSON under
-`~/.local/state/transparent-pir-deploy` (override with
-`TRANSPARENT_TRANSACTION_DIR`); each touched host retains its previous files under
-`/opt/transparent-pir/transactions/<transaction-id>`. An interrupted transaction is
-recoverable via `fleet-rollback`; a no-op does not replace the last rollback target.
-The workflow preserves `deploy-plan.json` and `deploy-timings.tsv`. Readiness
-reports disk cache bytes/hits/misses/write failures, and Prometheus reports restore
-counts and cumulative restore time separately from cold builds.
+Workers take no control commands: each query server synchronizes publications
+from its HTTPS publisher and reports status on its loopback `management_listen`.
+Readiness reports disk cache bytes/hits/misses/write failures, and Prometheus
+reports restore counts and cumulative restore time separately from cold builds.
 
 Acceptance is a measured compatible-binary deployment below ten minutes for the
-deployment phases, excluding build/CI time. Validate one replica and one owner
-before expanding: use `canary_worker_ids` with one worker ID per run, first a
-replica and then an owner. Canary mode requires the same publication, healthy
-existing workers and unchanged routing; deferred workers retain their state and
-are verified afterwards. Clear the input for the fleet rollout, then repeat with compatible cache entries and verify the wallet
-regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesystem
+deployment phases, excluding build/CI time. Validate one replica and then one
+owner before expanding, then repeat with compatible cache entries and verify the
+wallet regression. Record peak RSS/cgroup memory, disk use, errors and warm/cold filesystem
 cache state alongside phase timings. See [remaining work](remaining-work.md) for
 open rollout gates and [evidence](../../evidence/transparent/README.md) for recorded measurements.
 
@@ -512,21 +476,13 @@ Old recent shards keep their geometry within the publication lineage until a dec
 
 ## Continuous publication
 
-The continuous publisher uses `deploy-transparent-publisher.yml`: deploy the
-same tested main SHA in `shadow`, then `activate`. `shadow` first aligns the
-static filter origin with the verified full-chain set, upgrades a recent canary,
-upgrades archive owners serially and then the remaining replicas, and builds a
-candidate without advancing public coverage. `activate` routes both public map
-origins through the coordinator's publication authority and enables the loop.
-Before activation, verify the router directly over HTTPS and switch
-`transparent_public_dns_target=router` with a reviewed DNS-only Terraform plan.
-The pilot can forward its wallet routes to the router during DNS propagation;
-preserve its previous Caddyfile for rollback. Confirm both public map URLs reach
-the authority, including clients that still resolve the pilot. A warm internal
-router does not establish that the public hostname points to it.
-Use `rollback` with the deployment SHA to restore the saved binaries, units and
-routing; rollback refuses an orphaned predecessor. Deep reorg recovery should
-normally be left to the controller rather than restoring historical artifacts.
+The unified publisher changes through `publisher-cutover-*`
+([publisher](../publisher.md)). The standalone continuous-publisher workflow
+(`deploy-transparent-publisher.yml` and its installer), which pushed worker
+binaries over SSH, was removed with HTTPS-only publication on 2026-10-22;
+retained source revisions keep it for historical rollback. Deep reorg recovery
+should normally be left to the controller rather than restoring historical
+artifacts.
 
 The service polls the node's best-chain height/hash every second, commits each
 block to the event journal and rebuilds only the affected publication suffix.
@@ -582,7 +538,7 @@ operational `fleet.json` settings over (`OPERATIONAL_KEYS` in
 already warm quorum. An unchanged router configuration skips
 reload only when its successful application marker matches; an interrupted
 rename/reload is retried.
-Workers prepare through a root-only Unix control socket, keep current runtimes
+Workers synchronize each publication from their HTTPS publisher, keep current runtimes
 resident within their existing cache budgets, and swap snapshots without a
 restart. Preparation evicts unpinned runtimes from retired generations before
 building and warms only current revisions. Retained revisions remain available
@@ -592,7 +548,7 @@ publication. The controller keeps three unused candidate directories; workers
 keep the newest three retired serving snapshots plus any older snapshot still
 held by a request. An old reader does not prevent collection of other idle
 snapshots. The server releases its startup snapshot after launching prewarm;
-private control status reports `retired_snapshots` so a growing backlog is
+provider status reports `retired_snapshots` so a growing backlog is
 visible. Three superseded normal tail revisions may also accompany the current set.
 History workers stage under `worker_root/workers/<worker-id>/`. Each revision
 is transferred once into `.sources/<manifest-digest>`; publication directories
@@ -647,63 +603,18 @@ hard limit; cache and transient allocation admission remain separate. The
 tradeoff and failed lower threshold. Other workers retain their installed
 settings until their rollout.
 
-The optional `headless_console: true` fleet setting installs
-`transparent-headless-console.py` as a privileged worker `ExecStartPre`. It
-unbinds a virtio framebuffer console after requiring an enabled serial console;
-it refuses unknown framebuffer drivers. Preflight is read-only. The worker must
-be enabled across boot, and acceptance checks the loaded pre-start command,
-helper digest and unbound state every worker sample. The full-fleet gate also
-requires the matching helper digest. See [status](status.md) for deployment state.
-This prevents the virtual GPU console-update path observed during the M1
-investigation from running console refresh work on worker CPUs; sustained
-availability still requires the full gate below.
+The push-fleet hardening tools were removed with HTTPS-only publication on
+2026-10-22: the maintenance upgrader (`upgrade-transparent-fleet.py`), its
+canary supervisor (`run-transparent-hardening-rollout.py`), the read-only
+observer (`observe-transparent-hardening.py`), the one-at-a-time recent roll
+(`roll-recent-replicas.py`) and the worker pre-start helpers they installed for
+the `headless_console` and `storage_nodiscard` fleet settings. Retained source
+revisions keep them for the evidence they produced. Binary rollback on a worker
+never rebound the framebuffer or changed serial-console configuration; restoring
+graphics or online discard is a separate, explicit host operation. The
+[bounded disk-stall experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/productionize-m1-shoup-reduction-2026-09-11/README.md)
+records the discard policy's qualification.
 
-Binary rollback restores the previous worker unit and any saved helper. It does
-not rebind the framebuffer at runtime. Disabling the option removes the managed
-pre-start line on the next installation; restoring graphics is a separate,
-explicit host operation. Serial-console configuration is never changed.
-
-The optional `storage_nodiscard` fleet setting installs a privileged worker
-prestart that disables online discard on the shared ext4 root used by the
-runtime cache and publication record. It validates both paths before remounting,
-preserves all other mount options, and changes neither fstab nor file flushes,
-journaling, barriers or scheduled fstrim. The enabled worker unit reapplies the
-policy at boot. The observer verifies the loaded hook, current mount and helper
-hash; the full-fleet gate requires that same helper identity. Upgrade rollback
-restores the saved discard setting without reverting unrelated mount options.
-This policy is qualified initially on a single worker; see the
-[bounded disk-stall experiment](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/productionize-m1-shoup-reduction-2026-09-11/README.md).
-
-Run `tools/transparent/scripts/observe-transparent-hardening.py` on the coordinator with the
-expected worker binary digest and release `soak-query` executable. Its defaults
-require **both six hours and 300 new blocks**, two sustained query clients with
-exact source-byte comparisons, public visibility within 30 seconds and recent
-replica catch-up within 60 seconds from independent node observation,
-canonical endpoints, no OOM or restart, and 20% host memory headroom. A reorg
-resets the counted block samples. The monitor is read-only and cannot trigger a
-rollout; preserve its result and raw NDJSON before rolling the next workers.
-
-The observer also requires `state/routing-availability.json`, initialized by a
-successful router application using the matching fleet script. Its persistent
-epoch and cumulative unavailable-event count prevent a withdrawal and recovery
-between polls from escaping acceptance. Withdrawals are recorded before router
-application, so even a failed withdrawal attempt conservatively invalidates the
-run. Missing, malformed, replaced or regressed evidence fails the gate. Applying
-a warm route may initialize this record; do not synthesize or reset it to rescue
-an existing acceptance window. This records routing changes, not every possible
-network outage; the ordinary public and private probes remain required.
-
-
-The approved rollout accepts downtime and upgrades all six workers in one
-maintenance batch on the existing hardware. `upgrade-transparent-fleet.py`
-preflights every selected worker before guarding both public transparent origins.
-It gives restarted workers fifteen minutes to warm, verifies current canonical
-publications and exact directory/page queries, then reopens public service.
-Rollback preserves current publication records and revocations and reopens only
-after verification. Unverified recovery keeps the maintenance response.
-
-`run-transparent-hardening-rollout.py` supervises the canary upgrade, the loaded
-gate, the whole-fleet batch and observation of all six workers.
 The M1 post-rollout requirement is **six continuous hours and at least 300 new
 canonical blocks per worker**, confirmed by Roman on 2026-09-13 as the updated
 requirement under which the fleet observation had passed. This supersedes the
@@ -724,13 +635,6 @@ and roster digest; elapsed time alone is insufficient. The foreground adapter an
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
 recent-01 at the canary stage; once every worker's binary reports the control
 status fields, set `manage_all_workers: true` instead.
-`tools/transparent/scripts/roll-recent-replicas.py` upgrades recent replicas one at
-a time without a maintenance window, only while two others are routed, and
-waits for each to be routed again before the next. Archive owners still use the
-maintenance upgrade. Stop observers that latch on worker restarts, such as the
-continuous-load supervisor, before a roll and re-qualify their binaries after.
-The installer applies an explicit roster `build_slots` value to the staged worker
-unit before verification; an omitted value preserves the installed setting.
 With `control_sessions: true`, short control commands use authenticated SSH
 masters owned by `transparent-control-sessions.service`, separate from artifact
 transfers and long-running preparation. Install and start that unit, then verify
@@ -798,14 +702,11 @@ A freshness sample at or just past its budget records the monitor abandoning the
 read. It bounds the true recovery time from below and is never a catch-up
 measurement; establish the actual time from the worker log before quoting one.
 
-The hardening observer performs at most two attempts for a read-only
-HTTP GET after a reset, broken pipe, remote disconnect or unexpected TLS EOF.
-Both attempts share the original eight-second budget; the retry waits 50 ms.
-It records each caught failure and recovery and includes all elapsed time in
-freshness. HTTP rejection, certificate validation failures, arbitrary TLS alerts,
-timeouts and malformed content are not retried. Routing withdrawal and exactness
-checks remain mandatory. The result records monitor identity and retry policy.
-See [qualification evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/productionize-m1-http-retry-2026-09-12/README.md)
+The retained observations were taken by the removed hardening observer, which
+made at most two attempts for a read-only HTTP GET after a reset, broken pipe,
+remote disconnect or unexpected TLS EOF, within one eight-second budget, and
+counted all elapsed time in freshness. Its results record monitor identity and
+retry policy. See [qualification evidence](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/productionize-m1-http-retry-2026-09-12/README.md)
 and [status](status.md) for deployment state.
 
 ## Opt-in archive parent filters
@@ -864,14 +765,8 @@ The dedicated page is `/apm/transparent/` on the Enhance APM origin. The shared
 history, guardrail and independent-canary configuration. Metrics stay on private
 service endpoints or loopback Caddy admin; no public metrics route is introduced.
 
-For telemetry worker upgrades, the existing supervised hardening rollout accepts
-`--production-lock`, `--load-service`, `--load-root`, and `--load-identity-file`.
-The three load options must be supplied together. The identity JSON must cover
-exactly the current roster. The runner checks predecessors, pauses continuous
-load for each upgrade, verifies the expected post-upgrade identities, writes new
-pins atomically, then resumes load. Failures leave load stopped for investigation.
-An existing correctness/resource latch blocks mutation. The observer chooses a
-query shard from the selected worker's current assignment unless explicitly pinned.
+Worker binary upgrades coordinate the continuous load through
+`transparent-binary-*` ([binary upgrades](#binary-upgrades-of-the-current-v12-history-and-4k8-display-fleets)).
 The existing six-hour / 300-block and full-fleet observation gates are unchanged.
 
 ## Activity metadata v3/v11 prototype and cutover
@@ -2165,69 +2060,59 @@ change.
 ## Binary upgrades of the current v12 history and 4k8 display fleets
 
 `tools/scripts/wallet-pir-deploy.py transparent-binary-{plan,preflight,baseline,deploy,status,rollback}
---request F --request-sha256 H` (`tools/transparent/lib/binary_upgrade.py`) changes one component's
-executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging,
-the managed ExecStart drop-in, the production lock, the service's journal sequence and touched-target
-rollback. The request's `component` is `workers` (staged under the service root, for example
-`/opt/transparent-publisher`) or `controller` (staged under `<service root>/controller` with the
-controller's current executable name; a controller running the worker executable refuses). Worker
-and controller transactions are separate artifacts; a rollback refuses a transaction of the other
-component. `baseline` records both components.
+--request F --request-sha256 H` (`tools/transparent/lib/binary_upgrade.py`) changes the workers'
+executable per transaction through the shared engine: immutable `releases/<binary sha256>` staging
+under the service root (for example `/opt/transparent-publisher`), the managed ExecStart drop-in,
+the production lock, the service's journal sequence and touched-target rollback.
 
+- **Unified owner.** New transactions run only when the inventory's `publisher.managed_products`
+  names the product: the one `pir-publisher.service` server on `controller.host` is the controller
+  authority; pass `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins
+  that unit and `/etc/wallet-pir/publisher.json`; the enabled product section holds the settings
+  checked below, and its `listen` (history) or `status_listen` (display) serves the product's
+  `/v1/status`. Only `workers` transactions run, never restarting the publisher, and `baseline`
+  records only the workers; a `controller` request refuses and the publisher executable changes
+  through `publisher-cutover-*` ([publisher](../publisher.md)). A standalone controller still
+  running or still in the inventory beside it refuses.
+- **History providers.** The publisher distributes History only over HTTPS, so its History workers
+  are autonomous providers: each pins its `--config` file (`config_sha256`) and unit (`unit_sha256`),
+  the request has `load: null`, and fleet-controlled worker pins refuse. Every provider's publisher
+  must serve a compatible discovery document.
 - **Release identity** is the request's `release.git_sha` and `release.binary_sha256`; a mutating
   command also requires the installed operations package to name that Git revision.
-- An explicit History controller request may include `staging_adapter: {sha256, configuration, previous_configuration}`.
-  The adapter is staged once at `/opt/transparent-publisher/v12/adapters/<sha256>/transparent-live-fleet.py`
-  from `--staging-adapter`; its bytes must match the request. The prior configuration must match its pinned digest; the new configuration may differ only in
-  `fleet_command`. The locked transaction retains and restores the prior controller configuration
-  with its binary. It never overwrites the old immutable source or enables runtime shipping.
-- **Publication identity** is pinned separately: v12 `publication.source_sha` (the controller's
-  `source_sha`, for example `fb90519b`), or the 4k8 display `root` (run mode takes no `--geometry`;
-  `<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the controller's
-  normalized effective unit (every setting and argument, ExecStart binary abstracted, so it holds
-  across a controller upgrade) and the digests of its configuration, `fleet.json` and fleet script;
-  each worker's `worker_id` and `role` (display: `role` `combined`), cache/limit unit properties and
-  argument pairs.
-- **Current authority.** The controller's map advances during a rollout, so nothing map-dependent is
-  pinned. A worker's `map_sha256` must equal the controller's current map (history `/v1/status`
-  `map_sha256` with phase `serving`; display `published.map_sha256` with phase `running`, `halted`
-  null and `stalled` false), read before and after the worker. For history, the worker's
-  `assignment_sha256`, `worker_assignment_sha256`, `replica_group`, `role` and `assigned_shards`
-  must match the controller's `<fleet.json state_dir>/<map_sha256>.assignment.json` (native
-  `Assignment::digest` and `worker_digest`, recomputed in declaration order); `warm_runtimes` must
-  equal `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and
-  report `covered_through`. After a worker becomes HTTP-ready, the operator waits within the
-  controller's existing readiness budget for publication to recover from failed control calls
-  during the restart. It then repeats the publication and ownership checks. A controller that
-  remains stalled causes rollback; worker HTTP readiness alone cannot commit the upgrade.
-- History refuses unless the controller holds `follow_journal: false`, the full-v3 journal, the
-  full-v12 publication root and no `ship_runtimes`. Display refuses unless its controller runs
-  `--root <root>` without `--geometry`.
-- **Unified owner.** When the inventory's `publisher.managed_products` names the product, the one
-  `pir-publisher.service` server on `controller.host` is the controller authority; pass
-  `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins that unit and
-  `/etc/wallet-pir/publisher.json`; the enabled product section holds the settings checked above
-  (display: `root` instead of `--root`), and its `listen` (history) or `status_listen` (display)
-  serves the product's `/v1/status`. Only `workers` transactions run, never restarting the
-  publisher, and `baseline` records only the workers; a `controller` request refuses and the
-  publisher executable changes through `publisher-cutover-*` ([publisher](../publisher.md)). A
-  standalone controller still running or still in the inventory beside it refuses.
-- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history
-  (`upgrade-transparent-fleet.py`) and 7,200 seconds for the 4k8 Display request. Full warm
-  readiness remains required; the generic binary engine's 180-second default is insufficient
-  for the documented archive restore times.
-- **Continuous load.** History requests pin `load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
-  `/srv/transparent-activity/canonical-load/v12`, whose `transparent-v2-5qps-continuous.service`
-  latches on any worker hash other than its pins (it reads them once at start). Under the lock, a
-  `latched.json` refuses, and the pins must name exactly the request's worker IDs and the binaries
-  they run. A worker transaction stops the load before the first restart; after commit it writes
-  pins naming the new binary atomically (journaled with both digests) and starts the load when
-  `resume_after_upgrade` is true. This preserves the requested running state across a failed
-  attempt and a successful retry; use false to keep an intentionally paused observer stopped. A failed transaction, including an observer restart failure, rolls the workers back and leaves the
-  load stopped with pins naming the restored binaries; an explicit rollback re-pins to the restored binaries and leaves the load stopped
-  until the exact-answer gate passes. The latch and incident records are never removed. Monitoring
-  is not ready while the pins name a binary the workers no longer run. Display has no load
-  (`load: null`); a controller transaction does not touch the load.
+- **Publication identity** is pinned separately: v12 `publication.source_sha` (the History
+  section's `source_sha`, for example `fb90519b`), or the 4k8 display `root`
+  (`<root>/display-root.json`, pinned under `controller.files`, fixes txid-4k8); the publisher's
+  normalized effective unit and the digests of its configuration; each worker's ready identity
+  (display: `role` `combined`), cache/limit unit properties and argument pairs.
+- **Current authority.** The publisher's map advances during a rollout, so nothing map-dependent is
+  pinned. A worker's `map_sha256` must equal the current map (history `/v1/status` `map_sha256` with
+  phase `serving`; display `published.map_sha256` with phase `running`, `halted` null and `stalled`
+  false), read before and after the worker. A recent History provider's assignment fields must match
+  the `assignment.json` its own active publication records; `warm_runtimes` must equal
+  `target_runtimes` with no `prewarm_failed`. Display workers must be `ready`, `warm` and report
+  `covered_through`. After a worker becomes HTTP-ready, the operator waits within the authority's
+  readiness budget for publication to recover, then repeats the publication and ownership checks.
+  An authority that remains stalled causes rollback; worker HTTP readiness alone cannot commit the
+  upgrade.
+- History refuses unless its section holds `follow_journal: false`, the full-v3 journal and the
+  full-v12 publication root. Display refuses unless its section names the pinned `root`.
+- Worker readiness uses the existing product warmup budgets: 1,800 seconds for history and 7,200
+  seconds for the 4k8 Display request. Full warm readiness remains required; the generic binary
+  engine's 180-second default is insufficient for the documented archive restore times.
+- **Retired standalone controllers.** `transparent-v12-publish-controller.service` and
+  `transparent-txid-display-k8-controller.service` drove their workers directly; neither executable
+  exists in this repository any more. Against such a topology only `status` and `rollback` of a
+  transaction it already recorded run (`plan`, `preflight`, `baseline` and `deploy` refuse before
+  any host change). The rollback keeps the pinned unit, file and settings checks and allows an
+  unhealthy process to be restored. A recorded History worker transaction carries its continuous
+  load pins (`load.host`, `load.resume_after_upgrade` and the `pins.json` digest of
+  `/srv/transparent-activity/canonical-load/v12`): its explicit rollback stops
+  `transparent-v2-5qps-continuous.service`, restores the workers, writes pins naming the restored
+  binaries (journaled with both digests) and leaves the load stopped until the exact-answer gate
+  passes. The latch and incident records are never removed. The former `staging_adapter` request
+  field, which changed only a standalone History controller's `fleet_command`, is no longer
+  accepted.
 - **Alert delivery is reported, not inferred.** `plan`, `preflight` and `status` print `notifications:` lines
   for this service:
   - the `alert_mode` configured in `/etc/pir-quality/transparent-production.json`, labelled as read only at
@@ -2237,20 +2122,16 @@ component. `baseline` records both components.
   - delivery health from APM's `monitor-status`.
 
   Anything unreadable is `unknown`. When the running mode is not `active`, the output says that incidents
-  during the upgrade are recorded only. The continuous load (`exact-answer load:` lines) is an exact-answer
-  observer, not alert delivery. pir-apm keeps running through a worker upgrade. Once a service is active, the
-  unavailability a restart causes fires and recovers real incidents (archive warm-up takes minutes). The tool
-  sends no deployment notification of its own.
+  during the upgrade are recorded only. pir-apm keeps running through a worker upgrade. Once a service is
+  active, the unavailability a restart causes fires and recovers real incidents (archive warm-up takes
+  minutes). The tool sends no deployment notification of its own.
 - Supported topology only: history workers exactly `transparent-v12-archive.service` and
-  `transparent-v12-recent.service` with the `transparent-v12-publish-controller.service` controller;
-  display worker exactly `transparent-txid-display-worker.service` with
-  `transparent-txid-display-k8-controller.service`. External workers or other units refuse.
+  `transparent-v12-recent.service`; display worker exactly `transparent-txid-display-worker.service`.
+  External workers or other units refuse.
 - The checks run in preflight, under the lock before any change, after every restart (a changed
-  identity or an unhealthy controller fails the transaction and rolls back every touched target) and
-  after rollback. Explicit rollback keeps the configuration and unit-contract checks while allowing
-  an unhealthy process to be restored; existing incident latches are preserved and keep the load stopped.
-  Publications, assignments, journals and routing are never written; unit drift
-  beyond the binary refuses. Shipping stays disabled for history.
+  identity or an unhealthy authority fails the transaction and rolls back every touched target) and
+  after rollback. Publications, assignments, journals and routing are never written; unit drift
+  beyond the binary refuses.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
 

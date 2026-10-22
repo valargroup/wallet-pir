@@ -6,8 +6,8 @@ activate it locally. [Distribution](status_distributed.md) owns that
 interface. Dated deployment records below describe the predecessor; this source
 change is not evidence of a production switch.
 
-Production deployment records include a separate `status-pir` controller, router
-and worker on the native v3 profile; see [deployment](../enhance/deployment.md) and the
+Dated production records describe that predecessor: a separate `status-pir`
+controller, router and worker on the native v3 profile; see [deployment](../enhance/deployment.md) and the
 [October 10 record](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/production-deploy-9d2cbda0-2026-10-10/README.md).
 The [fleet operator guide](../operations.md) owns shared operating procedures.
 The [synthetic backend](status_backend.md) and
@@ -17,9 +17,9 @@ recorded modes and cannot qualify the native v3 release. The
 still separate deployment evidence from sustained capacity assurance.
 
 Status PIR privately observes transactions through the Enhance infrastructure.
-Its controller runs on the coordinator host behind the shared public origin, with a separate status
-index and a dedicated CPU host running both the packing router and evaluation
-worker. The wallet supplies a transaction ID locally and receives `NotFound`,
+The unified publisher maintains its separate status index on the coordinator
+host behind the shared public origin, and a dedicated CPU host runs both the
+packing router and evaluation worker. The wallet supplies a transaction ID locally and receives `NotFound`,
 `Mempool`, `Mined(height)`, or `Forked`, without disclosing that ID in a network
 request or retrieving transaction bytes.
 
@@ -43,12 +43,12 @@ prerequisite nor a fallback for Status PIR.
 
 The existing [Enhance architecture](../enhance/architecture.md) separates publication,
 query ingress, CPU packing, and worker evaluation. Status reuses those roles
-and their control mechanisms. It needs a new index because Enhance records
+and their HTTPS synchronization. It needs a new index because Enhance records
 are keyed by Ironwood action position and contain no txids.
 
 | Concern | Decision |
 | --- | --- |
-| Coordinator | Separate status controller on the shared coordinator host; publisher implementation can also be embedded in Enhance |
+| Publisher | Status product of the unified `pir-publisher` on the shared coordinator host |
 | Chain source | Shared authenticated node connectivity and network identity |
 | Database | Separate status journal, snapshots, sessions, and recovery state |
 | Query domain | One fixed domain of 8,192 rows; no partition selector |
@@ -84,8 +84,8 @@ evaluates the selected generation on its CPU backend.
 Router and worker are separate processes and systemd services, with independent
 admission and resource limits. Their shared host does not introduce a new
 non-collusion assumption: both already belong to the service's trust boundary.
-Their control interfaces require authenticated private connectivity from the
-coordinator; the evaluation API is bound to loopback. Only public client routes
+Neither takes commands from the coordinator: each synchronizes prepared material
+from the publisher over HTTPS, and the evaluation API is bound to loopback. Only public client routes
 are exposed through the existing HTTPS origin.
 
 Status ingestion and preparation use bounded queues and execution budgets.
@@ -302,9 +302,9 @@ state, even if that delays retirement indefinitely for an old candidate.
 
 ### Observation window
 
-The controller's `window_blocks` is the most canonical blocks the source
-retains; published coverage is that many blocks or fewer. The live controller
-has used 4,096 blocks, about 3.6 days at the measured 75.5-second spacing, since
+The Status publisher's `window_blocks` is the most canonical blocks the source
+retains; published coverage is that many blocks or fewer. The recorded
+deployment has used 4,096 blocks, about 3.6 days at the measured 75.5-second spacing, since
 the [September 27 change](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/enhance/status-window-4096-2026-09-27/README.md).
 That value is `MAX_INSPECTION_BLOCKS` in
 `src/status/status-publisher/src/source.rs`, a cap from the
@@ -388,14 +388,13 @@ results as evidence:
 
 The application publisher composes `src/shared/pir-pipeline` acquisition,
 preparation and owner publication. Acquisition still commits only the source
-checkpoint cache. Its one-second observation task and the separately supervised
-heartbeat task continue while a candidate waits on remote preparation. Preparation
-returns immutable manifest/public material; `commit_activate` rechecks canonicality
-and freshness, commits the existing authority record and checks both role replies
-before exposing the generation. A failure after authority advances still stops
-serving and returns to fencing; shared supervision never retries activation.
-Phase timings are internal observations, without changing status formats, source
-freshness or role leases. No store, authority or publication format is shared.
+checkpoint cache. Its one-second observation task continues while a candidate is
+prepared. The publisher prepares complete material once, rechecks canonicality
+and freshness, commits its authority record and then publishes the generation
+over HTTPS; routers and workers verify and activate it independently
+([distribution](status_distributed.md)). Phase timings are internal observations,
+without changing status formats or source freshness. No store, authority or
+publication format is shared.
 
 ### Source consistency and freshness
 
@@ -444,14 +443,12 @@ design before rollout, not a silent increase in freshness tolerance.
 ### Publication protocol
 
 1. Persist a consistent candidate index and its coverage metadata.
-2. Reserve candidate host/device resources before allocation or upload.
-3. Prepare worker data and router packing material for the exact candidate.
-4. Obtain worker, router, and ingress readiness acknowledgments bound to the
-   generation, control epoch, view digest, and process incarnation.
-5. Persist the serving decision and activate the acknowledged views using the
-   existing coordinated publication pattern.
-6. Expose the new manifest only once the corresponding query path is ready.
-7. Release replaced resources after their final admitted request pin is released.
+2. Prepare worker data and router packing material for the exact candidate.
+3. Commit the generation and publish its prepared material over HTTPS.
+4. Workers and routers verify and load it; the router announces the wallet
+   manifest only after it has confirmed the worker can evaluate that exact
+   generation ([distribution](status_distributed.md)).
+5. Release replaced resources after their final admitted request pin is released.
 
 Use active and candidate generations with bounded pins for in-flight work.
 Do not accumulate a historical generation for every observation interval.

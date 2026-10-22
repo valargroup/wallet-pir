@@ -121,8 +121,9 @@ class PublisherFixture:
         config = {'management_listen': '127.0.0.1:18080',
             'transparent_history': {'enabled': True, 'settings': copy.deepcopy(HISTORY)},
             'transaction_details': {'enabled': True, 'settings': copy.deepcopy(DISPLAY)},
-            'enhance': {'enabled': True, 'settings': {'data_dir': '/srv/enhance',
-                'worker_config': '/etc/enhance/workers.json', 'sealed_shards': 6}},
+            'enhance': {'enabled': True, 'settings': {'artifact_listen': '127.0.0.1:8084',
+                'listen': '127.0.0.1:8080', 'data_dir': '/srv/enhance', 'zakura_rpc_url': 'http://127.0.0.1:8232',
+                'zakura_cookie': '/run/credentials/pir-publisher.service/chain-cookie', 'poll_seconds': 10}},
             'status': {'enabled': True, 'settings': {'publisher': {'state_dir': '/srv/status'},
                 'cookie': '/run/node/cookie'}}}
         self.ex.install('coordinator', publisher.UNIT,
@@ -132,7 +133,6 @@ class PublisherFixture:
         self.ex.install('coordinator', publisher.LOAD,
             '[Service]\nExecStart=/bin/load --controller-unit pir-publisher\n', files={'/bin/load': b'load'})
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(config))
-        self.ex.put('coordinator', '/etc/enhance/workers.json', '{}')
         self.ex.put('coordinator', publisher.SAMPLER, json.dumps({'targets': [
             {'sources': ['transparent-publisher', 'txid-controller'], 'unit': publisher.UNIT}]}))
         inventory = json.loads((ROOT / 'tools/enhance/deploy/deploy-inventory.example.json').read_text())

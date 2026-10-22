@@ -33,7 +33,10 @@
     "enabled": true,
     "settings": {
       "listen": "127.0.0.1:8092",
-      "shard_dir": "/srv/pir-query-server/history"
+      "shard_dir": "/srv/pir-query-server/history",
+      "publisher": "https://enhance-pir.valargroup.dev",
+      "publisher_network": "main",
+      "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
     }
   },
   "transaction_details": {
@@ -41,8 +44,10 @@
     "settings": {
       "listen": "127.0.0.1:8095",
       "role": "combined",
-      "publication_dir": "/srv/pir-query-server/txid",
-      "state_dir": "/srv/pir-query-server/txid-state"
+      "state_dir": "/srv/pir-query-server/txid-state",
+      "publisher": "https://enhance-pir.valargroup.dev",
+      "publisher_network": "main",
+      "publisher_genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"
     }
   }
 }

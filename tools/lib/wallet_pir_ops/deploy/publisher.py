@@ -47,16 +47,6 @@ UNIT_PATH = '/etc/systemd/system/' + UNIT
 # running executable.
 STATUS_HTTPS_DROP = '/etc/systemd/system/' + UNIT + '.d/' + 'z' * 36 + '-status-https.conf'
 FINAL = ('committed', 'rolled-back')
-# Publisher settings removed with fleet-controlled Transparent publication, and
-# the value each had to hold for its product to already publish over HTTPS only.
-# None accepts any value of a setting that HTTPS-only publication ignored.
-RETIRED_SETTINGS = {
-    'transparent_history': {'http_only': True, 'distribute_prepared': True, 'ship_runtimes': True,
-                            'shadow': False, 'fleet_command': None, 'fleet_config': None},
-    'transaction_details': {'http_only': True, 'ship_runtimes': True, 'workers': None, 'mode': 'live',
-                            'blocks_per_step': None, 'step_interval_ms': None, 'replay_end': None,
-                            'exit_when_idle': False},
-}
 
 
 def require(condition, message):
@@ -111,13 +101,6 @@ def load_request(path, expected, *, recovery=False):
         require(isinstance(product, dict) and set(product) == {'enabled', 'settings'} and product['enabled'] is True
                 and isinstance(product['settings'], dict),
                 'every cutover product must be enabled')
-        if name not in PRODUCTS:
-            continue
-        settings = product['settings']
-        # Saved transactions keep the settings their publisher ran with.
-        require(recovery or not set(settings) & set(RETIRED_SETTINGS[name]),
-                'Transparent publishing is HTTPS-only; remove retired settings: '
-                + ', '.join(sorted(set(settings) & set(RETIRED_SETTINGS[name]))))
     checks = request['checks']
     require(isinstance(checks, dict) and set(checks) == set(products), 'each product needs an independent exact check')
     for check in checks.values():
@@ -150,23 +133,6 @@ def load_request(path, expected, *, recovery=False):
         from .enhance_https import validate
         validate(request, inventory)
     return request, inventory
-
-
-def without_retired_settings(installed):
-    """The installed configuration with retired settings removed.
-
-    Removal is accepted only where the installed value already selected
-    HTTPS-only publication, so an update never changes what is published.
-    """
-    current = json.loads(json.dumps(installed))
-    for name, retired in RETIRED_SETTINGS.items():
-        settings = current.get(name, {}).get('settings', {})
-        for key, required in retired.items():
-            if key in settings:
-                value = settings.pop(key)
-                require(required is None or value == required,
-                        f'{name}.{key}={value!r} is not HTTPS-only publication; reconcile before updating')
-    return current
 
 
 def exec_override(command):
@@ -241,8 +207,8 @@ class Cutover:
                  history['data_dir'] + '/writer.lock', history['publication_root'] + '/controller.lock',
                  display['journal'] + '/writer.lock', display['root'] + '/controller.lock']
         if self.expanded:
-            from .publisher_products import inputs, locks
-            paths += [*inputs(config), *locks(config)]
+            from .publisher_products import locks
+            paths += locks(config)
         paths += list(allocations or {})
         result = self.ex.publisher_resources(self.host, paths)
         require(result['machine_id'] == self.request['machine_id'], 'coordinator machine identity differs')
@@ -283,8 +249,7 @@ class Cutover:
                 'standalone and unified publishers both own state')
         override = status_https_override(unified, unified['exe_sha256'])
         config = self.request['configuration']
-        installed = json.loads(self.read(CONFIG))
-        require(config == without_retired_settings(installed),
+        require(config == json.loads(self.read(CONFIG)),
                 'publisher updates must preserve every product setting')
         executables = {}
         for name, state in states.items():
@@ -312,7 +277,7 @@ class Cutover:
         require(position < len(load_arguments) and load_arguments[position] in
                 ('pir-publisher', UNIT),
                 'unknown load controller binding')
-        from .publisher_products import render, inputs
+        from .publisher_products import render
         binary = ROOT_DIR + '/releases/' + self.request['release']['binary_sha256'] + '/pir-publisher'
         desired = {
             CONFIG: json.dumps(config, indent=2) + '\n',
@@ -325,15 +290,11 @@ class Cutover:
             # Keep the override and point it at the candidate, so rollback
             # restores the pinned bytes and running executable together.
             desired[STATUS_HTTPS_DROP] = exec_override(units.exec_start(units.effective([desired[UNIT_PATH]])))
-        # Pin consumed inputs without changing their contents or permissions.
-        for path in inputs(config):
-            require(self.read(path) is not None, 'missing publisher configuration: ' + path)
         before = {path: {'text': self.read(path), 'mode': (resource['files'][path] or {}).get('mode', 0o600)} for path in desired}
         serving = self.serving.capture() if self.serving else None
         return {'serving': serving, 'request_sha256': durable.digest(self.request), 'before': before, 'units': states,
                 'desired': desired, 'binary': binary, 'executables': executables,
-                'previous_transaction': previous and previous['id'],
-                'inputs': {path: sha(self.read(path)) for path in inputs(config)}}
+                'previous_transaction': previous and previous['id']}
 
     def plan(self):
         plan = self.capture()
@@ -482,8 +443,6 @@ class Cutover:
                 'managed files changed during staging')
         require(all(stable_unit(self.ex.probe_unit(self.host, name)) == before
                     for name, before in plan['units'].items()), 'publisher fleet changed during staging')
-        require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                'publisher input changed during staging')
         if self.serving:
             self.serving.unchanged_during_staging(plan['serving'])
 
@@ -577,8 +536,6 @@ class Cutover:
             self.resources()
             require(all(self.read(path) == previous['text'] for path, previous in plan['before'].items()),
                     'managed file changed before installation recovery')
-            require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                    'publisher input changed before installation recovery')
             require(self.ex.sha256(self.host, plan['binary']) == self.request['release']['binary_sha256'],
                     'staged publisher changed before installation recovery')
             for name, before in plan['units'].items():
@@ -621,8 +578,6 @@ class Cutover:
             def unchanged():
                 require(all(self.read(path) == text for path, text in plan['desired'].items()),
                         'managed file changed before verification recovery')
-                require(all(sha(self.read(path)) == digest for path, digest in plan.get('inputs', {}).items()),
-                        'publisher input changed before verification recovery')
                 state = self.ex.probe_unit(self.host, UNIT)
                 require(state['active_state'] == 'active' and not state['need_daemon_reload']
                         and state['exe_sha256'] == self.request['release']['binary_sha256'],
@@ -659,8 +614,6 @@ class Cutover:
                     'restart requires this committed publisher transaction')
             for path, text in journal['plan']['desired'].items():
                 require(self.read(path) == text, 'managed file changed before restart: ' + path)
-            for path, digest in journal['plan'].get('inputs', {}).items():
-                require(sha(self.read(path)) == digest, 'adopted input changed before restart: ' + path)
             require(self.ex.probe_unit(self.host, UNIT)['exe_sha256'] == self.request['release']['binary_sha256'],
                     'running publisher executable changed before restart')
             if not self.resume_load:

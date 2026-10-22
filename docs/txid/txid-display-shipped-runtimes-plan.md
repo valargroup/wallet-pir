@@ -13,8 +13,8 @@ the worker's own queries: recent-shard query p50 rises from 29 to 75 ms and p99 
 to 306 ms during a rebuild, at 20 lookups/s. It is also most of block-to-serving time:
 currently p50 8.5 s and p95 12.4 s.
 
-Move that build to the coordinator, as Enhance does for packing state
-(`tools/enhance/deploy/prepared-packing.md`). The controller builds each recent table's
+Move that build to the coordinator, as Enhance publications carry prepared
+packing state. The controller builds each recent table's
 runtime once, writes it in the existing runtime disk-cache format, and ships it with the
 candidate. The worker loads it, checks it end to end, and serves it. The worker builds
 locally only as a fallback.

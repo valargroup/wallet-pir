@@ -51,7 +51,6 @@
     "full": [
       "assignment",
       "geometry_costs",
-      "operator_payloads",
       "revisions_and_cache",
       "round_trip",
       "txid_client",

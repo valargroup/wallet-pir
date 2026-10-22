@@ -28,11 +28,10 @@ BINARIES = {
     # (features `transparent-history,transparent-detail`) with `--config`; the
     # admin tools come from transparent-tools.
     'transparent-shard': ['pir-query-server', 'shard-assign', 'shard-prune'],
-    'transparent-publisher': ['pir-publisher', 'pir-query-server', 'shard-control', 'shard-assign'],
+    'transparent-publisher': ['pir-publisher', 'pir-query-server', 'shard-assign'],
     # Tiered txid display proof of concept beside history; deployed only by
     # `wallet-pir-deploy.py txid-display-*` (tools/txid/lib/txid_display_poc.py).
-    'transparent-txid-display': ['pir-query-server', 'txid-control', 'txid-inventory',
-                                 'pir-publisher',
+    'transparent-txid-display': ['pir-query-server', 'txid-inventory', 'pir-publisher',
                                  'txid-quality-canary'],
     # Status publisher and the query server its roles run, from the native target
     # like `enhance-pir-native`; tools/scripts/wallet-pir-deploy.py renders its units.
@@ -56,7 +55,7 @@ FILES = {
         'tools/enhance/deploy/workers.example.json'],
     'transparent-filter': ['tools/transparent/deploy/transparent-filter-server.service',
                            'tools/transparent/deploy/transparent-filters.example.json'],
-    'transparent-shard': ['tools/transparent/deploy/transparent-shard-server.service', 'tools/transparent/deploy/transparent-Caddyfile'],
+    'transparent-shard': [],
     'transparent-publisher': [],
     'transparent-txid-display': ['tools/txid/deploy/transparent-txid-display-worker.service.in',
                                  'tools/txid/deploy/transparent-txid-display-controller.service.in',

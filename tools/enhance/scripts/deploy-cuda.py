@@ -46,8 +46,7 @@ def validate_inventory(inventory, service):
     config = inventory.services['enhance'].get('cuda_validation', {})
     if (not config.get('origin', '').startswith('https://')
             or not Path(config.get('oracle', '')).is_absolute()
-            or not config.get('router_url', '').startswith('http://')
-            or not config.get('coordinator_url', '').startswith('http://')):
+            or not config.get('router_url', '').startswith('http://')):
         raise ValueError('CUDA validation requires public HTTPS origin, absolute oracle and private health URLs')
     return target
 

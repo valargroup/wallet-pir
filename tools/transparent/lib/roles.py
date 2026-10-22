@@ -46,7 +46,6 @@ def publisher(config, *, config_path, state_dir, executable='/usr/local/bin/pir-
 
 
 HISTORY_TEMPLATE = ROOT / 'tools/transparent/deploy/transparent-history-worker.role.service'
-HISTORY_SOCKET = '/run/transparent-history-worker/control.sock'
 # The release payload's host binary (`pir-query-server`, built with its
 # `transparent-history` and `transparent-detail` features, and the descriptor's
 # `binary`); unit names keep their own history.
@@ -74,47 +73,60 @@ def document(management, listen, section, body):
     return {'management_listen': management, section: {'enabled': True, 'settings': body}}
 
 
-def history_worker(settings, *, release, template=None):
-    """The shard server under publication control.
+def https_origin(value, name):
+    """An explicit trusted HTTPS origin, or refusal."""
+    from urllib.parse import urlsplit
+    if not isinstance(value, str):
+        raise ValueError(name + ' must be an explicit trusted HTTPS origin')
+    origin = urlsplit(value)
+    if (origin.scheme != 'https' or not origin.hostname or origin.username is not None
+            or origin.password is not None or origin.path not in ('', '/')
+            or origin.query or origin.fragment or any(c.isspace() for c in value)):
+        raise ValueError(name + ' must be an explicit trusted HTTPS origin')
+    return value
 
-    The staged shard set and assignment are read-only inputs; the active
-    record and any runtime cache are state. The command is
-    `pir-query-server --config` a generated `transparent_history` section, and
-    the preflight check is the server's own loader, `--verify-only`, over that
-    same file: it verifies the set (or the recorded active publication) and
-    exits without listening.
+
+def publisher_source(s):
+    """The publisher settings every Transparent HTTPS consumer section carries."""
+    import re
+    if s['publisher_network'] != 'main' or not isinstance(s['publisher_genesis'], str) \
+            or not re.fullmatch('[0-9a-f]{64}', s['publisher_genesis']):
+        raise ValueError('publisher_network must be main and publisher_genesis a lowercase digest')
+    return {'publisher': https_origin(s['publisher'], 'publisher'),
+            'publisher_network': s['publisher_network'], 'publisher_genesis': s['publisher_genesis']}
+
+
+def history_worker(settings, *, release, template=None):
+    """A History query server that synchronizes from its HTTPS publisher.
+
+    Its state directory holds what it downloaded and is writable; the
+    configuration and any CA file are read-only. There is no preflight loader
+    check: `--verify-only` with a publisher synchronizes into the live state,
+    so the engine installs and restarts the unit and readiness proves it.
     """
     from wallet_pir_ops.role_config import address, settings_of, worker as render_worker
-    s = settings_of(settings, ('listen', 'shard_dir', 'state_dir'),
-                    ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions', 'assignment', 'worker_id',
-                     'prune_excess', 'runtime_cache_dir', 'runtime_cache_max_bytes'))
-    shards, state = directory(s['shard_dir']), directory(s['state_dir'])
+    s = settings_of(settings, ('listen', 'state_dir', 'publisher', 'publisher_network', 'publisher_genesis'),
+                    ('publisher_ca', 'archive_upstream', 'archive_ca', 'full_holdings', 'cache_bytes',
+                     'build_slots', 'query_slots', 'retain_revisions', 'bootstrap_max_bytes', 'prune_excess'))
+    state = directory(s['state_dir'])
     listen = address(s['listen'], 'listen')
-    body = {'listen': listen, 'shard_dir': shards}
-    body.update(integers(s, ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions')))
-    reads, writes = [shards], [state]
-    if ('assignment' in s) != ('worker_id' in s):
-        raise ValueError('assignment and worker_id go together')
-    if 'assignment' in s:
-        assignment = directory(s['assignment'])
-        if not isinstance(s['worker_id'], str) or not s['worker_id'].replace('-', '').isalnum():
-            raise ValueError('worker_id must be a plain name')
-        body.update(assignment=assignment, worker_id=s['worker_id'])
-        reads.append(assignment)
-    if s.get('prune_excess', False) is True:
-        body['prune_excess'] = True
-    if 'runtime_cache_dir' in s:
-        cache = directory(s['runtime_cache_dir'])
-        body['runtime_cache_dir'] = cache
-        body.update(integers(s, ('runtime_cache_max_bytes',)))
-        writes.append(cache)
-    body.update(control_socket=HISTORY_SOCKET, active_record=state + '/active.json')
+    body = {'listen': listen, 'shard_dir': state, **publisher_source(s)}
+    if 'archive_upstream' in s:
+        body['archive_upstream'] = https_origin(s['archive_upstream'], 'archive_upstream')
+    body.update(integers(s, ('cache_bytes', 'build_slots', 'query_slots', 'retain_revisions', 'bootstrap_max_bytes')))
+    for name in ('full_holdings', 'prune_excess'):
+        if s.get(name, False) is True:
+            body[name] = True
     path, management = CONFIGS['history-worker']
+    reads = [path]
+    for name in ('publisher_ca', 'archive_ca'):
+        if name in s:
+            body[name] = directory(s[name])
+            reads.append(body[name])
     template = HISTORY_TEMPLATE.read_text() if template is None else template
     return render_worker(template, directory(release) + '/' + SERVER, ['--config', path],
                          configurations={path: document(management, listen, 'transparent_history', body)},
-                         writable=writes, readonly=[path, *reads], settings=s,
-                         check=('--config', path, '--verify-only'))
+                         writable=[state], readonly=reads, settings=s)
 
 
 def history_provider(settings, *, release, template=None):
@@ -124,8 +136,6 @@ def history_provider(settings, *, release, template=None):
 
 def _provider(settings, release, template, config):
     import ipaddress
-    import re
-    from urllib.parse import urlsplit
     from wallet_pir_ops.role_config import address, settings_of, worker as render_worker, set_service
     s = settings_of(settings, ('listen', 'state_dir', 'publisher', 'publisher_network',
                               'publisher_genesis', 'archive_upstream'),
@@ -137,20 +147,8 @@ def _provider(settings, release, template, config):
     if not ipaddress.ip_address(host.strip('[]')).is_loopback or not 0 < int(port) < 65536:
         raise ValueError('provider listen must be loopback; expose wallet routes through operator TLS')
     state = directory(s['state_dir'])
-    body = {'listen': listen, 'shard_dir': state}
-    for name in ('publisher', 'archive_upstream'):
-        value = s[name]
-        if not isinstance(value, str):
-            raise ValueError(name + ' must be an explicit trusted HTTPS origin')
-        origin = urlsplit(value)
-        if (origin.scheme != 'https' or not origin.hostname or origin.username is not None
-                or origin.password is not None or origin.path not in ('', '/')
-                or origin.query or origin.fragment or any(c.isspace() for c in value)):
-            raise ValueError(name + ' must be an explicit trusted HTTPS origin')
-        body[name] = value
-    if s['publisher_network'] != 'main' or not isinstance(s['publisher_genesis'], str) or not re.fullmatch('[0-9a-f]{64}', s['publisher_genesis']):
-        raise ValueError('publisher_network must be main and publisher_genesis a lowercase digest')
-    body.update(publisher_network=s['publisher_network'], publisher_genesis=s['publisher_genesis'])
+    body = {'listen': listen, 'shard_dir': state, **publisher_source(s),
+            'archive_upstream': https_origin(s['archive_upstream'], 'archive_upstream')}
     path, management = CONFIGS[config]
     # ProtectSystem=strict already keeps the release read-only; naming its
     # directory would make every upgrade look like unit drift.

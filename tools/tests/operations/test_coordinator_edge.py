@@ -44,9 +44,9 @@ def site(text, host):
     return text[start:end]
 
 
-def load_upgrade_script():
-    path = ROOT / 'tools/transparent/scripts/upgrade-transparent-fleet.py'
-    spec = importlib.util.spec_from_file_location('upgrade_transparent_fleet', path)
+def load_schema_routing():
+    path = ROOT / 'tools/transparent/lib/activity_schema_routing.py'
+    spec = importlib.util.spec_from_file_location('activity_schema_routing', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -88,7 +88,7 @@ class Rendering(unittest.TestCase):
         self.assertEqual(after, rendered())
 
     def test_maintenance_closes_filter_routes_on_both_sites(self):
-        guard = load_upgrade_script().guard_coordinator
+        guard = load_schema_routing().guard_coordinator
         text = rendered().replace('\thandle /v1/status/* {', '\t@transparent_publication path /v1/shards\n'
                                   '\thandle @transparent_publication {\n\t\treverse_proxy 127.0.0.1:8094\n\t}\n'
                                   '\thandle /v1/status/* {', 1)

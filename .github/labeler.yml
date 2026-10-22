@@ -86,7 +86,6 @@
             "docs/publisher.md",
             "tools/transparent/deploy/transparent-publish-controller.service",
             "tools/txid/deploy/transparent-txid-display-controller.service.in",
-            ".github/workflows/deploy-transparent-publisher.yml",
             ".github/workflows/publish-transparent-shards.yml",
             ".github/workflows/backfill-transparent-events.yml",
             "tools/receiver/digitalocean/receiver-pir.service.in"

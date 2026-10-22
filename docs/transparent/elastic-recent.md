@@ -40,7 +40,6 @@ All paths are on the coordinator.
 | Process | Writes | Reads |
 |---|---|---|
 | Operator CLI `transparent-fleet-inventory.py` | inventory (any member, archive only with `--archive` and never in `act` mode) | – |
-| Operator `transparent-archive-standby.py` (root) | a host not yet in the inventory; `state/standby/<id>/` plans | inventory, `roster.json`, `state/active.json`, publisher `/v1/status` |
 | Actuator `transparent-fleet-actuator.py` (root, credentials) | inventory (elastic recent members only), `scaler/journal/`, elastic Terraform state, `credentials/known_hosts` entries of elastic members | `scaler/request.json`, `scaler/policy.json`, membership |
 | Reconciler (`transparent-live-fleet.py --reconcile`) | `state/membership.json`, `state/active.json`, per-publication plans | inventory projection (`roster.json`) |
 | Scaler `transparent-fleet-scaler.py` (no credentials) | `scaler/state.json`, `scaler/status.json`, `scaler/decisions.jsonl`, `scaler/request.json` | membership, worker `/metrics`, publisher `/v1/status`, `scaler/policy.json` |

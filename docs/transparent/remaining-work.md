@@ -124,17 +124,19 @@ the last two were found during the redeploy.
 - [ ] Make the `4c85b6c2` operations source verify again, or record that the 2026-10-03
   cutover's rollback is no longer available.
   - **The change.** On 2026-10-06 the txid display router hook rewrote
-    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The live
-    controller's `fleet_command` and the replica reconciler both run that file.
+    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The
+    standalone controller's `fleet_command` and the replica reconciler both ran that file.
   - **Why it refuses.** The receipt still records the original bytes, so every phase of
     the committed 2026-10-03 schema transaction refuses at receipt verification, its
     rollback included.
   - **Why source cannot fix it.** Those phases run `4c85b6c2`'s own code. Only the
     bootstrap survey, which runs from the staging client, accepts the one replacement.
-  - **One fix.** Stage a new source and point the controller's `fleet_command` and the
-    reconciler and control-sessions units at its adapter, then restart them. Next,
-    restore the original bytes kept by the router-hook transaction. After that, the
-    attribution pins move to the new source.
+  - **One fix.** Stage a new source and point the reconciler and control-sessions units
+    at its adapter, then restart them. Next, restore the original bytes kept by the
+    router-hook transaction. After that, the attribution pins move to the new source.
+    The binary upgrade tool no longer changes a standalone controller's
+    `fleet_command` (its `staging_adapter` request was removed on 2026-10-22), so a
+    standalone controller cannot be repointed through it.
 - [ ] Re-pin the version-1 portable executables to full CI 38011976059 at `9d2cbda0`,
   which production runs since the
   [`9d2cbda0` redeploy](https://github.com/valargroup/wallet-pir/blob/c00c2101e85fb9518ef8509f4478ed097ce49814/evidence/transparent/fleet-redeploy-9d2cbda0-2026-10-10/README.md):
@@ -144,25 +146,11 @@ the last two were found during the redeploy.
 - [x] Retire the changed-native candidate `c3c66b9b` (2026-10-22). Its v11
   qualification path was removed with the candidate tooling; historical
   identities, retained evidence and the 12ce publication stay unchanged.
-- [ ] Port the standard deploy paths to v11; the v11 fleet lives under
-  `/opt/transparent-publisher/v11/`.
-  - `deploy-transparent-publisher.py` `shadow` and `activate` write
-    `/opt/transparent-publisher/controller.json` and `fleet.json`. They default to the
-    v7 publication, the version-2 journal and `/srv/zakura/transparent-publications`.
-    `deploy-transparent-publisher.yml` runs it with those defaults.
-  - `upgrade-transparent-fleet.py` defaults to `/opt/transparent-publisher/fleet.json`.
-  - `deploy-transparent-shard.yml` reads `/opt/transparent-publisher/state/inventory.json`
-    and `roster.json`.
-
-  Run now, they would point the controller back at pre-v11 configuration. The
-  2026-10-09 redeploy used a manual runbook instead (its `raw/steps/`), reusing only
-  `install_worker`.
-- [ ] Give `roll-recent-replicas.py` a reviewed floor for a two-replica tier. It
-  restarts a replica only while two other recent replicas serve
-  (`MIN_OTHER_SERVING = 2`). The tier has two replicas, and the actuator that used to add
-  a temporary third is disabled. The 2026-10-09 roll therefore set the floor to 1 for
-  that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
-  Add an explicit, logged override, or bring up a temporary third replica for each roll.
+- [x] Retire the push deploy paths instead of porting them to v11 (2026-10-22).
+  `deploy-transparent-publisher.py`/`.yml`, `upgrade-transparent-fleet.py`,
+  `deploy-transparent-shard.sh`/`.yml` and `roll-recent-replicas.py` pushed
+  binaries and shard sets to workers over SSH and were removed with HTTPS-only
+  publication. Their pre-v11 defaults and the two-replica roll floor no longer apply.
 
 ## 8-bit history profile
 
@@ -260,8 +248,8 @@ Not planned with it: other row widths, a two-digit 8-bit key, or any change to `
     `txid-display-genesis/v2` root, `canonical-load/v11*`, `/opt/transparent-publisher/v11*`
     and `/opt/transparent-txid-display`. The retired unit files are kept in
     `/root/v1-destroy-20261014/retired-units/`;
-  - [ ] move the remaining pre-v11 `/v1` paths in `transparent-Caddyfile` and
-    `deploy-transparent-shard.sh` to `/v2`, or delete that single-worker deploy path.
+  - [x] delete the single-worker deploy path that still served pre-v11 `/v1` paths
+    (`transparent-Caddyfile`, `deploy-transparent-shard.sh`; 2026-10-22).
 
 ## Transparent monitoring on /v2
 

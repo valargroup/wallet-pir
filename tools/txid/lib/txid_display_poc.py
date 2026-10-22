@@ -49,7 +49,7 @@ PLAN_SCHEMA = 'txid-display-poc-plan-v1'
 JOURNAL_KIND = 'txid-display-poc-transaction-v1'
 FLEET_SCHEMA = 'txid-display-fleet-v1'
 KIND = 'transparent-txid-display'
-BINARIES = ('pir-query-server', 'txid-control', 'txid-inventory', 'pir-publisher', 'txid-quality-canary')
+BINARIES = ('pir-query-server', 'txid-inventory', 'pir-publisher', 'txid-quality-canary')
 SCRIPTS = ('txid-display-fleet.py', 'txid-display-observe.py')
 TEMPLATES = ('transparent-txid-display-worker.service.in', 'transparent-txid-display-controller.service.in',
              'txid-display-routes.caddy.in')
@@ -58,8 +58,8 @@ RELEASE_FILES = {name: 'tools/txid/deploy/' + name for name in TEMPLATES}
 RELEASE_FILES.update({name: 'tools/txid/scripts/' + name for name in SCRIPTS})
 # What each host runs. Workers never receive the controller or the backfill.
 HOST_RELEASE = {
-    'coordinator': ('pir-publisher', 'txid-inventory', 'txid-control', *SCRIPTS),
-    'archive': ('pir-query-server', 'txid-control'),
+    'coordinator': ('pir-publisher', 'txid-inventory', *SCRIPTS),
+    'archive': ('pir-query-server',),
 }
 # One combined worker on the archive host, which also serves the site.
 WORKERS = ('archive',)
@@ -1056,10 +1056,6 @@ class Poc:
     def self_check(self, name):
         """A non-mutating invocation of a staged executable: `(argv, exit status, output marker)`."""
         path = self.binary(name)
-        if name == 'txid-control':
-            # `txid-control SOCKET < command.json` has no --help: argv[1] is the
-            # socket. Without one it prints its usage and exits 1, touching nothing.
-            return [path], 1, 'usage: txid-control SOCKET'
         if name.endswith('.py'):
             return ['/usr/bin/python3', path, '--help'], 0, ''
         return [path, '--help'], 0, ''

@@ -38,7 +38,7 @@ impl pir_pipeline::publisher::Workflow for DetailPublication<'_> {
         Ok(())
     }
     async fn finish(&mut self) -> Result<(), BoxError> {
-        while self.controller.building || self.controller.staging {
+        while self.controller.building {
             if let Some(event) = self.controller.receiver.recv().await {
                 self.controller.background(event);
             }

@@ -15,7 +15,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnhancePublisherConfig {
-    pub artifact_listen: Option<SocketAddr>,
+    pub artifact_listen: SocketAddr,
     pub listen: SocketAddr,
     pub data_dir: PathBuf,
     pub zakura_rpc_url: String,
@@ -29,7 +29,6 @@ impl EnhancePublisherConfig {
     pub fn validate(&self) -> Result<()> {
         let rpc = reqwest::Url::parse(&self.zakura_rpc_url)?;
         if self.poll_seconds == 0
-            || self.artifact_listen.is_none()
             || !self.data_dir.is_absolute()
             || !self.zakura_cookie.is_absolute()
             || !matches!(rpc.scheme(), "http" | "https")
@@ -37,7 +36,7 @@ impl EnhancePublisherConfig {
             || !rpc.username().is_empty()
             || rpc.password().is_some()
         {
-            return Err("Enhance publisher needs canonical RPC credentials, absolute state paths, an artifact listener and nonzero polling".into());
+            return Err("Enhance publisher needs canonical RPC credentials, absolute state paths and nonzero polling".into());
         }
         Ok(())
     }
@@ -79,10 +78,8 @@ pub async fn run(
     }
     let rpc = ZakuraClient::from_cookie_file(&config.zakura_rpc_url, &config.zakura_cookie)?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
-    let artifacts = tokio::spawn(http.serve(
-        config.artifact_listen.ok_or("artifact listener missing")?,
-        publisher.distribution().router(),
-    ));
+    let artifacts =
+        tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));
     tasks.own(&artifacts);
     let failed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let artifact_failed = failed.clone();
@@ -126,10 +123,7 @@ pub fn configure(
     };
     config.validate()?;
     let resources = PublisherResources {
-        listeners: vec![
-            config.listen,
-            config.artifact_listen.ok_or("artifact listener missing")?,
-        ],
+        listeners: vec![config.listen, config.artifact_listen],
         writable_paths: vec![config.data_dir.clone()],
         probes: vec![ReadinessProbe {
             address: config.listen,

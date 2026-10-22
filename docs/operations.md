@@ -297,11 +297,9 @@ them with the usual exact artifact identity, pinned hosts, lock and journal:
    refuses to overwrite a configuration file it did not render.
 3. `deploy` stages the release, then runs the product's own check on the
    staged release against a staged copy of the configuration before any unit
-   changes: `receiver-directory serve-publication --check`,
-   `pir-query-server --config FILE --verify-only` for the role's Transparent
-   history section and, when an initial publication is named, for its
-   transaction-details section. Enhance and Status
-   workers have no staged inputs, so no check is manufactured for them. The
+   changes: `receiver-directory serve-publication --check`. Enhance, Status
+   and Transparent workers download their publications from their HTTPS
+   publisher and have no staged inputs, so no check is manufactured for them. The
    unit is then written, enabled, started and verified: active, the release's
    digest running, health answering with that `binary_sha256`, and the role's
    own readiness where it has one.
@@ -316,10 +314,10 @@ identity, never serving authority:
 
 | Role | Controller and dependencies | Ready when |
 |---|---|---|
-| Enhance worker | the coordinator reserves, uploads rows, prepares, activates and commits over `/internal/*` with `ENHANCE_INTERNAL_TOKEN`; a packing router must list it | `published` is nonempty, after the coordinator activates it |
+| Enhance worker | the worker downloads published rows from its configured HTTPS publisher and activates them itself; a packing router must list it | health `ready`, once its active publication's lease holds |
 | Status worker | the worker downloads prepared database units from its configured HTTPS publisher; wallet/evaluation forwarding remains separate | control health `ready`, with a fresh, verified and eligible publication |
-| Transparent history worker | the publication controller prepares and activates over the root-only control socket; the staged set or active record loads at start | `/v1/ready` once its runtimes are warm |
-| Transparent display worker | the display controller stages, prepares and activates over its control socket; starts empty | `/v1/ready` after its first activation |
+| Transparent history worker | the worker downloads verified publications and runtimes from its configured HTTPS publisher and activates them itself | `/v1/ready` once its runtimes are warm |
+| Transparent display worker | the worker downloads the full display publication from its configured HTTPS publisher and activates it itself; starts empty | `/v1/ready` after its first activation |
 | Receiver `serve-publication` | the operator's publication record; a node for canonical checks; the publisher remains trusted for completeness | `serving` set, once the record verifies and its anchor is canonical |
 
 `worker-report SERVICE [--only ROLE]` reads only existing private endpoints and

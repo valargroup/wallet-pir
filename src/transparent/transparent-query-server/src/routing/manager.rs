@@ -3,7 +3,7 @@
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 use crate::{
-    control::persist,
+    durable::persist,
     history::{
         live::{Command, LiveService, Publication},
         service::{ServiceConfig, ServiceState},

@@ -10,8 +10,6 @@ transparent_publication_lag_blocks 0
 transparent_publication_oldest_unpublished_seconds 0
 # TYPE transparent_publication_withdrawn gauge
 transparent_publication_withdrawn 0
-# TYPE transparent_publication_ready_recent_replicas gauge
-transparent_publication_ready_recent_replicas 1
 # TYPE transparent_publication_last_cycle_seconds gauge
 transparent_publication_last_cycle_seconds 13.377106881
 # TYPE transparent_publication_last_freshness_seconds gauge

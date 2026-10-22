@@ -320,7 +320,6 @@ async fn http_display_publisher_recovers_after_an_offline_reorg() {
             &root,
             open_writer(&journal).unwrap(),
             Source::Script(Script::new(steps)),
-            vec![],
             Settings {
                 distribution: Some(distribution.clone()),
                 exit_when_idle: true,
@@ -356,7 +355,6 @@ async fn http_display_publisher_recovers_after_an_offline_reorg() {
             &root,
             open_writer(&journal).unwrap(),
             Source::Script(Script::new([])),
-            vec![],
             Settings {
                 distribution: Some(distribution.clone()),
                 exit_when_idle: true,

@@ -185,10 +185,10 @@ impl Source {
             origin: self.transport.origin().to_string(),
             current: current.clone(),
         };
-        let primary = crate::control::persist(&directory.join("publisher-high-water.json"), &saved);
+        let primary = crate::durable::persist(&directory.join("publisher-high-water.json"), &saved);
         let fallback = directory.join("publisher-high-water-fallback.json");
         if primary.is_err() || fallback.exists() {
-            crate::control::persist(&fallback, &saved)?;
+            crate::durable::persist(&fallback, &saved)?;
         }
         primary?;
         Ok(())
@@ -450,27 +450,27 @@ mod observation_tests {
                     origin: source.transport.origin().to_string(),
                     current: next.clone(),
                 };
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                crate::durable::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(source
                     .validate_observation(root.path(), &next)
                     .unwrap()
                     .is_some());
                 saved.current.revision += 1;
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                crate::durable::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a newer readable companion"
                 );
                 saved.current = next.clone();
                 saved.current.inventory_sha256 = "33".repeat(32);
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                crate::durable::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "equal revisions cannot substitute another inventory"
                 );
                 saved.current = next.clone();
                 saved.origin = "https://another.invalid/".into();
-                crate::control::persist(&root.path().join(companion), &saved).unwrap();
+                crate::durable::persist(&root.path().join(companion), &saved).unwrap();
                 assert!(
                     source.validate_observation(root.path(), &next).is_err(),
                     "a damaged record must not hide a readable origin mismatch"

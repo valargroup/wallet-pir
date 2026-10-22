@@ -43,7 +43,7 @@ def _local_role(settings, *, release, template, role, external=False):
     """Render a Status HTTPS consumer and its private evaluation listeners."""
     from urllib.parse import urlsplit
     required = ('network_hex', 'state_dir', 'listen', 'publisher')
-    optional = ('worker_origin', 'publisher_ca', 'cuda') + (('query_listen',) if role == 'router' else ())
+    optional = ('worker_origin', 'publisher_ca') + (('query_listen',) if role == 'router' else ())
     config = settings_of(settings, required, optional)
     network = config['network_hex']
     if not isinstance(network, str) or len(network) != 64 or any(c not in '0123456789abcdef' for c in network):
@@ -55,8 +55,6 @@ def _local_role(settings, *, release, template, role, external=False):
     body = dict(config, role=role)
     body['state_dir'] = directory(body['state_dir'])
     body.setdefault('worker_origin', 'http://' + body['listen'])
-    if type(body.get('cuda', False)) is not bool:
-        raise ValueError('cuda must be a boolean')
     readonly = []
     if 'publisher_ca' in body:
         body['publisher_ca'] = directory(body['publisher_ca'])

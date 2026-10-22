@@ -1,4 +1,4 @@
-"""State and consumed inputs of the already-unified four-product publisher."""
+"""Locks and unit rendering of the already-unified four-product publisher."""
 from . import units
 from .engine import DeployError
 
@@ -6,11 +6,6 @@ from .engine import DeployError
 def require(condition, message):
     if not condition:
         raise DeployError(message)
-
-
-def inputs(config):
-    enhance = config['enhance']['settings']
-    return [enhance[k] for k in ('worker_config', 'packing_router_config', 'pool_policy') if enhance.get(k)]
 
 
 def locks(config):

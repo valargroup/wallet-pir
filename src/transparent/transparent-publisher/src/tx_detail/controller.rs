@@ -2,25 +2,23 @@
 //!
 //! Each block from the source goes into the in-memory cache. The seal rule
 //! runs over the cache and queues every seal it makes; queued seals are built
-//! one at a time in the background (each chains its predecessor's digest)
-//! and staged on every archive owner. A cycle then publishes: the staged
-//! prefix of the queue becomes archives, the recent shard is rebuilt over its
-//! window (every unsealed block, reaching back over the newest archives until
-//! it holds `recent_window` txids), a candidate is written, and workers are
-//! activated archive owners first. A map therefore never names an archive its
-//! owners are not already serving.
+//! one at a time in the background (each chains its predecessor's digest).
+//! A cycle then publishes: the built prefix of the queue becomes archives,
+//! the recent shard is rebuilt over its window (every unsealed block,
+//! reaching back over the newest archives until it holds `recent_window`
+//! txids), a candidate is written with its prepared runtimes, and the HTTPS
+//! distribution finalizes it for query servers to download.
 //!
 //! Sealed content never changes. A fork below the sealed floor, bytes that
 //! differ under a published identity, or a map whose sealed entries are not
 //! the previous ones (minus window drops) halts the controller: it writes
 //! `halted.json`, logs `alert=txid_display_halt`, and stops publishing while
-//! workers keep serving the last activation.
+//! query servers keep serving the last finalized publication.
 //!
-//! A rollback owes every recent replica an invalidation. It is recorded in
-//! `invalidate.json` before the journal changes and kept until each replica
-//! acknowledges it, and a replica is offered nothing newer until then. A
-//! restart that finds the journal off the activated chain without such a
-//! record withdraws the whole recent range.
+//! A rollback withdraws the HTTPS publication and is recorded in
+//! `invalidate.json` before the journal changes. A restart that finds the
+//! journal off the activated chain without such a record rewrites everything
+//! from the recent start.
 mod workflow;
 use workflow::DetailPublication;
 
@@ -34,7 +32,6 @@ use super::publisher::{
     collect, probe_hard_links, publish_parts, read_map, verify_dir, write_candidate, ActiveRecord,
     DisplayRoot, PublishError, PublishedShard, SealRecord, ShardSpec, HALTED_FILE, MANIFEST_FILE,
 };
-use super::serving::{stage, Fleet, StageOutcome, WorkerConfig};
 use super::source::{Source, SourceError, SourceUpdate};
 use super::timeline::{HeightIndex, Timeline};
 use crate::history::publication::{write_atomic, BoxError, Journal};
@@ -57,14 +54,11 @@ use transparent_shared::runtime::disk::ShippedRuntimes;
 use transparent_shared::tx_detail::prebuild::Shipped;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
-/// Command-adapter workers are asked to collect every this many cycles.
-const WORKER_COLLECT_EVERY: u64 = 20;
 /// Consecutive failed cycles after which publication counts as stalled.
 const STALL_FAILURES: u32 = 5;
 /// How often a standing recent-shard bound alert repeats.
 const LAG_ALERT_EVERY: Duration = Duration::from_secs(60);
-/// Invalidations recent replicas have not acknowledged, and the lowest
-/// rollback since the last activation.
+/// The lowest rollback since the last activation.
 pub const INVALIDATE_FILE: &str = "invalidate.json";
 
 /// Builds a revision's runtimes into a candidate directory; see
@@ -74,13 +68,13 @@ pub type Prebuild = fn(&Path, &Path) -> Result<Vec<Shipped>, String>;
 pub struct Settings {
     /// Skip re-verifying sealed revisions at startup.
     pub trust_sealed: bool,
-    /// Finalized HTTP publications; no externally controlled worker is required.
+    /// The HTTPS publication query servers download. Every live publisher
+    /// has one; controller tests without a node leave it out.
     pub distribution: Option<super::distribution::Distribution>,
-    /// Build the recent revision's runtimes into each candidate, so recent
-    /// replicas load them instead of building (`--ship-runtimes`). A failed
-    /// build is counted and the candidate ships without them.
-    pub ship_runtimes: Option<Prebuild>,
-    /// Unused candidates kept besides the active and worker-held ones.
+    /// Builds the recent revision's runtimes into each candidate before it is
+    /// finalized. A failed build is counted, and finalization builds them.
+    pub prebuild: Prebuild,
+    /// Unused candidates kept besides the active one.
     pub retain_candidates: usize,
     /// Above this many unsealed records in the cache, a `lag` alert repeats
     /// every minute: the next recent shard would hold them all.
@@ -99,7 +93,7 @@ impl Default for Settings {
         Self {
             trust_sealed: false,
             distribution: None,
-            ship_runtimes: None,
+            prebuild: transparent_shared::tx_detail::prebuild::build_shipped,
             retain_candidates: 3,
             max_recent_records: None,
             exit_when_idle: false,
@@ -186,8 +180,6 @@ enum JobState {
     Planned,
     Building,
     Built,
-    Staging,
-    Staged,
 }
 
 /// One seal from decision to publication.
@@ -199,16 +191,13 @@ struct SealJob {
     bucket_counts: Vec<u64>,
     state: JobState,
     shard: Option<PublishedShard>,
-    stage_s: f64,
     attempts: u32,
     retry_at: Option<Instant>,
-    /// Staged again after an archive owner lost it; its `seal` event stands.
-    restaged: bool,
 }
 
 impl SealJob {
     fn record(&self) -> SealRecord {
-        let shard = self.shard.as_ref().expect("a staged seal is built");
+        let shard = self.shard.as_ref().expect("a publishable seal is built");
         SealRecord {
             shard_id: self.shard_id,
             start_height: self.start,
@@ -230,16 +219,9 @@ impl SealJob {
     }
 }
 
-enum Background {
-    Built {
-        shard_id: u64,
-        result: Result<Box<PublishedShard>, PublishError>,
-    },
-    Staged {
-        shard_id: u64,
-        seconds: f64,
-        outcomes: Vec<StageOutcome>,
-    },
+struct Background {
+    shard_id: u64,
+    result: Result<Box<PublishedShard>, PublishError>,
 }
 
 fn backoff(attempts: u32) -> Duration {
@@ -250,10 +232,10 @@ fn ms(started: Instant) -> u64 {
     started.elapsed().as_millis() as u64
 }
 
-/// The lowest rollback since a candidate last went out to workers, made while
+/// The lowest rollback since a candidate was last finalized, made while
 /// `map_sha256` was active. Its ancestor was on that map's chain, so a
-/// journal that still holds it agrees with everything replicas can serve
-/// through it, and the invalidations queued with it cover the rest.
+/// journal that still holds it agrees with everything published through it
+/// below the ancestor.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct RollbackRecord {
     map_sha256: String,
@@ -264,8 +246,6 @@ struct RollbackRecord {
 /// `invalidate.json`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 struct Invalidations {
-    /// Each recent replica's unacknowledged `from_height`.
-    pending: BTreeMap<String, u64>,
     rollback: Option<RollbackRecord>,
 }
 
@@ -358,7 +338,6 @@ pub struct Controller {
     cache: DisplayCache,
     index: HeightIndex,
     timeline: Timeline,
-    fleet: Fleet,
     settings: Settings,
     active: ActiveRecord,
     map: DisplayMap,
@@ -367,7 +346,6 @@ pub struct Controller {
     published_tip: (u64, String),
     queue: VecDeque<SealJob>,
     building: bool,
-    staging: bool,
     sender: mpsc::UnboundedSender<Background>,
     receiver: mpsc::UnboundedReceiver<Background>,
     /// When each not yet published height was first observed.
@@ -383,11 +361,11 @@ pub struct Controller {
     prebuild_failures: u64,
     /// The stop request of the running loop. Candidate preparation observes
     /// it between its blocking steps and ends without activating; once
-    /// worker activation begins, the cycle finishes its commit.
+    /// finalization begins, the cycle finishes its commit.
     shutdown: pir_pipeline::service::Shutdown,
     last_cycle: Value,
     /// Unix milliseconds of the last activation by a cycle, and of the last
-    /// seal staged on its owners; 0 before the first since this start.
+    /// seal built; 0 before the first since this start.
     last_success_ms: u64,
     last_seal_ms: u64,
     maps: Vec<DisplayMap>,
@@ -401,17 +379,15 @@ impl Controller {
     /// revisions must verify from disk (unless trusted). The cache is reloaded
     /// from its window floor (see [`cache_floor`]) through the activated tip;
     /// queued seals are planned again from it and reproduce the same digests.
-    /// Undelivered invalidations are restored. A journal that no longer holds
-    /// the activated tip, unless a recorded rollback accounts for it, owes
-    /// every recent replica an invalidation from the recent start.
+    /// A journal that no longer holds the activated tip is rewritten from the
+    /// recorded rollback, or from the recent start without one.
     pub fn open(
         root: &Path,
         store: EventStore,
         source: Source,
-        workers: Vec<WorkerConfig>,
         settings: Settings,
     ) -> Result<Self, BoxError> {
-        // Workers are handed absolute candidate paths.
+        // Candidate and active paths are recorded absolute.
         let root = &std::fs::canonicalize(root)?;
         let layout = DisplayRoot::load(root)?;
         layout.validate()?;
@@ -482,19 +458,17 @@ impl Controller {
             cache_floor(&store, &layout.seal, map.start_height, unsealed)?.min(recent.start_height);
         let cache = DisplayCache::load(&store, layout.seal, floor, through, now_ms())?;
         let index = HeightIndex::open(root)?;
-        let mut fleet = Fleet::new(workers);
         let saved_invalidations = Invalidations::load(root)?;
-        fleet.restore_invalidations(&saved_invalidations.pending);
         let journal_hash = |height: u64| {
             store
                 .block_at(height)
                 .map(|b| b.block_hash.to_display_hex())
         };
-        // Off the activated chain, replicas may serve blocks the journal no
-        // longer holds. A recorded rollback whose ancestor the journal still
-        // holds queued every invalidation that calls for. Otherwise where they
-        // differ is unknown, but sealed terminals are checked below, so
-        // everything from the recent start is enough.
+        // Off the activated chain, the activated publication holds blocks the
+        // journal no longer does. A recorded rollback whose ancestor the
+        // journal still holds bounds where they differ. Otherwise it is
+        // unknown, but sealed terminals are checked below, so everything from
+        // the recent start is enough.
         let off_chain = journal_hash(active.tip).as_deref() != Some(active.tip_hash.as_str());
         let recorded = saved_invalidations
             .rollback
@@ -507,16 +481,12 @@ impl Controller {
         let replaced_from = match (off_chain, recorded) {
             (false, _) => None,
             (true, Some(from)) => Some(from),
-            (true, None) => {
-                fleet.queue_invalidation(recent.start_height);
-                Some(recent.start_height)
-            }
+            (true, None) => Some(recent.start_height),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut controller = Self {
             root: root.to_path_buf(),
             published_tip: (active.tip, active.tip_hash.clone()),
-            fleet,
             layout,
             store,
             source,
@@ -529,7 +499,6 @@ impl Controller {
             recent_previous,
             queue: VecDeque::new(),
             building: false,
-            staging: false,
             sender,
             receiver,
             observed: BTreeMap::new(),
@@ -650,7 +619,7 @@ impl Controller {
         tracing::error!(
             alert = "txid_display_halt",
             %reason,
-            "display controller halted; workers keep serving the last activation"
+            "display controller halted; query servers keep serving the last publication"
         );
         let record = json!({"reason": reason, "unix_ms": now_ms(),
             "tip": self.cache.tip().map(|t| t.0), "map_sha256": self.active.map_sha256});
@@ -683,22 +652,22 @@ impl Controller {
             .unwrap_or(self.layout.start_height - 1)
     }
 
-    /// Staged seals at the queue's head that the rule still makes at the
+    /// Built seals at the queue's head that the rule still makes at the
     /// cache tip. A rollback inside the margin can undo a decision: such a
     /// seal keeps its range and digest but waits, so a published archive
     /// always ends at least the reorg margin below the tip.
     fn publishable(&self) -> usize {
-        let staged = self
+        let built = self
             .queue
             .iter()
-            .take_while(|j| j.state == JobState::Staged)
+            .take_while(|j| j.state == JobState::Built)
             .count();
-        if staged == 0 {
+        if built == 0 {
             return 0;
         }
         // The queue starts at the first unsealed height, so ranges line up.
         let start = self.unsealed_start();
-        staged.min(plan_seals(&self.layout.seal, start, self.cache.counts_from(start)).len())
+        built.min(plan_seals(&self.layout.seal, start, self.cache.counts_from(start)).len())
     }
 
     fn needs_cycle(&self) -> bool {
@@ -711,12 +680,10 @@ impl Controller {
 
     fn idle(&self) -> bool {
         self.source.exhausted(&self.cache)
-            // A staged seal the rule no longer makes waits for blocks.
-            && self.queue.iter().all(|j| j.state == JobState::Staged)
+            // A built seal the rule no longer makes waits for blocks.
+            && self.queue.iter().all(|j| j.state == JobState::Built)
             && !self.building
-            && !self.staging
             && !self.needs_cycle()
-            && !self.fleet.stale(&self.active.map_sha256, &self.map)
     }
 
     /// Runs until halted, or until idle when the settings ask for it.
@@ -731,9 +698,9 @@ impl Controller {
     ) -> Result<Outcome, BoxError> {
         self.shutdown = shutdown.clone();
         let result = self.run_loop(shutdown).await;
-        // Every return path waits for builders and worker transports before
-        // dropping the controller and its exclusive root/journal ownership.
-        while self.building || self.staging {
+        // Every return path waits for the seal builder before dropping the
+        // controller and its exclusive root/journal ownership.
+        while self.building {
             if let Some(event) = self.receiver.recv().await {
                 self.background(event);
             }
@@ -772,11 +739,6 @@ impl Controller {
                 Err(error) => return Err(error),
             }
         }
-        let errors = self
-            .fleet
-            .refresh((&self.active.map_sha256, &self.map))
-            .await;
-        self.record_worker_errors("status", errors);
         self.plan();
         pir_pipeline::publisher::PublisherService::new(DetailPublication {
             controller: self,
@@ -803,8 +765,6 @@ impl Controller {
                 let result = self.cycle().await;
                 self.settings.metrics.cycle_finished(result.is_ok());
                 Some(result)
-            } else if self.fleet.stale(&self.active.map_sha256, &self.map) {
-                Some(self.sync_workers().await)
             } else {
                 None
             };
@@ -821,7 +781,7 @@ impl Controller {
                     self.retry_at = Some(Instant::now() + backoff(self.failures));
                     self.failures += 1;
                     self.stalled(&error);
-                    self.collect_local();
+                    self.collect();
                 }
             }
         }
@@ -839,8 +799,7 @@ impl Controller {
     async fn poll_source(&mut self) -> Result<(), BoxError> {
         let floor = self.sealed_floor();
         let distribution = self.settings.distribution.clone();
-        let (fleet, rollback, saved, root, active) = (
-            &mut self.fleet,
+        let (rollback, saved, root, active) = (
             &mut self.rollback,
             &mut self.saved_invalidations,
             &self.root,
@@ -852,10 +811,8 @@ impl Controller {
                     .withdraw(ancestor + 1)
                     .map_err(|e| e.to_string())?;
             }
-            fleet.queue_invalidation(ancestor + 1);
             note_rollback(rollback, active, ancestor, hash);
             let next = Invalidations {
-                pending: fleet.invalidations(),
                 rollback: rollback.clone(),
             };
             next.store(root)
@@ -900,11 +857,7 @@ impl Controller {
                 json!({"ancestor": ancestor, "from_height": ancestor + 1, "old_tip": old_tip,
                     "depth": old_tip.map(|t| t.saturating_sub(ancestor))}),
             );
-            // A replica may serve more than the controller activated (an
-            // activation whose reply was lost), so every rollback is withdrawn;
-            // one above everything served withdraws nothing. Sources that roll
-            // the journal back have recorded this already.
-            self.fleet.queue_invalidation(ancestor + 1);
+            // Sources that roll the journal back have recorded this already.
             if let Some(block) = self.store.block_at(ancestor) {
                 note_rollback(
                     &mut self.rollback,
@@ -914,7 +867,6 @@ impl Controller {
                 );
             }
             self.save_invalidations();
-            self.deliver_invalidations().await;
             self.cache.truncate_after(ancestor);
             if let Err(error) = self.index.truncate_after(ancestor) {
                 tracing::error!(%error, "height index truncation failed");
@@ -946,8 +898,8 @@ impl Controller {
         Ok(())
     }
 
-    /// Alerts once cycles keep failing: workers keep serving the last
-    /// activation, so nothing else shows that the tip stopped advancing.
+    /// Alerts once cycles keep failing: query servers keep serving the last
+    /// publication, so nothing else shows that the tip stopped advancing.
     fn stalled(&self, error: &str) {
         if self.failures < STALL_FAILURES {
             return;
@@ -958,7 +910,7 @@ impl Controller {
             published_tip = self.published_tip.0,
             tip = self.cache.tip().map(|t| t.0),
             %error,
-            "display publication keeps failing; workers serve the last activation"
+            "display publication keeps failing; query servers serve the last publication"
         );
         if self.failures == STALL_FAILURES {
             self.timeline.record(
@@ -1025,53 +977,13 @@ impl Controller {
                 bucket_counts: self.cache.archive_counts(range),
                 state: JobState::Planned,
                 shard: None,
-                stage_s: 0.0,
                 attempts: 0,
                 retry_at: None,
-                restaged: false,
             });
         }
     }
 
-    /// Stages again any staged seal a known archive owner no longer holds:
-    /// staging lives in the worker's memory, so a restart loses it. Until it
-    /// is staged again, cycles publish without it and recent replicas keep
-    /// advancing. Returns whether any was.
-    fn restage_lost(&mut self) -> bool {
-        let mut any = false;
-        for job in self
-            .queue
-            .iter_mut()
-            .filter(|j| j.state == JobState::Staged)
-        {
-            let digest = &job.shard.as_ref().expect("built").digest;
-            let lost: Vec<String> = self
-                .fleet
-                .archive_owners()
-                .filter(|w| {
-                    w.known
-                        && !w.staged.contains(digest)
-                        && !w.sealed.as_ref().is_some_and(|s| s.contains(digest))
-                })
-                .map(|w| w.config.name.clone())
-                .collect();
-            if !lost.is_empty() {
-                self.timeline.record(
-                    "error",
-                    json!({"stage": "seal_stage", "shard_id": job.shard_id,
-                        "error": "archive owners lost the staged seal", "workers": lost}),
-                );
-                job.state = JobState::Built;
-                job.attempts = 0;
-                job.retry_at = None;
-                job.restaged = true;
-                any = true;
-            }
-        }
-        any
-    }
-
-    /// Starts the next seal build and the next staging, one of each at a time.
+    /// Starts the next seal build, one at a time.
     fn schedule(&mut self) {
         let now = Instant::now();
         if !self.building {
@@ -1122,136 +1034,38 @@ impl Controller {
                     })
                     .await
                     .unwrap_or_else(|e| Err(PublishError::Other(e.to_string())));
-                    let _ = sender.send(Background::Built { shard_id, result });
+                    let _ = sender.send(Background { shard_id, result });
                 });
             }
-        }
-        if !self.staging {
-            let Some(job) = self
-                .queue
-                .iter_mut()
-                .find(|j| j.state != JobState::Staged)
-                .filter(|j| j.state == JobState::Built && j.ready(now))
-            else {
-                return;
-            };
-            let shard = job.shard.as_ref().expect("built");
-            let targets: Vec<_> = self
-                .fleet
-                .archive_owners()
-                .filter(|w| {
-                    !w.staged.contains(&shard.digest)
-                        && !w.sealed.as_ref().is_some_and(|s| s.contains(&shard.digest))
-                })
-                .map(|w| (w.config.name.clone(), w.config.transport.clone()))
-                .collect();
-            if targets.is_empty() {
-                job.state = JobState::Staged;
-                if !job.restaged {
-                    self.timeline.record("seal", seal_event(job));
-                    self.last_seal_ms = now_ms();
-                }
-                return;
-            }
-            job.state = JobState::Staging;
-            self.staging = true;
-            let (shard_id, digest, directory, sender) = (
-                job.shard_id,
-                shard.digest.clone(),
-                shard.directory.clone(),
-                self.sender.clone(),
-            );
-            tokio::spawn(async move {
-                let started = Instant::now();
-                let mut outcomes = Vec::new();
-                for (name, transport) in targets {
-                    outcomes.push(stage(name, transport, directory.clone(), digest.clone()).await);
-                }
-                let _ = sender.send(Background::Staged {
-                    shard_id,
-                    seconds: started.elapsed().as_secs_f64(),
-                    outcomes,
-                });
-            });
         }
     }
 
-    fn background(&mut self, event: Background) {
-        match event {
-            Background::Built { shard_id, result } => {
-                self.building = false;
-                let Some(job) = self.queue.iter_mut().find(|j| j.shard_id == shard_id) else {
-                    return;
-                };
-                match result {
-                    Ok(shard) => {
-                        job.state = JobState::Built;
-                        job.shard = Some(*shard);
-                        job.attempts = 0;
-                        job.retry_at = None;
-                    }
-                    Err(PublishError::Other(error)) => {
-                        job.state = JobState::Planned;
-                        job.retry_at = Some(Instant::now() + backoff(job.attempts));
-                        job.attempts += 1;
-                        self.timeline.record(
-                            "error",
-                            json!({"stage": "seal_build", "shard_id": shard_id, "error": error}),
-                        );
-                    }
-                    Err(error) => {
-                        if let CycleError::Halt(halt) = CycleError::from(error) {
-                            self.halt(halt);
-                        }
-                    }
-                }
+    fn background(&mut self, Background { shard_id, result }: Background) {
+        self.building = false;
+        let Some(job) = self.queue.iter_mut().find(|j| j.shard_id == shard_id) else {
+            return;
+        };
+        match result {
+            Ok(shard) => {
+                job.state = JobState::Built;
+                job.shard = Some(*shard);
+                job.attempts = 0;
+                job.retry_at = None;
+                self.timeline.record("seal", seal_event(job));
+                self.last_seal_ms = now_ms();
             }
-            Background::Staged {
-                shard_id,
-                seconds,
-                outcomes,
-            } => {
-                self.staging = false;
-                let Some(job) = self.queue.iter_mut().find(|j| j.shard_id == shard_id) else {
-                    return;
-                };
-                let digest = job.shard.as_ref().expect("built").digest.clone();
-                let mut failed = false;
-                for outcome in outcomes {
-                    let worker = self
-                        .fleet
-                        .workers
-                        .iter_mut()
-                        .find(|w| w.config.name == outcome.worker);
-                    match (outcome.result, worker) {
-                        (Ok(_), Some(worker)) => {
-                            worker.staged.insert(digest.clone());
-                        }
-                        (Ok(_), None) => {}
-                        (Err(error), worker) => {
-                            failed = true;
-                            if let Some(worker) = worker {
-                                worker.known = false;
-                            }
-                            self.timeline.record(
-                                "error",
-                                json!({"stage": "seal_stage", "shard_id": shard_id,
-                                    "worker": outcome.worker, "error": error}),
-                            );
-                        }
-                    }
-                }
-                if failed {
-                    job.state = JobState::Built;
-                    job.retry_at = Some(Instant::now() + backoff(job.attempts));
-                    job.attempts += 1;
-                } else {
-                    job.state = JobState::Staged;
-                    job.stage_s = seconds;
-                    if !job.restaged {
-                        self.timeline.record("seal", seal_event(job));
-                        self.last_seal_ms = now_ms();
-                    }
+            Err(PublishError::Other(error)) => {
+                job.state = JobState::Planned;
+                job.retry_at = Some(Instant::now() + backoff(job.attempts));
+                job.attempts += 1;
+                self.timeline.record(
+                    "error",
+                    json!({"stage": "seal_build", "shard_id": shard_id, "error": error}),
+                );
+            }
+            Err(error) => {
+                if let CycleError::Halt(halt) = CycleError::from(error) {
+                    self.halt(halt);
                 }
             }
         }
@@ -1280,22 +1094,12 @@ impl Controller {
         let started = Instant::now();
         let (tip, tip_hash) = self.cache.tip().ok_or_else(|| retry("empty cache"))?;
         let tip_hash = tip_hash.to_display_hex();
-        let errors = self
-            .fleet
-            .refresh((&self.active.map_sha256, &self.map))
-            .await;
-        self.record_worker_errors("status", errors);
-        if self.restage_lost() {
-            // Nothing else may wake the loop to start it.
-            self.schedule();
-        }
         let count = self.publishable();
         if count == 0 && (tip, &tip_hash) == (self.published_tip.0, &self.published_tip.1) {
-            // Only a seal was due, and it is being staged again.
             return Ok(Input::Deferred);
         }
-        let staged: Vec<&SealJob> = self.queue.iter().take(count).collect();
-        let new_seals: Vec<SealRecord> = staged.iter().map(|j| j.record()).collect();
+        let built: Vec<&SealJob> = self.queue.iter().take(count).collect();
+        let new_seals: Vec<SealRecord> = built.iter().map(|j| j.record()).collect();
         let mut archives: Vec<DisplayMapEntry> = self
             .map
             .shards
@@ -1303,7 +1107,7 @@ impl Controller {
             .filter(|s| s.sealed)
             .cloned()
             .chain(
-                staged
+                built
                     .iter()
                     .map(|j| j.shard.as_ref().unwrap().entry.clone()),
             )
@@ -1437,41 +1241,33 @@ impl Controller {
             candidate_ms,
             prebuild,
         } = candidate;
-        self.deliver_invalidations().await;
-        // Delivery awaits workers; a stop requested meanwhile abandons the
-        // unactivated candidate. Once worker activation begins, it and its
-        // commit finish.
+        // A stop requested during preparation abandons the unactivated
+        // candidate. Once finalization begins, it and its commit finish.
         if self.shutdown.requested() {
             tracing::info!(tip, "display candidate activation stopped by shutdown");
             return Ok(());
         }
-        // The rollback record vouches only for what replicas held when it was
-        // made. This candidate may reach some replicas without being
-        // committed, so a restart from here on withdraws the recent range.
+        // The rollback record vouches only for what was published when it was
+        // made. This candidate may be published without being committed, so
+        // a restart from here on rewrites the recent range.
         if self.rollback.is_some() {
-            let next = Invalidations {
-                pending: self.fleet.invalidations(),
-                rollback: None,
-            };
+            let next = Invalidations { rollback: None };
             next.store(&self.root).map_err(retry)?;
             self.saved_invalidations = next;
             self.rollback = None;
         }
-        let report = self
-            .fleet
-            .activate(&candidate, &sha, &map, true)
-            .await
-            .map_err(CycleError::Retry)?;
+        let finalize_started = Instant::now();
         if let Some(distribution) = &self.settings.distribution {
             distribution
                 .finalize(candidate.clone(), vec![self.active.directory.clone()])
                 .await
                 .map_err(retry)?;
         }
+        let activate_ms = ms(finalize_started);
         let activated_ms = now_ms();
         self.last_success_ms = activated_ms;
 
-        // Committed: workers serve the new map.
+        // Committed: query servers download the new map.
         self.queue.drain(..new_seals.len());
         self.active.seals.extend(new_seals.iter().cloned());
         // Keep enough sealed blocks to fill the window from the sealed floor,
@@ -1520,8 +1316,7 @@ impl Controller {
             "shipped_bytes": prebuild.as_ref().map(|p| p.1.iter().map(|f| f.bytes).sum::<u64>()),
             "shipped": prebuild.as_ref().map(|p| &p.1),
             "prebuild_failures": self.prebuild_failures,
-            "ship_ms": report.ship_ms,
-            "prepare_ms": report.prepare_ms, "activate_ms": report.activate_ms,
+            "activate_ms": activate_ms,
             "activated_ms": activated_ms, "cycle_ms": ms(started),
             "freshness_ms": fresh.iter().map(|f| activated_ms.saturating_sub(f.1)).collect::<Vec<_>>(),
             "recent": recent.summary(), "archives": self.map.shards.len() - 1,
@@ -1530,7 +1325,6 @@ impl Controller {
             "map_sha256": sha,
             "sealed_published": new_seals.iter().map(|s| s.shard_id).collect::<Vec<_>>(),
             "dropped": dropped.iter().map(|s| s.shard_id).collect::<Vec<_>>(),
-            "workers": report.workers,
         });
         self.timeline.record("cycle", self.last_cycle.clone());
         let stages = [
@@ -1541,11 +1335,7 @@ impl Controller {
         ]
         .into_iter()
         .chain(prebuild.as_ref().map(|p| ("prebuild", p.0 as f64 / 1e3)))
-        .chain([
-            ("ship", report.ship_ms as f64 / 1e3),
-            ("prepare", report.prepare_ms as f64 / 1e3),
-            ("activate", report.activate_ms as f64 / 1e3),
-        ]);
+        .chain([("activate", activate_ms as f64 / 1e3)]);
         self.settings.metrics.observe_cycle(
             started.elapsed().as_secs_f64(),
             fresh
@@ -1553,16 +1343,15 @@ impl Controller {
                 .map(|f| activated_ms.saturating_sub(f.1) as f64 / 1e3),
             stages,
         );
-        self.collect().await;
+        self.collect();
         Ok(())
     }
 
-    /// With `--ship-runtimes`, builds the recent revision's runtimes into the
-    /// candidate root; returns the milliseconds taken and the files written.
-    /// A failure is logged and counted, its files are removed, and the
-    /// candidate ships without runtimes: replicas then build their own.
+    /// Builds the recent revision's runtimes into the candidate root; returns
+    /// the milliseconds taken and the files written. A failure is logged and
+    /// counted and its files are removed; finalization then builds them.
     async fn prebuild(&mut self, candidate: &Path, recent: &str) -> Option<(u64, Vec<Shipped>)> {
-        let build = self.settings.ship_runtimes?;
+        let build = self.settings.prebuild;
         let started = Instant::now();
         let (revision, root) = (candidate.join(recent), candidate.to_path_buf());
         let built = tokio::task::spawn_blocking(move || build(&revision, &root))
@@ -1573,7 +1362,7 @@ impl Controller {
             Err(error) => {
                 self.prebuild_failures += 1;
                 tracing::warn!(%error, failures = self.prebuild_failures,
-                    "runtime prebuild failed; the candidate ships without runtimes");
+                    "runtime prebuild failed; finalization builds the runtimes");
                 self.timeline.record(
                     "error",
                     json!({"stage": "prebuild", "error": error, "failures": self.prebuild_failures}),
@@ -1586,53 +1375,10 @@ impl Controller {
         }
     }
 
-    /// Activates the current candidate on workers that are behind it, such as
-    /// a worker that restarted, or every worker right after bootstrap, and
-    /// delivers owed invalidations.
-    ///
-    /// Recent replicas are left alone while the journal no longer holds the
-    /// activated tip: a replica that never held that map was not invalidated
-    /// for it, and would serve its orphaned blocks.
-    async fn sync_workers(&mut self) -> Result<(), CycleError> {
-        let errors = self
-            .fleet
-            .refresh((&self.active.map_sha256, &self.map))
-            .await;
-        self.record_worker_errors("status", errors);
-        self.deliver_invalidations().await;
-        let on_chain = self
-            .store
-            .block_at(self.active.tip)
-            .is_some_and(|b| b.block_hash.to_display_hex() == self.active.tip_hash);
-        let report = self
-            .fleet
-            .activate(
-                &self.active.directory,
-                &self.active.map_sha256,
-                &self.map,
-                on_chain,
-            )
-            .await
-            .map_err(CycleError::Retry)?;
-        if !on_chain && self.fleet.stale(&self.active.map_sha256, &self.map) {
-            return Err(retry(
-                "the activated tip left the journal; recent replicas wait for the next cycle",
-            ));
-        }
-        if !report.workers.is_empty() {
-            self.timeline.record(
-                "sync",
-                json!({"map_sha256": self.active.map_sha256, "workers": report.workers}),
-            );
-        }
-        Ok(())
-    }
-
     /// Removes unused candidates and recent revisions; also after a failed
     /// cycle, whose candidate nothing serves.
-    fn collect_local(&self) {
-        let mut keep = self.fleet.held_directories();
-        keep.insert(self.active.directory.clone());
+    fn collect(&self) {
+        let keep = std::collections::BTreeSet::from([self.active.directory.clone()]);
         if let Err(error) = collect(&self.root, &keep, self.settings.retain_candidates) {
             self.timeline.record(
                 "error",
@@ -1641,20 +1387,10 @@ impl Controller {
         }
     }
 
-    async fn collect(&mut self) {
-        self.collect_local();
-        if self.active.cycle.is_multiple_of(WORKER_COLLECT_EVERY) {
-            let errors = self.fleet.collect().await;
-            self.record_worker_errors("worker_collect", errors);
-        }
-    }
-
-    /// Mirrors owed invalidations and the rollback record into
-    /// `invalidate.json`. A failed write leaves them in memory, and the next
-    /// change retries.
+    /// Mirrors the rollback record into `invalidate.json`. A failed write
+    /// leaves it in memory, and the next change retries.
     fn save_invalidations(&mut self) {
         let next = Invalidations {
-            pending: self.fleet.invalidations(),
             rollback: self.rollback.clone(),
         };
         if next == self.saved_invalidations {
@@ -1669,29 +1405,6 @@ impl Controller {
                     json!({"stage": "invalidate_record", "error": error.to_string()}),
                 );
             }
-        }
-    }
-
-    /// Delivers owed invalidations ahead of any activation.
-    async fn deliver_invalidations(&mut self) {
-        if self.fleet.invalidations().is_empty() {
-            return;
-        }
-        let errors = self
-            .fleet
-            .invalidate((&self.active.map_sha256, &self.map))
-            .await;
-        self.record_worker_errors("invalidate", errors);
-        self.save_invalidations();
-    }
-
-    fn record_worker_errors(&self, stage: &str, errors: Vec<(String, String)>) {
-        for (worker, error) in errors {
-            tracing::warn!(stage, worker, %error, "display worker call failed");
-            self.timeline.record(
-                "error",
-                json!({"stage": stage, "worker": worker, "error": error}),
-            );
         }
     }
 
@@ -1711,10 +1424,6 @@ impl Controller {
             "failures": self.failures,
             "stalled": self.failures >= STALL_FAILURES,
             "prebuild_failures": self.prebuild_failures,
-            "workers": self.fleet.workers.iter().map(|w| json!({
-                "name": w.config.name, "role": w.config.role.as_str(), "known": w.known,
-                "expected": w.expected, "staged": w.staged,
-                "invalidate_from": w.invalidate_from})).collect::<Vec<_>>(),
             "updated_ms": now_ms(),
         });
         *self.settings.status.write().unwrap() = status;
@@ -1766,7 +1475,7 @@ fn seal_event(job: &SealJob) -> Value {
         "dir_segments": shard.entry.directory_segments,
         "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
         "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
-        "stage_s": job.stage_s, "digest": shard.digest,
+        "digest": shard.digest,
     })
 }
 

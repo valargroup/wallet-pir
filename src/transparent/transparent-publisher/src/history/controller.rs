@@ -2018,10 +2018,6 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                 },
             ),
             (
-                "ready_recent_replicas",
-                status["ready_replicas"].as_f64().unwrap_or(0.),
-            ),
-            (
                 "last_cycle_seconds",
                 status["cycle_seconds"].as_f64().unwrap_or(0.),
             ),

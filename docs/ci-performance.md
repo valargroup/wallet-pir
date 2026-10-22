@@ -588,7 +588,7 @@ start, not the original workflow creation; the report includes its attempt numbe
 python3 tools/ci/timings.py --run <run-id>
 python3 tools/ci/timings.py --run <run-id> --cache-records
 python3 tools/ci/timings.py --workflow ci.yml --limit 20
-python3 tools/ci/timings.py --workflow deploy-transparent-shard.yml --limit 20
+python3 tools/ci/timings.py --workflow deploy-enhance-cuda.yml --limit 20
 ```
 
 `dispatch_to_job_start_seconds` is measured from the current attempt's start and
