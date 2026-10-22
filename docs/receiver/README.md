@@ -212,15 +212,20 @@ witness manifest under its own domain. Every segment's two sessions share
 `/v1/receiver/query`, and a query's session ID selects the table among every live
 inventory's segments.
 
+Wallet routes are served at the canonical `/receiver/v1/<operation>`, and at the
+deployed `/v1/receiver/<operation>` for existing clients; both reach the same handlers
+and share metric labels. Operator routes (`/v1/receiver/health`, `/metrics`) have no
+canonical counterpart.
+
 | Route | Content |
 |---|---|
-| `GET /v1/receiver/inventory` | The current inventory head, at most 16 KiB |
-| `GET /v1/receiver/inventory/:inventory/:chunk` | One chunk of a live inventory's shards; 410 once not served |
-| `GET /v1/receiver/shard-filters/:digest` | A live sealed shard's filter by digest |
-| `GET /v1/receiver/public/:session` | Public PIR setup of either session |
-| `POST /v1/receiver/query` | One encrypted payment or witness row query |
-| `GET /v1/receiver/block-filters/head` | Rolling hint availability |
-| `GET /v1/receiver/block-filters/:revision/:from/:limit` | Bounded consecutive block filters |
+| `GET /receiver/v1/inventory` | The current inventory head, at most 16 KiB |
+| `GET /receiver/v1/inventory/:inventory/:chunk` | One chunk of a live inventory's shards; 410 once not served |
+| `GET /receiver/v1/shard-filters/:digest` | A live sealed shard's filter by digest |
+| `GET /receiver/v1/public/:session` | Public PIR setup of either session |
+| `POST /receiver/v1/query` | One encrypted payment or witness row query |
+| `GET /receiver/v1/block-filters/head` | Rolling hint availability |
+| `GET /receiver/v1/block-filters/:revision/:from/:limit` | Bounded consecutive block filters |
 | `GET /v1/receiver/health` | Process identity, the served inventory, the indexer's report and this process's NEAR reads (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and

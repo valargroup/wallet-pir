@@ -36,7 +36,10 @@ fn endpoint(path: &str) -> Option<&'static str> {
         Some("manifest")
     } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
         Some("setup")
-    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
+    } else if let Some(route) = path
+        .strip_prefix("/receiver/v1/")
+        .or_else(|| path.strip_prefix("/v1/receiver/"))
+    {
         receiver_endpoint(route)
     } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
         if path.ends_with("/directory") {
@@ -51,7 +54,8 @@ fn endpoint(path: &str) -> Option<&'static str> {
     }
 }
 
-/// The receiver directory's route categories; session IDs never become labels.
+/// The receiver directory's route categories below either public prefix; session IDs
+/// never become labels.
 fn receiver_endpoint(route: &str) -> Option<&'static str> {
     Some(match route.split('/').next()? {
         "inventory" => "receiver_inventory",
@@ -115,8 +119,10 @@ const ENDPOINTS: [&str; 6] = [
 
 /// Serve the current publication while the owner prepares, validates and rotates
 /// revisions, with the admission and refusals of `docs/serving-contract.md`.
-/// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` and
-/// `/metrics` are for operators; a deployment's edge proxies only the wallet routes.
+/// Cancellation never frees a still-running CPU slot. Wallet routes are served at the
+/// canonical `/receiver/v1/<operation>` and at the deployed `/v1/receiver/<operation>`.
+/// `/v1/receiver/health` and `/metrics` are for operators, outside the canonical
+/// namespace; a deployment's edge proxies only the wallet routes.
 /// Health also reports `fields`, though its own (`identity`, `serving`, `epoch`,
 /// `indexer`) take precedence over theirs.
 pub fn router_with_health(publications: Publications, fields: HealthFields) -> Router {
@@ -130,10 +136,13 @@ pub fn router_with_health(publications: Publications, fields: HealthFields) -> R
     })
 }
 
-/// The routes of [`router_with_health`] over `service`.
+/// The routes of [`router_with_health`] over `service`: the operator routes, and the
+/// wallet operations mounted once at the canonical prefix and once at the deployed
+/// legacy prefix, reaching the same handlers.
 fn router(service: Service) -> Router {
     let metrics = service.metrics.clone();
     metrics.initialize(&ENDPOINTS);
+    let wallet = wallet_routes();
     Router::new()
         .route("/v1/receiver/health", get(health))
         .route(
@@ -142,8 +151,19 @@ fn router(service: Service) -> Router {
                 ([(header::CONTENT_TYPE, "text/plain")], s.metrics.render())
             }),
         )
+        .nest("/receiver/v1", wallet.clone())
+        .nest("/v1/receiver", wallet)
+        .layer(axum::middleware::map_response(no_store_errors))
+        .layer(axum::middleware::from_fn_with_state(metrics, observe))
+        .with_state(service)
+}
+
+/// The wallet-facing receiver operations, relative to a public prefix. Each is defined
+/// only here; operator routes never join them, so no prefix exposes those.
+fn wallet_routes() -> Router<Service> {
+    Router::new()
         .route(
-            "/v1/receiver/inventory",
+            "/inventory",
             get(|State(s): State<Service>| async move {
                 match s.publications.current() {
                     Ok(p) => json(p.head_bytes().to_vec()),
@@ -152,7 +172,7 @@ fn router(service: Service) -> Router {
             }),
         )
         .route(
-            "/v1/receiver/inventory/:inventory/:chunk",
+            "/inventory/:inventory/:chunk",
             get(
                 |State(s): State<Service>, Path((id, chunk)): Path<(String, usize)>| async move {
                     let Some(id) = hash(&id) else {
@@ -169,7 +189,7 @@ fn router(service: Service) -> Router {
             ),
         )
         .route(
-            "/v1/receiver/shard-filters/:digest",
+            "/shard-filters/:digest",
             get(|State(s): State<Service>, Path(digest): Path<String>| async move {
                 let Some(digest) = hash(&digest) else {
                     return StatusCode::BAD_REQUEST.into_response();
@@ -199,17 +219,17 @@ fn router(service: Service) -> Router {
             }),
         )
         .route(
-            "/v1/receiver/public/:session",
+            "/public/:session",
             get(|State(s): State<Service>, Path(id): Path<String>| async move { public(&s, &id) }),
         )
-        .route("/v1/receiver/query", post(query))
-        .route("/v1/receiver/block-filters/head", get(|State(s): State<Service>| async move {
+        .route("/query", post(query))
+        .route("/block-filters/head", get(|State(s): State<Service>| async move {
             match s.publications.filters() {
                 Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
                 Err(status) => status.into_response(),
             }
         }))
-        .route("/v1/receiver/block-filters/:revision/:from/:limit", get(
+        .route("/block-filters/:revision/:from/:limit", get(
             |State(s): State<Service>, Path((revision, from, limit)): Path<(u64, u32, u32)>| async move {
                 // The permit is held until the encoded batch is sent.
                 let Ok(permit) = s.batches.clone().try_acquire_owned() else {
@@ -226,9 +246,6 @@ fn router(service: Service) -> Router {
                 }
             }
         ))
-        .layer(axum::middleware::map_response(no_store_errors))
-        .layer(axum::middleware::from_fn_with_state(metrics, observe))
-        .with_state(service)
 }
 
 /// A resident filter's encoding as a response body, holding its budget until sent.

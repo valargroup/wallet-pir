@@ -107,7 +107,9 @@ PREVIOUS_ROUTES = ['/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/publ
                    '/v1/receiver/witness/*', '/v1/receiver/filters/*']
 PREVIOUS = LIVE.replace(' '.join(wallet_routes(LIVE)), ' '.join(PREVIOUS_ROUTES))
 ADDED = {'/v1/receiver/block-filters/*', '/v1/receiver/inventory', '/v1/receiver/inventory/*',
-         '/v1/receiver/shard-filters/*'}
+         '/v1/receiver/shard-filters/*', '/receiver/v1/block-filters/*', '/receiver/v1/inventory',
+         '/receiver/v1/inventory/*', '/receiver/v1/query', '/receiver/v1/public/*',
+         '/receiver/v1/shard-filters/*'}
 
 
 def script(path, body):
