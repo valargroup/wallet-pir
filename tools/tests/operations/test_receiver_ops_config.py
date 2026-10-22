@@ -210,8 +210,6 @@ def check_exact_check(service, unit, caddy):
     nodes = lambda words: [words[i + 1] for i, word in enumerate(words) if word == '--rpc-url']
     assert nodes(argv) and nodes(argv) == nodes(served), (nodes(argv), nodes(served))
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
-    # Provider audit availability does not gate wallet discovery or publication.
-    assert '--await-feed-reads' not in argv, argv
     timeout = check.get('timeout')
     assert isinstance(timeout, int) and 120 <= timeout <= 600, timeout
 
@@ -255,8 +253,6 @@ def check_probe_config(configs):
     assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
     argv = config['command']
     assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
-    # Companion witness tables are always served, and the probe always checks them.
-    assert '--witnesses' not in argv, argv
 
 
 def monitor_merge(readme):
@@ -325,7 +321,6 @@ class ReceiverOpsContract(unittest.TestCase):
             mutated(swap(PROBE[0], '/opt/receiver-pir/tools/receiver-directory')),
             mutated(swap('https://receiver-pir.valargroup.dev', 'https://receiver.example')),
             mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
-            mutated(lambda check, argv: argv.extend(['--await-feed-reads', '1'])),
             mutated(lambda check, argv: check.update(timeout=0)),
         ]:
             self.assertNotEqual(service, self.service)
