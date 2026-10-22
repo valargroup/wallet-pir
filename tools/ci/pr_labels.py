@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize the catalog and select at most three labels for each requested PR.
+"""Select up to three primary PR labels, plus an area when three risks apply.
 
 Reads the checked-in catalog and uses the authenticated GitHub CLI. Run from a
 trusted checkout: pull-request changes must never supply this code or catalog
@@ -15,9 +15,12 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / '.github/labels.json'
 RULES = ROOT / '.github/labeler.yml'
-LIMIT = 3
-RISK_PRIORITY = ('pir-scheme', 'wallet-api-breaking', 'publish-api-breaking',
-                 'journal-breaking', 'security-review', 'privacy-review')
+LIMIT = 4
+PRIMARY_LIMIT = 3
+RISK_GROUPS = (('migration', 'journal-breaking'),
+               ('wallet-api-breaking', 'publish-api-breaking'),
+               ('pir-scheme', 'security-review', 'privacy-review'))
+RISK_PRIORITY = tuple(name for group in RISK_GROUPS for name in group)
 
 
 def catalog():
@@ -63,15 +66,23 @@ def path_pattern(glob):
 
 
 def select(files, existing, rules):
-    """Reserve slots for manual labels, then rank components by changed lines.
+    """Prioritize migrations, API breaks, and security while retaining an area.
 
-    Component labels are recomputed so old broad labeling and stale labels do
-    not occupy the limited slots. PIR and breaking-change signals take priority
-    when more than three manual labels have been supplied.
+    Cover each risk category before extra signals from the same category. Three
+    risks may use the primary slots; their main area then occupies slot four.
+    Other PRs retain the usual three-label budget, including at least one area.
     """
     manual = set(existing) - set(rules)
-    priority = {name: index for index, name in enumerate(RISK_PRIORITY)}
-    selected = sorted(manual, key=lambda name: (priority.get(name, len(priority)), name))[:LIMIT]
+    risks = []
+    for group in RISK_GROUPS:
+        present = next((name for name in group if name in manual), None)
+        if present:
+            risks.append(present)
+    risks.extend(name for name in RISK_PRIORITY if name in manual and name not in risks)
+    selected = risks[:PRIMARY_LIMIT]
+    budget = min(LIMIT, max(PRIMARY_LIMIT, len(selected) + 1))
+    ordinary = sorted(manual - set(RISK_PRIORITY))
+    selected.extend(ordinary[:budget - len(selected) - 1])
     ranked = []
     for name, matches in rules.items():
         globs = matches[0]['changed-files'][0]['any-glob-to-any-file']
@@ -81,8 +92,16 @@ def select(files, existing, rules):
             category = 0 if name.startswith('product:') else 1 if name in {
                 'area:publisher', 'area:query-server'} else 2
             ranked.append((-score, category, name))
-    selected.extend(name for _, _, name in sorted(ranked)[:LIMIT - len(selected)])
-    return selected
+    components = [name for _, _, name in sorted(ranked)]
+    area = next((name for name in components if name.startswith('area:')
+                 or name == 'documentation'), 'area:shared')
+    remaining = components[:budget - len(selected)]
+    if area not in remaining:
+        if len(remaining) == budget - len(selected):
+            remaining[-1] = area
+        else:
+            remaining.append(area)
+    return selected + remaining
 
 
 def api(repository, path, *, data=None, paginate=False):

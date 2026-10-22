@@ -1,9 +1,11 @@
 # PR management and labels
 
 Labels show which products and service roles a PR touches and which kinds of
-change deserve attention. Keep **at most three labels per PR**, focused on the
-main areas changed. Labels do not introduce approval, specification, or
-merge requirements. They do not establish that CI passed, a release was
+change deserve attention. Prioritize **migrations, API breaks, and security**.
+Keep up to three primary labels and always retain an area label; when three
+risk labels consume the primary slots, add the area as a fourth label. The
+hard limit is **four labels total**. Labels do not introduce approval,
+specification, or merge requirements. They do not establish that CI passed, a release was
 published, or a deployment happened.
 
 The repository still defaults to direct pushes to `main`; use a PR when Roman
@@ -14,13 +16,14 @@ requests one. This guide applies whenever a PR is created or updated.
 1. Keep the PR focused on one outcome. Describe the problem and resulting
    behavior, breaking changes, and validation in plain words. Keep pending and
    skipped validation explicit. Use a draft while the change is unfinished.
-2. Check the selected component labels against the main changes. The limit is
-   three labels total, not three labels per category; a broad PR does not need
-   one label for every touched directory.
+2. Check the selected component labels against the main changes. Ordinary PRs
+   keep up to three labels; a broad PR does not need one for every directory.
+   Always retain a functional area, including when three risk labels apply.
 3. Inspect the diff and apply the breaking-change and review labels below when
    relevant. An absent label is not evidence of compatibility or safety.
-4. Revisit labels after scope changes. Risk labels take priority and use the
-   same three slots as component labels. Remove labels that no longer apply.
+4. Revisit labels after scope changes. Migration, API-break, and security labels
+   take priority over ordinary labels and additional components. Up to three
+   risk labels plus one area may apply. Remove labels that no longer apply.
 
 Reviewers check the labels along with the diff. Labels do not replace a PR's
 breaking-change explanation, validation evidence, or the existing review and
@@ -28,25 +31,36 @@ release rules. No label requires an additional approval or specification.
 
 ## Automatic component labels
 
-The workflow reserves slots for manually applied risk or other non-component
-labels, then selects the highest-scoring components for the remaining slots.
+The workflow selects risk labels first, then other manual labels and the
+highest-scoring components. It reserves at least one slot for a functional area
+(`area:*` or `documentation`). When no area path matches, use `area:shared` for
+repository-wide or otherwise unclassified changes.
 Each component scores the added and removed lines in matching files, with a
 minimum of one point per file so renames are included. Ties prefer products,
 then Publisher/Query Server, then supporting areas, then alphabetical order.
 Component labels are recomputed on updates; labels for lesser or stale areas
 are removed rather than accumulating.
 
-If more than three manual labels are present, retain three in this order:
-`pir-scheme`, `wallet-api-breaking`, `publish-api-breaking`, `journal-breaking`,
-`security-review`, `privacy-review`, then other labels alphabetically. This
-keeps the limit explicit without creating a merge gate.
+When several risk categories apply, retain one from each category before extra
+signals from the same category, with at most three risk labels:
+
+1. Migration or persisted-data break: `migration`, then `journal-breaking`.
+2. API break: `wallet-api-breaking`, then `publish-api-breaking`.
+3. Security or privacy: `pir-scheme`, then `security-review`, then `privacy-review`.
+
+After covering the applicable categories, fill spare risk slots in that same
+order. Other manual labels come afterwards, alphabetically, and never displace
+the reserved area. For example, `migration`, `wallet-api-breaking`, and
+`security-review` retain `area:publisher` as a fourth label. Two API-break
+labels cannot crowd out a migration or security signal. This remains labeling
+guidance, without a new merge gate.
 
 | Labels | Meaning and automatic coverage |
 | --- | --- |
 | `product:enhance`, `product:status`, `product:transparent`, `product:receiver` | Product-owned source, tools, docs, evidence, and explicitly product-specific workflow and infrastructure paths. Transaction-detail/txid paths belong to Transparent. |
 | `area:publisher` | Unified publisher, product publishing packages, and explicitly publisher-owned deployment configuration. Receiver's indexer and store belong here. |
 | `area:query-server` | Unified query server, product query packages, and explicitly query-owned deployment configuration. Receiver's PIR server belongs here. |
-| `area:shared` | Libraries and tools shared across products. |
+| `area:shared` | Shared libraries, repository-wide changes, or components without a narrower functional area. |
 | `area:ci` | Workflows, GitHub configuration, and CI/development tooling. |
 | `area:operations` | Deployment, infrastructure, fleet administration, and operations tests. |
 | `documentation` | Markdown and documentation/evidence indexes. Product labels are also candidates for product docs. |
@@ -54,16 +68,17 @@ keeps the limit explicit without creating a merge gate.
 Product and role labels describe the main touched components; they do not mean
 every change affects an external API. A unified-host edit makes its role label
 a candidate. A shared library edit does not
-automatically receive every product label. The selected three labels summarize
+automatically receive every product label. The selected labels summarize
 the PR; its description can explain additional affected products and roles.
 
-## Breaking-change labels
+## Migration and breaking-change labels
 
 Apply these after checking behavior, rather than inferring breaks from a path
 or from the size of the diff. They may overlap.
 
 | Label | Apply when |
 | --- | --- |
+| `migration` | The change affects persisted-state schemas, data conversions, backfills, or upgrade/recovery migration behavior. Apply from the behavior of the change, not just its filename. |
 | `wallet-api-breaking` | Wallet/client updates are needed because requests, responses, encodings, endpoints, or protocol behavior become incompatible. Include externally consumed Rust APIs when their change requires a client update. |
 | `publish-api-breaking` | The publisher-to-query-server contract becomes incompatible: discovery, manifests, publication formats, artifact downloads, or associated protocol behavior. Publisher CLI/configuration changes alone do not imply this label. |
 | `journal-breaking` | Existing persisted ingestion journals become unreadable or unsafe to reuse, or require rebuilding or conversion. An internal journal refactor that preserves existing data does not qualify. |
@@ -104,11 +119,13 @@ opens, reopens, gains commits, is edited, becomes ready for review, or has label
 added or removed. Draft PRs are included. Updates made with the workflow's own
 GitHub token do not trigger another run.
 
-Automation adds component labels only. Breaking-change, security, privacy, and
+Automation adds component labels only. Migration, breaking-change, security, privacy, and
 PIR-scheme labels are applied by authors, agents, or reviewers. Existing label
 definitions outside the catalog, including `prepare-hosted-cache`, are left
-untouched. On a PR, non-component labels count toward the three-label limit.
-Adding a risk label displaces a component label when all three slots are full.
+untouched. On a PR, non-component labels count toward the limit. Adding a risk
+label displaces an ordinary label or additional component, while retaining the
+main area. Three risks plus that area may use four labels; other PRs stay at
+three or fewer.
 Rerunning the workflow produces the same selection for unchanged inputs.
 
 The workflow executes code and reads configuration only from the default
@@ -123,8 +140,8 @@ gh workflow run pr-labels.yml --repo valargroup/wallet-pir --ref main -f pr-numb
 ```
 
 For several PRs, pass their numbers separated by actual newlines in the same
-input. Closed PRs are skipped. Manual dispatch applies the same three-label
-limit as automatic runs.
+input. Closed PRs are skipped. Manual dispatch applies the same priority and
+four-label maximum as automatic runs.
 
 When changing the taxonomy, update the catalog, path rules where relevant, and
 this guide together. Keep rules explicit for differently named Receiver

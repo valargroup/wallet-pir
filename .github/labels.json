@@ -25,7 +25,7 @@
   },
   "area:shared": {
     "color": "7057ff",
-    "description": "Libraries or tooling shared across products."
+    "description": "Shared libraries, repository-wide changes, or components without a narrower functional area."
   },
   "area:ci": {
     "color": "7057ff",
@@ -38,6 +38,10 @@
   "documentation": {
     "color": "0075ca",
     "description": "Documentation, guides, and retained evidence documentation."
+  },
+  "migration": {
+    "color": "d73a4a",
+    "description": "Persisted-state schema changes, data conversions, backfills, or upgrade migration behavior."
   },
   "wallet-api-breaking": {
     "color": "d73a4a",

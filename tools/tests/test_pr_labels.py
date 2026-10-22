@@ -1,6 +1,7 @@
 """Catalog synchronization only updates named labels and stops on API failure."""
 from contextlib import redirect_stdout
 import io
+from itertools import combinations
 import json
 from pathlib import Path
 import subprocess
@@ -24,7 +25,7 @@ class PrLabelTests(unittest.TestCase):
         rules = json.loads((ROOT / '.github/labeler.yml').read_text())
         self.assertLessEqual(set(rules), set(catalog))
         self.assertEqual(set(catalog) - set(rules), {
-            'wallet-api-breaking', 'publish-api-breaking', 'journal-breaking',
+            'migration', 'wallet-api-breaking', 'publish-api-breaking', 'journal-breaking',
             'security-review', 'privacy-review', 'pir-scheme'})
         for name, matches in rules.items():
             with self.subTest(label=name):
@@ -78,12 +79,46 @@ class PrLabelTests(unittest.TestCase):
         self.assertEqual(pr_labels.select(files, [], self.rules),
                          ['product:receiver', 'area:publisher', 'area:query-server'])
 
-    def test_risk_labels_displace_components_without_exceeding_three(self):
+    def test_two_risks_keep_the_main_area_in_the_third_slot(self):
         files = [{'filename': 'src/enhance/enhance-publisher/src/lib.rs', 'changes': 10}]
         selected = pr_labels.select(files, ['pir-scheme', 'wallet-api-breaking'], self.rules)
-        self.assertEqual(selected, ['pir-scheme', 'wallet-api-breaking', 'product:enhance'])
+        self.assertEqual(selected, ['wallet-api-breaking', 'pir-scheme', 'area:publisher'])
         self.assertEqual(pr_labels.select(files, list(pr_labels.RISK_PRIORITY), self.rules),
-                         ['pir-scheme', 'wallet-api-breaking', 'publish-api-breaking'])
+                         ['migration', 'wallet-api-breaking', 'pir-scheme', 'area:publisher'])
+
+    def test_migration_api_and_security_keep_a_fourth_area_despite_extra_api_labels(self):
+        files = [{'filename': 'src/enhance/enhance-publisher/src/lib.rs', 'changes': 10}]
+        existing = ['migration', 'wallet-api-breaking', 'publish-api-breaking',
+                    'security-review', 'bug', 'product:receiver']
+        selected = pr_labels.select(files, existing, self.rules)
+        self.assertEqual(selected, ['migration', 'wallet-api-breaking',
+                                    'security-review', 'area:publisher'])
+        self.assertEqual(pr_labels.select(files, selected, self.rules), selected)
+
+    def test_every_risk_combination_preserves_categories_and_an_area_within_four(self):
+        files = [{'filename': 'src/receiver/receiver-indexer/src/lib.rs', 'changes': 10}]
+        for count in range(len(pr_labels.RISK_PRIORITY) + 1):
+            for risks in combinations(pr_labels.RISK_PRIORITY, count):
+                with self.subTest(risks=risks):
+                    selected = pr_labels.select(files, [*risks, 'bug', 'question'], self.rules)
+                    self.assertLessEqual(len(selected), 4)
+                    self.assertIn('area:publisher', selected)
+                    if count < 3:
+                        self.assertLessEqual(len(selected), 3)
+                    for category in [{'migration', 'journal-breaking'},
+                                     {'wallet-api-breaking', 'publish-api-breaking'},
+                                     {'security-review', 'pir-scheme', 'privacy-review'}]:
+                        if category.intersection(risks):
+                            self.assertTrue(category.intersection(selected))
+
+    def test_unclassified_or_product_only_changes_still_have_a_functional_area(self):
+        for files in [[{'filename': 'Cargo.toml', 'changes': 10}],
+                      [{'filename': f'src/{product}/new.rs', 'changes': 10}
+                       for product in ['receiver', 'enhance', 'status']]]:
+            with self.subTest(files=files):
+                selected = pr_labels.select(files, [], self.rules)
+                self.assertIn('area:shared', selected)
+                self.assertLessEqual(len(selected), 3)
 
     def test_large_area_wins_and_old_component_labels_do_not_accumulate(self):
         files = [{'filename': 'src/status/status-query-server/src/lib.rs', 'changes': 80},
