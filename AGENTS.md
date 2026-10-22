@@ -98,6 +98,12 @@ subcommands, and product features are selected independently.
 
 ## Branches and production changes
 
+- Follow the [PR management and labeling guide](docs/pr-management.md) when
+  creating or updating a PR. Keep at most three labels per PR, prioritizing risk
+  labels and the main components changed. Inspect the diff and apply semantic
+  breaking-change, security, privacy, and `pir-scheme` labels, including relevant indirect changes
+  through configuration, defaults, or dependencies. Labels describe scope and
+  risk; they do not introduce approval, specification, or merge requirements.
 - Commit and push directly to `main` unless Roman asks for a PR; when he does,
   open one against `main`. Work in the primary checkout or a visible worktree,
   not a hidden per-task isolation copy.

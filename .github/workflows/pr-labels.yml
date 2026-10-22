@@ -1,0 +1,39 @@
+name: PR labels
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr-numbers:
+        description: 'PR number, or multiple PR numbers separated by newlines'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: pr-labels-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # Only the default branch supplies executable code and label policy.
+      # Never check out the PR head or interpolate PR text into a shell command.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Select up to three PR labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBERS: ${{ inputs.pr-numbers || github.event.pull_request.number }}
+        run: python3 tools/ci/pr_labels.py --repo "$REPOSITORY" --pr-numbers "$PR_NUMBERS"
