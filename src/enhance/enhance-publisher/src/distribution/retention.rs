@@ -93,25 +93,30 @@ impl PublicationDistribution {
         ] {
             collect_files(&self.root.join(directory), &keep)?;
         }
-        let directory = self.root.join("preparation/artifacts-10");
-        if directory.is_dir() {
-            for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                if entry.file_type().map_err(|e| e.to_string())?.is_dir()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .is_some_and(|name| canonical_hash(name) && !units.contains(name))
-                {
-                    fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                }
-            }
-            File::open(directory)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
+        collect_units(&crate::publication::engine_root(&self.root), &units)
     }
+}
+/// Remove prepared units no retained publication uses from the directory the
+/// preparation engine rooted at `engine_root` writes them to.
+pub(super) fn collect_units(engine_root: &Path, keep: &BTreeSet<String>) -> Result<(), String> {
+    let directory = engine_root.join(enhance_query_server::runtime::UNIT_DIRECTORY);
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().map_err(|e| e.to_string())?.is_dir()
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| canonical_hash(name) && !keep.contains(name))
+        {
+            fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
+        }
+    }
+    File::open(directory)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| e.to_string())
 }
 pub(super) fn collect_files(directory: &Path, keep: &BTreeSet<String>) -> Result<(), String> {
     if !directory.is_dir() {

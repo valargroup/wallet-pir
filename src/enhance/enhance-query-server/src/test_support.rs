@@ -61,10 +61,10 @@ pub(crate) fn seed_published_fixture(root: &Path, domain: &DomainPlan) {
             }
         }
     }
-    let source = prepared.join("artifacts-9");
+    let source = prepared.join(crate::runtime::UNIT_DIRECTORY);
     assert!(
         source.is_dir(),
         "published fixture is missing its artifact tree"
     );
-    copy(&source, &root.join("artifacts-9"));
+    copy(&source, &root.join(crate::runtime::UNIT_DIRECTORY));
 }

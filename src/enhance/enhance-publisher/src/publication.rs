@@ -22,6 +22,11 @@ use std::{
 };
 pub use verification::{verify_publication, PreparedPublication, VerificationStats};
 
+/// Root of the preparation engine whose prepared units retention collects.
+pub(crate) fn engine_root(root: &Path) -> std::path::PathBuf {
+    root.join("preparation")
+}
+
 /// Produce material for validated coverage, one domain at a time. The caller
 /// owns chain authority and supplies the recovery epoch of every domain.
 /// This operation neither activates consumers nor grants serving authority.
