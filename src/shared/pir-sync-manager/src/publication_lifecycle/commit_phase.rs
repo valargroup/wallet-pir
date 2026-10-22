@@ -118,7 +118,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         let retained_views =
             self.retained_views
                 .after_commit(identity, objects, &required, SystemTime::now());
-        let keep = retained_views.objects();
+        let keep = retained_views.collectable_beyond();
         let cache = self.cache.clone();
         let started_under = self.commit_fence.generation().await;
         let fence = self.commit_fence.clone();
@@ -126,8 +126,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             .durable_operation
             .run(async move {
                 DurableOutcome::Commit(OwnedCommit {
-                    outcome: run_commit(fence, started_under, prepared, move || {
-                        cache.collect_unreferenced(&keep)
+                    outcome: run_commit(fence, started_under, prepared, move || match keep {
+                        Some(keep) => cache.collect_unreferenced(&keep),
+                        None => Ok(()),
                     })
                     .await,
                     view,

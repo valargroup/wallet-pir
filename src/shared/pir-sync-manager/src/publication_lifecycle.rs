@@ -24,6 +24,9 @@
 //!   owed until a release completes or a newer commit supersedes it.
 //! - Objects stay cached while a view the adapter still needs references them
 //!   ([`ViewRequirement`]); every other object is collected at the next commit.
+//!   While the adapter still needs a view this lifecycle never committed (for
+//!   example one installed from local state), its objects are unknown and no
+//!   commit collects anything.
 //! - A 304 or a successful response refreshes neither source-observation age
 //!   nor authority-check time; the product's freshness checks still apply.
 mod authority_round;
@@ -122,7 +125,8 @@ pub trait PublicationAdapter: Send {
     /// Every committed view the adapter still needs, and why: each view that
     /// can answer a request and each view a peer holds. The engine keeps the
     /// objects of these views and of the view it is committing, and collects
-    /// every other object inside that commit.
+    /// every other object inside that commit, unless one of these views was
+    /// never committed by this lifecycle: then nothing is collected.
     fn retained_views(
         &mut self,
     ) -> impl Future<Output = Vec<(ViewIdentity, ViewRequirement)>> + Send;
@@ -140,9 +144,9 @@ pub trait PublicationAdapter: Send {
     /// Tell a dependent peer the commit happened. The outcome of a network
     /// release can be uncertain, so it must be idempotent: a release cut off
     /// by cancellation or answered [`PeerHandover::Pending`] stays owed, and
-    /// each later pass releases again before it observes fresh authority,
-    /// without waiting on the answer, until a release completes or a newer
-    /// commit's release supersedes it.
+    /// each later pass makes one release attempt, bounded by the adapter, and
+    /// awaits its answer before it observes fresh authority, until a release
+    /// completes or a newer commit's release supersedes it.
     fn release_peer(&mut self, report: &Self::Report) -> impl Future<Output = PeerHandover> + Send;
     /// The report of the view still serving, for deferred passes.
     fn serving_report(&mut self) -> impl Future<Output = Self::Report> + Send;
