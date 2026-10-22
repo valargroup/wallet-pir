@@ -38,9 +38,9 @@ def variants(groups):
     return {
         'transparent': dict(family='transparent', packages=[*groups['transparent'], *TRANSPARENT_HOSTS], features=TRANSPARENT + qualification_features([*groups['transparent'], *TRANSPARENT_HOSTS])),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-query-server', 'status-query-server', 'pir-e2e-tests'],
-                          features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-query-server', 'status-query-server', 'pir-e2e-tests'])),
-        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-query-server', 'status-query-server',
+        'reference': dict(family='enhance', packages=['enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'],
+                          features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-query-server', 'status-material', 'status-query-server', 'pir-e2e-tests'])),
+        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-query-server', 'status-material', 'status-query-server',
                                              'status-publisher', 'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=[]),
     }
@@ -341,6 +341,7 @@ def baseline_commands(family, include_cuda=False):
                            '--lib', '--', *REFERENCE_LIB_FILTERS]),
             ('reference', [*options, '-p', 'pir-e2e-tests', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
+            ('reference', [*options, '-p', 'status-material', '--features', 'qualification-tests', '--lib']),
             ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
             ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
             ('cuda', [*options, '-p', 'enhance-query-server', '--features', 'native-reinspiring,cuda', '--lib',

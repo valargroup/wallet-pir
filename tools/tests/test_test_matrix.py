@@ -74,7 +74,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-query-server', 'status-query-server', 'status-publisher',
+                         {'enhance-query-server', 'status-material', 'status-query-server', 'status-publisher',
                           'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
