@@ -4,8 +4,8 @@
 # requests reach the archive owner and every other @TXID@/ request, metadata
 # included, reaches the recent replica. A seal changes neither handle.
 # The split map (the recent map and its index chunks) is gzipped when the client
-# accepts it; the full @TXID@/shards listing is served exactly as before.
-	@txid_split_map path @TXID@/map @TXID@/map/*
+# accepts it; the full @TXID@/shards listing is served exactly as before. The
+# matcher is scoped to its handle, so a site may render this once per prefix.
 	handle @TXID@/archive/* {
 		reverse_proxy @ARCHIVE_UPSTREAM@ {
 			lb_try_duration 2s
@@ -17,6 +17,7 @@
 		}
 	}
 	handle @TXID@/* {
+		@txid_split_map path @TXID@/map @TXID@/map/*
 		encode @txid_split_map gzip
 		reverse_proxy @RECENT_UPSTREAM@ {
 			lb_try_duration 2s
