@@ -4,9 +4,10 @@ use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 use crate::{
-    history::shardset::{FileStamp, ShardSet},
+    history::shardset::ShardSet,
     runtime::{disk::ShippedRuntimes, SharedParams},
 };
+use pir_publication::{hash_object_file, FileIdentity, ObjectFileError, ObjectReference};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -618,9 +619,7 @@ impl Finalized {
             }
             // Only the inode listed and checked, still unchanged and still
             // what its path names, is finalized or vouched for later.
-            if same_file(&physical, &probe)? != Some(stamp) {
-                return Err(format!("runtime {name} changed while it was checked").into());
-            }
+            stamp.check(&physical, &probe)?;
             if settled {
                 evidence.insert(
                     name.clone(),
@@ -1069,22 +1068,18 @@ pub struct Validation {
 pub struct Verified {
     /// Bytes hashed by this pass; reused entries are not counted.
     pub hashed: u64,
-    files: BTreeMap<String, (String, FileStamp)>,
+    files: BTreeMap<String, (String, FileIdentity)>,
+    /// Fresh observations support this pass's correctness checks, but only
+    /// files settled before its start may vouch for contents in another pass.
+    started: Option<std::time::SystemTime>,
 }
 impl Verified {
-    fn stamp(&self, artifact: &Artifact) -> Option<FileStamp> {
+    fn stamp(&self, artifact: &Artifact) -> Option<FileIdentity> {
         self.files
             .get(&artifact.path)
             .filter(|(sha256, _)| *sha256 == artifact.sha256)
             .map(|(_, stamp)| *stamp)
     }
-}
-
-/// The stamp of `file`, opened at `path`, when the path still names it.
-fn same_file(path: &Path, file: &std::fs::File) -> io::Result<Option<FileStamp>> {
-    let opened = FileStamp::of(&file.metadata()?);
-    let named = FileStamp::of(&std::fs::symlink_metadata(path)?);
-    Ok(opened.filter(|_| opened == named))
 }
 
 impl Validation {
@@ -1101,13 +1096,22 @@ impl Validation {
         known: Option<&Verified>,
         pause: &dyn Fn() -> bool,
     ) -> Result<Verified, IntegrityError> {
-        let mut verified = Verified::default();
+        let mut verified = Verified {
+            started: Some(std::time::SystemTime::now()),
+            ..Verified::default()
+        };
         for artifact in &inventory.artifacts {
-            if let Some(stamp) = known.and_then(|k| k.stamp(artifact)) {
-                let still = resolve(&self.root, &artifact.path)
-                    .ok()
-                    .and_then(|path| std::fs::symlink_metadata(path).ok())
-                    .and_then(|m| FileStamp::of(&m));
+            if let Some(stamp) = known.and_then(|k| {
+                k.stamp(artifact).filter(|stamp| {
+                    k.started
+                        .is_some_and(|started| stamp.settled_before(started))
+                })
+            }) {
+                let still = resolve(&self.root, &artifact.path).ok().and_then(|path| {
+                    let file = std::fs::File::open(&path).ok()?;
+                    let identity = FileIdentity::capture(&path, &file).ok()?;
+                    (file.metadata().ok()?.len() == artifact.bytes).then_some(identity)
+                });
                 if still == Some(stamp) {
                     verified
                         .files
@@ -1128,12 +1132,11 @@ impl Validation {
         &self,
         artifact: &Artifact,
         pause: &dyn Fn() -> bool,
-    ) -> Result<FileStamp, IntegrityError> {
-        use io::Read;
-        let unavailable = |e: &dyn std::fmt::Display| {
-            IntegrityError::Unavailable(format!("{}: {e}", artifact.path))
+    ) -> Result<FileIdentity, IntegrityError> {
+        let unavailable = |error: &dyn std::fmt::Display| {
+            IntegrityError::Unavailable(format!("{}: {error}", artifact.path))
         };
-        let mismatch = |found: Option<String>, reason: &str| IntegrityError::Mismatch {
+        let mismatch = |found, reason: &str| IntegrityError::Mismatch {
             path: artifact.path.clone(),
             expected_sha256: artifact.sha256.clone(),
             found_sha256: found,
@@ -1142,54 +1145,30 @@ impl Validation {
         if !safe_path(&artifact.path) {
             return Err(mismatch(None, "unsafe artifact path"));
         }
-        let checked = match resolve(&self.root, &artifact.path) {
-            Ok(checked) => checked,
-            Err(error) => match error.downcast_ref::<io::Error>() {
-                Some(e) => return Err(unavailable(e)),
-                None => return Err(mismatch(None, &error.to_string())),
-            },
+        let physical = resolve(&self.root, &artifact.path).map_err(|error| {
+            match error.downcast_ref::<io::Error>() {
+                Some(error) => unavailable(error),
+                None => mismatch(None, &error.to_string()),
+            }
+        })?;
+        let mut file = std::fs::File::open(&physical).map_err(|e| unavailable(&e))?;
+        let expected = ObjectReference {
+            sha256: artifact.sha256.clone(),
+            bytes: artifact.bytes,
         };
-        let mut file = std::fs::File::open(&checked).map_err(|e| unavailable(&e))?;
-        let metadata = file.metadata().map_err(|e| unavailable(&e))?;
-        if !metadata.is_file() {
-            return Err(mismatch(None, "artifact is not a regular file"));
-        }
-        if metadata.len() != artifact.bytes {
-            return Err(mismatch(None, "artifact length changed"));
-        }
-        // A file replaced or rewritten while it is read says nothing about
-        // either version; it is read again later.
-        let before = same_file(&checked, &file)
-            .map_err(|e| unavailable(&e))?
-            .ok_or_else(|| unavailable(&"artifact was replaced while opening"))?;
-        let mut hash = Sha256::new();
-        let mut buffer = vec![0u8; 1 << 20];
-        let mut total = 0u64;
-        loop {
-            if pause() {
-                return Err(IntegrityError::Stopped);
-            }
-            let read = file.read(&mut buffer).map_err(|e| unavailable(&e))?;
-            if read == 0 {
-                break;
-            }
-            total += read as u64;
-            hash.update(&buffer[..read]);
-        }
-        if same_file(&checked, &file).map_err(|e| unavailable(&e))? != Some(before) {
-            return Err(unavailable(&"artifact changed while it was read"));
-        }
-        let found = hex::encode(hash.finalize());
-        if total != artifact.bytes {
-            return Err(mismatch(
-                Some(found),
-                "artifact length changed while reading",
-            ));
-        }
-        if found != artifact.sha256 {
-            return Err(mismatch(Some(found), "artifact digest mismatch"));
-        }
-        Ok(before)
+        hash_object_file(&physical, &mut file, Some(&expected), pause)
+            .map(|(_, identity)| identity)
+            .map_err(|error| match error {
+                ObjectFileError::Cancelled => IntegrityError::Stopped,
+                ObjectFileError::DigestMismatch { actual, .. } => {
+                    mismatch(Some(actual), "artifact digest mismatch")
+                }
+                ObjectFileError::LengthMismatch { .. } => mismatch(None, "artifact length changed"),
+                ObjectFileError::NotRegularFile(_) => {
+                    mismatch(None, "artifact is not a regular file")
+                }
+                error => unavailable(&error),
+            })
     }
 
     /// Load each listed runtime alone, admitted by `memory`, and check it
@@ -1231,8 +1210,8 @@ impl Validation {
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
             let file = crate::verification::open(&path)
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
-            match same_file(&path, &file) {
-                Ok(Some(found)) if found == stamp => Ok((file, stamp)),
+            match FileIdentity::capture(&path, &file) {
+                Ok(found) if found == stamp => Ok((file, stamp)),
                 Ok(_) => Err(CorrectnessError::Unavailable(format!(
                     "{} changed since integrity validation",
                     artifact.path
@@ -1240,18 +1219,17 @@ impl Validation {
                 Err(e) => Err(CorrectnessError::Unavailable(e.to_string())),
             }
         };
-        let unchanged =
-            |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| match resolve_path(
-                &self.root, path,
-            )
-            .ok()
-            .map(|path| same_file(&path, file))
+        let unchanged = |path: &Path, file: &std::fs::File, stamp: FileIdentity, name: &str| {
+            match resolve_path(&self.root, path)
+                .ok()
+                .map(|path| FileIdentity::capture(&path, file))
             {
-                Some(Ok(Some(found))) if found == stamp => Ok(()),
+                Some(Ok(found)) if found == stamp => Ok(()),
                 _ => Err(CorrectnessError::Unavailable(format!(
                     "{name} changed during correctness validation"
                 ))),
-            };
+            }
+        };
         let mut checked = CheckedRuntimes::default();
         for (path, key, shared, source) in plan.native {
             if pause() {
@@ -1312,7 +1290,7 @@ pub struct CheckedRuntimes {
     /// For runtimes the last successful inventory read in full: the digest,
     /// length and settled stamp of the exact inode, so an unchanged file is
     /// not hashed again. A changed or replaced file has another stamp.
-    pub(crate) evidence: BTreeMap<String, (String, u64, FileStamp)>,
+    pub(crate) evidence: BTreeMap<String, (String, u64, FileIdentity)>,
     /// Native runtimes loaded and self-checked by the last attempt.
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
@@ -1334,7 +1312,7 @@ impl CheckedRuntimes {
 pub(crate) struct Known {
     sha256: String,
     bytes: u64,
-    stamp: FileStamp,
+    stamp: FileIdentity,
 }
 impl Known {
     /// The verification `source` holds for its exact file, if any: only a
@@ -1360,7 +1338,7 @@ pub(crate) struct Listed {
     /// The open runtime handle, for a self-check of the inode just listed.
     pub(crate) opened: Option<std::fs::File>,
     /// The stamp of the inode listed, unchanged throughout the listing.
-    pub(crate) stamp: FileStamp,
+    pub(crate) stamp: FileIdentity,
     /// Whether `stamp` predates the listing enough to vouch for it later.
     pub(crate) settled: bool,
     /// Whether the bytes were read and hashed.
@@ -1462,30 +1440,15 @@ pub(crate) fn listed_hashes(dir: &Path) -> usize {
 fn listed_digest(
     path: &Path,
     file: &mut std::fs::File,
-    known: Option<(&str, u64, FileStamp)>,
+    known: Option<(&str, u64, FileIdentity)>,
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<Listing, Error> {
     let started = std::time::SystemTime::now();
-    let opened = file.metadata()?;
-    if !opened.is_file() {
-        return Err("artifact is not a regular file".into());
-    }
-    let stamp = FileStamp::of(&opened).ok_or("artifact is not a regular file")?;
-    let named = |file: &std::fs::File| -> Result<(), Error> {
-        let now = FileStamp::of(&file.metadata()?);
-        let named = std::fs::symlink_metadata(path)
-            .ok()
-            .and_then(|m| FileStamp::of(&m));
-        if now != Some(stamp) || named != Some(stamp) {
-            return Err(format!("{} changed while it was listed", path.display()).into());
-        }
-        Ok(())
-    };
+    let stamp = FileIdentity::capture(path, file)?;
     if let Some((sha256, bytes, known)) = known {
-        if known == stamp && opened.len() == bytes {
-            named(file)?;
+        if known == stamp && file.metadata()?.len() == bytes {
             return Ok(Listing {
-                sha256: sha256.to_string(),
+                sha256: sha256.to_owned(),
                 bytes,
                 stamp,
                 settled: true,
@@ -1495,34 +1458,14 @@ fn listed_digest(
     }
     #[cfg(test)]
     LISTED_HASHED.lock().unwrap().push(path.to_path_buf());
-    let bytes = opened.len();
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    let mut total = 0u64;
-    loop {
-        if stop() {
-            return Err(Box::new(Stopped));
-        }
-        let read = io::Read::read(file, &mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        total += read as u64;
-        hash.update(&buffer[..read]);
-        #[cfg(test)]
-        LISTED_AFTER_READ.with(|hook| {
-            if let Some(hook) = hook.borrow_mut().as_mut() {
-                hook(path)
-            }
-        });
-    }
-    named(file)?;
-    if total != bytes {
-        return Err(format!("{} changed length while it was listed", path.display()).into());
-    }
+    let (reference, stamp) =
+        hash_object_file(path, file, None, stop).map_err(|error| match error {
+            ObjectFileError::Cancelled => Box::new(Stopped) as Error,
+            error => Box::new(error),
+        })?;
     Ok(Listing {
-        sha256: hex::encode(hash.finalize()),
-        bytes,
+        sha256: reference.sha256,
+        bytes: reference.bytes,
         stamp,
         settled: stamp.settled_before(started),
         read: true,
@@ -1534,17 +1477,10 @@ fn listed_digest(
 struct Listing {
     sha256: String,
     bytes: u64,
-    stamp: FileStamp,
+    stamp: FileIdentity,
     settled: bool,
     /// Whether the bytes were read, rather than vouched for by `known`.
     read: bool,
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Called after each bounded read of a listed file, to inject a change.
-    static LISTED_AFTER_READ: std::cell::RefCell<Option<Box<dyn FnMut(&Path)>>> =
-        const { std::cell::RefCell::new(None) };
 }
 
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
@@ -1691,7 +1627,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("table.bin");
         std::fs::write(&path, b"verified table").unwrap();
-        let stamp = FileStamp::of(&std::fs::metadata(&path).unwrap()).unwrap();
+        let stamp = FileIdentity::from_metadata(&std::fs::metadata(&path).unwrap()).unwrap();
         let sha = digest(b"verified table");
         let open = || std::fs::File::open(&path).unwrap();
         let before = listed_hashes(dir.path());
@@ -1916,47 +1852,6 @@ mod tests {
         std::fs::rename(dir.path().join("next"), &path).unwrap();
         listed_digest(&path, &mut open(), known, &|| false).unwrap();
         assert_eq!(listed_hashes(dir.path()), hashed + 2);
-    }
-
-    #[test]
-    fn a_file_changed_or_replaced_while_listed_is_refused() {
-        use std::os::unix::fs::FileExt;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("table.bin");
-        let bytes = vec![5u8; (1 << 20) + 7];
-        let inject = |change: Box<dyn FnMut(&Path)>| {
-            LISTED_AFTER_READ.with(|hook| *hook.borrow_mut() = Some(change));
-        };
-        let changes: Vec<Box<dyn Fn(&Path)>> = vec![
-            // A same-size write with the modification time restored.
-            Box::new(|path: &Path| {
-                let file = open_write(path);
-                let modified = file.metadata().unwrap().modified().unwrap();
-                file.write_all_at(b"x", 0).unwrap();
-                file.set_modified(modified).unwrap();
-            }),
-            // Truncation.
-            Box::new(|path: &Path| open_write(path).set_len(3).unwrap()),
-            // The path replaced by another inode with the same bytes.
-            Box::new(|path: &Path| {
-                let next = path.with_extension("next");
-                std::fs::copy(path, &next).unwrap();
-                std::fs::rename(&next, path).unwrap();
-            }),
-        ];
-        for change in changes {
-            std::fs::write(&path, &bytes).unwrap();
-            let mut once = Some(change);
-            inject(Box::new(move |path: &Path| {
-                if let Some(change) = once.take() {
-                    change(path)
-                }
-            }));
-            let mut file = std::fs::File::open(&path).unwrap();
-            let error = listed_digest(&path, &mut file, None, &|| false).unwrap_err();
-            assert!(error.to_string().contains("while it was listed"), "{error}");
-        }
-        LISTED_AFTER_READ.with(|hook| *hook.borrow_mut() = None);
     }
 
     fn open_write(path: &Path) -> std::fs::File {

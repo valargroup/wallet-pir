@@ -54,6 +54,7 @@
 //! same bytes at the same paths on its own host, so a wallet that wants two
 //! origins still has them.
 
+use pir_publication::FileIdentity;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
@@ -283,60 +284,9 @@ pub struct SegmentSource {
     zero_from_row: u64,
     /// What this process observed of the file the last time it hashed it,
     /// when that observation is certain enough to vouch for the file later;
-    /// see [`FileStamp`]. In memory only, so a restart verifies everything.
-    evidence: Option<FileStamp>,
+    /// see [`FileIdentity`]. In memory only, so a restart verifies everything.
+    evidence: Option<FileIdentity>,
     size_only: bool,
-}
-
-/// The identity and change metadata of a file this process hashed.
-///
-/// Sampled from the open file before and after the bytes were read, and from
-/// the path once they had been: all three must agree, or the file changed
-/// while it was verified and is refused. A later revision whose segment
-/// resolves to a file with the same stamp is the same inode, unmodified since
-/// it was hashed, and inherits the verification without re-reading it.
-///
-/// Both modification and change time are part of the stamp: restoring the
-/// modification time after writing cannot preserve the change time. Creating
-/// or removing a hard link also changes it and conservatively requires another
-/// hash. The modification time is only trusted when it predates the read
-/// by more than any timestamp granularity, so a write in the same tick as the
-/// file's last modification cannot leave the stamp unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FileStamp {
-    dev: u64,
-    ino: u64,
-    len: u64,
-    mtime_sec: i64,
-    mtime_nsec: i64,
-    ctime_sec: i64,
-    ctime_nsec: i64,
-}
-
-impl FileStamp {
-    pub(crate) fn of(meta: &std::fs::Metadata) -> Option<Self> {
-        use std::os::unix::fs::MetadataExt;
-        meta.is_file().then(|| Self {
-            dev: meta.dev(),
-            ino: meta.ino(),
-            len: meta.len(),
-            mtime_sec: meta.mtime(),
-            mtime_nsec: meta.mtime_nsec(),
-            ctime_sec: meta.ctime(),
-            ctime_nsec: meta.ctime_nsec(),
-        })
-    }
-
-    /// Whether the last modification predates `instant` by more than the
-    /// coarsest timestamp granularity a host filesystem uses.
-    pub(crate) fn settled_before(&self, instant: std::time::SystemTime) -> bool {
-        let Ok(since) = instant.duration_since(std::time::UNIX_EPOCH) else {
-            return false;
-        };
-        let modified = i128::from(self.mtime_sec) * 1_000_000_000 + i128::from(self.mtime_nsec);
-        let changed = i128::from(self.ctime_sec) * 1_000_000_000 + i128::from(self.ctime_nsec);
-        modified.max(changed) + i128::from(EVIDENCE_SETTLE_NANOS) < since.as_nanos() as i128
-    }
 }
 
 #[cfg(test)]
@@ -348,10 +298,6 @@ thread_local! {
 /// The directory beside a publisher's publications that stores each table
 /// segment and prepared runtime once, named by the SHA-256 of its bytes.
 pub const OBJECT_STORE: &str = ".objects";
-
-/// How long before a read a file must last have been modified for its stamp
-/// to vouch for it later: one second, the coarsest mtime granularity in use.
-const EVIDENCE_SETTLE_NANOS: i64 = 1_000_000_000;
 
 /// What one load spent proving its tables, and what it took over instead.
 ///
@@ -548,7 +494,7 @@ impl SegmentSource {
 
     /// Verifies the segment and returns what was observed of its file, when
     /// that is settled enough to serve as evidence later.
-    fn verify_stamped(&self, stop: Stop<'_>) -> Result<Option<FileStamp>, LoadError> {
+    fn verify_stamped(&self, stop: Stop<'_>) -> Result<Option<FileIdentity>, LoadError> {
         self.verify_stamped_observing(|| {}, stop)
     }
 
@@ -556,7 +502,7 @@ impl SegmentSource {
         &self,
         mut after_read: impl FnMut(),
         stop: Stop<'_>,
-    ) -> Result<Option<FileStamp>, LoadError> {
+    ) -> Result<Option<FileIdentity>, LoadError> {
         // Collecting an old publication removes hard links and changes ctime
         // even when its shared table bytes are untouched. Retry the whole hash,
         // never the stamp alone. Content errors and persistent churn still fail.
@@ -573,7 +519,7 @@ impl SegmentSource {
         &self,
         after_read: &mut impl FnMut(),
         stop: Stop<'_>,
-    ) -> Result<Option<FileStamp>, LoadError> {
+    ) -> Result<Option<FileIdentity>, LoadError> {
         let io = |source| LoadError::Io {
             path: self.path.clone(),
             source,
@@ -584,7 +530,7 @@ impl SegmentSource {
         let context = self.verification_context();
         let receipt = crate::verification::Receipt::new(&self.path, &file, &context);
         if receipt.as_ref().is_some_and(|r| r.matches()) {
-            return Ok(FileStamp::of(&before));
+            return Ok(FileIdentity::from_metadata(&before));
         }
         let received = crate::verification::matches_received(
             &self.path,
@@ -630,8 +576,11 @@ impl SegmentSource {
         after_read();
         let after = file.metadata().map_err(io)?;
         let named = std::fs::metadata(&self.path).map_err(io)?;
-        let stamp = FileStamp::of(&before);
-        if stamp.is_none() || stamp != FileStamp::of(&after) || stamp != FileStamp::of(&named) {
+        let stamp = FileIdentity::from_metadata(&before);
+        if stamp.is_none()
+            || stamp != FileIdentity::from_metadata(&after)
+            || stamp != FileIdentity::from_metadata(&named)
+        {
             return Err(LoadError::ChangedDuringVerification {
                 path: self.path.clone(),
             });
@@ -682,7 +631,7 @@ impl SegmentSource {
             return None;
         }
         let meta = std::fs::metadata(&candidate.path).ok()?;
-        (FileStamp::of(&meta)? == evidence).then(|| Self {
+        (FileIdentity::from_metadata(&meta)? == evidence).then(|| Self {
             path: candidate.path.clone(),
             evidence: Some(evidence),
             ..self.clone()
@@ -797,7 +746,7 @@ impl SegmentSource {
 
     /// What this process observed of the file when it verified it, if that
     /// is settled enough to vouch for the same unchanged file later.
-    pub(crate) fn evidence(&self) -> Option<FileStamp> {
+    pub(crate) fn evidence(&self) -> Option<FileIdentity> {
         self.evidence
     }
 
@@ -809,12 +758,9 @@ impl SegmentSource {
         let Some(evidence) = self.evidence else {
             return false;
         };
-        let now = file.metadata().ok();
-        let named = std::fs::metadata(&self.path).ok();
-        FileStamp::of(before) == Some(evidence)
-            && now.as_ref().and_then(FileStamp::of) == Some(evidence)
-            && named.as_ref().and_then(FileStamp::of) == Some(evidence)
-            && evidence.len == self.bytes() as u64
+        FileIdentity::from_metadata(before) == Some(evidence)
+            && before.len() == self.bytes() as u64
+            && evidence.check(&self.path, file).is_ok()
     }
 
     fn verification_context(&self) -> Vec<u8> {
@@ -1384,7 +1330,7 @@ impl ShardSet {
     /// Per segment, not per revision: a republished tail is a new revision
     /// whose sealed page shards are byte-identical and hard-linked from the
     /// one before, and those are not hashed again. Merely claiming the same
-    /// digest never skips verification; see [`FileStamp`].
+    /// digest never skips verification; see [`FileIdentity`].
     pub fn open_reusing(
         dir: &Path,
         options: &LoadOptions,
