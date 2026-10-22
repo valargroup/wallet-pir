@@ -56,37 +56,6 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Prepare the approved full v11 publication on the pinned coordinator.
       Requires completed ingestion; preserves canonical service and all partial output.
 
-  schema-candidate-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
-      [--expect-plan-sha256 H]  Verify and retain the changed-native candidate's 18
-      artifacts under /srv/transparent-activity/candidates; installs and runs nothing.
-  schema-candidate-upload-{plan,preflight,stage} --source-sha REV --attempt N
-      --transparent-filter F --transparent-publisher F --supplemental F [--expect-plan-sha256 H]
-  schema-candidate-upload-{status,reconcile} --source-sha REV --request-sha256 H
-      From root's workstation (remote-lock inventory, pinned SSH): stream exactly the three
-      pinned candidate archives to the coordinator's fixed candidate archive namespace.
-  schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
-      Render the candidate worker executable pair for schema-input-{plan,...,stage}.
-  schema-qualify-{plan,preflight,run} --request F --request-sha256 H [--expect-plan-sha256 H]
-  schema-qualify-{status,reconcile} --request-sha256 H
-      Deployed candidate staged load, freshness, capacity trial or one lifecycle fault,
-      run as one detached owner under the lock; run requires the reviewed plan digest.
-      Reconcile restores an owned unit effect that did not finish before releasing the fence.
-  schema-qualify-summary --transaction ID
-      Read-only capacity decision from reconciled trials of one transaction.
-
-  schema-snapshot-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
-      [--expect-plan-sha256 H]  On the pinned coordinator, quiesce only the reviewed
-      full-journal writer, copy its committed prefix to a private immutable snapshot
-      and restore that writer. The snapshot qualifies no oracle or candidate gate.
-  schema-candidate-execute-{plan,preflight,stage} --source-sha REV
-      --mode artifact-verification|native-certificates --attempt N
-      --preparation-request-sha256 H [--expect-plan-sha256 H]
-  schema-candidate-execute-{status,reconcile} --source-sha REV --request-sha256 H
-      From root's workstation (remote-lock inventory, pinned SSH, every host machine_id-pinned):
-      under the coordinator lock, survey every host, then run the closed candidate shard-verify
-      or all 180 native certificate segments and retain private raw evidence. Native exit zero
-      is not a gate pass.
-
   txid-display-{plan,preflight,status,ingest-status} --request F --request-sha256 H
   txid-display-deploy --request F --request-sha256 H --expect-plan-sha256 H
       --phase stage|workers|route|controller

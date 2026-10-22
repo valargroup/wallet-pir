@@ -78,7 +78,7 @@ class OperationsBundleTests(unittest.TestCase):
                             for s in registry.values() for r in s.roles.values()))
         probe = ("from wallet_pir_ops import release; "
                  "from tools.txid.lib import txid_display_poc; "
-                 "from tools.transparent.lib import activity_deployed_qualification as qualification; "
+                 "from tools.transparent.lib import activity_input_stage as qualification; "
                  "assert release.ROOT == txid_display_poc.ROOT; "
                  "assert qualification.HERE == release.ROOT / 'tools/transparent/lib'")
         result = subprocess.run([sys.executable, '-B', '-c', probe], cwd=self.root,
