@@ -1107,6 +1107,7 @@ mod tests {
     use super::*;
     use axum::{extract::State as HttpState, routing::post, Json, Router};
     use receiver_directory::snapshot::Snapshot;
+    #[cfg(feature = "qualification-tests")]
     use receiver_pir_server::Publication;
     use serde_json::{json, Value};
     use std::{
@@ -1181,6 +1182,7 @@ mod tests {
     }
 
     /// An empty one-shard inventory ending at block `[hash; 32]`, height 101.
+    #[cfg(feature = "qualification-tests")]
     fn publication(hash: u8) -> Publication {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.end_hash = [hash; 32];
