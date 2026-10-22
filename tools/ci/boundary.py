@@ -571,7 +571,7 @@ def serving_resolved_violations(root_id, packages, nodes):
     return problems
 
 
-DATABASE = {'zakura-state', 'rocksdb', 'librocksdb-sys'}
+DATABASE = {'zakura-state', 'rocksdb', 'librocksdb-sys', 'zakura-rocksdb', 'zakura-librocksdb-sys'}
 DATABASE_FREE = {
     'transparent-publisher': DATABASE,
     'transparent-tools': DATABASE | {'zakura-server-chain', 'transparent-publisher'},
