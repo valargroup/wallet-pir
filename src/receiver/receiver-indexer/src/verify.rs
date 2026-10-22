@@ -67,6 +67,20 @@ pub fn leaves(rows: &[u8]) -> Result<Vec<(u64, Hash, u32)>, Error> {
     Ok(leaves)
 }
 
+/// Adds the receiver of every record in `rows` to `receivers`, each slot checked by
+/// [`check_slot`], in row order.
+pub fn receivers(rows: &[u8], receivers: &mut Vec<ReceiverBytes>) -> Result<(), Error> {
+    for row in rows.as_chunks::<ROW_BYTES>().0 {
+        // Bytes after the last slot are row padding, not a record.
+        for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
+            if let Some(record) = Record::decode(slot).map_err(directory_error)? {
+                receivers.push(*record.receiver.as_bytes());
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checks every record of `snapshot` and that `witnesses` is its companion table: bound
 /// to it, one payload per record by ordinal, each supplying exactly the siblings its
 /// position has at the table's tree size, and every final payload folding from its

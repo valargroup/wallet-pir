@@ -37,7 +37,7 @@ use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::revision::Refused;
 use receiver_directory::Hash;
 use receiver_directory::{
-    shards::{Coverage, ShardFilter, MAX_FILTER_BYTES},
+    shards::{Coverage, ShardFilter, MAX_FILTER_BYTES, MAX_RECEIVERS},
     snapshot::{Manifest, Snapshot, ROW_BYTES},
     witness,
 };
@@ -360,6 +360,9 @@ pub fn load(
     let mut shards = Vec::new();
     for shard in &layout.shards {
         let mut segments = Vec::new();
+        // A sealed shard's distinct receivers, which its staged filter must hold exactly.
+        // They are 43 bytes each, at most a filter's capacity, for one shard at a time.
+        let mut receivers = Vec::new();
         for segment in &shard.segments {
             let (revision, name) = (&segment.payments, hex::encode(segment.payments));
             let companion = hex::encode(segment.witnesses);
@@ -411,6 +414,17 @@ pub fn load(
                 payments: file(&format!("{name}.rows")),
                 witnesses: file(&format!("{companion}.witness")),
             };
+            if shard.filter.is_some() {
+                crate::verify::receivers(&data, &mut receivers)
+                    .map_err(|e| invalid(format!("publication: {e}")))?;
+                receivers.sort_unstable();
+                receivers.dedup();
+                if receivers.len() > MAX_RECEIVERS as usize {
+                    return Err(invalid(
+                        "a shard with more receivers than a filter holds".into(),
+                    ));
+                }
+            }
             // Each segment is verified and prepared, then released before the next, so
             // only one segment's tables are ever resident outside the table budget.
             let (server, witnesses) =
@@ -444,7 +458,7 @@ pub fn load(
                     end_hash: m.end_hash,
                 };
                 let shard = (layout.genesis, layout.history_revision, coverage);
-                let source = staged_filter(path, bytes.into(), digest, shard)
+                let source = staged_filter(path, bytes.into(), digest, shard, &receivers)
                     .map_err(|e| invalid(format!("filter {name}: {e}")))?;
                 Some(Arc::new(source))
             }
@@ -480,13 +494,16 @@ pub fn load(
 
 /// Verifies `bytes`, read from the staged filter file `path`, as the filter `digest`
 /// names for `shard`, its network, correction revision and coverage, as a wallet checks
-/// it, and returns a source that serves it from that file within the table budget. The
-/// source keeps the path and length only, never `bytes`.
+/// it, and as exactly the filter the indexer builds over `receivers`, the shard's
+/// verified distinct receivers: a wallet skips a shard its filter excludes, so a missing
+/// receiver would hide a payment. Returns a source that serves it from that file within
+/// the table budget. The source keeps the path and length only, never `bytes`.
 fn staged_filter(
     path: PathBuf,
     bytes: Arc<[u8]>,
     digest: &Hash,
     shard: (Hash, u64, Coverage),
+    receivers: &[receiver_directory::ReceiverBytes],
 ) -> std::result::Result<FilterSource, String> {
     let filter = ShardFilter::decode(&bytes).map_err(|e| e.to_string())?;
     if filter.digest() != *digest {
@@ -496,6 +513,11 @@ fn staged_filter(
     filter
         .check(&genesis, revision, &coverage)
         .map_err(|e| format!("it is for another shard, network or revision: {e}"))?;
+    let rebuilt = ShardFilter::build(genesis, revision, coverage, receivers)
+        .map_err(|e| format!("the shard's receivers: {e}"))?;
+    if rebuilt.digest() != *digest {
+        return Err("it does not hold exactly the shard's receivers".into());
+    }
     let len = bytes.len();
     Ok(FilterSource::stored(
         filter.digest(),
@@ -1109,20 +1131,39 @@ mod tests {
         let bytes: Arc<[u8]> = filter.bytes().into();
         let verified = Arc::downgrade(&bytes);
         let shard = ([1; 32], 0, coverage);
-        let source = staged_filter(path, bytes, &filter.digest(), shard).unwrap();
+        let receivers = [common::receiver()];
+        let source = staged_filter(path, bytes, &filter.digest(), shard, &receivers).unwrap();
         assert!(verified.upgrade().is_none());
         let tables = receiver_pir_server::tables::Tables::new(1 << 30);
         let served = tables.filter(&source).unwrap();
         assert_eq!(served.filter().unwrap(), filter.bytes());
-        let staged = |bytes: &[u8], shard| {
+        let staged = |bytes: &[u8], shard, receivers: &[_]| {
             staged_filter(
                 dir.path().join("filter"),
                 bytes.into(),
                 &filter.digest(),
                 shard,
+                receivers,
             )
         };
-        assert!(staged(&[0u8; 4], shard).is_err());
+        assert!(staged(&[0u8; 4], shard, &receivers).is_err());
+        // A filter missing one of the shard's verified receivers is refused, since a
+        // wallet paid there would skip the shard, and so is one holding an extra.
+        let both = [common::receiver(), common::seeded_receiver(1)];
+        let refused = staged(filter.bytes(), shard, &both).err().unwrap();
+        assert!(
+            refused.contains("exactly the shard's receivers"),
+            "{refused}"
+        );
+        let extra = ShardFilter::build([1; 32], 0, coverage, &both).unwrap();
+        assert!(staged_filter(
+            dir.path().join("filter"),
+            extra.bytes().into(),
+            &extra.digest(),
+            shard,
+            &receivers,
+        )
+        .is_err());
         // A valid filter for another shard, network or revision is refused too.
         let other = Coverage {
             end_hash: [4; 32],
@@ -1133,7 +1174,10 @@ mod tests {
             ([2; 32], 0, coverage),
             ([1; 32], 1, coverage),
         ] {
-            assert!(staged(filter.bytes(), shard).is_err(), "{shard:?}");
+            assert!(
+                staged(filter.bytes(), shard, &receivers).is_err(),
+                "{shard:?}"
+            );
         }
     }
 
