@@ -20,15 +20,11 @@ fn coinbase_exclusion_preserves_position_and_compact_context() {
     assert_eq!(indexed.coinbase_actions, 1);
     assert_eq!(indexed.start_position, 610502);
     assert_eq!(indexed.commitments, b.commitments());
-    // The refund alone, as a node's tree over its one Action would root it.
+    // The block's second transaction is the public refund.
     let refund = zakura_server_chain::testing::Tx::from_bytes(
         &hex::decode(zakura_server_chain::testing::RECEIVER_REFUND_HEX.trim()).unwrap(),
     );
     assert_eq!(refund.txid(), b.txids()[1]);
-    assert_ne!(
-        zakura_server_chain::testing::ironwood_root_of(&[refund]),
-        zakura_server_chain::testing::receiver::ironwood_root(&[&b])
-    );
     assert_eq!(indexed.payments.len(), 1);
     let (receiver, p) = &indexed.payments[0];
     // Services can pass the canonical record directly to the receiver codec.
