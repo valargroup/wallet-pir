@@ -22,9 +22,7 @@
         "salt_hex": "0101010101010101010101010101010101010101010101010101010101010101",
         "window_blocks": 4096,
         "private_listen": "127.0.0.1:8480"
-      },
-      "rpc_url": "http://127.0.0.1:8232",
-      "cookie": "/run/credentials/pir-publisher.service/chain-cookie"
+      }
     }
   },
   "transparent_history": {
@@ -36,8 +34,6 @@
       "recent_from": 0,
       "recent_geometry": "recent-4k-8k",
       "archive_geometry": "archive-wide",
-      "rpc_url": "http://127.0.0.1:8232",
-      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
       "listen": "10.0.0.1:8096",
       "source_sha": "replace-with-release-revision",
       "follow_journal": false

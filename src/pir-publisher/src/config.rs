@@ -137,7 +137,12 @@ impl Config {
             crate::publisher::PublisherEngine
         );
         #[cfg(feature = "transparent-history")]
-        register!(transparent_filters, transparent_publisher::service::filters);
+        register!(
+            transparent_filters,
+            transparent_publisher::service::filters,
+            chain,
+            crate::publisher::PublisherEngine
+        );
         #[cfg(feature = "transparent-detail")]
         register!(
             transaction_details,

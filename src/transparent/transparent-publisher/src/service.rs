@@ -22,7 +22,7 @@ fn details_published(bytes: &[u8]) -> bool {
 }
 /// Static declaration only; the startup factory retains publication authority.
 pub fn history<E>(
-    config: HistoryConfig,
+    mut config: HistoryConfig,
     chain: Option<&ChainSettings>,
     executor: E,
 ) -> Result<PublisherDefinition<axum::Router>>
@@ -32,6 +32,8 @@ where
     let chain = chain
         .cloned()
         .ok_or("enabled transparent_history publisher needs the root chain settings")?;
+    config.rpc_url = chain.rpc_url.clone();
+    config.rpc_cookie = chain.rpc_cookie.clone();
     let mut writable_paths = vec![config.publication_root.clone()];
     if !config.follow_journal {
         writable_paths.push(config.data_dir.clone());
@@ -70,8 +72,15 @@ where
     )
     .following_chain())
 }
-pub fn filters(config: FilterConfig) -> Result<PublisherDefinition<axum::Router>> {
+pub fn filters<E: IngestionExecutor>(
+    config: FilterConfig,
+    chain: Option<&ChainSettings>,
+    executor: E,
+) -> Result<PublisherDefinition<axum::Router>> {
     config.validate()?;
+    let chain = chain
+        .cloned()
+        .ok_or("enabled transparent_filters publisher needs the root chain settings")?;
     let resources = PublisherResources {
         listeners: vec![config.listen],
         writable_paths: vec![config.data_dir.clone()],
@@ -84,8 +93,23 @@ pub fn filters(config: FilterConfig) -> Result<PublisherDefinition<axum::Router>
     Ok(PublisherDefinition::new(
         "transparent_filters",
         resources,
-        move |context| crate::history::filter_service::run(config, context.http, context.shutdown),
-    ))
+        move |context| async move {
+            let feed = context
+                .chain
+                .ok_or("filter publisher started without the root chain")?;
+            let rpc = crate::ingest::zakura::connect(&chain.rpc_url, &chain.rpc_cookie)?;
+            crate::history::filter_service::run(
+                config,
+                rpc,
+                feed,
+                executor,
+                context.http,
+                context.shutdown,
+            )
+            .await
+        },
+    )
+    .following_chain())
 }
 pub fn details<E: pir_pipeline::publisher::PublisherExecutor>(
     config: DetailConfig,
