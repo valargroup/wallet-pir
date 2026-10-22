@@ -35,6 +35,20 @@ their private paths. Peer-to-peer calls between roles, deploy probes and the
 `pir-apm` quality probes keep the legacy paths that deployed binaries already
 serve.
 
+`https://wallet-pir.valargroup.dev` is the unified base for the canonical paths.
+It is a second site on the coordinator's Caddy
+([`tools/deploy/coordinator/Caddyfile`](../tools/deploy/coordinator/Caddyfile),
+rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
+`tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
+filter operations reach the coordinator's loopback services; Transparent
+queries, history filter shards and Receiver cross to `transparent-pir` and
+`receiver-pir` over verified HTTPS, naming each origin as Host and SNI. It
+serves no legacy alias and no operator path. The product hosts keep serving both
+forms for released wallets. Receiver's edge trusts only the coordinator's
+address to forward `X-Forwarded-For`, so its per-client admission still keys on
+the wallet. Whether the host is live is recorded in the product status pages,
+not here.
+
 ## Features
 
 The host compiles a product only when that product's Cargo feature is enabled:

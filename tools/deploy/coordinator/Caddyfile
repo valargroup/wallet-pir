@@ -97,6 +97,16 @@ wallet-pir.valargroup.dev {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
+	# History filter shards are a Transparent router operation; every other
+	# canonical filter operation is the coordinator's filter service.
+	handle /transparent/v1/filters/shards* {
+		reverse_proxy https://transparent-pir.valargroup.dev {
+			header_up Host transparent-pir.valargroup.dev
+			transport http {
+				tls_server_name transparent-pir.valargroup.dev
+			}
+		}
+	}
 	handle /transparent/v1/filters/* {
 		reverse_proxy 127.0.0.1:8090
 	}

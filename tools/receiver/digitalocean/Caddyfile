@@ -1,3 +1,15 @@
+{
+	servers {
+		# The unified wallet host (`wallet-pir.valargroup.dev`, on the shared
+		# coordinator at `wallet_pir_coordinator_dns_ipv4`) forwards Receiver
+		# requests here. Trust only that address to append to X-Forwarded-For, so
+		# the service's per-client admission keys on the wallet that sent the
+		# request rather than on the coordinator. Every other peer's header is
+		# replaced with its own address, as before.
+		trusted_proxies static 167.99.42.60/32
+	}
+}
+
 receiver-pir.valargroup.dev {
 	# The service refuses a query that is not exactly its fixed length, and caps the
 	# upload before that; this is the outer bound.
