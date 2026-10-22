@@ -3,7 +3,6 @@ use super::{
     serving::{evaluate, query, shared_bytes, HttpState},
     telemetry, Service,
 };
-use crate::distributed::{Binding, Health, ProviderStatus, Role};
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
@@ -11,6 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use status_query_server::distributed::{Binding, Health, ProviderStatus, Role};
 use status_shared::{
     now_ms,
     protocol::{Hash, Manifest},
@@ -35,7 +35,7 @@ impl Service {
             .merge(telemetry::routes())
     }
     pub fn query_routes(&self) -> Router {
-        crate::PUBLIC_ROUTES
+        status_query_server::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [
@@ -256,7 +256,7 @@ async fn router_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Controller;
+    use crate::status::Controller;
     use axum::{body::Body, http::Request};
     use status_shared::{protocol::PROTOCOL, Generation};
     use std::sync::Arc;

@@ -1,12 +1,9 @@
 //! Shared role state and exclusive ownership of the local serving directory.
-use super::{admission, serving::serving_http_client};
-use crate::{
-    distributed::{loopback_origin, Role},
-    Controller,
-};
+use super::{admission, serving::serving_http_client, Controller};
 use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
 use pir_publication::ObjectReference;
+use status_query_server::distributed::{loopback_origin, Role};
 use status_shared::{protocol::Hash, publication::Failure, Generation};
 use std::{fs::File, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;

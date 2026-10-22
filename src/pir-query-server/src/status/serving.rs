@@ -1,7 +1,7 @@
 //! Wallet-facing and worker query handlers of the Status roles. Each one checks
 //! authority and freshness before and after admission.
 use super::admission;
-use crate::Controller;
+use crate::status::Controller;
 use axum::{body::Bytes, extract::State, http::StatusCode};
 use status_shared::{profile, protocol::*, telemetry};
 use std::{

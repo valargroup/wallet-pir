@@ -3,11 +3,13 @@
 `pir-query-server` is one process that serves any compiled subset of Enhance,
 Status, Transparent history, and transaction details. The host crate is
 `src/pir-query-server`. Its management server
-reserves listeners and owns process shutdown. Product libraries continue to own
-evaluation, admission, and readiness. Status HTTP routes, synchronization,
-and role validation live in `status-query-server::service` and its product
-configuration; the host delegates to that crate, as it does for Enhance and
-Transparent.
+reserves listeners and owns process shutdown. The host owns Status roles
+directly: role configuration, HTTP routes, admission, telemetry, the generation
+controller and publisher synchronization live in `pir_query_server::status`.
+`status-shared` supplies generation material and the wire protocol, and
+`status-query-server` supplies only the private router-worker messages and the
+public route mounts. Enhance and Transparent libraries still own their roles;
+the host delegates to them.
 
 ## Public routes
 

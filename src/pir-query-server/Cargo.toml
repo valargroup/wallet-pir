@@ -13,7 +13,16 @@ path = "tests/operator.rs"
 [features]
 default = []
 enhance = ["dep:enhance-query-server"]
-status = ["dep:status-query-server"]
+status = [
+    "dep:status-query-server",
+    "dep:status-shared",
+    "dep:pir-control",
+    "dep:pir-publication",
+    "dep:hex",
+    "dep:http",
+    "dep:rand",
+    "dep:url",
+]
 # Transparent history and transaction-detail serving compile independently.
 transparent-history = [
     "dep:transparent-query-server",
@@ -26,6 +35,7 @@ transparent-detail = [
 native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
+    "status-shared?/native-reinspiring",
 ]
 cuda = ["enhance-query-server?/cuda"]
 
@@ -35,9 +45,18 @@ enhance-query-server = { path = "../enhance/enhance-query-server", optional = tr
 status-query-server = { path = "../status/status-query-server", optional = true }
 transparent-query-server = { path = "../transparent/transparent-query-server", optional = true, default-features = false }
 pir-pipeline = { path = "../shared/pir-pipeline" }
+# Status roles: product material comes from status-shared, peer messages from
+# status-query-server; the host owns their HTTP, admission and synchronization.
+status-shared = { path = "../status/status-shared", optional = true }
+pir-control = { path = "../shared/pir-control", features = ["admission"], optional = true }
+pir-publication = { path = "../shared/pir-publication", optional = true }
+hex = { version = "0.4", optional = true }
+http = { version = "1", optional = true }
+rand = { version = "0.8", optional = true }
+url = { version = "2", optional = true }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -46,4 +65,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 tempfile = "3"
+status-shared = { path = "../status/status-shared", features = ["client"] }
+# Independent wallet client exercises the Status serving wire contract.
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["native", "status"] }
 tower = { version = "0.5", features = ["util"] }

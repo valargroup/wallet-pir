@@ -106,8 +106,8 @@ class FastBuildTests(unittest.TestCase):
         self.assertCountEqual(shard['args'][1:], only_distribution)
 
     def test_status_preparation_splits_once_and_other_suites_keep_larger_groups(self):
-        names = {f'service::sync::tests::case_{index:02d}' for index in range(37)}
-        status = dict(package='status-query-server', integration=False, exclusive=False,
+        names = {f'status::sync::tests::case_{index:02d}' for index in range(37)}
+        status = dict(package='pir-query-server', integration=False, exclusive=False,
                       args=[], case_count=len(names))
         shards = fast_build.bounded_programs(status, names)
         self.assertEqual(len(shards), 2)

@@ -22,6 +22,7 @@
         {
           "any-glob-to-any-file": [
             "src/status/**",
+            "src/pir-query-server/src/status/**",
             "tools/status/**",
             "docs/status/**",
             "evidence/status/**",

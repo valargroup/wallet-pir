@@ -1,9 +1,13 @@
-//! Autonomous Status serving roles hosted by `pir-query-server`.
+//! Status serving roles owned by the query server.
 //!
-//! This facade checks publisher compatibility before opening role state, starts
-//! synchronization, then serves the supplied listeners. Dropping its future
-//! aborts owned synchronization and wallet-listener tasks.
+//! The host checks publisher compatibility before opening role state, starts
+//! synchronization, then serves the supplied listeners. Dropping the role
+//! future aborts owned synchronization and wallet-listener tasks. Generation
+//! material, the wire protocol and peer messages stay in `status-shared` and
+//! `status-query-server`.
 mod admission;
+pub mod config;
+mod controller;
 mod routes;
 mod serving;
 mod state;
@@ -12,8 +16,10 @@ mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]
 mod wallet_tests;
 
-use crate::distributed::RoleConfig;
+pub use config::RoleConfig;
+pub use controller::Controller;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
+pub use status_query_server::distributed::Role;
 use status_shared::publication::{attempt_limit, Failure, PREFIX};
 
 fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {

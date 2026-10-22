@@ -201,10 +201,8 @@ EXCLUDED = ('evidence/', 'target/')
 
 
 def serving_ingestion_problem(owner, name, target):
-    """Status roles use the shared lifecycle utility without acquiring ingestion."""
-    if (owner == 'src/status/status-query-server/' and name == PIPELINE
-            and target == 'src/shared/pir-pipeline/'):
-        return False
+    """Whether a serving library edge reaches ingestion. Status roles, and their
+    use of the shared lifecycle utility, are owned by `pir-query-server`."""
     return name in INGESTION
 
 

@@ -7,11 +7,7 @@
 //! and installs committed views in the role's controller.
 mod worker_handover;
 
-use super::Service;
-use crate::{
-    distributed::{Role, RoleConfig},
-    Controller,
-};
+use super::{config::RoleConfig, Controller, Service};
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
 use pir_sync_manager::{
     publication_lifecycle::{
@@ -20,6 +16,7 @@ use pir_sync_manager::{
     },
     Error,
 };
+use status_query_server::distributed::Role;
 use status_shared::{
     now_ms,
     protocol::{Manifest, MAX_AGE_MS},

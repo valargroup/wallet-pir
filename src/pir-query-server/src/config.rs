@@ -33,7 +33,7 @@ pub struct Config {
     #[cfg(feature = "enhance")]
     pub enhance: Option<Product<enhance_query_server::service::ServingRole>>,
     #[cfg(feature = "status")]
-    pub status: Option<Product<status_query_server::distributed::RoleConfig>>,
+    pub status: Option<Product<crate::status::RoleConfig>>,
     #[cfg(feature = "transparent-history")]
     pub transparent_history:
         Option<Product<transparent_query_server::history::process::HistoryProcess>>,

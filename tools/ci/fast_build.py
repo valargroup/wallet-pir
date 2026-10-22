@@ -237,10 +237,10 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    # Status pays for one process-local generation per group. Two groups let
-    # those prepares overlap. Every other suite keeps about forty-eight cases
-    # so immutable fixtures stay together.
-    group = 31 if program.get('package') == 'status-query-server' else 48
+    # Status roles, hosted by the query server, pay for one process-local
+    # generation per group. Two groups let those prepares overlap. Every other
+    # suite keeps about forty-eight cases so immutable fixtures stay together.
+    group = 31 if program.get('package') == 'pir-query-server' else 48
     if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
     lanes = min(3, (len(names) + group - 1) // group)

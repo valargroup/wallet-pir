@@ -1,5 +1,5 @@
 use super::*;
-use crate::service::routes::{provider_commit, provider_pin};
+use crate::status::routes::{provider_commit, provider_pin};
 use axum::extract::{Path, State};
 use axum::{
     http::{HeaderMap, StatusCode},

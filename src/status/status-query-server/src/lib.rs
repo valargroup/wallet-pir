@@ -1,15 +1,12 @@
-//! Status PIR serving core: the controller that decides which generation a
-//! request may use, the private role protocol and the Status service.
+//! Status PIR serving primitives below `pir-query-server`: the private peer
+//! messages a router and worker exchange and the wallet-facing route mounts.
 //!
 //! Generations, the wire protocol and the publication contract live in
-//! `status-shared`. The [`service`] module owns Status listeners, admission
-//! and outbound HTTP. `pir-query-server` reserves listeners and supervises the
-//! product task; chain observation and publication remain in
-//! `status-publisher`, which this crate must never depend on.
-mod controller;
+//! `status-shared`. `pir-query-server` owns Status roles, listeners,
+//! admission, synchronization and outbound HTTP; chain observation and
+//! publication remain in `status-publisher`, which this crate must never
+//! depend on.
 pub mod distributed;
-pub mod service;
-pub use controller::Controller;
 
 /// Where the wallet-facing Status operations (`/init`, `/session/:id`,
 /// `/query`) are served: the canonical `/status/v1` namespace and the deployed

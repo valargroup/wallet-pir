@@ -426,16 +426,15 @@ class BoundaryTests(unittest.TestCase):
                         'dependencies': [self.edge('zakura-server-chain', git=library)]}]
         self.assertEqual(boundary.violations(application, []), [])
 
-    def test_status_query_roles_own_transport_and_neutral_lifecycle(self):
-        for name, path in [('tokio', None), ('axum', None), ('reqwest', None),
-                           ('pir-pipeline', 'src/shared/pir-pipeline/'),
-                           ('pir-sync-manager', 'src/shared/pir-sync-manager/')]:
+    def test_status_query_library_leaves_the_lifecycle_to_the_host(self):
+        for name, path in [('pir-pipeline', 'src/shared/pir-pipeline/')]:
             packages = [{'name': 'status-query-server',
                          'manifest': 'src/status/status-query-server/Cargo.toml',
                          'dependencies': [{**self.edge(name), 'path': path}]}]
-            self.assertEqual(boundary.violations(packages, []), [], name)
-        self.assertTrue(boundary.serving_ingestion_problem(
-            'src/status/status-query-server/', 'pir-pipeline', 'tools/ingestion/'))
+            self.assertNotEqual(boundary.violations(packages, []), [], name)
+        packages = [{'name': 'pir-query-server', 'manifest': 'src/pir-query-server/Cargo.toml',
+                     'dependencies': [{**self.edge('pir-pipeline'), 'path': 'src/shared/pir-pipeline/'}]}]
+        self.assertEqual(boundary.violations(packages, []), [])
 
     def test_status_query_server_refuses_publisher_and_chain_dependencies(self):
         for name, location in [
@@ -480,7 +479,9 @@ class BoundaryTests(unittest.TestCase):
                      local('lifecycle', 'pir-pipeline', 'src/shared/pir-pipeline')],
                      'resolve': {'nodes': [node('serving', [('lifecycle', None)]),
                                            *metadata['resolve']['nodes'][1:], node('lifecycle', [])]}}
-        self.assertEqual(boundary.resolved_violations(lifecycle), [])
+        # The lifecycle utility belongs to the host, never a serving library.
+        self.assertEqual(boundary.resolved_violations(lifecycle),
+                         ['status-query-server: serving library resolves pir-pipeline'])
         lifecycle['resolve']['nodes'][-1] = node('lifecycle', [('chain', None)])
         self.assertTrue(any('status-query-server: serving library resolves zakura-server-chain' == problem
                             for problem in boundary.resolved_violations(lifecycle)))
