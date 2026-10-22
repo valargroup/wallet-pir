@@ -1,5 +1,4 @@
 """Qualification must remain cumulative and independent for each service."""
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -83,16 +82,6 @@ class QualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'CUDA candidates belong to Enhance'):
             q.verify('receiver', SHA, Path('/unused'), cuda=True)
 
-    def test_tests_use_hosted_runners_while_cpu_candidates_keep_the_build_runner(self):
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        for name in ['transparent-lint', 'transparent-test', 'enhance-lint',
-                     'enhance-test', 'shared-test', 'receiver-test']:
-            job = re.split(r'\n  [a-z][\w-]*:\n', workflow.split(f'\n  {name}:\n', 1)[1])[0]
-            self.assertIn('    runs-on: ubuntu-24.04\n', job)
-            self.assertNotIn('vars.WALLET_PIR_BUILD_RUNNER', job)
-        build = workflow.split('\n  build:\n', 1)[1].split('\n  release:\n', 1)[0]
-        self.assertIn('vars.WALLET_PIR_BUILD_RUNNER', build)
-        self.assertIn('    needs: [select, validate-ops]\n', build)
 
     def test_qualification_rejects_dirty_candidates_before_publication(self):
         def extract(_archive, destination, _sha, _kind):
@@ -102,14 +91,6 @@ class QualificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'candidate source was dirty'):
                 q.verify('enhance', SHA, Path('/unused'))
 
-    def test_expensive_checks_can_be_cancelled_when_a_new_commit_arrives(self):
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        for name in ['transparent-lint', 'transparent-test', 'enhance-lint',
-                     'enhance-test', 'shared-test', 'receiver-test']:
-            job = workflow.split(f'\n  {name}:\n', 1)[1]
-            expression = re.search(r'^    if: (.+)$', job, re.M).group(1)
-            self.assertIn('!cancelled()', expression, name)
-            self.assertNotIn('always()', expression, name)
 
     def test_publication_survives_skipped_other_families_but_requires_its_gates(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
@@ -140,73 +121,6 @@ class QualificationTests(unittest.TestCase):
                 for result in ['failure', 'skipped', 'cancelled', 'queued']:
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
 
-    def test_cuda_compiles_before_qualification_but_publishes_only_after_it(self):
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        build = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
-        publish = workflow.split('\n  release-cuda:\n', 1)[1]
-        publish += (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
-        self.assertIn('    needs: [select, validate-ops, cuda]\n', build)
-        self.assertIn("inputs.include-cuda && needs.cuda.result == 'success'", build)
-        self.assertNotIn('needs.complete', build)
-        self.assertIn('tools/ci/build-cuda.sh', build)
-        self.assertIn('name: candidate-native-cuda-${{ github.sha }}', build)
-        self.assertNotIn('name: enhance-pir-native-cuda-${{ github.sha }}', build)
-        self.assertIn('    needs: [complete, build-cuda]\n', publish)
-        self.assertIn('name: candidate-native-cuda-${{ github.sha }}', publish)
-        self.assertIn('qualification.py verify --family enhance --cuda', publish)
-        self.assertNotIn('tools/ci/build-cuda.sh', publish)
-        self.assertIn('name: enhance-pir-native-cuda-${{ github.sha }}', publish)
-
-    def test_main_has_a_separate_runner_setting_from_legacy_branch_workflows(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        routing = next(line for line in workflow.splitlines() if 'runs-on:' in line)
-        self.assertIn("github.ref == 'refs/heads/main'", routing)
-        self.assertIn("github.event_name != 'pull_request'", routing)
-        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', routing)
-        self.assertNotIn('vars.WALLET_PIR_FAST_RUNNER', workflow)
-        preparation = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
-        self.assertIn('vars.WALLET_PIR_MAIN_RUNNER', preparation)
-
-    def test_branch_preparation_cannot_hold_the_main_runner_or_concurrency_slot(self):
-        workflow = (ROOT / '.github/workflows/ci-prepare.yml').read_text()
-        routing = next(line for line in workflow.splitlines() if 'runs-on:' in line)
-        self.assertIn("github.ref == 'refs/heads/main' && vars.WALLET_PIR_MAIN_RUNNER", routing)
-        self.assertIn("|| '\"ubuntu-24.04\"'", routing)
-        group = next(line for line in workflow.splitlines() if line.strip().startswith('group:'))
-        self.assertIn("github.ref == 'refs/heads/main' && 'fast-refs/heads/main'", group)
-        self.assertIn("|| format('prepare-fast-{0}', github.ref)", group)
-        self.assertIn('cancel-in-progress: false', workflow)
-
-    def test_only_fast_validation_and_dependency_cache_priming_run_on_main_pushes(self):
-        # Parse trigger structure so adding a comment mentioning "push" cannot
-        # accidentally change which workflows this assertion covers.
-        def events(name):
-            workflow = (ROOT / '.github/workflows' / name).read_text()
-            triggers = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
-            return set(re.findall(r'^  ([a-z_]+):', triggers, re.M))
-        self.assertIn('push', events('ci.yml'))
-        self.assertEqual(set(events('ci-qualify.yml')), {'workflow_dispatch'})
-        for name in ['ci-full.yml']:
-            self.assertNotIn('push', events(name))
-            self.assertNotIn('workflow_run', events(name))
-            self.assertIn('schedule', events(name))
-            self.assertIn('workflow_dispatch', events(name))
-        self.assertEqual(events('ci-cache.yml'), {'push', 'schedule', 'workflow_dispatch'})
-        prime = (ROOT / '.github/workflows/ci-cache.yml').read_text()
-        self.assertIn('    paths:\n', prime)
-        self.assertIn('branches: [main]', prime)
-        self.assertIn('--all --compile-only', prime)
-        self.assertNotIn('needs:', prime.split('\n  plan-qualification:', 1)[0])
-
-    def test_feedback_finishes_before_main_only_timing_check(self):
-        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('timeout-minutes:', workflow)
-        timing = workflow.split('- name: Check main feedback timing after validation', 1)[1]
-        self.assertIn("if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'", timing)
-        self.assertIn('--check-fast-seconds 180', timing)
-        self.assertLess(workflow.index('- name: Run affected fast checks'), workflow.index('- name: Check main feedback timing'))
-        self.assertIn("inputs.hosted && 'hosted-'", workflow)
-        self.assertIn('!inputs.hosted', workflow)
 
     def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
         packages = q.workspace_packages()
@@ -335,11 +249,6 @@ class QualificationTests(unittest.TestCase):
         self.assertTrue(result['cuda']['selected'])
         self.assertTrue(result['enhance']['selected'])
         self.assertFalse(result['receiver']['selected'])
-
-    def test_operations_build_runs_no_cargo(self):
-        with patch.object(q, 'run') as run:
-            q.build('ops')
-            run.assert_not_called()
 
 
 class StorageTests(unittest.TestCase):

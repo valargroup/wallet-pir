@@ -38,7 +38,8 @@ pub struct Config {
     pub concurrency: u32,
     /// Whether to include the optional payout audit in health.
     pub audit_enabled: bool,
-    pub filter_blocks: u32,
+    /// An operator cap on the rolling filter window; see [`crate::blocks::filter_window_blocks`].
+    pub filter_blocks: Option<u32>,
     pub history_revision: u64,
     /// Pinned payment table rows of sealed shards' segments.
     pub shard_rows: u32,
@@ -383,10 +384,8 @@ async fn publish_filters(
 ) -> Result<()> {
     // The revision this pass collects under, which `revision::advance` recorded.
     let revision = store.history_revision()?;
-    let first = (tip
-        .height
-        .saturating_sub(args.filter_blocks.saturating_sub(1)))
-    .max(args.start_height);
+    let blocks = crate::blocks::filter_window_blocks(tip.height, args.filter_blocks);
+    let first = (tip.height.saturating_sub(blocks - 1)).max(args.start_height);
     let current = serving.filter_window();
     if current.is_some_and(|window| {
         let head = window.head();
@@ -400,7 +399,7 @@ async fn publish_filters(
     }) {
         return Ok(());
     }
-    let filters = store.block_filters(args.filter_blocks, revision)?;
+    let filters = store.block_filters(blocks, revision)?;
     let window = receiver_pir_server::blocks::BlockWindow::new(genesis, revision, filters)?;
     rpc.check_network(genesis).await?;
     if !is_canonical(rpc, tip.height, tip.hash).await? || !serving.publish_filters(window, epoch) {
@@ -1295,7 +1294,7 @@ mod tests {
                 batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
                 concurrency: 8,
                 audit_enabled: true,
-                filter_blocks: receiver_store::blocks::MAX_FILTER_BLOCKS,
+                filter_blocks: None,
                 history_revision: 0,
                 shard_rows: receiver_pir::MIN_ROWS,
                 shard_target: None,
@@ -2183,7 +2182,7 @@ mod tests {
     async fn a_correction_older_than_retention_rebuilds_its_shard() {
         use super::common::{receiver, seeded_receiver};
         let mut paused = Paused::new(|_| {}).await;
-        (paused.args.shard_target, paused.args.filter_blocks) = (Some(1), 1);
+        (paused.args.shard_target, paused.args.filter_blocks) = (Some(1), Some(1));
         let block = paused.extend(&[receiver()], 1, 0);
         paused.extend(&[seeded_receiver(1)], 0, 0);
         paused.extend(&[], 1, 0);
@@ -2348,7 +2347,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_one_shot_run_does_not_build_rolling_filters() {
         let mut paused = Paused::new(|_| {}).await;
-        paused.args.filter_blocks = receiver_store::blocks::MAX_FILTER_BLOCKS + 1;
+        paused.args.filter_blocks = Some(receiver_store::blocks::MAX_FILTER_BLOCKS + 1);
         let rpc = std::slice::from_ref(&paused.rpc);
         let genesis = Network::Mainnet.genesis_hash();
         refresh(&paused.args, rpc, genesis, None, &mut State::default())

@@ -183,12 +183,18 @@ class Runner:
             # independent service. Do not wait for this runner to recover itself.
             raise
 
+    def observe_forward(self):
+        return observe(self.target.identifier)
+
+    def stop_forward(self):
+        systemctl('stop', self.name + '.service')
+
     def watchdog(self):
         while True:
             state = json.loads(self.decision.path.read_text())
             if state['phase'] in ('accepted', 'restored'):
                 return {'transaction': self.target.identifier, 'phase': state['phase']}
-            observed = observe(self.target.identifier)
+            observed = self.observe_forward()
             active = observed.get('MainPID', '0') != '0'
             if not active and not state['runner_started'] and observed.get('ActiveState') == 'failed':
                 # A unique unit can fail before Python reaches started(). An
@@ -203,8 +209,8 @@ class Runner:
                             'forward invocation changed; refusing to stop another owner')
                     # TimeoutStopSec and KillMode bound and contain termination;
                     # no PID outside this transaction's cgroup is targeted.
-                    systemctl('stop', self.name + '.service')
-                    require(observe(self.target.identifier).get('MainPID') == '0', 'forward runner did not stop')
+                    self.stop_forward()
+                    require(self.observe_forward().get('MainPID') == '0', 'forward runner did not stop')
                 latest = self.target.latest()
                 if latest is None or latest['id'] != self.target.identifier:
                     require(state['interrupted_unix'] is None,

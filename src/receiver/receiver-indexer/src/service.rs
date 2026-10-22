@@ -64,10 +64,12 @@ pub struct Config {
     /// Maximum simultaneous raw-block RPC requests.
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_CONCURRENCY)))]
     pub concurrency: u32,
-    /// Rolling filter retention in blocks, at most seven target days. PIR history is retained.
-    #[arg(long, default_value_t = receiver_store::blocks::MAX_FILTER_BLOCKS)]
-    #[serde(default = "default_filter_blocks")]
-    pub filter_blocks: u32,
+    /// Caps the rolling filter window in blocks. By default it spans seven days of target
+    /// time, which is more blocks after NU7 (see `blocks::filter_window_blocks`); it never
+    /// spans more. PIR history is retained.
+    #[arg(long)]
+    #[serde(default)]
+    pub filter_blocks: Option<u32>,
     /// Pinned payment table rows of every sealed Receiver shard segment. Sealing keeps
     /// each segment placeable at this geometry; changing it affects only later seals.
     #[arg(long, default_value_t = receiver_pir::MAX_ROWS)]
@@ -165,8 +167,9 @@ impl Config {
             || self.cookie.is_some() == self.no_auth
             || self.poll_seconds == 0
             || self.near_poll_seconds < 10
-            || self.filter_blocks == 0
-            || self.filter_blocks > receiver_store::blocks::MAX_FILTER_BLOCKS
+            || self.filter_blocks.is_some_and(|blocks| {
+                blocks == 0 || blocks > receiver_store::blocks::MAX_FILTER_BLOCKS
+            })
             || self.history_revision > i64::MAX as u64
             || self.depth > 50
             || self.batch_size == 0
@@ -317,11 +320,6 @@ fn default_table_memory_mib() -> u64 {
 /// parsing.
 fn default_retention_seconds() -> u64 {
     600
-}
-
-/// Default rolling suffix, shared by JSON configuration and command-line parsing.
-fn default_filter_blocks() -> u32 {
-    receiver_store::blocks::MAX_FILTER_BLOCKS
 }
 
 #[cfg(test)]

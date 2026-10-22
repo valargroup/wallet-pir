@@ -3,9 +3,9 @@
 //! an interruption, then adoption by the real coordinator and HTTP PIR queries.
 
 use crate::support::*;
+use enhance_publisher::chain_source::{Prevouts, ZakuraClient};
 use enhance_publisher::ingest::EnhanceJournal;
-use enhance_publisher::rebuild::{adopt_staged, Adoption, Receipt};
-use enhance_publisher::zakura::{Prevouts, ZakuraClient};
+use enhance_publisher::rebuild::{adopt_staged, JournalAdoption, RebuildReceipt};
 use enhance_query_server::client::EnhancePirClient;
 use enhance_query_server::protocol::Manifest;
 use enhance_query_server::ACTIVATION_HEIGHT;
@@ -171,11 +171,11 @@ fn read_record(dir: &Path, position: u64) -> EnhanceRecord {
     EnhanceRecord::from_bytes(bytes[start..start + RECORD_BYTES].try_into().unwrap()).unwrap()
 }
 
-fn receipt(dir: &Path) -> Receipt {
+fn receipt(dir: &Path) -> RebuildReceipt {
     serde_json::from_slice(&std::fs::read(dir.join("rebuild.json")).unwrap()).unwrap()
 }
 
-fn write_receipt(dir: &Path, receipt: &Receipt) {
+fn write_receipt(dir: &Path, receipt: &RebuildReceipt) {
     std::fs::write(
         dir.join("rebuild.json"),
         serde_json::to_vec(receipt).unwrap(),
@@ -255,7 +255,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         let prevouts = Prevouts::new(1000);
         let mut journal = EnhanceJournal::open(&data).unwrap();
         for height in H..=H + 3 {
-            let mut block = enhance_publisher::zakura::block(&client, height, &prevouts)
+            let mut block = enhance_publisher::chain_source::block(&client, height, &prevouts)
                 .await
                 .unwrap();
             for record in &mut block.records {
@@ -335,7 +335,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let printed: Receipt = serde_json::from_slice(&output.stdout).unwrap();
+    let printed: RebuildReceipt = serde_json::from_slice(&output.stdout).unwrap();
     let staged_receipt = receipt(&staged);
     assert_eq!(printed, staged_receipt);
     {
@@ -393,7 +393,8 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
                     .unwrap(),
             )
             .unwrap();
-            let Adoption::Rejected { reason, moved_to } = adopt_staged(&copy).unwrap() else {
+            let JournalAdoption::Rejected { reason, moved_to } = adopt_staged(&copy).unwrap()
+            else {
                 panic!("sealed shard must refuse");
             };
             assert!(reason.contains("sealed shard 0"), "{reason}");
@@ -408,7 +409,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
             let adopted = adopt_staged(&copy).unwrap();
             assert!(matches!(
                 adopted,
-                Adoption::Adopted {
+                JournalAdoption::Adopted {
                     changed_records: 6,
                     ..
                 }
@@ -418,7 +419,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
                 journal_digests(&copy.join("enhance")),
                 journal_digests(&good)
             );
-            assert_eq!(adopt_staged(&copy).unwrap(), Adoption::None);
+            assert_eq!(adopt_staged(&copy).unwrap(), JournalAdoption::None);
         }
     }
 
@@ -458,7 +459,8 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
             copy_dir(&good, &copy.join("enhance-staged"));
             let before = journal_digests(&copy.join("enhance"));
             tamper(&copy.join("enhance-staged"));
-            let Adoption::Rejected { reason, moved_to } = adopt_staged(&copy).unwrap() else {
+            let JournalAdoption::Rejected { reason, moved_to } = adopt_staged(&copy).unwrap()
+            else {
                 panic!("{name} must refuse adoption");
             };
             let expected = if name == "non-fee byte" {
@@ -501,7 +503,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         .count();
     assert_eq!(rejected, 1);
 
-    // Adoption, then the normal loop publishes the next block.
+    // JournalAdoption, then the normal loop publishes the next block.
     drop(process);
     std::fs::rename(&good, &staged).unwrap();
     let old_live = journal_digests(&live);

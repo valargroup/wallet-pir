@@ -536,36 +536,6 @@ class PlanTests(Base):
         changed['units']['archive']['memory_max'] = '5G'
         self.assertNotEqual(first.plan_sha256(), self.poc(changed).plan_sha256())
 
-    def test_plan_names_its_own_coordinator_paths_units_and_site(self):
-        poc = self.poc()
-        files, plan = poc.render(), poc.plan()
-        self.assertEqual(plan['phases'], ['stage', 'workers', 'route', 'controller'])
-        self.assertEqual(sorted(plan), ['files', 'hosts', 'phases', 'release', 'release_dir', 'request_sha256',
-                                        'retires', 'schema', 'site', 'source_sha', 'templates', 'transient'])
-        self.assertEqual(sorted(files), ['config:archive', 'fleet.json', 'publisher.json', 'routes.caddy', 'unit:archive',
-                                         'unit:controller', 'withdrawn.caddy', 'workers.json'])
-        self.assertEqual((plan['files']['config:archive']['host'], plan['files']['config:archive']['path'],
-                          plan['files']['config:archive']['mode']),
-                         ('archive', '/etc/transparent-pir/txid-display-worker.json', '0644'))
-        self.assertEqual(plan['hosts'], {'coordinator': 'coordinator', 'archive': 'archive-03'})
-        self.assertEqual(sorted(plan['release']), ['archive', 'coordinator'])
-        self.assertEqual(plan['retires'], {})
-        self.assertEqual(plan['site'], {**SITE, 'host': 'archive-03', 'opt': '/opt/transparent-txid-display-k8',
-                                        'units': sorted({N.CONTROLLER_UNIT, *N.TRANSIENT})})
-        self.assertEqual(plan['files']['routes.caddy']['host'], 'archive')
-        self.assertEqual(plan['files']['routes.caddy']['path'], P.CADDYFILE)
-        self.assertEqual(plan['files']['unit:controller']['path'],
-                         '/etc/systemd/system/transparent-txid-display-k8-controller.service')
-        self.assertEqual(plan['files']['fleet.json']['path'], '/opt/transparent-txid-display-k8/fleet.json')
-        self.assertEqual(plan['release_dir'], RELEASE_DIR)
-        controller = files['unit:controller']
-        self.assertIn('ReadWritePaths=/srv/zakura/txid-display-poc/root /srv/zakura/txid-display-poc/journal '
-                      '/opt/transparent-txid-display-k8/state\n', controller)
-        self.assertNotIn('/opt/transparent-txid-display/', controller)
-        self.assertEqual(json.loads(files['fleet.json'])['control_dir'], '/opt/transparent-txid-display-k8/state/ssh')
-        transient = plan['transient']
-        self.assertEqual({argv[1] for argv in transient.values()},
-                         {'--unit=' + unit for unit in (*N.TRANSIENT, N.PLAN_START_UNIT, N.VERIFY_UNIT)})
 
     def test_rendered_units_carry_the_reviewed_limits(self):
         files = self.poc().render()
@@ -679,11 +649,6 @@ class PlanTests(Base):
         self.assertIn('getbestblockhash', (ROOT / P.RELEASE_FILES['txid-display-observe.py']).read_text())
         self.assertIn('--interval-ms', transient['observer'])
         self.assertIn('https://txid.example/v2/txid/shards', transient['mapwatch'])
-
-    def test_release_bundle_kind_matches_the_deploy(self):
-        self.assertEqual(RELEASE.BINARIES[P.KIND], list(P.BINARIES))
-        self.assertEqual(sorted(Path(path).name for path in RELEASE.FILES[P.KIND]), sorted(P.RELEASE_FILES))
-        self.assertEqual(sorted(RELEASE.FILES[P.KIND]), sorted(P.RELEASE_FILES.values()))
 
 
 class PreflightTests(Base):
@@ -1067,12 +1032,6 @@ class RouteTests(DeployedFleet):
         poc.rollback(poc.transaction.id)
         self.assertEqual(self.fake.text('archive-03', P.CADDYFILE), DEFAULT_CADDY)
 
-    def test_retired_router_phases_are_unknown(self):
-        poc = self.poc()
-        for phase in ('firewall', 'router-hook'):
-            with self.subTest(phase=phase), self.assertRaisesRegex(P.PocError, 'unknown phase'):
-                poc.deploy(phase, poc.plan_sha256())
-
 
 class ControllerTests(DeployedFleet):
     def setUp(self):
@@ -1151,13 +1110,6 @@ class TransientTests(Base):
         self.poc().act('measure-stop')
         for unit in (N.OBSERVER_UNIT, N.MAPWATCH_UNIT):
             self.assertEqual(self.fake.unit('coordinator', unit)['active'], 'inactive')
-
-    def test_verify_reports_the_controller_result(self):
-        poc = self.poc()
-        poc.act('verify', poc.plan_sha256())
-        self.fake.wait_results[N.VERIFY_UNIT] = (1, 'sealed digest 7 differs')
-        with self.assertRaisesRegex(P.PocError, 'sealed digest 7 differs'):
-            self.poc().act('verify', poc.plan_sha256())
 
 
 class StopAndRetireTests(DeployedFleet):

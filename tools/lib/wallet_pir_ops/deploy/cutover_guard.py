@@ -100,7 +100,9 @@ class Decision:
         wall = state['deadline_unix'] is not None and self.clock() >= state['deadline_unix']
         elapsed = (self.boot_id is not None and self.boot_id == state.get('boot_id')
                    and self.elapsed() >= state.get('deadline_elapsed', float('inf')))
-        return wall or elapsed
+        rebooted = (state['interrupted_unix'] is not None and self.boot_id is not None
+                    and state.get('boot_id') is not None and self.boot_id != state['boot_id'])
+        return wall or elapsed or rebooted
 
     def guard(self):
         with self.locked() as state:

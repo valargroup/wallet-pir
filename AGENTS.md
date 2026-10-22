@@ -95,9 +95,17 @@ subcommands, and product features are selected independently.
   edits. Do not create a new cold target per command or weaken trust boundaries.
 - Keep fast-suite fixtures small enough to finish in a few seconds; retain deployed-size parameter combinations in full qualification.
 - When a test needs a published predecessor, reuse the shared fixture, damage an open artifact in place, and build or decode a full artifact only for the property that test checks.
+- Prioritize integration tests for complex script workflows; avoid trivial or implementation-detail tooling tests, retaining focused tests only for consequential gaps.
 
 ## Branches and production changes
 
+- Follow the [PR management and labeling guide](docs/pr-management.md) when
+  creating or updating a PR. Prioritize migrations, API breaks, and security;
+  keep up to three primary labels and always retain an area label, using a fourth
+  label when all three primary slots contain risks. Inspect the diff and apply
+  migration, breaking-change, security, privacy, and `pir-scheme` labels, including relevant indirect changes
+  through configuration, defaults, or dependencies. Labels describe scope and
+  risk; they do not introduce approval, specification, or merge requirements.
 - Commit and push directly to `main` unless Roman asks for a PR; when he does,
   open one against `main`. Work in the primary checkout or a visible worktree,
   not a hidden per-task isolation copy.

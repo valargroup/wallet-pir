@@ -167,6 +167,22 @@ rollback watchdog enabled for boot. It returns their identities immediately;
 supervision decision. This is not a completed deployment until that decision is
 accepted and the journal is committed.
 
+Alternatively, `publisher-cutover-deploy --supervision operator` runs from a
+verified matching operations bundle on macOS, using the operator's existing SSH
+inventory. It retains private inputs under `--state-dir` and installs separate
+transaction-owned forward and rollback LaunchAgents. The Mac must remain awake,
+logged in and connected until acceptance or restoration; `caffeinate` prevents
+idle sleep. Network loss delays remote rollback until access returns. No private
+key is copied to a host and SSH agent forwarding remains disabled. Status includes
+the local supervision decision. Keep the same Mac, bundle and state directory
+for recovery; an interrupted forward attempt never starts again automatically.
+
+CPU-only restoration omits GPU workers from both the inventory's serving targets
+and router maps, and sets `enhance_https.cuda_release` to null. The HTTPS cutover
+may preserve an already-stopped continuous checker with `resume_load: false` and
+the exact `expected_disk_latch_sha256`; the same disk-only incident restrictions
+as ordinary publisher updates apply. The checker and latch remain untouched.
+
 The watchdog records one deadline immediately before the first interruption.
 Retries cannot reset it; a boot clock also prevents a backwards wall-clock change
 from extending the hour. Acceptance requires readiness, fresh publication

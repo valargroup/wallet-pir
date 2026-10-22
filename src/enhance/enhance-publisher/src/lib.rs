@@ -5,15 +5,17 @@
 // so publisher modules refer to them alongside their own.
 use enhance_query_server::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
 
+mod durable_state;
+
 pub mod application;
+pub mod chain_source;
 pub mod distribution;
 pub mod handoff;
 pub mod ingest;
+pub mod journal;
 pub mod publication;
 pub mod publisher;
 pub mod rebuild;
-pub mod store;
-pub mod zakura;
 
 pub mod service;
 

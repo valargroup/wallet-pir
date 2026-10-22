@@ -5,6 +5,10 @@ use receiver_directory::{
     Hash,
 };
 
+/// The most blocks one rolling window holds: seven days at NU7's 25-second target
+/// spacing, the shortest.
+const MAX_WINDOW_BLOCKS: usize = 7 * 24 * 3600 / 25;
+
 /// Maximum encoded material retained by one rolling window.
 const MAX_WINDOW_BYTES: usize = 64 * 1024 * 1024;
 
@@ -24,7 +28,7 @@ impl BlockWindow {
         filters: Vec<BlockFilter>,
     ) -> Result<Self, receiver_directory::Error> {
         use receiver_directory::Error;
-        if filters.is_empty() || filters.len() > 8064 {
+        if filters.is_empty() || filters.len() > MAX_WINDOW_BLOCKS {
             return Err(Error::Capacity);
         }
         let first = filters[0].block().height;

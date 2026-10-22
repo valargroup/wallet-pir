@@ -1,5 +1,6 @@
 //! HTTP observation and loopback management routes over the Status core's
 //! aggregate counters. No query identifiers enter labels.
+use crate::telemetry;
 use axum::{
     body::HttpBody,
     extract::Request,
@@ -8,7 +9,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use status_query_server::telemetry;
 use std::time::Instant;
 
 pub async fn observe(role: &'static str, request: Request, next: Next) -> Response {

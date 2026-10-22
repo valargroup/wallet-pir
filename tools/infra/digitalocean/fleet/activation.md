@@ -12,10 +12,10 @@ mappings into four service modules. The historical rename chains and the two
 archive index-to-name mappings remain in `shared.tf`. Project memberships stay
 in this root with their original resource sets.
 
-`ops/tests/fixtures/digitalocean-layout-contract.json` pins the original root
-interfaces, resource arguments, templates and independent worker-pool files.
-The tests reconstruct the old references before comparison. The fleet mock
-suite enables every service. A private two-version Terraform mock rehearsal
+The historical source above retains the original root interfaces, resource
+arguments, templates and independent worker-pool files. The saved-plan
+comparator checks resource identities, values and outputs and refuses provider
+actions. The fleet mock suite enables every service. A private two-version Terraform mock rehearsal
 applied the original configuration into test-only state and then planned the
 new source against that same state: 66 instances, 42 moves, all resource actions
 `no-op`, unchanged output values. These counts describe the mock fixture,
