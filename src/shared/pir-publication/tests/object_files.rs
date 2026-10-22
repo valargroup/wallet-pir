@@ -67,8 +67,11 @@ fn whole_file_hashing_checks_digest_length_and_named_identity() {
     assert_eq!(actual, expected);
     assert_ne!(identity, changed);
     fs::remove_file(&path).unwrap();
+    fs::write(&replacement, b"abc").unwrap();
     std::os::unix::fs::symlink(&replacement, &path).unwrap();
-    assert!(hash_object_file(&path, &mut file, None, &|| false).is_err());
+    // Even a symlink to the opened inode cannot stand in for its physical name.
+    let mut target = File::open(&replacement).unwrap();
+    assert!(hash_object_file(&path, &mut target, None, &|| false).is_err());
 }
 
 #[test]
