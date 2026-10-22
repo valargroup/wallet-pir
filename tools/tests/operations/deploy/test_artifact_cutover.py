@@ -1,5 +1,6 @@
 """Artifact conversion cannot strand old authority behind new executables."""
 import copy
+import itertools
 import json
 from pathlib import Path
 import sys
@@ -14,7 +15,13 @@ from wallet_pir_ops.deploy.engine import DeployError, mutation_fence
 from wallet_pir_ops.deploy.remote import production_lock
 
 
+CONFIG = '/etc/wallet-pir/publisher.json'
 INCIDENT = '/state/integrity-failures.json'
+
+
+def publisher_config(root='/state', enabled=True):
+    return json.dumps({'management_listen':'127.0.0.1:18080', 'transparent_history':{'enabled':enabled,
+        'settings':{'publication_root':root, 'listen':'10.0.0.1:8096'}}})
 # As the current publisher serializes a failure: tagged checksums.
 CURRENT_INCIDENT = json.dumps([{'path':'a/directory.0.bin',
     'expected_checksum':{'algorithm':'blake3', 'digest':'77'*32},
@@ -103,12 +110,15 @@ class ArtifactCutoverTests(unittest.TestCase):
         for index, name in enumerate(['publisher', *sorted(A.SERVICES - {'publisher'})]):
             unit = name + '.service'
             health = f'http://127.0.0.1:{8000 + index}/health'
-            role = descriptors.Role('server', unit, 'exec-drop-in', health)
+            # The publisher's aggregate readiness, which a retained incident holds false.
+            ready = {'field':'ready', 'equals':True} if name == 'publisher' else None
+            role = descriptors.Role('server', unit, 'exec-drop-in', health, ready=ready)
             service = descriptors.Service(name, '/opt/' + name, 'service', ('server',), {'server':role})
             self.registry[name] = service
             services[name] = {'roles':{'server':[{'host':'coordinator'}]},
                               'exact_check':{'host':'coordinator', 'argv':['/bin/exact']}}
-            self.ex.install('coordinator', unit, '[Service]\nExecStart=/old/' + name + '\n',
+            arguments = ' --config ' + CONFIG if name == 'publisher' else ''
+            self.ex.install('coordinator', unit, '[Service]\nExecStart=/old/' + name + arguments + '\n',
                             files={'/old/' + name:('old-' + name).encode()})
             self.ex.endpoints[('coordinator', health)] = unit
             candidate = self.state / name
@@ -118,6 +128,7 @@ class ArtifactCutoverTests(unittest.TestCase):
         self.inventory = descriptors.Inventory({'coordinator':{}}, {'mode':'config'},
                                                {'type':'remote','host':'coordinator'}, services)
         self.ex.put('coordinator', '/helper', b'helper')
+        self.ex.put('coordinator', CONFIG, publisher_config())
         self.ex.put('coordinator', '/state/current.json', json.dumps({'algorithm':'sha256',
                     'revision':92, 'eligible':True, 'revoked':[]}))
         helper = {'host':'coordinator','helper':'/helper','helper_sha256':sha256(b'helper')}
@@ -125,15 +136,15 @@ class ArtifactCutoverTests(unittest.TestCase):
             'preparations':[{**helper,'root':'/state','stage':'/stage'}],
             'records':[{**helper,'kind':'transparent-state','input':'/state/current.json',
                         'output':'/stage/current.json','preparations':['/stage/prepared.json']}],
-            'incidents':[{'host':'coordinator','path':INCIDENT}],
             'discovery':{'host':'coordinator','url':'https://publisher.example/.well-known/pir-service-discovery'}}
         self.target = self.make_target()
         for _, deployer in self.target.groups:
             deployer.refresh_baseline()
 
     def make_target(self, request=None):
+        # Each poll advances a second, so a readiness deadline expires at once.
         return A.Cutover(request or self.request, self.inventory, self.registry, self.ex, self.state,
-                         poll_seconds=0)
+                         poll_seconds=0, clock=itertools.count().__next__, sleep=lambda _: None)
 
     def test_conversion_precedes_publisher_then_consumers_and_repeated_rollback_is_safe(self):
         result = self.target.deploy(self.target.plan()['plan_sha256'])
@@ -244,7 +255,8 @@ class ArtifactCutoverTests(unittest.TestCase):
         for lost in (False, True):
             with self.subTest(lost_runner=lost):
                 self.setUp()
-                result = self.target.deploy(self.target.plan()['plan_sha256'])
+                # The retained incident keeps the resumed publisher unready.
+                result = self.deploy_with_unready_publisher()
                 advanced = {'algorithm':'blake3', 'revision':108, 'eligible':False, 'revoked':['new withdrawal']}
                 self.ex.put('coordinator', '/state/current.json', json.dumps(advanced))
                 self.ex.incident_on_stop = CURRENT_INCIDENT
@@ -270,18 +282,84 @@ class ArtifactCutoverTests(unittest.TestCase):
                                  {**advanced, 'algorithm':'sha256'})
                 self.assert_serving('old-')
 
-    def test_history_preparation_must_declare_its_incident_record(self):
-        request = copy.deepcopy(self.request)
-        request['preparations'][0]['source'] = {'product':'transparent-history', 'inventory':'{}',
-            'inventory_sha256':sha256(b'{}'), 'checkpoints':'/stage/checkpoints'}
-        request['incidents'] = []
+    def deploy_with_unready_publisher(self):
+        """A committed cutover whose publisher then reports aggregate ready=false."""
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        self.ex.unhealthy.add(('coordinator', self.request['groups'][0]['binary_sha256']))
+        status, body = self.ex.http_get('coordinator', 'http://127.0.0.1:8000/health')
+        self.assertEqual((status, json.loads(body)['ready']), (200, False))
+        return result
+
+    def test_resume_refuses_dead_or_wrong_executable_and_a_retry_recovers(self):
+        release = self.target.groups[0][1].release_binary(self.request['groups'][0]['binary_sha256'])
+        for case in ('dead', 'wrong'):
+            with self.subTest(case=case):
+                self.setUp()
+                result = self.deploy_with_unready_publisher()
+                self.ex.incident_on_stop = CURRENT_INCIDENT
+                if case == 'dead':
+                    self.ex.failing_restart.add(('coordinator', 'publisher.service'))
+                    reason = 'unit is failed'
+                else:
+                    original = self.ex.host('coordinator').files[release]
+                    self.ex.put('coordinator', release, b'another publisher')
+                    reason = 'running executable is ' + sha256(b'another publisher')
+                with self.assertRaisesRegex(DeployError, 'not verified.*' + reason):
+                    self.target.rollback(result['id'])
+                # Consumers wait for the publisher; the journal still owns recovery.
+                self.assertFalse(self.ex.probe_unit('coordinator', 'status.service')['main_pid'])
+                self.assertEqual(A.Journal.load(self.state, A.NAME, result['id']).status, 'rolling-back')
+                if case == 'dead':
+                    self.ex.failing_restart.clear()
+                else:
+                    self.ex.put('coordinator', release, original)
+                with self.assertRaisesRegex(DeployError, 'resumed the current release'):
+                    self.make_target().rollback(result['id'])
+                self.assert_serving('new-')
+                self.assertEqual(self.ex.read('coordinator', INCIDENT), CURRENT_INCIDENT)
+                self.assertEqual(A.Journal.load(self.state, A.NAME, result['id']).status, 'committed')
+
+    def refuses_before_stopping(self, result, pattern='predecessor cannot read'):
+        before = len(self.ex.log)
+        with self.assertRaisesRegex(DeployError, pattern):
+            self.make_target().rollback(result['id'])
+        self.assertFalse(any(op in ('systemctl', 'write') for _, op, _ in self.ex.log[before:]))
+        self.assert_serving('new-')
+
+    def test_history_incident_records_follow_the_publisher_configuration(self):
+        # The request names no incident and its preparation has no product.
+        self.assertNotIn('source', self.request['preparations'][0])
+        self.ex.put('coordinator', CONFIG, publisher_config('/srv/history'))
+        result = self.make_target().deploy(self.make_target().plan()['plan_sha256'])
+        pinned = A.Journal.load(self.state, A.NAME, result['id']).data['incidents']
+        self.assertEqual(pinned, [{'host':'coordinator', 'path':'/srv/history/integrity-failures.json'}])
+        # A clean record on another same-host path proves nothing.
+        self.ex.put('coordinator', INCIDENT, '[]')
+        self.ex.put('coordinator', '/srv/history/integrity-failures.json', CURRENT_INCIDENT)
+        self.refuses_before_stopping(result)
+        # Moving the root leaves both the pinned and the configured root checked.
+        self.ex.put('coordinator', CONFIG, publisher_config('/srv/moved'))
+        self.refuses_before_stopping(result)
+        self.ex.put('coordinator', '/srv/history/integrity-failures.json', '[]')
+        self.ex.put('coordinator', '/srv/moved/integrity-failures.json', CURRENT_INCIDENT)
+        self.refuses_before_stopping(result)
+        # Without a readable configuration nothing proves which roots exist.
+        self.ex.remove('coordinator', '/srv/moved/integrity-failures.json')
+        self.ex.remove('coordinator', CONFIG)
+        self.refuses_before_stopping(result, 'cannot derive Transparent History incident records')
+        # A disabled History product writes no record; absent files need nothing.
+        self.ex.put('coordinator', CONFIG, publisher_config('/srv/moved', enabled=False))
+        self.assertEqual(self.make_target().rollback(result['id'])['status'], 'rolled-back')
+        self.assert_serving('old-')
+
+    def test_publisher_without_its_configuration_cannot_plan(self):
+        self.ex.put('coordinator', CONFIG, 'not json')
+        with self.assertRaisesRegex(DeployError, 'not a readable publisher configuration'):
+            self.target.plan()
+        request = {**copy.deepcopy(self.request), 'incidents':[]}
         path = self.state / 'request.json'
         path.write_text(json.dumps(request))
-        with self.assertRaisesRegex(DeployError, 'must declare its integrity-failures.json'):
-            A.load_request(path, sha256(path.read_bytes()))
-        request['incidents'] = [{'host':'coordinator', 'path':'/state/other.json'}]
-        path.write_text(json.dumps(request))
-        with self.assertRaisesRegex(DeployError, 'incident records must name'):
+        with self.assertRaisesRegex(DeployError, 'request fields differ'):
             A.load_request(path, sha256(path.read_bytes()))
 
     def test_incomplete_fleet_and_later_deployments_are_refused(self):
