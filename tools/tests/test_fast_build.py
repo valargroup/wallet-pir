@@ -116,6 +116,33 @@ class FastBuildTests(unittest.TestCase):
         other = dict(status, package='receiver-indexer')
         self.assertEqual(fast_build.bounded_programs(other, names), [other])
 
+    def test_cgroup_quota_bounds_available_cpus(self):
+        root = Path(self.directory.name) / 'cgroup'
+        leaf = root / 'slice' / 'task.service'
+        leaf.mkdir(parents=True)
+        (root / 'cpu.max').write_text('max 100000\n')
+        (root / 'slice' / 'cpu.max').write_text('600000 100000\n')
+        (leaf / 'cpu.max').write_text('250000 100000\n')
+        membership = Path(self.directory.name) / 'membership'
+        membership.write_text('0::/slice/task.service\n')
+        self.assertEqual(fast_build.cgroup_cpus(root, membership), 3)
+        (leaf / 'cpu.max').write_text('max 100000\n')
+        self.assertEqual(fast_build.cgroup_cpus(root, membership), 6)
+        (root / 'slice' / 'cpu.max').write_text('max 100000\n')
+        self.assertIsNone(fast_build.cgroup_cpus(root, membership))
+        self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
+
+    def test_status_unit_program_runs_alone_only_on_small_hosts(self):
+        names = {'status::sync::tests::case', 'config::tests::case'}
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+            self.assertFalse(fast_build.status_runs_alone(
+                'pir-query-server', ['lib'], {'enhance::tests::case'}))
+            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['test'], names))
+            self.assertFalse(fast_build.status_runs_alone('receiver-indexer', ['lib'], names))
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+
     def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
         root = Path(self.directory.name) / 'sources'
         root.mkdir()

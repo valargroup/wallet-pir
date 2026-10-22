@@ -10,8 +10,9 @@ in-process Enhance hint graph stays on a second command and never joins the
 first. Chain-node fixtures stay in qualification: they pull the wallet client
 and node stack into every crate on their command. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-Enhance publication fixtures run alone, as does the filter library on fewer than
-eight cores. The remaining programs share a pool of at most three processes.
+Enhance publication fixtures run alone, as do the filter library and the query
+host's Status unit cases on fewer than eight cores, counting any cgroup CPU
+quota. The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -24,10 +25,36 @@ import tomllib
 from stage import ROOT, run, inherited_fds
 
 
+def cgroup_cpus(root=Path('/sys/fs/cgroup'), membership=Path('/proc/self/cgroup')):
+    """The tightest cgroup v2 CPU quota above this process, or None."""
+    try:
+        path = next(line[3:] for line in membership.read_text().splitlines()
+                    if line.startswith('0::'))
+    except (OSError, StopIteration):
+        return None
+    limits = []
+    directory = root / path.lstrip('/')
+    while True:
+        try:
+            quota, period = (directory / 'cpu.max').read_text().split()
+            if quota != 'max':
+                limits.append(max(1, -(-int(quota) // int(period))))
+        except (OSError, ValueError):
+            pass
+        if directory == root or root not in directory.parents:
+            break
+        directory = directory.parent
+    return min(limits) if limits else None
+
+
 def available_cpus():
+    """CPUs this process may use: its affinity, bounded by any cgroup quota."""
     if hasattr(os, 'sched_getaffinity'):
-        return len(os.sched_getaffinity(0))
-    return os.cpu_count() or 1
+        cpus = len(os.sched_getaffinity(0))
+    else:
+        cpus = os.cpu_count() or 1
+    quota = cgroup_cpus()
+    return min(cpus, quota) if quota else cpus
 
 
 def publisher_runs_alone(name, kinds):
@@ -37,6 +64,16 @@ def publisher_runs_alone(name, kinds):
     build threads, so it stays in the shared pool there.
     """
     return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
+
+
+def status_runs_alone(name, kinds, names):
+    """Status sync cases each prepare a generation on every core.
+
+    Below eight cores, sharing those cores with the pool pushes a single case
+    past its budget, so the query host's Status unit program runs alone there.
+    """
+    return (name == 'pir-query-server' and 'lib' in kinds and available_cpus() < 8
+            and any(case.startswith('status::') for case in names))
 
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
@@ -430,6 +467,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     programs = []
     actual_integrations, actual_units = set(), set()
     discovered_units = {name: set() for name in run_packages}
+    # Unit cases already run by an earlier command's program for the same target.
+    covered_units = {}
     seen = set()
     for artifact in artifacts:
         binary = artifact['executable']
@@ -461,16 +500,32 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
+        # The hint command builds the query host with every role, so its unit
+        # program repeats the stable command's cases. Run only its new cases.
+        unit = None if integration else (name, target['name'], tuple(target['kind']))
+        repeated = set() if unit is None else names & covered_units.get(unit, set())
+        if unit is not None:
+            covered_units.setdefault(unit, set()).update(names)
+        if repeated:
+            names = names - repeated
+            if not names:
+                continue
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
                              exclusive=publisher_runs_alone(name, target['kind'])
+                             or status_runs_alone(name, target['kind'], names)
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
+        if repeated:
+            programs.extend(dict(part, args=[*part['args'], '--exact', *sorted(names)])
+                            if '--exact' not in part['args'] else part
+                            for part in bounded_programs(program, names))
+            continue
         programs.extend(bounded_programs(program, names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
