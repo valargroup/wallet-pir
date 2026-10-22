@@ -6,6 +6,8 @@ use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;
 
+// Only the chain identities are needed here, not the roster helpers.
+#[allow(dead_code)]
 #[path = "support/history_set.rs"]
 mod history_set;
 #[path = "support/revision.rs"]
