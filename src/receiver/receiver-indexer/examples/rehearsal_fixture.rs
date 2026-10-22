@@ -3,7 +3,8 @@
 //! `stage DIR NAME OFFSET HASH_BYTE` writes a complete publication directory, in the
 //! indexer's file layout, ending `OFFSET` blocks after Ironwood activation at a block
 //! hash of `HASH_BYTE` repeated, with two payments to the shared fixture receiver,
-//! and prints its record and anchor. `lookup ORIGIN OFFSET HASH_BYTE` retrieves the
+//! and prints its record and the blocks it depends on, each with the Ironwood tree size
+//! a node must report after it. `lookup ORIGIN OFFSET HASH_BYTE` retrieves the
 //! fixture receiver's payments over encrypted PIR and exits zero only if they are
 //! exactly the two this fixture staged: the oracle is the construction, not the server.
 #[path = "../../receiver-store/tests/common/mod.rs"]
@@ -126,6 +127,18 @@ async fn main() {
                 serde_json::to_vec_pretty(&witness.manifest).unwrap(),
             )
             .unwrap();
+            use receiver_indexer::canonical::TreeAnchor;
+            let anchors: Vec<_> = [
+                TreeAnchor::payments(&snapshot.manifest),
+                TreeAnchor::witnesses(&witness.manifest),
+            ]
+            .iter()
+            .map(|anchor| {
+                serde_json::json!({"height": anchor.height,
+                    "hash": zakura_server_chain::hash::display(&anchor.hash),
+                    "size": anchor.size})
+            })
+            .collect();
             let genesis = snapshot.manifest.genesis;
             let segment = receiver_indexer::verify::prepare(snapshot, witness).unwrap();
             let inventory = receiver_pir_server::Publication::assemble(
@@ -140,7 +153,7 @@ async fn main() {
                 serde_json::json!({"directory": dir, "revision": revision,
                     "end_height": activation() + offset,
                     "end_hash": zakura_server_chain::hash::display(&hash),
-                    "session": hex::encode(session)})
+                    "anchors": anchors, "session": hex::encode(session)})
             );
         }
         Some("lookup") => {

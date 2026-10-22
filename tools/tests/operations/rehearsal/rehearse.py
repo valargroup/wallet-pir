@@ -51,11 +51,16 @@ def sha256(path):
 
 
 class Node:
-    """A JSON-RPC node: genesis, a tip and the hashes the test sets."""
+    """A JSON-RPC node: genesis, a tip, and the blocks the test sets with their Ironwood tree sizes.
+
+    `getblock HASH 1` answers `trees.ironwood.size` for a set block, as the receiver reads
+    an anchor's tree size, and a node error for any other hash.
+    """
 
     def __init__(self, genesis_display):
         self.genesis = genesis_display
         self.hashes = {}
+        self.sizes = {}
         self.tip = 0
         node = self
 
@@ -63,14 +68,20 @@ class Node:
             def do_POST(self):
                 request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 method, params = request['method'], request.get('params', [])
+                result, error = None, None
                 if method == 'getblockcount':
                     result = node.tip
                 elif method == 'getblockhash':
                     height = int(params[0])
                     result = node.genesis if height == 0 else node.hashes.get(height, 'ee' * 32)
-                else:
-                    result = None
-                body = json.dumps({'result': result, 'error': None, 'id': request.get('id')}).encode()
+                elif method == 'getblock' and params[1:] == [1]:
+                    heights = [h for h, display in node.hashes.items() if display == params[0]]
+                    if heights and params[0] in node.sizes:
+                        result = {'hash': params[0], 'height': heights[0],
+                                  'trees': {'ironwood': {'size': node.sizes[params[0]]}}}
+                    else:
+                        error = {'code': -8, 'message': 'Block not found'}
+                body = json.dumps({'result': result, 'error': error, 'id': request.get('id')}).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(body)))
@@ -84,9 +95,16 @@ class Node:
         self.url = 'http://127.0.0.1:%d' % self.server.server_address[1]
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
-    def set(self, height, display_hash):
+    def set(self, height, display_hash, size=None):
         self.hashes[height] = display_hash
+        if size is not None:
+            self.sizes[display_hash] = size
         self.tip = max(self.tip, height + 5)
+
+    def stage(self, published):
+        """Puts every block a staged publication depends on on the chain, with its tree size."""
+        for anchor in published['anchors']:
+            self.set(anchor['height'], anchor['hash'], anchor['size'])
 
 
 def last_preparation(status):
@@ -196,7 +214,7 @@ def receiver():
     publications.mkdir()
     stage = lambda name, offset, byte: json.loads(r.run(fixture, 'stage', publications, name, offset, byte).stdout)
     a = stage('a', 1, 161)
-    node.set(a['end_height'], a['end_hash'])
+    node.stage(a)
     record = r.work / 'input/record/publication.json'
     record.parent.mkdir(parents=True)
     def point(published):
@@ -226,7 +244,7 @@ def receiver():
     r.run(*exact(1, 161))
     r.step('restart', note='re-verified from the record; exact answer after restart')
     b = stage('b', 2, 178)
-    node.set(b['end_height'], b['end_hash'])
+    node.stage(b)
     point(b)
     r.wait('update serving', lambda: (r.health(origin + '/v1/receiver/health') or {}).get('serving') == b['session'])
     r.run(*exact(2, 178))
