@@ -14,6 +14,17 @@ from wallet_pir_ops.deploy.engine import DeployError, mutation_fence
 from wallet_pir_ops.deploy.remote import production_lock
 
 
+INCIDENT = '/state/integrity-failures.json'
+# As the current publisher serializes a failure: tagged checksums.
+CURRENT_INCIDENT = json.dumps([{'path':'a/directory.0.bin',
+    'expected_checksum':{'algorithm':'blake3', 'digest':'77'*32},
+    'found_checksum':{'algorithm':'blake3', 'digest':'88'*32},
+    'inventory_checksum':{'algorithm':'blake3', 'digest':'99'*32},
+    'map_sha256':'44'*32, 'reason':'body checksum differs'}])
+PREDECESSOR_INCIDENT = json.dumps([{'path':'a/directory.0.bin', 'expected_sha256':'11'*32,
+    'found_sha256':None, 'inventory_sha256':'33'*32, 'map_sha256':'44'*32, 'reason':'body checksum differs'}])
+
+
 class Fleet(FakeFleet):
     def __init__(self):
         super().__init__()
@@ -22,9 +33,18 @@ class Fleet(FakeFleet):
         self.events = []
         self.interrupt_stop = False
         self.interrupt_reverse = False
+        self.incident_on_stop = None
+        self.interrupt_restart = False
 
     def systemctl(self, host, *arguments):
+        if arguments[0] == 'restart' and self.interrupt_restart:
+            self.interrupt_restart = False
+            raise KeyboardInterrupt('lost rollback owner while resuming the current release')
         super().systemctl(host, *arguments)
+        if arguments[0] == 'stop' and self.incident_on_stop and arguments[1] == 'publisher.service':
+            # The validator records a failure while the publisher shuts down.
+            self.put(host, INCIDENT, self.incident_on_stop)
+            self.incident_on_stop = None
         if arguments[0] == 'stop' and self.interrupt_stop:
             self.interrupt_stop = False
             raise KeyboardInterrupt('lost cutover owner after completed stop')
@@ -105,6 +125,7 @@ class ArtifactCutoverTests(unittest.TestCase):
             'preparations':[{**helper,'root':'/state','stage':'/stage'}],
             'records':[{**helper,'kind':'transparent-state','input':'/state/current.json',
                         'output':'/stage/current.json','preparations':['/stage/prepared.json']}],
+            'incidents':[{'host':'coordinator','path':INCIDENT}],
             'discovery':{'host':'coordinator','url':'https://publisher.example/.well-known/pir-service-discovery'}}
         self.target = self.make_target()
         for _, deployer in self.target.groups:
@@ -190,6 +211,78 @@ class ArtifactCutoverTests(unittest.TestCase):
         with self.assertRaisesRegex(DeployError, 'reverse translation'):
             self.target.rollback(result['id'])
         self.assertFalse(any(op == 'systemctl' for _, op, _ in self.ex.log[before:]))
+
+    def assert_serving(self, prefix):
+        for name in A.SERVICES:
+            state = self.ex.probe_unit('coordinator', name + '.service')
+            self.assertEqual((state['active_state'], state['exe_sha256']),
+                             ('active', sha256((prefix + name).encode())))
+
+    def test_current_format_incident_refuses_rollback_before_stopping(self):
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        self.ex.put('coordinator', INCIDENT, CURRENT_INCIDENT)
+        before = len(self.ex.log)
+        with self.assertRaisesRegex(DeployError, 'predecessor cannot read.*roll forward'):
+            self.target.rollback(result['id'])
+        self.assertFalse(any(op in ('systemctl', 'write') for _, op, _ in self.ex.log[before:]))
+        self.assertEqual(self.ex.read('coordinator', INCIDENT), CURRENT_INCIDENT)
+        self.assert_serving('new-')
+        for document in ('[{}]', '{}', 'not json'):
+            self.ex.put('coordinator', INCIDENT, document)
+            with self.assertRaisesRegex(DeployError, 'predecessor cannot read'):
+                self.make_target().rollback(result['id'])
+        self.assert_serving('new-')
+
+    def test_predecessor_format_incident_survives_rollback_unchanged(self):
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        self.ex.put('coordinator', INCIDENT, PREDECESSOR_INCIDENT)
+        self.assertEqual(self.target.rollback(result['id'])['status'], 'rolled-back')
+        self.assertEqual(self.ex.read('coordinator', INCIDENT), PREDECESSOR_INCIDENT)
+        self.assert_serving('old-')
+
+    def test_incident_recorded_during_shutdown_resumes_current_release(self):
+        for lost in (False, True):
+            with self.subTest(lost_runner=lost):
+                self.setUp()
+                result = self.target.deploy(self.target.plan()['plan_sha256'])
+                advanced = {'algorithm':'blake3', 'revision':108, 'eligible':False, 'revoked':['new withdrawal']}
+                self.ex.put('coordinator', '/state/current.json', json.dumps(advanced))
+                self.ex.incident_on_stop = CURRENT_INCIDENT
+                self.ex.interrupt_restart = lost
+                if lost:
+                    with self.assertRaises(KeyboardInterrupt):
+                        self.target.rollback(result['id'])
+                    # A new runner finds writers stopped and the record stable.
+                    self.target = self.make_target()
+                with self.assertRaisesRegex(DeployError, 'resumed the current release.*roll forward'):
+                    self.target.rollback(result['id'])
+                self.assert_serving('new-')
+                self.assertEqual(self.ex.read('coordinator', INCIDENT), CURRENT_INCIDENT)
+                self.assertEqual(json.loads(self.ex.read('coordinator', '/state/current.json')), advanced)
+                self.assertNotIn('restore-predecessors', self.ex.events)
+                journal = A.Journal.load(self.state, A.NAME, result['id'])
+                self.assertEqual(journal.status, 'committed')
+                self.assertNotIn('rollback', journal.data)
+                # Once the current release clears the failure, rollback completes.
+                self.ex.put('coordinator', INCIDENT, '[]')
+                self.assertEqual(self.make_target().rollback(result['id'])['status'], 'rolled-back')
+                self.assertEqual(json.loads(self.ex.read('coordinator', '/state/current.json')),
+                                 {**advanced, 'algorithm':'sha256'})
+                self.assert_serving('old-')
+
+    def test_history_preparation_must_declare_its_incident_record(self):
+        request = copy.deepcopy(self.request)
+        request['preparations'][0]['source'] = {'product':'transparent-history', 'inventory':'{}',
+            'inventory_sha256':sha256(b'{}'), 'checkpoints':'/stage/checkpoints'}
+        request['incidents'] = []
+        path = self.state / 'request.json'
+        path.write_text(json.dumps(request))
+        with self.assertRaisesRegex(DeployError, 'must declare its integrity-failures.json'):
+            A.load_request(path, sha256(path.read_bytes()))
+        request['incidents'] = [{'host':'coordinator', 'path':'/state/other.json'}]
+        path.write_text(json.dumps(request))
+        with self.assertRaisesRegex(DeployError, 'incident records must name'):
+            A.load_request(path, sha256(path.read_bytes()))
 
     def test_incomplete_fleet_and_later_deployments_are_refused(self):
         request = copy.deepcopy(self.request)
