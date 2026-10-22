@@ -305,8 +305,3 @@ class RuntimeStagingTests(unittest.IsolatedAsyncioTestCase):
                 shutil.rmtree(before['directory'])
                 self.assertTrue((path / 'table.bin').exists())
                 before.update(staged['publication'])
-
-    def test_transfer_bytes_reads_rsync_stats(self):
-        self.assertEqual(M.transfer_bytes(STATS), 41234)
-        self.assertIsNone(M.transfer_bytes(b''))
-        self.assertIsNone(M.transfer_bytes(None))

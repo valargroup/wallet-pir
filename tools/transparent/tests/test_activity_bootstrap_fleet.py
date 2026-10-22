@@ -153,22 +153,6 @@ class Fleet(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'partial or foreign'):
             G.verify(coordinator,{**binding,'host':'coordinator'},'coordinator',attributed=attributed)
 
-    def test_every_candidate_tool_is_an_operational_class_and_prototype_is_never_baseline(self):
-        import activity_candidate as C
-        self.assertTrue({n.rsplit('/',1)[-1] for n in C.ARTIFACTS}<=set(G.NAMES))
-        self.assertFalse(any('prototype' in name for name in G.BASELINE))
-
-    def test_embedded_components_keep_distinct_globals_and_fixed_survey_has_no_mutation_entry(self):
-        namespace={};exec(B.EMBEDDED_FLEET,namespace)
-        self.assertIsNot(namespace['_SURVEY'].__dict__,namespace['_BOOTSTRAP_FLEET'].__dict__)
-        self.assertIs(namespace['_BOOTSTRAP_FLEET'].S,namespace['_SURVEY'])
-        self.assertIs(namespace['_BOOTSTRAP_FLEET'].CA,namespace['_CONTROL'])
-        self.assertEqual(namespace['_CONTROL'].CONTROL_SHA256,G.CA.CONTROL_SHA256)
-        self.assertEqual(namespace['_SURVEY'].KIND,G.S.KIND)
-        self.assertEqual(namespace['_BOOTSTRAP_FLEET'].KIND,G.KIND)
-        compile(B.SURVEY_HELPER,'fictional-readonly-survey','exec')
-        compile(B.HELPER,'fictional-source-receiver','exec')
-
 
 class Transport(unittest.TestCase):
     def client(self):

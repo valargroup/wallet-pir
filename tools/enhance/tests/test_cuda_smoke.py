@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('cuda_smoke', Path(__file__).resolve().parents[1] / 'scripts/cuda-smoke.py')
 smoke = importlib.util.module_from_spec(spec)
@@ -24,10 +23,9 @@ class SmokeAcceptance(unittest.TestCase):
             with self.assertRaises(ValueError):
                 smoke.validate_worker_health(bad, 0)
 
-    def test_exact_report_passes(self):
-        smoke.validate_report(self.report())
 
     def test_fail_closed_report(self):
+        smoke.validate_report(self.report())
         for key, value in [('protocol', 'cpu-protocol'), ('completed', 0),
                            ('succeeded', 4), ('incorrect_answers', 1),
                            ('warmup_incorrect_answers', 1), ('unstarted_arrivals', 1),

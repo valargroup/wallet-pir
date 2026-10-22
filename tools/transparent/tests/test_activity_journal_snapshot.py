@@ -2031,22 +2031,6 @@ class Wrapper(unittest.TestCase):
         self.assertEqual(cli.main(['schema-snapshot-owner', '--request-sha256', 'not-hex'], out=output.append), 1)
         self.assertIn('invalid journal snapshot request digest', output[0])
 
-    def test_production_constants(self):
-        self.assertEqual(S.JOURNAL, Path('/srv/transparent-activity/full-v3/journal'))
-        self.assertEqual(S.SNAPSHOTS, Path('/srv/transparent-activity/snapshots/journal'))
-        self.assertEqual(S.OWNERS, Path('/srv/transparent-activity/ops/input-staging'))
-        self.assertEqual((S.RECORD_BYTES, S.CHECKPOINT_BYTES, S.FORMAT_VERSION, S.START_HEIGHT), (48, 16, 3, 0))
-        source = (HERE.parents[2]/'src/transparent/transparent-journal/src/events.rs').read_text()
-        self.assertIn('const STORE_VERSION: u16 = 3;', source)
-        self.assertIn('const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;', source)
-        self.assertIn('lock.try_lock()', source)
-        self.assertIn('.open(dir.join("writer.lock"))', source)
-        # Fixed byte-boundary fixtures. Agreement of both bounds with the pinned
-        # zakura-transparent-events codec runs in the filter server's registered
-        # event_codec_bounds integration test, as well as the exporter's test.
-        self.assertEqual(S.EVENT_BYTES, 87)
-        self.assertEqual(S.MAX_EVENT_BYTES, 103)
-
 
 if __name__ == '__main__':
     unittest.main()

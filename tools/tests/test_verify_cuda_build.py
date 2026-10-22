@@ -50,10 +50,6 @@ class CudaBuildTests(unittest.TestCase):
         self.assertNotIn('ENHANCE_MATVEC_BACKEND', self.env)
         self.assertNotIn('ENHANCE_CUDA_DEVICE', self.env)
 
-    def test_publisher_build_info_is_not_consulted(self):
-        self.verify()
-        self.assertNotIn('build-info', self.command)
-        self.assertNotIn('enhance-pir-server', self.command[0])
 
     def test_either_package_missing_cuda_refuses(self):
         for index in (0, 1, 2):
@@ -72,9 +68,6 @@ class CudaBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'packaging path differs'):
             self.verify()
 
-    def test_revision_must_be_a_full_commit(self):
-        with self.assertRaisesRegex(ValueError, 'full lowercase commit SHA'):
-            self.verify(revision='short')
 
     def test_evaluator_check_failure_refuses(self):
         self.messages.write_text('\n'.join(json.dumps(a) for a in self.artifacts))

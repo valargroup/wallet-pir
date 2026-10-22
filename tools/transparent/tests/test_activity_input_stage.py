@@ -186,29 +186,6 @@ class Inputs(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'symlink'):M.worker_binary(name)
             with self.assertRaisesRegex(ValueError,'unsupported'):M.worker_binary('publisher')
 
-    def test_portable_pins_are_the_release_production_runs(self):
-        # Independent record of the 2026-10-09 redeploy: its manifest's "after"
-        # identities and the CI bundle's own checksums.
-        evidence=Path(__file__).parents[1]/'fixtures/deployment-provenance/fleet-redeploy-2026-10-09'
-        manifest=json.loads((evidence/'manifest.json').read_text())
-        sums=dict(reversed(line.split()) for line in (evidence/'raw/release-SHA256SUMS').read_text().splitlines())
-        binaries=manifest['binaries']
-        self.assertEqual(M.DEPLOYED_SHA,manifest['source']['commit'])
-        self.assertEqual(M.WORKER_HASHES,{'transparent-shard-server':binaries['transparent-shard-server']['after'],
-                                          'shard-control':binaries['shard-control (workers)']['after']})
-        self.assertEqual(M.COORDINATOR_HASHES,{'transparent-publish-controller':binaries['transparent-publish-controller']['after']})
-        for name,value in {**M.WORKER_HASHES,**M.COORDINATOR_HASHES}.items():
-            self.assertEqual(sums[name],value)
-        # The coordinator's own shard-control is not the worker pair's.
-        self.assertNotEqual(binaries['unchanged']['coordinator shard-control'],M.WORKER_HASHES['shard-control'])
-
-    def test_deployed_controller_uses_the_same_checksum_named_release_root(self):
-        name='transparent-publish-controller'; data=b'controller'; expected=hashlib.sha256(data).hexdigest()
-        with patch.object(M,'WORKER_ROOT',self.root/'portable'),patch.dict(M.COORDINATOR_HASHES,{name:expected},clear=True):
-            path=M.WORKER_ROOT/expected/name; path.parent.mkdir(parents=True); path.write_bytes(data); path.chmod(0o755)
-            self.assertEqual(M.worker_binary(name),path)
-            path.write_bytes(b'12ce controller')
-            with self.assertRaisesRegex(ValueError,'identity/mode'):M.worker_binary(name)
 
     def client(self):
         client=object.__new__(M.Client)

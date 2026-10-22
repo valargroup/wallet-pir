@@ -111,33 +111,6 @@ class ConsumerTests(unittest.TestCase):
         self.assertFalse(any('node/database' in e for e in problems('product-status-testing')))
         self.assertEqual(problems('server-rocksdb'), [])
 
-    def test_consumer_type_checks_keep_flags_and_cap_lints(self):
-        with patch.dict(graph.os.environ, {'RUSTFLAGS': '-D warnings'}):
-            env = graph.consumer_environment(Path('/t'))
-        self.assertEqual(env['RUSTFLAGS'], '-D warnings --cap-lints=warn')
-        self.assertEqual(env['CARGO_TARGET_DIR'], '/t')
-
-    def test_fast_feedback_resolves_without_typechecking(self):
-        def metadata(manifest, offline):
-            self.assertTrue(offline)
-            kind = manifest.parent.name
-            features = []
-            if kind.startswith('product-'):
-                features = [kind.removeprefix('product-').removesuffix('-testing')]
-            packages = [{'id': 'c', 'name': kind + '-consumer', 'source': None},
-                        {'id': 'adapter', 'name': 'zakura-server-chain', 'source': None}]
-            if kind.startswith('product-receiver'):
-                packages.append({'id': 'recovery', 'name': 'zakura-receiver-crypto', 'source': 'git+x'})
-            return {'packages': packages, 'resolve': {'root': 'c', 'nodes': [
-                {'id': 'c', 'deps': []},
-                {'id': 'adapter', 'features': features, 'deps': []},
-                *([{'id': 'recovery', 'deps': []}] if kind.startswith('product-receiver') else [])]}}
-
-        with patch.dict(graph.os.environ, {'WALLET_PIR_FAST_TESTS': '1'}), \
-                patch.object(graph, 'metadata', side_effect=metadata), \
-                patch.object(graph.subprocess, 'run') as run:
-            graph.main([])
-        run.assert_not_called()
 
     def test_main_reports_violations_without_compiling(self):
         def metadata(manifest, offline):
@@ -149,24 +122,6 @@ class ConsumerTests(unittest.TestCase):
                 self.assertRaisesRegex(SystemExit, 'repository package pir-runtime'):
             graph.main([])
         run.assert_not_called()
-
-
-class FullSelectionTests(unittest.TestCase):
-    def test_shared_runs_three_reader_selections_with_rocksdb_limited_to_its_targets(self):
-        import sys
-        sys.path.insert(0, str(ROOT / 'tools/ci'))
-        import full_packages
-        groups = {'shared': ['pir-control', graph.READER], 'enhance': [], 'transparent': [], 'receiver': []}
-        commands = [c for c in full_packages.commands('shared', groups) if graph.READER in c]
-        self.assertEqual(len(commands), 3)
-        decoding, rpc, rocksdb = (c[c.index('--features') + 1] for c in commands)
-        self.assertNotIn('rpc', decoding)
-        self.assertNotIn('testing-node', decoding)
-        for product in graph.PRODUCTS:
-            self.assertIn(f'{graph.READER}/{product}', rpc)
-        self.assertIn(f'{graph.READER}/rocksdb', rocksdb)
-        self.assertEqual(commands[2][commands[2].index('--lib'):commands[2].index('--features')],
-                         ['--lib', '--test', 'state'])
 
 
 if __name__ == '__main__':

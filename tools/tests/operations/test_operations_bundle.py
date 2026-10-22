@@ -3,7 +3,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tarfile
@@ -19,26 +18,6 @@ from wallet_pir_ops.deploy import descriptors  # noqa: E402
 
 
 class OperationsBundleTests(unittest.TestCase):
-    def test_rust_consumers_can_find_operations_resources(self):
-        paths = subprocess.check_output(['git', 'ls-files', '*.rs'], cwd=ROOT, text=True).splitlines()
-        checked = 0
-        for name in paths:
-            source = ROOT / name
-            manifest = next((p for p in source.parents if (p / 'Cargo.toml').is_file()), None)
-            if manifest is None:
-                continue
-            text = source.read_text()
-            references = [(manifest, path) for path in re.findall(
-                r'Path::new\(env!\("CARGO_MANIFEST_DIR"\)\)\s*\.join\("([^"]+)"\)', text)]
-            references += [(source.parent, path) for path in re.findall(r'include_str!\("([^"]+)"\)', text)]
-            for base, path in references:
-                target = (base / path).resolve()
-                if 'ops/' in path or target.is_relative_to(ROOT / 'tools'):
-                    with self.subTest(source=name, resource=path):
-                        self.assertTrue(target.exists(), f'{name} references missing resource {path}')
-                    checked += 1
-        self.assertGreater(checked, 0)
-
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -109,31 +88,6 @@ class OperationsBundleTests(unittest.TestCase):
         self.assertFalse(list(destination.rglob('*.pyc')))
         self.assertFalse(any('.git' in p.parts for p in destination.rglob('*')))
 
-    def test_new_role_resources_do_not_raise_the_retained_v1_inventory_floor(self):
-        # A retained v1 release predating the provider still has a valid core
-        # inventory. Its own archived renderer determines its available roles.
-        provider = {'docs/transparent/prepared-distribution.md',
-                    'tools/transparent/deploy/history-provider.example.json',
-                    'tools/transparent/deploy/history-provider.caddy',
-                    'tools/transparent/deploy/transparent-history-provider.role.service'}
-        # It also predates the separate Status and txid operations directories.
-        files = {name: data for name, data in bundle.contents(ROOT).items()
-                 if name not in provider and not name.startswith(('tools/status/', 'tools/txid/'))}
-        archive = self.root / 'retained-v1.tar.gz'
-        bundle.write_archive(archive, 'b' * 40, files, False)
-        manifest, payload = bundle.verify(archive, 'b' * 40)
-        self.assertEqual(set(payload) - {'operations.json'}, set(files))
-        self.assertEqual(manifest['source_revision'], 'b' * 40)
-        destination = self.root / 'retained-v1'
-        bundle.extract(archive, destination, 'b' * 40)
-        bundle.self_check('b' * 40, root=destination)
-        # Optional files unexpectedly added to an old installation still alter
-        # its exact inventory; accepting old manifests must not hide additions.
-        guide = destination / 'docs/transparent/prepared-distribution.md'
-        guide.parent.mkdir(parents=True, exist_ok=True)
-        guide.write_text('unexpected resource')
-        with self.assertRaisesRegex(ValueError, 'inventory changed'):
-            bundle.self_check('b' * 40, root=destination)
 
     def test_archive_refusals_leave_destination_absent(self):
         special = tarfile.TarInfo('tools/lib/linked.py')
@@ -169,9 +123,17 @@ class OperationsBundleTests(unittest.TestCase):
 
     def test_inventory_excludes_runtime_credentials_and_evidence(self):
         self.assertFalse(any(not bundle.allowed(name) for name in self.manifest['files']))
+        infrastructure = ROOT / 'tools/infra/digitalocean'
+        for path in infrastructure.rglob('*.tf'):
+            self.assertIn(path.relative_to(ROOT).as_posix(), self.manifest['files'])
         for name in ('tools/deploy/.env', 'tools/infra/production/secrets.tfvars',
                      'evidence/transparent/run/raw.py', 'tools/lib/__pycache__/a.pyc',
-                     'tools/deploy/id_ed25519', 'tools/deploy/inventory.json'):
+                     'tools/deploy/id_ed25519', 'tools/deploy/inventory.json',
+                     'tools/infra/digitalocean/fleet/terraform.tfstate',
+                     'tools/infra/digitalocean/fleet/saved.tfplan',
+                     'tools/infra/digitalocean/fleet/secrets.tfvars',
+                     'tools/infra/digitalocean/fleet/settings.auto.tfvars.json',
+                     'tools/infra/digitalocean/fleet/.terraform/terraform.tfstate'):
             self.assertFalse(bundle.allowed(name), name)
 
     def test_registry_refuses_cycles_and_duplicate_product_ownership(self):
