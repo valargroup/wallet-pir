@@ -15,7 +15,7 @@ pub(super) fn configure(
         writable_paths: vec![config.data_dir.clone()],
         probes: vec![ReadinessProbe {
             address: config.bind,
-            path: "/v1/receiver/init",
+            path: "/v1/receiver/inventory",
             rule: ReadinessRule::HttpSuccess,
         }],
     };

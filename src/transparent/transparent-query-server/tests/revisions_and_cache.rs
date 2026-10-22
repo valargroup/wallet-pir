@@ -1860,13 +1860,12 @@ async fn required_material_checks_size_without_warming_or_rehashing() {
         .map(|shard| {
             shard
                 .tables()
-                .into_iter()
                 .map(|table| shard.segments(table) as usize)
                 .sum::<usize>()
         })
         .sum::<usize>();
     let shard = set.current().next().unwrap();
-    let table = shard.tables().into_iter().next().unwrap();
+    let table = shard.tables().next().unwrap();
     let source = shard.segment(table, 0).unwrap();
     let params = SharedParams::build(shard.geometry, table.kind()).unwrap();
     let key = (shard.runtime_identity(table).to_string(), table.kind(), 0);

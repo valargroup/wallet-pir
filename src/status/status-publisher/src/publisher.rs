@@ -10,12 +10,15 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use ipir_sp::server::MatvecBackend;
 use pir_pipeline::Input;
+use pir_publication::{
+    conditional_token, AuthorityCheckRefusal, AuthorityTransition, PublicationAuthority,
+    PublicationReference, PublishedObjectStore, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH,
+    OBJECTS_PATH,
+};
 use serde::Deserialize;
-use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
+use status_shared::{now_ms, protocol::*, publication::*, telemetry, Generation};
 use std::{
-    fs,
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, RwLock},
@@ -35,15 +38,24 @@ pub struct Config {
 }
 #[derive(Default)]
 struct Published {
-    current: Option<Current>,
+    /// The shared publication authority, opened once the chain is known.
+    authority: Option<PublicationAuthority<StatusDescriptor>>,
     manifest: Option<Manifest>,
-    // An in-flight preparation holds its token, preventing pointer reuse even
-    // when several withdrawals leave the public eligibility flag unchanged.
-    fence: Arc<()>,
 }
 impl Published {
-    fn check_fence(&self, expected: &Arc<()>) -> Result<(), Failure> {
-        if !Arc::ptr_eq(&self.fence, expected) {
+    /// The authority sequence a preparation starts under. Every withdrawal
+    /// and recovery advances it, so a preparation that began earlier cannot
+    /// publish.
+    fn preparation_fence(&self) -> Result<(u64, u64), Failure> {
+        let current = self
+            .authority
+            .as_ref()
+            .ok_or("Status publication authority is not open")?
+            .current();
+        Ok((current.sequence, current.fence.recovery_epoch))
+    }
+    fn check_fence(&self, expected_sequence: u64) -> Result<(), Failure> {
+        if self.preparation_fence()?.0 != expected_sequence {
             return Err("Status authority changed during preparation".into());
         }
         Ok(())
@@ -55,104 +67,87 @@ pub struct Publisher {
     published: Arc<RwLock<Published>>,
     rpc: Arc<RwLock<Option<ZakuraClient>>>,
     exported: Arc<std::sync::Mutex<Option<Inventory>>>,
+    /// Distributed objects; only retained publications are served.
+    objects: Arc<PublishedObjectStore>,
 }
-impl Publisher {
-    pub fn new(config: Config) -> Result<Self, Failure> {
-        let salt: Hash = hex::decode(&config.salt_hex)?
+impl Config {
+    /// Check the configuration without opening state.
+    pub fn validate(&self) -> Result<(), Failure> {
+        let salt: Hash = hex::decode(&self.salt_hex)?
             .try_into()
             .map_err(|_| "salt must be 32 bytes")?;
-        if !config.private_listen.ip().is_loopback() || config.window_blocks == 0 || salt == [0; 32]
-        {
+        if !self.private_listen.ip().is_loopback() || self.window_blocks == 0 || salt == [0; 32] {
             return Err("invalid private Status configuration".into());
         }
+        Ok(())
+    }
+}
+impl Publisher {
+    /// Validate `config` and open its distributed-object store.
+    pub fn new(config: Config) -> Result<Self, Failure> {
+        config.validate()?;
+        let objects = PublishedObjectStore::open(config.state_dir.join("distribution/objects"))?;
         Ok(Self {
             config,
             published: Arc::new(RwLock::new(Published::default())),
             rpc: Arc::new(RwLock::new(None)),
             exported: Arc::new(std::sync::Mutex::new(None)),
+            objects: Arc::new(objects),
         })
     }
     pub fn private_routes(&self) -> Router {
         Router::new()
             .route("/control/active", get(active))
-            .route(&format!("{PREFIX}current"), get(current))
-            .route(&format!("{PREFIX}objects/:id"), get(object))
-            .route(&format!("{PREFIX}anchors/check"), post(anchors))
+            .route(&format!("{PREFIX}{CURRENT_PATH}"), get(current))
+            .route(&format!("{PREFIX}{OBJECTS_PATH}:id"), get(object))
+            .route(
+                &format!("{PREFIX}{AUTHORITY_CHECK_PATH}"),
+                post(authority_check),
+            )
             .layer(axum::extract::DefaultBodyLimit::max(METADATA_LIMIT))
             .with_state(self.clone())
             .merge(telemetry_routes())
     }
-    fn root(&self) -> PathBuf {
-        self.config.state_dir.join("distribution")
-    }
-    fn revision(&self) -> Result<u64, Failure> {
-        let root = self.root();
-        fs::create_dir_all(&root)?;
-        let path = root.join("revision.json");
-        let previous = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice::<u64>(&bytes)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(e) => return Err(e.into()),
-        };
-        let next = previous.checked_add(1).ok_or("Status revision exhausted")?;
-        durable(&root, "revision.json", &serde_json::to_vec(&next)?)?;
-        Ok(next)
-    }
-    fn withdraw(&self) {
-        let mut state = self.published.write().unwrap();
-        state.fence = Arc::new(());
-        if let Some(current) = &mut state.current {
-            current.eligible = false;
-        }
-        state.manifest = None;
-    }
-    fn store(&self, bytes: &[u8]) -> Result<Object, Failure> {
-        let object = Object::new(bytes);
-        let root = self.root().join("objects");
-        fs::create_dir_all(&root)?;
-        let path = root.join(&object.sha256);
-        if path.exists() {
-            object.verify(&fs::read(path)?)?;
-        } else {
-            durable(&root, &object.sha256, bytes)?;
-        }
-        Ok(object)
-    }
-    /// Keep the current material even after expiry, plus all still-fresh
-    /// predecessors. Query transfers pin open inodes; old observations cannot
-    /// activate after their original freshness deadline.
-    fn collect(&self, inventory: Inventory) -> Result<(), Failure> {
-        let root = self.root();
-        let mut retained: Vec<Inventory> = match fs::read(root.join("retained.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
-        retained.retain(|old| {
-            old.manifest.fresh(now_ms()).is_ok() && old.manifest.id() != inventory.manifest.id()
-        });
-        retained.push(inventory);
-        let mut keep = std::collections::BTreeSet::new();
-        for inventory in &retained {
-            keep.insert(digest(&serde_json::to_vec(inventory)?));
-            for object in inventory
-                .units
-                .iter()
-                .chain(&inventory.packing)
-                .chain(std::iter::once(&inventory.public))
-            {
-                keep.insert(object.sha256.clone());
-            }
-        }
-        durable(&root, "retained.json", &serde_json::to_vec(&retained)?)?;
-        for entry in fs::read_dir(root.join("objects"))? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
-                fs::remove_file(entry.path())?;
-            }
+    /// Open the publication authority for `network` unless it is open. Opening
+    /// starts a new recovery epoch.
+    fn open_authority(&self, network: Hash, salt: Hash) -> Result<(), Failure> {
+        let mut published = self.published.write().unwrap();
+        if published.authority.is_none() {
+            published.authority = Some(PublicationAuthority::open(
+                self.config.state_dir.join("distribution/publication.json"),
+                scope(network, salt),
+            )?);
         }
         Ok(())
+    }
+    /// Stop serving the current publication and refuse in-flight preparations.
+    fn withdraw(&self) {
+        self.transition(AuthorityTransition::Withdraw);
+    }
+    /// Whether the latest authority transition was a withdrawal.
+    fn last_transition_withdrew(&self) -> bool {
+        self.published
+            .read()
+            .unwrap()
+            .authority
+            .as_ref()
+            .is_some_and(|authority| {
+                let current = authority.current();
+                !current.eligible && current.fence.latest_withdrawal == current.sequence
+            })
+    }
+    /// Start a new recovery epoch after a withdrawal or an uncertain write.
+    fn recover(&self) {
+        self.transition(AuthorityTransition::Recover);
+    }
+    fn transition(&self, transition: AuthorityTransition<StatusDescriptor>) {
+        let mut published = self.published.write().unwrap();
+        published.manifest = None;
+        if let Some(authority) = &mut published.authority {
+            if let Err(error) = authority.apply(transition) {
+                tracing::warn!(%error, "Status authority transition was not durable");
+            }
+        }
     }
     async fn publish(
         &self,
@@ -161,8 +156,8 @@ impl Publisher {
         cache: &mut Option<Generation>,
         rpc: &ZakuraClient,
     ) -> Result<Generation, Failure> {
-        let expected = self.published.read().unwrap().fence.clone();
-        let (generation, epoch) = authority.next_identity()?;
+        let (expected, epoch) = self.published.read().unwrap().preparation_fence()?;
+        let generation = authority.next_generation()?;
         let previous = cache.clone();
         let result = pir_pipeline::publisher::PublicationPass::new(
             async { Ok::<_, Failure>(Input::Work((expected, generation, epoch, previous))) },
@@ -175,7 +170,6 @@ impl Publisher {
                             epoch,
                             observed.observed_ms,
                             previous.as_ref(),
-                            MatvecBackend::Cpu,
                         )?;
                         Ok(g)
                     })
@@ -195,14 +189,15 @@ impl Publisher {
                             inventory.manifest = candidate.manifest().clone();
                             inventory
                         } else {
-                            candidate.export_prepared(|bytes| publisher.store(bytes))?
+                            candidate
+                                .export_prepared(|bytes| Ok(publisher.objects.store(bytes)?))?
                         };
                         *cache = Some(inventory.clone());
                         Ok(inventory)
                     })
                     .await??;
                 let manifest = inventory.manifest.clone();
-                let object = self.store(&serde_json::to_vec(&inventory)?)?;
+                let object = self.objects.store(&serde_json::to_vec(&inventory)?)?;
                 Ok(Input::Work((
                     expected, generation, epoch, prepared, inventory, manifest, object,
                 )))
@@ -218,27 +213,33 @@ impl Publisher {
                 // a concurrent withdrawal cannot be replaced by an eligible view.
                 {
                     let mut published = self.published.write().unwrap();
-                    published.check_fence(&expected)?;
+                    published.check_fence(expected)?;
                     manifest.fresh(now_ms())?;
+                    // Authorize the referenced objects before any consumer can
+                    // see the pointer. Still-activatable predecessors stay
+                    // served so peers can finish handover; queries pin inodes.
+                    self.objects.retain_publication(
+                        std::iter::once(object.clone())
+                            .chain(inventory.referenced_objects().cloned()),
+                        manifest.observed_ms.saturating_add(MAX_AGE_MS),
+                        now_ms(),
+                    )?;
                     authority.commit(&manifest)?;
-                    let current = Current {
-                        schema: SCHEMA.into(),
-                        revision: self.revision()?,
-                        recovery_epoch: epoch,
-                        network: manifest.network,
-                        salt: manifest.salt,
-                        generation: manifest.generation,
-                        inventory: Some(object),
-                        eligible: true,
-                    };
-                    // The current pointer is durable only after all referenced objects and
-                    // authority. A restart allocates a new revision and recovery epoch.
-                    durable(&self.root(), "current.json", &serde_json::to_vec(&current)?)?;
-                    *published = Published {
-                        current: Some(current),
-                        manifest: Some(manifest.clone()),
-                        fence: expected,
-                    };
+                    // The envelope is published only after all referenced objects and
+                    // the generation are durable. A restart starts a new recovery epoch.
+                    let publication = PublicationReference::new(
+                        inventory.material_identity(),
+                        object,
+                        StatusDescriptor {
+                            generation: manifest.generation,
+                        },
+                    );
+                    published
+                        .authority
+                        .as_mut()
+                        .ok_or("Status publication authority is not open")?
+                        .apply(AuthorityTransition::Publish(publication))?;
+                    published.manifest = Some(manifest.clone());
                 }
                 tracing::info!(
                     generation,
@@ -247,12 +248,6 @@ impl Publisher {
                     published_ms = now_ms(),
                     "Status prepared publication"
                 );
-                let publisher = self.clone();
-                if let Err(error) =
-                    tokio::task::spawn_blocking(move || publisher.collect(inventory)).await?
-                {
-                    tracing::warn!(%error, "Status artifact collection deferred");
-                }
                 Ok(prepared)
             },
         )
@@ -273,7 +268,6 @@ impl Publisher {
     ) -> Result<(), Failure> {
         let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
         *self.rpc.write().unwrap() = Some(rpc.clone());
-        self.revision()?;
         struct Withdraw(Publisher);
         impl Drop for Withdraw {
             fn drop(&mut self) {
@@ -319,14 +313,6 @@ impl Publisher {
     }
 }
 
-fn durable(root: &std::path::Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
-    pir_control::durable::write_atomic(root, name, |f| f.write_all(bytes))?;
-    fs::set_permissions(root.join(name), {
-        use std::os::unix::fs::PermissionsExt;
-        fs::Permissions::from_mode(0o444)
-    })?;
-    pir_control::durable::sync_dir(root)
-}
 async fn active(State(s): State<Publisher>) -> Result<Json<Manifest>, StatusCode> {
     let manifest = s
         .published
@@ -345,10 +331,11 @@ async fn current(State(s): State<Publisher>, headers: HeaderMap) -> Result<Respo
         .published
         .read()
         .unwrap()
-        .current
-        .clone()
+        .authority
+        .as_ref()
+        .map(|authority| authority.current().clone())
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let token = format!("\"{}-{}\"", current.revision, current.eligible);
+    let token = conditional_token(&current);
     let mut response = if headers.get("if-none-match").and_then(|s| s.to_str().ok()) == Some(&token)
     {
         StatusCode::NOT_MODIFIED.into_response()
@@ -370,53 +357,58 @@ async fn object(
     State(s): State<Publisher>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
-    if !valid_digest(&id) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let file = tokio::fs::File::open(s.root().join("objects").join(id))
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let stream = tokio_util::io::ReaderStream::new(file);
+    let file = s
+        .objects
+        .open_retained(&id)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+            _ => StatusCode::NOT_FOUND,
+        })?;
+    let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     Ok(Body::from_stream(stream).into_response())
 }
-async fn anchors(
+/// Answer whether each requested anchor is still canonical, naming the anchor
+/// it answers, only while the request's authority is current and eligible
+/// before and after the node lookups. An answer renews no manifest freshness.
+async fn authority_check(
     State(s): State<Publisher>,
-    Json(request): Json<AnchorRequest>,
-) -> Result<Json<AnchorResponse>, StatusCode> {
-    if request.anchors.is_empty() || request.anchors.len() > MAX_ANCHORS {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let before = s
-        .published
-        .read()
-        .unwrap()
-        .current
-        .clone()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    if request.current != before || !before.eligible {
-        return Err(StatusCode::CONFLICT);
-    }
+    Json(request): Json<AnchorCheckRequest>,
+) -> Result<Json<AnchorCheckResponse>, StatusCode> {
+    let admit = || {
+        let published = s.published.read().unwrap();
+        let current = published
+            .authority
+            .as_ref()
+            .ok_or(StatusCode::CONFLICT)?
+            .current();
+        request.admit(current).map_err(|refusal| match refusal {
+            AuthorityCheckRefusal::MalformedRequest => StatusCode::BAD_REQUEST,
+            AuthorityCheckRefusal::AuthorityAdvanced => StatusCode::CONFLICT,
+        })
+    };
+    admit()?;
     let rpc = s
         .rpc
         .read()
         .unwrap()
         .clone()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let mut canonical = Vec::new();
-    for (height, hash) in request.anchors {
-        canonical.push(
-            rpc.block_hash(u64::from(height))
-                .await
-                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-                == hash,
-        );
+    let mut answers = Vec::new();
+    for &(height, hash) in &request.subjects {
+        let still_authoritative = rpc
+            .block_hash(u64::from(height))
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            == hash;
+        answers.push(SubjectAnswer {
+            subject: (height, hash),
+            still_authoritative,
+        });
     }
-    if s.published.read().unwrap().current.as_ref() != Some(&before) {
-        return Err(StatusCode::CONFLICT);
-    }
-    Ok(Json(AnchorResponse {
-        current: before,
-        canonical,
+    admit()?;
+    Ok(Json(AnchorCheckResponse {
+        authority: request.authority,
+        answers,
     }))
 }
 fn telemetry_routes() -> Router {
@@ -491,7 +483,7 @@ mod withdrawal_tests {
     use super::*;
 
     #[test]
-    fn repeated_withdrawals_refuse_preparations_even_without_an_eligible_publication() {
+    fn withdrawals_and_recoveries_refuse_earlier_preparations() {
         let root = tempfile::tempdir().unwrap();
         let publisher = Publisher::new(Config {
             state_dir: root.path().into(),
@@ -500,14 +492,116 @@ mod withdrawal_tests {
             private_listen: "127.0.0.1:8480".parse().unwrap(),
         })
         .unwrap();
-        let before = publisher.published.read().unwrap().fence.clone();
+        assert!(publisher
+            .published
+            .read()
+            .unwrap()
+            .preparation_fence()
+            .is_err());
+        publisher.open_authority([1; 32], [1; 32]).unwrap();
+        let (before, _) = publisher
+            .published
+            .read()
+            .unwrap()
+            .preparation_fence()
+            .unwrap();
         publisher.withdraw();
-        let recovery = publisher.published.read().unwrap().fence.clone();
+        let (withdrawn, _) = publisher
+            .published
+            .read()
+            .unwrap()
+            .preparation_fence()
+            .unwrap();
         publisher.withdraw();
+        publisher.recover();
         let published = publisher.published.read().unwrap();
-        assert!(published.current.is_none());
-        assert!(published.check_fence(&before).is_err());
-        assert!(published.check_fence(&recovery).is_err());
-        assert!(published.check_fence(&published.fence).is_ok());
+        let current = published.authority.as_ref().unwrap().current();
+        assert!(!current.eligible);
+        assert_eq!(current.fence.recovery_epoch, 2);
+        assert!(published.check_fence(before).is_err());
+        assert!(published.check_fence(withdrawn).is_err());
+        assert!(published.check_fence(current.sequence).is_ok());
+    }
+
+    /// A failed newer publication followed by a failed withdrawal leaves the
+    /// old publication withdrawn: neither `current` nor an authority check
+    /// grants it, and a restart cannot restore it.
+    #[tokio::test]
+    async fn failed_authority_writes_revoke_live_authority_checks() {
+        let root = tempfile::tempdir().unwrap();
+        let config = Config {
+            state_dir: root.path().into(),
+            salt_hex: "01".repeat(32),
+            window_blocks: 1,
+            private_listen: "127.0.0.1:8480".parse().unwrap(),
+        };
+        let publisher = Publisher::new(config.clone()).unwrap();
+        publisher.open_authority([1; 32], [1; 32]).unwrap();
+        let publication = |generation| {
+            AuthorityTransition::Publish(PublicationReference::new(
+                [generation as u8; 32],
+                pir_publication::ObjectReference::for_bytes(b"inventory"),
+                StatusDescriptor { generation },
+            ))
+        };
+        let published = {
+            let mut state = publisher.published.write().unwrap();
+            let authority = state.authority.as_mut().unwrap();
+            authority.apply(publication(1)).unwrap().clone()
+        };
+        let request = AnchorCheckRequest {
+            authority: published.authority().unwrap(),
+            subjects: vec![(1, [3; 32])],
+        };
+
+        let distribution = root.path().join("distribution");
+        let saved = std::fs::read(distribution.join("publication.json")).unwrap();
+        let objects = root.path().join("objects-moved");
+        std::fs::rename(&distribution, &objects).unwrap();
+        std::fs::write(&distribution, b"not a directory").unwrap();
+        {
+            let mut state = publisher.published.write().unwrap();
+            let authority = state.authority.as_mut().unwrap();
+            assert!(authority.apply(publication(2)).is_err());
+        }
+        publisher.withdraw();
+
+        let current = publisher
+            .published
+            .read()
+            .unwrap()
+            .authority
+            .as_ref()
+            .unwrap()
+            .current()
+            .clone();
+        assert!(!current.eligible && current.sequence > published.sequence);
+        assert_eq!(
+            authority_check(State(publisher.clone()), Json(request.clone()))
+                .await
+                .err(),
+            Some(StatusCode::CONFLICT)
+        );
+
+        drop(publisher);
+        std::fs::remove_file(&distribution).unwrap();
+        std::fs::rename(&objects, &distribution).unwrap();
+        std::fs::write(distribution.join("publication.json"), saved).unwrap();
+        let restarted = Publisher::new(config).unwrap();
+        restarted.open_authority([1; 32], [1; 32]).unwrap();
+        let recovered = restarted
+            .published
+            .read()
+            .unwrap()
+            .authority
+            .as_ref()
+            .unwrap()
+            .current()
+            .clone();
+        assert!(!recovered.eligible && recovered.sequence > current.sequence);
+        assert_eq!(
+            authority_check(State(restarted), Json(request)).await.err(),
+            Some(StatusCode::CONFLICT)
+        );
     }
 }

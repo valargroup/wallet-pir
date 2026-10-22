@@ -100,13 +100,14 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime',
     'transparent-shared', 'transparent-query-server',
-    'enhance-query-server', 'status-query-server', 'pir-serving',
+    'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'pir-serving',
+    'pir-publication',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-query-server', 'status-query-server', 'transparent-shared', 'pir-runtime',
-           'pir-serving', 'pir-cuda'}
+SERVING = {'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'transparent-shared',
+           'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
     'transparent-publisher', 'status-publisher',
@@ -135,10 +136,17 @@ SHARED_SCOPES = {
 # graph. Every kind of edge counts, including optional and target-specific edges.
 # Synchronization is transport and scheduling, never a product or PIR engine.
 SYNC_MANAGER = 'pir-sync-manager'
-SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'sha2', 'tokio',
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'pir-publication', 'reqwest', 'serde', 'serde_json',
+               'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
 PIPELINE_DIRECT = {'tokio'}
+# The internal publisher-query publication contract: content-addressed objects,
+# pointer succession, durable floors and object caches. It performs no network
+# I/O and has no runtime, product, chain or PIR-engine dependency.
+PUBLICATION = 'pir-publication'
+PUBLICATION_PATH = 'src/shared/pir-publication/'
+PUBLICATION_DIRECT = {'hex', 'pir-control', 'rand', 'serde', 'serde_json', 'sha2', 'tempfile'}
 # The independently published Publisher-Query Server contract. It stays free of
 # HTTP frameworks, runtimes, products and workspace packages so it can build from
 # its packaged sources alone; the sync manager is its one local consumer here.
@@ -166,14 +174,14 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 # Shared foundations and the host-only features that alone may reach TRANSPORT.
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
-    'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store',
-    'enhance-publisher', 'enhance-query-server', 'status-publisher',
+    'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-shared',
+    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.
 RUNTIME_PENDING = {
-    'enhance-publisher', 'enhance-query-server', 'status-publisher',
+    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
@@ -330,12 +338,21 @@ def violations(packages, allowed):
                 local_pipeline = (name == PIPELINE and not dependency['git'] and
                                   dependency.get('path') == 'src/shared/pir-pipeline/') or (
                                   name == DISCOVERY and not dependency['git'] and
-                                  dependency.get('path') == DISCOVERY_PATH)
-                registry_utility = (name in SYNC_DIRECT - {PIPELINE} and
+                                  dependency.get('path') == DISCOVERY_PATH) or (
+                                  name == PUBLICATION and not dependency['git'] and
+                                  dependency.get('path') == PUBLICATION_PATH)
+                registry_utility = (name in SYNC_DIRECT - {PIPELINE, PUBLICATION} and
                                     not dependency.get('path') and not dependency['git'])
                 if not (local_pipeline or registry_utility):
                     problems.append(f"{package['manifest']}: sync manager has a "
                                     f"{dependency['kind']} outside its utility boundary: {name}")
+            if package['name'] == PUBLICATION and (
+                    name not in PUBLICATION_DIRECT or dependency['git']
+                    or (dependency.get('path') and not (
+                        name == 'pir-control'
+                        and dependency.get('path') == 'src/shared/pir-control/'))):
+                problems.append(f"{package['manifest']}: publication contract has a "
+                                f"{dependency['kind']} outside its boundary: {name}")
             if package['name'] == DISCOVERY and (
                     name not in DISCOVERY_DIRECT or dependency.get('path')
                     or dependency['git']):
@@ -467,7 +484,8 @@ def resolved_violations(metadata, *, workspace_unified=False):
                 seen.add(current)
                 target = packages[current]
                 if current != root_id and (
-                        (target['source'] is None and target['name'] not in {PIPELINE, DISCOVERY})
+                        (target['source'] is None
+                         and target['name'] not in {PIPELINE, DISCOVERY, PUBLICATION, 'pir-control'})
                         or target['name'] in COMMON | NODE | CANONICAL
                         or target['name'] in {'ipir-sp', 'inspiring', 'reinspiring',
                                               'simplepir-kernel', 'valar-spiral-rs'}
@@ -629,23 +647,31 @@ def standalone_metadata(names, features=None):
 def common_family_violations(packages, patches):
     """Reject stale Common releases and mixed sources, including unused lock entries.
 
-    Common's protocol patch selects the family revision. Every Common patch and
-    resolved package must use it, so updating a direct dependency cannot leave an
+    A root protocol patch selects a development family, which every Common patch and
+    resolved package must use. Without one, every Common package must be the
+    published 4.0.0 release. Either way, updating a direct dependency cannot leave an
     older copy hidden behind a transitive or optional dependency.
     """
     names = {name for name in COMMON if name.startswith('zakura-')}
     patches = {name: patch for name, patch in patches.items() if name in names}
-    selected = patches['zakura-protocol']
-    expected = f"git+{selected['git']}?rev={selected['rev']}#{selected['rev']}"
+    selected = patches.get('zakura-protocol')
     problems = []
-    for name, patch in patches.items():
-        if patch.get('git') != selected['git'] or patch.get('rev') != selected['rev']:
-            problems.append(f'{name}: Common patch must use the same revision as zakura-protocol')
+    if selected:
+        expected = f"git+{selected['git']}?rev={selected['rev']}#{selected['rev']}"
+        for name, patch in patches.items():
+            if patch.get('git') != selected['git'] or patch.get('rev') != selected['rev']:
+                problems.append(f'{name}: Common patch must use the same revision as zakura-protocol')
+    else:
+        expected = 'registry+https://github.com/rust-lang/crates.io-index'
+        if patches:
+            problems.append('Common patches require a matching zakura-protocol patch')
     for package in packages:
         if package['name'] not in names:
             continue
-        if package['version'].split('.')[0] != '4' or package.get('source') != expected:
-            problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 main revision")
+        version_ok = (package['version'].split('.')[0] == '4' if selected
+                      else package['version'] == '4.0.0')
+        if not version_ok or package.get('source') != expected:
+            problems.append(f"{package['name']} {package['version']}: Common must use the selected v4 family")
     return problems
 
 
@@ -691,7 +717,7 @@ def main(argv=None):
         for name in ('enhance-query-server', 'status-query-server', 'pir-query-server'):
             problems += cpu_graph_violations(standalone_metadata({name}))
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
-        for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER}):
+        for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER, PUBLICATION}):
             problems += resolved_violations(standalone_metadata({name}))
         problems += runtime_graph_violations()
     for problem in problems:

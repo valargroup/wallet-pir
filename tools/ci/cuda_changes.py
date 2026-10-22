@@ -16,19 +16,15 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = 'src/shared/pir-cuda/'
 CONTRACTS = (
-    'src/enhance/enhance-query-server/src/matvec',
-    'src/enhance/enhance-query-server/src/runtime',
+    'src/enhance/enhance-shared/src/matvec',
+    'src/enhance/enhance-shared/src/runtime',
     'src/enhance/enhance-query-server/src/worker',
-    'src/status/status-query-server/src/backend.rs',
-    'src/status/status-query-server/src/generation.rs',
-    'src/status/status-query-server/src/distributed.rs',
     'src/shared/pir-runtime/src/evaluation.rs',
     'src/pir-query-server/tests/operator.rs',
     'src/pir-query-server/src/main.rs',
     'src/pir-query-server/src/config.rs',
     'tools/pir-e2e-tests/tests/http.rs',
     'tools/pir-e2e-tests/tests/support/encrypted.rs',
-    'src/status/status-query-server/tests/status_wallet.rs',
 )
 TOOLS = {
     'tools/ci/cuda_changes.py', 'tools/tests/test_cuda_changes.py',
@@ -44,10 +40,10 @@ TOOLS = {
 WORKFLOWS = {'.github/workflows/ci.yml', '.github/workflows/ci-full.yml',
              '.github/workflows/ci-qualify.yml', '.github/workflows/ci-matrix-audit.yml'}
 FORWARDERS = {
+    'src/enhance/enhance-shared/Cargo.toml',
     'src/enhance/enhance-query-server/Cargo.toml',
-    'src/status/status-query-server/Cargo.toml',
-    'src/status/status-publisher/Cargo.toml', 'src/pir-query-server/Cargo.toml',
     'tools/pir-e2e-tests/Cargo.toml',
+    'src/pir-query-server/Cargo.toml',
 }
 
 

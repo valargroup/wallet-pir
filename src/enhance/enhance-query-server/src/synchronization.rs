@@ -5,6 +5,7 @@ use crate::{
         AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
     },
 };
+use pir_publication::{ObjectCache, OBJECTS_PATH};
 use pir_sync_manager::HttpsSource;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -12,8 +13,10 @@ use std::{
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
+#[cfg(test)]
+use {crate::publication::SOURCE_AUTHORITY_LIFETIME, pir_publication::SourceObservation};
 
 pub type Error = pir_sync_manager::Error;
 
@@ -345,13 +348,6 @@ impl Authority {
     }
 }
 
-pub fn now_ms() -> Result<u64, Error> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_millis()
-        .try_into()?)
-}
-
 impl Lease {
     pub(crate) fn has_release_time(&self) -> bool {
         self.deadline.saturating_duration_since(Instant::now()) >= Duration::from_secs(1)
@@ -370,14 +366,11 @@ impl Lease {
         safety: &Safety,
     ) -> Result<Self, Error> {
         safety.observe(&response.current)?;
-        let now = now_ms()?;
-        response.fresh(now)?;
+        let remaining = response.remaining_at(SystemTime::now())?;
         if response.authorized_manifest_sha256 != digest(manifest) {
             return Err("publisher authorized another manifest".into());
         }
         safety.permits_observation(manifest, Some(&response.current))?;
-        let remaining = pir_control::CONTROL_WATCHDOG
-            .saturating_sub(Duration::from_millis(now - response.observed_unix_ms));
         Ok(Self {
             manifest: digest(manifest),
             observation: response,
@@ -389,8 +382,7 @@ impl Lease {
         if self.manifest != digest(manifest) || Instant::now() > self.deadline {
             return Err("Enhance source authority expired".into());
         }
-        self.observation
-            .fresh(now_ms().map_err(|e| e.to_string())?)?;
+        self.observation.remaining_at(SystemTime::now())?;
         safety.permits_observation(manifest, Some(&self.observation.current))
     }
 }
@@ -399,16 +391,19 @@ pub struct Client {
     pub safety: Safety,
     source: HttpsSource,
     root: PathBuf,
+    /// Verified publication objects; holding one confers no authority.
+    cache: ObjectCache,
     cache_limit: u64,
 }
 
 impl Client {
     pub fn new(root: &Path, config: &Config, safety: Safety) -> Result<Self, Error> {
-        fs::create_dir_all(root.join("objects"))?;
+        remove_digest_part_transfers(&root.join("objects"))?;
         Ok(Self {
             safety,
             source: config.source(config.download_budget_bytes)?,
             root: root.into(),
+            cache: ObjectCache::open(root.join("objects"))?,
             cache_limit: config.cache_limit_bytes,
         })
     }
@@ -478,95 +473,84 @@ impl Client {
         Ok(inventory)
     }
 
-    /// Remove only owned object names; downloaded bytes confer no authority.
+    /// Remove every cached object outside `keep`, then refuse when the objects
+    /// still retained exceed the cache budget. Downloaded bytes confer no
+    /// authority.
     pub fn collect(&self, keep: &std::collections::BTreeSet<String>) -> Result<(), Error> {
-        for entry in fs::read_dir(self.root.join("objects"))? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type()?.is_file()
-                && ((crate::protocol::canonical_hash(&name) && !keep.contains(&name))
-                    || name.ends_with(".part"))
-            {
-                fs::remove_file(entry.path())?;
-            }
-        }
-        let occupied = fs::read_dir(self.root.join("objects"))?.try_fold(0u64, |sum, entry| {
-            sum.checked_add(entry?.metadata()?.len())
-                .ok_or_else(|| std::io::Error::other("cache size overflow"))
-        })?;
-        if occupied > self.cache_limit {
+        self.cache.collect_unreferenced(keep)?;
+        if self.occupied_bytes()? > self.cache_limit {
             return Err("Enhance cache capacity reached".into());
         }
         Ok(())
     }
 
+    /// The verified cached path of `object`, downloading it within the cache
+    /// budget when it is absent. A cached file whose bytes differ is replaced.
     pub async fn object(&mut self, object: &Object) -> Result<PathBuf, Error> {
         object.validate()?;
-        let root = self.root.clone();
-        let checked = object.clone();
-        if tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let path = checked.path(&root)?;
-            if fs::metadata(&path).map_err(|e| e.to_string())?.len() != checked.bytes
-                || crate::prepared_packing::hash_file(&path)? != checked.sha256
-            {
-                return Err("cached publication object checksum or length mismatch".into());
-            }
-            Ok(())
-        })
-        .await?
-        .is_ok()
-        {
-            return Ok(object.path(&self.root)?);
+        let reference = object.reference();
+        let cache = self.cache.clone();
+        let cached = reference.clone();
+        match tokio::task::spawn_blocking(move || cache.verified_cached(&cached)).await? {
+            Ok(Some(path)) => return Ok(path),
+            Ok(None) => {}
+            Err(_) => fs::remove_file(self.cache.object_path(&reference)?)?,
         }
-        let path = object.path(&self.root)?;
-        if path.exists() {
-            fs::remove_file(&path)?;
-        }
-        let occupied = fs::read_dir(self.root.join("objects"))?.try_fold(0u64, |sum, entry| {
-            let size = entry?.metadata()?.len();
-            sum.checked_add(size)
-                .ok_or_else(|| std::io::Error::other("cache size overflow"))
-        })?;
-        if occupied
+        if self
+            .occupied_bytes()?
             .checked_add(object.bytes)
             .is_none_or(|sum| sum > self.cache_limit)
         {
             return Err("Enhance cache capacity reached".into());
         }
-        let temporary = self
-            .root
-            .join("objects")
-            .join(format!("{}.part", object.sha256));
-        let result = async {
-            let mut file = tokio::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)
-                .await?;
-            let response = self
-                .source
-                .request(&format!("objects/{}", object.sha256), None)
-                .await?;
-            response
-                .copy_to(
-                    &mut file,
-                    object.bytes,
-                    pir_sync_manager::Verification::Sha256(&object.sha256),
-                )
-                .await?;
-            file.sync_all().await?;
-            drop(file);
-            tokio::fs::rename(&temporary, &path).await?;
-            File::open(self.root.join("objects"))?.sync_all()?;
-            Ok::<(), Error>(())
-        }
-        .await;
-        if result.is_err() {
-            let _ = tokio::fs::remove_file(&temporary).await;
-        }
-        result?;
-        Ok(path)
+        let mut partial = self.cache.begin_partial(&reference)?;
+        let mut file = tokio::fs::File::from_std(partial.take_file()?);
+        let response = self
+            .source
+            .request(&format!("{OBJECTS_PATH}{}", object.sha256), None)
+            .await?;
+        response
+            .copy_to(
+                &mut file,
+                object.bytes,
+                pir_sync_manager::Verification::Sha256(&object.sha256),
+            )
+            .await?;
+        let written = file.into_std().await;
+        Ok(tokio::task::spawn_blocking(move || partial.promote(written)).await??)
     }
+
+    fn occupied_bytes(&self) -> Result<u64, Error> {
+        Ok(
+            fs::read_dir(self.cache.directory())?.try_fold(0u64, |sum, entry| {
+                sum.checked_add(entry?.metadata()?.len())
+                    .ok_or_else(|| std::io::Error::other("cache size overflow"))
+            })?,
+        )
+    }
+}
+
+/// Remove transfers interrupted while partial objects were named
+/// `<sha256>.part`. The shared cache neither creates nor collects that name, yet
+/// such a file counts against the cache budget. Other files are left alone.
+fn remove_digest_part_transfers(objects: &Path) -> std::io::Result<()> {
+    let entries = match fs::read_dir(objects) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file()
+            && name
+                .strip_suffix(".part")
+                .is_some_and(crate::protocol::canonical_hash)
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -618,7 +602,7 @@ mod tests {
                 }),
             },
             authorized_manifest_sha256: digest(manifest),
-            observed_unix_ms: now_ms().unwrap(),
+            source: SourceObservation::starting_now(),
         }
     }
 
@@ -732,10 +716,10 @@ mod tests {
         wrong.authorized_manifest_sha256 = "04".repeat(32);
         assert!(Lease::from_response(wrong, &manifest, &safety).is_err());
         let mut expired = initial.clone();
-        expired.observed_unix_ms -= 5001;
+        expired.source.observed_unix_ms -= SOURCE_AUTHORITY_LIFETIME.as_millis() as u64 + 1;
         assert!(Lease::from_response(expired, &manifest, &safety).is_err());
         let mut future = initial.clone();
-        future.observed_unix_ms += 60000;
+        future.source.observed_unix_ms += 60000;
         assert!(Lease::from_response(future, &manifest, &safety).is_err());
         let mut lease = Lease::from_response(initial, &manifest, &safety).unwrap();
         lease.deadline = Instant::now() - Duration::from_millis(1);
@@ -770,6 +754,27 @@ mod tests {
         let name = "01".repeat(32);
         fs::write(root.path().join("objects").join(&name), [1, 2]).unwrap();
         assert!(client.collect(&[name].into()).is_err());
+        client.collect(&Default::default()).unwrap();
+    }
+
+    #[test]
+    fn restart_removes_digest_part_transfers_but_keeps_other_files() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = root.path().join("objects");
+        fs::create_dir_all(&objects).unwrap();
+        let interrupted = objects.join(format!("{}.part", "01".repeat(32)));
+        fs::write(&interrupted, [1, 2]).unwrap();
+        fs::write(objects.join("notes.part"), b"").unwrap();
+        let config = Config {
+            publisher_origin: "https://publisher.example".into(),
+            trusted_ca: None,
+            download_budget_bytes: METADATA_LIMIT * 3,
+            cache_limit_bytes: 1,
+        };
+        let safety = Safety::open(root.path(), &config.publisher_origin).unwrap();
+        let client = Client::new(root.path(), &config, safety).unwrap();
+        assert!(!interrupted.exists());
+        assert!(objects.join("notes.part").exists());
         client.collect(&Default::default()).unwrap();
     }
 }

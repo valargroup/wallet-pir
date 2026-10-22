@@ -5,8 +5,8 @@
 //! faces wallets.
 
 #[cfg(feature = "cli")]
-use status_query_server as status;
-use status_query_server::*;
+use status_shared as status;
+use status_shared::*;
 
 pub mod authority;
 #[cfg(feature = "cli")]

@@ -1,635 +1,520 @@
-//! Status publication policy hosted by the product-neutral HTTPS loop.
-mod objects;
-use super::{serving, Service};
+//! Status material hooks for the shared publication lifecycle.
+//!
+//! [`pir_sync_manager::publication_lifecycle`] owns envelope succession, the
+//! durable floor, object transfer, authority checks and commit ordering. This
+//! adapter chooses the Status inventory (from the envelope, or from the worker
+//! for a router), loads generations, pins the worker during router handover
+//! and installs committed views in the role's controller.
+mod worker_handover;
+
+use super::Service;
 use crate::{
     distributed::{Role, RoleConfig},
-    now_ms,
-    protocol::{Hash, Manifest},
-    publication::*,
-    Controller, Generation,
+    Controller,
 };
-use ipir_sp::server::MatvecBackend;
-use objects::{collect, persist, verify_file};
-use pir_pipeline::Input;
-use pir_sync_manager::{HttpsSource, SyncTask};
-use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fs};
-use std::{path::PathBuf, sync::Arc};
+use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
+use pir_sync_manager::{
+    publication_lifecycle::{
+        ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
+        PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
+    },
+    Error,
+};
+use status_shared::{
+    now_ms,
+    protocol::{Manifest, MAX_AGE_MS},
+    publication::*,
+    Generation,
+};
+use std::{
+    collections::BTreeSet,
+    sync::Arc,
+    time::{Duration, UNIX_EPOCH},
+};
 
-#[derive(Debug)]
-struct PublicationAdvanced;
-impl std::fmt::Display for PublicationAdvanced {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Status publication advanced during coordination")
-    }
-}
-impl std::error::Error for PublicationAdvanced {}
+/// Durable floor file. Floors of the earlier pointer format live under another
+/// name; their pointers can never be served again, so they are left unread.
+const FLOOR_FILE: &str = "publication-floor.json";
+const ACTIVE_RECORD: &str = "active.json";
 
-#[derive(Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-/// Durable publisher revision and permanently invalidated serving views.
-struct PublisherHighWater {
-    current: Option<Current>,
-    invalid: BTreeSet<Hash>,
-}
-pub(super) struct StatusSynchronization {
+pub(super) type StatusSynchronization = PublicationLifecycle<StatusPublication>;
+
+/// Open the role's floor and cache and bind them to the configured publisher.
+pub(super) fn synchronization(
     service: Service,
-    source: HttpsSource,
-    backend: MatvecBackend,
-    floor: PublisherHighWater,
-    conditional: Option<Current>,
-    retained: Vec<Object>,
-    loaded: Option<Inventory>,
-    deferred: bool,
+    config: &RoleConfig,
+) -> Result<StatusSynchronization, Failure> {
+    let source = super::source(config)?;
+    let floor = AuthorityFloor::open(
+        service.state_dir.join(FLOOR_FILE),
+        SourceBinding {
+            publisher_origin: source.origin().to_string(),
+            product_namespace: PREFIX.into(),
+            chain: service.network,
+        },
+    )?;
+    let cache = ObjectCache::open(service.state_dir.join("objects"))?;
+    let adapter = StatusPublication {
+        service,
+        loaded_inventory: None,
+    };
+    PublicationLifecycle::new(adapter, source, floor, cache)
 }
-impl StatusSynchronization {
-    pub fn new(service: Service, config: &RoleConfig) -> Result<Self, Failure> {
-        let source = super::source(config)?;
-        let floor = match fs::read(service.state_dir.join("publisher-high-water.json")) {
-            Ok(bytes) => serde_json::from_slice::<PublisherHighWater>(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                PublisherHighWater::default()
-            }
-            Err(error) => return Err(error.into()),
-        };
-        if let Some(current) = &floor.current {
-            current.validate(service.network)?;
-        }
-        fs::create_dir_all(service.state_dir.join("objects"))?;
-        // The exclusive owner can remove interrupted transfer files. Completed
-        // objects and every authority/revocation record are preserved.
-        for entry in fs::read_dir(service.state_dir.join("objects"))? {
-            let entry = entry?;
-            if entry.file_type()?.is_file()
-                && entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".download-")
-            {
-                fs::remove_file(entry.path())?;
-            }
-        }
-        let backend = if config.cuda {
-            MatvecBackend::Cuda { device: 0 }
-        } else {
-            MatvecBackend::Cpu
-        };
-        Ok(Self {
-            service,
-            source,
-            backend,
-            floor,
-            conditional: None,
-            retained: Vec::new(),
-            loaded: None,
-            deferred: false,
-        })
+
+pub(super) struct StatusPublication {
+    service: Service,
+    /// The inventory of the last view this process loaded and committed. Only
+    /// its already-verified material may be re-identified without reloading.
+    loaded_inventory: Option<Inventory>,
+}
+
+/// A planned Status inventory and how much of it must be loaded.
+pub(super) struct StatusCandidate {
+    inventory: Inventory,
+    inventory_object: ObjectReference,
+    authorization: InventoryAuthorization,
+    previous: Option<Arc<Generation>>,
+    material: CandidateMaterial,
+}
+enum CandidateMaterial {
+    /// The serving generation already is this inventory.
+    AlreadyServing,
+    /// The serving material under a new publication identity.
+    Reidentified(Box<Generation>),
+    /// Load the material from verified cached objects.
+    LoadFromCache,
+}
+pub(super) struct StatusLoaded {
+    inventory: Inventory,
+    inventory_object: ObjectReference,
+    authorization: InventoryAuthorization,
+    generation: Generation,
+}
+
+impl StatusPublication {
+    async fn serving_controller(&self) -> Option<Controller> {
+        self.service.state.lock().await.controller.clone()
     }
-    async fn save_floor(&self) -> Result<(), Failure> {
-        let root = self.service.state_dir.clone();
-        let bytes = serde_json::to_vec(&self.floor)?;
-        let result = tokio::task::spawn_blocking(move || {
-            persist(&root, "publisher-high-water.json", &bytes)
-        })
-        .await?;
-        if let Err(error) = result {
-            self.revoke().await;
-            self.service.state.lock().await.poisoned = true;
-            return Err(error.into());
-        }
-        Ok(())
+}
+
+impl PublicationAdapter for StatusPublication {
+    type Descriptor = StatusDescriptor;
+    type AuthoritySubject = AnchorSubject;
+    type Candidate = StatusCandidate;
+    type Loaded = StatusLoaded;
+    type Report = u64;
+    type InstalledView = Inventory;
+
+    fn validate_envelope(&self, envelope: &Current) -> Result<(), Error> {
+        validate_current(envelope, self.service.network)
     }
-    async fn revoke(&self) {
-        let mut state = self.service.state.lock().await;
-        if let Some(c) = &state.controller {
-            c.revoke();
-        }
-        state.router_holds.clear();
-    }
-    async fn observe(&mut self, current: Current) -> Result<(), Failure> {
-        current.validate(self.service.network)?;
-        let mut invalidate = !current.eligible;
-        if let Some(old) = &self.floor.current {
-            if !current.succeeds(old) {
-                return Err("Status publisher replay or identity change".into());
-            }
-            invalidate |= current.recovery_epoch > old.recovery_epoch;
-        }
-        if invalidate {
-            let manifests = self
-                .service
-                .state
-                .lock()
-                .await
+
+    fn fence_serving(
+        &mut self,
+    ) -> impl std::future::Future<Output = Vec<ViewIdentity>> + Send + 'static {
+        let service = self.service.clone();
+        async move {
+            let mut state = service.state.lock().await;
+            let fenced = state
                 .controller
                 .as_ref()
                 .map(Controller::serving_manifests)
-                .unwrap_or_default();
-            self.floor
-                .invalid
-                .extend(manifests.iter().map(Manifest::id));
-            self.revoke().await;
-        }
-        self.floor.current = Some(current);
-        self.save_floor().await
-    }
-    async fn current(&mut self) -> Result<Current, Failure> {
-        let token = self
-            .conditional
-            .as_ref()
-            .map(|c| format!("\"{}-{}\"", c.revision, c.eligible));
-        let mut response = self.source.request("current", token.as_deref()).await?;
-        let current = if response.status() == reqwest::StatusCode::NOT_MODIFIED {
-            response.discard().await?;
-            self.conditional
-                .clone()
-                .ok_or("Status unexpected unchanged response")?
-        } else if response.status().is_success() {
-            serde_json::from_slice::<Current>(&response.read_limited(METADATA_LIMIT).await?)?
-        } else {
-            response.discard().await?;
-            return Err("Status publisher unavailable".into());
-        };
-        drop(response);
-        self.observe(current.clone()).await?;
-        self.conditional = Some(current.clone());
-        Ok(current)
-    }
-    async fn object(&mut self, object: &Object) -> Result<PathBuf, Failure> {
-        object.validate(attempt_limit())?;
-        let root = self.service.state_dir.join("objects");
-        let target = root.join(&object.sha256);
-        if target.exists() {
-            let path = target.clone();
-            let expected = object.clone();
-            tokio::task::spawn_blocking(move || verify_file(&path, &expected)).await??;
-            return Ok(target);
-        }
-        let temporary = root.join(format!(
-            ".download-{}",
-            hex::encode(rand::random::<[u8; 16]>())
-        ));
-        let result = async {
-            let mut response = self
-                .source
-                .request(&format!("objects/{}", object.sha256), None)
-                .await?;
-            if !response.status().is_success() {
-                response.discard().await?;
-                return Err::<(), Failure>("Status object unavailable".into());
-            }
-            let mut file = tokio::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)
-                .await?;
-            response
-                .copy_to(
-                    &mut file,
-                    object.bytes,
-                    pir_sync_manager::Verification::Sha256(&object.sha256),
-                )
-                .await?;
-            file.sync_all().await?;
-            drop(file);
-            use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(&temporary, fs::Permissions::from_mode(0o444)).await?;
-            tokio::fs::rename(&temporary, &target).await?;
-            let directory = root.clone();
-            tokio::task::spawn_blocking(move || fs::File::open(directory)?.sync_all()).await??;
-            Ok(())
-        }
-        .await;
-        if result.is_err() {
-            let _ = tokio::fs::remove_file(&temporary).await;
-        }
-        result?;
-        Ok(target)
-    }
-    async fn worker_inventory(&self) -> Result<Option<Object>, Failure> {
-        let response = self
-            .service
-            .serving_http
-            .get(format!("{}/v1/provider-status", self.service.worker_origin))
-            .send()
-            .await?;
-        let bytes = serving::bounded(response, METADATA_LIMIT)
-            .await
-            .map_err(|_| "Status worker status unavailable")?;
-        let status: ProviderStatus = serde_json::from_slice(&bytes)?;
-        // An available worker that is still loading is ordinary coordination,
-        // so keep the shared success cadence instead of transport backoff.
-        if status
-            .manifest
-            .as_ref()
-            .is_none_or(|m| m.fresh(now_ms()).is_err())
-        {
-            return Ok(None);
-        }
-        Ok(status.inventory)
-    }
-    async fn pin_worker(&self, manifest: &Manifest) -> Result<(), Failure> {
-        if self.service.role != Role::Router {
-            return Ok(());
-        }
-        let response = self
-            .service
-            .serving_http
-            .post(format!(
-                "{}/v1/provider-pin/{}",
-                self.service.worker_origin,
-                hex::encode(manifest.id())
-            ))
-            .send()
-            .await?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
-            return Err(Box::new(PublicationAdvanced));
-        }
-        let bytes = serving::bounded(response, 16)
-            .await
-            .map_err(|_| "Status worker cannot evaluate candidate generation")?;
-        if !serde_json::from_slice::<bool>(&bytes)? {
-            return Err("Status worker generation not ready".into());
-        }
-        Ok(())
-    }
-    async fn authority(&mut self, current: Current, candidate: &Manifest) -> Result<(), Failure> {
-        let active = self
-            .service
-            .state
-            .lock()
-            .await
-            .controller
-            .as_ref()
-            .map(Controller::serving_manifests)
-            .unwrap_or_default();
-        let mut manifests = vec![candidate.clone()];
-        manifests.extend(
-            active
-                .into_iter()
-                .filter(|m| m.id() != candidate.id() && m.fresh(now_ms()).is_ok()),
-        );
-        let request = AnchorRequest {
-            current: current.clone(),
-            anchors: manifests
+                .unwrap_or_default()
                 .iter()
-                .map(|m| (m.anchor_height, m.anchor_hash))
-                .collect(),
+                .map(view)
+                .collect();
+            if let Some(controller) = &state.controller {
+                controller.revoke();
+            }
+            state.router_holds.clear();
+            fenced
+        }
+    }
+
+    fn invalidate_views(
+        &mut self,
+        views: Vec<ViewIdentity>,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let service = self.service.clone();
+        async move {
+            let mut state = service.state.lock().await;
+            let views: BTreeSet<_> = views.into_iter().map(|view| view.0).collect();
+            if let Some(controller) = &state.controller {
+                controller.invalidate(views.iter().copied());
+            }
+            state
+                .router_holds
+                .retain(|generation| !views.contains(&generation.manifest().id()));
+        }
+    }
+
+    fn close_admission(&mut self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let service = self.service.clone();
+        async move { service.state.lock().await.poisoned = true }
+    }
+
+    async fn serving_subjects(&mut self, envelope: &Current) -> Vec<(ViewIdentity, AnchorSubject)> {
+        let Some(controller) = self.serving_controller().await.filter(|c| !c.revoked()) else {
+            return Vec::new();
         };
-        let mut response = self
-            .source
-            .post_json("anchors/check", serde_json::to_vec(&request)?)
-            .await?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
-            response.discard().await?;
-            // Observe withdrawal or epoch changes before retaining any old view.
-            drop(response);
-            self.current().await?;
-            return Err(Box::new(PublicationAdvanced));
-        }
-        if !response.status().is_success() {
-            response.discard().await?;
-            return Err("Status authority changed during synchronization".into());
-        }
-        let attestation: AnchorResponse =
-            serde_json::from_slice(&response.read_limited(METADATA_LIMIT).await?)?;
-        drop(response);
-        if attestation.current != current || attestation.canonical.len() != manifests.len() {
-            return Err("Status authority response differs".into());
-        }
-        let mut changed = false;
-        for (manifest, canonical) in manifests.iter().zip(&attestation.canonical) {
-            if !canonical {
-                self.floor.invalid.insert(manifest.id());
-                self.revoke().await;
-                changed = true;
-            }
-        }
-        if changed {
-            self.save_floor().await?;
-        }
-        if self.floor.invalid.contains(&candidate.id())
-            || candidate.recovery_epoch != current.recovery_epoch
-        {
-            return Err("Status candidate revoked".into());
-        }
-        Ok(())
+        controller
+            .serving_manifests()
+            .into_iter()
+            .filter(|m| {
+                m.recovery_epoch == envelope.fence.recovery_epoch && m.fresh(now_ms()).is_ok()
+            })
+            .map(|m| (view(&m), (m.anchor_height, m.anchor_hash)))
+            .collect()
     }
-    async fn update(&mut self) -> Result<u64, Failure> {
-        let input = pir_pipeline::acquire(self.acquire(), &mut ()).await?;
-        match pir_pipeline::advance(
-            input,
-            AcquiredPublication::prepare,
-            PreparedPublication::publish,
-            &mut (),
-        )
-        .await?
-        {
-            Input::Work(generation) => Ok(generation),
-            Input::Deferred => Ok(self
-                .service
-                .state
-                .lock()
-                .await
-                .controller
-                .as_ref()
-                .map_or(0, |c| c.current().manifest().generation)),
-            Input::Unchanged => {
-                unreachable!("Status rechecks authority even for unchanged material")
-            }
-        }
-    }
-    async fn acquire(&mut self) -> Result<Input<AcquiredPublication<'_>>, Failure> {
-        self.source.discover().await?;
-        self.source.reset_budget();
-        let current = self.current().await?;
-        // A withdrawal is the publisher's announced recovery, not a transport
-        // failure. Service is already fenced, so keep the normal cadence and
-        // load the replacement soon after it is published.
-        if !current.eligible {
-            self.deferred = true;
-            return Ok(Input::Deferred);
-        }
+
+    async fn plan(
+        &mut self,
+        envelope: &Current,
+        objects: &mut ObjectFetcher<'_>,
+    ) -> Result<PublicationPlan<StatusCandidate>, Error> {
         self.service
             .state
             .lock()
             .await
             .router_holds
             .retain(|g| g.manifest().fresh(now_ms()).is_ok());
-        let active = self
-            .service
-            .state
-            .lock()
-            .await
-            .controller
-            .as_ref()
-            .filter(|c| !c.revoked())
-            .map(|c| c.current().manifest().clone());
-        if let Some(active) = active
-            .filter(|m| m.recovery_epoch == current.recovery_epoch && m.fresh(now_ms()).is_ok())
-        {
-            self.authority(current.clone(), &active).await?;
-        }
-        let inventory_object = if self.service.role == Role::Router {
-            let Some(inventory) = self.worker_inventory().await? else {
-                self.deferred = true;
-                return Ok(Input::Deferred);
-            };
-            inventory
+        // A router follows its worker, which may still serve a retained
+        // predecessor of the latest publication.
+        let (inventory_object, authorization) = if self.service.role == Role::Router {
+            match worker_handover::serving_inventory(&self.service).await? {
+                Some(inventory) => (inventory, InventoryAuthorization::RetainedHandover),
+                None => return Ok(PublicationPlan::Deferred),
+            }
         } else {
-            current
-                .inventory
-                .clone()
-                .ok_or("Status current has no inventory")?
+            let latest = envelope
+                .inventory()
+                .cloned()
+                .ok_or("Status current has no inventory")?;
+            (latest, InventoryAuthorization::Latest)
         };
-        inventory_object.validate(METADATA_LIMIT as u64)?;
-        let inventory_path = self.object(&inventory_object).await?;
-        let inventory: Inventory = serde_json::from_slice(&fs::read(inventory_path)?)?;
-        inventory.validate(&current)?;
-        if self.floor.invalid.contains(&inventory.manifest.id()) {
-            return Err("Status candidate was invalidated".into());
+        let inventory: Inventory = serde_json::from_slice(
+            &objects
+                .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
+                .await?,
+        )?;
+        // A worker still serving a view from before the latest recovery is
+        // loading, like a worker with no fresh view.
+        if authorization == InventoryAuthorization::RetainedHandover
+            && inventory.manifest.recovery_epoch < envelope.fence.recovery_epoch
+        {
+            return Ok(PublicationPlan::Deferred);
         }
+        inventory.authorize(&inventory_object, envelope, authorization)?;
         inventory.manifest.fresh(now_ms())?;
-        // Even an unchanged active publication must revalidate live authority.
-        let previous = self
-            .service
-            .state
-            .lock()
-            .await
-            .controller
-            .as_ref()
-            .map(Controller::current);
-        let unchanged = previous
+        let controller = self.serving_controller().await;
+        let previous = controller.as_ref().map(Controller::current);
+        let already_serving = previous
             .as_ref()
             .is_some_and(|g| g.manifest().id() == inventory.manifest.id());
-        if !unchanged
-            && self
-                .service
-                .state
-                .lock()
-                .await
-                .controller
-                .as_ref()
-                .is_some_and(|c| !c.can_prepare())
-        {
-            self.deferred = true;
-            return Ok(Input::Deferred);
+        if !already_serving && controller.as_ref().is_some_and(|c| !c.can_prepare()) {
+            return Ok(PublicationPlan::Deferred);
         }
-        // Reuse only the material already verified and loaded by this process.
-        // The new identity still passes live authority and freshness checks in
-        // publish; no bytes are read from disk on this metadata-only path.
-        let refreshed = previous
+        // Reuse only material this process already verified and loaded. The
+        // new publication identity still passes live authority and freshness
+        // checks.
+        let reidentified = previous
             .as_ref()
-            .zip(self.loaded.as_ref())
-            .and_then(|(g, old)| {
-                if old.manifest != *g.manifest() || !old.same_prepared_material(&inventory) {
-                    return None;
-                }
-                let next = g.reidentified(
-                    inventory.manifest.generation,
-                    inventory.manifest.recovery_epoch,
-                    inventory.manifest.observed_ms,
-                );
-                (next.manifest() == &inventory.manifest).then_some(next)
-            });
-        if !unchanged && refreshed.is_none() {
-            for object in
-                std::iter::once(&inventory.public).chain(if self.service.role == Role::Worker {
-                    inventory.units.iter()
-                } else {
-                    inventory.packing.iter()
-                })
-            {
-                self.object(object).await?;
-            }
-        }
-        Ok(Input::Work(AcquiredPublication {
-            sync: self,
-            inventory,
-            inventory_object,
-            previous,
-            unchanged,
-            refreshed,
-        }))
-    }
-}
-
-// Tokens borrow the sole synchronization owner. No phase can run twice or
-// overlap another pass; only publication may persist and switch the active view.
-struct AcquiredPublication<'a> {
-    sync: &'a mut StatusSynchronization,
-    inventory: Inventory,
-    inventory_object: Object,
-    previous: Option<Arc<Generation>>,
-    unchanged: bool,
-    refreshed: Option<Generation>,
-}
-struct PreparedPublication<'a> {
-    sync: &'a mut StatusSynchronization,
-    inventory: Inventory,
-    inventory_object: Object,
-    candidate: Option<Generation>,
-}
-impl<'a> AcquiredPublication<'a> {
-    async fn prepare(self) -> Result<Input<PreparedPublication<'a>>, Failure> {
-        let Self {
-            sync,
-            inventory,
-            inventory_object,
-            previous,
-            unchanged,
-            refreshed,
-        } = self;
-        let candidate = if unchanged {
-            previous.as_ref().map(|g| g.as_ref().clone())
-        } else if refreshed.is_some() {
-            refreshed
+            .zip(self.loaded_inventory.as_ref())
+            .and_then(|(serving, loaded)| reidentify(serving, loaded, &inventory));
+        let (material, required_objects) = if already_serving {
+            (CandidateMaterial::AlreadyServing, Vec::new())
+        } else if let Some(generation) = reidentified {
+            (
+                CandidateMaterial::Reidentified(Box::new(generation)),
+                Vec::new(),
+            )
         } else {
-            let root = sync.service.state_dir.join("objects");
-            let i = inventory.clone();
-            let worker = sync.service.role == Role::Worker;
-            let backend = sync.backend;
-            Some(
+            let role_objects = if self.service.role == Role::Worker {
+                &inventory.units
+            } else {
+                &inventory.packing
+            };
+            let mut required = vec![inventory.public.clone()];
+            required.extend(role_objects.iter().cloned());
+            for object in &required {
+                object.validate(attempt_limit())?;
+            }
+            (CandidateMaterial::LoadFromCache, required)
+        };
+        Ok(PublicationPlan::Candidate {
+            identity: view(&inventory.manifest),
+            candidate: StatusCandidate {
+                inventory,
+                inventory_object,
+                authorization,
+                previous,
+                material,
+            },
+            required_objects,
+        })
+    }
+
+    async fn load(
+        &mut self,
+        candidate: StatusCandidate,
+        cache: &ObjectCache,
+    ) -> Result<StatusLoaded, Error> {
+        let StatusCandidate {
+            inventory,
+            inventory_object,
+            authorization,
+            previous,
+            material,
+        } = candidate;
+        let generation = match material {
+            CandidateMaterial::AlreadyServing => previous
+                .as_deref()
+                .cloned()
+                .ok_or("Status serving generation disappeared")?,
+            CandidateMaterial::Reidentified(generation) => *generation,
+            CandidateMaterial::LoadFromCache => {
+                let cache = cache.clone();
+                let loading = inventory.clone();
+                let worker = self.service.role == Role::Worker;
                 tokio::task::spawn_blocking(move || {
                     Generation::load_prepared(
-                        &i,
+                        &loading,
                         worker,
-                        |o| root.join(&o.sha256),
-                        backend,
+                        |object| cache.object_path(object),
                         previous.as_deref(),
                     )
                 })
-                .await??,
-            )
-        };
-        Ok(Input::Work(PreparedPublication {
-            sync,
-            inventory,
-            inventory_object,
-            candidate,
-        }))
-    }
-}
-impl PreparedPublication<'_> {
-    async fn publish(self) -> Result<u64, Failure> {
-        let Self {
-            sync,
-            inventory,
-            inventory_object,
-            candidate,
-        } = self;
-        let latest = sync.current().await?;
-        if !latest.eligible {
-            return Err("Status publication withdrawn".into());
-        }
-        inventory.validate(&latest)?;
-        sync.authority(latest, &inventory.manifest).await?;
-        sync.pin_worker(&inventory.manifest).await?;
-        inventory.manifest.fresh(now_ms())?;
-        if let Some(candidate) = candidate {
-            let root = sync.service.state_dir.clone();
-            let bytes = serde_json::to_vec(&inventory_object)?;
-            if let Err(error) =
-                tokio::task::spawn_blocking(move || persist(&root, "active.json", &bytes)).await?
-            {
-                sync.revoke().await;
-                sync.service.state.lock().await.poisoned = true;
-                return Err(error.into());
+                .await??
             }
-            let mut state = sync.service.state.lock().await;
+        };
+        Ok(StatusLoaded {
+            inventory,
+            inventory_object,
+            authorization,
+            generation,
+        })
+    }
+
+    /// A worker's candidate whose latest publication re-identifies the same
+    /// material, typically refreshed while it loaded, takes the latest
+    /// inventory's metadata. A router follows its worker's own inventory.
+    async fn rebind(
+        &mut self,
+        envelope: &Current,
+        loaded: StatusLoaded,
+        objects: &mut ObjectFetcher<'_>,
+    ) -> Result<StatusLoaded, Error> {
+        let Some(latest) = envelope.publication.as_ref().filter(|_| envelope.eligible) else {
+            return Ok(loaded);
+        };
+        if loaded.authorization != InventoryAuthorization::Latest
+            || latest.material != loaded.inventory.material_identity()
+            || *latest
+                == loaded
+                    .inventory
+                    .publication_reference(&loaded.inventory_object)
+        {
+            return Ok(loaded);
+        }
+        let inventory: Inventory = serde_json::from_slice(
+            &objects
+                .fetch_metadata(&latest.inventory, METADATA_LIMIT as u64)
+                .await?,
+        )?;
+        let Some(generation) = reidentify(&loaded.generation, &loaded.inventory, &inventory) else {
+            return Ok(loaded);
+        };
+        Ok(StatusLoaded {
+            inventory,
+            inventory_object: latest.inventory.clone(),
+            authorization: InventoryAuthorization::Latest,
+            generation,
+        })
+    }
+
+    fn revalidate(
+        &self,
+        envelope: &Current,
+        loaded: &StatusLoaded,
+    ) -> Result<(ViewIdentity, AnchorSubject), Error> {
+        let manifest = &loaded.inventory.manifest;
+        loaded
+            .inventory
+            .authorize(&loaded.inventory_object, envelope, loaded.authorization)?;
+        if manifest.recovery_epoch != envelope.fence.recovery_epoch {
+            return Err("Status candidate belongs to an earlier recovery epoch".into());
+        }
+        manifest.fresh(now_ms())?;
+        Ok((
+            view(manifest),
+            (manifest.anchor_height, manifest.anchor_hash),
+        ))
+    }
+
+    async fn reserve_peer(&mut self, loaded: &StatusLoaded) -> Result<PeerReservation, Error> {
+        if self.service.role != Role::Router {
+            return Ok(PeerReservation::Reserved);
+        }
+        worker_handover::pin(&self.service, &loaded.inventory.manifest).await
+    }
+
+    fn view_objects(&self, loaded: &StatusLoaded) -> BTreeSet<String> {
+        std::iter::once(&loaded.inventory_object)
+            .chain(loaded.inventory.referenced_objects())
+            .map(|object| object.sha256.clone())
+            .collect()
+    }
+
+    /// Every view the controller can still answer from, and each view a
+    /// router holds until the view is too old to answer.
+    async fn retained_views(&mut self) -> Vec<(ViewIdentity, ViewRequirement)> {
+        let state = self.service.state.lock().await;
+        let serving = state
+            .controller
+            .as_ref()
+            .filter(|controller| !controller.revoked())
+            .map(Controller::retained_manifests)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|manifest| (view(&manifest), ViewRequirement::Serving));
+        let held = state.router_holds.iter().map(|generation| {
+            let manifest = generation.manifest();
+            let answerable_until =
+                UNIX_EPOCH + Duration::from_millis(manifest.observed_ms.saturating_add(MAX_AGE_MS));
+            (view(manifest), ViewRequirement::HeldUntil(answerable_until))
+        });
+        serving.chain(held).collect()
+    }
+
+    fn prepare_commit(
+        &mut self,
+        loaded: StatusLoaded,
+    ) -> Result<(PreparedCommit<u64>, Inventory), Error> {
+        let StatusLoaded {
+            inventory,
+            inventory_object,
+            generation,
+            ..
+        } = loaded;
+        let root = self.service.state_dir.clone();
+        let record_bytes = serde_json::to_vec(&inventory_object)?;
+        let record = Box::new(move || {
+            pir_control::durable::write_atomic(&root, ACTIVE_RECORD, |f| {
+                f.write_all(&record_bytes)
+            })?;
+            pir_control::durable::sync_dir(&root)
+        });
+        let reported_generation = inventory.manifest.generation;
+        let install_service = self.service.clone();
+        let install = Box::pin(async move {
+            let mut state = install_service.state.lock().await;
             let mut retired_owner = None;
+            // Activation refuses before changing any view, so an error leaves
+            // serving unchanged.
             let retired = match state.controller.as_ref() {
                 Some(controller) if !controller.revoked() => {
-                    if controller.current().manifest().id() != candidate.manifest().id() {
-                        controller.activate_deferring_release(candidate)?
+                    if controller.current().manifest().id() != generation.manifest().id() {
+                        controller.activate_deferring_release(generation)?
                     } else {
                         Vec::new()
                     }
                 }
                 _ => {
-                    retired_owner = state.controller.replace(Controller::new(candidate));
+                    retired_owner = state.controller.replace(Controller::new(generation));
                     Vec::new()
                 }
             };
-            state.inventory = Some(inventory_object.clone());
+            state.inventory = Some(inventory_object);
             state.poisoned = false;
             drop(state);
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
             }
-            sync.loaded = Some(inventory.clone());
-            sync.retained.push(inventory_object.clone());
-            if sync.retained.len() > 2 {
-                sync.retained.remove(0);
+            Ok(reported_generation)
+        });
+        let revoke_service = self.service.clone();
+        let revoke_after_failed_record = Box::pin(async move {
+            let mut state = revoke_service.state.lock().await;
+            if let Some(controller) = &state.controller {
+                controller.revoke();
             }
-            let root = sync.service.state_dir.join("objects");
-            let retained = sync.retained.clone();
-            tokio::task::spawn_blocking(move || collect(&root, &retained)).await??;
-        }
-        if sync.service.role == Role::Router {
-            let release = sync
-                .service
-                .serving_http
-                .post(format!(
-                    "{}/v1/provider-commit/{}",
-                    sync.service.worker_origin,
-                    hex::encode(inventory.manifest.id())
-                ))
-                .send()
-                .await;
-            match release {
-                Ok(response) if response.status().is_success() => {}
-                _ => {
-                    sync.deferred = true;
-                    tracing::warn!("Status router handover acknowledgment deferred");
-                }
+            state.router_holds.clear();
+            state.poisoned = true;
+        });
+        Ok((
+            PreparedCommit {
+                record,
+                install,
+                revoke_after_failed_record,
+            },
+            inventory,
+        ))
+    }
+
+    fn installed(&mut self, inventory: Inventory) {
+        self.loaded_inventory = Some(inventory);
+    }
+
+    async fn release_peer(&mut self, _generation: &u64) -> PeerHandover {
+        match (&self.service.role, &self.loaded_inventory) {
+            (Role::Router, Some(inventory)) => {
+                worker_handover::release(&self.service, &inventory.manifest).await
             }
+            _ => PeerHandover::Complete,
         }
-        Ok(inventory.manifest.generation)
+    }
+
+    async fn serving_report(&mut self) -> u64 {
+        self.serving_controller()
+            .await
+            .map_or(0, |c| c.current().manifest().generation)
+    }
+
+    async fn pass_started(&mut self) {
+        self.service.state.lock().await.synchronization = "synchronizing".into();
+    }
+
+    async fn pass_finished(&mut self, result: &Result<PublicationPass<u64>, Error>) {
+        let synchronization = match result {
+            Ok(PublicationPass::Committed {
+                handover: PeerHandover::Complete,
+                ..
+            }) => "synchronized",
+            Ok(_) => "waiting_for_peer",
+            Err(error) => {
+                tracing::warn!(%error, "Status synchronization refused");
+                "refused"
+            }
+        };
+        self.service.state.lock().await.synchronization = synchronization.into();
     }
 }
 
-impl SyncTask for StatusSynchronization {
-    type Report = u64;
-    type Error = Failure;
-    async fn synchronize(&mut self) -> Result<u64, Failure> {
-        self.deferred = false;
-        self.service.state.lock().await.synchronization = "synchronizing".into();
-        let result = match self.update().await {
-            // A newer pointer won the authority handshake. Nothing was activated;
-            // retry at the normal cadence rather than spending half the serving
-            // freshness window in transport-failure backoff.
-            Err(error) if error.is::<PublicationAdvanced>() => {
-                self.deferred = true;
-                Ok(self
-                    .service
-                    .state
-                    .lock()
-                    .await
-                    .controller
-                    .as_ref()
-                    .map_or(0, |c| c.current().manifest().generation))
-            }
-            result => result,
-        };
-        self.service.state.lock().await.synchronization = if result.is_ok() && self.deferred {
-            "waiting_for_peer"
-        } else if result.is_ok() {
-            "synchronized"
-        } else {
-            "refused"
-        }
-        .into();
-        result
+/// `generation`, loaded from `loaded`, under `inventory` when that names the
+/// same verified material with new metadata. Only the manifest's generation,
+/// recovery epoch and observation time may differ.
+fn reidentify(
+    generation: &Generation,
+    loaded: &Inventory,
+    inventory: &Inventory,
+) -> Option<Generation> {
+    if loaded.manifest != *generation.manifest()
+        || loaded.material_identity() != inventory.material_identity()
+    {
+        return None;
     }
-    fn terminal(&self, error: &Failure) -> bool {
-        pir_sync_manager::is_incompatible(error.as_ref())
-    }
-    fn report(&self, result: &Result<u64, Failure>) {
-        if let Err(error) = result {
-            tracing::warn!(%error,"Status synchronization refused");
-        }
-    }
+    let next = generation.reidentified(
+        inventory.manifest.generation,
+        inventory.manifest.recovery_epoch,
+        inventory.manifest.observed_ms,
+    );
+    (next.manifest() == &inventory.manifest).then_some(next)
 }
+
+/// A Status serving view is one exact manifest.
+fn view(manifest: &Manifest) -> ViewIdentity {
+    ViewIdentity(manifest.id())
+}
+
 #[cfg(test)]
 mod tests;

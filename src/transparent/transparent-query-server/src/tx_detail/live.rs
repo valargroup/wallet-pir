@@ -243,9 +243,6 @@ impl crate::activation::Adapter for DisplayActivation {
     }
 }
 
-/// Never set: staging is not cancelled by reorgs, which cannot reach a
-/// sealed revision without halting the controller.
-
 impl DisplayLive {
     pub fn new(
         runtime: Arc<DisplayRuntime>,

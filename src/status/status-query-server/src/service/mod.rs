@@ -12,11 +12,9 @@ mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]
 mod wallet_tests;
 
-use crate::{
-    distributed::RoleConfig,
-    publication::{attempt_limit, Failure, PREFIX},
-};
+use crate::distributed::RoleConfig;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
+use status_shared::publication::{attempt_limit, Failure, PREFIX};
 
 fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {
     let roots = match &config.publisher_ca {
@@ -50,7 +48,7 @@ pub async fn serve_role_on(
         config.state_dir.clone(),
         config.worker_origin.clone(),
     )?;
-    let task = sync::StatusSynchronization::new(service.clone(), &config)?;
+    let task = sync::synchronization(service.clone(), &config)?;
     // The worker and router each poll the publisher. Their combined delay must
     // leave room for preparation inside Status's twenty-second freshness limit.
     let mut manager = pir_sync_manager::SyncManager::new(task)

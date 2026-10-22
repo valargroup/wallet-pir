@@ -600,6 +600,22 @@ cannot be built or written is reported in the cycle record and left to the worke
 invalidation is checked before each segment, and a candidate whose preparation it stops
 is never offered.
 
+An HTTP-only publisher (`http_only`) stores each table segment and prepared runtime once,
+named by the SHA-256 of its bytes, in `.objects/<sha256>` beside its publications
+(`transparent_publisher::history::store`). A candidate's revision directories keep their
+manifest and filter as local files and name every segment by the exact link
+`../../.objects/<sha256>`; its runtimes are `../.objects/<sha256>` links. Republishing an
+unchanged segment or runtime therefore changes no inode, and the process's ctime-bound
+evidence carries it into the next candidate without another hash or runtime self-check. A
+file new to the store is hashed against its manifest, synced and installed by a link that
+never replaces an installed object; the first cycle after an upgrade imports the served
+plain-file layout the same way without copying it. The loader and the one artifact
+resolver behind inventory preparation, restore, validation and HTTP serving accept only
+those exact links into real stores and refuse traversal, any other link and missing
+targets. Inventory paths, URLs and bytes are unchanged. After candidate collection, an
+object or runtime that no remaining publication directory links is removed; an in-flight
+response keeps its open file. Fleet publications keep plain files.
+
 The prepare request names the candidate directory as `runtimes`. The fleet adapter lists
 only the runtime files of the worker's assigned shards (`shard-assign files --runtimes`),
 hard-links every file the worker's active publication already holds, so a sealed shard's

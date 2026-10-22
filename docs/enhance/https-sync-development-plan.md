@@ -48,7 +48,7 @@ support its independent handover rules without implementing a new promotion poli
 | [`worker_sync.rs`](../../src/enhance/enhance-query-server/src/worker_sync.rs) | Verified row loading, backend admission and exact readiness | Autonomous worker activation and bounded peer pins |
 | [`router_sync.rs`](../../src/enhance/enhance-query-server/src/router_sync.rs) | Published packing, compatible workers and exact evaluations | Local handover, byte-budget admission and response fences |
 | [`ingress_sync.rs`](../../src/enhance/enhance-query-server/src/ingress_sync.rs) | Manifest/routing activation with compatible routers | Separate control/query origins and retained request bindings |
-| [`prepared_packing.rs`](../../src/enhance/enhance-query-server/src/prepared_packing.rs) | Verified persisted/mapped packing | Reuses the existing format and bounded loaders |
+| [`prepared_packing.rs`](../../src/enhance/enhance-shared/src/prepared_packing.rs) | Verified persisted/mapped packing | Reuses the existing format and bounded loaders |
 | [`service.rs`](../../src/enhance/enhance-query-server/src/service.rs) and root hosts | Configure/supervise one role | Requires synchronization settings; validates actual role JSON without opening state |
 | [`pir-sync-manager`](../../src/shared/pir-sync-manager/src/lib.rs) | HTTPS transfer accounting, sequential polling and backoff | Enhance authority, recovery and activation policy stays product-owned |
 

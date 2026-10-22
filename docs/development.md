@@ -26,11 +26,10 @@ Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency acces
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 
-The current service workspace and standalone txid sizing exporter pin the Common
-family to one Git revision through their Cargo patches. Move those patches
-together when updating Common; the dependency boundary check rejects older
-Common releases and copies resolved from another source, including stale lockfile
-entries. The released frozen-client fixture retains its independent historical
+The service workspace uses the published Common 4.0.0 release, with no Common
+patch, and its root patch keeps the wallet-library family on one revision. The
+dependency boundary check rejects older Common releases and copies resolved from
+another source, including stale lockfile entries. The released frozen-client fixture retains its independent historical
 dependencies for interoperability checks.
 
 PIR primitives come from the role packages in wallet-libraries. Publishers use
@@ -88,7 +87,8 @@ Explicit full commands (`make test`, `make check-full`, full package families an
 the qualification matrix) enable the declared `qualification-tests` features.
 These restore the original deployed geometry combinations, mixed-size archive
 preparation, full publication sequence, longer display histories and the larger
-Enhance multi-unit failure fixture and 16K monolithic comparison. Repeated
+Enhance multi-unit failure fixture and 16K monolithic comparison, and Receiver's served
+sealing campaigns. Repeated
 campaigns that rebuild one runtime only to assert an additional property stay
 behind that feature; fast feedback keeps a single case for each property.
 Ordinary
@@ -276,7 +276,11 @@ Cargo package names and standalone commands are preserved. See the
 `src/shared/`. Transparent history, transaction-detail and Status consumers supply its
 product adapters. The library accounts all consumed response bytes against one
 attempt budget and schedules complete passes sequentially with bounded backoff.
-It does not interpret publications or grant serving authority. Product code
-retains schemas, replay records, directory locks, validation, preparation and
-activation. Enhance does not use it yet. Status uses the same polling and backoff; its
+It does not grant serving authority by itself. Its `publication_lifecycle`
+module runs the shared publication lifecycle over the transport-free
+`pir-publication` contract (object references, pointer succession, durable
+floors, object cache and publisher object store); Status is its first adopter,
+and other products still keep their own replay records and promotion. Product
+code retains schemas, directory locks, validation, preparation and activation.
+Enhance does not use it yet. Status uses the same polling and backoff; its
 wallet still rejects observations older than twenty seconds.

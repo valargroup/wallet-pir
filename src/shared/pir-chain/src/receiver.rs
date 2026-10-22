@@ -147,6 +147,50 @@ mod rpc {
             Ok(root)
         }
 
+        /// The root of completed Ironwood subtree `index`, the 2^16 leaves from position
+        /// `index << 16`, and the height of the block completing it, from
+        /// `z_getsubtreesbyindex`; `None` while it is incomplete. The node does not
+        /// reverse subtree roots, so the root is in the encoding a witness payload uses.
+        /// An answer for another pool or index, or a root that is not a canonical field
+        /// element, is refused.
+        pub async fn ironwood_subtree(
+            &self,
+            index: u16,
+        ) -> Result<Option<([u8; 32], u32)>, NodeError> {
+            #[derive(Deserialize)]
+            struct Subtrees {
+                pool: String,
+                start_index: u16,
+                subtrees: Vec<Subtree>,
+            }
+            #[derive(Deserialize)]
+            struct Subtree {
+                root: String,
+                end_height: u32,
+            }
+            let answer: Subtrees = self
+                .call("z_getsubtreesbyindex", json!(["ironwood", index, 1]))
+                .await?;
+            if answer.pool != "ironwood" || answer.start_index != index || answer.subtrees.len() > 1
+            {
+                return Err(NodeError::Block(
+                    "subtrees are for another pool or index".into(),
+                ));
+            }
+            let Some(subtree) = answer.subtrees.into_iter().next() else {
+                return Ok(None);
+            };
+            let root: [u8; 32] = hex::decode(subtree.root)?
+                .try_into()
+                .map_err(|_| NodeError::Block("Ironwood subtree root is not 32 bytes".into()))?;
+            if !bool::from(orchard::Anchor::from_bytes(root).is_some()) {
+                return Err(NodeError::Block(
+                    "non-canonical Ironwood subtree root".into(),
+                ));
+            }
+            Ok(Some((root, subtree.end_height)))
+        }
+
         /// The time in the header of the block `hash` (protocol byte order), in Unix
         /// seconds.
         pub async fn block_time(&self, hash: [u8; 32]) -> Result<i64, NodeError> {
@@ -383,6 +427,33 @@ mod tests {
             ))
             .await;
             NodeClient::new(url, None).unwrap()
+        }
+
+        /// A completed subtree's root is the bytes the node gives, with its completing
+        /// height; an empty list is an incomplete subtree, and an answer for another pool
+        /// or index, or a noncanonical root, is refused.
+        #[tokio::test]
+        async fn ironwood_subtrees_are_read_as_the_node_encodes_them() {
+            let root = zakura_chain::orchard::tree::NoteCommitmentTree::default()
+                .root()
+                .bytes_in_display_order();
+            let read = |answer: Value| async move {
+                treestate_node(answer).await.ironwood_subtree(3).await
+            };
+            let answer = |pool: &str, index: u16, subtrees: Value| json!({"pool": pool, "start_index": index, "subtrees": subtrees});
+            let one = |root: [u8; 32]| json!([{"root": hex::encode(root), "end_height": 9}]);
+            assert_eq!(
+                read(answer("ironwood", 3, one(root))).await.unwrap(),
+                Some((root, 9))
+            );
+            assert_eq!(read(answer("ironwood", 3, json!([]))).await.unwrap(), None);
+            for refused in [
+                answer("orchard", 3, one(root)),
+                answer("ironwood", 4, one(root)),
+                answer("ironwood", 3, one([0xff; 32])),
+            ] {
+                assert!(read(refused).await.is_err());
+            }
         }
 
         /// The root is the bytes the node gives, unreversed: the pinned node encodes its

@@ -27,7 +27,7 @@ native-reinspiring = [
     "enhance-query-server?/native-reinspiring",
     "status-query-server?/native-reinspiring",
 ]
-cuda = ["enhance-query-server?/cuda", "status-query-server?/cuda"]
+cuda = ["enhance-query-server?/cuda"]
 
 [dependencies]
 pir-sync-manager = { path = "../shared/pir-sync-manager" }

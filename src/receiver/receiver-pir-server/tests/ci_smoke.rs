@@ -3,20 +3,21 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/prepared.rs"]
+mod prepared;
+#[path = "common/router.rs"]
+mod router;
 use common::{manifest, receiver, record};
-use history::history;
+use history::{history, Accepted, Session};
 use receiver_directory::snapshot::Snapshot;
-use receiver_pir::{
-    server::Server,
-    transport::{DirectoryClient, Transport},
-    AcceptedCoverage, Error, MIN_ROWS,
-};
+use receiver_pir::{transport::Transport, Error, MIN_ROWS};
 use receiver_pir_server::{Publication, Publications};
+use router::router_with_publications;
 use std::time::Duration;
 
 /// The chain anchor that [`manifest`] ends at.
-fn accepted() -> AcceptedCoverage {
-    AcceptedCoverage {
+fn accepted() -> Accepted {
+    Accepted {
         genesis: [1; 32],
         required_start: 100,
         height: 101,
@@ -32,7 +33,7 @@ fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let mut manifest = manifest(rows);
     // Positions start at 200; a long history needs room after them.
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records, &[]).unwrap()
+    Snapshot::build(manifest, &records).unwrap()
 }
 struct Running {
     origin: String,
@@ -44,13 +45,13 @@ impl Drop for Running {
     }
 }
 async fn serve(snapshot: Snapshot) -> Running {
-    serve_publication(Publication::verified(Server::new(snapshot).unwrap(), None)).await
+    serve_publication(prepared::prepare_payments(snapshot).unwrap()).await
 }
 /// Serve one prepared publication through the production router.
 async fn serve_publication(publication: Publication) -> Running {
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
-    serve_router(receiver_pir_server::router_with_publications(publications)).await
+    serve_router(router_with_publications(publications)).await
 }
 async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -103,10 +104,9 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
 async fn connect<T: Transport>(
     origin: &str,
     http: T,
-    accepted: AcceptedCoverage,
-) -> Result<DirectoryClient<T>, Error> {
-    let manifest = DirectoryClient::fetch_manifest(origin, &http).await?;
-    DirectoryClient::connect_manifest(origin, http, accepted, manifest).await
+    accepted: Accepted,
+) -> Result<Session<T>, Error> {
+    history::connect(origin, http, accepted).await
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Install immutable objects and durably replace bounded publication metadata.
 use crate::{artifact, prepared_packing};
-use enhance_query_server::publication::{Object, METADATA_LIMIT};
+use enhance_shared::publication::{Object, METADATA_LIMIT};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},

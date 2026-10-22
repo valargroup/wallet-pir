@@ -367,7 +367,7 @@ impl LiveService {
         let (next, verification, material) = tokio::task::spawn_blocking(move || {
             tracing::info!(map = %digest, queue_seconds = loading_started.elapsed().as_secs_f64(), "publication loading task started");
             let eviction_started = std::time::Instant::now();
-            old.evict_unpinned();
+            old.evict_unpinned_except_current();
             tracing::info!(map = %digest, seconds = eviction_started.elapsed().as_secs_f64(), "publication runtime eviction finished");
             let open_started = std::time::Instant::now();
             let set = ShardSet::open_for_serving(&directory, &options)

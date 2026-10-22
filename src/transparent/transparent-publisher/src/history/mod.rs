@@ -8,6 +8,7 @@ pub mod publication;
 pub mod service;
 pub mod shard_filters;
 pub mod shard_matches;
+pub mod store;
 mod validator;
 
 pub mod filter_service;

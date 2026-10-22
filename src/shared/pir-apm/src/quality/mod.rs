@@ -262,9 +262,6 @@ fn status_read(bytes: &[u8], operation: &str, at: u64) -> Result<Reading, &'stat
         "host_memory_total_bytes",
         "host_memory_available_bytes",
         "process_rss_bytes",
-        "gpu_utilization_percent",
-        "gpu_memory_used_mib",
-        "gpu_memory_total_mib",
     ] {
         if let Some(value) = v["resources"][key].as_u64() {
             r.values.gauges.insert(key.into(), value as f64);

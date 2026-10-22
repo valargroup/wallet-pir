@@ -77,9 +77,7 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "init" => "receiver_init",
         "public" => "receiver_public",
         "query" => "receiver_query",
-        "rows" => "receiver_rows",
         "witness" => "receiver_witness",
-        "filters" => "receiver_filters",
         "health" => "receiver_health",
         _ => return None,
     })

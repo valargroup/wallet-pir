@@ -3,7 +3,7 @@
 use super::{require, AnyError};
 use crate::{status, zakura::ZakuraClient};
 use serde_json::json;
-use status_query_server::protocol::*;
+use status_shared::protocol::*;
 use std::{
     fs::File,
     io::{BufWriter, Write},

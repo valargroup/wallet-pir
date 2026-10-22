@@ -214,6 +214,70 @@ class EnhanceTests(PublisherFixture, unittest.TestCase):
             self.target.plan()
         self.assertEqual(self.ex.effects, [])
 
+    def test_identity_repair_preserves_the_predecessor_account_and_only_new_cache_paths(self):
+        from wallet_pir_ops.deploy import enhance_repair
+        parent = self.deploy()
+        parent['phase'] = 'verifying'
+        parent['plan']['serving']['group_units']['cpu'][0]['fragment_text'] += '\n[Service]\nUser=existing-worker\nGroup=existing-worker\nEnvironmentFile=/etc/existing-worker.env\n'
+        original = self.ex.run
+        def run(host, argv, timeout):
+            if enhance_repair.IDENTITY in argv:
+                paths = json.loads(argv[-1])
+                return 0, json.dumps({'uid': 999, 'gid': 999, 'directories':
+                    [{'path': p, 'uid': 0, 'gid': 0, 'mode': 0o750} for p in paths]})
+            return original(host, argv, timeout)
+        self.ex.run = run
+        repairs = enhance_repair.plan(self.target, parent)
+        self.assertIn('User=existing-worker\n', repairs[0]['after'])
+        self.assertIn('Group=existing-worker\n', repairs[0]['after'])
+        self.assertIn('EnvironmentFile=/etc/existing-worker.env\n', repairs[0]['after'])
+        record = parent['enhance_journals']['cpu']['hosts'][0]
+        self.assertEqual([d['path'] for d in repairs[0]['ownership']['directories']], record['directories'])
+        for program in (enhance_repair.IDENTITY, enhance_repair.OWNERSHIP):
+            compile(program, '<remote repair>', 'exec')
+
+    def test_deploy_preserves_the_installed_account_and_credential_reference(self):
+        worker = next(t for t in self.target.serving.deployer.targets if t.role.name == 'worker')
+        worker.settings.pop('credentials', None)
+        path = '/etc/systemd/system/' + worker.unit
+        current = self.ex.read(worker.host, path)
+        self.ex.put(worker.host, '/etc/installed-worker.env', 'placeholder')
+        self.ex.edit(worker.host, path, current + '\n[Service]\nUser=enhance-pir-v4\nGroup=enhance-pir-v4\nEnvironmentFile=/etc/installed-worker.env\n')
+        self.ex.systemctl(worker.host, 'restart', worker.unit)
+        self.ex.service_users.remove('enhance-pir')
+        self.ex.effects.clear()
+        result = self.deploy()
+        self.assertEqual(result['phase'], 'committed')
+        text = self.ex.read(worker.host, path)
+        self.assertIn('User=enhance-pir-v4\n', text)
+        self.assertIn('Group=enhance-pir-v4\n', text)
+        self.assertIn('EnvironmentFile=/etc/installed-worker.env\n', text)
+        self.assertEqual(self.ex.cache_owners[worker.host, worker.settings['data_dir']], 'enhance-pir-v4')
+
+    def test_missing_service_account_is_refused_before_publisher_stop(self):
+        worker = next(t for t in self.target.serving.deployer.targets if t.role.name == 'worker')
+        worker.settings['limits'] = {'User': 'missing-service-account'}
+        with self.assertRaisesRegex(DeployError, 'service account does not exist'):
+            self.deploy()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_missing_credential_file_is_refused_before_publisher_stop(self):
+        worker = next(t for t in self.target.serving.deployer.targets if t.role.name == 'worker')
+        worker.settings['credentials'] = ['/etc/missing-worker.env']
+        with self.assertRaisesRegex(DeployError, 'credential environment file is unavailable'):
+            self.deploy()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_foreign_owned_existing_cache_is_refused_without_chown_or_stop(self):
+        worker = next(t for t in self.target.serving.deployer.targets if t.role.name == 'worker')
+        path = worker.settings['data_dir']
+        self.ex.host(worker.host).dirs.add(path)
+        self.ex.cache_owners[worker.host, path] = 'another-service'
+        with self.assertRaisesRegex(DeployError, 'foreign owner'):
+            self.deploy()
+        self.assertEqual(self.ex.cache_owners[worker.host, path], 'another-service')
+        self.assertEqual(self.ex.effects, [])
+
     def test_lost_handoff_reply_still_requires_rollback_floor_transfer(self):
         original = self.ex.run
 

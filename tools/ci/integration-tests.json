@@ -1,4 +1,10 @@
 {
+  "pir-publication": {
+    "fast": [
+      "object_installation"
+    ],
+    "full": []
+  },
   "receiver-indexer": {
     "fast": [],
     "full": [
@@ -26,6 +32,12 @@
     "full": [
       "status_wallet"
     ]
+  },
+  "transparent-publisher": {
+    "fast": [
+      "immutable_objects"
+    ],
+    "full": []
   },
   "transparent-query-server": {
     "fast": [

@@ -55,7 +55,7 @@ class MatrixTests(unittest.TestCase):
     def test_reference_filters_and_cuda_modes_do_not_expand_or_disappear(self):
         registry, contexts, targets, packages, _ = self.plan
         reference = registry['enhance-reference']['targets']
-        self.assertIn('reference:enhance-query-server:lib:enhance_query_server', reference)
+        self.assertIn('reference:enhance-shared:lib:enhance_shared', reference)
         self.assertNotIn('reference:enhance-publisher:test:http', reference)
         native = matrix.package_features('enhance-query-server', contexts['native'], packages)
         cuda = matrix.package_features('enhance-query-server', contexts['cuda'], packages)
@@ -65,7 +65,9 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('enhance-query-server/cuda', cuda)
         reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
         self.assertEqual(reference_features, ['enhance-query-server/client',
-                                              'enhance-query-server/qualification-tests'])
+                                              'enhance-query-server/qualification-tests',
+                                              'enhance-shared/client',
+                                              'enhance-shared/qualification-tests'])
         self.assertIn('pir-e2e-tests/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
         self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
@@ -74,7 +76,7 @@ class MatrixTests(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-query-server', 'status-query-server', 'status-publisher',
+                         {'enhance-shared', 'enhance-query-server',
                           'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
@@ -261,8 +263,12 @@ class MatrixTests(unittest.TestCase):
                     def command(command, **options):
                         if command[:3] == ['cargo', 'test', '--no-run']:
                             package = command[command.index('-p') + 1]
+                            selected = (command[command.index('--features') + 1].split(',')
+                                        if '--features' in command else [])
+                            features = sorted(feature.split('/', 1)[1] for feature in selected
+                                              if feature.startswith(package + '/'))
                             return [dict(executable=str(script), package_id=packages[package]['id'],
-                                         target=dict(name=t['target'], kind=[t['kind']]), features=[])
+                                         target=dict(name=t['target'], kind=[t['kind']]), features=features)
                                     for key in registry[shard]['targets']
                                     if (t := targets[key])['package'] == package and t['kind'] in ('lib', 'bin', 'test')]
                         if 'tools/ci/unit_tests.py' in command:

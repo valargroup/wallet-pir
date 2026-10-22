@@ -21,27 +21,22 @@ impl pir_pipeline::publisher::Workflow for Publication<'_> {
         }
         let observed = self.rx.borrow().clone();
         if let Some(observed) = observed.filter(|o| o.observed_ms > self.last_observed) {
+            self.publisher
+                .open_authority(observed.snapshot.network, self.salt)?;
             // Detect invalidation independently of the publication outcome.
-            let (active, withdrawn) = {
-                let published = self.publisher.published.read().unwrap();
-                (
-                    published.manifest.clone(),
-                    published.current.as_ref().is_some_and(|c| !c.eligible),
-                )
-            };
-            // Candidate validation can withdraw after the active-anchor
-            // check. Its cleared manifest must not hide the recovery fence.
-            if withdrawn {
-                self.authority = None;
-                self.previous = None;
-            }
+            let active = self.publisher.published.read().unwrap().manifest.clone();
             if let Some(active) = active {
                 if self.rpc.block_hash(u64::from(active.anchor_height)).await? != active.anchor_hash
                 {
                     self.publisher.withdraw();
-                    self.authority = None;
-                    self.previous = None;
                 }
+            }
+            // Candidate validation can also withdraw. After any withdrawal
+            // earlier answers may no longer be trusted: start a new recovery
+            // epoch and prepare from scratch.
+            if self.publisher.last_transition_withdrew() {
+                self.publisher.recover();
+                self.previous = None;
             }
             if self.authority.is_none() {
                 self.authority = Some(authority::Authority::open(
@@ -63,7 +58,11 @@ impl pir_pipeline::publisher::Workflow for Publication<'_> {
             {
                 Ok(g) => self.previous = Some(g),
                 Err(error) => {
-                    if error.downcast_ref::<authority::AuthorityError>().is_some() {
+                    if error.downcast_ref::<authority::AuthorityError>().is_some()
+                        || error
+                            .downcast_ref::<pir_publication::PublicationAuthorityError>()
+                            .is_some()
+                    {
                         self.publisher.withdraw();
                         self.authority = None;
                     }

@@ -1,7 +1,7 @@
 //! Reserve a committed prefix and its generation before preparing any bytes.
 use super::{EnhancePublisher, PublicationWork};
 use crate::journal::RecordJournal;
-use enhance_query_server::protocol::{self, Geometry, Manifest, ShardState};
+use enhance_shared::protocol::{self, Geometry, Manifest, ShardState};
 use std::{collections::BTreeMap, sync::Arc};
 
 impl EnhancePublisher {
@@ -36,8 +36,8 @@ impl EnhancePublisher {
                 .domain_epochs
                 .entry(shard.id)
                 .or_insert_with(|| "0".into());
-            if shard.records == 32768 * enhance_query_server::RECORDS_PER_ROW as u64 {
-                let end = (shard.id + 1) * 32768 * enhance_query_server::RECORDS_PER_ROW as u64;
+            if shard.records == 32768 * enhance_shared::RECORDS_PER_ROW as u64 {
+                let end = (shard.id + 1) * 32768 * enhance_shared::RECORDS_PER_ROW as u64;
                 let crossing = snapshot
                     .blocks()
                     .iter()

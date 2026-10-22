@@ -1,7 +1,7 @@
 //! Stream fee-only comparisons without changing published non-fee bytes.
 use super::{RebuildError, COMPARE_RECORDS};
 use crate::journal::CommittedJournalSnapshot;
-use enhance_query_server::{
+use enhance_shared::{
     EnhanceRecord, FLAG_HAS_FEE, RECORD_BYTES, RECORD_FEE_OFFSET, RECORD_FLAGS_OFFSET,
 };
 use sha2::{Digest, Sha256};
@@ -106,7 +106,7 @@ pub(super) fn compare_journals(
 /// dividing by it places three quarters of a sealed domain, and every record
 /// of every later domain, outside the sealed set.
 pub(super) fn query_shard(position: u64) -> u64 {
-    let span = enhance_query_server::protocol::Geometry::default().max_shard_rows
-        * enhance_query_server::RECORDS_PER_ROW as u64;
+    let span = enhance_shared::protocol::Geometry::default().max_shard_rows
+        * enhance_shared::RECORDS_PER_ROW as u64;
     position / span
 }

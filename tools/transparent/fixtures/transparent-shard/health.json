@@ -1,4 +1,10 @@
 {
+  "artifact_validation": {
+    "failed": 0,
+    "pending": 0,
+    "validated": 0,
+    "withdrawn_shards": []
+  },
   "assigned_shards": 2,
   "assignment_sha256": null,
   "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",

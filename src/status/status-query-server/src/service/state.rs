@@ -2,12 +2,12 @@
 use super::{admission, serving::serving_http_client};
 use crate::{
     distributed::{loopback_origin, Role},
-    protocol::Hash,
-    publication::{Failure, Object},
-    Controller, Generation,
+    Controller,
 };
 use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
+use pir_publication::ObjectReference;
+use status_shared::{protocol::Hash, publication::Failure, Generation};
 use std::{fs::File, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -15,7 +15,7 @@ pub const PER_CLIENT_CONCURRENCY: usize = 2;
 #[derive(Default)]
 pub(super) struct ServiceState {
     pub(super) controller: Option<Controller>,
-    pub(super) inventory: Option<Object>,
+    pub(super) inventory: Option<ObjectReference>,
     pub(super) synchronization: String,
     pub(super) poisoned: bool,
     pub(super) router_holds: Vec<Arc<Generation>>,
@@ -62,6 +62,13 @@ impl Service {
     }
     /// Return the active authority only while state and freshness permit serving.
     pub(super) async fn serving(&self) -> Result<Controller, StatusCode> {
+        let controller = self.available_controller().await?;
+        controller.check(&controller.current())?;
+        Ok(controller)
+    }
+    /// A controller whose admission is open. Session handlers must check their
+    /// requested generation; another view's invalidation cannot revoke it.
+    pub(super) async fn available_controller(&self) -> Result<Controller, StatusCode> {
         let state = self.state.lock().await;
         if state.poisoned {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -70,7 +77,9 @@ impl Service {
             .controller
             .clone()
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-        controller.check(&controller.current())?;
+        if controller.revoked() {
+            return Err(StatusCode::GONE);
+        }
         Ok(controller)
     }
 }

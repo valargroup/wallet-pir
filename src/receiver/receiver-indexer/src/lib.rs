@@ -6,10 +6,15 @@
 pub mod application;
 pub mod blocks;
 pub mod canonical;
+pub mod durable;
 pub mod near;
 pub mod probe;
+pub mod revision;
+pub mod seal;
 pub mod serve_publication;
+pub mod shards;
 pub mod verify;
+pub mod witness;
 
 /// A response body over its bound, or a failed read.
 #[derive(Debug, thiserror::Error)]
@@ -88,5 +93,11 @@ mod tests {
 #[cfg(test)]
 #[path = "../../receiver-pir-server/tests/common/prepared.rs"]
 pub(crate) mod prepared;
+#[cfg(test)]
+#[path = "../../receiver-pir-server/tests/common/router.rs"]
+pub(crate) mod router;
 
 pub mod service;
+
+#[cfg(test)]
+mod block_hints_tests;

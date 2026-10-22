@@ -4,8 +4,7 @@ use crate::publication_source::Published;
 use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
 use enhance_query_server::{
     protocol::{self, Geometry, Lifecycle, Manifest},
-    publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, PREFIX},
-    worker::Revocation,
+    publication::{AuthorityRequest, AuthorityResponse, Inventory, Object, Revocation, PREFIX},
 };
 use pir_e2e_tests::enhance_fixture::{tls, Tls};
 use sha2::{Digest, Sha256};
@@ -21,6 +20,16 @@ use std::{
 /// Every deployed-geometry case prepares, copies and hashes about 1 GB, so the
 /// qualification lane runs them one at a time. The bound covers the shared cold
 /// preparation (24-34s on 3 CPUs) plus the longest body measured there (60s).
+/// Wall-clock time `offset_ms` after the response's source observation.
+fn observed_at(response: &AuthorityResponse, offset_ms: i64) -> std::time::SystemTime {
+    let at = response
+        .source
+        .observed_unix_ms
+        .checked_add_signed(offset_ms)
+        .unwrap();
+    std::time::UNIX_EPOCH + Duration::from_millis(at)
+}
+
 const QUALIFICATION_BUDGET: Duration = Duration::from_secs(180);
 static DEPLOYED: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
@@ -849,7 +858,8 @@ async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
         for fault in ["corrupt", "truncated", "missing"] {
             std::fs::write(scratch.path().join("fault"), fault).unwrap();
             assert!(synchronizer.poll_once().await.is_err(), "damaged source must not activate");
-            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".part")));
+            // A failed transfer leaves no partial file: only promoted digest names remain.
+            assert!(std::fs::read_dir(worker_root.join("objects")).unwrap().all(|entry| protocol::canonical_hash(&entry.unwrap().file_name().to_string_lossy())));
         }
         std::fs::write(scratch.path().join("fault"), "").unwrap();
         synchronizer.poll_once().await.unwrap();
@@ -988,7 +998,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let current_url = format!("{}{PREFIX}current", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!before.current.eligible);
-        assert_eq!(before.observed_unix_ms, 0);
+        assert_eq!(before.source.observed_unix_ms, 0);
         let prepare_root = root.clone();
         let inventory = tokio::task::spawn_blocking(move || prepare_publication(&prepare_root, 67)).await.unwrap().inventory().clone();
         let domain = &inventory.domains[0];
@@ -1004,11 +1014,11 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(current.current.eligible);
         assert!(current.current.succeeds(&before.current));
         assert_eq!(current.current.withdrawal_revision, before.current.withdrawal_revision);
-        assert_ne!(current.observed_unix_ms, 0);
-        current.fresh(current.observed_unix_ms).unwrap();
-        current.fresh(current.observed_unix_ms + 5000).unwrap();
-        assert!(current.fresh(current.observed_unix_ms + 5001).is_err());
-        assert!(current.fresh(current.observed_unix_ms - 1).is_err());
+        assert_ne!(current.source.observed_unix_ms, 0);
+        current.remaining_at(observed_at(&current, 0)).unwrap();
+        current.remaining_at(observed_at(&current, 5000)).unwrap();
+        assert!(current.remaining_at(observed_at(&current, 5001)).is_err());
+        assert!(current.remaining_at(observed_at(&current, -1)).is_err());
         let mut replay = current.current.clone();
         replay.revision -= 1;
         assert!(!replay.succeeds(&current.current));
@@ -1025,7 +1035,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         let observed_before_delay = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
         tokio::time::sleep(Duration::from_millis(30)).await;
         release.notify_one();
-        assert!(delayed.await.unwrap().observed_unix_ms <= observed_before_delay, "source response delay cannot renew the observation time");
+        assert!(delayed.await.unwrap().source.observed_unix_ms <= observed_before_delay, "source response delay cannot renew the observation time");
         let descriptor = current.current.inventory.as_ref().unwrap();
         check_object(&transport, "inventories", descriptor).await;
         let fetched: Inventory = transport.client.get(format!("{}{PREFIX}inventories/{}", transport.origin, descriptor.sha256)).send().await.unwrap().json().await.unwrap();
@@ -1062,7 +1072,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(publication.await.unwrap().is_err(), "an in-flight publication cannot undo a source withdrawal");
         let withdrawn: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!withdrawn.current.eligible);
-        assert_eq!(withdrawn.observed_unix_ms, 0);
+        assert_eq!(withdrawn.source.observed_unix_ms, 0);
         distribution.publish(manifest.clone(), inventory.clone()).await.unwrap();
         distribution.withdraw(&Revocation { recovery_epoch: 1, sessions: [hex::encode(manifest.session_id(0).unwrap())].into() }).unwrap();
         assert_eq!(transport.client.post(&authority_url).json(&request).send().await.unwrap().status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
@@ -1076,7 +1086,7 @@ async fn complete_publication_crosses_tls_without_consumers_and_source_loss_cann
         assert!(restored.current.withdrawal_revision > current.current.withdrawal_revision);
         assert_eq!(restored.current.recovery_epoch, 1);
         assert_eq!(restored.current.revoked.len(), 1);
-        assert_eq!(restored.observed_unix_ms, 0);
+        assert_eq!(restored.source.observed_unix_ms, 0);
         assert!(!current.current.succeeds(&restored.current), "restart fence cannot replay the predecessor");
     }).await.expect("complete Enhance TLS publication exceeded qualification budget");
 }
@@ -1285,7 +1295,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         let authority_url = format!("{}{PREFIX}authority", transport.origin);
         let before: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!before.current.eligible);
-        assert_eq!(before.observed_unix_ms, 0);
+        assert_eq!(before.source.observed_unix_ms, 0);
         assert!(before.authorized_manifest_sha256.is_empty());
         for manifest_sha256 in ["11".repeat(32), "../escape".into()] {
             let refused = transport.client.post(&authority_url).json(&AuthorityRequest { manifest_sha256 }).send().await.unwrap();
@@ -1296,7 +1306,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         assert!(distribution.withdraw(&Revocation::default()).is_err(), "a fence cannot move backwards");
         let withdrawn: AuthorityResponse = transport.client.get(&current_url).send().await.unwrap().json().await.unwrap();
         assert!(!withdrawn.current.eligible);
-        assert_eq!(withdrawn.observed_unix_ms, 0);
+        assert_eq!(withdrawn.source.observed_unix_ms, 0);
         assert!(withdrawn.current.succeeds(&before.current));
         assert!(withdrawn.current.withdrawal_revision > before.current.withdrawal_revision);
         assert_eq!(withdrawn.current.recovery_epoch, 1);
@@ -1311,7 +1321,7 @@ async fn unpublished_distribution_refuses_authority_and_keeps_its_fence_across_r
         assert!(restored.current.withdrawal_revision > withdrawn.current.withdrawal_revision);
         assert_eq!(restored.current.recovery_epoch, withdrawn.current.recovery_epoch);
         assert_eq!(restored.current.revoked, withdrawn.current.revoked);
-        assert_eq!(restored.observed_unix_ms, 0);
+        assert_eq!(restored.source.observed_unix_ms, 0);
         assert!(!before.current.succeeds(&restored.current), "restart fence cannot replay the predecessor");
     }).await.expect("Enhance authority refusal exceeded thirty seconds");
 }

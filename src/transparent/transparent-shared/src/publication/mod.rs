@@ -277,6 +277,73 @@ pub fn safe_path(path: &str) -> bool {
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
         })
 }
+pub use crate::history::shardset::OBJECT_STORE;
+
+/// The regular file publication artifact `relative` names under `root`.
+///
+/// Every component must be a real directory or file, with two exceptions,
+/// each one exact link into the real [`OBJECT_STORE`] beside the publication:
+/// a runtime file directly under `root` may link to `../.objects/<sha256>`, and
+/// a table segment of a revision directory to `../../.objects/<sha256>`. Traversal, any other
+/// symbolic link, a redirect elsewhere, a linked store and a missing or
+/// non-regular target are refused. Publication paths stay logical; only reads
+/// use the returned path. A segment link's digest is checked against its
+/// manifest by the loader and by the digest listed for it.
+pub(crate) fn resolve(root: &Path, relative: &str) -> Result<PathBuf, Error> {
+    if !safe_path(relative) {
+        return Err("unsafe publisher artifact path".into());
+    }
+    let components: Vec<&str> = relative.split('/').collect();
+    let base = root.parent().ok_or("publication has no parent")?;
+    let real = |path: &Path, dir: bool| -> Result<(), Error> {
+        let meta = std::fs::symlink_metadata(path)?;
+        if meta.file_type().is_symlink() || (if dir { !meta.is_dir() } else { !meta.is_file() }) {
+            return Err("publisher store entry has the wrong type".into());
+        }
+        Ok(())
+    };
+    let mut physical = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        physical.push(component);
+        let last = index + 1 == components.len();
+        if !std::fs::symlink_metadata(&physical)?
+            .file_type()
+            .is_symlink()
+        {
+            continue;
+        }
+        let target = std::fs::read_link(&physical)?;
+        let prefix = if last && index == 0 && ShippedRuntimes::is_entry(component) {
+            Path::new("..").join(OBJECT_STORE)
+        } else if last && index == 1 && is_digest(components[0]) && *component != "filter.bin" {
+            Path::new("../..").join(OBJECT_STORE)
+        } else {
+            return Err("symlink in publisher artifact".into());
+        };
+        let name = target
+            .strip_prefix(prefix)
+            .ok()
+            .and_then(|name| name.to_str())
+            .filter(|name| is_digest(name))
+            .ok_or("publisher artifact link leaves the object store")?
+            .to_string();
+        let store = base.join(OBJECT_STORE);
+        real(&store, true)?;
+        physical = store.join(name);
+    }
+    real(&physical, false)?;
+    Ok(physical)
+}
+
+/// [`resolve`] for an artifact given by its logical path under `root`.
+fn resolve_path(root: &Path, logical: &Path) -> Result<PathBuf, Error> {
+    let relative = logical
+        .strip_prefix(root)?
+        .to_str()
+        .ok_or("non-UTF8 artifact")?;
+    resolve(root, relative)
+}
+
 impl Inventory {
     /// Classifications must agree with the existing map before any table or
     /// runtime is fetched. A publisher cannot label archive tables as metadata.
@@ -463,28 +530,67 @@ impl Finalized {
         let previous = &checked.passed;
         checked.loaded = 0;
         checked.reused = 0;
+        checked.bytes_hashed = 0;
+        checked.bytes_reused = 0;
         let mut passed = BTreeMap::new();
+        let mut evidence = BTreeMap::new();
         let mut files = BTreeMap::new();
         let Plan {
             mut inventory,
-            pending,
+            mut pending,
             sources,
             native,
         } = plan(root, set, recent_from_height, full)?;
+        // A runtime whose exact inode this process hashed and self-checked,
+        // unchanged since, is listed with that digest instead of read again.
+        for (path, kind, known) in &mut pending {
+            if matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime) {
+                *known = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| checked.evidence.get(name))
+                    .map(|(sha256, bytes, stamp)| Known {
+                        sha256: sha256.clone(),
+                        bytes: *bytes,
+                        stamp: *stamp,
+                    });
+            }
+        }
         // Hash immutable artifacts on the existing bounded CPU pool. Native
         // handles stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
-        for (artifact, path, file) in hash_listed(root, pending, stop)? {
+        for listed in hash_listed(root, pending, stop)? {
+            let Listed {
+                artifact,
+                path,
+                physical,
+                opened,
+                stamp,
+                settled,
+                read,
+            } = listed;
+            if read {
+                checked.bytes_hashed += artifact.bytes;
+            } else {
+                checked.bytes_reused += artifact.bytes;
+            }
             if let Some(expected) = sources.get(&path) {
                 if artifact.sha256 != *expected {
                     return Err("source segment differs from its manifest".into());
                 }
             }
-            if let Some(file) = file {
-                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+            if let Some(file) = opened {
+                let runtime = (
+                    artifact.sha256.clone(),
+                    file,
+                    physical.clone(),
+                    stamp,
+                    settled,
+                );
+                runtimes.insert(path.clone(), runtime);
             }
             if full || artifact.kind.local() {
-                files.insert(artifact.sha256.clone(), path);
+                files.insert(artifact.sha256.clone(), physical);
             }
             inventory.artifacts.push(artifact);
         }
@@ -495,7 +601,9 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed runtime")?;
+            let (sha256, file, physical, stamp, settled) =
+                runtimes.remove(&path).ok_or("unhashed runtime")?;
+            let probe = file.try_clone()?;
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
             if previous.get(&name) == Some(&sha256) {
@@ -508,6 +616,17 @@ impl Finalized {
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
             }
+            // Only the inode listed and checked, still unchanged and still
+            // what its path names, is finalized or vouched for later.
+            if same_file(&physical, &probe)? != Some(stamp) {
+                return Err(format!("runtime {name} changed while it was checked").into());
+            }
+            if settled {
+                evidence.insert(
+                    name.clone(),
+                    (sha256.clone(), probe.metadata()?.len(), stamp),
+                );
+            }
             passed.insert(name, sha256);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
@@ -516,6 +635,7 @@ impl Finalized {
         let bytes = serde_json::to_vec(&inventory)?;
         let sha256 = digest(&bytes);
         checked.passed = passed;
+        checked.evidence = evidence;
         Ok(Self {
             inventory,
             bytes,
@@ -576,24 +696,9 @@ fn plan<'a>(
             .to_str()
             .ok_or("non-UTF8 artifact")?
             .to_string();
-        if !safe_path(&relative) {
-            return Err("unsafe publisher artifact path".into());
-        }
-        let mut checked = root.to_path_buf();
-        for component in relative.split('/') {
-            checked.push(component);
-            if std::fs::symlink_metadata(&checked)?
-                .file_type()
-                .is_symlink()
-            {
-                return Err("symlink in publisher artifact".into());
-            }
-        }
+        resolve(root, &relative)?;
         if !paths.insert(relative.clone()) {
             return Ok(false);
-        }
-        if !std::fs::metadata(&path)?.is_file() {
-            return Err("artifact is not a regular file".into());
         }
         pending.push((path, kind, known));
         Ok(true)
@@ -825,7 +930,8 @@ impl Finalized {
                 .get(relative)
                 .filter(|a| a.kind == *kind)
                 .ok_or("restored inventory does not list exactly the publication")?;
-            let file = crate::verification::open(path)?;
+            let physical = resolve_path(root, path)?;
+            let file = crate::verification::open(&physical)?;
             let metadata = file.metadata()?;
             if !metadata.is_file() || metadata.len() != artifact.bytes {
                 return Err(format!("restored artifact {relative} has the wrong length").into());
@@ -837,13 +943,13 @@ impl Finalized {
             }
             if *kind == Kind::Metadata {
                 let mut file = file;
-                let (found, _) = listed_digest(path, &mut file, None, &|| false)?;
+                let found = listed_digest(&physical, &mut file, None, &|| false)?.sha256;
                 if found != artifact.sha256 {
                     return Err(format!("restored metadata {relative} digest mismatch").into());
                 }
             }
             if expected.full || kind.local() {
-                files.insert(artifact.sha256.clone(), path.clone());
+                files.insert(artifact.sha256.clone(), physical);
             }
         }
         let shipped = ShippedRuntimes::required(root.to_path_buf());
@@ -998,11 +1104,11 @@ impl Validation {
         let mut verified = Verified::default();
         for artifact in &inventory.artifacts {
             if let Some(stamp) = known.and_then(|k| k.stamp(artifact)) {
-                let path = self.root.join(&artifact.path);
-                let still = std::fs::symlink_metadata(&path)
+                let still = resolve(&self.root, &artifact.path)
                     .ok()
+                    .and_then(|path| std::fs::symlink_metadata(path).ok())
                     .and_then(|m| FileStamp::of(&m));
-                if safe_path(&artifact.path) && still == Some(stamp) {
+                if still == Some(stamp) {
                     verified
                         .files
                         .insert(artifact.path.clone(), (artifact.sha256.clone(), stamp));
@@ -1036,14 +1142,13 @@ impl Validation {
         if !safe_path(&artifact.path) {
             return Err(mismatch(None, "unsafe artifact path"));
         }
-        let mut checked = self.root.clone();
-        for component in artifact.path.split('/') {
-            checked.push(component);
-            let metadata = std::fs::symlink_metadata(&checked).map_err(|e| unavailable(&e))?;
-            if metadata.file_type().is_symlink() {
-                return Err(mismatch(None, "artifact became a symbolic link"));
-            }
-        }
+        let checked = match resolve(&self.root, &artifact.path) {
+            Ok(checked) => checked,
+            Err(error) => match error.downcast_ref::<io::Error>() {
+                Some(e) => return Err(unavailable(e)),
+                None => return Err(mismatch(None, &error.to_string())),
+            },
+        };
         let mut file = std::fs::File::open(&checked).map_err(|e| unavailable(&e))?;
         let metadata = file.metadata().map_err(|e| unavailable(&e))?;
         if !metadata.is_file() {
@@ -1122,9 +1227,11 @@ impl Validation {
                     artifact.path
                 ))
             })?;
-            let file = crate::verification::open(path)
+            let path = resolve_path(&self.root, path)
                 .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
-            match same_file(path, &file) {
+            let file = crate::verification::open(&path)
+                .map_err(|e| CorrectnessError::Unavailable(e.to_string()))?;
+            match same_file(&path, &file) {
                 Ok(Some(found)) if found == stamp => Ok((file, stamp)),
                 Ok(_) => Err(CorrectnessError::Unavailable(format!(
                     "{} changed since integrity validation",
@@ -1134,10 +1241,13 @@ impl Validation {
             }
         };
         let unchanged =
-            |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| match same_file(
-                path, file,
-            ) {
-                Ok(Some(found)) if found == stamp => Ok(()),
+            |path: &Path, file: &std::fs::File, stamp: FileStamp, name: &str| match resolve_path(
+                &self.root, path,
+            )
+            .ok()
+            .map(|path| same_file(&path, file))
+            {
+                Some(Ok(Some(found))) if found == stamp => Ok(()),
                 _ => Err(CorrectnessError::Unavailable(format!(
                     "{name} changed during correctness validation"
                 ))),
@@ -1199,10 +1309,18 @@ impl Validation {
 #[derive(Debug, Default)]
 pub struct CheckedRuntimes {
     pub(crate) passed: BTreeMap<String, String>,
+    /// For runtimes the last successful inventory read in full: the digest,
+    /// length and settled stamp of the exact inode, so an unchanged file is
+    /// not hashed again. A changed or replaced file has another stamp.
+    pub(crate) evidence: BTreeMap<String, (String, u64, FileStamp)>,
     /// Native runtimes loaded and self-checked by the last attempt.
     pub loaded: usize,
     /// Native runtimes matching earlier checked bytes in the last attempt.
     pub reused: usize,
+    /// Listed bytes the last attempt hashed, and those it listed from
+    /// evidence of the same unchanged files without reading them.
+    pub bytes_hashed: u64,
+    pub bytes_reused: u64,
 }
 
 impl CheckedRuntimes {
@@ -1231,6 +1349,24 @@ impl Known {
     }
 }
 
+/// One artifact [`hash_listed`] listed.
+#[derive(Debug)]
+pub(crate) struct Listed {
+    pub(crate) artifact: Artifact,
+    /// The logical path under the publication root.
+    pub(crate) path: PathBuf,
+    /// The checked file the bytes were read from.
+    pub(crate) physical: PathBuf,
+    /// The open runtime handle, for a self-check of the inode just listed.
+    pub(crate) opened: Option<std::fs::File>,
+    /// The stamp of the inode listed, unchanged throughout the listing.
+    pub(crate) stamp: FileStamp,
+    /// Whether `stamp` predates the listing enough to vouch for it later.
+    pub(crate) settled: bool,
+    /// Whether the bytes were read and hashed.
+    pub(crate) read: bool,
+}
+
 /// [`hash_listed`] without evidence or a stop: every file is hashed.
 #[cfg(test)]
 fn hash_artifacts(
@@ -1241,7 +1377,10 @@ fn hash_artifacts(
         .into_iter()
         .map(|(path, kind)| (path, kind, None))
         .collect();
-    hash_listed(root, pending, &|| false)
+    Ok(hash_listed(root, pending, &|| false)?
+        .into_iter()
+        .map(|listed| (listed.artifact, listed.path, listed.opened))
+        .collect())
 }
 
 /// Hash each pending artifact, listing a file with its `Known` digest when it is
@@ -1251,7 +1390,7 @@ pub(crate) fn hash_listed(
     root: &Path,
     pending: Vec<(PathBuf, Kind, Option<Known>)>,
     stop: &(dyn Fn() -> bool + Sync),
-) -> Result<Vec<(Artifact, PathBuf, Option<std::fs::File>)>, Error> {
+) -> Result<Vec<Listed>, Error> {
     crate::runtime::build_pool().install(|| {
         pending
             .into_par_iter()
@@ -1264,36 +1403,28 @@ pub(crate) fn hash_listed(
                     .to_str()
                     .ok_or("non-UTF8 artifact")?
                     .to_string();
-                if !safe_path(&relative) {
-                    return Err("unsafe publisher artifact path".into());
-                }
-                let mut checked = root.to_path_buf();
-                for component in relative.split('/') {
-                    checked.push(component);
-                    if std::fs::symlink_metadata(&checked)?
-                        .file_type()
-                        .is_symlink()
-                    {
-                        return Err("symlink in publisher artifact".into());
-                    }
-                }
-                let mut file = std::fs::File::open(&path)?;
+                let physical = resolve(root, &relative)?;
+                let mut file = std::fs::File::open(&physical)?;
                 let known = known
                     .as_ref()
                     .map(|k| (k.sha256.as_str(), k.bytes, k.stamp));
-                let (sha256, bytes) = listed_digest(&path, &mut file, known, stop)?;
+                let listing = listed_digest(&physical, &mut file, known, stop)?;
                 let opened =
                     matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime).then_some(file);
-                Ok((
-                    Artifact {
+                Ok(Listed {
+                    artifact: Artifact {
                         path: relative,
-                        sha256,
-                        bytes,
+                        sha256: listing.sha256,
+                        bytes: listing.bytes,
                         kind,
                     },
                     path,
+                    physical,
                     opened,
-                ))
+                    stamp: listing.stamp,
+                    settled: listing.settled,
+                    read: listing.read,
+                })
             })
             .collect()
     })
@@ -1324,23 +1455,42 @@ pub(crate) fn listed_hashes(dir: &Path) -> usize {
 /// The digest and length to list for `file`, opened at `path`: `known` when
 /// it was verified for this very file and the file is unchanged since, both
 /// as opened and as the path names it now; otherwise those of a full read.
+/// A file that changed while it was read, or was not the one its path names,
+/// is an error, never a listed digest. Also returned: the stamp of the file
+/// listed, and whether it is settled enough to vouch for the file later, as
+/// it is when it predates the read by more than any timestamp granularity.
 fn listed_digest(
     path: &Path,
     file: &mut std::fs::File,
     known: Option<(&str, u64, FileStamp)>,
     stop: &(dyn Fn() -> bool + Sync),
-) -> Result<(String, u64), Error> {
+) -> Result<Listing, Error> {
+    let started = std::time::SystemTime::now();
     let opened = file.metadata()?;
     if !opened.is_file() {
         return Err("artifact is not a regular file".into());
     }
-    if let Some((sha256, bytes, stamp)) = known {
-        let named = std::fs::symlink_metadata(path).ok();
-        if FileStamp::of(&opened) == Some(stamp)
-            && named.as_ref().and_then(FileStamp::of) == Some(stamp)
-            && opened.len() == bytes
-        {
-            return Ok((sha256.to_string(), bytes));
+    let stamp = FileStamp::of(&opened).ok_or("artifact is not a regular file")?;
+    let named = |file: &std::fs::File| -> Result<(), Error> {
+        let now = FileStamp::of(&file.metadata()?);
+        let named = std::fs::symlink_metadata(path)
+            .ok()
+            .and_then(|m| FileStamp::of(&m));
+        if now != Some(stamp) || named != Some(stamp) {
+            return Err(format!("{} changed while it was listed", path.display()).into());
+        }
+        Ok(())
+    };
+    if let Some((sha256, bytes, known)) = known {
+        if known == stamp && opened.len() == bytes {
+            named(file)?;
+            return Ok(Listing {
+                sha256: sha256.to_string(),
+                bytes,
+                stamp,
+                settled: true,
+                read: false,
+            });
         }
     }
     #[cfg(test)]
@@ -1348,6 +1498,7 @@ fn listed_digest(
     let bytes = opened.len();
     let mut hash = Sha256::new();
     let mut buffer = vec![0u8; 1 << 20];
+    let mut total = 0u64;
     loop {
         if stop() {
             return Err(Box::new(Stopped));
@@ -1356,9 +1507,44 @@ fn listed_digest(
         if read == 0 {
             break;
         }
+        total += read as u64;
         hash.update(&buffer[..read]);
+        #[cfg(test)]
+        LISTED_AFTER_READ.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().as_mut() {
+                hook(path)
+            }
+        });
     }
-    Ok((hex::encode(hash.finalize()), bytes))
+    named(file)?;
+    if total != bytes {
+        return Err(format!("{} changed length while it was listed", path.display()).into());
+    }
+    Ok(Listing {
+        sha256: hex::encode(hash.finalize()),
+        bytes,
+        stamp,
+        settled: stamp.settled_before(started),
+        read: true,
+    })
+}
+
+/// What [`listed_digest`] found.
+#[derive(Debug, PartialEq, Eq)]
+struct Listing {
+    sha256: String,
+    bytes: u64,
+    stamp: FileStamp,
+    settled: bool,
+    /// Whether the bytes were read, rather than vouched for by `known`.
+    read: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Called after each bounded read of a listed file, to inject a change.
+    static LISTED_AFTER_READ: std::cell::RefCell<Option<Box<dyn FnMut(&Path)>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 pub fn verify_file(path: &Path, expected: &Artifact) -> Result<(), Error> {
@@ -1496,7 +1682,7 @@ mod tests {
         // Resumed without a stop, the same file is hashed whole.
         let pending = vec![(path.clone(), Kind::RecentTable, None)];
         let listed = hash_listed(dir.path(), pending, &|| false).unwrap();
-        assert_eq!(listed[0].0.sha256, digest(&vec![7u8; (2 << 20) + 1]));
+        assert_eq!(listed[0].artifact.sha256, digest(&vec![7u8; (2 << 20) + 1]));
     }
 
     #[test]
@@ -1510,7 +1696,7 @@ mod tests {
         let open = || std::fs::File::open(&path).unwrap();
         let before = listed_hashes(dir.path());
         let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
-        assert_eq!(listed, (sha.clone(), 14));
+        assert_eq!((listed.sha256, listed.bytes), (sha.clone(), 14));
         assert_eq!(listed_hashes(dir.path()), before);
         // Same size, different bytes: the stamp no longer matches, so the
         // listed digest is that of the bytes now present.
@@ -1522,7 +1708,10 @@ mod tests {
             .write_all_at(b"V", 0)
             .unwrap();
         let listed = listed_digest(&path, &mut open(), Some((&sha, 14, stamp)), &|| false).unwrap();
-        assert_eq!(listed, (digest(b"Verified table"), 14));
+        assert_eq!(
+            (listed.sha256, listed.bytes),
+            (digest(b"Verified table"), 14)
+        );
         assert_eq!(listed_hashes(dir.path()), before + 1);
         // A replaced path is another inode.
         std::fs::write(dir.path().join("next"), b"verified table").unwrap();
@@ -1568,6 +1757,210 @@ mod tests {
         verify_file(&path, &expected).unwrap();
         std::fs::write(&path, b"short").unwrap();
         assert!(verify_file(&path, &expected).is_err());
+    }
+
+    /// A publication beside both stores, holding one revision whose segment
+    /// and one runtime are stored once in them and linked exactly.
+    fn stored_publication() -> (tempfile::TempDir, PathBuf, String, String, String) {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("candidate-1");
+        let revision = "ab".repeat(32);
+        let object = digest(b"rows");
+        let runtime = format!("{}-{}.runtime", "cd".repeat(32), "ef".repeat(32));
+        let objects = base.path().join(OBJECT_STORE);
+        for dir in [&root.join(&revision), &objects] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(objects.join(&object), b"rows").unwrap();
+        std::fs::write(objects.join(digest(b"runtime")), b"runtime").unwrap();
+        std::fs::write(root.join(&revision).join("filter.bin"), b"filter").unwrap();
+        let link = |target: PathBuf, at: PathBuf| std::os::unix::fs::symlink(target, at).unwrap();
+        link(
+            Path::new("../..").join(OBJECT_STORE).join(&object),
+            root.join(&revision).join("pages.0.bin"),
+        );
+        link(
+            Path::new("..").join(OBJECT_STORE).join(digest(b"runtime")),
+            root.join(&runtime),
+        );
+        (base, root, revision, object, runtime)
+    }
+
+    #[test]
+    fn exact_store_links_resolve_to_their_stored_file() {
+        let (base, root, revision, object, runtime) = stored_publication();
+        assert_eq!(
+            resolve(&root, &format!("{revision}/pages.0.bin")).unwrap(),
+            base.path().join(OBJECT_STORE).join(&object)
+        );
+        assert_eq!(
+            resolve(&root, &runtime).unwrap(),
+            base.path().join(OBJECT_STORE).join(digest(b"runtime"))
+        );
+        // Plain files still resolve to themselves.
+        assert_eq!(
+            resolve(&root, &format!("{revision}/filter.bin")).unwrap(),
+            root.join(&revision).join("filter.bin")
+        );
+    }
+
+    #[test]
+    fn store_redirects_traversal_and_missing_targets_fail_closed() {
+        let (base, root, revision, object, runtime) = stored_publication();
+        let refused = |relative: &str| resolve(&root, relative).is_err();
+        let symlink = |target: &Path, at: PathBuf| std::os::unix::fs::symlink(target, at).unwrap();
+        assert!(refused(&format!("../{OBJECT_STORE}/{object}")));
+        assert!(refused(&format!("{revision}/../{revision}/pages.0.bin")));
+        assert!(refused(&format!("{revision}/absent.bin")));
+        // Metadata is never a link, nor is a revision directory.
+        let dir = root.join(&revision);
+        std::fs::remove_file(dir.join("filter.bin")).unwrap();
+        symlink(
+            &Path::new("../..").join(OBJECT_STORE).join(&object),
+            dir.join("filter.bin"),
+        );
+        assert!(refused(&format!("{revision}/filter.bin")));
+        let linked = "12".repeat(32);
+        symlink(Path::new(&revision), root.join(&linked));
+        assert!(refused(&format!("{linked}/pages.0.bin")));
+        // A link anywhere but its store, or under another name, is refused.
+        let outside = base.path().join("outside");
+        std::fs::write(&outside, b"rows").unwrap();
+        symlink(&outside, dir.join("pages.1.bin"));
+        assert!(refused(&format!("{revision}/pages.1.bin")));
+        symlink(Path::new("../../outside"), dir.join("pages.2.bin"));
+        assert!(refused(&format!("{revision}/pages.2.bin")));
+        symlink(
+            &Path::new("../..").join(OBJECT_STORE).join("not-a-digest"),
+            dir.join("pages.3.bin"),
+        );
+        assert!(refused(&format!("{revision}/pages.3.bin")));
+        // A runtime may not use a segment's depth, nor a segment a runtime's.
+        let other = format!("{}-{}.runtime", "11".repeat(32), "22".repeat(32));
+        symlink(
+            &Path::new("../..")
+                .join(OBJECT_STORE)
+                .join(digest(b"runtime")),
+            root.join(&other),
+        );
+        assert!(refused(&other));
+        symlink(
+            &Path::new("..").join(OBJECT_STORE).join(&object),
+            dir.join("pages.5.bin"),
+        );
+        assert!(refused(&format!("{revision}/pages.5.bin")));
+        // A missing object is refused, as is an object that is itself a link.
+        symlink(
+            &Path::new("../..").join(OBJECT_STORE).join("33".repeat(32)),
+            dir.join("pages.4.bin"),
+        );
+        assert!(refused(&format!("{revision}/pages.4.bin")));
+        let objects = base.path().join(OBJECT_STORE);
+        std::fs::remove_file(objects.join(digest(b"runtime"))).unwrap();
+        symlink(&outside, objects.join(digest(b"runtime")));
+        assert!(refused(&runtime));
+        // A store that is itself a link is refused.
+        let moved = base.path().join("moved");
+        std::fs::rename(base.path().join(OBJECT_STORE), &moved).unwrap();
+        symlink(&moved, base.path().join(OBJECT_STORE));
+        assert!(refused(&format!("{revision}/pages.0.bin")));
+    }
+
+    #[test]
+    fn listed_evidence_is_settled_stable_and_never_survives_a_change() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.runtime");
+        std::fs::write(&path, b"runtime bytes").unwrap();
+        let open = || std::fs::File::open(&path).unwrap();
+        // Just written: hashed, but too recent to vouch for the file later.
+        let listed = listed_digest(&path, &mut open(), None, &|| false).unwrap();
+        assert_eq!(
+            (listed.sha256.as_str(), listed.bytes),
+            (digest(b"runtime bytes").as_str(), 13)
+        );
+        assert!(!listed.settled);
+        // Settled: the stamp of the hashed inode becomes evidence.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        open().set_modified(old).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let listed = listed_digest(&path, &mut open(), None, &|| false).unwrap();
+        assert!(
+            listed.settled,
+            "a settled unchanged file vouches for itself"
+        );
+        let stamp = listed.stamp;
+        let sha = listed.sha256;
+        let hashed = listed_hashes(dir.path());
+        let known = Some((sha.as_str(), 13, stamp));
+        let again = listed_digest(&path, &mut open(), known, &|| false).unwrap();
+        assert_eq!((again.sha256.as_str(), again.stamp), (sha.as_str(), stamp));
+        assert_eq!(
+            listed_hashes(dir.path()),
+            hashed,
+            "no bytes were read again"
+        );
+        // A same-size write with the modification time restored still
+        // changes the stamp, so the new bytes are hashed and listed.
+        open_write(&path).write_all_at(b"R", 0).unwrap();
+        open().set_modified(old).unwrap();
+        let changed = listed_digest(&path, &mut open(), known, &|| false).unwrap();
+        assert_eq!(changed.sha256, digest(b"Runtime bytes"));
+        assert!(
+            !changed.settled,
+            "a change this recent proves nothing later"
+        );
+        assert_eq!(listed_hashes(dir.path()), hashed + 1);
+        // A replaced inode with the original bytes is hashed again too.
+        std::fs::write(dir.path().join("next"), b"runtime bytes").unwrap();
+        std::fs::rename(dir.path().join("next"), &path).unwrap();
+        listed_digest(&path, &mut open(), known, &|| false).unwrap();
+        assert_eq!(listed_hashes(dir.path()), hashed + 2);
+    }
+
+    #[test]
+    fn a_file_changed_or_replaced_while_listed_is_refused() {
+        use std::os::unix::fs::FileExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("table.bin");
+        let bytes = vec![5u8; (1 << 20) + 7];
+        let inject = |change: Box<dyn FnMut(&Path)>| {
+            LISTED_AFTER_READ.with(|hook| *hook.borrow_mut() = Some(change));
+        };
+        let changes: Vec<Box<dyn Fn(&Path)>> = vec![
+            // A same-size write with the modification time restored.
+            Box::new(|path: &Path| {
+                let file = open_write(path);
+                let modified = file.metadata().unwrap().modified().unwrap();
+                file.write_all_at(b"x", 0).unwrap();
+                file.set_modified(modified).unwrap();
+            }),
+            // Truncation.
+            Box::new(|path: &Path| open_write(path).set_len(3).unwrap()),
+            // The path replaced by another inode with the same bytes.
+            Box::new(|path: &Path| {
+                let next = path.with_extension("next");
+                std::fs::copy(path, &next).unwrap();
+                std::fs::rename(&next, path).unwrap();
+            }),
+        ];
+        for change in changes {
+            std::fs::write(&path, &bytes).unwrap();
+            let mut once = Some(change);
+            inject(Box::new(move |path: &Path| {
+                if let Some(change) = once.take() {
+                    change(path)
+                }
+            }));
+            let mut file = std::fs::File::open(&path).unwrap();
+            let error = listed_digest(&path, &mut file, None, &|| false).unwrap_err();
+            assert!(error.to_string().contains("while it was listed"), "{error}");
+        }
+        LISTED_AFTER_READ.with(|hook| *hook.borrow_mut() = None);
+    }
+
+    fn open_write(path: &Path) -> std::fs::File {
+        std::fs::File::options().write(true).open(path).unwrap()
     }
 
     #[test]
