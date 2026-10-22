@@ -86,6 +86,10 @@ class Coordinator(FakeFleet):
         return 200, json.dumps({'phase': 'serving'})
 
     def run(self, host, argv, timeout):
+        if argv[:2] == ['python3', '-c']:
+            from tools.enhance.lib.deploy_prerequisites import PROGRAM
+            if argv[2] == PROGRAM:
+                return super().run(host, argv, timeout)
         self.runs.append((host, argv))
         if argv[:2] == ['stat', '-c']:
             return 0, '644:0:0\n'

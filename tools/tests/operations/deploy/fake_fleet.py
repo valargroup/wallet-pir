@@ -60,6 +60,8 @@ class FakeFleet(Executor):
         self.held = set()
         self.product_check = None     # f(host, argv) -> (code, output) for a release's own check
         self.next_inode = 0
+        self.service_users = {'root', 'enhance-pir', 'enhance-pir-v4'}
+        self.cache_owners = {}
 
     # ------------------------------------------------------------- set-up
 
@@ -258,6 +260,24 @@ class FakeFleet(Executor):
 
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
+        if argv[:2] == ['python3', '-c']:
+            from tools.enhance.lib.deploy_prerequisites import PROGRAM
+            if argv[2] == PROGRAM:
+                value = json.loads(argv[3])
+                if value['user'] not in self.service_users:
+                    return 1, 'service account does not exist'
+                for name in value['credentials']:
+                    if not name.startswith('-') and name not in self.host(host).files:
+                        return 1, 'credential environment file is unavailable'
+                for path in value['directories']:
+                    if self.cache_owners.get((host, path), value['user']) != value['user']:
+                        return 1, 'existing cache has a foreign owner'
+                if value['prepare']:
+                    for path in value['directories']:
+                        if path not in self.host(host).dirs:
+                            self.mkdir(host, path, 0o750)
+                            self.cache_owners[host, path] = value['user']
+                return 0, '{}'
         data = self.host(host).files.get(argv[0])
         # A staged binary's self-check; any other command is an exact check.
         if data is not None and argv[1:] == ['--help']:

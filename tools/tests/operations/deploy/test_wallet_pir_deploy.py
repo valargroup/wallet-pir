@@ -454,7 +454,7 @@ class DeployTests(Fleet):
 
     def test_role_mode_refuses_a_drop_in_the_rendered_unit_does_not_own(self):
         cases = [
-            ('90-v7.conf', '[Service]\nExecStart=\nExecStart=/bin/old worker\nReadWritePaths=/srv/old\n',
+            ('90-v7.conf', '[Service]\nExecStart=\nExecStart=/bin/old worker\nReadWritePaths=/srv/old\nMemoryHigh=6G\n',
              'cannot be superseded'),
             ('50-local.conf', '[Service]\nExecStart=\nExecStart=/bin/old worker\n', 'overrides ExecStart'),
             ('50-memory.conf', '[Service]\nMemoryHigh=6G\n', 'owns its whole unit'),
@@ -1145,8 +1145,7 @@ class UnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'deploy.toml'
             for old, new in [('\nowns_unit = true\n', '\nowns_unit = "yes"\n'),
-                             ('adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]\n',
-                              'adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]\nowns_unit = true\n')]:
+                             ('mode = "role"\n', 'mode = "exec-drop-in"\nowns_unit = true\n')]:
                 with self.subTest(new=new):
                     self.assertIn(old, text)
                     path.write_text(text.replace(old, new, 1))
