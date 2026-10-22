@@ -2,11 +2,20 @@
 //! durable state or what may serve.
 use super::{
     durable_operation::{run_commit, CommitOutcome, DurableOutcome, OwnedCommit},
-    PublicationAdapter, PublicationLifecycle, PublicationLifecycleError,
+    PeerHandover, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError,
 };
 use crate::Error;
 use pir_publication::MaterialIdentity;
 use std::{collections::BTreeSet, io};
+
+/// A commit that installed and has not finished completing: the adapter
+/// still needs the view, or the dependent peer still needs its release.
+/// It stays pending across cancelled passes until both happened.
+pub(super) struct PendingCompletion<R, V> {
+    report: R,
+    view: Option<V>,
+    collection_failure: Option<io::Error>,
+}
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// Revoke serving under the commit fence, so no commit that started
@@ -16,16 +25,15 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 
     /// Await a durable operation a cancelled pass left behind and apply its
-    /// outcome, before this pass observes or writes anything. A commit that
-    /// installed is completed here as its own pass would have: the adapter
-    /// receives the view, its objects are retained and the peer is released.
+    /// outcome, then finish a pending completion, before this pass observes
+    /// or writes anything. A commit that installed is completed here as its
+    /// own pass would have: the adapter receives the view and the peer is
+    /// released; its collection already ran inside the owned operation.
     pub(super) async fn settle_durable_operation(&mut self) -> Result<(), Error> {
         match self.durable_operation.settle().await {
             None => {}
-            Some(Ok(DurableOutcome::Commit(commit))) => match self.complete_commit(commit).await {
-                Ok(report) => {
-                    self.adapter.release_peer(&report).await;
-                }
+            Some(Ok(DurableOutcome::Commit(commit))) => match self.begin_completion(commit) {
+                Ok(()) => {}
                 // The pass that raised the fence already acted on it.
                 Err(error)
                     if error.downcast_ref::<PublicationLifecycleError>()
@@ -39,6 +47,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             Some(Ok(DurableOutcome::FloorWritten(Err(_)))) | Some(Err(_)) => {
                 self.close_after_failed_floor_write().await;
             }
+        }
+        if self.pending_completion.is_some() {
+            self.finish_completion().await?;
         }
         Ok(())
     }
@@ -80,13 +91,14 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     }
 
     /// Commit `loaded` as `identity`: refuse an invalidated view or a dirty
-    /// floor, then record and install it as an owned operation, and retain its
-    /// objects only after the install succeeded.
+    /// floor, then record, install and collect around it as one owned
+    /// operation, and complete it: the adapter receives the view and the
+    /// dependent peer is released.
     pub(super) async fn commit(
         &mut self,
         identity: MaterialIdentity,
         loaded: A::Loaded,
-    ) -> Result<A::Report, Error> {
+    ) -> Result<(A::Report, PeerHandover), Error> {
         if self.floor.is_invalidated(&identity) {
             return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
         }
@@ -95,50 +107,90 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         }
         let retained = self.adapter.retained_objects(&loaded);
         let (prepared, view) = self.adapter.prepare_commit(loaded)?;
+        let retained_commits = retained_after(&self.retained_commits, retained);
+        let keep: BTreeSet<String> = retained_commits.iter().flatten().cloned().collect();
+        let cache = self.cache.clone();
         let started_under = self.commit_fence.generation().await;
         let fence = self.commit_fence.clone();
         let outcome = self
             .durable_operation
             .run(async move {
                 DurableOutcome::Commit(OwnedCommit {
-                    outcome: run_commit(fence, started_under, prepared).await,
+                    outcome: run_commit(fence, started_under, prepared, move || {
+                        cache.collect_unreferenced(&keep)
+                    })
+                    .await,
                     view,
-                    retained,
+                    retained_commits,
                 })
             })
             .await??;
         match outcome {
-            DurableOutcome::Commit(commit) => self.complete_commit(commit).await,
+            DurableOutcome::Commit(commit) => self.begin_completion(commit)?,
             DurableOutcome::FloorWritten(_) => unreachable!("a commit produced a floor write"),
         }
+        self.finish_completion().await
     }
 
-    /// Apply a finished commit once: hand an installed view to the adapter
-    /// and retain its objects, or report why nothing was installed.
-    async fn complete_commit(
+    /// Record a finished commit: an installed one becomes the pending
+    /// completion and its retained object sets take effect; otherwise report
+    /// why nothing was installed.
+    fn begin_completion(
         &mut self,
         commit: OwnedCommit<A::Report, A::InstalledView>,
-    ) -> Result<A::Report, Error> {
-        let report = match commit.outcome {
-            CommitOutcome::Installed(report) => report?,
-            CommitOutcome::Fenced => return Err(Box::new(PublicationLifecycleError::CommitFenced)),
-            CommitOutcome::RecordFailed(error) => return Err(error.into()),
-        };
-        self.adapter.installed(commit.view);
-        self.retain_commit(commit.retained).await?;
-        Ok(report)
+    ) -> Result<(), Error> {
+        match commit.outcome {
+            CommitOutcome::Installed { report, collected } => {
+                self.retained_commits = commit.retained_commits;
+                self.pending_completion = Some(PendingCompletion {
+                    report,
+                    view: Some(commit.view),
+                    collection_failure: collected.err(),
+                });
+                Ok(())
+            }
+            CommitOutcome::InstallFailed(error) => Err(error),
+            CommitOutcome::Fenced => Err(Box::new(PublicationLifecycleError::CommitFenced)),
+            CommitOutcome::RecordFailed(error) => Err(error.into()),
+        }
     }
 
-    /// Keep the objects of the last two commits and collect everything else.
-    async fn retain_commit(&mut self, objects: BTreeSet<String>) -> Result<(), Error> {
-        self.retained_commits.retain(|old| *old != objects);
-        self.retained_commits.push(objects);
-        if self.retained_commits.len() > 2 {
-            self.retained_commits.remove(0);
+    /// Hand the pending view to the adapter once and release the dependent
+    /// peer. A pass cancelled while releasing leaves the completion pending,
+    /// and the next pass releases again; the release is idempotent.
+    async fn finish_completion(&mut self) -> Result<(A::Report, PeerHandover), Error> {
+        let pending = self
+            .pending_completion
+            .as_mut()
+            .expect("a completion is pending");
+        if let Some(view) = pending.view.take() {
+            self.adapter.installed(view);
         }
-        let keep: BTreeSet<String> = self.retained_commits.iter().flatten().cloned().collect();
-        let cache = self.cache.clone();
-        tokio::task::spawn_blocking(move || cache.collect_unreferenced(&keep)).await??;
-        Ok(())
+        let handover = self.adapter.release_peer(&pending.report).await;
+        let completed = self
+            .pending_completion
+            .take()
+            .expect("a completion is pending");
+        if let Some(error) = completed.collection_failure {
+            return Err(error.into());
+        }
+        Ok((completed.report, handover))
     }
+}
+
+/// The object sets of the last two commits once `objects` is committed.
+fn retained_after(
+    retained_commits: &[BTreeSet<String>],
+    objects: BTreeSet<String>,
+) -> Vec<BTreeSet<String>> {
+    let mut retained: Vec<_> = retained_commits
+        .iter()
+        .filter(|old| **old != objects)
+        .cloned()
+        .collect();
+    retained.push(objects);
+    if retained.len() > 2 {
+        retained.remove(0);
+    }
+    retained
 }

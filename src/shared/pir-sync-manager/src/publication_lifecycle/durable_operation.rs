@@ -4,7 +4,10 @@
 //! a pass never abandons or duplicates a write: the next pass settles the
 //! outstanding operation before it observes anything. Commits additionally
 //! check the [`CommitFence`] generation they started under, atomically with
-//! installing, so a fence raised while a commit was recording wins.
+//! installing, so a fence raised while a commit was recording wins. A commit
+//! that installed also collects unreferenced objects inside the same
+//! operation, so a collection with an older keep set always finishes before a
+//! later pass fetches anything.
 use crate::Error;
 use pir_publication::WrittenFloor;
 use std::{collections::BTreeSet, fmt, future::Future, io, pin::Pin, sync::Arc};
@@ -28,7 +31,13 @@ pub struct PreparedCommit<R> {
 
 /// How an owned commit ended.
 pub(super) enum CommitOutcome<R> {
-    Installed(Result<R, Error>),
+    /// The view serves; `collected` reports the collection that followed.
+    Installed {
+        report: R,
+        collected: io::Result<()>,
+    },
+    /// The install refused; serving is unchanged.
+    InstallFailed(Error),
     /// Serving was fenced after the commit started; nothing was installed.
     Fenced,
     RecordFailed(io::Error),
@@ -41,8 +50,8 @@ pub(super) struct OwnedCommit<R, V> {
     pub(super) outcome: CommitOutcome<R>,
     /// Handed to the adapter once the install succeeded.
     pub(super) view: V,
-    /// Objects the installed view keeps referenced.
-    pub(super) retained: BTreeSet<String>,
+    /// The object sets retained once this commit installed, newest last.
+    pub(super) retained_commits: Vec<BTreeSet<String>>,
 }
 
 /// The outcome of the one durable operation a lifecycle may have outstanding.
@@ -68,11 +77,13 @@ impl CommitFence {
     }
 }
 
-/// Record, then install only if no fence was raised since `started_under`.
+/// Record, then install only if no fence was raised since `started_under`,
+/// then run `collect` (off the executor) once the view serves.
 pub(super) async fn run_commit<R>(
     fence: CommitFence,
     started_under: u64,
     prepared: PreparedCommit<R>,
+    collect: impl FnOnce() -> io::Result<()> + Send + 'static,
 ) -> CommitOutcome<R> {
     let PreparedCommit {
         record,
@@ -92,7 +103,15 @@ pub(super) async fn run_commit<R>(
     }
     let installed = install.await;
     drop(generation);
-    CommitOutcome::Installed(installed)
+    match installed {
+        Ok(report) => CommitOutcome::Installed {
+            report,
+            collected: tokio::task::spawn_blocking(collect)
+                .await
+                .unwrap_or_else(|error| Err(io::Error::other(error))),
+        },
+        Err(error) => CommitOutcome::InstallFailed(error),
+    }
 }
 
 /// Another durable operation is still outstanding.
@@ -176,6 +195,7 @@ mod tests {
             fence.clone(),
             started_under,
             blocked_commit(blocked, installed.clone()),
+            || Ok(()),
         );
         // The pass waiting for the commit is cancelled while the record blocks.
         assert!(
@@ -215,7 +235,7 @@ mod tests {
                 revoke_flag.store(true, Ordering::SeqCst)
             }),
         };
-        let outcome = run_commit(fence.clone(), 0, prepared).await;
+        let outcome = run_commit(fence.clone(), 0, prepared, || Ok(())).await;
         assert!(matches!(outcome, CommitOutcome::RecordFailed(_)));
         assert!(revoked.load(Ordering::SeqCst));
         assert!(!installed.load(Ordering::SeqCst));
@@ -264,11 +284,13 @@ mod tests {
         let (release, blocked) = mpsc::channel();
         let mut slot = OwnedOperationSlot::new();
         let prepared = blocked_commit(blocked, installed.clone());
+        let retained = vec![BTreeSet::from(["object".to_string()])];
+        let carried = retained.clone();
         let commit = async move {
             OwnedCommit {
-                outcome: run_commit(fence, 0, prepared).await,
+                outcome: run_commit(fence, 0, prepared, || Ok(())).await,
                 view: "installed view",
-                retained: BTreeSet::from(["object".to_string()]),
+                retained_commits: carried,
             }
         };
         assert!(
@@ -278,10 +300,71 @@ mod tests {
         );
         release.send(()).unwrap();
         let settled = slot.settle().await.unwrap().unwrap();
-        assert!(matches!(settled.outcome, CommitOutcome::Installed(Ok(()))));
+        assert!(matches!(
+            settled.outcome,
+            CommitOutcome::Installed {
+                report: (),
+                collected: Ok(())
+            }
+        ));
         assert!(installed.load(Ordering::SeqCst));
         assert_eq!(settled.view, "installed view");
-        assert_eq!(settled.retained, BTreeSet::from(["object".to_string()]));
+        assert_eq!(settled.retained_commits, retained);
         assert!(slot.settle().await.is_none(), "settled exactly once");
+    }
+
+    /// A pass cancelled while its commit collects leaves the collection
+    /// owned: the next pass joins it before it can fetch, so an object that
+    /// pass promotes afterwards is never removed under the older keep set.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_collection_cancelled_with_its_pass_finishes_before_the_next_pass_fetches() {
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cache = pir_publication::ObjectCache::open(cache_dir.path().into()).unwrap();
+        let kept = pir_publication::ObjectReference::for_bytes(b"kept");
+        let stale = pir_publication::ObjectReference::for_bytes(b"stale");
+        for (object, bytes) in [(&kept, b"kept".as_slice()), (&stale, b"stale")] {
+            let mut partial = cache.begin_partial(object).unwrap();
+            let mut file = partial.take_file().unwrap();
+            std::io::Write::write_all(&mut file, bytes).unwrap();
+            partial.promote(file).unwrap();
+        }
+        let (release, blocked) = mpsc::channel::<()>();
+        let collecting = cache.clone();
+        let keep = BTreeSet::from([kept.sha256.clone()]);
+        let prepared = PreparedCommit::<()> {
+            record: Box::new(|| Ok(())),
+            install: Box::pin(async { Ok(()) }),
+            revoke_after_failed_record: Box::pin(async {}),
+        };
+        let mut slot = OwnedOperationSlot::new();
+        let commit = run_commit(CommitFence::default(), 0, prepared, move || {
+            blocked.recv().unwrap();
+            collecting.collect_unreferenced(&keep)
+        });
+        // The pass is cancelled while the collection is blocked.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), slot.run(commit))
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        // The next pass settles the operation first...
+        let settled = slot.settle().await.unwrap().unwrap();
+        assert!(matches!(
+            settled,
+            CommitOutcome::Installed {
+                collected: Ok(()),
+                ..
+            }
+        ));
+        assert!(cache.verified_cached(&stale).unwrap().is_none());
+        // ...and only then fetches, so what it promotes survives.
+        let fetched = pir_publication::ObjectReference::for_bytes(b"fetched");
+        let mut partial = cache.begin_partial(&fetched).unwrap();
+        let mut file = partial.take_file().unwrap();
+        std::io::Write::write_all(&mut file, b"fetched").unwrap();
+        partial.promote(file).unwrap();
+        assert!(cache.verified_cached(&fetched).unwrap().is_some());
+        assert!(cache.verified_cached(&kept).unwrap().is_some());
     }
 }

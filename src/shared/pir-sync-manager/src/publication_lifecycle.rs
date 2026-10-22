@@ -18,16 +18,21 @@
 //!   check, then rechecks the floor. Floor writes and commits run as owned
 //!   tasks; a cancelled pass leaves its task outstanding and the next pass
 //!   settles it before observing anything. A commit installs only if no fence
-//!   was raised while it was recording.
+//!   was raised while it was recording, and collects unreferenced objects
+//!   inside its owned operation. Handing the view to the adapter and releasing
+//!   the dependent peer stay pending across cancelled passes until done.
 //! - A 304 or a successful response refreshes neither source-observation age
 //!   nor authority-check time; the product's freshness checks still apply.
 mod authority_round;
 mod commit_phase;
+#[cfg(test)]
+mod completion_tests;
 mod durable_operation;
 mod object_fetch;
 mod pointer_observation;
 
 use crate::{Error, HttpsSource, SyncTask};
+use commit_phase::PendingCompletion;
 pub use durable_operation::PreparedCommit;
 use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
 pub use object_fetch::ObjectFetcher;
@@ -221,6 +226,8 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     retained_commits: Vec<BTreeSet<String>>,
     commit_fence: CommitFence,
     durable_operation: OwnedOperationSlot<DurableOutcome<A::Report, A::InstalledView>>,
+    /// An installed commit whose view or peer release is still outstanding.
+    pending_completion: Option<PendingCompletion<A::Report, A::InstalledView>>,
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -247,6 +254,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             retained_commits: Vec::new(),
             commit_fence: CommitFence::default(),
             durable_operation: OwnedOperationSlot::new(),
+            pending_completion: None,
         })
     }
     pub fn adapter(&self) -> &A {
@@ -309,8 +317,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if self.adapter.reserve_peer(&loaded).await? == PeerReservation::PeerAdvanced {
             return Err(Box::new(PointerAdvanced));
         }
-        let report = self.commit(identity, loaded).await?;
-        let handover = self.adapter.release_peer(&report).await;
+        let (report, handover) = self.commit(identity, loaded).await?;
         Ok(PublicationPass::Committed { report, handover })
     }
 
