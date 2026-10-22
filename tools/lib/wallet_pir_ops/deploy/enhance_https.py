@@ -220,11 +220,33 @@ class EnhanceServing(Serving):
         parent['enhance_handoff_rollback' if rollback else 'enhance_handoff'] = receipt
         owner.save(parent)
 
-    def activate(self, parent):
+    def prepare_handoff(self, parent):
         owner = self.cutover
         parent['enhance_handoff_started'] = True
         owner.save(parent)
         owner.effect(parent, 'preserve Enhance recovery floors', lambda: self.handoff(parent))
+
+    def publication_ready(self):
+        """Require eligible HTTPS material before interrupting any consumer."""
+        owner = self.cutover
+        origin = owner.request['enhance_https']['origin'].rstrip('/')
+        deadline = owner.clock() + 900
+        while True:
+            owner.supervision.guard()
+            discovery, _ = owner.ex.http_get(owner.host, origin + '/.well-known/pir-service-discovery')
+            code, body = owner.ex.http_get(owner.host, origin + '/provider/enhance/v1/current')
+            try:
+                current = json.loads(body)['current']
+                if (discovery == 200 and code == 200 and current['eligible'] is True
+                        and current.get('manifest') and current.get('inventory')):
+                    return
+            except (ValueError, KeyError, TypeError):
+                pass
+            require(owner.clock() < deadline, 'Enhance HTTPS publication readiness deadline exceeded')
+            owner.sleep(3)
+
+    def activate(self, parent):
+        owner = self.cutover
         for kind, deployer in self.groups.items():
             deployer.lock = owner.lock
             journal = GroupJournal(owner, parent, kind)

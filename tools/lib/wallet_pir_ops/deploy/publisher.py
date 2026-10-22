@@ -72,7 +72,7 @@ def load_request(path, expected, *, recovery=False):
             'publisher request has unknown or missing fields')
     require(request['schema'] in (SCHEMA, EXPANDED_SCHEMA, *SERVING_SCHEMAS), 'unsupported publisher cutover schema')
     if 'expected_disk_latch_sha256' in request:
-        require(request['schema'] == SERVING_SCHEMA and request.get('resume_load') is False
+        require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and request.get('resume_load') is False
                 and isinstance(request['expected_disk_latch_sha256'], str)
                 and re.fullmatch('[a-f0-9]{64}', request['expected_disk_latch_sha256']),
                 'expected_disk_latch_sha256 pins an existing disk-only incident with resume_load:false')
@@ -80,8 +80,8 @@ def load_request(path, expected, *, recovery=False):
         require(request['schema'] == SERVING_SCHEMA and type(request['preserve_serving']) is bool,
                 'preserve_serving must be a boolean for publisher-cutover/3 only')
     if 'resume_load' in request:
-        require(request['schema'] == SERVING_SCHEMA and type(request['resume_load']) is bool,
-                'resume_load must be a boolean for publisher-cutover/3 only')
+        require(request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA) and type(request['resume_load']) is bool,
+                'resume_load must be a boolean for a publisher update or Enhance HTTPS cutover')
     require(recovery or request['schema'] in SERVING_SCHEMAS,
             'completed ownership migrations are recovery-only; deploy the unified four-product fleet')
     require(isinstance(request['host'], str) and re.fullmatch('[A-Za-z0-9_.-]+', request['host']), 'invalid host')
@@ -263,7 +263,7 @@ class Cutover:
         require(all(states[name]['active_state'] != 'active' and not states[name]['main_pid'] for name in self.old),
                 'standalone and unified publishers both own state')
         override = None
-        if self.request['schema'] == SERVING_SCHEMA:
+        if self.request['schema'] in (SERVING_SCHEMA, ENHANCE_HTTPS_SCHEMA):
             override = status_https_override(unified, unified['exe_sha256'])
         else:
             require(not unified['drop_ins'], 'unexpected publisher drop-ins; reconcile before changing ownership')
@@ -516,7 +516,10 @@ class Cutover:
             self.unlocked()
             from .publisher_restore import HistoryRestore
             HistoryRestore(self).install(journal)
-            if self.serving:
+            enhance_https = self.request['schema'] == ENHANCE_HTTPS_SCHEMA
+            if enhance_https:
+                self.serving.prepare_handoff(journal)
+            elif self.serving:
                 self.serving.activate(journal)
             for path, text in plan['desired'].items():
                 mode = 0o644 if path.startswith('/etc/systemd/') else 0o600
@@ -526,6 +529,10 @@ class Cutover:
             self.effect(journal, 'start publisher', lambda: self.ex.systemctl(self.host, 'start', UNIT))
             self.save(journal, 'verifying')
             self.ready(True)
+            if enhance_https:
+                self.serving.route(journal)
+                self.serving.publication_ready()
+                self.serving.activate(journal)
             if self.serving:
                 self.serving.verify(journal)
                 self.serving.route(journal)
@@ -756,16 +763,21 @@ def register(commands):
             command.add_argument('--archive', required=True)
         if operation == 'deploy':
             command.add_argument('--expect-plan-sha256', required=True)
+            command.add_argument('--supervision', choices=('coordinator', 'operator'), default='coordinator')
 
     for operation in ('run', 'watchdog'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--transaction', required=True)
+        command.add_argument('--supervision', choices=('coordinator', 'operator'), default='coordinator')
 
 
 def dispatch(args, executor=None, **_options):
     from .remote import SSHExecutor
     operation = args.command.removeprefix('publisher-cutover-')
     if operation in ('run', 'watchdog'):
+        if args.supervision == 'operator':
+            from .cutover_operator import dispatch as supervised
+            return supervised(args)
         from .cutover_runner import dispatch as supervised
         return supervised(args)
     request, inventory = load_request(args.request, args.request_sha256,
@@ -797,6 +809,10 @@ def dispatch(args, executor=None, **_options):
                 result['history_edge_sha256'] = sha(executor.read(request['https']['history_edge']['host'],
                                                                  '/etc/caddy/Caddyfile'))
         if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            from .cutover_operator import status as operator_status
+            operator = operator_status(args.state_dir, args.request_sha256)
+            if operator is not None:
+                result['operator_supervision'] = operator
             pointer = target.read(ROOT_DIR + '/supervised-latest.json')
             if pointer is not None:
                 from .cutover_guard import unit_name
@@ -819,6 +835,9 @@ def dispatch(args, executor=None, **_options):
         if target.serving:
             target.serving.binary = args.serving_binary
         if request['schema'] == ENHANCE_HTTPS_SCHEMA:
+            if args.supervision == 'operator':
+                from .cutover_operator import launch
+                return launch(target, args, binary)
             from .cutover_runner import launch
             return launch(target, args, binary)
         try:
