@@ -10,18 +10,19 @@ use std::{
     path::Path,
 };
 #[cfg(not(feature = "native-reinspiring"))]
-pub const DIRECTORY: &str = "prepared-packing-v1";
+pub const DIRECTORY: &str = "prepared-packing-v2";
 #[cfg(feature = "native-reinspiring")]
-pub const DIRECTORY: &str = "prepared-native-packing-v2";
+pub const DIRECTORY: &str = "prepared-native-packing-v3";
 #[cfg(not(feature = "native-reinspiring"))]
-pub const FORMAT: u16 = 1;
+pub const FORMAT: u16 = 2;
 #[cfg(feature = "native-reinspiring")]
-pub const FORMAT: u16 = 3;
+pub const FORMAT: u16 = 4;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifact {
     pub name: String,
-    pub sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    pub checksum: String,
     pub bytes: u64,
     pub format: u16,
 }
@@ -29,7 +30,7 @@ impl Artifact {
     pub fn validate(&self, rows: u64, public: &str) -> Result<(), String> {
         if self.format != FORMAT
             || self.name != artifact_name(rows, public)?
-            || !crate::protocol::canonical_hash(&self.sha256)
+            || !crate::protocol::canonical_hash(&self.checksum)
             || !valid_len(self.bytes, rows)?
         {
             return Err("invalid prepared artifact identity or size".into());
@@ -42,7 +43,7 @@ pub fn artifact_name(rows: u64, public: &str) -> Result<String, String> {
     let parameter = crate::protocol::parameter_id(params.db_rows as u64)?;
     Ok(format!(
         "{}.bin",
-        crate::protocol::digest(&("prepared-packing-v1", parameter, public))
+        crate::protocol::digest(&("prepared-packing-v2", parameter, public))
     ))
 }
 pub fn describe_hint(root: &Path, hint: &str, rows: u64) -> Result<Artifact, String> {
@@ -106,10 +107,10 @@ pub fn persist(root: &Path, pack: &Packing) -> Result<Artifact, String> {
     .map_err(|e| e.to_string())?;
     let path = directory.join(&name);
     let bytes = fs::metadata(&path).map_err(|e| e.to_string())?.len();
-    let sha256 = hash_file(&path)?;
+    let checksum = hash_file(&path)?;
     let a = Artifact {
         name: name.clone(),
-        sha256,
+        checksum,
         bytes,
         format: FORMAT,
     };
@@ -145,7 +146,7 @@ pub fn install(root: &Path, rows: u64, prepared: &[u8]) -> Result<Vec<u8>, Strin
     let path = directory.join(&name);
     let a = Artifact {
         name: name.clone(),
-        sha256: hash_file(&path)?,
+        checksum: hash_file(&path)?,
         bytes: fs::metadata(&path).map_err(|e| e.to_string())?.len(),
         format: FORMAT,
     };
@@ -185,7 +186,7 @@ fn public_parameters(rows: u64, prepared: &[u8]) -> Result<Vec<u8>, String> {
 
 pub fn hash_file(path: &Path) -> Result<String, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
-    let mut hash = Sha256::new();
+    let mut hash = pir_artifact::Hasher::new();
     let mut buffer = [0; 65536];
     loop {
         let n = f.read(&mut buffer).map_err(|e| e.to_string())?;
@@ -199,7 +200,7 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
 }
 pub fn verify(path: &Path, a: &Artifact) -> Result<(), String> {
     if fs::metadata(path).map_err(|e| e.to_string())?.len() != a.bytes
-        || hash_file(path)? != a.sha256
+        || hash_file(path)? != a.checksum
     {
         return Err("prepared artifact checksum/length mismatch".into());
     }
@@ -218,7 +219,7 @@ pub fn load(
     if file.metadata().map_err(|e| e.to_string())?.len() != a.bytes {
         return Err("prepared artifact length mismatch".into());
     }
-    let mut hash = Sha256::new();
+    let mut hash = pir_artifact::Hasher::new();
     let mut buffer = [0u8; 65536];
     loop {
         let n = file.read(&mut buffer).map_err(|e| e.to_string())?;
@@ -227,7 +228,7 @@ pub fn load(
         }
         hash.update(&buffer[..n]);
     }
-    if hex::encode(hash.finalize()) != a.sha256 {
+    if hex::encode(hash.finalize()) != a.checksum {
         return Err("prepared artifact checksum mismatch".into());
     }
     // Authenticate the same inode that is mapped, even across path replacement.
@@ -277,7 +278,7 @@ mod tests {
         );
         let mut a = Artifact {
             name: name.clone(),
-            sha256: "cd".repeat(32),
+            checksum: "cd".repeat(32),
             bytes,
             format: FORMAT,
         };
@@ -307,7 +308,7 @@ mod tests {
         fs::write(&path, b"prepared").unwrap();
         let a = Artifact {
             name: "test".into(),
-            sha256: hash_file(&path).unwrap(),
+            checksum: hash_file(&path).unwrap(),
             bytes: 8,
             format: FORMAT,
         };

@@ -61,7 +61,7 @@ pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
         println!(
             "{}",
             serde_json::json!({
-                "inventory_sha256": record.inventory_sha256,
+                "inventory_checksum": record.inventory_checksum,
                 "map_sha256": record.map_sha256,
                 "anchor_height": record.anchor_height,
                 "anchor_hash": record.anchor_hash,

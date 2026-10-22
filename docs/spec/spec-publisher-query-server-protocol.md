@@ -5,8 +5,9 @@
 This protocol specifies the protocol between Publisher and Query Server to ingest and refresh the data.
 
 1. The publisher completes preparation and consistency checks, computes each
-   immutable artifact's SHA-256 hash and exact byte count, and publishes both
-   alongside the artifact.
+   immutable artifact's BLAKE3 checksum and exact byte count, and publishes both
+   alongside the artifact. Checksums explicitly identify their algorithm and
+   digest; a BLAKE3 digest is never encoded in a field named `sha256`.
 2. The query server downloads the artifact over authenticated HTTPS, checks the
    received and stored byte counts, and saves the file with its expected hash.
    It does not hash the artifact or repeat preparation consistency checks before
@@ -27,3 +28,10 @@ This protocol specifies the protocol between Publisher and Query Server to inges
 
 Small metadata is verified before use. Publication authority, canonicality and
 revocation checks remain required regardless of artifact validation status.
+
+This artifact checksum policy also applies to Enhance and Status prepared
+distribution objects and metadata. It does not change wallet-protocol source
+commitments, public-parameter bindings, chain hashes or upstream-defined hashes.
+Those retain their specified algorithms even when they cover the same bytes.
+The publisher-query-server discovery contract is major version 2; predecessor
+distribution contracts are accepted only by explicit offline migration tools.

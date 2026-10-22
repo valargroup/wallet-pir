@@ -1,7 +1,7 @@
 //! Publisher identities are checked once, after activation, without queueing
 //! query work behind the checker. A failure belongs to the dependent shards.
+use pir_artifact::Hasher;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs::File,
@@ -54,7 +54,8 @@ impl Stamp {
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u32,
-    sha256: String,
+    #[serde(with = "pir_artifact::current")]
+    checksum: String,
     bytes: u64,
     stamp: Stamp,
     passed: bool,
@@ -109,7 +110,7 @@ impl Job {
     fn save(&self, passed: bool) -> io::Result<()> {
         let record = Record {
             version: 1,
-            sha256: self.expected.sha256.clone(),
+            checksum: self.expected.checksum.clone(),
             bytes: self.expected.bytes,
             stamp: self.stamp.lock().unwrap().clone(),
             passed,
@@ -123,7 +124,7 @@ impl Job {
             tracing::error!(%persist, path = %self.primary.display(), "cannot persist artifact withdrawal");
         }
         self.phase.store(FAILED, Ordering::Release);
-        tracing::error!(%error, sha256 = %self.expected.sha256, path = %self.primary.display(),
+        tracing::error!(%error, checksum = %self.expected.checksum, path = %self.primary.display(),
             "artifact validation failed; dependent shards withdrawn");
     }
 }
@@ -310,7 +311,7 @@ impl Scope {
         };
         let identity = format!(
             "{}:{}:{}:{}",
-            stamp.device, stamp.inode, expected.sha256, expected.bytes
+            stamp.device, stamp.inode, expected.checksum, expected.bytes
         );
         let mut state = self.core.shared.state.lock().unwrap();
         state.jobs.retain(|_, weak| weak.strong_count() != 0);
@@ -327,7 +328,7 @@ impl Scope {
                         })
                         .is_some_and(|r| {
                             r.version == 1
-                                && r.sha256 == expected.sha256
+                                && r.checksum == expected.checksum
                                 && r.bytes == expected.bytes
                                 && !r.passed
                         });
@@ -338,7 +339,7 @@ impl Scope {
                         Ok(input) => {
                             let record: Record = serde_json::from_reader(input.take(8193))?;
                             if record.version == 1
-                                && record.sha256 == expected.sha256
+                                && record.checksum == expected.checksum
                                 && record.bytes == expected.bytes
                             {
                                 if !record.passed {
@@ -518,7 +519,7 @@ fn check(shared: &Shared, job: &Arc<Job>, replacement: Option<&Path>) -> io::Res
     if replacement.is_none() && before != *job.stamp.lock().unwrap() {
         return Err(io::Error::other("artifact replaced before validation"));
     }
-    let mut hash = Sha256::new();
+    let mut hash = Hasher::new();
     let mut buffer = vec![0; CHUNK];
     let mut bytes = 0u64;
     loop {
@@ -542,7 +543,7 @@ fn check(shared: &Shared, job: &Arc<Job>, replacement: Option<&Path>) -> io::Res
         hash.update(&buffer[..n]);
     }
     let actual = hex::encode(hash.finalize());
-    if bytes != job.expected.bytes || actual != job.expected.sha256 {
+    if bytes != job.expected.bytes || actual != job.expected.checksum {
         return Err(io::Error::other(format!(
             "artifact digest or length mismatch: got {actual}, {bytes} bytes"
         )));
@@ -602,7 +603,8 @@ fn check(shared: &Shared, job: &Arc<Job>, replacement: Option<&Path>) -> io::Res
             std::fs::rename(&temp, &alias)?;
             let artifact = publication::Artifact {
                 path: String::new(),
-                sha256: job.expected.sha256.clone(),
+                checksum: job.expected.checksum.clone(),
+                source_sha256: job.expected.source_sha256.clone(),
                 bytes: job.expected.bytes,
                 kind: publication::Kind::RecentRuntime,
             };
@@ -614,7 +616,7 @@ fn check(shared: &Shared, job: &Arc<Job>, replacement: Option<&Path>) -> io::Res
     }
     job.save(true)?;
     job.phase.store(PASSED, Ordering::Release);
-    tracing::info!(sha256 = %job.expected.sha256, bytes, "artifact background validation passed");
+    tracing::info!(checksum = %job.expected.checksum, bytes, "artifact background validation passed");
     Ok(())
 }
 
@@ -652,7 +654,8 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
             .filter_map(Weak::upgrade)
             .filter(|job| {
                 job.enabled.load(Ordering::Acquire)
-                    && job.expected.object.parent() == Some(root.join("objects").as_path())
+                    && job.expected.object.parent()
+                        == Some(root.join(pir_artifact::namespace("objects")).as_path())
                     && job.phase.load(Ordering::Acquire) == FAILED
             })
             .collect()
@@ -665,9 +668,9 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
         {
             continue;
         }
-        let partial = root.join("objects").join(format!(
+        let partial = root.join(pir_artifact::namespace("objects")).join(format!(
             "{}.validation.repair-{}",
-            job.expected.sha256,
+            job.expected.checksum,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -686,7 +689,7 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
                 .open(&partial)?;
             let mut output = tokio::fs::File::from_std(output);
             let mut response = source
-                .get(&format!("artifacts/{}", job.expected.sha256))
+                .get(&format!("artifacts/{}", job.expected.checksum))
                 .await?;
             let mut remaining = job.expected.bytes;
             while let Some(chunk) = response.chunk().await? {
@@ -717,7 +720,7 @@ async fn repair(core: &Arc<Core>, source: &mut crate::source::Source, root: &Pat
                 core.shared.wake.notify_all();
             }
             Err(error) => {
-                tracing::warn!(%error, sha256 = %job.expected.sha256, "withdrawn artifact repair deferred");
+                tracing::warn!(%error, checksum = %job.expected.checksum, "withdrawn artifact repair deferred");
             }
         }
     }

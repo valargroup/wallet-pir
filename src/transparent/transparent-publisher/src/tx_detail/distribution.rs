@@ -55,7 +55,7 @@ impl Distribution {
             schema: SCHEMA.into(),
             revision: crate::history::distribution::advance_distribution_revision(&self.0.root)?,
             recovery_epoch: 0,
-            inventory_sha256: finalized.sha256.clone(),
+            inventory_checksum: finalized.checksum.clone(),
             network: finalized.inventory.network.clone(),
             genesis_hash: finalized.inventory.genesis_hash.clone(),
             anchor_height: finalized.anchor_height,
@@ -295,7 +295,7 @@ async fn serve(authority: Distribution, request: Request) -> Result<Response, Bo
     if !current.eligible() {
         return Ok(StatusCode::NOT_FOUND.into_response());
     }
-    if suffix == format!("inventories/{}", finalized.sha256) {
+    if suffix == format!("inventories/{}", finalized.checksum) {
         return Ok((
             [
                 (header::CONTENT_TYPE, "application/json"),

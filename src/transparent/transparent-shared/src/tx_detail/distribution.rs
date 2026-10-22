@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const SCHEMA: &str = "transparent-display-prepared-distribution-v1";
+pub const SCHEMA: &str = "transparent-display-prepared-distribution-v2";
 pub const PREFIX: &str = "/provider/txid/v1/";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,7 +46,7 @@ impl Inventory {
         let mut paths = BTreeSet::new();
         for file in &self.artifacts {
             if !safe_path(&file.path)
-                || !is_digest(&file.sha256)
+                || !is_digest(&file.checksum)
                 || file.bytes == 0
                 || !paths.insert(&file.path)
                 || (file.kind == Kind::Metadata && file.bytes > 16 << 20)
@@ -90,7 +90,7 @@ impl Inventory {
 pub struct Finalized {
     pub inventory: Inventory,
     pub bytes: Vec<u8>,
-    pub sha256: String,
+    pub checksum: String,
     pub files: BTreeMap<String, PathBuf>,
     pub anchor_height: u64,
     pub anchor_hash: String,
@@ -159,7 +159,11 @@ impl Finalized {
         };
         let map = root.join(MAP_FILE);
         expected.insert(map.clone(), set.map_digest.clone());
-        add(map, Kind::Metadata, None);
+        add(
+            map,
+            Kind::Metadata,
+            Some(Known::commitment(set.map_digest.clone())),
+        );
         for revision in set.current() {
             add(revision.dir.join(MANIFEST_FILE), Kind::Metadata, None);
             let (table_kind, runtime_kind) = if revision.manifest.sealed {
@@ -193,16 +197,15 @@ impl Finalized {
         // stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
         for (artifact, path, file) in hash_listed(root, pending, stop)? {
-            if expected
-                .get(&path)
-                .is_some_and(|sha256| *sha256 != artifact.sha256)
-            {
+            if expected.get(&path).is_some_and(|checksum| {
+                artifact.source_sha256.as_deref() != Some(checksum.as_str())
+            }) {
                 return Err("display source differs from its manifest".into());
             }
             if let Some(file) = file {
-                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+                runtimes.insert(path.clone(), (artifact.checksum.clone(), file));
             }
-            files.insert(artifact.sha256.clone(), path);
+            files.insert(artifact.checksum.clone(), path);
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
@@ -212,10 +215,10 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 display runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed display runtime")?;
+            let (checksum, file) = runtimes.remove(&path).ok_or("unhashed display runtime")?;
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
-            if previous.get(&name) == Some(&sha256) {
+            if previous.get(&name) == Some(&checksum) {
                 checked.reused += 1;
             } else {
                 if stop() {
@@ -226,7 +229,7 @@ impl Finalized {
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
             }
-            passed.insert(name, sha256);
+            passed.insert(name, checksum);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
         inventory.validate(&inventory.network, &inventory.genesis_hash)?;
@@ -234,7 +237,7 @@ impl Finalized {
         let terminal = set.map.shards.last().ok_or("empty display map")?;
         checked.passed = passed;
         Ok(Self {
-            sha256: digest(&bytes),
+            checksum: digest(&bytes),
             bytes,
             inventory,
             files,
@@ -351,7 +354,7 @@ mod tests {
                 .iter()
                 .find(|a| a.path == relative)
                 .unwrap();
-            assert_eq!(artifact.sha256, digest(&std::fs::read(path).unwrap()));
+            assert_eq!(artifact.checksum, digest(&std::fs::read(path).unwrap()));
         };
         for revision in set.current() {
             hashed(&revision.dir.join(MANIFEST_FILE));
@@ -464,7 +467,7 @@ mod tests {
                 .iter()
                 .find(|a| a.path == relative);
             assert_eq!(
-                listed.unwrap().sha256,
+                listed.unwrap().checksum,
                 digest(&std::fs::read(source).unwrap())
             );
         }
@@ -551,10 +554,10 @@ mod tests {
             .collect();
         assert_eq!(runtimes.len(), 2);
         assert_eq!((checked.loaded, checked.reused), (2, 0));
-        assert_eq!(first.sha256, Finalized::prepare(&dir).unwrap().sha256);
+        assert_eq!(first.checksum, Finalized::prepare(&dir).unwrap().checksum);
         let second = Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
         assert_eq!((checked.loaded, checked.reused), (0, 2));
-        assert_eq!(second.sha256, first.sha256);
+        assert_eq!(second.checksum, first.checksum);
         assert_eq!(second.files, first.files);
 
         // A replaced runtime is reloaded and refused, however often its name
@@ -590,7 +593,7 @@ mod tests {
         }
         let linked = Finalized::prepare_reusing(&next, &reused, &mut checked).unwrap();
         assert_eq!((checked.loaded, checked.reused), (0, 2));
-        assert_eq!(linked.sha256, first.sha256);
+        assert_eq!(linked.checksum, first.checksum);
         assert!(linked.files.values().all(|path| path.starts_with(&next)));
 
         // A segment changed after the set took it over no longer matches its

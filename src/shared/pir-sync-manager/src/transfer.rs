@@ -1,6 +1,6 @@
 //! Streaming mechanics only. Products select verification and own file promotion.
 use crate::{Error, Response};
-use sha2::{Digest, Sha256};
+use pir_artifact::Hasher;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -8,7 +8,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 /// explicitly select `Length`; selecting it grants no authority to serve.
 pub enum Verification<'a> {
     Length,
-    Sha256(&'a str),
+    Artifact(&'a str),
 }
 
 pub struct Transfer {
@@ -35,7 +35,7 @@ impl Response<'_> {
         let mut remaining = expected_bytes;
         let mut hash = match verification {
             Verification::Length => None,
-            Verification::Sha256(_) => Some(Sha256::new()),
+            Verification::Artifact(_) => Some(Hasher::new()),
         };
         while let Some(chunk) = self.chunk().await? {
             if chunk.len() as u64 > remaining {
@@ -50,8 +50,8 @@ impl Response<'_> {
         if remaining != 0 {
             return Err("artifact incomplete".into());
         }
-        if let (Some(hash), Verification::Sha256(expected)) = (hash, verification) {
-            if format!("{:x}", hash.finalize()) != expected {
+        if let (Some(hash), Verification::Artifact(expected)) = (hash, verification) {
+            if hex_digest(hash.finalize()) != expected {
                 return Err("artifact digest mismatch".into());
             }
         }
@@ -60,4 +60,8 @@ impl Response<'_> {
             elapsed: started.elapsed(),
         })
     }
+}
+
+fn hex_digest(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

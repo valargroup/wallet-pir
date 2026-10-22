@@ -271,8 +271,8 @@ async fn withdrawn_view_does_not_block_downloading_a_same_epoch_successor() {
     let object = pointer().inventory.unwrap();
     assert!(service
         .state_dir
-        .join("objects")
-        .join(object.sha256)
+        .join(pir_artifact::namespace("objects"))
+        .join(object.checksum)
         .is_file());
     assert!(task.floor.invalid.contains(&old.manifest().id()));
     assert!(service.serving().await.is_err());
@@ -286,11 +286,11 @@ async fn truncated_objects_never_become_completed_cache_entries() {
     assert!(task.object(&object).await.is_err());
     assert!(!service
         .state_dir
-        .join("objects")
-        .join(&object.sha256)
+        .join(pir_artifact::namespace("objects"))
+        .join(&object.checksum)
         .exists());
     assert_eq!(
-        fs::read_dir(service.state_dir.join("objects"))
+        fs::read_dir(service.state_dir.join(pir_artifact::namespace("objects")))
             .unwrap()
             .count(),
         0
@@ -359,7 +359,10 @@ async fn consumer_restart_requires_https_authority_despite_completed_objects() {
     let mut task = StatusSynchronization::new(service.clone(), &config).unwrap();
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
-    assert!(path.join("objects").join(object.sha256).is_file());
+    assert!(path
+        .join(pir_artifact::namespace("objects"))
+        .join(object.checksum)
+        .is_file());
     server.abort();
 }
 

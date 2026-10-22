@@ -1,7 +1,6 @@
 //! Install immutable objects and durably replace bounded publication metadata.
 use crate::{artifact, prepared_packing};
 use enhance_query_server::publication::{Object, METADATA_LIMIT};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
     io::{self, Read},
@@ -46,12 +45,12 @@ pub(super) fn persist_metadata(
 
 pub(super) fn install_object_bytes(root: &Path, bytes: &[u8]) -> Result<Object, String> {
     let object = Object {
-        sha256: hex::encode(Sha256::digest(bytes)),
+        checksum: pir_artifact::digest(bytes),
         bytes: bytes.len() as u64,
     };
     // An existing object is hashed with the complete inventory.
     if !object.path(root)?.exists() {
-        artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
+        artifact::write_atomic_cold(&root.join(pir_artifact::namespace("objects")), &object.checksum, |f| {
             f.write_all(bytes)
         })
         .map_err(|e| e.to_string())?;
@@ -65,14 +64,14 @@ pub(super) fn install_packing_object(
     prepared: &prepared_packing::Artifact,
 ) -> Result<(), String> {
     let object = Object {
-        sha256: prepared.sha256.clone(),
+        checksum: prepared.checksum.clone(),
         bytes: prepared.bytes,
     };
     // The copy is hashed with the complete inventory.
     if object.path(root)?.exists() {
         return Ok(());
     }
-    artifact::write_atomic_cold(&root.join("objects"), &object.sha256, |f| {
+    artifact::write_atomic_cold(&root.join(pir_artifact::namespace("objects")), &object.checksum, |f| {
         io::copy(&mut File::open(source)?, f)?;
         Ok(())
     })

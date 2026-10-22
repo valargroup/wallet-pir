@@ -517,20 +517,20 @@ async fn discovery_accepts_only_a_trusted_compatible_publisher() {
         assert!(error.incompatible().is_none(), "{body}");
         assert!(!is_incompatible(&error));
     }
-    let mismatch = refused(r#"body:{"service":"pir-publisher","version":"2.0.0"}"#).await;
+    let mismatch = refused(r#"body:{"service":"pir-publisher","version":"3.0.0"}"#).await;
     let incompatible = mismatch.incompatible().expect("typed mismatch");
     assert!(incompatible.query_server_is_older());
     let boxed: Error = Box::new(mismatch);
     assert!(is_incompatible(boxed.as_ref()));
     let text = boxed.to_string();
-    assert!(text.contains(&tls.origin) && text.contains("2.0.0") && text.contains("1.0.0"));
+    assert!(text.contains(&tls.origin) && text.contains("3.0.0") && text.contains("2.0.0"));
     assert!(text.contains("upgrade the query server"), "{text}");
     // The same-major additive fields of a newer publisher are accepted.
     *tls.discovery.lock().unwrap() =
-        r#"body:{"service":"pir-publisher","version":"1.9.0","added":true}"#.into();
+        r#"body:{"service":"pir-publisher","version":"2.9.0","added":true}"#.into();
     assert_eq!(
         tls.source(1).discover().await.unwrap(),
-        pir_service_discovery::Version::new(1, 9, 0)
+        pir_service_discovery::Version::new(2, 9, 0)
     );
     assert!(tls
         .requests
@@ -586,14 +586,15 @@ async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error(
 #[tokio::test]
 async fn streamed_objects_preserve_length_digest_and_aggregate_budget() {
     let tls = Tls::new().await;
-    let digest = "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721";
+    let digest = pir_artifact::digest(b"abcdef");
+    let digest = digest.as_str();
     let mut source = tls.source(100);
     for (length, verification, succeeds) in [
-        (6, Verification::Sha256(digest), true),
+        (6, Verification::Artifact(digest), true),
         (6, Verification::Length, true),
         (7, Verification::Length, false),
         (5, Verification::Length, false),
-        (6, Verification::Sha256(&"00".repeat(32)), false),
+        (6, Verification::Artifact(&"00".repeat(32)), false),
     ] {
         let mut output = Vec::new();
         let result = source

@@ -108,13 +108,13 @@ impl Publisher {
     }
     fn store(&self, bytes: &[u8]) -> Result<Object, Failure> {
         let object = Object::new(bytes);
-        let root = self.root().join("objects");
+        let root = self.root().join(pir_artifact::namespace("objects"));
         fs::create_dir_all(&root)?;
-        let path = root.join(&object.sha256);
+        let path = root.join(&object.checksum);
         if path.exists() {
             object.verify(&fs::read(path)?)?;
         } else {
-            durable(&root, &object.sha256, bytes)?;
+            durable(&root, &object.checksum, bytes)?;
         }
         Ok(object)
     }
@@ -141,11 +141,11 @@ impl Publisher {
                 .chain(&inventory.packing)
                 .chain(std::iter::once(&inventory.public))
             {
-                keep.insert(object.sha256.clone());
+                keep.insert(object.checksum.clone());
             }
         }
         durable(&root, "retained.json", &serde_json::to_vec(&retained)?)?;
-        for entry in fs::read_dir(root.join("objects"))? {
+        for entry in fs::read_dir(root.join(pir_artifact::namespace("objects")))? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if valid_digest(&name) && entry.file_type()?.is_file() && !keep.contains(&name) {
@@ -373,7 +373,7 @@ async fn object(
     if !valid_digest(&id) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let file = tokio::fs::File::open(s.root().join("objects").join(id))
+    let file = tokio::fs::File::open(s.root().join(pir_artifact::namespace("objects")).join(id))
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let stream = tokio_util::io::ReaderStream::new(file);

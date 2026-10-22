@@ -203,15 +203,15 @@ impl PublicationDistribution {
         self.check_canonical_anchor(&manifest).await?;
         let bytes = serde_json::to_vec(inventory).map_err(|e| e.to_string())?;
         let object = Object {
-            sha256: digest(inventory),
+            checksum: enhance_query_server::publication::inventory_digest(inventory),
             bytes: bytes.len() as u64,
         };
         if object.bytes > METADATA_LIMIT {
             return Err("inventory exceeds metadata limit".into());
         }
-        let directory = self.root.join("inventories");
+        let directory = self.root.join(pir_artifact::namespace("inventories"));
         fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        artifact::write_atomic(&directory, &format!("{}.json", object.sha256), |f| {
+        artifact::write_atomic(&directory, &format!("{}.json", object.checksum), |f| {
             f.write_all(&bytes)
         })
         .map_err(|e| e.to_string())?;

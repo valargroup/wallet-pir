@@ -349,6 +349,10 @@ pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
     let control = root.join("fault");
     std::fs::write(&control, "").unwrap();
     let mut child = tokio::process::Command::new("python3")
+        .env(
+            "PIR_ARTIFACT_HASH_COMMAND",
+            env!("CARGO_BIN_EXE_pir-publisher"),
+        )
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../pir-publisher/tests/support/distribution_tls.py"
@@ -427,7 +431,7 @@ fn finalization_lists_present_bytes_and_stops_when_asked() {
     let mut tables = 0;
     for artifact in &finalized.inventory().artifacts {
         let bytes = std::fs::read(directory.join(&artifact.path)).unwrap();
-        assert_eq!(artifact.sha256, digest(&bytes), "{}", artifact.path);
+        assert_eq!(artifact.checksum, digest(&bytes), "{}", artifact.path);
         assert_eq!(artifact.bytes, bytes.len() as u64);
         tables += usize::from(matches!(
             artifact.kind,
@@ -721,7 +725,7 @@ async fn batched_anchor_checks_bind_the_snapshot_and_fail_closed() {
     for mutate in [
         |r: &mut AnchorBatchRequest| r.revision += 1,
         |r: &mut AnchorBatchRequest| r.recovery_epoch += 1,
-        |r: &mut AnchorBatchRequest| r.inventory_sha256 = "33".repeat(32),
+        |r: &mut AnchorBatchRequest| r.inventory_checksum = "33".repeat(32),
     ] {
         let mut other = request.clone();
         mutate(&mut other);
@@ -1444,7 +1448,8 @@ fn with_inventory(
 ) -> Vec<u8> {
     let mut record = record.clone();
     record.inventory = serde_json::to_string(inventory).unwrap();
-    record.inventory_sha256 = transparent_shared::publication::digest(record.inventory.as_bytes());
+    record.inventory_checksum =
+        transparent_shared::publication::digest(record.inventory.as_bytes());
     serde_json::to_vec(&record).unwrap()
 }
 
@@ -1518,11 +1523,11 @@ fn restore_offers_the_exact_prepared_inventory_and_its_bodies_validate() {
     let restored = case.restore();
     // The exact bytes and digest offered over HTTPS, and only listed local files.
     assert_eq!(restored.finalized.bytes(), case.finalized.bytes());
-    assert_eq!(restored.finalized.sha256(), case.finalized.sha256());
+    assert_eq!(restored.finalized.checksum(), case.finalized.checksum());
     for artifact in &case.finalized.inventory().artifacts {
         assert_eq!(
-            restored.finalized.file(&artifact.sha256),
-            case.finalized.file(&artifact.sha256),
+            restored.finalized.file(&artifact.checksum),
+            case.finalized.file(&artifact.checksum),
             "{}",
             artifact.path
         );
@@ -1680,11 +1685,11 @@ fn integrity_confirms_same_size_body_corruption_the_restore_cannot_see() {
     {
         Err(transparent_shared::publication::IntegrityError::Mismatch {
             path,
-            found_sha256,
+            found_checksum,
             ..
         }) => {
             assert_eq!(path, table.path);
-            assert!(found_sha256.is_some());
+            assert!(found_checksum.is_some());
         }
         other => panic!("expected a mismatch, got {other:?}"),
     }
@@ -1807,7 +1812,7 @@ fn a_newer_job_or_cancellation_stops_obsolete_validation_and_releases_its_input(
         identity: Identity {
             directory: case.directory.clone(),
             map_sha256: case.expected.map_sha256.clone(),
-            inventory_sha256: case.finalized.sha256().to_string(),
+            inventory_checksum: case.finalized.checksum().to_string(),
             height: case.expected.anchor_height,
             hash: case.expected.anchor_hash.clone(),
             epoch: 0,
@@ -1900,7 +1905,7 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
         Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
             .unwrap();
     let inventory = restored.finalized.inventory().clone();
-    let sha256 = restored.finalized.sha256().to_string();
+    let sha256 = restored.finalized.checksum().to_string();
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
     let failures = root.path().join("state");
@@ -1926,7 +1931,7 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
         identity: Identity {
             directory: directory.clone(),
             map_sha256: set.map_digest.clone(),
-            inventory_sha256: sha256.clone(),
+            inventory_checksum: sha256.clone(),
             height: expected.anchor_height,
             hash: expected.anchor_hash.clone(),
             epoch: owner.0.epoch.load(Ordering::Acquire),
@@ -1957,7 +1962,7 @@ async fn restored_history_serves_before_validation_and_withdraws_on_a_body_misma
         .unwrap();
     assert_eq!(report.map_sha256, set.map_digest);
     assert_eq!(status("integrity_validation")["state"], "pending");
-    assert_eq!(status("integrity_validation")["inventory_sha256"], sha256);
+    assert_eq!(status("integrity_validation")["inventory_checksum"], sha256);
 
     // Same-size corruption found after start withdraws the publication and
     // is recorded for the next process.
@@ -2011,7 +2016,7 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
     let restored =
         Finalized::restore_completed(&directory, &serde_json::to_vec(&record).unwrap(), &expected)
             .unwrap();
-    let sha256 = restored.finalized.sha256().to_string();
+    let sha256 = restored.finalized.checksum().to_string();
     let rpc = canonical_rpc(root.path(), &set).await;
     let owner = authority(&directory, Some(restored.finalized), rpc.client.clone());
     let state = root.path().join("state");
@@ -2019,7 +2024,7 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
     let identity = Identity {
         directory: directory.clone(),
         map_sha256: set.map_digest.clone(),
-        inventory_sha256: sha256,
+        inventory_checksum: sha256,
         height: expected.anchor_height,
         hash: expected.anchor_hash.clone(),
         epoch: owner.0.epoch.load(Ordering::Acquire),
@@ -2040,7 +2045,7 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
     assert_eq!(*owner.0.status.read().unwrap(), before);
     // A different inventory under the current epoch is equally stale.
     let other = Identity {
-        inventory_sha256: "00".repeat(32),
+        inventory_checksum: "00".repeat(32),
         epoch: owner.0.epoch.load(Ordering::Acquire),
         ..identity
     };
@@ -2069,8 +2074,8 @@ async fn a_result_about_a_superseded_publication_changes_nothing() {
         Event::Integrity(Err(
             transparent_shared::publication::IntegrityError::Mismatch {
                 path: artifact.path.clone(),
-                expected_sha256: artifact.sha256.clone(),
-                found_sha256: Some("11".repeat(32)),
+                expected_checksum: artifact.checksum.clone(),
+                found_checksum: Some("11".repeat(32)),
                 reason: "changed".into(),
             },
         )),
@@ -2331,7 +2336,7 @@ async fn restarted_controller_serves_before_validation_and_keeps_serving_a_corre
     assert_eq!(status["integrity_validation"]["state"], "passed");
     assert_eq!(status["phase"], "serving");
     assert_eq!(
-        status["correctness_validation"]["inventory_sha256"],
+        status["correctness_validation"]["inventory_checksum"],
         transparent_shared::publication::digest(&serde_json::to_vec(&inventory).unwrap())
     );
     // Still the same process, still serving the same inventory.
@@ -2525,8 +2530,8 @@ async fn without_completion_evidence_corrupt_bytes_are_prepared_in_full_and_neve
     )
     .unwrap();
     let failures = startup.config.publication_root.join(INTEGRITY_FAILURES);
-    let recorded = serde_json::json!([{"path":table.path,"expected_sha256":table.sha256,
-        "found_sha256":null,"inventory_sha256":"00".repeat(32),
+    let recorded = serde_json::json!([{"path":table.path,"expected_checksum":table.sha256,
+        "found_checksum":null,"inventory_checksum":"00".repeat(32),
         "map_sha256":startup.record.map_sha256,"reason":"recorded by an earlier process"}]);
     std::fs::write(&failures, serde_json::to_vec(&recorded).unwrap()).unwrap();
     let (tls, task, shutdown) = startup.start("front").await;

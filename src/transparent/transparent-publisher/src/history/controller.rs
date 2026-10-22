@@ -411,7 +411,7 @@ pub async fn run_managed(
         status["integrity_validation"] = serde_json::json!({"state":"failed",
             "publication":{"height":authority.0.active.read().unwrap().publication.height,
                 "hash":authority.0.active.read().unwrap().publication.hash},
-            "map_sha256":failure.map_sha256,"inventory_sha256":failure.inventory_sha256,
+            "map_sha256":failure.map_sha256,"inventory_checksum":failure.inventory_checksum,
             "reason":format!("{}: {}", failure.path, failure.reason),
             "artifact":serde_json::to_value(&failure).unwrap_or_default()});
     }
@@ -1225,7 +1225,7 @@ async fn activate_history(
         if distribution.inventory().artifacts.iter().any(|a| {
             failures
                 .iter()
-                .any(|f| f.found_sha256.as_deref() == Some(a.sha256.as_str()))
+                .any(|f| f.found_checksum.as_deref() == Some(a.checksum.as_str()))
         }) {
             return Err("candidate lists bytes that failed integrity validation".into());
         }
@@ -1347,7 +1347,7 @@ async fn activate_history(
             status[phase] = serde_json::json!({"state":"passed","source":"preparation",
                 "publication":{"height":height,"hash":hash},
                 "map_sha256":publication.map_sha256,
-                "inventory_sha256":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.sha256().to_string())});
+                "inventory_checksum":authority.0.active.read().unwrap().distribution.as_ref().map(|d| d.checksum().to_string())});
         }
         // What this cycle did, for operators and measurements: when its
         // candidate was published, accepted by a preparation quorum and
@@ -1400,9 +1400,9 @@ const INTEGRITY_FAILURES: &str = "integrity-failures.json";
 #[serde(deny_unknown_fields)]
 struct IntegrityFailure {
     path: String,
-    expected_sha256: String,
-    found_sha256: Option<String>,
-    inventory_sha256: String,
+    expected_checksum: String,
+    found_checksum: Option<String>,
+    inventory_checksum: String,
     map_sha256: String,
     reason: String,
 }
@@ -1422,8 +1422,8 @@ fn lists_failed(
 ) -> bool {
     inventory.artifacts.iter().any(|a| {
         failures.iter().any(|f| {
-            (f.path == a.path && f.expected_sha256 == a.sha256)
-                || f.found_sha256.as_deref() == Some(a.sha256.as_str())
+            (f.path == a.path && f.expected_checksum == a.checksum)
+                || f.found_checksum.as_deref() == Some(a.checksum.as_str())
         })
     })
 }
@@ -1574,7 +1574,7 @@ async fn serve_restored(
         identity: super::validator::Identity {
             directory: publication.directory.clone(),
             map_sha256: publication.map_sha256.clone(),
-            inventory_sha256: distribution.sha256().to_string(),
+            inventory_checksum: distribution.checksum().to_string(),
             height: publication.height,
             hash: publication.hash.clone(),
             epoch,
@@ -1591,7 +1591,7 @@ fn validation_status(identity: &super::validator::Identity, state: &str) -> serd
         "state": state,
         "publication": {"height": identity.height, "hash": identity.hash},
         "map_sha256": identity.map_sha256,
-        "inventory_sha256": identity.inventory_sha256,
+        "inventory_checksum": identity.inventory_checksum,
     })
 }
 
@@ -1620,7 +1620,7 @@ fn validation_event(
             && active
                 .distribution
                 .as_ref()
-                .is_some_and(|d| d.sha256() == identity.inventory_sha256)
+                .is_some_and(|d| d.checksum() == identity.inventory_checksum)
     };
     let set = |key: &str, value: serde_json::Value| {
         if current() {
@@ -1656,17 +1656,17 @@ fn validation_event(
         }),
         Event::Integrity(Err(IntegrityError::Mismatch {
             path,
-            expected_sha256,
-            found_sha256,
+            expected_checksum,
+            found_checksum,
             reason,
         })) => {
-            tracing::error!(%path, %reason, inventory = %identity.inventory_sha256,
+            tracing::error!(%path, %reason, inventory = %identity.inventory_checksum,
                 "publication artifact failed integrity validation");
             let failure = IntegrityFailure {
                 path,
-                expected_sha256,
-                found_sha256,
-                inventory_sha256: identity.inventory_sha256.clone(),
+                expected_checksum,
+                found_checksum,
+                inventory_checksum: identity.inventory_checksum.clone(),
                 map_sha256: identity.map_sha256.clone(),
                 reason: reason.clone(),
             };
@@ -1735,7 +1735,7 @@ fn validation_event(
             }
         }
         Event::Correctness(Err(CorrectnessError::Failed(reason))) => {
-            tracing::error!(%reason, inventory = %identity.inventory_sha256,
+            tracing::error!(%reason, inventory = %identity.inventory_checksum,
                 "publication failed correctness validation; still serving");
             update("correctness", &|v| {
                 v["state"] = "failed".into();
@@ -1932,8 +1932,8 @@ async fn check_distribution_anchors(
         || authority.0.distribution_revision.load(Ordering::Acquire) != current.revision
         || authority.0.withdrawn.load(Ordering::Acquire) != !current.eligible()
         || active.publication.map_sha256 != map_sha256
-        || active.distribution.as_ref().map(|d| d.sha256())
-            != Some(current.inventory_sha256.as_str())
+        || active.distribution.as_ref().map(|d| d.checksum())
+            != Some(current.inventory_checksum.as_str())
     {
         return Err("canonicality snapshot superseded".into());
     }
@@ -1973,7 +1973,7 @@ async fn anchor_batch(
             schema: publication::SCHEMA.into(),
             revision: current.revision,
             recovery_epoch: current.recovery_epoch,
-            inventory_sha256: current.inventory_sha256.clone(),
+            inventory_checksum: current.inventory_checksum.clone(),
             genesis_hash: current.genesis_hash.clone(),
             results: batch
                 .anchors
@@ -2014,7 +2014,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
             schema: publication::SCHEMA.into(),
             revision: authority.0.distribution_revision.load(Ordering::Acquire),
             recovery_epoch: authority.0.epoch.load(Ordering::Acquire),
-            inventory_sha256: finalized.sha256().to_string(),
+            inventory_checksum: finalized.checksum().to_string(),
             network: active.filters.map().network.clone(),
             genesis_hash: active.filters.map().genesis_hash.clone(),
             anchor_height: active.publication.height,
@@ -2122,7 +2122,7 @@ async fn distribution_request(authority: Authority, request: Request) -> Respons
         return unavailable();
     }
     let finalized = active.distribution.as_ref().unwrap();
-    if suffix == format!("inventories/{}", finalized.sha256()) {
+    if suffix == format!("inventories/{}", finalized.checksum()) {
         return (
             [
                 ("content-type", "application/json"),

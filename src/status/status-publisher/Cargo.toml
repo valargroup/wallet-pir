@@ -21,6 +21,7 @@ cuda = ["status-query-server/cuda"]
 fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 
 [dependencies]
+pir-artifact = { path = "../../shared/pir-artifact" }
 pir-pipeline = { path = "../../shared/pir-pipeline" }
 thiserror = "2"
 status-query-server = { path = "../status-query-server" }
@@ -44,6 +45,6 @@ zakura-pir-publisher = { git = "https://github.com/zakura-core/wallet-libraries.
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f48b62b80ec7d9d7fb7893401435a24b189b8ec2", default-features = false, optional = true }
 
 [dev-dependencies]
-pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
+pir-service-discovery = { version = "2.0.0", path = "../../shared/pir-service-discovery" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

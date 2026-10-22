@@ -20,6 +20,8 @@ struct Maintenance {
 }
 #[derive(clap::Subcommand)]
 enum Command {
+    /// Hash artifacts or prepare a checksum migration without starting services.
+    ArtifactChecksum(pir_publisher::artifact_checksum::Command),
     #[cfg(feature = "enhance")]
     /// Enhance offline maintenance and build information.
     Enhance(Maintenance),
@@ -45,6 +47,7 @@ enum Command {
 impl Command {
     async fn run(self) -> pir_publisher::Result<()> {
         match self {
+            Self::ArtifactChecksum(command) => command.run(),
             #[cfg(feature = "enhance")]
             Self::Enhance(args) => {
                 enhance_publisher::commands::run(arguments("enhance", args)).await
@@ -86,13 +89,26 @@ fn arguments(name: &str, args: Maintenance) -> Vec<std::ffi::OsString> {
         .chain(args.args)
         .collect()
 }
-#[tokio::main]
-async fn main() -> pir_publisher::Result<()> {
+fn main() -> pir_publisher::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let args = Args::parse();
+    let mut args = Args::parse();
+    // The checksum helper is synchronous. Python tooling can stream through it
+    // without allocating a serving runtime and its worker threads per file.
+    if matches!(args.command, Some(Command::ArtifactChecksum(_))) {
+        if let Some(Command::ArtifactChecksum(command)) = args.command.take() {
+            return command.run();
+        }
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(args))
+}
+
+async fn run(args: Args) -> pir_publisher::Result<()> {
     if let Some(command) = args.command {
         return command.run().await;
     }

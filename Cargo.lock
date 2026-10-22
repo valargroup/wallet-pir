@@ -100,7 +100,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -111,7 +111,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -334,6 +334,19 @@ checksum = "2380c0236432f7b22a70229df30f218f5293870c056beb76f5ca068e3273a366"
 dependencies = [
  "arrayvec",
  "constant_time_eq",
+]
+
+[[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -873,6 +886,7 @@ dependencies = [
  "enhance-query-server",
  "hex",
  "ipir-sp",
+ "pir-artifact",
  "pir-control",
  "pir-pipeline",
  "reinspiring",
@@ -906,6 +920,7 @@ dependencies = [
  "ipir-sp",
  "libc",
  "memmap2",
+ "pir-artifact",
  "pir-control",
  "pir-cuda",
  "pir-observability",
@@ -944,7 +959,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2017,7 +2032,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2161,6 +2176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-artifact"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "pir-control"
 version = "0.1.0"
 dependencies = [
@@ -2264,6 +2291,8 @@ dependencies = [
  "axum",
  "clap",
  "enhance-publisher",
+ "enhance-query-server",
+ "pir-artifact",
  "pir-pipeline",
  "pir-service-discovery",
  "receiver-indexer",
@@ -2271,12 +2300,14 @@ dependencies = [
  "serde",
  "serde_json",
  "status-publisher",
+ "status-query-server",
  "tempfile",
  "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
+ "transparent-shared",
 ]
 
 [[package]]
@@ -2286,6 +2317,7 @@ dependencies = [
  "axum",
  "clap",
  "enhance-query-server",
+ "pir-artifact",
  "pir-pipeline",
  "pir-sync-manager",
  "reqwest",
@@ -2311,7 +2343,7 @@ dependencies = [
 
 [[package]]
 name = "pir-service-discovery"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "semver",
  "serde",
@@ -2332,6 +2364,7 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "pir-artifact",
  "pir-service-discovery",
  "reqwest",
  "rustls",
@@ -2959,7 +2992,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3235,7 +3268,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3268,6 +3301,7 @@ dependencies = [
  "clap",
  "hex",
  "ipir-sp",
+ "pir-artifact",
  "pir-control",
  "pir-pipeline",
  "pir-service-discovery",
@@ -3299,6 +3333,7 @@ dependencies = [
  "ipir-sp",
  "memmap2",
  "pir-control",
+ "pir-artifact",
  "pir-cuda",
  "pir-pipeline",
  "pir-runtime",
@@ -3395,7 +3430,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3679,6 +3714,7 @@ dependencies = [
  "clap",
  "hex",
  "libc",
+ "pir-artifact",
  "pir-control",
  "pir-observability",
  "pir-pipeline",
@@ -3714,6 +3750,7 @@ dependencies = [
  "hex",
  "http-body",
  "ipir-sp",
+ "pir-artifact",
  "pir-control",
  "pir-observability",
  "pir-pipeline",
@@ -3745,6 +3782,7 @@ dependencies = [
  "hex",
  "ipir-sp",
  "memmap2",
+ "pir-artifact",
  "pir-observability",
  "pir-runtime",
  "rayon",
@@ -4108,7 +4146,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

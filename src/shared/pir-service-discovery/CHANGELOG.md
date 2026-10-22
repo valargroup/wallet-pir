@@ -6,6 +6,13 @@ version is compatible in both directions.
 
 ## Unreleased
 
+## 2.0.0
+
+- Prepared artifact distribution uses explicitly tagged checksums and BLAKE3
+  across Enhance, Status, Transparent History and Transparent Display.
+- Artifact inventory schemas and prepared runtime files change together;
+  version 1 peers are incompatible. Wallet-protocol commitments are unchanged.
+
 ## 1.0.0
 
 Initial stable contract.

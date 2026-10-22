@@ -844,7 +844,10 @@ mod tests {
             build_shipped_verified(revision, &dir, &[]).unwrap();
         }
         let finalized = Finalized::prepare_set(&dir, &set).unwrap();
-        assert_eq!(finalized.sha256, Finalized::prepare(&dir).unwrap().sha256);
+        assert_eq!(
+            finalized.checksum,
+            Finalized::prepare(&dir).unwrap().checksum
+        );
 
         // A source replaced after the set verified it is still refused: every
         // published source is reloaded against its manifest digest.

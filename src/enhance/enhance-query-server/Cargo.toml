@@ -18,6 +18,7 @@ cuda = ["dep:pir-cuda", "pir-cuda/cuda"]
 
 client = ["dep:zakura-pir-client"]
 [dependencies]
+pir-artifact = { path = "../../shared/pir-artifact" }
 pir-cuda = { path = "../../shared/pir-cuda", optional = true }
 pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }

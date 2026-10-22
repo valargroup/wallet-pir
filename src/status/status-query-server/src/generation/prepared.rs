@@ -109,10 +109,10 @@ impl Generation {
             let mut blocks = Vec::new();
             for item in &inventory.packing {
                 let file = File::open(object(item))?;
-                let mut hash = Sha256::new();
+                let mut hash = pir_artifact::Hasher::new();
                 let mut reader = &file;
                 let n = std::io::copy(&mut reader, &mut HashWriter(&mut hash))?;
-                if n != item.bytes || hex::encode(hash.finalize()) != item.sha256 {
+                if n != item.bytes || hex::encode(hash.finalize()) != item.checksum {
                     return Err("Status packing digest differs".into());
                 }
                 // SAFETY: downloads publish read-only immutable inodes with atomic
@@ -151,7 +151,7 @@ impl Generation {
         Ok(generation)
     }
 }
-struct HashWriter<'a>(&'a mut Sha256);
+struct HashWriter<'a>(&'a mut pir_artifact::Hasher);
 impl Write for HashWriter<'_> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0.update(bytes);

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{prepared_packing, runtime, PackingBudget};
 use enhance_query_server::{
-    protocol::{digest, Coverage},
+    protocol::Coverage,
     publication::Domain,
 };
 use sha2::{Digest, Sha256};
@@ -35,7 +35,7 @@ pub(super) fn prepare_domains(
             rows.push(install_object_bytes(root, &bytes)?);
         }
         // A previously verified domain avoids hint and packing preparation.
-        let key = digest(&plan);
+        let key = enhance_query_server::publication::inventory_digest(&plan);
         let retained = root.join("domains").join(format!("{key}.json"));
         if retained.exists() {
             let domain: Domain = read_metadata(&retained)?;
@@ -64,6 +64,7 @@ pub(super) fn prepare_domains(
             plan,
             rows,
             hint: install_object_bytes(root, &encoded)?,
+            public_params_sha256: hex::encode(Sha256::digest(&packing.public)),
             public: install_object_bytes(root, &packing.public)?,
             packing: prepared,
         };

@@ -1,6 +1,6 @@
 //! Bounded artifact I/O. Open handles pin immutable, atomically replaced files.
 use axum::body::Bytes;
-use sha2::{Digest, Sha256};
+use pir_artifact::Hasher;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Write};
 #[cfg(target_os = "linux")]
@@ -165,7 +165,7 @@ impl Drop for PositionalReader {
 pub(crate) struct VerifiedReader<R> {
     inner: R,
     remaining: u64,
-    hash: Sha256,
+    hash: Hasher,
     digest: String,
     complete: bool,
     failed: Arc<AtomicBool>,
@@ -176,7 +176,7 @@ impl<R: Read> VerifiedReader<R> {
         Self {
             inner,
             remaining: length,
-            hash: Sha256::new(),
+            hash: Hasher::new(),
             digest,
             complete: false,
             failed: Arc::new(AtomicBool::new(false)),
@@ -251,7 +251,7 @@ pub fn write_atomic(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<String> {
-    pir_control::durable::write_atomic(directory, name, write)
+    pir_artifact::write_atomic_with(directory, name, |_| {}, write)
 }
 
 /// Sync first, then request eviction for large artifacts that are already
@@ -261,7 +261,7 @@ pub fn write_atomic_cold(
     name: &str,
     write: impl FnOnce(&mut dyn Write) -> io::Result<()>,
 ) -> io::Result<String> {
-    pir_control::durable::write_atomic_with(directory, name, release_file_cache, write)
+    pir_artifact::write_atomic_with(directory, name, release_file_cache, write)
 }
 
 #[cfg(test)]
@@ -274,8 +274,7 @@ mod tests {
 
     fn artifact(path: &Path, bytes: &[u8]) -> PublicationArtifact {
         fs::write(path, bytes).unwrap();
-        PublicationArtifact::open(path, bytes.len() as u64, hex::encode(Sha256::digest(bytes)))
-            .unwrap()
+        PublicationArtifact::open(path, bytes.len() as u64, pir_artifact::digest(bytes)).unwrap()
     }
 
     #[test]
@@ -350,7 +349,7 @@ mod tests {
             let mut reader = VerifiedReader::new(
                 Cursor::new(corrupt),
                 data.len() as u64,
-                hex::encode(Sha256::digest(&data)),
+                pir_artifact::digest(&data),
             );
             let mut output = Vec::new();
             assert!(reader.read_to_end(&mut output).is_err());
@@ -374,7 +373,7 @@ mod tests {
         assert_eq!(fs::read(dir.path().join("hint")).unwrap(), b"committed");
         assert!(!dir.path().join("hint.tmp").exists());
         let digest = write_atomic(dir.path(), "hint", |w| w.write_all(b"replacement")).unwrap();
-        assert_eq!(digest, hex::encode(Sha256::digest(b"replacement")));
+        assert_eq!(digest, pir_artifact::digest(b"replacement"));
     }
 
     #[test]
@@ -383,7 +382,7 @@ mod tests {
         let bytes = vec![0x5a; IO_BUFFER_BYTES * 4];
         let digest =
             write_atomic_cold(dir.path(), "large", |writer| writer.write_all(&bytes)).unwrap();
-        assert_eq!(digest, hex::encode(Sha256::digest(&bytes)));
+        assert_eq!(digest, pir_artifact::digest(&bytes));
         let pinned =
             PublicationArtifact::open(&dir.path().join("large"), bytes.len() as u64, digest)
                 .unwrap();

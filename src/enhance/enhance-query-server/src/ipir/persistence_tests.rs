@@ -17,7 +17,7 @@ fn streamed_database_rejects_short_corrupt_and_failed_reads_without_panicking() 
     let (_, params) = shard_parameters(&layout()).unwrap();
     let count = params.db_rows * params.db_cols;
     let bytes = vec![0u8; count * 2];
-    let digest = hex::encode(Sha256::digest(&bytes));
+    let digest = pir_artifact::digest(&bytes);
     let input = BufReader::with_capacity(
         IO_BUFFER_BYTES,
         VerifiedReader::new(Cursor::new(&bytes), bytes.len() as u64, digest.clone()),
