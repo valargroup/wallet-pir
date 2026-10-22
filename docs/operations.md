@@ -297,11 +297,9 @@ them with the usual exact artifact identity, pinned hosts, lock and journal:
    refuses to overwrite a configuration file it did not render.
 3. `deploy` stages the release, then runs the product's own check on the
    staged release against a staged copy of the configuration before any unit
-   changes: `receiver-directory serve-publication --check`,
-   `pir-query-server --config FILE --verify-only` for the role's Transparent
-   history section and, when an initial publication is named, for its
-   transaction-details section. Enhance and Status
-   workers have no staged inputs, so no check is manufactured for them. The
+   changes: `receiver-directory serve-publication --check`. Enhance, Status
+   and Transparent workers download their publications from their HTTPS
+   publisher and have no staged inputs, so no check is manufactured for them. The
    unit is then written, enabled, started and verified: active, the release's
    digest running, health answering with that `binary_sha256`, and the role's
    own readiness where it has one.
