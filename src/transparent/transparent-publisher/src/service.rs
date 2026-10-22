@@ -72,8 +72,11 @@ where
     )
     .following_chain())
 }
+/// `history` is History's configuration when it runs in the same publisher:
+/// its committed event journal then feeds the filters.
 pub fn filters<E: IngestionExecutor>(
     config: FilterConfig,
+    history: Option<&HistoryConfig>,
     chain: Option<&ChainSettings>,
     executor: E,
 ) -> Result<PublisherDefinition<axum::Router>> {
@@ -81,6 +84,7 @@ pub fn filters<E: IngestionExecutor>(
     let chain = chain
         .cloned()
         .ok_or("enabled transparent_filters publisher needs the root chain settings")?;
+    let history_journal = history.map(|history| history.data_dir.clone());
     let resources = PublisherResources {
         listeners: vec![config.listen],
         writable_paths: vec![config.data_dir.clone()],
@@ -100,6 +104,7 @@ pub fn filters<E: IngestionExecutor>(
             let rpc = crate::ingest::zakura::connect(&chain.rpc_url, &chain.rpc_cookie)?;
             crate::history::filter_service::run(
                 config,
+                history_journal,
                 rpc,
                 feed,
                 executor,

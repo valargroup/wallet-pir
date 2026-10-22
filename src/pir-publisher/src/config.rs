@@ -140,6 +140,7 @@ impl Config {
         register!(
             transparent_filters,
             transparent_publisher::service::filters,
+            validation::active(&self.transparent_history, "transparent_history")?,
             chain,
             crate::publisher::PublisherEngine
         );

@@ -236,7 +236,7 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
         original = copy.deepcopy(self.request['configuration'])
         changes = [('transparent_history', 'recent_from', 2),
                    ('transparent_history', 'listen', '10.0.0.9:8096'),
-                   ('transaction_details', 'poll_ms', 501),
+                   ('transaction_details', 'max_recent_records', 501),
                    ('enhance', 'prevout_cache_outputs', 20),
                    ('status', 'publisher', {'state_dir': '/srv/other-status'})]
         for product, field, value in changes:

@@ -42,8 +42,11 @@ impl Config {
 
 /// Serve filters from the existing store while the root executor schedules its
 /// ingestion from the root chain follower.
+/// With `history_journal`, blocks History has committed are projected from its
+/// event journal instead of being extracted again.
 pub async fn run<E: IngestionExecutor>(
     cli: Config,
+    history_journal: Option<PathBuf>,
     zakura: NodeClient,
     feed: ChainFeed,
     executor: E,
@@ -90,9 +93,12 @@ pub async fn run<E: IngestionExecutor>(
         );
         state = state.with_shard_filters(filters);
     }
-    let writer =
+    let mut writer =
         ingest::FilterIngestion::new(zakura, state.clone(), cli.cache_outputs, cli.commit_every)
             .await;
+    if let Some(journal) = history_journal {
+        writer = writer.sharing_history(journal);
+    }
     let ingest_stop = stop.clone();
     let finished = state.clone();
     let ingestion = tokio::spawn(async move {

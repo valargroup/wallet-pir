@@ -524,6 +524,7 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
     let configuration = out.join("publisher.json");
     let settings = serde_json::json!({
         "management_listen": management,
+        "chain": {"rpc_url": node_origin, "rpc_cookie": cookie, "poll_ms": 100},
         "transparent_history": {"enabled": true, "settings": {
             "data_dir": history,
             "publication_root": out.join("history-publisher"),
@@ -531,8 +532,6 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
             "recent_from": 2,
             "recent_geometry": "decoupled-2k-8k",
             "archive_geometry": "decoupled-32k-32k",
-            "rpc_url": node_origin,
-            "rpc_cookie": cookie,
             "listen": history_listen,
             "source_sha": std::env::var("WALLET_PIR_SOURCE_SHA").unwrap(),
             "follow_journal": true
@@ -540,9 +539,6 @@ async fn unified_publisher_drives_independent_full_history_and_display_consumers
         "transaction_details": {"enabled": true, "settings": {
             "root": display_root,
             "journal": display,
-            "rpc_url": node_origin,
-            "rpc_cookie": cookie,
-            "poll_ms": 100,
             "status_listen": display_listen
         }}
     });

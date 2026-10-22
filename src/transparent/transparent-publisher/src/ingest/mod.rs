@@ -83,10 +83,16 @@ pub async fn build_fetched_block_filter(
 /// coverage, rolls it back and appends filters built by the same transparent
 /// extraction History uses. It needs no historical event journal.
 ///
+/// When History runs beside the filters, blocks History's event journal has
+/// committed are projected from it, including oversized-event sidecars, rather
+/// than extracted a second time; heights below the journal's start still use
+/// extraction, and heights above its coverage wait for History.
+///
 /// Rollback only moves the height map: filter bytes for orphaned blocks stay in
 /// the store as immutable cached content and become reachable again for free if
 /// their block returns.
 pub struct FilterIngestion {
+    history: Option<HistoryJournal>,
     zakura: NodeClient,
     state: ServiceState,
     cache: OutputCache,
@@ -114,6 +120,7 @@ impl FilterIngestion {
             )
         };
         Self {
+            history: None,
             zakura,
             state,
             cache: OutputCache::new(cache_outputs),
@@ -123,6 +130,88 @@ impl FilterIngestion {
             start,
             end,
         }
+    }
+}
+
+impl FilterIngestion {
+    /// Project blocks History's committed journal at `dir` holds.
+    pub fn sharing_history(mut self, dir: std::path::PathBuf) -> Self {
+        self.history = Some(HistoryJournal { dir, reader: None });
+        self
+    }
+
+    /// One block's hash, parent and filter, projected from History's journal
+    /// when it holds the block, or extracted from the node otherwise.
+    async fn build(&mut self, height: u64) -> Result<Built, BoxError> {
+        if let Some(history) = &mut self.history {
+            if let Some(built) = history.project(height)? {
+                return Ok(built);
+            }
+        }
+        let fetched = self.zakura.fetch_block(height).await?;
+        let parent = BlockHash::from_internal_bytes(fetched.parent());
+        let built =
+            build_fetched_block_filter(&self.zakura, &mut self.cache, height, fetched).await?;
+        if self.zakura.block_hash_display(height).await? != built.block_hash.to_display_hex() {
+            return Err("block became noncanonical during extraction".into());
+        }
+        self.state
+            .metrics()
+            .observe_block(built.rpc_lookups, built.cache_hits);
+        Ok(Built {
+            block_hash: built.block_hash,
+            parent: Some(parent),
+            filter: built.filter,
+        })
+    }
+}
+
+struct Built {
+    block_hash: BlockHash,
+    /// The parent hash, when the source records it.
+    parent: Option<BlockHash>,
+    filter: transparent_filter::FilterBytes,
+}
+
+/// History's committed event journal, read in place.
+struct HistoryJournal {
+    dir: std::path::PathBuf,
+    reader: Option<transparent_shared::journal::events::EventStore>,
+}
+
+impl HistoryJournal {
+    /// The filter of `height` from committed History events, `None` below the
+    /// journal's start. Heights above its committed coverage are an error the
+    /// next observation retries, so the filter store never runs ahead of it.
+    fn project(&mut self, height: u64) -> Result<Option<Built>, BoxError> {
+        let reader = match &mut self.reader {
+            Some(reader) => {
+                reader.refresh()?;
+                reader
+            }
+            None => self
+                .reader
+                .insert(transparent_shared::journal::events::EventStore::open_existing(&self.dir)?),
+        };
+        if height < reader.start_height() {
+            return Ok(None);
+        }
+        let (Some(block), Some(events)) = (reader.block_at(height), reader.events_at(height)?)
+        else {
+            return Err(format!("History's journal has not committed block {height} yet").into());
+        };
+        let parent = height
+            .checked_sub(1)
+            .and_then(|parent| reader.block_at(parent))
+            .map(|parent| parent.block_hash);
+        let mut elements: Vec<ScriptBytes> = events.into_iter().map(|(script, _)| script).collect();
+        elements.sort();
+        elements.dedup();
+        Ok(Some(Built {
+            block_hash: block.block_hash,
+            parent,
+            filter: build_filter(block.block_hash, &elements)?,
+        }))
     }
 }
 
@@ -197,25 +286,25 @@ impl Ingestion for FilterIngestion {
             .await;
         let mut since_commit = 0;
         for next in from..=through {
-            // Fetch and build outside the lock; take it only to append.
-            let fetched = self.zakura.fetch_block(next).await?;
-            let parent = BlockHash::from_internal_bytes(fetched.parent()).to_display_hex();
+            // Build outside the lock; take it only to append.
+            let built = self.build(next).await?;
             let expected = match &self.end {
-                Some(end) if end.height + 1 == next => end.hash.clone(),
+                Some(end) if end.height + 1 == next => Some(end.hash.clone()),
                 None if next == self.start && next == 0 => {
-                    BlockHash::from_internal_bytes([0; 32]).to_display_hex()
+                    Some(BlockHash::from_internal_bytes([0; 32]).to_display_hex())
                 }
                 // The first block of an empty store has no committed parent.
-                None if next == self.start => parent.clone(),
+                None if next == self.start => None,
                 _ => return Err("missing filter store parent".into()),
             };
-            if parent != expected {
-                return Err("node reorganized while fetching block; retry reconciliation".into());
-            }
-            let built =
-                build_fetched_block_filter(&self.zakura, &mut self.cache, next, fetched).await?;
-            if self.zakura.block_hash_display(next).await? != built.block_hash.to_display_hex() {
-                return Err("block became noncanonical during extraction".into());
+            // A journal's first block records no parent; the scheduler's
+            // canonical anchor check covers it.
+            if let (Some(expected), Some(parent)) = (&expected, built.parent) {
+                if parent.to_display_hex() != *expected {
+                    return Err(
+                        "node reorganized while fetching block; retry reconciliation".into(),
+                    );
+                }
             }
             {
                 let mut inner = self.state.inner().write().await;
@@ -231,9 +320,6 @@ impl Ingestion for FilterIngestion {
                 height: next,
                 hash: built.block_hash.to_display_hex(),
             });
-            self.state
-                .metrics()
-                .observe_block(built.rpc_lookups, built.cache_hits);
         }
         self.state.inner().write().await.store.commit()?;
         self.state
@@ -258,5 +344,124 @@ impl Ingestion for FilterIngestion {
             return pir_pipeline::FailurePolicy::Stop;
         }
         pir_pipeline::FailurePolicy::NextPoll
+    }
+}
+
+#[cfg(test)]
+mod history_projection_tests {
+    use super::*;
+    use transparent_shared::journal::events::EventStore;
+    use zakura_pir_protocol::transparent::events::{
+        ReceiveEvent, SpendEvent, TransparentEvent, Txid,
+    };
+
+    fn hash(height: u64) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&height.to_le_bytes());
+        bytes[31] = 0xa5;
+        BlockHash::from_internal_bytes(bytes)
+    }
+
+    fn receive(script: &[u8], height: u32, tag: u8) -> (ScriptBytes, TransparentEvent) {
+        let event = TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
+            height,
+            txid: Txid([tag; 32]),
+            transaction_index: 0,
+            output_index: u32::from(tag),
+            value: 1_000,
+            coinbase: false,
+        });
+        (ScriptBytes::new(script.to_vec()), event)
+    }
+
+    fn spend(script: &[u8], height: u32, tag: u8) -> (ScriptBytes, TransparentEvent) {
+        let event = TransparentEvent::Spend(SpendEvent {
+            metadata: None,
+            height,
+            spending_txid: Txid([tag + 1; 32]),
+            transaction_index: 1,
+            input_index: 0,
+            spent_txid: Txid([tag; 32]),
+            spent_output_index: 0,
+        });
+        (ScriptBytes::new(script.to_vec()), event)
+    }
+
+    /// Filters projected from History's committed events equal filters built
+    /// over independently listed script sets: empty blocks, receives, spends,
+    /// repeated and unusual scripts. Heights below the journal's start fall
+    /// back to extraction; heights above its coverage wait; a rollback the
+    /// journal commits is visible to the next projection.
+    #[test]
+    fn projection_matches_independent_script_sets_and_follows_rollbacks() {
+        let dir = tempfile::tempdir().unwrap();
+        let p2pkh = [0x76, 0xa9, 0x14, 7, 0x88, 0xac];
+        let bare = [0x51, 0x21, 3, 0x51, 0xae];
+        let op_return = [0x6a, 0x04, 1, 2, 3, 4];
+        let one_byte = [0x00];
+        let blocks: Vec<(Vec<(ScriptBytes, TransparentEvent)>, Vec<&[u8]>)> = vec![
+            (vec![], vec![]),
+            (
+                vec![
+                    receive(&p2pkh, 11, 1),
+                    receive(&bare, 11, 2),
+                    spend(&p2pkh, 11, 3),
+                ],
+                vec![&p2pkh, &bare],
+            ),
+            (
+                vec![receive(&op_return, 12, 4), spend(&one_byte, 12, 5)],
+                vec![&one_byte, &op_return],
+            ),
+        ];
+        let mut writer = EventStore::open(dir.path(), "00", 10).unwrap();
+        for (offset, (events, _)) in blocks.iter().enumerate() {
+            let height = 10 + offset as u64;
+            writer.append_block(height, hash(height), events).unwrap();
+        }
+        writer.commit().unwrap();
+        let mut journal = HistoryJournal {
+            dir: dir.path().to_path_buf(),
+            reader: None,
+        };
+        assert!(journal.project(9).unwrap().is_none(), "below the start");
+        for (offset, (_, scripts)) in blocks.iter().enumerate() {
+            let height = 10 + offset as u64;
+            let built = journal.project(height).unwrap().unwrap();
+            let mut expected: Vec<ScriptBytes> = scripts
+                .iter()
+                .map(|s| ScriptBytes::new(s.to_vec()))
+                .collect();
+            expected.sort();
+            assert_eq!(built.block_hash, hash(height));
+            assert_eq!(
+                built.parent,
+                height.checked_sub(1).filter(|h| *h >= 10).map(hash)
+            );
+            assert_eq!(
+                built.filter.as_slice(),
+                build_filter(hash(height), &expected).unwrap().as_slice(),
+                "height {height}"
+            );
+        }
+        assert!(journal.project(13).is_err(), "above committed coverage");
+        // History rolls back and commits a replacement block.
+        writer.rollback_to(Some(11)).unwrap();
+        let mut replaced = hash(12).internal_bytes().to_owned();
+        replaced[30] = 1;
+        let replaced = BlockHash::from_internal_bytes(replaced);
+        writer
+            .append_block(12, replaced, &[receive(&p2pkh, 12, 9)])
+            .unwrap();
+        writer.commit().unwrap();
+        let built = journal.project(12).unwrap().unwrap();
+        assert_eq!(built.block_hash, replaced);
+        assert_eq!(
+            built.filter.as_slice(),
+            build_filter(replaced, &[ScriptBytes::new(p2pkh.to_vec())])
+                .unwrap()
+                .as_slice()
+        );
     }
 }

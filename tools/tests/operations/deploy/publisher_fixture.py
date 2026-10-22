@@ -21,8 +21,7 @@ HISTORY = {'data_dir': '/srv/transparent-activity/full-v3/journal',
            'recent_from': 1, 'recent_geometry': 'decoupled-2k-8k', 'archive_geometry': 'decoupled-32k-32k',
            'listen': '10.0.0.1:8096', 'source_sha': 'retained-source', 'follow_journal': False}
 DISPLAY = {'root': '/srv/txid-display-genesis/v4/root', 'journal': '/srv/txid-display-genesis/journal-v3',
-           'rpc_url': 'http://127.0.0.1:8232',
-           'rpc_cookie': '/root/.cache/zakura/.cookie', 'poll_ms': 500, 'status_listen': '127.0.0.1:8098',
+           'status_listen': '127.0.0.1:8098',
            'trust_sealed': False, 'max_recent_records': None}
 
 

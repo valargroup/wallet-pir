@@ -1043,7 +1043,7 @@ mod live {
 
     #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
-    async fn live_follow_publishes_rolls_back_and_halts_on_a_sealed_fork() {
+    async fn live_follow_publishes_rolls_back_and_refuses_another_network() {
         let temp = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 6, 1);
@@ -1112,7 +1112,7 @@ mod live {
         });
 
         let driver = tokio::spawn({
-            let chain = chain.clone();
+            let (chain, stop) = (chain.clone(), stop.clone());
             async move {
                 // Replay reaches the journal end first.
                 let tip = hash(&chain.read().unwrap()[5]);
@@ -1129,35 +1129,30 @@ mod live {
                 }
                 let tip = hash(&chain.read().unwrap()[9]);
                 published(&status, 9, &tip).await;
-                // A fork replacing the display start's parent cannot be followed.
+                // A chain with another genesis is another network: the writer
+                // refuses it before reconciliation could treat it as a reorg.
                 {
                     let mut blocks = chain.write().unwrap();
                     blocks.clear();
                     extend(&mut blocks, 12, 40);
                 }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                stop.request();
             }
         });
         let outcome = tokio::time::timeout(
             Duration::from_secs(60),
-            controller.run(crate::host_engine::PublisherEngine),
+            controller.run_until(crate::host_engine::PublisherEngine, stop.clone()),
         )
         .await
-        .expect("the controller halts")
+        .expect("the controller stops")
         .unwrap();
         driver.await.unwrap();
-        stop.request();
-        // The writer refused the sealed rollback before changing the journal.
-        assert!(matches!(
-            ingest.await.unwrap(),
-            Err(crate::tx_detail::ingestion::IngestError::SealedReorg(..))
-        ));
+        assert!(ingest.await.unwrap().is_ok());
         following.await.unwrap();
-        assert!(
-            matches!(outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
-            "{outcome:?}"
-        );
+        assert_eq!(outcome, Outcome::Idle);
         assert_eq!(reorgs_from(&root), vec![7]);
-        // The halted controller left the journal on the last followed chain.
+        // The journal stayed on the last followed chain.
         assert_eq!(controller.store().covered_through(), Some(9));
         assert_eq!(controller.map().covered_through(), Some(9));
         assert_eq!(controller.active().tip, 9);
