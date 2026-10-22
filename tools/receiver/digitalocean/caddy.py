@@ -12,8 +12,8 @@ named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
 It validates the candidate beside the live file, keeps the live file as
 /etc/caddy/Caddyfile.before-<UTC time>-<random>, renames the candidate over it, reloads
 Caddy and verifies: the inventory's exact check from the running release,
-and `/v1/receiver/health`
-and `/metrics` answering exactly 404 at the public origin. On failure it puts
+and `/v1/receiver/health`, `/metrics` and their `/receiver/v1/` counterparts
+answering exactly 404 at the public origin. On failure it puts
 the backup back, reloads and verifies again. Exit status: 0 applied and
 verified, 1 not applied (see the message), 75 outcome unknown: an SSH step
 timed out, lost its connection or failed to sync a write to disk, and the
@@ -55,7 +55,7 @@ from wallet_pir_ops.deploy import descriptors  # noqa: E402
 from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor, production_lock  # noqa: E402
 
 LIVE = '/etc/caddy/Caddyfile'
-DENIED = ('/v1/receiver/health', '/metrics')
+DENIED = ('/v1/receiver/health', '/metrics', '/receiver/v1/health', '/receiver/v1/metrics')
 STEP_SECONDS = 180
 UNKNOWN = 75
 
