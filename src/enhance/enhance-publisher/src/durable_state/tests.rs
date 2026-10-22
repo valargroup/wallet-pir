@@ -1,5 +1,5 @@
 use super::*;
-use enhance_query_server::protocol::{Coverage, Geometry};
+use enhance_shared::protocol::{Coverage, Geometry};
 use serde_json::{json, Value};
 
 // Handwritten examples of the pre-refactor disk formats. Keep field order and

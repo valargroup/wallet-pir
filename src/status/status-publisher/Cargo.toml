@@ -14,16 +14,16 @@ path = "src/lib.rs"
 [features]
 default = []
 # Standalone diagnostic commands use wallet helpers; the embedded publisher does not.
-cli = ["status-query-server/client"]
-native-reinspiring = ["status-query-server/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
-cuda = ["status-query-server/cuda"]
+cli = ["status-shared/client"]
+native-reinspiring = ["status-shared/native-reinspiring", "dep:zakura-pir-publisher", "ipir-sp/native-reinspiring"]
 # Chain fixtures and the wallet client for host regressions. Production builds leave it off.
 fixtures = ["zakura-server-chain/testing-node", "dep:zakura-pir-client", "zakura-pir-client/status"]
 
 [dependencies]
 pir-pipeline = { path = "../../shared/pir-pipeline" }
+pir-publication = { path = "../../shared/pir-publication" }
 thiserror = "2"
-status-query-server = { path = "../status-query-server" }
+status-shared = { path = "../status-shared" }
 pir-control = { path = "../../shared/pir-control" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
@@ -44,6 +44,8 @@ zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, featu
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
+# Cross-role regressions run real query-server roles against this publisher.
+status-query-server = { path = "../status-query-server" }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

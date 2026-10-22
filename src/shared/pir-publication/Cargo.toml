@@ -1,0 +1,17 @@
+[package]
+name = "pir-publication"
+version = "0.1.0"
+edition = "2021"
+description = "Transport-free publisher-query publication contract: content-addressed objects, pointer succession, durable authority floors and object caches"
+publish = false
+
+[dependencies]
+hex = "0.4"
+pir-control = { path = "../pir-control" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

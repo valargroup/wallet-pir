@@ -1,8 +1,8 @@
 //! Which generations a Status process serves, and when a request against one
 //! must be refused.
-use super::{now_ms, Generation};
-use crate::protocol::*;
 use http::StatusCode;
+use status_shared::protocol::*;
+use status_shared::{now_ms, Generation};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, RwLock,

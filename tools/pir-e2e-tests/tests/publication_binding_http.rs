@@ -113,7 +113,7 @@ async fn advance_during_authorization(
         if withdraw {
             source
                 .distribution
-                .withdraw(&enhance_query_server::worker::Revocation {
+                .withdraw(&enhance_query_server::publication::Revocation {
                     recovery_epoch: 0,
                     sessions: Default::default(),
                 })

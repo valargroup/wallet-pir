@@ -6,8 +6,12 @@ use crate::{
     runtime::DomainPlan,
     ROW_BYTES,
 };
+use pir_publication::ObjectReference;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 pub const VERSION: u16 = 1;
 pub const PREFIX: &str = "/provider/enhance/v1/";
@@ -117,6 +121,14 @@ impl Object {
             return Err("invalid publication object".into());
         }
         Ok(())
+    }
+
+    /// The shared content-addressed reference to the same bytes.
+    pub fn reference(&self) -> ObjectReference {
+        ObjectReference {
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
     }
 
     pub fn path(&self, root: &Path) -> Result<PathBuf, String> {
@@ -239,4 +251,13 @@ impl Inventory {
         }
         Ok(true)
     }
+}
+
+/// The publisher's durable invalidation: the recovery fence and the sessions
+/// it withdraws from every serving role.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Revocation {
+    #[serde(with = "crate::protocol::decimal_u64")]
+    pub recovery_epoch: u64,
+    pub sessions: BTreeSet<String>,
 }

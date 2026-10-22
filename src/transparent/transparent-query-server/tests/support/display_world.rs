@@ -254,6 +254,21 @@ impl Worker {
         .unwrap();
         prepared
     }
+
+    /// [`Self::publish`], then waits for the background warming activation
+    /// starts. A worker's first queries otherwise load runtimes inside their
+    /// query deadline; lookups that check transcripts and answers start warm.
+    pub async fn publish_warm(&self, directory: &Path, map_sha256: &str) -> serde_json::Value {
+        let prepared = self.publish(directory, map_sha256).await;
+        tokio::time::timeout(Duration::from_secs(120), async {
+            while self.command(DisplayCommand::Status).await.unwrap()["warm"] != true {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the activated publication warms");
+        prepared
+    }
 }
 
 pub struct World {
@@ -299,8 +314,8 @@ impl World {
         let recent = Worker::new(root.path(), DisplayRole::RecentReplica, config, Vec::new());
         // Both start empty and take the publication through control, as a
         // freshly deployed worker does: one table each, the shard's bucket.
-        assert_eq!(archive.publish(&p0.0, &p0.1).await["built"], 0);
-        assert_eq!(recent.publish(&p0.0, &p0.1).await["built"], 0);
+        assert_eq!(archive.publish_warm(&p0.0, &p0.1).await["built"], 0);
+        assert_eq!(recent.publish_warm(&p0.0, &p0.1).await["built"], 0);
         let faults = Faults::default();
         let app = Router::new().fallback(edge).with_state(Edge {
             archive: archive.live.router(),

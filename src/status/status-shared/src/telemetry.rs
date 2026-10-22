@@ -11,9 +11,6 @@ pub struct Resources {
     pub host_memory_total_bytes: Option<u64>,
     pub host_memory_available_bytes: Option<u64>,
     pub process_rss_bytes: Option<u64>,
-    pub gpu_utilization_percent: Option<u64>,
-    pub gpu_memory_used_mib: Option<u64>,
-    pub gpu_memory_total_mib: Option<u64>,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -227,28 +224,10 @@ fn process_resources() -> Resources {
             .and_then(|v| v.parse::<u64>().ok())
             .and_then(|v| v.checked_mul(1024));
     }
-    if let Ok(output) = std::process::Command::new("/usr/bin/nvidia-smi")
-        .args([
-            "--query-gpu=utilization.gpu,memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-    {
-        if output.status.success() {
-            if let Some(line) = String::from_utf8_lossy(&output.stdout).lines().next() {
-                let values: Vec<_> = line.split(',').map(str::trim).collect();
-                if values.len() == 3 {
-                    resources.gpu_utilization_percent = values[0].parse().ok();
-                    resources.gpu_memory_used_mib = values[1].parse().ok();
-                    resources.gpu_memory_total_mib = values[2].parse().ok();
-                }
-            }
-        }
-    }
     resources
 }
-/// Current counters with process resources. Reads `/proc` and may run
-/// `nvidia-smi`, so call it off any async runtime thread.
+/// Current counters with process resources. Reads `/proc`, so call it off
+/// any async runtime thread.
 pub fn snapshot() -> Telemetry {
     let mut data = shared().lock().unwrap().clone();
     static INSTANCE: OnceLock<String> = OnceLock::new();

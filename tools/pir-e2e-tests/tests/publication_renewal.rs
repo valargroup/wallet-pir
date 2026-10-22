@@ -1,14 +1,16 @@
 //! Real source observations for responses longer than one authority lifetime.
 #[path = "support/publication.rs"]
 mod publication_source;
-use enhance_query_server::worker::Revocation;
+use enhance_query_server::publication::Revocation;
 use publication_source::Published;
 use std::time::Duration;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delayed_response_renews_real_authority_but_cannot_cross_withdrawal_or_source_loss() {
     use enhance_query_server::synchronization::{Authority, Safety};
+    // The cold publisher preparation (26-32s on a three-CPU host) is fixture
+    // setup, not renewal behavior, so it runs before the case budget starts.
+    let fixture = Published::new().await;
     tokio::time::timeout(Duration::from_secs(30), async {
-        let fixture = Published::new().await;
         let source = fixture.source();
         let root = fixture.scratch.path().join("delayed-response");
         let authority = Authority::new(

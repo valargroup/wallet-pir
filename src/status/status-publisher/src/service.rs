@@ -14,8 +14,7 @@ pub struct Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        Publisher::new(self.publisher.clone())?;
-        Ok(())
+        self.publisher.validate()
     }
 }
 pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Result<()> {

@@ -35,14 +35,14 @@ jobs:
       - name: Lint CUDA integration
         run: >-
           python3 tools/ci/stage.py lint:cuda -- cargo clippy --locked --all-targets
-          -p pir-cuda -p enhance-query-server -p status-query-server -p status-publisher -p pir-query-server
-          --features pir-cuda/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,status-query-server/cuda,status-publisher/cuda,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
+          -p pir-cuda -p enhance-shared -p enhance-query-server -p pir-query-server
+          --features pir-cuda/cuda,enhance-shared/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
           -- -D warnings
-      - name: Reject CUDA in a CPU-only Status consumer of a mixed build
+      - name: Status uses CPU even when Enhance enables upstream CUDA
         run: >-
-          python3 tools/ci/stage.py tests:cuda-feature-boundary -- cargo test --locked --profile release-fast
-          -p pir-cuda -p status-query-server --features pir-cuda/cuda --lib
-          cuda_requires_the_status_feature_before_reading_coefficients
+          python3 tools/ci/stage.py tests:status-cpu-mixed-build -- cargo test --locked --profile release-fast
+          -p pir-cuda -p status-shared --features pir-cuda/cuda --lib
+          fixed_inputs_pin_public_material_and_answer
       - uses: actions/upload-artifact@v4
         with:
           name: qualification-cuda-${{ github.sha }}-${{ github.run_attempt }}

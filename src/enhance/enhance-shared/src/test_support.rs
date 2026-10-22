@@ -4,7 +4,7 @@ use crate::RECORD_BYTES;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-pub(crate) fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
+pub fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
     let mut bytes = vec![0; count * RECORD_BYTES];
     for (i, row) in bytes.chunks_exact_mut(RECORD_BYTES).enumerate() {
         row[..8].copy_from_slice(&(start + i as u64).to_le_bytes());
@@ -15,7 +15,7 @@ pub(crate) fn records(start: u64, count: usize) -> Result<Vec<u8>, String> {
 // Failure tests need a published predecessor, not another cold build of
 // the same public rows. Copy its immutable bytes; each engine still loads
 // and accounts for its own kernels under the test's fault instrumentation.
-pub(crate) fn seed_published_fixture(root: &Path, domain: &DomainPlan) {
+pub fn seed_published_fixture(root: &Path, domain: &DomainPlan) {
     if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
         return;
     }

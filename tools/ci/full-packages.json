@@ -4,6 +4,7 @@
     "pir-observability",
     "pir-runtime",
     "pir-pipeline",
+    "pir-publication",
     "pir-sync-manager",
     "pir-service-discovery",
     "pir-serving",
@@ -11,7 +12,9 @@
     "zakura-server-chain"
   ],
   "enhance": [
+    "enhance-shared",
     "enhance-query-server",
+    "status-shared",
     "status-query-server",
     "status-publisher",
     "enhance-pir-client",

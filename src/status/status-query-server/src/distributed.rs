@@ -1,10 +1,19 @@
 //! Private Status role protocol. Transport authentication is supplied by restricted
 //! SSH forwarding; every listener and configured peer must be loopback-only.
-use crate::protocol::*;
 use serde::{Deserialize, Serialize};
+use status_shared::protocol::*;
 use std::{net::SocketAddr, path::PathBuf};
 
 pub type Failure = Box<dyn std::error::Error + Send + Sync>;
+
+/// What a worker tells its router: the inventory and manifest it serves.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderStatus {
+    pub inventory: Option<pir_publication::ObjectReference>,
+    pub manifest: Option<Manifest>,
+    pub synchronization: String,
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -29,8 +38,6 @@ pub struct RoleConfig {
     #[serde(default)]
     pub publisher_ca: Option<PathBuf>,
     pub worker_origin: String,
-    #[serde(default)]
-    pub cuda: bool,
 }
 
 impl RoleConfig {
@@ -127,7 +134,23 @@ mod tests {
             publisher: "https://publisher.example".into(),
             publisher_ca: None,
             worker_origin: "http://127.0.0.1:8381".into(),
-            cuda: false,
+        }
+    }
+
+    #[test]
+    fn role_configuration_rejects_removed_cuda_selection() {
+        for cuda in [false, true] {
+            let error = serde_json::from_value::<RoleConfig>(serde_json::json!({
+                "role": "worker",
+                "network_hex": "01".repeat(32),
+                "state_dir": "/tmp/status-worker",
+                "listen": "127.0.0.1:8381",
+                "publisher": "https://publisher.example",
+                "worker_origin": "",
+                "cuda": cuda,
+            }))
+            .unwrap_err();
+            assert!(error.to_string().contains("unknown field `cuda`"));
         }
     }
 

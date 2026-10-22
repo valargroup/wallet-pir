@@ -29,7 +29,9 @@ impl PackingBudget {
             cgroup: None,
         }))
     }
-    pub(crate) fn router() -> Self {
+    /// Packing-router limit: the cgroup memory limit, or seven GiB without
+    /// one, less the host and request reserve.
+    pub fn router() -> Self {
         let cgroup = current_cgroup();
         let limit = cgroup
             .as_ref()
@@ -80,7 +82,7 @@ impl PackingBudget {
 
     /// Check the complete replacement before loading its first mapping. Loading
     /// is sequential, so all new residents overlap with one mapping workspace.
-    pub(crate) fn admit_mappings(&self, additional: usize) -> Result<(), String> {
+    pub fn admit_mappings(&self, additional: usize) -> Result<(), String> {
         if additional == 0 {
             return Ok(());
         }

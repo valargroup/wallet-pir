@@ -32,8 +32,6 @@
       "transparent:transparent-tools:bin:txid-quality-canary",
       "transparent:transparent-tools:doc:transparent_tools",
       "transparent:transparent-tools:example:activity-reopen",
-      "transparent:transparent-tools:example:layout_replay",
-      "transparent:transparent-tools:example:sample_recovery",
       "transparent:transparent-tools:lib:transparent_tools",
       "transparent:transparent-tools:test:compact_recovery",
       "transparent:transparent-tools:test:parent_filters",
@@ -126,6 +124,8 @@
       "native:pir-monitor:bin:pir-monitor",
       "native:status-publisher:doc:status_publisher",
       "native:status-publisher:lib:status_publisher",
+      "native:status-shared:doc:status_shared",
+      "native:status-shared:lib:status_shared",
       "native:status-query-server:doc:status_query_server",
       "native:status-query-server:lib:status_query_server"
     ]
@@ -133,6 +133,8 @@
   "enhance-query-server-units": {
     "family": "enhance",
     "targets": [
+      "native:enhance-shared:doc:enhance_shared",
+      "native:enhance-shared:lib:enhance_shared",
       "native:enhance-query-server:doc:enhance_query_server",
       "native:enhance-query-server:lib:enhance_query_server"
     ]
@@ -182,7 +184,8 @@
     "targets": [
       "reference:pir-e2e-tests:test:ci_hint",
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
-      "reference:enhance-query-server:lib:enhance_query_server",
+      "reference:enhance-shared:lib:enhance_shared",
+      "reference:status-shared:lib:status_shared",
       "reference:status-query-server:lib:status_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
     ]
@@ -191,10 +194,9 @@
     "family": "enhance",
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
+      "cuda:enhance-shared:check:enhance_shared",
       "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
-      "cuda:status-publisher:check:status_publisher",
-      "cuda:status-query-server:check:status_query_server",
       "cuda:pir-cuda:check:pir_cuda"
     ]
   },
@@ -202,7 +204,7 @@
     "family": "enhance",
     "targets": [
       "cuda:pir-query-server:test:operator",
-      "cuda:enhance-query-server:lib:enhance_query_server"
+      "cuda:enhance-shared:lib:enhance_shared"
     ]
   },
   "receiver-indexer-store": {

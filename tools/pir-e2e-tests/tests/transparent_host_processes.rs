@@ -245,15 +245,20 @@ fn the_worker_process_takes_and_restores_a_publication_by_control() {
         "publication": {"directory": dir, "map_sha256": map_sha256},
     }));
     assert!(ok, "{prepared}");
-    assert_eq!(prepared["warm"], true);
-    assert_eq!(prepared["built"], 1);
+    assert_eq!(prepared["ready"], true);
+    assert_eq!(prepared["built"], 0, "preparation checks sizes only");
     let (ok, activated) = control(serde_json::json!({
         "operation": "activate", "expected": "", "map_sha256": map_sha256,
     }));
     assert!(ok, "{activated}");
     let body: serde_json::Value = ready().json().unwrap();
     assert_eq!(body["map_sha256"], map_sha256);
-    assert_eq!(body["warm"], true);
+    // Background warming then loads the recent shard's runtime.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while ready().json::<serde_json::Value>().unwrap()["warm"] != true {
+        assert!(std::time::Instant::now() < deadline, "worker never warmed");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     let (ok, refused) = control(serde_json::json!({
         "operation": "invalidate", "expected": map_sha256, "from_height": 150,
     }));
@@ -275,7 +280,7 @@ fn the_worker_process_takes_and_restores_a_publication_by_control() {
     assert_eq!(revoked(), 409);
     drop(worker);
 
-    // A restart serves the recorded publication once its runtimes are warm.
+    // A restart serves the recorded publication once it is ready.
     let _worker = spawn();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while ready().status() != 200 {

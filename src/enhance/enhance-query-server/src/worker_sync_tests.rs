@@ -204,3 +204,29 @@ async fn evaluation_failure(backend: MatvecConfig) {
     assert_eq!(worker.evaluation.available_permits(), 1);
     assert_eq!(fs::read(root.path().join("sync.json")).unwrap(), safety);
 }
+
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn cuda_without_feature_fails_before_creating_worker_state() {
+    let root = tempfile::tempdir().unwrap();
+    let config = crate::matvec::MatvecConfig {
+        matvec_backend: crate::matvec::Backend::Cuda,
+        cuda_device: None,
+    };
+    let result = crate::worker_sync::Worker::open(
+        root.path(),
+        crate::worker_sync::Config {
+            source: crate::synchronization::Config {
+                publisher_origin: "https://publisher.example".into(),
+                trusted_ca: None,
+                download_budget_bytes: 8 * 1024 * 1024,
+                cache_limit_bytes: 8 * 1024 * 1024,
+            },
+            shards: [0].into(),
+        },
+        Default::default(),
+        config,
+    );
+    assert!(matches!(result, Err(e) if e.to_string().contains("--features cuda")));
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}

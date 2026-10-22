@@ -44,6 +44,7 @@ def publisher_runs_alone(name, kinds):
 FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-client',
     'enhance-pir-load-test',
+    'enhance-shared',
     'enhance-publisher',
     'enhance-query-server',
     'pir-e2e-tests',

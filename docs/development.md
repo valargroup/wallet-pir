@@ -276,7 +276,11 @@ Cargo package names and standalone commands are preserved. See the
 `src/shared/`. Transparent history, transaction-detail and Status consumers supply its
 product adapters. The library accounts all consumed response bytes against one
 attempt budget and schedules complete passes sequentially with bounded backoff.
-It does not interpret publications or grant serving authority. Product code
-retains schemas, replay records, directory locks, validation, preparation and
-activation. Enhance does not use it yet. Status uses the same polling and backoff; its
+It does not grant serving authority by itself. Its `publication_lifecycle`
+module runs the shared publication lifecycle over the transport-free
+`pir-publication` contract (object references, pointer succession, durable
+floors, object cache and publisher object store); Status is its first adopter,
+and other products still keep their own replay records and promotion. Product
+code retains schemas, directory locks, validation, preparation and activation.
+Enhance does not use it yet. Status uses the same polling and backoff; its
 wallet still rejects observations older than twenty seconds.

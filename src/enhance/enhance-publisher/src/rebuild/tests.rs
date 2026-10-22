@@ -5,7 +5,7 @@ use crate::{
     journal::CommittedJournalSnapshot,
     types::{DatabaseId, ENHANCE_LAYOUT},
 };
-use enhance_query_server::{FLAG_HAS_FEE, RECORD_BYTES, RECORD_FEE_OFFSET, RECORD_FLAGS_OFFSET};
+use enhance_shared::{FLAG_HAS_FEE, RECORD_BYTES, RECORD_FEE_OFFSET, RECORD_FLAGS_OFFSET};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
@@ -139,8 +139,8 @@ fn sparse_journal(dir: &Path, positions: u64, at: u64, fee: Option<u64>) {
 
 #[test]
 fn query_shard_uses_the_coverage_span_not_the_layout_unit() {
-    let span = enhance_query_server::protocol::Geometry::default().max_shard_rows
-        * enhance_query_server::RECORDS_PER_ROW as u64;
+    let span = enhance_shared::protocol::Geometry::default().max_shard_rows
+        * enhance_shared::RECORDS_PER_ROW as u64;
     let unit = ENHANCE_LAYOUT.shard_positions() as u64;
     assert_eq!(span, 32_768 * 33);
     assert_eq!(unit * 4, span);

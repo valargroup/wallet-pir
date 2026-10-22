@@ -1,6 +1,6 @@
 //! Merge monotonic recovery floors without carrying serving eligibility forward.
 use crate::durable_state::RecoveryState;
-use enhance_query_server::protocol::{self, MAX_QUERY_SHARDS};
+use enhance_shared::protocol::{self, MAX_QUERY_SHARDS};
 
 pub(super) fn validate_recovery_floors(recovery: &RecoveryState) -> Result<(), String> {
     for (id, epoch) in &recovery.domain_epochs {

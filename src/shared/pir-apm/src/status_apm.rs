@@ -611,16 +611,7 @@ pub fn pane(view: &View) -> String {
     }
     html.push_str("</div>");
     for role in ["router", "worker"] {
-        // CPU-only hosts report no GPU reading; omit it rather than show a blank.
-        let gpu = number(sample, &["role_resources", role, "gpu_utilization_percent"])
-            .map(|_| {
-                format!(
-                    " · GPU utilization: {}%",
-                    display(sample, &["role_resources", role, "gpu_utilization_percent"])
-                )
-            })
-            .unwrap_or_default();
-        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes{gpu}</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"])));
+        html.push_str(&format!("<section class=\"card\"><h3>{role} resources</h3><p>Process RSS: {} bytes · host available memory: {} bytes</p></section>", display(sample,&["role_resources",role,"process_rss_bytes"]), display(sample,&["role_resources",role,"host_memory_available_bytes"])));
     }
     html.push_str("<p class=\"intro\">Live publication is read from the coordinator manifest. Router and worker share one host; their host readings overlap and must not be summed. No client load-test percentile is inferred from these server histograms.</p></section>");
     html
@@ -762,21 +753,6 @@ mod tests {
             None
         )
         .is_err());
-    }
-    #[test]
-    fn gpu_reading_is_shown_only_when_reported() {
-        let view = View {
-            configured: true,
-            sample: Some(
-                serde_json::json!({"operations":{},"generation":1,"observed_ms":0,
-                "role_resources":{"worker":{"process_rss_bytes":1,"gpu_utilization_percent":45}}}),
-            ),
-            success: Some(SystemTime::now()),
-            ..Default::default()
-        };
-        let html = pane(&view);
-        assert_eq!(html.matches("GPU utilization").count(), 1);
-        assert!(html.contains("GPU utilization: 45%"));
     }
     #[test]
     fn overflow_latency_is_not_reported_as_ten_seconds() {

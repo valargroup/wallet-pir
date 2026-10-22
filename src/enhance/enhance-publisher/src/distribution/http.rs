@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use enhance_query_server::{
+use enhance_shared::{
     artifact,
     protocol::canonical_hash,
     publication::{AuthorityRequest, AuthorityResponse, Object},

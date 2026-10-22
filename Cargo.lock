@@ -870,7 +870,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "clap",
- "enhance-query-server",
+ "enhance-shared",
  "hex",
  "ipir-sp",
  "pir-control",
@@ -896,23 +896,48 @@ name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "axum",
- "base64",
- "clap",
  "enhance-query-server",
+ "enhance-shared",
  "hdrhistogram",
  "hex",
  "http-body",
+ "memmap2",
+ "pir-control",
+ "pir-observability",
+ "pir-publication",
+ "pir-runtime",
+ "pir-sync-manager",
+ "prometheus",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "enhance-shared"
+version = "0.0.1"
+dependencies = [
+ "base64",
+ "bytes",
+ "clap",
+ "enhance-shared",
+ "hex",
  "inspiring",
  "ipir-sp",
  "libc",
  "memmap2",
  "pir-control",
  "pir-cuda",
- "pir-observability",
+ "pir-publication",
  "pir-runtime",
  "pir-serving",
- "pir-sync-manager",
- "prometheus",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "reinspiring",
@@ -925,7 +950,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
- "tower",
  "tracing",
  "zakura-pir-client",
  "zakura-pir-query-server",
@@ -1959,7 +1983,7 @@ dependencies = [
  "reinspiring",
  "serde_json",
  "sha2 0.10.9",
- "status-query-server",
+ "status-shared",
  "zakura-pir-server-core",
 ]
 
@@ -2244,6 +2268,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-publication"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "pir-control",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "pir-publisher"
 version = "0.1.0"
 dependencies = [
@@ -2318,9 +2355,12 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "rustls",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
@@ -3249,12 +3289,14 @@ dependencies = [
  "ipir-sp",
  "pir-control",
  "pir-pipeline",
+ "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "status-query-server",
+ "status-shared",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -3274,29 +3316,45 @@ dependencies = [
  "axum",
  "hex",
  "http",
- "inspiring",
  "ipir-sp",
- "memmap2",
  "pir-control",
- "pir-cuda",
  "pir-pipeline",
- "pir-runtime",
- "pir-serving",
+ "pir-publication",
  "pir-sync-manager",
  "rand 0.8.5",
- "rayon",
- "reinspiring",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "status-query-server",
+ "status-shared",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tower",
  "tracing",
  "url",
+ "zakura-pir-client",
+ "zakura-pir-query-server",
+]
+
+[[package]]
+name = "status-shared"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "inspiring",
+ "ipir-sp",
+ "memmap2",
+ "pir-publication",
+ "pir-runtime",
+ "pir-serving",
+ "rand 0.8.5",
+ "rayon",
+ "reinspiring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tracing",
  "zakura-pir-client",
  "zakura-pir-query-server",
 ]

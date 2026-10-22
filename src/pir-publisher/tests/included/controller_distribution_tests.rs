@@ -50,10 +50,6 @@ fn authority(directory: &Path, distribution: Option<Finalized>, rpc: NodeClient)
 fn publication(root: &Path) -> (PathBuf, ShardSet) {
     publication_fixture(root, 2, false)
 }
-#[cfg(feature = "qualification-tests")]
-fn publication_through(root: &Path, through: u64) -> (PathBuf, ShardSet) {
-    publication_fixture(root, through, false)
-}
 fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, ShardSet) {
     let journal_dir = root.join("journal");
     let mut journal =

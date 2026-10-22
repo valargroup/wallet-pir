@@ -1,7 +1,7 @@
 //! The canonical chain through the shared server chain adapters. They own the
 //! node client, block and transaction decoding, fees and spent-output resolution;
 //! this module maps their Enhance actions onto Enhance records.
-use enhance_query_server::{EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata};
+use enhance_shared::{EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata};
 use zakura_server_chain::enhance::EnhanceAction;
 
 pub use zakura_server_chain::enhance::{PrevoutCounts, Prevouts, PREVOUT_BATCH};

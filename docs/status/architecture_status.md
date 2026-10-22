@@ -18,7 +18,7 @@ still separate deployment evidence from sustained capacity assurance.
 
 Status PIR privately observes transactions through the Enhance infrastructure.
 Its controller runs on the coordinator host behind the shared public origin, with a separate status
-index and a dedicated GPU host running both the packing router and evaluation
+index and a dedicated CPU host running both the packing router and evaluation
 worker. The wallet supplies a transaction ID locally and receives `NotFound`,
 `Mempool`, `Mined(height)`, or `Forked`, without disclosing that ID in a network
 request or retrieving transaction bytes.
@@ -52,7 +52,7 @@ are keyed by Ironwood action position and contain no txids.
 | Chain source | Shared authenticated node connectivity and network identity |
 | Database | Separate status journal, snapshots, sessions, and recovery state |
 | Query domain | One fixed domain of 8,192 rows; no partition selector |
-| Serving host | Separate P4000 host, colocated CPU router and CUDA worker |
+| Serving host | CPU host, colocated CPU router and CPU worker |
 | Replication | One status router and one status worker for the initial deployment |
 | Wallet | Vizor Rust and Dart integration; no Swift changes in this work |
 | Payload retrieval | Explicitly separate API, restricted to documented payload-required flows |
@@ -79,7 +79,7 @@ The publisher owns ingestion, coverage, generation identity, preparation,
 publication and revocation. Query servers independently synchronize prepared
 material over HTTPS. The router validates the encrypted request, obtains the
 worker intermediate, validates its binding and packs the result. The worker
-evaluates the selected generation on its configured CPU/CUDA backend.
+evaluates the selected generation on its CPU backend.
 
 Router and worker are separate processes and systemd services, with independent
 admission and resource limits. Their shared host does not introduce a new
@@ -89,7 +89,7 @@ coordinator; the evaluation API is bound to loopback. Only public client routes
 are exposed through the existing HTTPS origin.
 
 Status ingestion and preparation use bounded queues and execution budgets.
-Backfill, a failed status publication, or GPU unavailability must not stall
+Backfill, a failed status publication, or worker unavailability must not stall
 Enhance publication or recovery. Shared authority does not require both products
 to publish at the same height or in the same transaction. Each manifest binds
 its own anchor, and wallets validate it independently.
@@ -111,7 +111,7 @@ and session identity. This design does not hide transaction broadcast, wallet
 network identity, or correlations with other services. Existing Tor/direct
 policy continues to apply.
 
-The default build uses the non-native q48 PIR profile and CUDA implementation
+The default build uses the non-native q48 PIR profile and CPU implementation
 (`status-pir-v2-q48`), with status-specific setup and transcript domain
 separation. Do not inherit Enhance protocol identifiers, setup tags, or cached
 material.
@@ -429,12 +429,12 @@ against the twenty-second target.
 
 Compute changed rows between the active and candidate index. Apply incremental
 database and hint updates using the existing PIR arithmetic, and update candidate
-GPU storage without modifying the generation used by admitted requests. Packing
+CPU storage without modifying the generation used by admitted requests. Packing
 material is bound to the candidate hint; an unchanged setup does not permit reuse
 of stale database-dependent material. Validate every incremental path against an
 independently rebuilt snapshot.
 
-The low-level incremental hint, packing, and GPU update interfaces still require
+The low-level incremental hint, packing, and database update interfaces still require
 implementation and measurement. The architecture does not assume that a row
 delta automatically makes publication cheap: random txid distribution can change
 many rows, and packing preparation or client material refresh may dominate.
@@ -593,14 +593,14 @@ The [hardware manifest](https://github.com/valargroup/wallet-pir/blob/c00c2101e8
 the reference machine, rather than a general capacity guarantee.
 
 Budget combined router and worker memory: active/candidate packing material,
-host database copies, request allocations, pinned resources, GPU data and
-scratch, CUDA runtime, OS reserve, and artifact cache. Bound disk retention for
+host database copies, request allocations, evaluation scratch, OS reserve,
+and artifact cache. Bound disk retention for
 active, candidate, and rollback data. Qualify peaks during concurrent updates;
-matrix-only VRAM measurements do not qualify the colocated service.
+historical GPU measurements do not qualify the CPU service.
 
-Use CPU-compatible checksummed binaries, an explicitly selected CUDA backend,
-and verified driver/runtime libraries. GPU initialization or runtime failure is
-an error; it does not silently select CPU or a public observation service.
+Use CPU-compatible checksummed binaries. Status always evaluates on CPU, including
+in query hosts built with Enhance CUDA support. Evaluation failure is an error;
+it does not silently select a public observation service.
 Install Roman's public SSH key for access and deploy release artifacts without
 copying a private SSH key onto the host.
 
@@ -663,7 +663,7 @@ worker loss, coordinator authority expiry, interrupted updates, and restart in
 separate failure scenarios; expected unavailability must preserve correctness
 and recover without a privacy downgrade.
 
-Run focused Rust and Dart tests, real CUDA/HTTP interoperability, and applicable
+Run focused Rust and Dart tests, real CPU/HTTP interoperability, and applicable
 normal Rust and FVM Flutter lanes before wallet enablement. Retain source and
 binary identities, hardware configuration, workload definitions, and raw results
 according to the [evidence policy](../../evidence/enhance/README.md).
