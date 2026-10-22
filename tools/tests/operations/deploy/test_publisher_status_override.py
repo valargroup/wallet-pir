@@ -1,14 +1,10 @@
 """An ordinary publisher update owns only the exact Status HTTPS ExecStart override."""
-import sys
 import unittest
-from publisher_fixture import PublisherFixture, ROOT
+from publisher_fixture import PublisherFixture
 from fake_fleet import sha256
 from wallet_pir_ops.deploy import publisher
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import RemoteError
-
-sys.path.insert(0, str(ROOT))
-from tools.status.lib import https_cutover
 
 STATUS_BINARY = b'status https publisher'
 STATUS_RELEASE = publisher.ROOT_DIR + '/releases/' + sha256(STATUS_BINARY) + '/pir-publisher'
@@ -28,7 +24,9 @@ class StatusOverrideTests(PublisherFixture, unittest.TestCase):
         return self.ex.probe_unit('coordinator', publisher.UNIT)
 
     def test_override_path_is_the_status_renderer_path(self):
-        self.assertEqual(publisher.STATUS_HTTPS_DROP, https_cutover.DROP.format(unit=publisher.UNIT))
+        # The retired renderer's DROP for the publisher unit (source 6b6b923b).
+        self.assertEqual(publisher.STATUS_HTTPS_DROP, '/etc/systemd/system/pir-publisher.service.d/'
+                         'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-status-https.conf')
 
     def test_update_retargets_the_override_and_rollback_restores_its_bytes(self):
         self.install_override()
