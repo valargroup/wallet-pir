@@ -210,11 +210,10 @@ class Fleet:
         config = self.root / 'publisher.json'
         config.write_text(json.dumps({
             'management_listen': f'127.0.0.1:{self.port()}',
+            'chain': {'rpc_url': 'http://127.0.0.1:' + port, 'rpc_cookie': str(cookie), 'poll_ms': 1000},
             'enhance': {'enabled': True, 'settings': {
                 'artifact_listen': self.artifacts, 'listen': self.operator,
                 'data_dir': str(self.root / 'publisher'),
-                'zakura_rpc_url': 'http://127.0.0.1:' + port,
-                'zakura_cookie': str(cookie), 'poll_seconds': 1,
                 'prevout_cache_outputs': 1000,
             }},
         }))

@@ -89,6 +89,30 @@ existing names and semantics; non-optional settings must be explicit. Receiver
 must use continuous serving, and Enhance's embedded Status setting is replaced
 by the separate Status section. No configuration reload is performed.
 
+The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
+1000) names the one node every chain-following product reads. Enhance requires
+it and no longer accepts `zakura_rpc_url`, `zakura_cookie` or `poll_seconds`.
+Status, Transparent History, Transparent Filters and transaction details still
+carry their own source settings until they move to the root follower. Receiver
+keeps its own multi-node settings and never uses the root section.
+
+### Root chain following
+
+When a chain-following product is enabled, the host runs one follower that
+reads the node's genesis and tip once per pass and delivers every pass,
+including an unchanged tip. Each such product supplies its journal's writer
+operations through its registration; the host runs a live scheduler and a
+separate backfill scheduler over that one writer. On every pass the live
+scheduler compares the journal's own durable checkpoints with the node, so a
+restart or a skipped pass cannot hide a reorg. Before removing any orphaned
+blocks it lets the product withdraw publications that depend on them. Short
+gaps extend live; longer gaps go to the backfill scheduler, which commits
+bounded batches toward a fixed target and releases the writer between batches
+so reorg withdrawal stays responsive. A product offers new publication work
+only after its coverage equals the observed tip. A node behind the journal
+removes nothing. Existing journals are opened in place and resume at their
+committed coverage; at an unchanged tip no block is read or rewritten.
+
 `--check` parses and validates the configuration, listener declarations and
 writable paths. It neither reads credentials nor contacts nodes or workers,
 opens stores or binds sockets. It cannot establish input validity or readiness.

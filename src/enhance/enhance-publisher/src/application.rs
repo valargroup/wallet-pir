@@ -27,6 +27,25 @@ pub struct EnhanceIngestion {
     pub source: CanonicalSource,
     latest: tokio::sync::watch::Sender<Option<PublicationWork>>,
 }
+impl EnhanceIngestion {
+    /// The writer and the latest-work slot its caught-up coverage fills.
+    pub fn new(
+        journal: EnhanceJournal,
+        publisher: EnhancePublisher,
+        source: CanonicalSource,
+    ) -> (Self, tokio::sync::watch::Receiver<Option<PublicationWork>>) {
+        let (latest, pending) = tokio::sync::watch::channel(None);
+        (
+            Self {
+                journal,
+                publisher,
+                source,
+                latest,
+            },
+            pending,
+        )
+    }
+}
 fn identity(block: &crate::journal::JournalBlock) -> BlockId {
     BlockId {
         height: block.height,
@@ -97,7 +116,7 @@ pub async fn run_until<E>(
 where
     E: pir_pipeline::publisher::PublisherExecutor + pir_pipeline::ingestion::IngestionExecutor,
 {
-    let (latest, pending) = tokio::sync::watch::channel::<Option<PublicationWork>>(None);
+    let (ingestion, pending) = EnhanceIngestion::new(journal, publisher.clone(), source);
     let preparing = publisher.clone();
     let stop = shutdown.clone();
     let publishing = executor.clone();
@@ -118,12 +137,6 @@ where
     // A stopped listener or publication task stops ingestion after its operation.
     let mut publication = std::pin::pin!(publication);
     let mut http = std::pin::pin!(http);
-    let ingestion = EnhanceIngestion {
-        journal,
-        publisher,
-        source,
-        latest,
-    };
     let ingesting = executor.ingest(ingestion, feed, shutdown.clone());
     let mut ingesting = std::pin::pin!(ingesting);
     let unexpected = tokio::select! {
@@ -192,5 +205,79 @@ impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
     async fn wait(&mut self) -> std::result::Result<(), String> {
         self.closed = self.pending.changed().await.is_err();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeMap, fs, path::Path};
+
+    fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+        let mut found = BTreeMap::new();
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                found.extend(files(&path));
+            } else {
+                found.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+        found
+    }
+
+    /// An existing journal opens in place: coverage comes from its committed
+    /// blocks, and an unchanged-tip pass leaves every journal byte unchanged.
+    #[tokio::test]
+    async fn existing_journal_resumes_in_place_and_rewinds_only_on_request() {
+        let root = tempfile::tempdir().unwrap();
+        let records = vec![vec![0u8; enhance_shared::RECORD_BYTES]; 3];
+        {
+            let mut journal = EnhanceJournal::open(root.path()).unwrap();
+            for _ in 0..3 {
+                journal.append_fixture_block(&records).unwrap();
+            }
+        }
+        let journal_dir = root.path().join("enhance");
+        let before = files(&journal_dir);
+        let cookie = root.path().join("cookie");
+        fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
+        let publisher = EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
+        let (mut ingestion, _pending) = EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            publisher,
+            CanonicalSource {
+                rpc,
+                prevouts: Prevouts::new(16),
+            },
+        );
+        let first = enhance_shared::ACTIVATION_HEIGHT;
+        let tip = BlockId {
+            height: first + 2,
+            hash: format!("{:064x}", first + 2),
+        };
+        assert_eq!(ingestion.start_height(), first);
+        assert_eq!(ingestion.committed(), Some(tip.clone()));
+        assert_eq!(ingestion.checkpoint_at_or_below(first + 10), Some(tip.clone()));
+        assert_eq!(
+            ingestion.checkpoint_at_or_below(first + 1).map(|b| b.height),
+            Some(first + 1)
+        );
+        assert_eq!(ingestion.checkpoint_at_or_below(first - 1), None);
+        let observation = ChainObservation {
+            genesis: String::new(),
+            tip,
+            pass: 1,
+        };
+        ingestion.caught_up(&observation).await.unwrap();
+        ingestion.caught_up(&observation).await.unwrap();
+        assert_eq!(files(&journal_dir), before);
+
+        let keep = ingestion.checkpoint_at_or_below(first + 1);
+        ingestion.withdraw_above(keep.as_ref()).await.unwrap();
+        ingestion.rewind(keep.as_ref()).await.unwrap();
+        assert_eq!(ingestion.committed(), keep);
+        assert_eq!(ingestion.journal.tree_size(), 6);
     }
 }
