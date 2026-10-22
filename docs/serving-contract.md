@@ -76,7 +76,7 @@ read it through accessors and change it only through the owner's operations:
 |---|---|---|---|
 | Enhance | `EnhanceJournal` appends/rewinds; complete hashed inventories bind rows/setup/packing | publisher owns publication; each serving role owns local activation | `Arc` of the activated view or shard |
 | Status | `Generation`; identity changes only by `reidentified`/`reobserved`, content only by preparing anew | `Controller`, distributed roles | `Arc<Generation>` |
-| Transparent | staged candidate under the control socket | shard and display `live` modules | active publication runtimes |
+| Transparent | candidate downloaded and verified from the HTTPS publisher | shard and display `live` modules, driven by their HTTPS managers | active publication runtimes |
 | Receiver | `PublicationRecord::read` | `serve-publication` loop | `Publication` |
 
 Constructors say which checks they make. Structural checks (lengths, ordering,

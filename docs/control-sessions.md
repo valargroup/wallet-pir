@@ -150,18 +150,13 @@ this with the generated key line and Match block. Run it with
 Removing `AllowStreamLocalForwarding no` makes it fail. Re-run it on the
 hosts' OpenSSH version before relying on the result there.
 
-**Consequence for Transparent:** today status reads use Unix forwards to
-`/run/transparent-pir/control.sock` over root SSH. A restricted account needs
-the worker's control socket on a loopback TCP port instead, listed in
-`permitopen`. Two ways to get there:
-
-- a listener in the `pir-query-server` Transparent history process;
-- `systemd-socket-proxyd` in front of the existing socket.
-
-The trade-off: any local user on the worker can connect to a loopback TCP port,
-whereas the socket is root-only. The port therefore needs its own guard, either
-a firewall rule matching the forwarding account's uid or authentication in the
-control protocol. That decision precedes the Transparent step below.
+**Consequence for Transparent:** workers no longer have a control socket; they
+take publications from their HTTPS publisher, and status comes from the
+`pir-query-server` loopback `management_listen` port. A restricted account
+reaches it with a TCP forward listed in `permitopen`. Any local user on the
+worker can connect to a loopback TCP port, so the port needs its own guard,
+either a firewall rule matching the forwarding account's uid or authentication.
+That decision precedes the Transparent step below.
 
 ## Rollout order
 

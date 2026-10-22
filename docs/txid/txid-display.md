@@ -279,7 +279,8 @@ geometry.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
-- `src/transparent/transparent-publisher/src/tx_detail/` (`txid-display-controller`);
+- `src/transparent/transparent-publisher/src/tx_detail/` (the display controller,
+  run by `pir-publisher` as `transaction_details`);
 - `src/transparent/transparent-query-server/src/tx_detail/` (serving, run by
   `pir-query-server` with feature `transparent-detail`);
 - `tools/transparent` (`txid-inventory`);
@@ -291,21 +292,24 @@ The code on `main` no longer builds or reads v1. Serving v2 needs a fresh
 journal and lineage; the gates are in [remaining work](../transparent/remaining-work.md).
 
 The display controller composes the shared lifecycle at source acquisition,
-candidate preparation and owner activation. Its borrowed controller token keeps
-the store and every seal job with their existing owner. Background seal building
-and staging remain ordered; preparation selects only the staged contiguous queue
-prefix, checks immutable lineage and writes the recent candidate. Owner publication
-then delivers invalidations, activates archive owners before recent replicas and
-commits the existing active record. Adaptive source/background/retry waits use the
-shared boundary wait without cancelling these operations or coalescing seals.
+candidate preparation and activation. Its borrowed controller token keeps the
+store and every seal job with their existing owner. Background seal building
+stays ordered; preparation selects only the built contiguous queue prefix,
+checks immutable lineage, writes the recent candidate and prebuilds its recent
+runtimes. Activation finalizes the candidate as the HTTPS publication query
+servers download, then commits the existing active record. A rollback withdraws
+the HTTPS publication before the journal changes and is recorded in
+`invalidate.json` until the next activation. Adaptive source/background/retry
+waits use the shared boundary wait without cancelling these operations or
+coalescing seals.
 Internal phase timing does not change status formats, readiness or authority.
 
 ### Controller status and metrics
 
-`txid-display-controller run --status-listen` serves private JSON status on `/`,
-`/v1/status` and `/v1/health`, and Prometheus text on `/metrics`. Workers keep
-serving the last activation when the controller stalls or halts, so these are
-what show it. Gauges: `txid_display_node_height`, `_published_height`,
+The transaction-detail publisher's `status_listen` serves private JSON status on
+`/`, `/v1/status` and `/v1/health`, and Prometheus text on `/metrics`. Query
+servers keep serving the last publication when the controller stalls or halts,
+so these are what show it. Gauges: `txid_display_node_height`, `_published_height`,
 `_lag_blocks`, `_oldest_unpublished_seconds`, `_stalled`, `_halted`,
 `_consecutive_failures`, `_seal_queue`, `_last_success_timestamp_seconds` and
 `_last_seal_timestamp_seconds` (0 until the first since the process started).
@@ -313,17 +317,16 @@ Counters: `txid_display_cycles_total` and `_cycle_failures_total`. Histograms:
 `txid_display_cycle_seconds` per successful cycle, `_freshness_seconds` per
 newly published block from first observed to active, and
 `_cycle_stage_seconds{stage}` with `build`, `verify`, `digest`, `write`,
-`prebuild` (only with `--ship-runtimes`), `ship`, `prepare` and `activate`.
+`prebuild` and `activate` (HTTPS finalization).
 Display workers add `transparent_display_prepare_seconds` per successful
 prepare and `transparent_display_self_check_seconds` per prepare that loaded
 shipped runtimes to their own `/metrics`.
 
 ### Shipped recent runtimes
 
-Every block the recent replica prepares each table of the new recent revision:
-it encodes the database, computes the hint and the two-mask preprocessing. With
-`txid-display-controller run --ship-runtimes` (off by default) the controller
-does that work once instead and ships the result with the candidate.
+Every block brings a new recent revision whose tables need encoding, a hint and
+the two-mask preprocessing. The controller does that work once and ships the
+result with every candidate.
 
 - **Controller.** After writing a candidate it builds every table segment of the
   recent revision on the runtime build pool (`TRANSPARENT_BUILD_THREADS`) and
@@ -332,12 +335,12 @@ does that work once instead and ships the result with the candidate.
   directories. Never inside one, whose files must be exactly its manifest's, and
   never as a subdirectory, which a worker would read as a revision. The cycle
   records `prebuild_ms`, `shipped_bytes`, the files and `prebuild_failures`. A
-  failed build is logged and counted, its files are removed, and the candidate
-  ships without runtimes. Archives are not shipped: they are built once per seal
-  by `stage`.
-- **Transport.** The fleet adapter's `rsync` carries the files unchanged. They
-  are named by revision, so every block's files are copied in full; collection
-  deletes them with their candidate on both sides.
+  failed build is logged and counted and its files are removed; HTTPS
+  finalization then builds every missing runtime, archives included.
+- **Transport.** The HTTPS publication inventory lists the files beside the
+  revisions, and query servers download them unchanged. They are named by
+  revision, so every block's files are new; collection deletes them with their
+  candidate.
 - **Worker.** When a publication directory holds any `.runtime` file, the
   prewarm tries the file for each unsealed table segment before restoring or
   building. It is found by the same identity a disk-cache entry is: revision
