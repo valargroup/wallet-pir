@@ -475,19 +475,19 @@ impl ServiceState {
     }
 
     /// Reclaim idle runtimes of revisions this snapshot no longer serves as
-    /// current. Its current runtimes are residency obligations while it stays
-    /// active, so preparing a candidate beside it never turns its in-flight
-    /// and next queries into cold builds.
-    pub(crate) fn evict_unpinned_except_current(&self) {
-        let current: std::collections::HashSet<&str> = self
+    /// current. Its current runtimes, directory and page tables alike, are
+    /// residency obligations while it stays active, so preparing a candidate
+    /// beside it never turns its in-flight and next queries into cold builds.
+    pub fn evict_unpinned_except_current(&self) {
+        let current: std::collections::HashSet<String> = self
             .inner
             .set
             .current()
-            .map(|shard| shard.digest.as_str())
+            .flat_map(|shard| shard.runtime_identities())
             .collect();
         self.inner
             .cache
-            .evict_unpinned_except(|(digest, _, _)| current.contains(digest.as_str()));
+            .evict_unpinned_except(|(identity, _, _)| current.contains(identity));
     }
 
     pub(crate) fn prune_disk(

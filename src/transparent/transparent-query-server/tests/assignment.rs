@@ -354,6 +354,35 @@ async fn ready_does_not_wait_for_background_warming() {
     assert_eq!(ready["prewarm_finished"], true);
 }
 
+/// Preparing a candidate reclaims idle runtimes, but never those of the
+/// active snapshot's current revisions: directory and page runtimes, which
+/// page shards key by their own identity, both stay resident.
+#[tokio::test(flavor = "multi_thread")]
+async fn preparation_eviction_keeps_current_directory_and_page_runtimes() {
+    use std::sync::atomic::Ordering;
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path());
+    let assignment = planned(&map);
+    let set = load_as(dir.path(), &assignment, "recent-01", LoadOptions::whole(3));
+    assert!(
+        set.current().any(|shard| shard
+            .runtime_identities()
+            .iter()
+            .any(|identity| *identity != shard.digest)),
+        "the fixture's page tables have their own runtime identity"
+    );
+    let state = ServiceState::build(set, warm_config()).unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let resident = state.metrics().cache_entries.load(Ordering::Acquire);
+    assert_eq!(resident, 4, "two shards, directory and pages each");
+    state.evict_unpinned_except_current();
+    assert_eq!(
+        state.metrics().cache_entries.load(Ordering::Acquire),
+        resident
+    );
+    assert_eq!(state.metrics().evictions.load(Ordering::Acquire), 0);
+}
+
 /// Runtimes load on demand under the cache budget, so an assignment whose
 /// runtimes do not all fit the cache at once is accepted and ready.
 #[tokio::test(flavor = "multi_thread")]
