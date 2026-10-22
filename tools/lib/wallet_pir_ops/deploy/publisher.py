@@ -767,12 +767,14 @@ def register(commands):
     cleanup = commands.add_parser('publisher-cutover-prune-qualification', allow_abbrev=False)
     cleanup.add_argument('--host', action='append', required=True)
     cleanup.add_argument('--confirm-path', required=True, choices=('/srv/enhance-pir-v7/qualification-worker',))
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue', 'repair-enhance-plan', 'repair-enhance'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
         command.add_argument('--cuda-binary')
+        if operation == 'repair-enhance':
+            command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('preflight', 'deploy'):
             command.add_argument('--archive', required=True)
         if operation == 'deploy':
@@ -805,6 +807,9 @@ def dispatch(args, executor=None, **_options):
         target.serving.binary = getattr(args, 'serving_binary', None)
         if request['schema'] == ENHANCE_HTTPS_SCHEMA:
             target.serving.cuda_binary = getattr(args, 'cuda_binary', None)
+    if operation in ('repair-enhance-plan', 'repair-enhance'):
+        from .enhance_repair import dispatch as repair
+        return repair(target, args)
     if operation in ('rollback', 'reconcile'):
         return target.rollback()
     if operation == 'continue':
