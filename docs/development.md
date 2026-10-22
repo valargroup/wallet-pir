@@ -87,7 +87,8 @@ Explicit full commands (`make test`, `make check-full`, full package families an
 the qualification matrix) enable the declared `qualification-tests` features.
 These restore the original deployed geometry combinations, mixed-size archive
 preparation, full publication sequence, longer display histories and the larger
-Enhance multi-unit failure fixture and 16K monolithic comparison. Repeated
+Enhance multi-unit failure fixture and 16K monolithic comparison, and Receiver's served
+sealing campaigns. Repeated
 campaigns that rebuild one runtime only to assert an additional property stay
 behind that feature; fast feedback keeps a single case for each property.
 Ordinary

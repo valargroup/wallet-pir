@@ -1550,6 +1550,84 @@ mod tests {
         found
     }
 
+    /// One segment of a layout a one-shot pass wrote: its payment manifest and records,
+    /// and its companion's manifest and payload rows.
+    struct Written {
+        payments: receiver_directory::snapshot::Manifest,
+        rows: Vec<u8>,
+        witnesses: receiver_directory::witness::Manifest,
+        payloads: Vec<u8>,
+    }
+
+    impl Written {
+        /// The payment of `receiver`, which must be the segment's only one for it, with
+        /// its companion payload.
+        fn payment(&self, receiver: [u8; 43]) -> (zakura_receiver_crypto::Payment, [u8; 512]) {
+            let mut found = Vec::new();
+            for row in self.rows.chunks(receiver_directory::snapshot::ROW_BYTES) {
+                let slots =
+                    &row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES];
+                for slot in slots.chunks(receiver_directory::RECORD_BYTES) {
+                    if let Some(r) = zakura_receiver_crypto::Record::decode(slot).unwrap() {
+                        if *r.receiver.as_bytes() == receiver {
+                            found.push(r);
+                        }
+                    }
+                }
+            }
+            assert_eq!(found.len(), 1);
+            let r = found.remove(0);
+            let at = r.ordinal as usize * receiver_directory::witness::PAYLOAD_BYTES;
+            (r.payment, self.payloads[at..at + 512].try_into().unwrap())
+        }
+    }
+
+    /// Runs a one-shot pass with `state` into an emptied publications directory, as an
+    /// indexer that writes files does, and returns every segment it wrote in layout
+    /// order. One-shot passes prepare no PIR tables.
+    async fn one_shot(paused: &Paused, state: &mut State) -> (Layout, Vec<Vec<Written>>) {
+        let root = paused.dir.path().join("publications");
+        let _ = std::fs::remove_dir_all(&root);
+        let rpc = std::slice::from_ref(&paused.rpc);
+        refresh(
+            &paused.args,
+            rpc,
+            Network::Mainnet.genesis_hash(),
+            None,
+            state,
+        )
+        .await
+        .unwrap();
+        let read = |name: String| std::fs::read(root.join(name)).unwrap();
+        let name = std::fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .find(|n| n.ends_with(".inventory.json"))
+            .unwrap();
+        let layout: Layout = serde_json::from_slice(&read(name)).unwrap();
+        let shards = layout
+            .shards
+            .iter()
+            .map(|shard| {
+                shard
+                    .segments
+                    .iter()
+                    .map(|s| {
+                        let (p, w) = (hex::encode(s.payments), hex::encode(s.witnesses));
+                        Written {
+                            payments: serde_json::from_slice(&read(format!("{p}.json"))).unwrap(),
+                            rows: read(format!("{p}.rows")),
+                            witnesses: serde_json::from_slice(&read(format!("{w}.witness.json")))
+                                .unwrap(),
+                            payloads: read(format!("{w}.witness")),
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+        (layout, shards)
+    }
+
     /// The lower path of every position in a fresh rebuild from all `store`'s
     /// commitments, the independent oracle for served payloads.
     fn fresh(store: &Store, positions: &[u64]) -> Vec<[u8; 512]> {
@@ -1592,6 +1670,7 @@ mod tests {
     /// PIR, with each payment's companion payload equal to a fresh rebuild; the filters
     /// serve by digest; a restart rebuilds the identical inventory; and a displaced
     /// inventory keeps serving its chunks and sessions while sealed sessions carry over.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_shards_serve_through_the_library_client() {
         use super::common::{receiver, seeded_receiver};
@@ -1786,6 +1865,7 @@ mod tests {
     }
 
     /// The checked records kept shards hold in memory.
+    #[cfg(feature = "qualification-tests")]
     fn kept_leaves(state: &State) -> usize {
         state
             .kept
@@ -1798,6 +1878,7 @@ mod tests {
     /// Memory a serving indexer holds for its inventories: the table budget's resident
     /// bytes (prepared tables and filter encodings), and bytes held outside it, which are
     /// sources holding prepared state in memory and kept shards' checked records.
+    #[cfg(feature = "qualification-tests")]
     fn footprint(paused: &Paused) -> (usize, usize) {
         let held: usize = paused
             .publications
@@ -1812,6 +1893,7 @@ mod tests {
     /// Publishing more sealed shards, and restarting as a new process, keeps the accounted
     /// footprint within the table budget, with nothing held outside it once companions
     /// freeze: memory does not grow with sealed history. Every payment still serves.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn resident_memory_stays_bounded_as_sealed_shards_accumulate() {
         use super::common::{receiver, seeded_receiver};
@@ -2110,6 +2192,7 @@ mod tests {
 
     /// `receiver`'s first payment's companion payload in the first shard, checked against
     /// a fresh rebuild from `store`.
+    #[cfg(feature = "qualification-tests")]
     async fn served_payload(
         client: &receiver_pir::transport::InventoryClient<Wallet>,
         store: &Store,
@@ -2123,6 +2206,7 @@ mod tests {
     }
 
     /// The first shard's payment and witness session IDs and witness tree height.
+    #[cfg(feature = "qualification-tests")]
     fn first_shard(
         client: &receiver_pir::transport::InventoryClient<Wallet>,
     ) -> ([u8; 32], [u8; 32], u32) {
@@ -2140,6 +2224,7 @@ mod tests {
     /// completing block and reused, and rebuilt again when a reorg replaces that block
     /// even though every payment block is unchanged. Served payloads equal a fresh
     /// rebuild throughout.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn witness_dependencies_follow_reorgs_after_a_seal() {
         let one = super::common::receiver();
@@ -2200,6 +2285,138 @@ mod tests {
         );
     }
 
+    /// The first sealed shard's payment table revision and companion manifest in
+    /// `shards`, as a one-shot pass wrote them.
+    fn first_written(shards: &[Vec<Written>]) -> ([u8; 32], receiver_directory::witness::Manifest) {
+        let segment = &shards[0][0];
+        (
+            segment.payments.revision().unwrap(),
+            segment.witnesses.clone(),
+        )
+    }
+
+    /// A sealed shard's companion, in written passes that prepare no PIR, is provisional
+    /// at each tip until its payment's Ironwood shard completes, and is rebuilt when a
+    /// reorg replaces the block after the seal while its payment table stays. Payloads
+    /// equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal` checks
+    /// the same over served PIR under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn written_companions_stay_provisional_and_follow_a_reorg() {
+        let one = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let mut state = State::default();
+        let paid = paused.extend(&[one], 4, 0);
+        let (payments, w0) = first_written(&one_shot(&paused, &mut state).await.1);
+        // Short of completing Ironwood shard 0, after the seal.
+        let filler = (1 << 16) - 15;
+        paused.extend(&[], filler, 0);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p1, w1) = first_written(&shards);
+        assert_eq!(p1, payments);
+        assert_ne!(w1, w0);
+        assert_eq!(w1.tree_height, paused.store().tip().unwrap().height);
+        let (payment, provisional) = shards[0][0].payment(one);
+        assert_eq!(provisional, fresh(&paused.store(), &[payment.position])[0]);
+        // A reorg after the seal, before witness finality.
+        paused.store().rewind(paid.height, paid.hash).unwrap();
+        paused.extend(&[], filler, 1);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p2, w2) = first_written(&shards);
+        assert_eq!(p2, payments);
+        assert_ne!(w2, w1);
+        let (_, reorged) = shards[0][0].payment(one);
+        assert_eq!(reorged, fresh(&paused.store(), &[payment.position])[0]);
+        assert_ne!(reorged, provisional);
+    }
+
+    /// A sealed shard's companion, in written passes that prepare no PIR, freezes at the
+    /// block completing its payment's Ironwood shard and stays unchanged after it, and
+    /// is rebuilt when a reorg replaces that block though the payment table is unchanged.
+    /// Payloads equal a fresh rebuild. `witness_dependencies_follow_reorgs_after_a_seal`
+    /// checks the same over served PIR under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn written_companions_freeze_and_follow_a_reorg_of_the_completing_block() {
+        let one = super::common::receiver();
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.shard_target = Some(1);
+        let mut state = State::default();
+        paused.extend(&[one], 4, 0);
+        paused.extend(&[], (1 << 16) - 15, 0);
+        let completing = paused.extend(&[], 20, 0);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (payments, w3) = first_written(&shards);
+        assert_eq!(w3.tree_height, completing.height);
+        let (payment, final_payload) = shards[0][0].payment(one);
+        assert_eq!(
+            final_payload,
+            fresh(&paused.store(), &[payment.position])[0]
+        );
+        paused.extend(&[], 1, 0);
+        assert_eq!(first_written(&one_shot(&paused, &mut state).await.1).1, w3);
+        // A reorg of the completing block rebuilds the companion of the unchanged table.
+        let before = paused.store().checkpoint(completing.height - 1).unwrap();
+        paused.store().rewind(before.height, before.hash).unwrap();
+        paused.extend(&[], 20, 2);
+        let (_, shards) = one_shot(&paused, &mut state).await;
+        let (p5, w5) = first_written(&shards);
+        assert_eq!(p5, payments);
+        assert_ne!(w5, w3);
+        let (_, rebuilt) = shards[0][0].payment(one);
+        assert_eq!(rebuilt, fresh(&paused.store(), &[payment.position])[0]);
+        assert_ne!(rebuilt, final_payload);
+    }
+
+    /// A correction adding a payment to a sealed shard older than the rolling filters
+    /// unseals from the corrected block and writes the shards again under the new
+    /// generation with the same boundaries, the payment and its witness, without any PIR
+    /// preparation. `a_correction_older_than_retention_rebuilds_its_shard` also checks
+    /// the served sessions' revocation under `qualification-tests`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_written_correction_older_than_retention_reseals_its_shard() {
+        use super::common::{receiver, seeded_receiver};
+        let mut paused = Paused::new(|_| {}).await;
+        (paused.args.shard_target, paused.args.filter_blocks) = (Some(1), Some(1));
+        let block = paused.extend(&[receiver()], 1, 0);
+        paused.extend(&[seeded_receiver(1)], 0, 0);
+        paused.extend(&[], 1, 0);
+        let bounds = |shards: &[Vec<Written>]| {
+            shards
+                .iter()
+                .map(|s| (s[0].payments.start_height, s[0].payments.end_height))
+                .collect::<Vec<_>>()
+        };
+        let (old, shards) = one_shot(&paused, &mut State::default()).await;
+        let old_bounds = bounds(&shards);
+        let mut corrected = block.clone();
+        let mut omitted = corrected.payments[0].1.clone();
+        omitted.position += 1;
+        omitted.cmx = corrected.commitments[1];
+        (omitted.tx_index, omitted.txid) = (2, [9; 32]);
+        let three = seeded_receiver(2);
+        corrected.payments.push((three, omitted.clone()));
+        paused.store().correct(1, &[corrected]).unwrap();
+        assert!(paused.store().sealed_shards().unwrap().is_empty());
+        paused.args.history_revision = 1;
+        let (layout, shards) = one_shot(&paused, &mut State::default()).await;
+        assert_eq!(layout.history_revision, 1);
+        assert_eq!(bounds(&shards), old_bounds);
+        let sealed = |l: &Layout| l.shards.iter().map(|s| s.sealed).collect::<Vec<_>>();
+        assert_eq!(sealed(&layout), sealed(&old));
+        let (payment, payload) = shards[0][0].payment(three);
+        let fields = |p: &zakura_receiver_crypto::Payment| (p.position, p.cmx, p.tx_index, p.txid);
+        assert_eq!(
+            fields(&payment),
+            (
+                omitted.position,
+                omitted.cmx,
+                omitted.tx_index,
+                omitted.txid
+            )
+        );
+        assert_eq!(payload, fresh(&paused.store(), &[omitted.position])[0]);
+    }
+
     /// A reorg across a seal removes the sealed shard and revokes its sessions, and the
     /// replacement chain is sealed afresh.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2244,6 +2461,7 @@ mod tests {
     /// A correction adding a payment to a sealed shard older than the rolling filters
     /// revokes every session at once, unseals from the corrected block and republishes
     /// under the new generation with the same boundaries, the payment and its witness.
+    #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_correction_older_than_retention_rebuilds_its_shard() {
         use super::common::{receiver, seeded_receiver};
