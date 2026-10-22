@@ -1,5 +1,6 @@
 """Artifact conversion cannot strand old authority behind new executables."""
 import copy
+from dataclasses import replace
 import itertools
 import json
 from pathlib import Path
@@ -318,6 +319,45 @@ class ArtifactCutoverTests(unittest.TestCase):
                 self.assert_serving('new-')
                 self.assertEqual(self.ex.read('coordinator', INCIDENT), CURRENT_INCIDENT)
                 self.assertEqual(A.Journal.load(self.state, A.NAME, result['id']).status, 'committed')
+
+    def test_external_history_worker_resumes_while_its_publication_is_unready(self):
+        actual = descriptors.load_descriptors(ROOT / 'tools/transparent/deploy/services.toml')[
+            'transparent-history'].roles['external-worker']
+        service = self.registry['transparent-history']
+        role = replace(service.roles['server'], health=actual.health, ready=actual.ready,
+                       liveness_url=actual.liveness_url)
+        self.registry['transparent-history'] = replace(service, roles={'server':role})
+        self.inventory.services['transparent-history']['roles']['server'][0]['vars'] = {
+            'listen':'127.0.0.1:8900'}
+        self.inventory.services['transparent-history']['roles']['server'][0]['health_equals'] = {'ready':True}
+        ready_url = 'http://127.0.0.1:8900/v1/ready'
+        health_url = 'http://127.0.0.1:8900/v1/health'
+        self.ex.endpoints[('coordinator', ready_url)] = 'transparent-history.service'
+        self.target = self.make_target()
+        for _, deployer in self.target.groups:
+            deployer.refresh_baseline()
+        result = self.target.deploy(self.target.plan()['plan_sha256'])
+        original = self.ex.http_get
+
+        def health(host, url, timeout=5):
+            if url == health_url:
+                return 200, '{"ok":true}'
+            if url == ready_url and self.ex.read(host, INCIDENT) == CURRENT_INCIDENT:
+                return 503, '{"ready":false}'
+            return original(host, url, timeout)
+
+        self.ex.http_get = health
+        self.ex.incident_on_stop = CURRENT_INCIDENT
+        with self.assertRaisesRegex(DeployError, 'resumed the current release'):
+            self.target.rollback(result['id'])
+        self.assert_serving('new-')
+        self.assertEqual(self.ex.read('coordinator', INCIDENT), CURRENT_INCIDENT)
+        self.assertEqual(A.Journal.load(self.state, A.NAME, result['id']).status, 'committed')
+        # Normal deployment acceptance still rejects the unready publication.
+        for index, (group, deployer) in enumerate(self.target.groups):
+            if group['service'] == 'transparent-history':
+                record = self.target.child(A.Journal.load(self.state, A.NAME, result['id']), index).hosts[0]
+                self.assertFalse(deployer.check(record, group['binary_sha256'])[0])
 
     def refuses_before_stopping(self, result, pattern='predecessor cannot read'):
         before = len(self.ex.log)

@@ -412,11 +412,12 @@ class Deployer:
 
     # ---------------------------------------------------------- verification
 
-    def live(self, record, expected):
+    def live(self, record, expected, *, liveness_only=False):
         """`(ok, reason, health document)`: the exact executable runs and answers health.
 
         Liveness only; product readiness, which a retained incident may hold
-        false by design, is `check`'s further condition.
+        false by design, is `check`'s further condition. Recovery can select a
+        dedicated liveness URL without publication acceptance fields.
         """
         state = self.ex.probe_unit(record['host'], record['unit'])
         if state['active_state'] != 'active':
@@ -424,7 +425,8 @@ class Deployer:
         if state['exe_sha256'] != expected:
             return False, 'running executable is %s, expected %s' % (state['exe_sha256'], expected), None
         verify = record['verify']
-        status, body = self.ex.http_get(record['host'], verify['health'])
+        liveness_url = verify.get('liveness_url') if liveness_only else None
+        status, body = self.ex.http_get(record['host'], liveness_url or verify['health'])
         if status != 200:
             return False, 'health answered %s' % status, None
         try:
@@ -433,7 +435,7 @@ class Deployer:
             document = None
         if isinstance(document, dict) and 'binary_sha256' in document and document['binary_sha256'] != expected:
             return False, 'health reports binary_sha256 %s' % document['binary_sha256'], None
-        for field, expected_value in verify.get('health_equals', {}).items():
+        for field, expected_value in ({} if liveness_url else verify.get('health_equals', {})).items():
             value = document
             for part in field.split('.'):
                 value = value.get(part) if isinstance(value, dict) else None
@@ -463,7 +465,8 @@ class Deployer:
     def wait_verified(self, record, expected, *, live_only=False):
         deadline = self.clock() + record['verify']['timeout']
         while True:
-            ok, reason = self.live(record, expected)[:2] if live_only else self.check(record, expected)
+            ok, reason = (self.live(record, expected, liveness_only=True)[:2]
+                          if live_only else self.check(record, expected))
             if ok:
                 return
             if self.clock() >= deadline:
@@ -482,6 +485,7 @@ class Deployer:
             'changes': [{**change, 'previous_sha256': text_sha256(change['previous']),
                          'new_sha256': text_sha256(change['new'])} for change in plan.changes],
             'verify': {'health': target.url(target.role.health), 'ready': target.role.ready,
+                       'liveness_url': target.url(target.role.liveness_url),
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
             'directories': list(plan.directories), 'check': list(plan.check),
