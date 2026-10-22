@@ -674,6 +674,18 @@ pub mod receiver {
                 .into()
         }
     }
+
+    /// The Ironwood tree root, as the node's `z_gettreestate` encodes it, after
+    /// `blocks`, from the empty tree.
+    pub fn ironwood_root(blocks: &[&RefundBlock]) -> [u8; 32] {
+        let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
+        for tx in blocks.iter().flat_map(|block| &block.0.transactions) {
+            for action in tx.ironwood_actions() {
+                tree.append(action.cm_x).unwrap();
+            }
+        }
+        tree.root().bytes_in_display_order()
+    }
 }
 
 /// Status blocks.

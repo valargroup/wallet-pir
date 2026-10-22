@@ -35,8 +35,7 @@ and tools that read a node add `rpc`.
 - `hash`: conversions between the node's display order and protocol order.
 - `receiver`: Ironwood blocks checked against their headers and the node's tree
   sizes, every Action's note position (coinbase included), the payments
-  recoverable with the zero outgoing viewing key, and completed Ironwood subtree
-  roots.
+  recoverable with the zero outgoing viewing key, and Ironwood roots.
 - `enhance`: each Ironwood Action's Enhance fields with its transaction's exact fee,
   resolving spent outputs from the same block, a bounded cache, then batched reads;
   an unresolved output fails the block.
