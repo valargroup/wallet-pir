@@ -329,7 +329,7 @@ impl FileStamp {
 
     /// Whether the last modification predates `instant` by more than the
     /// coarsest timestamp granularity a host filesystem uses.
-    fn settled_before(&self, instant: std::time::SystemTime) -> bool {
+    pub(crate) fn settled_before(&self, instant: std::time::SystemTime) -> bool {
         let Ok(since) = instant.duration_since(std::time::UNIX_EPOCH) else {
             return false;
         };
@@ -344,6 +344,10 @@ thread_local! {
     /// Source loads on this thread that streamed the bytes through SHA-256.
     pub(crate) static LOADS_HASHED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
+
+/// The directory beside a publisher's publications that stores each table
+/// segment and prepared runtime once, named by the SHA-256 of its bytes.
+pub const OBJECT_STORE: &str = ".objects";
 
 /// How long before a read a file must last have been modified for its stamp
 /// to vouch for it later: one second, the coarsest mtime granularity in use.
@@ -432,7 +436,12 @@ impl SegmentSource {
 
     /// Trust publisher preparation and check only the local file's size.
     pub fn for_serving(mut self) -> Result<Self, LoadError> {
-        let file = crate::verification::open(&self.path).map_err(|source| LoadError::Io {
+        let opened = if self.check_object_link()? {
+            std::fs::File::open(&self.path)
+        } else {
+            crate::verification::open(&self.path)
+        };
+        let file = opened.map_err(|source| LoadError::Io {
             path: self.path.clone(),
             source,
         })?;
@@ -453,6 +462,57 @@ impl SegmentSource {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether this segment's file is a link into the publisher's segment
+    /// [`OBJECT_STORE`], refusing any link but the exact one: from
+    /// `<publication>/<digest>/<file>` to `../../.objects/<sha256>` for this
+    /// segment's own digest, with a real store and a regular object. A
+    /// publication stores each segment once and links it from every revision
+    /// that publishes it, so republishing never changes the object's inode.
+    fn check_object_link(&self) -> Result<bool, LoadError> {
+        let io = |source| LoadError::Io {
+            path: self.path.clone(),
+            source,
+        };
+        if !std::fs::symlink_metadata(&self.path)
+            .map_err(io)?
+            .file_type()
+            .is_symlink()
+        {
+            return Ok(false);
+        }
+        let refused = || {
+            LoadError::Invalid(format!(
+                "invalid segment object link: {}",
+                self.path.display()
+            ))
+        };
+        let digest = self.sha256.len() == 64
+            && self
+                .sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        let expected = Path::new("../..").join(OBJECT_STORE).join(&self.sha256);
+        if !digest || std::fs::read_link(&self.path).map_err(io)? != expected {
+            return Err(refused());
+        }
+        let store = self
+            .path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or_else(refused)?
+            .join(OBJECT_STORE);
+        let real = |path: &Path, dir: bool| {
+            std::fs::symlink_metadata(path).is_ok_and(|m| {
+                !m.file_type().is_symlink() && if dir { m.is_dir() } else { m.is_file() }
+            })
+        };
+        if !real(&store, true) || !real(&store.join(&self.sha256), false) {
+            return Err(refused());
+        }
+        Ok(true)
     }
 
     pub fn rows(&self) -> u64 {
@@ -1086,6 +1146,7 @@ impl LoadedShard {
             if size_only {
                 return source.for_serving();
             }
+            source.check_object_link()?;
             source.verify_or_reuse(
                 evidence.get(identity, kind, index as u32).iter().copied(),
                 report,
@@ -1415,6 +1476,16 @@ impl ShardSet {
                 source,
             })?;
             let path = entry.path();
+            if path.is_symlink()
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(crate::runtime::disk::ShippedRuntimes::is_entry)
+            {
+                // A publisher's stored runtime; the artifact resolver checks
+                // its link, and no runtime is a revision.
+                continue;
+            }
             if path.is_symlink() {
                 // Fleet publications may reference a revision stored once in
                 // this worker's sibling catalog. Do not accept redirects out

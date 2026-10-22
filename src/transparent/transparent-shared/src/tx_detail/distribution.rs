@@ -192,7 +192,14 @@ impl Finalized {
         // Hash immutable artifacts on the bounded CPU pool. Native handles
         // stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
-        for (artifact, path, file) in hash_listed(root, pending, stop)? {
+        for crate::publication::Listed {
+            artifact,
+            path,
+            physical,
+            opened: file,
+            ..
+        } in hash_listed(root, pending, stop)?
+        {
             if expected
                 .get(&path)
                 .is_some_and(|sha256| *sha256 != artifact.sha256)
@@ -202,7 +209,7 @@ impl Finalized {
             if let Some(file) = file {
                 runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
             }
-            files.insert(artifact.sha256.clone(), path);
+            files.insert(artifact.sha256.clone(), physical);
             inventory.artifacts.push(artifact);
         }
         // Keep native loads sequential to bound resident runtime memory.
