@@ -1394,8 +1394,11 @@ mod tests {
         }
     }
 
+    /// A stored file, with its inode number and change time.
+    type Stored = (PathBuf, (u64, i64, i64));
+
     /// The stored file `link` names, and its stamp.
-    fn stored(link: &Path) -> (PathBuf, (u64, i64, i64)) {
+    fn stored(link: &Path) -> Stored {
         use std::os::unix::fs::MetadataExt;
         let physical = std::fs::canonicalize(link).unwrap();
         let meta = std::fs::metadata(&physical).unwrap();
@@ -1436,8 +1439,7 @@ mod tests {
         let never = || false;
         let mut previous: Option<(PathBuf, ShardSet, transparent_filter::ShardMap)> = None;
         // Each cycle's segment objects by digest, with their stamps.
-        let mut history: Vec<std::collections::BTreeMap<String, (PathBuf, (u64, i64, i64))>> =
-            Vec::new();
+        let mut history: Vec<std::collections::BTreeMap<String, Stored>> = Vec::new();
         for cycle in 0..5u64 {
             let output = base.join(format!("candidate-{cycle}"));
             let map = match &previous {
