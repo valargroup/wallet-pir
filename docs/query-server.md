@@ -46,8 +46,15 @@ queries, history filter shards and Receiver cross to `transparent-pir` and
 serves no legacy alias and no operator path. The product hosts keep serving both
 forms for released wallets. Receiver's edge trusts only the coordinator's
 address to forward `X-Forwarded-For`, so its per-client admission still keys on
-the wallet. Whether the host is live is recorded in the product status pages,
-not here.
+the wallet. The site reaches the live coordinator file only through the
+transactional `wallet-pir-deploy coordinator-edge-{plan,preflight,deploy,status,rollback}`
+operation (`wallet_pir_ops.deploy.unified_edge`). Under the production lock it pins the
+live file and coordinator identity, adds or replaces only the unified site, validates,
+reloads, probes the host locally (canonical routes 200, legacy and operator paths 404)
+and restores the exact previous file on any failure. Its request is
+`{"schema": "coordinator-unified-edge/1", "host", "machine_id", "enhance_public_url"}`.
+Product cutovers edit their own site in place and keep it. Whether the host is
+live is recorded in the product status pages, not here.
 
 ## Features
 

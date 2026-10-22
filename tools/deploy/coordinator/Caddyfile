@@ -1,7 +1,9 @@
 # Rendered by `wallet_pir_ops.deploy.coordinator_edge`: ENHANCE_PUBLIC_HOST is
-# replaced with the host of ENHANCE_PUBLIC_URL before the file is validated and
-# installed. The renderer refuses a result that lacks either site below, so a
-# per-product deploy cannot drop the unified `wallet-pir.valargroup.dev` site.
+# replaced with the host of ENHANCE_PUBLIC_URL, and the renderer refuses a
+# result that lacks either site below. The live file is not replaced with this
+# template: product cutovers edit their own site in place, and
+# `wallet-pir-deploy coordinator-edge-{plan,preflight,deploy,status,rollback}`
+# adds or updates only the unified `wallet-pir.valargroup.dev` site.
 ENHANCE_PUBLIC_HOST {
 	tls {
 		issuer acme {
