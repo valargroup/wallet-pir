@@ -85,6 +85,10 @@ HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'}
 # Fixture features pull one product's wallet client and chain test node into
 # every crate on their command. Fast leaves the chain node in qualification.
 # The second command is only the in-process Enhance hint graph.
+# Query-host roles the stable command reaches through publisher dev-dependencies.
+HINT_HOST_ROLES = ('pir-query-server/status', 'pir-query-server/transparent-detail',
+                   'pir-query-server/transparent-history')
+
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
     'transparent': 'pir-e2e-tests/transparent-tests',
@@ -404,6 +408,10 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         # The same feature also enables the query host's Enhance role. Its
         # library and operator tests that are compiled only in that role stay
         # here, so the stable command can keep building the host without it.
+        # Both commands write one host binary, and operator tests from both
+        # run it. Building it here with the roles the stable command unifies
+        # in as well keeps it a superset of every compiled operator test.
+        features.update(HINT_HOST_ROLES)
         commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
                          '-p', 'pir-e2e-tests', '-p', 'pir-query-server', '--lib',
                          '--test', 'ci_hint', '--test', 'operator',
