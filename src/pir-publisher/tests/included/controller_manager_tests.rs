@@ -1022,7 +1022,7 @@ async fn manager_checks_inventory_and_required_files_on_unchanged_maps() {
     // entry rather than write through the active publication's runtime.
     let object = state
         .join(pir_artifact::namespace("objects"))
-        .join(&runtime.sha256);
+        .join(&runtime.checksum);
     assert!(std::fs::metadata(&object).unwrap().permissions().readonly());
     std::fs::remove_file(&object).unwrap();
     std::fs::write(&object, b"corrupt").unwrap();
