@@ -136,9 +136,6 @@ pub fn preparation(
             .unwrap_or(0),
     );
 }
-pub fn reaffirmed(observed_ms: u64) {
-    shared().lock().unwrap().observed_ms = Some(observed_ms);
-}
 
 const LIMITS: [f64; 11] = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.5, 1., 2., 5.];
 

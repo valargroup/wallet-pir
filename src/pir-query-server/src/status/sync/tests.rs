@@ -10,6 +10,8 @@ use std::sync::{
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
+    advance_during_check: AtomicBool,
+    withdraw_during_check: AtomicBool,
     version: RwLock<String>,
 }
 #[path = "../../../tests/support/status_tls.rs"]
@@ -55,6 +57,8 @@ async fn setup() -> (
     let current = Arc::new(Origin {
         current: RwLock::new(pointer()),
         canonical: AtomicBool::new(true),
+        advance_during_check: AtomicBool::new(false),
+        withdraw_during_check: AtomicBool::new(false),
         version: RwLock::new(pir_sync_manager::service_discovery::VERSION.into()),
     });
     let shared = current.clone();
@@ -92,6 +96,14 @@ async fn setup() -> (
             post(move |Json(request): Json<AnchorRequest>| {
                 let shared = anchors.clone();
                 async move {
+                    if shared.advance_during_check.swap(false, Ordering::SeqCst) {
+                        let mut current = shared.current.write().unwrap();
+                        current.revision += 1;
+                        if shared.withdraw_during_check.load(Ordering::SeqCst) {
+                            current.eligible = false;
+                        }
+                        return StatusCode::CONFLICT.into_response();
+                    }
                     Json(AnchorResponse {
                         current: shared.current.read().unwrap().clone(),
                         canonical: vec![
@@ -99,6 +111,7 @@ async fn setup() -> (
                             request.anchors.len()
                         ],
                     })
+                    .into_response()
                 }
             }),
         );
@@ -406,5 +419,59 @@ async fn ordinary_discovery_failure_is_retryable_and_never_renews_freshness() {
         before
     );
     assert!(task.floor.current.is_none());
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_new_publication_during_authority_check_retries_without_renewing_the_old_view() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    let before = service
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .current()
+        .manifest()
+        .clone();
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    assert_eq!(task.synchronize().await.unwrap(), before.generation);
+    assert!(task.deferred);
+    assert_eq!(
+        service.state.lock().await.synchronization,
+        "waiting_for_peer"
+    );
+    assert_eq!(
+        service
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .unwrap()
+            .current()
+            .manifest(),
+        &before
+    );
+    assert!(task.floor.invalid.is_empty());
+    assert_eq!(
+        task.floor.current.as_ref().unwrap(),
+        &*source.current.read().unwrap()
+    );
+    // The next attempt really runs; its invalid fixture must still be refused.
+    assert!(task.synchronize().await.is_err());
+    server.abort();
+}
+
+#[tokio::test]
+async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring() {
+    let (_root, service, mut task, source, _tls, server) = setup().await;
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    source.withdraw_during_check.store(true, Ordering::SeqCst);
+    task.synchronize().await.unwrap();
+    assert!(task.deferred);
+    assert!(!task.floor.current.as_ref().unwrap().eligible);
+    assert!(service.serving().await.is_err());
     server.abort();
 }

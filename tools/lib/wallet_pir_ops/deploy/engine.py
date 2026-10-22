@@ -85,7 +85,8 @@ class TargetPlan:
 
 class Deployer:
     def __init__(self, service, inventory, executor, state_dir, baseline_path=None, lock=None,
-                 out=print, sleep=time.sleep, clock=time.monotonic, poll_seconds=2.0, only=None):
+                 out=print, sleep=time.sleep, clock=time.monotonic, poll_seconds=2.0, only=None,
+                 hold_on_failure=False):
         self.service = service
         self.inventory = inventory
         self.ex = executor
@@ -97,6 +98,7 @@ class Deployer:
         self.sleep = sleep
         self.clock = clock
         self.poll_seconds = poll_seconds
+        self.hold_on_failure = hold_on_failure
         self.targets = descriptors.select(descriptors.targets(service, inventory), only)
 
     def transaction_binary(self):
@@ -682,6 +684,10 @@ class Deployer:
             journal.set_status('committed')
         except BaseException as error:
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
+            if self.hold_on_failure and journal.touched():
+                journal.set_status('held')
+                self.out('deploy failed (%s); holding changed targets for operator repair' % error)
+                raise
             if journal.touched():
                 self.out('deploy failed (%s); rolling back %d touched target(s)' % (error, len(journal.touched())))
                 try:

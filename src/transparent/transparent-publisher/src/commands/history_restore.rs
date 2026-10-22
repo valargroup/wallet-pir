@@ -1,6 +1,6 @@
 //! Completed-publication evidence for a pinned History publication, prepared
 //! beside a running publisher: no journal writer, listener or other product.
-use crate::history::{controller::Config, publication::write_atomic};
+use crate::history::{controller::Config, publication::write_durable};
 use clap::Parser;
 use std::path::PathBuf;
 use transparent_shared::{
@@ -57,7 +57,7 @@ pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
             end.end_height,
             &end.terminal_block_hash,
         )?;
-        write_atomic(&cli.output, &serde_json::to_vec(&record)?)?;
+        write_durable(&cli.output, &serde_json::to_vec(&record)?)?;
         println!(
             "{}",
             serde_json::json!({

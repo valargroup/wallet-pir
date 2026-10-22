@@ -123,8 +123,9 @@ class CorrectnessSelectionTests(unittest.TestCase):
         self.assertFalse(any('--workspace' in command and '--no-run' in command for command in calls))
         self.assertTrue(any('-p' in command and 'pir-e2e-tests' in command and 'ci_hint' in command
                             for command in calls))
-        self.assertTrue(any('enhance-query-server' in command and 'routing_contract' in command
+        self.assertTrue(any('enhance-query-server' in command and '--lib' in command
                             for command in calls))
+        self.assertFalse(any('routing_contract' in command for command in calls))
         self.assertTrue(any('status-query-server' in command and '--tests' in command for command in calls))
         self.assertTrue(any('--doc' in command and '--workspace' in command for command in calls))
         self.assertTrue(any(command[:2] == ['cargo', 'clippy'] and '--all-targets' in command

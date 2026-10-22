@@ -64,7 +64,16 @@
               "matvec_backend": "cpu",
               "credentials": [
                 "/etc/enhance-pir/internal-token.env"
-              ]
+              ],
+              "synchronization": {
+                "publisher_origin": "https://publisher.example.invalid",
+                "trusted_ca": null,
+                "download_budget_bytes": 8589934592,
+                "cache_limit_bytes": 8589934592,
+                "shards": [
+                  0
+                ]
+              }
             }
           },
           {
@@ -79,7 +88,16 @@
               "matvec_backend": "cpu",
               "credentials": [
                 "/etc/enhance-pir/internal-token.env"
-              ]
+              ],
+              "synchronization": {
+                "publisher_origin": "https://publisher.example.invalid",
+                "trusted_ca": null,
+                "download_budget_bytes": 8589934592,
+                "cache_limit_bytes": 8589934592,
+                "shards": [
+                  1
+                ]
+              }
             }
           },
           {
@@ -97,7 +115,16 @@
               "cuda_device": 0,
               "credentials": [
                 "/etc/enhance-pir/internal-token.env"
-              ]
+              ],
+              "synchronization": {
+                "publisher_origin": "https://publisher.example.invalid",
+                "trusted_ca": null,
+                "download_budget_bytes": 8589934592,
+                "cache_limit_bytes": 8589934592,
+                "shards": [
+                  0
+                ]
+              }
             },
             "health_equals": {
               "matvec.matvec_backend": "cuda",
@@ -115,10 +142,24 @@
               "listen": "192.0.2.14:8092",
               "control_listen": "192.0.2.14:8093",
               "data_dir": "/srv/enhance-pir-router",
-              "artifact_origin": "http://192.0.2.10:8080",
               "credentials": [
                 "/etc/enhance-pir/internal-token.env"
-              ]
+              ],
+              "synchronization": {
+                "publisher_origin": "https://publisher.example.invalid",
+                "trusted_ca": null,
+                "download_budget_bytes": 8589934592,
+                "cache_limit_bytes": 8589934592,
+                "workers": {
+                  "0": [
+                    "http://192.0.2.15:8091",
+                    "http://192.0.2.19:8091"
+                  ],
+                  "1": [
+                    "http://192.0.2.16:8091"
+                  ]
+                }
+              }
             }
           }
         ],
@@ -134,7 +175,27 @@
               "data_dir": "/srv/enhance-pir-ingress",
               "credentials": [
                 "/etc/enhance-pir/internal-token.env"
-              ]
+              ],
+              "synchronization": {
+                "publisher_origin": "https://publisher.example.invalid",
+                "trusted_ca": null,
+                "download_budget_bytes": 8589934592,
+                "cache_limit_bytes": 8589934592,
+                "routers": {
+                  "0": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ],
+                  "1": [
+                    {
+                      "control_origin": "http://192.0.2.14:8093",
+                      "query_origin": "http://192.0.2.14:8092"
+                    }
+                  ]
+                }
+              }
             }
           }
         ]
@@ -172,7 +233,7 @@
               "network_hex": "08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400",
               "state_dir": "/var/lib/status-pir-worker-native",
               "listen": "127.0.0.1:8481",
-              "artifact_origin": "http://127.0.0.1:8495",
+              "publisher": "https://enhance.example",
               "worker_origin": "http://127.0.0.1:8481"
             }
           }
@@ -184,7 +245,7 @@
               "network_hex": "08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400",
               "state_dir": "/var/lib/status-pir-router-native",
               "listen": "127.0.0.1:8482",
-              "artifact_origin": "http://127.0.0.1:8481",
+              "publisher": "https://enhance.example",
               "worker_origin": "http://127.0.0.1:8481",
               "query_listen": "127.0.0.1:8484"
             }

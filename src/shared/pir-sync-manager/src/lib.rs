@@ -51,10 +51,24 @@ pub trait SyncTask: Send {
 /// this manager never races a pass against a timer or retries part of a pass.
 pub struct SyncManager<T> {
     task: T,
+    success_interval: Option<Duration>,
 }
 impl<T> SyncManager<T> {
     pub fn new(task: T) -> Self {
-        Self { task }
+        Self {
+            task,
+            success_interval: None,
+        }
+    }
+    /// Use a product's freshness budget for successful passes. Failure backoff
+    /// and the default cadence remain unchanged.
+    pub fn with_success_interval(mut self, interval: Duration) -> Self {
+        assert!(
+            !interval.is_zero(),
+            "successful polling interval must be positive"
+        );
+        self.success_interval = Some(interval);
+        self
     }
     pub fn task(&self) -> &T {
         &self.task
@@ -87,8 +101,12 @@ impl<T: SyncTask> SyncManager<T> {
             let jitter = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000);
+            let wait = self
+                .success_interval
+                .filter(|_| failures == 0)
+                .unwrap_or_else(|| delay(failures, jitter));
             self.task
-                .wait_until(tokio::time::Instant::now() + delay(failures, jitter))
+                .wait_until(tokio::time::Instant::now() + wait)
                 .await;
         }
     }

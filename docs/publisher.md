@@ -37,6 +37,22 @@ journal, database or runtime-cache format. Maintenance is available through
 root subcommands; the product crates have no standalone executables. Crate relocation does not relocate deployed data or change upstream
 wallet-libraries revisions.
 
+The binary composes product service facades into `PublisherDefinition` values.
+Each definition declares listeners, writable paths and readiness probes, and owns
+a startup factory. Static checks inspect those declarations without opening
+credentials or product state. The generic `run_registered` host reserves all
+listeners before starting any factory; it contains no product-specific routing,
+controller settings or readiness response schemas.
+
+`pir-pipeline::publisher::PublisherService` runs product workflows. Products
+supply bounded operations, wake conditions and failure policies. Typed
+`PublicationPass` recipes carry work and candidates through acquisition,
+preparation and publication, including borrowed owner permits. The service
+observes shutdown between operations and always finishes the product drain;
+activation validation and durable authority updates stay inside product code.
+Enhance, Status, History, filters and transaction details use this engine.
+Receiver retains its existing implementation through a composition-layer bridge.
+
 ## Configuration and local use
 
 Build the native CPU application used by the deployed protocols:
@@ -154,7 +170,7 @@ Only a verified source observation supplies a new timestamp. Immutable artifacts
 are reused across metadata-only publications. Query servers independently fetch,
 verify, load and activate material through `pir-sync-manager`; Status no longer
 uses publisher heartbeats. The twenty-second wallet observation-age limit is
-unchanged. See [Status distribution and cutover](status/status_distributed.md).
+unchanged. See [Status distribution](status/status_distributed.md).
 This describes source capability, not a production cutover record.
 
 ## Autonomous Transparent HTTP prototype

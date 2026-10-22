@@ -71,7 +71,7 @@ impl PublicationArtifact {
         result
     }
 
-    /// Re-open a hint file and apply the checks a worker runs before serving it.
+    /// Re-open a publisher hint file and validate its complete encoding.
     /// Callers use this to reject each damaged shape without preparing another runtime.
     #[doc(hidden)]
     pub fn revalidate_hint_file(

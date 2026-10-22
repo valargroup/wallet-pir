@@ -125,11 +125,25 @@ impl Distribution {
         &self.root
     }
 
-    pub(crate) fn is_current(&self, manifest: &Manifest) -> bool {
-        let disk = self.disk.lock().unwrap();
-        !self.poisoned.load(Ordering::Acquire)
-            && disk.current.eligible
-            && disk.current.manifest.as_ref() == Some(manifest)
+    pub(crate) fn durable_current(&self) -> Current {
+        self.disk.lock().unwrap().current.clone()
+    }
+    /// Last durably installed manifest, for operator tooling. This does not
+    /// authorize serving; consumers must obtain fresh source authority.
+    pub fn published_manifest(&self) -> Option<Manifest> {
+        self.disk.lock().unwrap().current.manifest.clone()
+    }
+    pub(crate) fn retained_manifests(&self) -> Vec<Manifest> {
+        self.disk
+            .lock()
+            .unwrap()
+            .retained
+            .iter()
+            .map(|r| r.manifest.clone())
+            .collect()
+    }
+    pub(crate) fn poison(&self) {
+        self.poisoned.store(true, Ordering::Release);
     }
 
     /// Install a completed publication after hashing every object it names.
@@ -139,8 +153,12 @@ impl Distribution {
         if !inventory.supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(manifest, move |root| publication::verify(root, inventory))
-            .await
+        self.install(
+            manifest,
+            self.durable_current().withdrawal_revision,
+            move |root| publication::verify(root, inventory),
+        )
+        .await
     }
 
     /// Install material this process prepared, rehashing only objects whose
@@ -150,16 +168,33 @@ impl Distribution {
         manifest: Manifest,
         prepared: Prepared,
     ) -> Result<(), String> {
+        self.publish_if_unwithdrawn(
+            manifest,
+            prepared,
+            self.durable_current().withdrawal_revision,
+        )
+        .await
+    }
+
+    pub(crate) async fn publish_if_unwithdrawn(
+        &self,
+        manifest: Manifest,
+        prepared: Prepared,
+        withdrawal_revision: u64,
+    ) -> Result<(), String> {
         if !prepared.inventory().supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(manifest, move |root| prepared.recheck(root))
-            .await
+        self.install(manifest, withdrawal_revision, move |root| {
+            prepared.recheck(root)
+        })
+        .await
     }
 
     async fn install(
         &self,
         manifest: Manifest,
+        withdrawal_revision: u64,
         verify: impl FnOnce(&Path) -> Result<Prepared, String> + Send + 'static,
     ) -> Result<(), String> {
         // Use the producer's lock too: collection must not race a candidate
@@ -174,6 +209,9 @@ impl Distribution {
             .try_lock()
             .map_err(|_| "Enhance publication preparation already owned")?;
         let predecessor = self.disk.lock().unwrap().current.clone();
+        if predecessor.withdrawal_revision != withdrawal_revision {
+            return Err("Enhance publication withdrawn during preparation".into());
+        }
         let root = self.root.clone();
         let prepared = tokio::task::spawn_blocking(move || verify(&root))
             .await
@@ -246,12 +284,6 @@ impl Distribution {
         {
             return Err("nonmonotonic Enhance distribution fence".into());
         }
-        if !next.current.eligible
-            && revocation.recovery_epoch == next.current.recovery_epoch
-            && next.current.revoked == revocation.sessions
-        {
-            return Ok(());
-        }
         next.current.recovery_epoch = revocation.recovery_epoch;
         next.current.revoked = revocation.sessions.clone();
         next.current.eligible = false;
@@ -298,7 +330,10 @@ impl Distribution {
         Ok(started)
     }
 
-    async fn authority(&self, requested: Option<&str>) -> Result<AuthorityResponse, String> {
+    pub(crate) async fn authority(
+        &self,
+        requested: Option<&str>,
+    ) -> Result<AuthorityResponse, String> {
         if self.poisoned.load(Ordering::Acquire) {
             return Err("Enhance distribution persistence failed".into());
         }
@@ -337,11 +372,28 @@ impl Distribution {
         let observed_unix_ms = self.canonical(&manifest).await?;
         // Recheck after the RPC: a withdrawal concurrent with the node check
         // must be visible before the response grants any authority.
-        if self.poisoned.load(Ordering::Acquire) || self.disk.lock().unwrap().current != current {
+        let disk = self.disk.lock().unwrap();
+        let latest = &disk.current;
+        if self.poisoned.load(Ordering::Acquire)
+            || !latest.eligible
+            || (requested.is_none() && latest.manifest != current.manifest)
+            || latest.withdrawal_revision != current.withdrawal_revision
+            || !disk
+                .retained
+                .iter()
+                .any(|retained| retained.manifest == manifest)
+            || manifest.coverage.shards.iter().any(|shard| {
+                manifest
+                    .session_id(shard.id)
+                    .is_ok_and(|id| latest.revoked.contains(&hex::encode(id)))
+            })
+        {
             return Err("Enhance authority changed during source validation".into());
         }
+        // Ordinary publication advancement does not revoke a retained binding.
+        // Return the latest floors together with this real canonical observation.
         Ok(AuthorityResponse {
-            current,
+            current: latest.clone(),
             authorized_manifest_sha256: digest(&manifest),
             observed_unix_ms,
         })
@@ -587,4 +639,60 @@ fn stream(path: &Path, descriptor: &Object) -> ApiResult<Response> {
         Body::from_stream(artifact.stream()),
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_files_removes_only_unretained_owned_files() {
+        let scratch = tempfile::tempdir().unwrap();
+        let directory = scratch.path().join("objects");
+        assert!(collect_files(&directory, &BTreeSet::new()).is_ok());
+        fs::create_dir(&directory).unwrap();
+        let (kept, stale) = ("ab".repeat(32), "cd".repeat(32));
+        let retained = [
+            kept.clone(),
+            format!("{kept}.json"),
+            format!("{kept}.bin"),
+            format!("{kept}.bin.json"),
+        ];
+        let removed = [
+            stale.clone(),
+            format!("{stale}.json"),
+            format!("{stale}.bin"),
+            format!("{stale}.bin.json"),
+            format!("{kept}.tmp"),
+            format!("{kept}.json.tmp"),
+            format!("{stale}.bin.tmp"),
+        ];
+        // Names the publisher does not own, including near-hashes, stay.
+        let foreign = [
+            "current.json".to_string(),
+            "distribution.lock".to_string(),
+            "AB".repeat(32),
+            format!("{}.json", "a".repeat(63)),
+            format!("{stale}.txt"),
+        ];
+        for name in retained.iter().chain(&removed).chain(&foreign) {
+            fs::write(directory.join(name), name).unwrap();
+        }
+        // A directory under an owned name is not a collected file.
+        fs::create_dir(directory.join("ef".repeat(32))).unwrap();
+        collect_files(&directory, &retained.iter().cloned().collect()).unwrap();
+        let mut remaining: Vec<_> = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        remaining.sort();
+        let mut expected: Vec<_> = retained
+            .iter()
+            .chain(&foreign)
+            .cloned()
+            .chain(["ef".repeat(32)])
+            .collect();
+        expected.sort();
+        assert_eq!(remaining, expected);
+    }
 }

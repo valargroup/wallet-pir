@@ -54,7 +54,7 @@ renderer = "tools.enhance.lib.roles:worker"
 # Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
 # credentials (the ENHANCE_INTERNAL_TOKEN environment file). Health uses vars.listen.
 health = "http://{listen}/internal/health"
-ready = { field = "published", nonempty = true }
+ready = { field = "ready", equals = true }
 ready_timeout = 300
 adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
 
@@ -72,7 +72,7 @@ renderer = "tools.enhance.lib.roles:external_worker"
 optional = true
 # Settings: listen, data_dir, sealed_shards?, matvec_backend?, cuda_device?,
 # limits?, credentials (the ENHANCE_INTERNAL_TOKEN environment file).
-# Published only after the coordinator activates it; health proves identity.
+# Serves only after verified HTTPS publication; health proves identity.
 health = "http://{listen}/internal/health"
 ready_timeout = 300
 
@@ -82,8 +82,8 @@ binary = "pir-query-server"
 mode = "role"
 template = "enhance-pir-packing-router.role.service"
 renderer = "tools.enhance.lib.roles:packing_router"
-# Settings: data_dir, artifact_origin, listen, control_listen, credentials.
-# Ready once the running coordinator re-activates it. Health uses vars.control_listen.
+# Settings: data_dir, synchronization, listen, control_listen, credentials.
+# Ready after verified HTTPS material and matching downstream readiness. Health uses vars.control_listen.
 health = "http://{control_listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300

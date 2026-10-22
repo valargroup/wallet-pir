@@ -35,9 +35,9 @@ pub struct Config {
     #[serde(flatten)]
     pub source: SourceConfig,
     /// Domain responsibilities and private worker replicas are local configuration.
-    #[serde(deserialize_with = "crate::synchronization::domains")]
+    #[serde(deserialize_with = "crate::synchronization::domain_map")]
     pub workers: BTreeMap<u64, Vec<String>>,
-    #[serde(default, deserialize_with = "crate::synchronization::domains")]
+    #[serde(default, deserialize_with = "crate::synchronization::domain_map")]
     pub preferred: BTreeMap<u64, BTreeSet<String>>,
 }
 impl Config {
@@ -47,6 +47,9 @@ impl Config {
             return Err("router needs one to six domain responsibilities".into());
         }
         for (&shard, urls) in &self.workers {
+            if shard >= protocol::MAX_QUERY_SHARDS {
+                return Err("router domain is outside the protocol ceiling".into());
+            }
             if urls.is_empty()
                 || urls.len() > 2
                 || urls.iter().collect::<BTreeSet<_>>().len() != urls.len()
@@ -54,7 +57,7 @@ impl Config {
                 return Err("router needs one or two distinct replicas per domain".into());
             }
             for url in urls {
-                crate::packing_router::valid_origin(url)?;
+                crate::synchronization::peer_origin(url)?;
             }
             if self
                 .preferred
@@ -406,7 +409,7 @@ impl PackingRouter {
         loaded: &Loaded,
         shard: u64,
         excluded: Option<&str>,
-    ) -> Result<(String, Option<String>, Outstanding), ApiError> {
+    ) -> Result<(String, String, Outstanding), ApiError> {
         let mut inner = self.inner.lock().unwrap();
         let peers = loaded.peers.lock().unwrap();
         let peers = peers
@@ -449,7 +452,7 @@ impl PackingRouter {
         *inner.outstanding.entry(chosen.url.clone()).or_default() += 1;
         Ok((
             chosen.url.clone(),
-            Some(chosen.incarnation.clone()),
+            chosen.incarnation.clone(),
             Outstanding {
                 inner: self.inner.clone(),
                 url: chosen.url.clone(),
@@ -500,11 +503,9 @@ impl Synchronizer {
                 }
             }
         }
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
+        let Some(manifest) = response.current.manifest.clone() else {
+            return Ok(());
+        };
         let observed =
             Lease::from_response(response.clone(), &manifest, &self.router.authority.safety)?;
         if self
@@ -651,8 +652,8 @@ impl Synchronizer {
             return Ok(());
         };
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("router candidate superseded while loading".into());
+        if !lease.continues(&observed) {
+            return Err("router publication withdrawn while loading".into());
         }
         let guard = self.router.authority.install(manifest.clone(), lease)?;
         guard.check()?;
@@ -723,7 +724,7 @@ impl SyncTask for Synchronizer {
 async fn health(State(router): State<PackingRouter>) -> Json<serde_json::Value> {
     let inner = router.inner.lock().unwrap();
     Json(
-        serde_json::json!({"incarnation": router.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
+        serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": router.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
         "packing_charged_bytes": router.budget.charged_bytes(),
         "ready": inner.active.as_ref().is_some_and(|view| router.authority.check(&view.manifest).is_ok())}),
     )
@@ -912,7 +913,10 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
         .ok_or((StatusCode::GONE, "session_unavailable".into()))?;
     let query_rows = crate::query_serving::validate_binding(&loaded.manifest, binding)?;
     crate::query_serving::admitted(async move {
-        guard.check().map_err(unavailable)?;
+        let guard = guard
+            .fresh_for_release(&router.authority)
+            .await
+            .map_err(unavailable)?;
         let coefficients = packing
             .query_coefficients(&bytes, binding, query_rows)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
@@ -935,7 +939,10 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
                 router.select(&loaded, binding.shard_id, excluded)
             })
             .await?;
-        guard.check().map_err(unavailable)?;
+        let guard = guard
+            .fresh_for_release(&router.authority)
+            .await
+            .map_err(unavailable)?;
         let worker_time = answer.worker_time;
         let (bytes, packing, packing_time) = tokio::task::spawn_blocking(move || {
             let began = Instant::now();
@@ -946,7 +953,10 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
         })
         .await
         .map_err(unavailable)??;
-        guard.check().map_err(unavailable)?;
+        let guard = guard
+            .fresh_for_release(&router.authority)
+            .await
+            .map_err(unavailable)?;
         let mut response =
             crate::response_body::guarded(bytes, (permit, loaded, packing), move || guard.check())
                 .into_response();

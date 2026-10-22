@@ -102,6 +102,18 @@ pub struct Inventory {
     pub public: Object,
 }
 impl Inventory {
+    /// Exact distributed objects and commitments; publication identity may advance.
+    pub fn same_prepared_material(&self, next: &Self) -> bool {
+        self.schema == next.schema
+            && self.manifest.network == next.manifest.network
+            && self.manifest.salt == next.manifest.salt
+            && self.manifest.rows_digest == next.manifest.rows_digest
+            && self.manifest.public_digest == next.manifest.public_digest
+            && self.units == next.units
+            && self.packing == next.packing
+            && self.public == next.public
+    }
+
     pub fn validate(&self, current: &Current) -> Result<(), Failure> {
         self.validate_material()?;
         if self.schema != SCHEMA
@@ -254,6 +266,18 @@ mod tests {
             packing: vec![],
             public: Object::new(b"public"),
         };
+        let mut next = inventory.clone();
+        next.manifest.generation += 1;
+        next.manifest.observed_ms += 1;
+        assert!(inventory.same_prepared_material(&next));
+        next.public = Object::new(b"other");
+        assert!(!inventory.same_prepared_material(&next));
+        next = inventory.clone();
+        next.manifest.salt[0] ^= 1;
+        assert!(!inventory.same_prepared_material(&next));
+        next = inventory.clone();
+        next.manifest.rows_digest[0] ^= 1;
+        assert!(!inventory.same_prepared_material(&next));
         assert!(inventory.validate(&current()).is_err());
         let result = crate::Generation::load_prepared(
             &inventory,

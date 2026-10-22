@@ -83,6 +83,9 @@ pub struct DisplayRevision {
     pub dir: PathBuf,
     /// Segments of each bucket's table, in bucket order. Empty unless held.
     pub buckets: Vec<Vec<SegmentSource>>,
+    /// Whether this process checked every row of these exact tables, here
+    /// or under an earlier revision of this digest. Never for serving loads.
+    rows_checked: bool,
 }
 
 impl DisplayRevision {
@@ -113,6 +116,7 @@ impl DisplayRevision {
             geometry,
             dir: dir.to_path_buf(),
             buckets: Vec::new(),
+            rows_checked: false,
         })
     }
 
@@ -165,9 +169,10 @@ impl DisplayRevision {
     }
 
     /// Verifies the revision, taking over any segment `earlier` — a held
-    /// revision with this digest — proved as the very file now published.
-    /// Rows are re-checked unless every segment was taken over, in which case
-    /// `earlier` checked these exact files under this exact manifest.
+    /// revision with this digest — proved as the very file now published,
+    /// and hashing every other one against the manifest. Rows are checked
+    /// unless `earlier` checked them for this process: the manifest binds
+    /// every segment digest, so its sources then hold those exact bytes.
     pub(crate) fn verify_tables_reusing(
         mut self,
         earlier: Option<&Self>,
@@ -178,7 +183,6 @@ impl DisplayRevision {
         let earlier = earlier.filter(|earlier| earlier.digest == self.digest && earlier.held());
         let geometry = self.geometry;
         let shard_id = self.manifest.shard_id;
-        let hashed_before = report.segments_hashed;
         let mut buckets = Vec::new();
         for table in self.manifest.tables() {
             let published = self
@@ -219,10 +223,20 @@ impl DisplayRevision {
             }
             buckets.push(sources);
         }
-        if size_only || (earlier.is_some() && report.segments_hashed == hashed_before) {
-            self.buckets = buckets;
+        self.buckets = buckets;
+        if size_only {
             return Ok(self);
         }
+        // Every source now holds its manifest digest: hashed above, or taken
+        // over as the very file proved before. An earlier revision of this
+        // digest whose rows this process checked proved these exact bytes,
+        // so a hash repeated only because new links changed ctime proves the
+        // rows without reading them one at a time again.
+        if earlier.is_some_and(|earlier| earlier.rows_checked) {
+            self.rows_checked = true;
+            return Ok(self);
+        }
+        let buckets = &self.buckets;
 
         // Canonical rows, bucket membership, each entry's one row,
         // duplicates and counts, one row at a time.
@@ -276,7 +290,7 @@ impl DisplayRevision {
         }
         checked.map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
         report.bytes_row_checked += row_checked;
-        self.buckets = buckets;
+        self.rows_checked = true;
         Ok(self)
     }
 }
@@ -732,8 +746,9 @@ mod tests {
         let second =
             DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
 
-        // An in-place write voids the evidence: the archive is hashed and its
-        // rows checked again, and a changed byte is refused.
+        // An in-place write voids the evidence: the archive is hashed again,
+        // and a changed byte is refused. Identical bytes still match the
+        // digest whose rows `second` holds proven, so rows are not re-read.
         let segment = next.join(&shards[0].digest).join("directory-0.0.bin");
         let original = std::fs::read(&segment).unwrap();
         let file = File::options().write(true).open(&segment).unwrap();
@@ -741,7 +756,7 @@ mod tests {
         let third =
             DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
         assert_eq!(third.verification().segments_hashed, 1);
-        assert!(third.verification().bytes_row_checked > 0);
+        assert_eq!(third.verification().bytes_row_checked, 0);
         file.write_all_at(&[original[100] ^ 1], 100).unwrap();
         assert!(
             DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).is_err()
@@ -751,6 +766,71 @@ mod tests {
         file.write_all_at(&original[100..101], 100).unwrap();
         let restarted = DisplaySet::open(&next, 3, DisplayRole::Combined).unwrap();
         assert_eq!(restarted.verification().segments_hashed, 2);
+        assert!(restarted.verification().bytes_row_checked > 0);
+    }
+
+    /// Each publisher cycle links the same tables into a new candidate, which
+    /// changes their ctime: they are hashed again, but rows proved for those
+    /// digests are not re-read. Only rows this process checked are inherited.
+    #[test]
+    fn relinked_tables_are_rehashed_but_rows_are_inherited_only_when_checked() {
+        let root = tempfile::tempdir().unwrap();
+        let (dir, shards) = publication(root.path());
+        age(root.path());
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let first = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
+        assert!(first.verification().bytes_row_checked > 0);
+
+        // A candidate linked after `first` was verified: stamps differ.
+        let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let second =
+            DisplaySet::open_reusing(&next, 3, Some(&first), &[], DisplayRole::Combined).unwrap();
+        let report = second.verification();
+        assert_eq!((report.segments_hashed, report.segments_reused), (2, 0));
+        assert!(report.bytes_hashed > 0);
+        assert_eq!(report.bytes_row_checked, 0);
+
+        // A serving load checked no rows, so nothing inherits them from it.
+        let serving = DisplaySet::open_for_serving(&dir, 3, DisplayRole::Combined).unwrap();
+        let (third, _) = synth::write_candidate(root.path(), &params(), &shards, "c2").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let checked =
+            DisplaySet::open_reusing(&third, 3, Some(&serving), &[], DisplayRole::Combined)
+                .unwrap();
+        assert!(checked.verification().bytes_row_checked > 0);
+        // Nor from a set that inherited nothing and checked nothing either.
+        let restarted = DisplaySet::open(&third, 3, DisplayRole::Combined).unwrap();
+        assert_eq!(restarted.verification().segments_hashed, 2);
+        assert!(restarted.verification().bytes_row_checked > 0);
+
+        // Changed bytes never inherit anything: the digest refuses them,
+        // whatever the earlier set proved.
+        for shard in &shards {
+            let segment = next.join(&shard.digest).join("directory-0.0.bin");
+            let original = std::fs::read(&segment).unwrap();
+            let mut changed = original.clone();
+            changed[0] ^= 1;
+            std::fs::remove_file(&segment).unwrap();
+            std::fs::write(&segment, &changed).unwrap();
+            for earlier in [&first, &second] {
+                assert!(DisplaySet::open_reusing(
+                    &next,
+                    3,
+                    Some(earlier),
+                    &[],
+                    DisplayRole::Combined
+                )
+                .is_err());
+            }
+            std::fs::remove_file(&segment).unwrap();
+            std::fs::write(&segment, &original).unwrap();
+        }
+        // Restored bytes match again and keep the inherited row proof.
+        let restored =
+            DisplaySet::open_reusing(&next, 3, Some(&second), &[], DisplayRole::Combined).unwrap();
+        assert_eq!(restored.verification().segments_hashed, 2);
+        assert_eq!(restored.verification().bytes_row_checked, 0);
     }
 
     #[test]

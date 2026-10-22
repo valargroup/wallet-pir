@@ -88,8 +88,7 @@ def rust_checks(env, temporary, offline):
             enforce_budget=env['WALLET_PIR_ENFORCE_BUDGET'] == '1')
     # Reference checks have the same package/feature graph and are compiled
     # together. The full native workspace graph is never rebuilt without native.
-    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib',
-                     '--test', 'routing_contract'],
+    reference = run(['cargo', 'test', '--no-run', *options, '-p', 'enhance-query-server', '--lib'],
                     env=env, stage='compile:reference', collect_tests=True, test_details=True)
     reference += run(['cargo', 'test', '--no-run', *options, '-p', 'pir-e2e-tests',
                      '--features', 'enhance-tests', '--test', 'ci_hint'],

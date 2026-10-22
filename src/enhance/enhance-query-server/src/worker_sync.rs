@@ -48,7 +48,13 @@ impl Config {
     pub fn validate(&self, policy: PlacementPolicy) -> Result<(), Error> {
         self.source.validate()?;
         policy.validate()?;
-        if self.shards.is_empty() || self.shards.len() > policy.sealed_shards {
+        if self.shards.is_empty()
+            || self.shards.len() > policy.sealed_shards
+            || self
+                .shards
+                .iter()
+                .any(|id| *id >= protocol::MAX_QUERY_SHARDS)
+        {
             return Err("worker needs a bounded nonempty shard assignment".into());
         }
         Ok(())
@@ -110,6 +116,7 @@ pub struct Worker {
     evaluation: Arc<Semaphore>,
     synchronization: Arc<Semaphore>,
     pub incarnation: String,
+    matvec_latency: Arc<prometheus::Histogram>,
     _ownership: Arc<File>,
 }
 
@@ -177,6 +184,12 @@ impl Worker {
             evaluation: Arc::new(Semaphore::new(2)),
             synchronization: Arc::new(Semaphore::new(1)),
             incarnation: format!("{:032x}", rand::random::<u128>()),
+            matvec_latency: Arc::new(prometheus::Histogram::with_opts(
+                prometheus::HistogramOpts::new(
+                    "enhance_worker_matvec_duration_seconds",
+                    "Successful matrix-vector evaluation time measured inside this worker",
+                ),
+            )?),
             _ownership: Arc::new(ownership),
         })
     }
@@ -196,6 +209,7 @@ impl Worker {
     pub fn router(self) -> Router {
         Router::new()
             .route("/internal/health", get(health))
+            .route("/internal/metrics", get(metrics))
             .route("/internal/readiness", post(readiness))
             .route("/internal/release", post(release))
             .route("/internal/evaluate", post(evaluate))
@@ -213,7 +227,7 @@ impl Worker {
             .views
             .get(&id)
             .map(|view| view.lease.clone())
-            .filter(|lease| lease.check(manifest, &self.safety).is_ok())
+            .filter(|lease| lease.check(manifest, &self.safety).is_ok() && lease.has_release_time())
         {
             return Ok(lease);
         }
@@ -227,7 +241,7 @@ impl Worker {
             .views
             .get(&id)
             .map(|view| view.lease.clone())
-            .filter(|lease| lease.check(manifest, &self.safety).is_ok())
+            .filter(|lease| lease.check(manifest, &self.safety).is_ok() && lease.has_release_time())
         {
             return Ok(lease);
         }
@@ -254,6 +268,10 @@ impl Worker {
 
     fn admit(&self, domains: &[Domain]) -> Result<(), Error> {
         let plans = domains.iter().map(|d| &d.plan).collect::<Vec<_>>();
+        self.reservation(&plans).map(drop)
+    }
+
+    fn reservation(&self, plans: &[&DomainPlan]) -> Result<u64, Error> {
         let active = plans.iter().any(|p| p.shard.state != ShardState::Sealed);
         if plans.len() > self.policy.limit(active)
             || plans
@@ -266,7 +284,7 @@ impl Worker {
         }
         let mut sizes = self.live();
         let mut current = 0u64;
-        for plan in &plans {
+        for plan in plans {
             plan.validate()?;
             for unit in &plan.units {
                 let bytes = unit
@@ -289,7 +307,7 @@ impl Worker {
         if retained + growth + transition + OVERHEAD > RESIDENT_LIMIT {
             return Err("full growth/transition reservation does not fit".into());
         }
-        Ok(())
+        Ok(retained + growth + transition + OVERHEAD)
     }
 
     fn load(&self, domains: Vec<Domain>) -> Result<BTreeMap<u64, Arc<Loaded>>, Error> {
@@ -372,11 +390,11 @@ impl Synchronizer {
     pub async fn poll_once(&mut self) -> Result<(), Error> {
         self.client.begin().await?;
         let response = self.client.current().await?;
-        let manifest = response
-            .current
-            .manifest
-            .clone()
-            .ok_or("no complete Enhance publication")?;
+        let Some(manifest) = response.current.manifest.clone() else {
+            // A valid empty current is a publisher still preparing its first
+            // publication. Keep the ordinary cadence without granting a lease.
+            return Ok(());
+        };
         let observed = Lease::from_response(response.clone(), &manifest, &self.worker.safety)?;
         let id = digest(&manifest);
         {
@@ -450,8 +468,8 @@ impl Synchronizer {
         let worker = self.worker.clone();
         let loaded = tokio::task::spawn_blocking(move || worker.load(domains)).await??;
         let lease = self.client.authority(&manifest).await?;
-        if lease.current() != &response.current {
-            return Err("Enhance candidate superseded while loading".into());
+        if !lease.continues(&observed) {
+            return Err("Enhance publication withdrawn while loading".into());
         }
         lease.check(&manifest, &self.worker.safety)?;
         let mut inner = self.worker.inner.lock().unwrap();
@@ -488,10 +506,63 @@ impl SyncTask for Synchronizer {
 async fn health(State(worker): State<Worker>) -> Json<serde_json::Value> {
     let inner = worker.inner.lock().unwrap();
     Json(
-        serde_json::json!({"incarnation": worker.incarnation, "matvec": worker.backend,
+        serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256,
+        "incarnation": worker.incarnation, "matvec": worker.backend, "placement_policy": worker.policy,
         "active": inner.active, "protocol": protocol::PROTOCOL_REVISION,
         "ready": inner.active.as_ref().and_then(|id| inner.views.get(id))
             .is_some_and(|view| view.lease.check(&view.manifest, &worker.safety).is_ok())}),
+    )
+}
+
+async fn metrics(State(worker): State<Worker>) -> impl IntoResponse {
+    let (plans, retained, ready) = {
+        let inner = worker.inner.lock().unwrap();
+        let active = inner.active.as_ref().and_then(|id| inner.views.get(id));
+        let plans = active
+            .map(|view| {
+                view.domains
+                    .values()
+                    .map(|d| d.plan.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let ready =
+            active.is_some_and(|view| view.lease.check(&view.manifest, &worker.safety).is_ok());
+        (plans, inner.views.len(), ready)
+    };
+    let mut metrics = crate::telemetry::Metrics::default();
+    metrics.number("enhance_worker_up", 1);
+    metrics.number("enhance_worker_ready", u64::from(ready));
+    metrics.number("enhance_worker_retained_generations", retained as u64);
+    metrics.number(
+        "enhance_worker_live_database_bytes",
+        worker.live().values().sum(),
+    );
+    metrics.number(
+        "enhance_worker_queries_in_flight",
+        (2 - worker.evaluation.available_permits()) as u64,
+    );
+    let plans = plans.iter().collect::<Vec<_>>();
+    match worker.reservation(&plans) {
+        Ok(reserved) => {
+            metrics.number("enhance_worker_memory_sample_available", 1);
+            metrics.number("enhance_worker_model_reserved_bytes", reserved);
+            metrics.number("enhance_worker_model_within_limit", 1);
+        }
+        Err(_) => {
+            metrics.number("enhance_worker_memory_sample_available", 0);
+        }
+    }
+    use prometheus::{core::Collector, Encoder};
+    let mut histogram = Vec::new();
+    prometheus::TextEncoder::new()
+        .encode(&worker.matvec_latency.collect(), &mut histogram)
+        .unwrap();
+    (
+        [("content-type", "text/plain; version=0.0.4")],
+        metrics.finish()
+            + &String::from_utf8(histogram).unwrap()
+            + &crate::memory_observation::observe().render("enhance_worker_"),
     )
 }
 
@@ -667,9 +738,15 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
     .await;
     match result {
         Ok(Ok((bytes, loaded, permit, micros))) => {
-            if let Err(error) = lease.check(&manifest, &worker.safety) {
-                return unavailable(error).into_response();
-            }
+            worker.matvec_latency.observe(micros as f64 / 1_000_000.);
+            let refreshed = match worker.renew(&manifest).await {
+                Ok(fresh) if fresh.continues(&lease) => fresh,
+                Ok(_) => {
+                    return unavailable("publication withdrawn during evaluation").into_response()
+                }
+                Err(error) => return unavailable(error).into_response(),
+            };
+            let lease = refreshed;
             let safety = worker.safety.clone();
             (
                 [
@@ -689,6 +766,10 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
         Err(error) => unavailable(error).into_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "worker_sync_tests.rs"]
+mod backend_tests;
 
 #[cfg(test)]
 mod tests {

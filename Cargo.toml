@@ -35,7 +35,7 @@ members = [
     "tools/transparent",
 ]
 
-# Consume the companion witness table library change at one exact upstream revision.
+# Consume the wallet libraries at the main revision with the companion witness table change.
 [patch.crates-io]
 zakura-filters = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
 zakura-pir-client = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "166fc196ee019653fb170210906a014ed1f5982d" }
@@ -51,7 +51,7 @@ inspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a
 reinspiring = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp", rev = "5ea080a3281a01c5459f585e0a1bbbde50ec2bd2" }
 
-# Common uses the published 4.0.0 release.
+# Common uses the published 4.0.0 release, so it needs no patch.
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`
 # computes `zy * cr1 + tmp3 + carry` and relies on it wrapping modulo 2^64. That

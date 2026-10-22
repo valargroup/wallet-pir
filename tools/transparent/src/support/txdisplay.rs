@@ -12,7 +12,6 @@
 //! Every request's header and body bytes are computed from what HTTP/1.1
 //! puts on the wire, and the client sets every request header itself so the
 //! computation is exact; `bytemeter` checks it against a TCP relay.
-#![allow(dead_code)]
 
 use zakura_pir_client::transparent::native::TableClientExt as _;
 
@@ -119,10 +118,6 @@ impl ByteCounts {
 
     pub fn down(&self) -> u64 {
         self.init + self.map + self.manifest + self.setup + self.query_down + self.headers_down
-    }
-
-    pub fn total(&self) -> u64 {
-        self.up() + self.down()
     }
 }
 
@@ -326,20 +321,6 @@ impl DisplayClient {
             via,
             Some(self.inner.profiles.clone()),
         )
-    }
-
-    pub fn profiles(&self) -> ProfileCache {
-        self.inner.profiles.clone()
-    }
-
-    /// The map this client currently holds, if any.
-    pub async fn cached_map(&self) -> Option<(DisplayMap, String)> {
-        self.inner
-            .map
-            .lock()
-            .await
-            .as_ref()
-            .map(|cached| (cached.map.clone(), cached.sha256.clone()))
     }
 
     /// Fetches the map afresh, as a poller does.

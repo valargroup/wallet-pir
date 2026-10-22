@@ -1,19 +1,11 @@
 //! Authenticated synthetic Ironwood records through real HTTP PIR.
 //! Fixed inputs are public test material, never wallet credentials; the
 //! library-owned fixture holds the Orchard and note-encryption cryptography.
-use enhance_publisher::local_serving as serving;
-use enhance_publisher::{
-    control::{Group, Ledger, Replica},
-    store::RecordJournal,
-};
 use enhance_query_server::{
     client::EnhancePirClient, EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata,
     RECORD_BYTES,
 };
-use enhance_query_server::{
-    types::{DatabaseId, ENHANCE_LAYOUT},
-    worker::Worker,
-};
+use pir_e2e_tests::enhance_fixture::System;
 use zakura_pir_client::enhance::testing::{
     decrypt_incoming, recover_outgoing, FixtureKey, IronwoodOutputFixture, NoteDomain, OutputBytes,
     RecoveredNote, FIXTURE_MEMO, FIXTURE_VALUE,
@@ -35,17 +27,6 @@ fn ovk(
     recover_outgoing(key, output, cv_net, record.out_ciphertext())
 }
 
-async fn serve(router: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    (
-        url,
-        tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        }),
-    )
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let fixture = IronwoodOutputFixture::new();
@@ -63,52 +44,10 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
         has_transparent_outputs: false,
         metadata: EnhanceTransactionMetadata::new(3428144, None).unwrap(),
     });
-    let root = tempfile::tempdir().unwrap();
-    let mut tasks = Vec::new();
-    let mut replicas = Vec::new();
-    for i in 0..2 {
-        let (url, task) = serve(
-            Worker::open(&root.path().join(format!("worker-{i}")))
-                .unwrap()
-                .router(),
-        )
-        .await;
-        tasks.push(task);
-        replicas.push(Replica {
-            name: format!("r{i}"),
-            url,
-            incarnation: String::new(),
-            ledger: Ledger::default(),
-        });
-    }
-    let serving = serving::Serving::start(
-        root.path(),
-        &root.path().join("control"),
-        vec![Group {
-            placement_policy: Default::default(),
-            id: "g0".into(),
-            sequence: 0,
-            replicas,
-        }],
-    )
-    .await
-    .unwrap();
-    let (coordinator, origin) = (serving.coordinator(), serving.origin.clone());
-    let mut journal = RecordJournal::open(
-        root.path().join("journal"),
-        DatabaseId::Enhance,
-        ENHANCE_LAYOUT,
-    )
-    .unwrap();
     let mut records = vec![vec![0; RECORD_BYTES]; 67];
     records[32] = record.as_bytes().to_vec();
-    journal
-        .append_block(3428143, "01".repeat(32), &records)
-        .unwrap();
-    coordinator
-        .publish(&journal, 3428143, "01".repeat(32))
-        .await
-        .unwrap();
+    let system = System::start(records).await;
+    let origin = system.origin.clone();
     let mut client = EnhancePirClient::connect(&origin).await.unwrap();
     let bytes = client.query_position_with_timing(32).await.unwrap().0;
     assert_eq!(bytes.as_ref(), record.as_bytes());
@@ -163,7 +102,4 @@ async fn incoming_and_outgoing_recovery_authenticate_pir_returned_record() {
     let mut epk_tampered = output.clone();
     epk_tampered.ephemeral_key[0] ^= 1;
     assert!(own_ivk(&epk_tampered).is_none());
-    for task in tasks {
-        task.abort();
-    }
 }
