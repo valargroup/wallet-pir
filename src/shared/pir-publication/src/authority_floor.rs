@@ -77,9 +77,8 @@ impl<P: PublicationPointer + Serialize + DeserializeOwned> AuthorityFloor<P> {
     /// Open the floor at `path`, or an empty floor when none was saved.
     pub fn open(path: PathBuf, source: SourceBinding) -> Result<Self, AuthorityFloorError> {
         let saved = match fs::read(&path) {
-            Ok(bytes) => {
-                serde_json::from_slice::<SavedFloor<P>>(&bytes).map_err(AuthorityFloorError::Corrupt)?
-            }
+            Ok(bytes) => serde_json::from_slice::<SavedFloor<P>>(&bytes)
+                .map_err(AuthorityFloorError::Corrupt)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => SavedFloor {
                 source: None,
                 current: None,
@@ -222,7 +221,8 @@ mod tests {
         floor.advance(pointer(4), [[9; 32]]);
         floor.pending_write().unwrap().write().unwrap();
 
-        let reopened = AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
+        let reopened =
+            AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
         assert_eq!(reopened.pointer(), Some(&pointer(4)));
         assert!(reopened.is_invalidated(&[9; 32]));
         assert!(reopened.classify(&pointer(3)).is_err());
@@ -258,7 +258,8 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let floor = AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
+        let floor =
+            AuthorityFloor::<SavedPointer>::open(path.clone(), source("https://a")).unwrap();
         assert!(floor.classify(&pointer(6)).is_err());
         assert!(floor.is_invalidated(&[3; 32]));
         floor.pending_write().unwrap().write().unwrap();

@@ -23,7 +23,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         } else {
             let status = response.status().as_u16();
             response.discard().await?;
-            return Err(Box::new(PublicationLifecycleError::PointerUnavailable(status)));
+            return Err(Box::new(PublicationLifecycleError::PointerUnavailable(
+                status,
+            )));
         };
         drop(response);
         self.adapter.validate_pointer(&pointer)?;

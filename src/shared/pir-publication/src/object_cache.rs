@@ -32,7 +32,10 @@ impl ObjectCache {
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
             if entry.file_type()?.is_file()
-                && entry.file_name().to_string_lossy().starts_with(PARTIAL_PREFIX)
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(PARTIAL_PREFIX)
             {
                 fs::remove_file(entry.path())?;
             }
@@ -98,7 +101,8 @@ impl ObjectCache {
         for entry in fs::read_dir(&self.directory)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if is_object_digest(&name) && entry.file_type()?.is_file() && !retained.contains(&name) {
+            if is_object_digest(&name) && entry.file_type()?.is_file() && !retained.contains(&name)
+            {
                 fs::remove_file(entry.path())?;
             }
         }
@@ -174,7 +178,10 @@ mod tests {
         std::mem::forget(leftover);
 
         let reopened = ObjectCache::open(dir.path().join("objects")).unwrap();
-        assert_eq!(reopened.verified_cached(&object).unwrap(), Some(promoted.clone()));
+        assert_eq!(
+            reopened.verified_cached(&object).unwrap(),
+            Some(promoted.clone())
+        );
         assert_eq!(fs::read_dir(reopened.directory()).unwrap().count(), 1);
 
         // A promoted object altered after promotion is refused, never served.
@@ -199,7 +206,11 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
-        assert_eq!(names, vec![object.sha256.clone()], "the partial was removed");
+        assert_eq!(
+            names,
+            vec![object.sha256.clone()],
+            "the partial was removed"
+        );
         assert!(cache.verified_cached(&object).is_err());
     }
 

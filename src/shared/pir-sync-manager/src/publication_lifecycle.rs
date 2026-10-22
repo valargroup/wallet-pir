@@ -48,7 +48,7 @@ pub trait PublicationAdapter: Send {
     /// return the identities of views that were serving so the floor can
     /// invalidate them permanently.
     fn fence_serving(&mut self) -> impl Future<Output = Vec<MaterialIdentity>> + Send;
-    /// Close admission after a durable floor or commit write failed.
+    /// Close admission after a durable floor write failed.
     fn close_admission(&mut self) -> impl Future<Output = ()> + Send;
     /// Installed views that must stay authoritative under `pointer`.
     fn serving_subjects(
@@ -84,16 +84,14 @@ pub trait PublicationAdapter: Send {
     /// Objects `loaded` keeps referenced after commit.
     fn retained_objects(&self, loaded: &Self::Loaded) -> BTreeSet<String>;
     /// Durably record and install `loaded`. The returned future is spawned and
-    /// owned by the runtime, so it must not borrow the adapter.
+    /// owned by the runtime, so it must not borrow the adapter. A failed durable
+    /// write must fence serving and close admission before returning.
     fn commit(
         &mut self,
         loaded: Self::Loaded,
     ) -> impl Future<Output = Result<Self::Report, Error>> + Send + 'static;
     /// Tell a dependent peer the commit happened.
-    fn release_peer(
-        &mut self,
-        report: &Self::Report,
-    ) -> impl Future<Output = PeerHandover> + Send;
+    fn release_peer(&mut self, report: &Self::Report) -> impl Future<Output = PeerHandover> + Send;
     /// The report of the view still serving, for deferred passes.
     fn serving_report(&mut self) -> impl Future<Output = Self::Report> + Send;
     /// A pass is starting, for status reporting.
@@ -293,14 +291,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
         }
         let retained = self.adapter.retained_objects(&loaded);
-        let report = match owned_commit(self.adapter.commit(loaded)).await? {
-            Ok(report) => report,
-            Err(error) => {
-                self.adapter.fence_serving().await;
-                self.adapter.close_admission().await;
-                return Err(error);
-            }
-        };
+        let report = owned_commit(self.adapter.commit(loaded)).await??;
         // Retain.
         self.retain_commit(retained).await?;
         let handover = self.adapter.release_peer(&report).await;

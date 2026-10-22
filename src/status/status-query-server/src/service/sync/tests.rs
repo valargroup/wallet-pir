@@ -1,10 +1,5 @@
 use super::*;
 use crate::protocol::{MAX_AGE_MS, PROTOCOL};
-use pir_publication::{
-    conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
-};
-use pir_sync_manager::SyncTask;
-use std::fs;
 use crate::service::routes::{provider_commit, provider_pin};
 use axum::extract::{Path, State};
 use axum::{
@@ -13,6 +8,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use pir_publication::{
+    conditional_token, AuthorityCheckResponse, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
+};
+use pir_sync_manager::SyncTask;
+use std::fs;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     RwLock,
@@ -247,9 +247,11 @@ async fn skipped_withdrawal_fences_old_answers_before_candidate_download() {
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
     assert!(task.floor().is_invalidated(&active_id));
-    let reopened: AuthorityFloor<Current> =
-        AuthorityFloor::open(service.state_dir.join(FLOOR_FILE), task.floor().source().clone())
-            .unwrap();
+    let reopened: AuthorityFloor<Current> = AuthorityFloor::open(
+        service.state_dir.join(FLOOR_FILE),
+        task.floor().source().clone(),
+    )
+    .unwrap();
     assert!(reopened.is_invalidated(&active_id));
     server.abort();
 }
@@ -357,8 +359,11 @@ async fn consumer_restart_requires_https_authority_despite_completed_objects() {
     drop(service);
     fs::write(&tls.control, "refused-body").unwrap();
     let service = Service::open(Role::Worker, [1; 32], path.clone(), String::new()).unwrap();
-    let mut task = synchronization(service.clone(), &role_config(Role::Worker, path.clone(), &tls))
-        .unwrap();
+    let mut task = synchronization(
+        service.clone(),
+        &role_config(Role::Worker, path.clone(), &tls),
+    )
+    .unwrap();
     assert!(task.synchronize().await.is_err());
     assert!(service.serving().await.is_err());
     assert!(path.join("objects").join(object.sha256).is_file());
@@ -497,7 +502,10 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
         .manifest()
         .clone();
     source.advance_during_check.store(true, Ordering::SeqCst);
-    assert_eq!(deferred(task.synchronize().await.unwrap()), before.generation);
+    assert_eq!(
+        deferred(task.synchronize().await.unwrap()),
+        before.generation
+    );
     assert_eq!(
         service.state.lock().await.synchronization,
         "waiting_for_peer"

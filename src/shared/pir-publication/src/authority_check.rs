@@ -47,7 +47,7 @@ impl fmt::Display for AuthorityCheckRefusal {
 }
 impl std::error::Error for AuthorityCheckRefusal {}
 
-impl<P: PartialEq + crate::PublicationPointer, S> AuthorityCheckRequest<P, S> {
+impl<P: crate::PublicationPointer, S> AuthorityCheckRequest<P, S> {
     /// Publisher-side admission: the request is bounded and names `current`,
     /// which must be eligible. Call it again after the check, with the then
     /// current pointer, before answering.

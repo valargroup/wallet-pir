@@ -1,7 +1,7 @@
 //! One live authority check against the publisher.
 use super::{
-    pointer_observation::POINTER_LIMIT, PointerAdvanced, PublicationAdapter,
-    PublicationLifecycle, PublicationLifecycleError,
+    pointer_observation::POINTER_LIMIT, PointerAdvanced, PublicationAdapter, PublicationLifecycle,
+    PublicationLifecycleError,
 };
 use crate::Error;
 use pir_publication::{
@@ -44,7 +44,9 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             serde_json::from_slice(&response.read_limited(POINTER_LIMIT).await?)?;
         drop(response);
         if answer.pointer != *pointer || answer.still_authoritative.len() != identities.len() {
-            return Err(Box::new(PublicationLifecycleError::AuthorityResponseMismatch));
+            return Err(Box::new(
+                PublicationLifecycleError::AuthorityResponseMismatch,
+            ));
         }
         let refuted: Vec<MaterialIdentity> = identities
             .into_iter()

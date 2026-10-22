@@ -12,12 +12,12 @@ use axum::{
 };
 use ipir_sp::server::MatvecBackend;
 use pir_pipeline::Input;
-use serde::Deserialize;
-use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
 use pir_publication::{
     conditional_token, AuthorityCheckRefusal, AuthorityCheckResponse, PublishedObjectStore,
     AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
+use serde::Deserialize;
+use status_query_server::{now_ms, protocol::*, publication::*, telemetry, Generation};
 use std::{
     fs,
     net::SocketAddr,
@@ -92,7 +92,10 @@ impl Publisher {
             .route("/control/active", get(active))
             .route(&format!("{PREFIX}{CURRENT_PATH}"), get(current))
             .route(&format!("{PREFIX}{OBJECTS_PATH}:id"), get(object))
-            .route(&format!("{PREFIX}{AUTHORITY_CHECK_PATH}"), post(authority_check))
+            .route(
+                &format!("{PREFIX}{AUTHORITY_CHECK_PATH}"),
+                post(authority_check),
+            )
             .layer(axum::extract::DefaultBodyLimit::max(METADATA_LIMIT))
             .with_state(self.clone())
             .merge(telemetry_routes())
@@ -162,7 +165,8 @@ impl Publisher {
                             inventory.manifest = candidate.manifest().clone();
                             inventory
                         } else {
-                            candidate.export_prepared(|bytes| Ok(publisher.objects.store(bytes)?))?
+                            candidate
+                                .export_prepared(|bytes| Ok(publisher.objects.store(bytes)?))?
                         };
                         *cache = Some(inventory.clone());
                         Ok(inventory)
@@ -187,7 +191,6 @@ impl Publisher {
                     let mut published = self.published.write().unwrap();
                     published.check_fence(&expected)?;
                     manifest.fresh(now_ms())?;
-                    authority.commit(&manifest)?;
                     // Authorize the referenced objects before any consumer can
                     // see the pointer. Still-activatable predecessors stay
                     // served so peers can finish handover; queries pin inodes.
@@ -197,6 +200,7 @@ impl Publisher {
                         manifest.observed_ms.saturating_add(MAX_AGE_MS),
                         now_ms(),
                     )?;
+                    authority.commit(&manifest)?;
                     let current = Current {
                         schema: SCHEMA.into(),
                         revision: self.revision()?,
@@ -340,10 +344,13 @@ async fn object(
     State(s): State<Publisher>,
     Path(id): Path<String>,
 ) -> Result<Response, StatusCode> {
-    let file = s.objects.open_retained(&id).map_err(|error| match error.kind() {
-        std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
-        _ => StatusCode::NOT_FOUND,
-    })?;
+    let file = s
+        .objects
+        .open_retained(&id)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+            _ => StatusCode::NOT_FOUND,
+        })?;
     let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     Ok(Body::from_stream(stream).into_response())
 }

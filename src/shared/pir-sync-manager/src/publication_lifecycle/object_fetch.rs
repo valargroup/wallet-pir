@@ -30,7 +30,11 @@ impl<'a> ObjectFetcher<'a> {
             .request(&format!("{OBJECTS_PATH}{}", object.sha256), None)
             .await?;
         response
-            .copy_to(&mut file, object.bytes, Verification::Sha256(&object.sha256))
+            .copy_to(
+                &mut file,
+                object.bytes,
+                Verification::Sha256(&object.sha256),
+            )
             .await?;
         let written = file.into_std().await;
         Ok(tokio::task::spawn_blocking(move || partial.promote(written)).await??)

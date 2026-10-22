@@ -49,9 +49,7 @@ impl PublishedObjectStore {
         let object = ObjectReference::for_bytes(bytes);
         let path = self.directory.join(&object.sha256);
         if path.exists() {
-            object
-                .verify(&fs::read(path)?)
-                .map_err(io::Error::other)?;
+            object.verify(&fs::read(path)?).map_err(io::Error::other)?;
         } else {
             write_immutable(&self.directory, &object.sha256, bytes)?;
         }
@@ -88,7 +86,9 @@ impl PublishedObjectStore {
         for entry in fs::read_dir(&self.directory)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if is_object_digest(&name) && entry.file_type()?.is_file() && !referenced.contains(&name)
+            if is_object_digest(&name)
+                && entry.file_type()?.is_file()
+                && !referenced.contains(&name)
             {
                 fs::remove_file(entry.path())?;
             }
@@ -99,11 +99,17 @@ impl PublishedObjectStore {
     /// retained publication references is refused before any file access.
     pub fn open_retained(&self, name: &str) -> io::Result<fs::File> {
         if !is_object_digest(name) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not an object name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "not an object name",
+            ));
         }
         let retained = self.retained.read().unwrap();
         if !retained.iter().any(|p| p.objects.contains(name)) {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "object not retained"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "object not retained",
+            ));
         }
         fs::File::open(self.directory.join(name))
     }
@@ -130,7 +136,9 @@ mod tests {
         store.retain_publication([first.clone()], 100, 50).unwrap();
         assert!(store.open_retained(&first.sha256).is_ok());
         assert!(!dir.path().join(&unpublished.sha256).exists());
-        assert!(store.open_retained("../retained-publications.json").is_err());
+        assert!(store
+            .open_retained("../retained-publications.json")
+            .is_err());
 
         // A still-activatable predecessor remains served for peer handover.
         let second = store.store(b"second").unwrap();

@@ -130,7 +130,10 @@ impl PublicationAdapter for StatusPublication {
         self.service.state.lock().await.poisoned = true;
     }
 
-    async fn serving_subjects(&mut self, pointer: &Current) -> Vec<(MaterialIdentity, AnchorSubject)> {
+    async fn serving_subjects(
+        &mut self,
+        pointer: &Current,
+    ) -> Vec<(MaterialIdentity, AnchorSubject)> {
         let Some(controller) = self.serving_controller().await.filter(|c| !c.revoked()) else {
             return Vec::new();
         };
@@ -185,7 +188,8 @@ impl PublicationAdapter for StatusPublication {
             .as_ref()
             .zip(self.loaded_inventory.as_ref())
             .and_then(|(serving, loaded)| {
-                if loaded.manifest != *serving.manifest() || !loaded.same_prepared_material(&inventory)
+                if loaded.manifest != *serving.manifest()
+                    || !loaded.same_prepared_material(&inventory)
                 {
                     return None;
                 }
@@ -277,7 +281,10 @@ impl PublicationAdapter for StatusPublication {
             return Err("Status candidate belongs to an earlier recovery epoch".into());
         }
         manifest.fresh(now_ms())?;
-        Ok((manifest.id(), (manifest.anchor_height, manifest.anchor_hash)))
+        Ok((
+            manifest.id(),
+            (manifest.anchor_height, manifest.anchor_hash),
+        ))
     }
 
     async fn reserve_peer(&mut self, loaded: &StatusLoaded) -> Result<PeerReservation, Error> {
@@ -308,12 +315,22 @@ impl PublicationAdapter for StatusPublication {
             } = loaded;
             let root = service.state_dir.clone();
             let bytes = serde_json::to_vec(&inventory_object)?;
-            tokio::task::spawn_blocking(move || {
+            let written = tokio::task::spawn_blocking(move || {
                 pir_control::durable::write_atomic(&root, ACTIVE_RECORD, |f| f.write_all(&bytes))?;
                 pir_control::durable::sync_dir(&root)
             })
-            .await??;
+            .await;
             let mut state = service.state.lock().await;
+            if let Err(error) = written.map_err(Error::from).and_then(|w| Ok(w?)) {
+                // The record may have been replaced; nothing may serve until a
+                // later commit succeeds.
+                if let Some(controller) = &state.controller {
+                    controller.revoke();
+                }
+                state.router_holds.clear();
+                state.poisoned = true;
+                return Err(error);
+            }
             let mut retired_owner = None;
             let retired = match state.controller.as_ref() {
                 Some(controller) if !controller.revoked() => {
