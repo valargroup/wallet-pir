@@ -354,7 +354,8 @@ pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
         }),
     );
     let server = tokio::spawn(async move {
-        let (served, hashed) = tokio::join!(axum::serve(listener, router), axum::serve(hasher, hash));
+        let (served, hashed) =
+            tokio::join!(axum::serve(listener, router), axum::serve(hasher, hash));
         served.unwrap();
         hashed.unwrap();
     });
