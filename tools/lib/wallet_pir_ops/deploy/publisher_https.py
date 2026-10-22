@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from ..role_config import directory, render, service_settings
 from . import units
+from .coordinator_edge import replace_in_site, site_span
 from .publisher import require, sha, stable_unit
 from .publisher_serving import Serving
 
@@ -180,8 +181,11 @@ class HttpsServing(Serving):
         require('/provider/v1/' not in text and '/provider/txid/v1/' not in text,
                 'publisher distribution routes are already owned')
         marker = '\thandle {\n\t\trespond 404\n\t}'
-        require(text.count(marker) == 1, 'publisher TLS edge has no unique final refusal route')
-        return text.replace(marker, addition + marker)
+        # Insert into the publisher origin's own site; other sites on the edge
+        # (the unified wallet host) keep their own final refusal untouched.
+        span = site_span(text, origin.hostname)
+        require(text[span[0]:span[1]].count(marker) == 1, 'publisher TLS edge has no unique final refusal route')
+        return replace_in_site(text, span, lambda block: block.replace(marker, addition + marker))
 
     def capture(self):
         plan = super().capture()

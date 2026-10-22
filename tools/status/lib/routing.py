@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlsplit
 
 from wallet_pir_ops.paths import ROOT
-from wallet_pir_ops.deploy import descriptors, units
+from wallet_pir_ops.deploy import coordinator_edge, descriptors, units
 from wallet_pir_ops.deploy.engine import Deployer, DeployError, mutation_fence
 from wallet_pir_ops.deploy.remote import production_lock
 from wallet_pir_ops.deploy.transaction import FINAL, Journal
@@ -33,10 +33,14 @@ def require(condition, message):
 
 
 def candidate(text):
+    # The legacy route lives on one site; each site (the Enhance host and the
+    # unified wallet host) may carry one canonical alias, and every alias moves
+    # with the legacy route so no site reaches a different router.
     prefixes = [m[2] for m in ROUTE.finditer(text)]
-    require(prefixes.count('v1/status') == 1 and prefixes.count('status/v1') <= 1
-            and text.count('handle /status/v1/') == prefixes.count('status/v1'),
-            'expected exactly one simple Status wallet route and at most one canonical alias')
+    require(prefixes.count('v1/status') == 1 and text.count('handle /status/v1/') == prefixes.count('status/v1'),
+            'expected exactly one simple Status wallet route and simple canonical aliases')
+    for start, end in coordinator_edge.sites(text).values():
+        require(text[start:end].count('handle /status/v1/') <= 1, 'expected at most one canonical alias per site')
     return ROUTE.sub(lambda m: m[1] + '127.0.0.1:8492' + m[4], text)
 
 

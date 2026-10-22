@@ -1,6 +1,7 @@
-# Rendered during Enhance coordinator deploys: ENHANCE_PUBLIC_HOST is replaced with
-# the host of ENHANCE_PUBLIC_URL before the file is validated and installed.
-# (deploy-enhance-pir.sh, which used to do this, was removed in afdb4b6d.)
+# Rendered by `wallet_pir_ops.deploy.coordinator_edge`: ENHANCE_PUBLIC_HOST is
+# replaced with the host of ENHANCE_PUBLIC_URL before the file is validated and
+# installed. The renderer refuses a result that lacks either site below, so a
+# per-product deploy cannot drop the unified `wallet-pir.valargroup.dev` site.
 ENHANCE_PUBLIC_HOST {
 	tls {
 		issuer acme {
@@ -71,6 +72,63 @@ ENHANCE_PUBLIC_HOST {
 	}
 	# The coordinator's health, readiness and metrics stay on loopback for
 	# operators and the pir-apm sidecar; nothing else is public.
+	handle {
+		respond 404
+	}
+}
+
+# The unified wallet entry point. Only canonical product prefixes are served
+# here; legacy aliases (`/v1/enhance`, `/v1/status`, `/v1/filters`, `/v2`,
+# `/v1/receiver`) stay on the product hosts above and on their own hosts, which
+# remain in service for released wallets. Enhance, Status and Transparent
+# filters reach the same loopback services as the Enhance host. Transparent
+# queries and Receiver cross to their own public origins over verified HTTPS,
+# naming each origin as Host and SNI; nothing here proxies back to this host.
+wallet-pir.valargroup.dev {
+	tls {
+		issuer acme {
+			dir https://acme-v02.api.letsencrypt.org/directory
+		}
+	}
+
+	handle /transparent/v1/filters/parents/* {
+		uri strip_prefix /transparent/v1/filters/parents
+		root * /srv/transparent-parent-filters/public
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+	handle /transparent/v1/filters/* {
+		reverse_proxy 127.0.0.1:8090
+	}
+	handle /transparent/v1/* {
+		reverse_proxy https://transparent-pir.valargroup.dev {
+			header_up Host transparent-pir.valargroup.dev
+			transport http {
+				tls_server_name transparent-pir.valargroup.dev
+			}
+		}
+	}
+	handle /status/v1/* {
+		reverse_proxy 127.0.0.1:8492
+	}
+	handle /enhance/v1/query {
+		reverse_proxy 127.0.0.1:8082 {
+			transport http {
+				keepalive off
+			}
+		}
+	}
+	handle /enhance/v1/* {
+		reverse_proxy 127.0.0.1:8082
+	}
+	handle /receiver/v1/* {
+		reverse_proxy https://receiver-pir.valargroup.dev {
+			header_up Host receiver-pir.valargroup.dev
+			transport http {
+				tls_server_name receiver-pir.valargroup.dev
+			}
+		}
+	}
 	handle {
 		respond 404
 	}

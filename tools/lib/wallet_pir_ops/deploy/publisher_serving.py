@@ -12,6 +12,7 @@ import re
 
 from ..paths import ROOT
 from . import descriptors
+from .coordinator_edge import replace_in_site, site_containing
 from .engine import Deployer, file_sha256, mutation_fence
 from .publisher import require, sha, stable_unit
 from .transaction import Journal
@@ -25,13 +26,16 @@ DISCOVERY = '\thandle ' + DISCOVERY_PATH + ' {\n\t\treverse_proxy 127.0.0.1:1808
 
 
 def candidate(text):
-    require(text.count(WALLET) == 1 and FALLBACK not in text
-            and text.count('\thandle {\n\t\trespond 404\n\t}') == 1,
+    # Only the Enhance product site carries the legacy wallet route; the
+    # unified site's own final refusal must not count against it.
+    require(text.count(WALLET) == 1 and FALLBACK not in text, 'expected the deployed wallet ingress')
+    span = site_containing(text, WALLET)
+    require(text[span[0]:span[1]].count('\thandle {\n\t\trespond 404\n\t}') == 1,
             'expected the deployed wallet ingress and private publisher routes')
     require(text.count(DISCOVERY) <= 1 and text.count(DISCOVERY_PATH) == text.count(DISCOVERY),
             'unknown publisher discovery route')
     if DISCOVERY not in text:
-        text = text.replace(WALLET, WALLET + DISCOVERY)
+        text = replace_in_site(text, span, lambda block: block.replace(WALLET, WALLET + DISCOVERY))
     return text
 
 

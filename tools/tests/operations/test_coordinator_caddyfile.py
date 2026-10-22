@@ -28,7 +28,8 @@ class CoordinatorTemplate(unittest.TestCase):
                       '\t\troot * /srv/transparent-parent-filters/public', text)
         # Canonical prefixes are matched per product: no bare `/transparent/v1/*`,
         # no transparent health, and no control or worker surface under them.
-        handled = re.findall(r'(?m)^\t(?:handle(?:_path)?|@\w+ path) (.+?)(?: \{)?$', text)
+        enhance = text.split('\nwallet-pir.valargroup.dev {', 1)[0]
+        handled = re.findall(r'(?m)^\t(?:handle(?:_path)?|@\w+ path) (.+?)(?: \{)?$', enhance)
         canonical = [p for line in handled for p in line.split() if p.startswith(('/enhance/', '/status/', '/transparent/'))]
         self.assertEqual(sorted(canonical), ['/enhance/v1/*', '/enhance/v1/query', '/status/v1/*',
                                              '/transparent/v1/filters/*', '/transparent/v1/filters/parents/*'])

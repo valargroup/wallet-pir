@@ -58,8 +58,11 @@ def validate_gate(result, binary, script, config, roster, headless_helper=None, 
 def guard_coordinator(text):
     """Replace only the known transparent handlers, preserving other services."""
     required = ['handle @transparent_publication {', 'handle @legacy_transparent_filters {']
+    # The unified wallet host's canonical filter routes are guarded with the
+    # Enhance host's, so maintenance closes every public filter path at once.
     optional = ['handle_path /v1/filters/parents/* {', 'handle_path /transparent/v1/filters/parents/* {',
-                'handle @transparent_queries {']
+                'handle @transparent_queries {', 'handle /transparent/v1/filters/parents/* {',
+                'handle /transparent/v1/filters/* {']
     for marker in required + optional:
         count = text.count(marker)
         if count == 0 and marker in optional:

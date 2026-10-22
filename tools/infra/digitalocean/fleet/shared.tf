@@ -1,6 +1,9 @@
 locals {
   wallet_pir_coordinator_name = "wallet-pir-coordinator-01"
   enhance_public_hostname     = "enhance-pir.valargroup.dev"
+  # The unified wallet host shares the coordinator's Caddy with the Enhance
+  # host (tools/deploy/coordinator/Caddyfile). Product hosts stay published.
+  wallet_pir_public_hostname = "wallet-pir.valargroup.dev"
   # The transparent fleet terminates TLS on the worker rather than behind the
   # Enhance coordinator's Caddy. That Caddyfile is rendered and installed by
   # Enhance coordinator deploys, and a token they do not substitute would fail
@@ -50,6 +53,17 @@ resource "digitalocean_droplet" "coordinator" {
   lifecycle {
     ignore_changes = [user_data]
   }
+}
+
+resource "cloudflare_dns_record" "wallet_pir" {
+  zone_id = var.cloudflare_zone_id
+  name    = local.wallet_pir_public_hostname
+  type    = "A"
+  content = var.wallet_pir_coordinator_dns_ipv4
+  ttl     = 300
+  # Unproxied, so the coordinator's Caddy can answer the ACME challenge directly.
+  proxied = false
+  comment = "Unified Wallet PIR entry point on the shared coordinator; managed by Terraform"
 }
 
 resource "digitalocean_volume" "zakura" {
