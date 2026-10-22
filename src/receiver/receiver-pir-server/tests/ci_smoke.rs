@@ -3,6 +3,8 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/router.rs"]
+mod router;
 use common::{manifest, receiver, record};
 use history::history;
 use receiver_directory::snapshot::Snapshot;
@@ -12,6 +14,7 @@ use receiver_pir::{
     AcceptedCoverage, Error, MIN_ROWS,
 };
 use receiver_pir_server::{Publication, Publications};
+use router::router_with_publications;
 use std::time::Duration;
 
 /// The chain anchor that [`manifest`] ends at.
@@ -32,7 +35,7 @@ fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let mut manifest = manifest(rows);
     // Positions start at 200; a long history needs room after them.
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records, &[]).unwrap()
+    Snapshot::build(manifest, &records).unwrap()
 }
 struct Running {
     origin: String,
@@ -50,7 +53,7 @@ async fn serve(snapshot: Snapshot) -> Running {
 async fn serve_publication(publication: Publication) -> Running {
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
-    serve_router(receiver_pir_server::router_with_publications(publications)).await
+    serve_router(router_with_publications(publications)).await
 }
 async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

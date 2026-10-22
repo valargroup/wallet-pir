@@ -1,28 +1,8 @@
-//! A `pir-monitor` service probe for the receiver directory, run as `receiver-directory
-//! probe` or `receiver-probe`, and a deploy's exact check. With `--await-feed-reads` it
-//! first waits for the running process to read both NEAR feeds and serve a publication
-//! of those reads (`feeds_not_read` otherwise). It then checks the publication against
-//! independent mainnet nodes, one at a time and freshest first, looks up a pinned
-//! payment over live encrypted PIR, as Transparent's canary checks one query against a
-//! pinned row, checks the witness file (with `--witnesses`) and the filter file against
-//! the manifest, then checks the NEAR feed's freshness and the indexer's payout check,
-//! which health reports on the private network. It prints one JSON line: `passed`, on
-//! failure a `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"`
-//! with `queries` and `correct`. `answer_mismatch` marks served data that is wrong,
-//! which the monitor treats as a correctness incident; `oracle_invalid` a fixture that
-//! fails its pin, including an Action whose recovered receiver differs from the
-//! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
-//! reached the publication can complete the chain checks, or `payouts_uncheckable` when
-//! the indexer's report counts a recent completed payout to an Orchard receiver that
-//! NEAR gave no parsable transaction for, is an availability failure. Every response
-//! body is bounded before it is buffered.
-use crate::{
-    near::{unix_now, Feed},
-    read_limited,
-};
+//! Bounded real PIR, witness and rolling-filter checks against an independent node.
+use crate::read_limited;
 use clap::Parser;
 use receiver_directory::{
-    filter::{Filters, MAX_FILTERS_BYTES, PAID},
+    blocks::{Batch, Head, MAX_BATCH_BYTES},
     Hash, Payment, ReceiverBytes,
 };
 use receiver_pir::{
@@ -31,20 +11,15 @@ use receiver_pir::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 use zakura_receiver_crypto::{recovery::Action, witness::WitnessSnapshot, Receiver};
 use zakura_server_chain::{hash, Network, NodeClient, NodeError};
 
 /// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
 const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
 
-/// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
-const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// Bound on the health report, a few hundred bytes.
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
-/// How often `--await-feed-reads` polls health.
-const FEED_READS_POLL: Duration = Duration::from_secs(2);
 /// Pages the probe reads looking for the fixture's payment before it gives up.
 const MAX_PROBE_PAGES: u32 = 16;
 
@@ -60,9 +35,6 @@ pub struct Args {
     /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
     #[arg(long)]
     health_url: String,
-    /// A fixture file to look up instead of the embedded mainnet one, for tests.
-    #[arg(long)]
-    fixture: Option<PathBuf>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
     /// reached the publication check it one at a time, ranked as
     /// [`NodeClient::ranked`] does, until one completes the checks.
@@ -77,23 +49,16 @@ pub struct Args {
     /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
     #[arg(long, default_value_t = 12)]
     max_lag: u64,
-    /// Before any network check, wait up to this many seconds for health's `near.reads`
-    /// to show that the running process completed a read of both NEAR feeds, as a
-    /// deploy that sets the partner key must, and for the served publication to hold
-    /// those reads. Feeds are read in turn at the explorer's 5.5-second request pacing
-    /// (about 40 seconds a poll at October 2026 volume), and the 60-second poll
-    /// interval starts after both, so the deploy's 300 allows about three polls. That
-    /// is a budget, not a worst-case bound: a first read of a new provider database can
-    /// take far longer. Without this flag, as in the monitor's periodic probe, nothing
-    /// waits.
-    #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
-    await_feed_reads: Option<u64>,
     /// The service serves witness files, as the indexer does with `--witnesses`: each
     /// run then checks the session's file against the nodes' Ironwood root. The probe
     /// cannot infer this from the service, which would answer a lost file as one never
     /// configured, so the deployment states it.
     #[arg(long)]
     witnesses: bool,
+    /// Check a staged PIR-only service that intentionally publishes no rolling hints.
+    /// Indexing deployments must retain the default filter checks.
+    #[arg(long)]
+    without_block_filters: bool,
 }
 
 /// A failed check's category and detail.
@@ -136,10 +101,11 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
     hex::decode(hex).ok()?.try_into().ok()
 }
 
-/// Runs the probe, prints its JSON line and returns whether every check passed.
+/// Runs the probe with the embedded mainnet fixture, prints its JSON line and returns
+/// whether every check passed.
 pub async fn run(args: Args) -> bool {
     let mut lookup = None;
-    let (passed, category, detail) = match probe(args, &mut lookup).await {
+    let (passed, category, detail) = match probe(args, MAINNET_FIXTURE, &mut lookup).await {
         Ok(None) => (true, None, Value::Null),
         Ok(Some((category, detail))) => (false, Some(category), detail),
         Err(error) => (false, Some("request_failed"), error.to_string().into()),
@@ -154,14 +120,14 @@ pub async fn run(args: Args) -> bool {
     passed
 }
 
-/// The failed check, or `None` when every check passes. `lookup` records the encrypted
-/// queries made and whether they found the fixture's payment.
-async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Failure>> {
-    let raw = match &args.fixture {
-        Some(path) => std::fs::read(path)?,
-        None => MAINNET_FIXTURE.to_vec(),
-    };
-    let Ok(fixture) = serde_json::from_slice::<Fixture>(&raw) else {
+/// The failed check for the JSON `fixture`, or `None` when every check passes. `lookup`
+/// records the encrypted queries made and whether they found the fixture's payment.
+async fn probe(
+    args: Args,
+    fixture: &[u8],
+    lookup: &mut Option<(u32, bool)>,
+) -> Result<Option<Failure>> {
+    let Ok(fixture) = serde_json::from_slice::<Fixture>(fixture) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
     let a = &fixture.action;
@@ -198,13 +164,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    if let Some(secs) = args.await_feed_reads {
-        let wait = Duration::from_secs(secs);
-        let gate = await_feed_reads(&http, &args.health_url, wait, FEED_READS_POLL);
-        if let Some(failure) = gate.await {
-            return Ok(Some(failure));
-        }
-    }
+
     let origin = args.origin.trim_end_matches('/');
     let init = http.get(format!("{origin}/v1/receiver/init"));
     let manifest = fetch(init, MAX_MANIFEST_BYTES, "manifest", |bytes| {
@@ -329,7 +289,17 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             return Ok(Some(failure));
         }
     }
-    if let Some(failure) = check_filters(&http, origin, &id, directory, &receiver).await? {
+    if let Some(failure) = check_filters(
+        &http,
+        origin,
+        &rpc,
+        directory,
+        &receiver,
+        found.as_ref(),
+        args.without_block_filters,
+    )
+    .await?
+    {
         return Ok(Some(failure));
     }
     // The node's checks hold for the whole lookup only if the terminal block is still
@@ -337,88 +307,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     if rpc.block_hash(u64::from(directory.end_height)).await? != directory.end_hash {
         return Err("chain changed during the probe".into());
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs() as i64;
-    // Wallets check the recent set's window and coverage before trusting it; this checks
-    // only its freshness.
-    let recent = directory
-        .filters
-        .iter()
-        .find(|set| set.label == "near-intents/recent")
-        .and_then(|set| set.until_unix);
-    if recent.is_none_or(|until| until < now - MAX_RECENT_AGE_SECS) {
-        return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
-    }
     indexer_report(&http, &args.health_url, &id).await
-}
-
-/// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
-/// feeds and then the served publication's `indexer.feeds` reach the first such times
-/// seen from the same process (health's `identity.incarnation`; a restart starts over),
-/// so the probe checks a publication of the running process's reads, not an older one,
-/// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh. Each request is
-/// bounded by the time left of `wait`. At the deadline it fails as `feeds_not_read`
-/// with the last reads and published feeds seen and the last request error.
-async fn await_feed_reads(
-    http: &reqwest::Client,
-    health_url: &str,
-    wait: Duration,
-    poll: Duration,
-) -> Option<Failure> {
-    let deadline = tokio::time::Instant::now() + wait;
-    let (mut reads, mut published, mut error) = (Value::Null, Value::Null, None);
-    // Both feeds' times in a health map, if it holds both.
-    let times = |map: &Value| -> Option<Vec<i64>> {
-        [Feed::Payouts, Feed::Refunds]
-            .iter()
-            .map(|feed| map[feed.name()].as_i64())
-            .collect()
-    };
-    // Fixed at the first reads seen, with their process: later reads would keep moving
-    // ahead of publication.
-    let mut target: Option<(Value, Vec<i64>)> = None;
-    loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Some((
-                "feeds_not_read",
-                json!({"waited_secs": wait.as_secs(), "reads": reads,
-                    "published": published, "last_error": error}),
-            ));
-        }
-        // Health is not wallet data, so it is read without `fetch`, as `indexer_report` does.
-        let health = async {
-            let response = http.get(health_url).send().await?.error_for_status()?;
-            let body = read_limited(response, MAX_HEALTH_BYTES).await?;
-            Result::<Value>::Ok(serde_json::from_slice(&body)?)
-        };
-        match tokio::time::timeout(remaining, health).await {
-            Ok(Ok(health)) => {
-                reads = health["near"]["reads"].clone();
-                published = health["indexer"]["feeds"].clone();
-                let (process, current) = (&health["identity"]["incarnation"], times(&reads));
-                target = target
-                    .filter(|(p, _)| p == process)
-                    .or_else(|| Some(process.clone()).zip(current.clone()));
-                if let (Some((_, target)), Some(_), Some(published)) =
-                    (&target, current, times(&published))
-                {
-                    let fresh = unix_now() - MAX_RECENT_AGE_SECS;
-                    if published
-                        .iter()
-                        .zip(target)
-                        .all(|(p, t)| p >= t && *p >= fresh)
-                    {
-                        return None;
-                    }
-                }
-            }
-            Ok(Err(e)) => error = Some(e.to_string()),
-            Err(_) => error = Some("health did not answer before the deadline".to_owned()),
-        }
-        tokio::time::sleep_until((tokio::time::Instant::now() + poll).min(deadline)).await;
-    }
 }
 
 /// Checks the publication's anchor against `rpc`: its hash and the tree size after it
@@ -550,45 +439,68 @@ async fn check_witnesses(
     Ok(None)
 }
 
-/// Checks the session's filter file, which wallets test before any lookup: its digest
-/// must be the manifest's, it must decode to exactly the declared sets, and its paid
-/// set must hold `receiver`, the fixture's, or wallets would skip that lookup.
+/// Checks current rolling hints independently of PIR readiness. A pruned fixture is
+/// covered by the PIR check; a retained fixture must also appear in its block filter.
 async fn check_filters(
     http: &reqwest::Client,
     origin: &str,
-    id: &str,
+    rpc: &NodeClient,
     directory: &receiver_directory::snapshot::Manifest,
     receiver: &ReceiverBytes,
+    payment: Option<&Payment>,
+    without_block_filters: bool,
 ) -> Result<Option<Failure>> {
-    let request = http.get(format!("{origin}/v1/receiver/filters/{id}"));
-    let filters = fetch(request, MAX_FILTERS_BYTES, "filters", |bytes| {
-        let filters = Filters::decode(bytes).map_err(|e| e.to_string())?;
-        match Hash::from(Sha256::digest(bytes)) == directory.filters_sha256
-            && directory.check_filters(&filters).is_ok()
-        {
-            true => Ok(filters),
-            false => Err("differs from the manifest".to_owned()),
-        }
-    });
-    let filters = match filters.await? {
-        Ok(filters) => filters,
+    if without_block_filters {
+        return Ok(None);
+    }
+    let head = fetch(
+        http.get(format!("{origin}/v1/receiver/block-filters/head")),
+        16384,
+        "block_head",
+        |bytes| {
+            let head: Head = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+            head.validate(&directory.genesis)
+                .map_err(|e| e.to_string())?;
+            Ok::<_, String>(head)
+        },
+    )
+    .await?;
+    let head = match head {
+        Ok(head) => head,
         Err(failure) => return Ok(Some(failure)),
     };
-    let paid = filters
-        .get(PAID)
-        .is_some_and(|paid| paid.matches(&directory.salt, &[*receiver])[0]);
-    Ok((!paid).then(|| {
-        (
-            "answer_mismatch",
-            json!({"paid_filter": "omits the fixture"}),
-        )
-    }))
+    let retained = payment.filter(|p| p.height >= head.first && p.height <= head.tip.height);
+    let from = retained.map_or(head.tip.height, |p| p.height);
+    let batch = fetch(
+        http.get(format!(
+            "{origin}/v1/receiver/block-filters/{}/{from}/1",
+            head.revision
+        )),
+        MAX_BATCH_BYTES,
+        "block_batch",
+        |bytes| {
+            let batch = Batch::decode(bytes).map_err(|e| e.to_string())?;
+            batch.check(&head, from, 1).map_err(|e| e.to_string())?;
+            Ok::<_, String>(batch)
+        },
+    )
+    .await?;
+    let batch = match batch {
+        Ok(batch) => batch,
+        Err(failure) => return Ok(Some(failure)),
+    };
+    if batch.filters()[0].block().hash != rpc.block_hash(u64::from(from)).await?
+        || (retained.is_some() && !batch.matches(0, &[*receiver])?[0])
+    {
+        return Ok(Some(("answer_mismatch", json!({"block_filter": from}))));
+    }
+    Ok(None)
 }
 
 /// The indexer's payout check from health, which must report serving the probed
 /// publication `id`. Otherwise the report may describe another publication, such as
-/// one rotated in since the lookup, or another service. A missing payout outranks an
-/// uncheckable one.
+/// one rotated in since the lookup, or another service. Confirmed missing payouts
+/// fail the probe. Unavailable audit data is diagnostic only.
 async fn indexer_report(
     http: &reqwest::Client,
     health_url: &str,
@@ -607,16 +519,15 @@ async fn indexer_report(
     }
     let count = |field: &str| health["indexer"][field].as_u64();
     match (count("payouts_missing"), count("payouts_uncheckable")) {
-        (None, _) | (_, None) => Ok(Some(("report_unavailable", Value::Null))),
-        (Some(0), Some(0)) => Ok(None),
-        (Some(0), Some(uncheckable)) => Ok(Some((
-            "payouts_uncheckable",
-            json!({"payouts_uncheckable": uncheckable}),
-        ))),
-        (Some(missing), _) => Ok(Some((
+        (Some(missing), _) if missing > 0 => Ok(Some((
             "answer_mismatch",
             json!({"payouts_missing": missing}),
         ))),
+        (Some(0), Some(0)) => Ok(None),
+        counts => {
+            tracing::warn!(?counts, "optional payout audit unavailable or incomplete");
+            Ok(None)
+        }
     }
 }
 
@@ -1000,17 +911,13 @@ mod tests {
     }
 
     /// Serves an empty publication of `directory`. Returns the probe's arguments for it,
-    /// with the fixture at `fixture` and the node at `rpc`.
-    async fn publish(
-        directory: receiver_directory::snapshot::Manifest,
-        fixture: &std::path::Path,
-        rpc: &str,
-    ) -> Args {
-        let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
+    /// with the node at `rpc`.
+    async fn publish(directory: receiver_directory::snapshot::Manifest, rpc: &str) -> Args {
+        let snapshot = receiver_directory::snapshot::Snapshot::build(directory, &[]).unwrap();
         let publications = receiver_pir_server::Publications::default();
         let publication = crate::verify::prepare(snapshot, None).unwrap();
         assert!(publications.publish(publication, 0));
-        let app = receiver_pir_server::router_with_publications(publications);
+        let app = crate::router::router_with_publications(publications);
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
@@ -1020,12 +927,71 @@ mod tests {
             &origin,
             "--health-url",
             &format!("{origin}/v1/receiver/health"),
-            "--fixture",
-            fixture.to_str().unwrap(),
             "--rpc-url",
             rpc,
             "--no-auth",
         ])
+    }
+
+    /// Staged service probing skips hints only with an explicit operator flag.
+    #[tokio::test]
+    async fn staged_pir_only_probe_does_not_hide_an_indexer_filter_outage() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let reads = Arc::new(AtomicUsize::new(0));
+        let count = reads.clone();
+        let app = Router::new().route(
+            "/v1/receiver/block-filters/head",
+            routing::get(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let base = [
+            "probe",
+            "--origin",
+            &origin,
+            "--health-url",
+            &origin,
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--no-auth",
+        ];
+        let required = Args::parse_from(base);
+        let staged = Args::parse_from(base.into_iter().chain(["--without-block-filters"]));
+        let node = NodeClient::new(required.rpc_url[0].clone(), None).unwrap();
+        let http = reqwest::Client::new();
+        let receiver = super::common::receiver();
+        assert!(check_filters(
+            &http,
+            &origin,
+            &node,
+            &anchored(),
+            &receiver,
+            None,
+            staged.without_block_filters
+        )
+        .await
+        .unwrap()
+        .is_none());
+        assert_eq!(reads.load(Ordering::SeqCst), 0);
+        let result = check_filters(
+            &http,
+            &origin,
+            &node,
+            &anchored(),
+            &receiver,
+            None,
+            required.without_block_filters,
+        )
+        .await;
+        assert!(result.is_err() || result.unwrap().is_some());
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
     }
 
     /// A publication on another network is an answer mismatch naming both genesis
@@ -1036,12 +1002,10 @@ mod tests {
         let mut directory = anchored();
         directory.genesis = [2; 32];
         let end = u64::from(directory.end_height);
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fixture.json");
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         fixture["height"] = (end - 1).into();
         fixture["block_hash"] = hash::display(&[5; 32]).into();
-        std::fs::write(&path, fixture.to_string()).unwrap();
+        let fixture = fixture.to_string();
         let other = Node {
             genesis: [2; 32],
             fixture: 6,
@@ -1059,8 +1023,8 @@ mod tests {
             serve_node(other).await,
             unreachable,
         ] {
-            let args = publish(directory.clone(), &path, &rpc).await;
-            let failure = probe(args, &mut None).await.unwrap();
+            let args = publish(directory.clone(), &rpc).await;
+            let failure = probe(args, fixture.as_bytes(), &mut None).await.unwrap();
             assert_eq!(
                 failure,
                 Some(("answer_mismatch", expected.clone())),
@@ -1076,12 +1040,10 @@ mod tests {
     #[tokio::test]
     async fn a_publication_must_start_at_ironwood_activation() {
         let activation = crate::blocks::ironwood_activation();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fixture.json");
         let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         fixture["height"] = (activation + 1).into();
         fixture["block_hash"] = hash::display(&[5; 32]).into();
-        std::fs::write(&path, fixture.to_string()).unwrap();
+        let fixture = fixture.to_string();
         for (start, end, reaches_lookup) in [
             (activation + 1, activation + 2, false),
             (activation + 2, activation + 3, false),
@@ -1096,8 +1058,11 @@ mod tests {
             let mut directory = anchored();
             (directory.start_height, directory.end_height) = (start, end);
             let mut lookup = None;
-            let args = publish(directory, &path, &rpc).await;
-            let (category, detail) = probe(args, &mut lookup).await.unwrap().unwrap();
+            let args = publish(directory, &rpc).await;
+            let (category, detail) = probe(args, fixture.as_bytes(), &mut lookup)
+                .await
+                .unwrap()
+                .unwrap();
             // The empty publication lacks the fixture's payment once looked up.
             assert_eq!(category, "answer_mismatch", "{start}");
             assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
@@ -1149,8 +1114,7 @@ mod tests {
                 record
             })
             .collect();
-        let snapshot =
-            receiver_directory::snapshot::Snapshot::build(manifest, &records, &[]).unwrap();
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &records).unwrap();
         let positions = [0, 5].into_iter().collect();
         let proof = WitnessSnapshot::build(
             &crate::verify::publication(&snapshot.manifest).unwrap(),
@@ -1308,7 +1272,10 @@ mod tests {
                 &origin,
                 "--no-auth",
             ]);
-            let (category, detail) = probe(args, &mut None).await.unwrap().unwrap();
+            let (category, detail) = probe(args, MAINNET_FIXTURE, &mut None)
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(category, "answer_mismatch");
             assert!(detail["manifest"].is_string());
         }
@@ -1327,261 +1294,6 @@ mod tests {
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         origin
-    }
-
-    /// A filter file is accepted only with the manifest's digest and with the fixture's
-    /// receiver in its paid set.
-    #[tokio::test]
-    async fn the_filter_file_must_match_its_manifest() {
-        let build = |records: &[receiver_directory::RawRecord]| {
-            let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
-            receiver_directory::snapshot::Snapshot::build(manifest, records, &[]).unwrap()
-        };
-        let snapshot = build(&[super::common::record(0, 1)]);
-        let receiver = super::common::receiver();
-        let serve = |bytes: Vec<u8>| async move {
-            let app = Router::new().route(
-                "/v1/receiver/filters/x",
-                routing::get(move || async move { bytes }),
-            );
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", socket.local_addr().unwrap());
-            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-            origin
-        };
-        let http = reqwest::Client::new();
-        let origin = serve(snapshot.filters.clone()).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
-        assert!(check.await.unwrap().is_none());
-        let mut altered = snapshot.filters.clone();
-        *altered.last_mut().unwrap() ^= 1;
-        let origin = serve(altered).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
-        assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
-        // A self-consistent publication whose paid set omits the fixture's receiver.
-        let empty = build(&[]);
-        let origin = serve(empty.filters.clone()).await;
-        let check = check_filters(&http, &origin, "x", &empty.manifest, &receiver);
-        assert_eq!(
-            check.await.unwrap().unwrap().1["paid_filter"],
-            "omits the fixture"
-        );
-    }
-
-    /// A health route that answers its `n`th request, from 0, with `answer(n)`. Returns
-    /// its URL and the request count.
-    async fn health_route(
-        answer: impl Fn(usize) -> (axum::http::StatusCode, String) + Clone + Send + Sync + 'static,
-    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-        use std::sync::{atomic::Ordering, Arc};
-        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let count = asked.clone();
-        let app = Router::new().route(
-            "/health",
-            routing::get(move || {
-                let answer = answer.clone();
-                let n = count.fetch_add(1, Ordering::SeqCst);
-                async move { answer(n) }
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/health", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        (url, asked)
-    }
-
-    /// A health body whose `near.reads` are `reads` and whose served publication's
-    /// `indexer.feeds` are `published`, each as (payouts, refunds).
-    fn health(
-        reads: (Value, Value),
-        published: (Value, Value),
-    ) -> (axum::http::StatusCode, String) {
-        let map = |(payouts, refunds)| json!({"near-payouts": payouts, "near-refunds": refunds});
-        let health = json!({"near": {"reads": map(reads)}, "indexer": {"feeds": map(published)}});
-        (axum::http::StatusCode::OK, health.to_string())
-    }
-
-    /// A health body whose `near.reads` are `payouts` and `refunds`, which the served
-    /// publication already holds.
-    fn reads(payouts: Value, refunds: Value) -> (axum::http::StatusCode, String) {
-        health((payouts.clone(), refunds.clone()), (payouts, refunds))
-    }
-
-    /// The feed gate passes once health shows both feeds read, however late within its
-    /// wait, and otherwise fails at its deadline with the last reads and request error.
-    #[tokio::test]
-    async fn the_feed_gate_waits_for_both_reads() {
-        use std::sync::atomic::Ordering;
-        let http = reqwest::Client::new();
-        let poll = Duration::from_millis(50);
-        let gate = |url: String, secs| {
-            let http = http.clone();
-            async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
-        };
-        let t = unix_now();
-        let (url, asked) = health_route(move |_| reads(json!(t), json!(t + 1))).await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 1);
-        // The refund feed's read appears on the fourth request.
-        let (url, asked) =
-            health_route(move |n| reads(json!(t), if n < 3 { Value::Null } else { json!(t + 1) }))
-                .await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 4);
-        let (url, _) = health_route(move |_| reads(json!(t), Value::Null)).await;
-        let (category, detail) = gate(url, 1).await.unwrap();
-        assert_eq!(category, "feeds_not_read");
-        let feeds = json!({"near-payouts": t, "near-refunds": null});
-        assert_eq!(
-            detail,
-            json!({"waited_secs": 1, "reads": feeds, "published": feeds, "last_error": null})
-        );
-        // A failed request is reported after later answers, and a body without reads
-        // (an older server) never passes.
-        let (url, _) = health_route(|n| match n {
-            0 => (axum::http::StatusCode::SERVICE_UNAVAILABLE, String::new()),
-            _ => (
-                axum::http::StatusCode::OK,
-                json!({"serving": "x"}).to_string(),
-            ),
-        })
-        .await;
-        let (category, detail) = gate(url, 1).await.unwrap();
-        assert_eq!(
-            (category, &detail["reads"]),
-            ("feeds_not_read", &Value::Null)
-        );
-        assert!(
-            detail["last_error"].as_str().unwrap().contains("503"),
-            "{detail}"
-        );
-    }
-
-    /// After both reads, the feed gate also waits for the served publication's feeds to
-    /// reach the first reads it saw and to be fresh: one without them, with older ones
-    /// from a stored provider database, or with a first read that began too long ago
-    /// would fail the freshness check.
-    #[tokio::test]
-    async fn the_feed_gate_waits_for_a_publication_of_the_reads() {
-        use std::sync::atomic::Ordering;
-        let http = reqwest::Client::new();
-        let poll = Duration::from_millis(50);
-        let gate = |url: String, secs| {
-            let http = http.clone();
-            async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
-        };
-        let t = unix_now();
-        let read = (json!(t), json!(t + 1));
-        // No publication of the feeds yet, then one of an earlier process's reads.
-        for published in [(Value::Null, Value::Null), (json!(t - 1), json!(t + 1))] {
-            let answer = health(read.clone(), published.clone());
-            let (url, _) = health_route(move |_| answer.clone()).await;
-            let (category, detail) = gate(url, 1).await.unwrap();
-            assert_eq!(category, "feeds_not_read");
-            assert_eq!(
-                detail["reads"],
-                json!({"near-payouts": t, "near-refunds": t + 1})
-            );
-            let published = json!({"near-payouts": published.0, "near-refunds": published.1});
-            assert_eq!(detail["published"], published);
-        }
-        // The publication catches up on the fourth request, or is already past the reads.
-        let (url, asked) = health_route(move |n| {
-            let published = if n < 3 {
-                (json!(t - 1), json!(t + 1))
-            } else {
-                (json!(t), json!(t + 2))
-            };
-            health((json!(t), json!(t + 1)), published)
-        })
-        .await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 4);
-        // A first payout read that began past the freshness limit, as a fresh provider
-        // database's long first reads leave it, holds the gate until a fresh publication.
-        let stale = (json!(t - MAX_RECENT_AGE_SECS - 60), json!(t - 60));
-        let (url, asked) = health_route(move |n| {
-            let published = if n < 3 {
-                stale.clone()
-            } else {
-                (json!(t), json!(t))
-            };
-            health(stale.clone(), published)
-        })
-        .await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 4);
-        // Reads that keep moving one step ahead of publication do not hold the gate.
-        let (url, asked) = health_route(move |n| {
-            let n = n as i64;
-            let (read, published) = (json!(t + n), json!(t - 1 + n));
-            health((read.clone(), read), (published.clone(), published))
-        })
-        .await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 2);
-        // A restart after the first reads: the new process publishes the stored feeds
-        // before reading, so the gate waits for its own reads and their publication.
-        let (url, asked) = health_route(move |n| {
-            let (process, reads, published) = match n {
-                0 => ("a", (json!(t), json!(t + 1)), (json!(t - 1), json!(t + 1))),
-                1 | 2 => ("b", (Value::Null, Value::Null), (json!(t), json!(t + 1))),
-                3 => ("b", (json!(t + 5), json!(t + 6)), (json!(t), json!(t + 1))),
-                _ => (
-                    "b",
-                    (json!(t + 5), json!(t + 6)),
-                    (json!(t + 5), json!(t + 6)),
-                ),
-            };
-            let (status, body) = health(reads, published);
-            let mut body: Value = serde_json::from_str(&body).unwrap();
-            body["identity"] = json!({ "incarnation": process });
-            (status, body.to_string())
-        })
-        .await;
-        assert_eq!(gate(url, 30).await, None);
-        assert_eq!(asked.load(Ordering::SeqCst), 5);
-    }
-
-    /// With `--await-feed-reads`, a gate that fails ends the probe before it asks the
-    /// origin for anything.
-    #[tokio::test]
-    async fn the_feed_gate_runs_before_the_origin_is_asked() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let asked = std::sync::Arc::new(AtomicUsize::new(0));
-        let count = asked.clone();
-        let app = Router::new().route(
-            "/v1/receiver/init",
-            routing::get(move || {
-                count.fetch_add(1, Ordering::SeqCst);
-                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let (health, _) = health_route(|_| reads(Value::Null, Value::Null)).await;
-        let argv = |extra: &[&str]| {
-            let required = [
-                "receiver-probe",
-                "--origin",
-                &origin,
-                "--health-url",
-                &health,
-                "--rpc-url",
-                "http://127.0.0.1:1",
-                "--no-auth",
-            ];
-            Args::try_parse_from(required.iter().chain(extra))
-        };
-        let gated = argv(&["--await-feed-reads", "1"]).unwrap();
-        let failure = probe(gated, &mut None).await;
-        assert_eq!(failure.unwrap().unwrap().0, "feeds_not_read");
-        assert_eq!(asked.load(Ordering::SeqCst), 0);
-        // Without the flag the probe goes straight to the origin.
-        assert!(probe(argv(&[]).unwrap(), &mut None).await.is_err());
-        assert_eq!(asked.load(Ordering::SeqCst), 1);
-        assert!(argv(&["--await-feed-reads", "0"]).is_err());
     }
 
     /// Health's report counts only for the probed publication, even after a rotation,
@@ -1616,22 +1328,19 @@ mod tests {
                 json!({"probed": probed, "health_serving": rotated})
             )
         );
-        // The probed publication's report is missing, or counts a missing payout.
-        let failure = report(json!({"serving": probed})).await.unwrap();
-        assert_eq!(failure, ("report_unavailable", Value::Null));
+        // An unavailable optional audit cannot reject otherwise valid chain evidence.
+        assert!(report(json!({"serving": probed})).await.is_none());
+        assert!(report(json!({"serving": probed, "indexer": null}))
+            .await
+            .is_none());
         let failure = report(json!({"serving": probed, "indexer": indexer(2)}))
             .await
             .unwrap();
         assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
-        // A recent payout the report could not check is an availability failure.
         let uncheckable = json!({"payouts_missing": 0, "payouts_uncheckable": 1});
-        let failure = report(json!({"serving": probed, "indexer": uncheckable}))
+        assert!(report(json!({"serving": probed, "indexer": uncheckable}))
             .await
-            .unwrap();
-        assert_eq!(
-            failure,
-            ("payouts_uncheckable", json!({"payouts_uncheckable": 1}))
-        );
+            .is_none());
     }
 
     /// The fixture's pinned receiver is checked against recovery before any request:
@@ -1653,11 +1362,9 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fixture.json");
         // Runs the probe on `fixture`, or on the embedded one for `None`.
         let run = |fixture: Option<Value>| {
-            let mut args = vec![
+            let args = vec![
                 "receiver-probe".to_owned(),
                 "--origin".into(),
                 url.clone(),
@@ -1667,12 +1374,9 @@ mod tests {
                 url.clone(),
                 "--no-auth".into(),
             ];
-            if let Some(fixture) = fixture {
-                std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
-                args.extend(["--fixture".into(), path.to_str().unwrap().into()]);
-            }
+            let fixture = fixture.map_or(MAINNET_FIXTURE.to_vec(), |f| f.to_string().into());
             let args = Args::try_parse_from(args).unwrap();
-            async move { probe(args, &mut None).await }
+            async move { probe(args, &fixture, &mut None).await }
         };
         let fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         assert_eq!(fixture["receiver"], super::common::RECEIVER_HEX);
@@ -1705,5 +1409,161 @@ mod tests {
         // The independent pin passes, so the probe asks the origin for its manifest.
         assert!(run(None).await.is_err());
         assert!(requests.load(Ordering::SeqCst) > 0);
+    }
+
+    /// Against an indexer serving a synthetic chain that holds the public refund, a
+    /// fixture pinned where the refund was indexed passes with one encrypted query and
+    /// its witness, even when the first node is unreachable. A misplaced pin is an
+    /// answer mismatch, and nodes behind the publication leave it unchecked.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_live_lookup_finds_the_indexed_refund() {
+        use axum::extract::State;
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        };
+        use zakura_server_chain::testing::receiver::{ironwood_root, RefundBlock};
+        #[derive(Clone)]
+        struct Chain {
+            blocks: Arc<[RefundBlock; 2]>,
+            tip: Arc<AtomicU64>,
+        }
+        /// The refund's block at activation and a coinbase-only block after it.
+        async fn handler(State(chain): State<Chain>, Json(r): Json<Value>) -> Json<Value> {
+            let height = u64::from(crate::blocks::ironwood_activation());
+            let [first, second] = &*chain.blocks;
+            let requested = r["params"][0]
+                .as_u64()
+                .or_else(|| r["params"][0].as_str().and_then(|s| s.parse().ok()));
+            let block = if requested == Some(height + 1) {
+                second
+            } else {
+                first
+            };
+            let extended = r["params"][0] == second.display_hash();
+            let result = match r["method"].as_str().unwrap() {
+                "getblockcount" => json!(chain.tip.load(Ordering::SeqCst)),
+                "getblockhash" if r["params"][0] == 0 => {
+                    json!(hash::display(&Network::Mainnet.genesis_hash()))
+                }
+                "getblockhash" if r["params"][0] == height - 1 => json!("00".repeat(32)),
+                "getblockhash" => json!(block.display_hash()),
+                "getblock" if r["params"][1] == 1 => {
+                    json!({"trees": {"ironwood": {"size": if extended { 3 } else { 2 }}}})
+                }
+                "getblockheader" => json!({"time": 1_800_000_000}),
+                "getblock" => json!(block.raw_hex()),
+                "z_gettreestate" => {
+                    let blocks: &[&RefundBlock] =
+                        if extended { &[first, second] } else { &[first] };
+                    json!({"hash": r["params"][0], "height": height + u64::from(extended),
+                        "ironwood": {"commitments": {"finalRoot": hex::encode(ironwood_root(blocks))}}})
+                }
+                method => panic!("unexpected {method}"),
+            };
+            Json(json!({"result": result, "error": null}))
+        }
+        let activation = crate::blocks::ironwood_activation();
+        let first = RefundBlock::new(activation);
+        let second = first
+            .clone()
+            .coinbase_only()
+            .at_height(activation + 1)
+            .after(first.hash());
+        let tip = Arc::new(AtomicU64::new(u64::from(activation) + 1));
+        let chain = Chain {
+            blocks: Arc::new([first, second]),
+            tip: tip.clone(),
+        };
+        let app = Router::new()
+            .route("/", routing::post(handler))
+            .with_state(chain);
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+
+        // A one-shot run writes the rows this test reads the refund's indexed place from,
+        // then the serving run publishes the same chain from memory.
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::application::Config {
+            data_dir: dir.path().to_owned(),
+            min_rows: receiver_pir::MIN_ROWS,
+            witnesses: true,
+            max_witness_commitments: 1 << 24,
+            start_height: activation,
+            end_height: None,
+            depth: 0,
+            batch_size: crate::blocks::MAX_RECEIVER_BATCH_BLOCKS,
+            concurrency: 8,
+            audit_enabled: false,
+            filter_blocks: None,
+            history_revision: 0,
+        };
+        let nodes = [NodeClient::new(url.clone(), None).unwrap()];
+        let genesis = Network::Mainnet.genesis_hash();
+        let mut state = crate::application::State::default();
+        crate::application::refresh(&config, &nodes, genesis, None, &mut state)
+            .await
+            .unwrap();
+        let publications = receiver_pir_server::Publications::default();
+        crate::application::refresh(&config, &nodes, genesis, Some(&publications), &mut state)
+            .await
+            .unwrap();
+        let rows = std::fs::read_dir(dir.path().join("publications"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().is_some_and(|e| e == "rows"))
+            .unwrap();
+        let payment = std::fs::read(rows)
+            .unwrap()
+            .chunks(receiver_directory::snapshot::ROW_BYTES)
+            .flat_map(|row| {
+                row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES]
+                    .chunks(receiver_directory::RECORD_BYTES)
+                    .map(|slot| zakura_receiver_crypto::Record::decode(slot).unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .flatten()
+            .next()
+            .unwrap()
+            .payment;
+        let app = crate::router::router_with_publications(publications);
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+
+        let mut fixture: Value = serde_json::from_str(include_str!(
+            "../../receiver-store/tests/fixtures/zero-ovk-action.json"
+        ))
+        .unwrap();
+        fixture["height"] = payment.height.into();
+        fixture["block_hash"] = hash::display(&payment.block_hash).into();
+        fixture["tx_index"] = payment.tx_index.into();
+        fixture["position"] = payment.position.into();
+        let health = format!("{origin}/v1/receiver/health");
+        let run = |fixture: &Value, rpc: &[&str]| {
+            let mut args = vec!["probe", "--origin", &origin, "--health-url", &health];
+            args.extend(rpc.iter().flat_map(|node| ["--rpc-url", node]));
+            args.extend(["--no-auth", "--witnesses"]);
+            let args = Args::parse_from(args);
+            let fixture = fixture.to_string();
+            async move {
+                let mut lookup = None;
+                let failure = probe(args, fixture.as_bytes(), &mut lookup).await;
+                (failure.unwrap(), lookup)
+            }
+        };
+        assert_eq!(run(&fixture, &[&url]).await, (None, Some((1, true))));
+        let fallback = run(&fixture, &["http://127.0.0.1:1", &url]).await;
+        assert_eq!(fallback, (None, Some((1, true))));
+        let mut moved = fixture.clone();
+        moved["position"] = (payment.position + 1).into();
+        let (failure, lookup) = run(&moved, &[&url]).await;
+        assert_eq!(failure.unwrap().0, "answer_mismatch");
+        assert_eq!(lookup, Some((1, false)));
+        tip.store(u64::from(activation), Ordering::SeqCst);
+        let (failure, lookup) = run(&fixture, &[&url]).await;
+        assert_eq!(failure.unwrap().0, "oracle_unavailable");
+        assert_eq!(lookup, None);
     }
 }

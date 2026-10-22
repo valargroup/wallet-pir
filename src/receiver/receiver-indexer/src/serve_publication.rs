@@ -2,7 +2,7 @@
 //! publications an operator stages, without indexing.
 //!
 //! The operator stages a complete publication directory, in the files a one-shot
-//! indexer run writes (`<revision>.json`, `.rows`, `.filters` and optionally
+//! indexer run writes (`<revision>.json`, `.rows` and optionally
 //! `.witness`), and then atomically replaces a small record naming it:
 //! `{"directory": "/abs/path", "revision": "<hex>"}`. The record is a private, local
 //! control input: there is no update route. This mode opens no index database,
@@ -10,7 +10,7 @@
 //!
 //! Each record is loaded and verified in full before it can be served: the manifest
 //! must digest to the expected revision, cover history from Ironwood activation on
-//! mainnet, and commit to the row, filter and witness files beside it, which the
+//! mainnet, and commit to the row and witness files beside it, which the
 //! Receiver server library re-validates record by record while preparing PIR. Its
 //! anchor must then be canonical on the freshest node. Throughout, an independent
 //! guard checks every served anchor and revokes on a confirmed reorg, as the
@@ -19,18 +19,20 @@
 //!
 //! Updates are serial. A newer record supersedes one still preparing; a record that
 //! does not verify is refused and the valid publication already served stays. A
-//! restart reads the record again and verifies everything before serving: the
-//! status file in the state directory is a report for operators, never an input.
+//! A validated higher history revision revokes old answers before loading its rows,
+//! even if replacement preparation fails, and is recorded in the state directory's
+//! [`HISTORY_FILE`] first, so a restart never serves older, uncorrected history again
+//! even if the record still names it. A restart reads the record again and verifies
+//! everything before serving: the status file in the state directory is a report for
+//! operators, never an input.
 //!
 //! The publisher remains trusted for completeness: verification proves the files are
 //! the publication the record names and that it is internally consistent and anchored
 //! on the canonical chain, not that it holds every payment.
 use crate::canonical::{freshest, is_canonical};
+use crate::revision::Refused;
+use receiver_directory::snapshot::{Manifest, Snapshot, ROW_BYTES};
 use receiver_directory::Hash;
-use receiver_directory::{
-    filter::MAX_FILTERS_BYTES,
-    snapshot::{Manifest, Snapshot, ROW_BYTES},
-};
 use receiver_pir_server::{Publication, Publications};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -55,6 +57,9 @@ const MAX_RECORD_BYTES: u64 = 4096;
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 /// The report this mode writes into its state directory.
 pub const STATUS_FILE: &str = "serve-publication.json";
+/// The highest history revision this service has accepted, in its state directory: a
+/// record below it is refused. Deleting it is an explicit operator rollback.
+pub const HISTORY_FILE: &str = "history-revision.json";
 
 #[derive(clap::Parser)]
 #[command(name = "receiver-directory serve-publication")]
@@ -258,10 +263,12 @@ impl VerifiedPublication {
 }
 
 /// Loads and verifies the publication `record` names. Blocking: it reads up to a few
-/// hundred megabytes and prepares PIR.
+/// hundred megabytes and prepares PIR. When serving, a validated correction manifest
+/// revokes older sessions before any row loading or preparation.
 pub fn load(
     record: &PublicationRecord,
     config: &Config,
+    serving: Option<&Publications>,
 ) -> std::result::Result<VerifiedPublication, Refusal> {
     let invalid = |message: String| Refusal::InvalidSource(message);
     let file = |extension: &str| {
@@ -299,11 +306,33 @@ pub fn load(
             manifest.rows, config.min_rows
         )));
     }
+    // A trusted operator correction invalidates old answers immediately, even if
+    // replacement rows are missing or preparation later fails. A check only compares
+    // with the floor; it records nothing.
+    let mut floor = history_floor(&config.state_dir);
+    let accepted = match serving {
+        Some(publications) => {
+            crate::revision::advance(&mut floor, Some(publications), manifest.history_revision)
+        }
+        None => match crate::revision::Floor::floor(&mut floor) {
+            Ok(recorded) if manifest.history_revision < recorded => Err(Refused::Lower {
+                revision: manifest.history_revision,
+                floor: recorded,
+            }),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Refused::Floor(e)),
+        },
+    };
+    match accepted {
+        Ok(()) => {}
+        Err(Refused::Lower { .. }) => {
+            return Err(invalid("history revision moved backwards".into()))
+        }
+        Err(Refused::Floor(e)) => return Err(Refusal::Unavailable(format!("{HISTORY_FILE}: {e}"))),
+    }
     let rows_bytes = u64::from(manifest.rows) * ROW_BYTES as u64;
     let data =
         read_exact_len(&file("rows"), rows_bytes).map_err(|e| invalid(format!("rows: {e}")))?;
-    let filters = read_bounded(&file("filters"), MAX_FILTERS_BYTES as u64)
-        .map_err(|e| invalid(format!("filters: {e}")))?;
     let witness_path = file("witness");
     let witnesses = match std::fs::symlink_metadata(&witness_path) {
         Ok(_) => Some(
@@ -319,15 +348,8 @@ pub fn load(
         Err(e) => return Err(invalid(format!("witness: {e}"))),
     };
     let anchor = (manifest.end_height, manifest.end_hash);
-    let publication = crate::verify::prepare(
-        Snapshot {
-            manifest,
-            data,
-            filters,
-        },
-        witnesses,
-    )
-    .map_err(|e| invalid(format!("publication/witness: {e}")))?;
+    let publication = crate::verify::prepare(Snapshot { manifest, data }, witnesses)
+        .map_err(|e| invalid(format!("publication/witness: {e}")))?;
     let report = serde_json::json!({
         "mode": "serve-publication",
         "directory": record.directory,
@@ -403,6 +425,11 @@ impl Reporter {
     fn json(&self) -> serde_json::Value {
         serde_json::to_value(&*self.status.lock().unwrap()).unwrap_or_default()
     }
+}
+
+/// The correction floor in `state_dir`; see [`HISTORY_FILE`].
+fn history_floor(state_dir: &Path) -> crate::revision::StateFile {
+    crate::revision::StateFile::new(state_dir, HISTORY_FILE)
 }
 
 fn write_atomic(path: &Path, value: &impl Serialize) -> Result<()> {
@@ -488,11 +515,21 @@ impl Updater {
             let started = std::time::Instant::now();
             let config = self.config.clone();
             let loading = record.clone();
-            let loaded = tokio::task::spawn_blocking(move || load(&loading, &config))
-                .await
-                .unwrap_or_else(|e| {
-                    Err(Refusal::InvalidSource(format!("preparation failed: {e}")))
-                });
+            let serving = self.publications.clone();
+            let revision = self.publications.history_revision();
+            let loaded =
+                tokio::task::spawn_blocking(move || load(&loading, &config, Some(&serving)))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(Refusal::InvalidSource(format!("preparation failed: {e}")))
+                    });
+            // A higher correction revision in this record revoked what was served. That
+            // is this record's own doing, not a revocation to verify it again after, so
+            // the epoch it left is the one its outcome settles in.
+            if self.publications.history_revision() > revision {
+                self.activated_epoch = Some(self.publications.epoch());
+                self.reporter.update(|status| status.loaded = None);
+            }
             info!(
                 revision = %record.revision,
                 elapsed_ms = started.elapsed().as_millis() as u64,
@@ -505,6 +542,16 @@ impl Updater {
                         record: record.clone(),
                         verified,
                     })
+                }
+                // A transient failure, such as writing the correction floor, leaves the
+                // record unsettled, so the next poll loads it again.
+                Err(refusal @ Refusal::Unavailable(_)) => {
+                    warn!(revision = %record.revision, %refusal, "publication load deferred");
+                    self.reporter.update(|status| {
+                        status.preparing = None;
+                        status.refusal = Some(refusal);
+                    });
+                    return;
                 }
                 Err(refusal) => return self.refuse(record, refusal),
             }
@@ -637,7 +684,7 @@ impl Updater {
 /// exactly as the service does before serving it, without serving or activating.
 pub fn check(config: &Config) -> std::result::Result<VerifiedPublication, Refusal> {
     let record = PublicationRecord::read(&config.publication_record)?;
-    load(&record, config)
+    load(&record, config, None)
 }
 
 pub async fn main(args: Args) -> Result<()> {
@@ -675,6 +722,8 @@ pub async fn run(config: Config) -> Result<()> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let genesis = Network::Mainnet.genesis_hash();
     let publications = Publications::default();
+    // Older sessions stay fenced across a restart; see `HISTORY_FILE`.
+    crate::revision::restore(&mut history_floor(&config.state_dir), &publications)?;
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let app = receiver_pir_server::router_with_health(publications.clone(), {
         let reporter = reporter.clone();
@@ -729,6 +778,9 @@ async fn shutdown() {
 }
 
 #[cfg(test)]
+use crate::probe::common;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -767,6 +819,87 @@ mod tests {
         }))
         .unwrap_err();
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    /// A validated correction fences existing sessions before reading or preparing rows.
+    #[test]
+    fn staged_correction_fences_before_row_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        manifest.genesis = Network::Mainnet.genesis_hash();
+        manifest.start_height = crate::blocks::ironwood_activation();
+        manifest.end_height = manifest.start_height;
+        let old = receiver_directory::snapshot::Snapshot::build(manifest.clone(), &[]).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(crate::verify::prepare(old, None).unwrap(), 0));
+        manifest.history_revision = 1;
+        let revision = hex::encode(manifest.revision().unwrap());
+        std::fs::write(
+            dir.path().join(format!("{revision}.json")),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let record = PublicationRecord {
+            directory: dir.path().to_owned(),
+            revision,
+        };
+        let state = tempfile::tempdir().unwrap();
+        let config = Config {
+            state_dir: state.path().to_owned(),
+            ..config()
+        };
+        let failure = load(&record, &config, Some(&publications)).err().unwrap();
+        assert!(failure.to_string().contains("rows:"));
+        assert!(publications.current_anchor().is_none());
+        assert_eq!(publications.epoch(), 1);
+        assert!(publications.ready_at().is_none());
+    }
+
+    /// A correction's revision outlives a restart: once revision 1 was accepted, a fresh
+    /// service, or a check, refuses a record of revision 0 even though nothing serves.
+    #[test]
+    fn an_accepted_correction_survives_a_restart() {
+        let (dir, state) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let config = Config {
+            state_dir: state.path().to_owned(),
+            ..config()
+        };
+        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        manifest.genesis = Network::Mainnet.genesis_hash();
+        manifest.start_height = crate::blocks::ironwood_activation();
+        manifest.end_height = manifest.start_height;
+        let stage = |manifest: &Manifest| {
+            let revision = hex::encode(manifest.revision().unwrap());
+            std::fs::write(
+                dir.path().join(format!("{revision}.json")),
+                serde_json::to_vec(manifest).unwrap(),
+            )
+            .unwrap();
+            PublicationRecord {
+                directory: dir.path().to_owned(),
+                revision,
+            }
+        };
+        let old = stage(&manifest);
+        manifest.history_revision = 1;
+        let corrected = stage(&manifest);
+        // Accepted, then refused for its missing rows.
+        let failure = load(&corrected, &config, Some(&Publications::default()));
+        assert!(failure.err().unwrap().to_string().contains("rows:"));
+        let floor = || history_floor(state.path());
+        assert_eq!(crate::revision::Floor::floor(&mut floor()).unwrap(), 1);
+        let restarted = Publications::default();
+        crate::revision::restore(&mut floor(), &restarted).unwrap();
+        for serving in [Some(&restarted), None] {
+            let failure = load(&old, &config, serving).err().unwrap();
+            assert!(failure.to_string().contains("moved backwards"), "{failure}");
+        }
+        // An unreadable record refuses rather than guess.
+        std::fs::write(state.path().join(HISTORY_FILE), "x").unwrap();
+        assert!(matches!(
+            load(&old, &config, None),
+            Err(Refusal::Unavailable(_))
+        ));
     }
 
     #[test]

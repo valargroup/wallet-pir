@@ -4,12 +4,12 @@
 mod common;
 #[cfg(test)]
 extern crate self as receiver_pir_server;
+pub mod blocks;
 #[cfg(test)]
 #[path = "../tests/common/prepared.rs"]
 mod prepared;
 pub mod publication;
 use axum::{
-    body::Bytes,
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
@@ -57,7 +57,7 @@ fn receiver_endpoint(route: &str) -> Option<&'static str> {
         "public" => "receiver_public",
         "query" => "receiver_query",
         "witness" => "receiver_witness",
-        "filters" => "receiver_filters",
+        "block-filters" => "receiver_block_filters",
         "health" => "receiver_health",
         _ => return None,
     })
@@ -94,7 +94,13 @@ struct Service {
     clients: ClientSlots,
     metrics: pir_observability::HttpMetrics,
     health_fields: HealthFields,
+    /// Rolling filter batches being encoded or sent; see [`MAX_FILTER_BATCHES`].
+    batches: Arc<tokio::sync::Semaphore>,
 }
+
+/// Most rolling filter batches built or sent at once. Each holds up to twice
+/// `MAX_BATCH_BYTES` (its filters and their encoding); more are refused with 429.
+const MAX_FILTER_BATCHES: usize = 8;
 
 /// The receiver categories `pir_observability` reports.
 const ENDPOINTS: [&str; 6] = [
@@ -102,7 +108,7 @@ const ENDPOINTS: [&str; 6] = [
     "receiver_public",
     "receiver_query",
     "receiver_witness",
-    "receiver_filters",
+    "receiver_block_filters",
     "receiver_health",
 ];
 
@@ -110,12 +116,8 @@ const ENDPOINTS: [&str; 6] = [
 /// revisions, with the admission and refusals of `docs/serving-contract.md`.
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` and
 /// `/metrics` are for operators; a deployment's edge proxies only the wallet routes.
-pub fn router_with_publications(publications: Publications) -> Router {
-    router_with_health(publications, Arc::new(serde_json::Map::new))
-}
-
-/// [`router_with_publications`], with health also reporting `fields`. Health's own
-/// fields (`identity`, `serving`, `epoch`, `indexer`) take precedence over theirs.
+/// Health also reports `fields`, though its own (`identity`, `serving`, `epoch`,
+/// `indexer`) take precedence over theirs.
 pub fn router_with_health(publications: Publications, fields: HealthFields) -> Router {
     router(Service {
         publications,
@@ -123,10 +125,11 @@ pub fn router_with_health(publications: Publications, fields: HealthFields) -> R
         clients: ClientSlots::new(PER_CLIENT),
         metrics: pir_observability::HttpMetrics::default(),
         health_fields: fields,
+        batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
     })
 }
 
-/// The routes of [`router_with_publications`] over `service`.
+/// The routes of [`router_with_health`] over `service`.
 fn router(service: Service) -> Router {
     let metrics = service.metrics.clone();
     metrics.initialize(&ENDPOINTS);
@@ -168,14 +171,29 @@ fn router(service: Service) -> Router {
                 },
             ),
         )
-        .route(
-            "/v1/receiver/filters/:session",
-            get(
-                |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, &id, Material::Filters)
-                },
-            ),
-        )
+        .route("/v1/receiver/block-filters/head", get(|State(s): State<Service>| async move {
+            match s.publications.filters() {
+                Ok(window) => ([(header::CACHE_CONTROL, "no-store")], Json(window.head().clone())).into_response(),
+                Err(status) => status.into_response(),
+            }
+        }))
+        .route("/v1/receiver/block-filters/:revision/:from/:limit", get(
+            |State(s): State<Service>, Path((revision, from, limit)): Path<(u64, u32, u32)>| async move {
+                // The permit is held until the encoded batch is sent.
+                let Ok(permit) = s.batches.clone().try_acquire_owned() else {
+                    return overloaded();
+                };
+                match s.publications.filters().and_then(|window| window.batch(revision, from, limit)) {
+                    Ok(bytes) => {
+                        let mut response = binary(bytes);
+                        let body = std::mem::replace(response.body_mut(), axum::body::Body::empty());
+                        *response.body_mut() = pir_control::http::retain(body, permit);
+                        response
+                    }
+                    Err(status) => status.into_response(),
+                }
+            }
+        ))
         .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(metrics, observe))
         .with_state(service)
@@ -219,7 +237,6 @@ async fn health(State(s): State<Service>) -> Response {
 enum Material {
     Public,
     Witness,
-    Filters,
 }
 
 /// Serves one file of the publication whose hex id is `id`.
@@ -233,7 +250,6 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     };
     match material {
         Material::Public => binary(p.server.public().to_vec()),
-        Material::Filters => binary(Bytes::from_owner(p.server.filters())),
         Material::Witness => match &p.witnesses {
             Some(bytes) => binary(bytes.clone()),
             None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -348,7 +364,7 @@ mod tests {
         use receiver_directory::snapshot::Snapshot;
         use receiver_pir::{AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let publication = crate::prepared::prepare(snapshot, None).unwrap();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
@@ -373,6 +389,7 @@ mod tests {
             clients: clients.clone(),
             metrics: Default::default(),
             health_fields: Arc::new(serde_json::Map::new),
+            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
         };
         let request = client.prepare(common::receiver(), 0).unwrap();
         let response = query(
@@ -406,7 +423,6 @@ mod tests {
     async fn wrong_lengths_are_refused_without_waiting_for_evaluation() {
         let snapshot = receiver_directory::snapshot::Snapshot::build(
             common::manifest(receiver_pir::MIN_ROWS),
-            &[],
             &[],
         )
         .unwrap();
@@ -448,6 +464,40 @@ mod tests {
         server.abort();
     }
 
+    /// Rolling filter batches past the limit are refused with 429 while the others are
+    /// built or sent, and served again once one finishes.
+    #[tokio::test]
+    async fn rolling_filter_batches_beyond_the_limit_are_refused() {
+        let batches = Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES));
+        let app = router(Service {
+            publications: Publications::default(),
+            queue: Arc::new(Queue::new(1, 1, WAIT, true)),
+            clients: ClientSlots::new(PER_CLIENT),
+            metrics: pir_observability::HttpMetrics::default(),
+            health_fields: Arc::new(serde_json::Map::new),
+            batches: batches.clone(),
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!(
+            "http://{}/v1/receiver/block-filters/0/100/1",
+            socket.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let held = batches
+            .clone()
+            .acquire_many_owned(MAX_FILTER_BATCHES as u32)
+            .await
+            .unwrap();
+        let refused = reqwest::get(&url).await.unwrap();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        drop(held);
+        // With a slot free it reaches the window, which is not published yet.
+        let served = reqwest::get(&url).await.unwrap();
+        assert_eq!(served.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(batches.available_permits(), MAX_FILTER_BATCHES);
+        server.abort();
+    }
+
     /// Serves `publications` with `queue`, returning the query URL and the server task.
     async fn serve(
         publications: Publications,
@@ -459,6 +509,7 @@ mod tests {
             clients: ClientSlots::new(PER_CLIENT),
             metrics: pir_observability::HttpMetrics::default(),
             health_fields: Arc::new(serde_json::Map::new),
+            batches: Arc::new(tokio::sync::Semaphore::new(MAX_FILTER_BATCHES)),
         });
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
@@ -499,7 +550,7 @@ mod tests {
         use receiver_directory::snapshot::Snapshot;
         use receiver_pir::{server::Server, AcceptedCoverage, Client, MIN_ROWS};
         let snapshot =
-            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)]).unwrap();
         let server = Server::new(snapshot).unwrap();
         let accepted = AcceptedCoverage {
             genesis: [1; 32],
@@ -517,7 +568,7 @@ mod tests {
         let rotated = held_query(&url, &queue, query.body().to_vec(), || {
             let mut next = common::manifest(MIN_ROWS);
             (next.end_height, next.end_hash) = (102, [9; 32]);
-            let next = Server::new(Snapshot::build(next, &[], &[]).unwrap()).unwrap();
+            let next = Server::new(Snapshot::build(next, &[]).unwrap()).unwrap();
             assert!(publications.publish(Publication::verified(next, None), 0));
         })
         .await;
@@ -544,27 +595,37 @@ mod fixture_cache_tests {
     use super::*;
     use receiver_directory::snapshot::Snapshot;
     fn snapshot() -> Snapshot {
-        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[], &[]).unwrap()
+        Snapshot::build(common::manifest(receiver_pir::MIN_ROWS), &[]).unwrap()
     }
+    /// Only an identical snapshot reuses a cached server; a cached server keeps no
+    /// report and does not hide corrupt input.
     #[test]
-    fn reused_public_rows_do_not_share_reports_or_hide_corruption() {
-        let first = prepared::prepare(snapshot(), None).unwrap();
-        let second = prepared::prepare(snapshot(), None).unwrap();
+    fn reused_servers_do_not_share_reports_or_hide_corruption() {
+        // A cache of its own, so concurrent tests cannot evict its entries.
+        let cache = Default::default();
+        let prepare = |snapshot| prepared::prepare_in(&cache, snapshot, None);
+        let first = prepare(snapshot()).unwrap();
+        let second = prepare(snapshot()).unwrap();
         assert!(std::ptr::eq(
             first.server.public().as_ptr(),
             second.server.public().as_ptr()
+        ));
+        let mut salted = snapshot();
+        salted.manifest.salt[0] ^= 1;
+        let salted = Snapshot::build(salted.manifest, &[]).unwrap();
+        let other = prepare(salted).unwrap();
+        assert!(!std::ptr::eq(
+            first.server.public().as_ptr(),
+            other.server.public().as_ptr()
         ));
         let changed = first.with_report(serde_json::json!({"fixture": "changed"}));
         assert!(changed.report.is_some());
         assert!(second.report.is_none());
         let mut corrupt = snapshot();
         corrupt.data[0] ^= 1;
-        assert!(prepared::prepare(corrupt, None).is_err());
-        let mut corrupt = snapshot();
-        corrupt.filters.push(1);
-        assert!(prepared::prepare(corrupt, None).is_err());
+        assert!(prepare(corrupt).is_err());
         let mut corrupt = snapshot();
         corrupt.manifest.end_height = 0;
-        assert!(prepared::prepare(corrupt, None).is_err());
+        assert!(prepare(corrupt).is_err());
     }
 }

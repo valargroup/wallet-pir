@@ -41,4 +41,5 @@ zakura-server-chain = { path = "../../shared/pir-chain", default-features = fals
 
 
 [dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "testing-node"] }

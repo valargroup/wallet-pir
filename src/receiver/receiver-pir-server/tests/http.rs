@@ -3,6 +3,8 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/router.rs"]
+mod router;
 use common::{manifest, receiver, record};
 use history::history;
 use receiver_directory::snapshot::Snapshot;
@@ -12,6 +14,7 @@ use receiver_pir::{
     AcceptedCoverage, Client, Error, MIN_ROWS,
 };
 use receiver_pir_server::{Publication, Publications};
+use router::router_with_publications;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
@@ -35,7 +38,7 @@ fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let mut manifest = manifest(rows);
     // Positions start at 200; a long history needs room after them.
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records, &[]).unwrap()
+    Snapshot::build(manifest, &records).unwrap()
 }
 struct Running {
     origin: String,
@@ -53,7 +56,7 @@ async fn serve(snapshot: Snapshot) -> Running {
 async fn serve_publication(publication: Publication) -> Running {
     let publications = Publications::default();
     assert!(publications.publish(publication, 0));
-    serve_router(receiver_pir_server::router_with_publications(publications)).await
+    serve_router(router_with_publications(publications)).await
 }
 async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -69,10 +72,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         Publication::verified(Server::new(snapshot(2)).unwrap(), None),
         0
     ));
-    let server = serve_router(receiver_pir_server::router_with_publications(
-        publications.clone(),
-    ))
-    .await;
+    let server = serve_router(router_with_publications(publications.clone())).await;
     let old = connect(&server.origin, Http(http()), accepted())
         .await
         .unwrap();
@@ -157,10 +157,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let id = hex::encode(pir.id());
     let publications = Publications::default();
     assert!(publications.publish(Publication::verified(pir, None), 0));
-    let server = serve_router(receiver_pir_server::router_with_publications(
-        publications.clone(),
-    ))
-    .await;
+    let server = serve_router(router_with_publications(publications.clone())).await;
     let get = |path: String| http().get(format!("{}{path}", server.origin)).send();
     let unknown = get(format!("/v1/receiver/public/{}", "00".repeat(32)))
         .await
@@ -172,7 +169,7 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     for salt in 0..9 {
         let mut m = manifest(MIN_ROWS);
         m.salt[0] = salt;
-        let other = Server::new(Snapshot::build(m, &[], &[]).unwrap()).unwrap();
+        let other = Server::new(Snapshot::build(m, &[]).unwrap()).unwrap();
         assert!(publications.publish(Publication::verified(other, None), publications.epoch()));
         publications.revoke();
     }
@@ -199,10 +196,7 @@ async fn health_serves_the_owners_report() {
             .with_report(serde_json::json!({"missing_payouts": 0})),
         0
     ));
-    let server = serve_router(receiver_pir_server::router_with_publications(
-        publications.clone(),
-    ))
-    .await;
+    let server = serve_router(router_with_publications(publications.clone())).await;
     let health = || async {
         http()
             .get(format!("{}/v1/receiver/health", server.origin))
@@ -274,7 +268,7 @@ fn rotation_waits_for_the_previous_revisions_grace() {
         // Below the moving tip, so the record need not repeat its hash.
         let mut paid = record(0, 1);
         paid.payment.height = 100;
-        let next = Snapshot::build(m, &[paid], &[]).unwrap();
+        let next = Snapshot::build(m, &[paid]).unwrap();
         publications.publish(Publication::verified(Server::new(next).unwrap(), None), 0)
     };
     assert!(publish(101));
@@ -459,41 +453,6 @@ async fn connect<T: Transport>(
 }
 
 #[tokio::test]
-async fn wallets_test_receivers_against_the_publication_filters() {
-    /// Flips a bit of every filter file it fetches.
-    struct Tampered(Http);
-    impl Transport for Tampered {
-        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-            let mut bytes = Transport::get(&self.0, url, limit).await?;
-            if url.contains("/filters/") {
-                *bytes.last_mut().unwrap() ^= 1;
-            }
-            Ok(bytes)
-        }
-        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
-            Transport::post(&self.0, url, body, limit).await
-        }
-    }
-    let server = serve(snapshot(1)).await;
-    let transport = Http(http());
-    let manifest = DirectoryClient::fetch_manifest(&server.origin, &transport)
-        .await
-        .unwrap();
-    let filters = DirectoryClient::fetch_filters(&server.origin, &transport, &manifest)
-        .await
-        .unwrap();
-    let key = manifest.directory.salt;
-    let paid = filters.get(receiver_directory::filter::PAID).unwrap();
-    assert_eq!(paid.matches(&key, &[receiver()]), [true]);
-    assert_eq!(filters.iter().count(), 1);
-    let tampered = Tampered(Http(http()));
-    assert!(matches!(
-        DirectoryClient::fetch_filters(&server.origin, &tampered, &manifest).await,
-        Err(Error::Malformed)
-    ));
-}
-
-#[tokio::test]
 async fn retrieve_complete_history_and_enforce_limits_over_http() {
     let server = serve(snapshot(2)).await;
     let client = connect(&server.origin, Http(http()), accepted())
@@ -601,7 +560,7 @@ async fn common_witness_file_uses_the_same_publication() {
 #[test]
 fn encrypted_publication_roundtrip_and_fail_closed() {
     let records = [record(0, 2), record(1, 2)];
-    let server = Server::new(Snapshot::build(manifest(MIN_ROWS), &records, &[]).unwrap()).unwrap();
+    let server = Server::new(Snapshot::build(manifest(MIN_ROWS), &records).unwrap()).unwrap();
     let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
     let first = client.prepare(receiver(), 0).unwrap();
     let second = client.prepare(receiver(), 0).unwrap();
@@ -665,33 +624,15 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
 
 #[test]
 fn reject_corrupt_rows_before_preprocessing() {
-    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &[]).unwrap();
+    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[]).unwrap();
     snapshot.data[0] ^= 1;
     assert!(matches!(
         Server::new(snapshot),
         Err(Error::Directory(receiver_directory::Error::Malformed))
     ));
     // No PIR profile serves a smaller table.
-    let small = Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).unwrap();
+    let small = Snapshot::build(manifest(MIN_ROWS / 2), &[]).unwrap();
     assert!(matches!(Server::new(small), Err(Error::Unsupported)));
-}
-
-/// The directory accepts any number of provider sets, but a server refuses a session
-/// manifest over [`receiver_pir::MAX_MANIFEST_BYTES`].
-#[test]
-fn session_manifests_are_bounded_by_their_serialized_size() {
-    use receiver_directory::snapshot::ProviderSet;
-    let provider: Vec<_> = (0..300)
-        .map(|i| ProviderSet {
-            label: format!("p{i:03}/seen"),
-            window_secs: None,
-            since_unix: 1,
-            until_unix: 2,
-            receivers: Vec::new(),
-        })
-        .collect();
-    let snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &provider).unwrap();
-    assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
 }
 
 #[test]
@@ -704,7 +645,7 @@ fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
             m.salt[0] = m.salt[0].wrapping_add(1);
         }
         let records = [record(0, 2), record(1, 2)];
-        let server = Server::new(Snapshot::build(m, &records, &[]).unwrap()).unwrap();
+        let server = Server::new(Snapshot::build(m, &records).unwrap()).unwrap();
         let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
         assert_eq!(
             server.public().len(),

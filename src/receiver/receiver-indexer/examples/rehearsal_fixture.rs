@@ -53,7 +53,7 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
             record
         })
         .collect();
-    let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
+    let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
     let proof = WitnessSnapshot::build(
         &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
@@ -111,7 +111,6 @@ async fn main() {
             )
             .unwrap();
             std::fs::write(file("rows"), &snapshot.data).unwrap();
-            std::fs::write(file("filters"), &snapshot.filters).unwrap();
             std::fs::write(file("witness"), witness).unwrap();
             let session = receiver_pir::server::Server::new(snapshot).unwrap().id();
             println!(

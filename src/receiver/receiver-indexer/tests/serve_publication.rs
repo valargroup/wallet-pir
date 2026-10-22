@@ -74,7 +74,13 @@ async fn rpc(State(node): State<Node>, Json(request): Json<Value>) -> Json<Value
 /// A publication ending `offset` blocks after activation at `hash`, with two payments
 /// to the fixture receiver and their witness file.
 fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
+    corrected_publication(offset, hash, 0)
+}
+
+/// [`publication`] under history correction revision `revision`.
+fn corrected_publication(offset: u32, hash: Hash, revision: u64) -> (Snapshot, Vec<u8>) {
     let mut manifest = common::manifest(MIN_ROWS);
+    manifest.history_revision = revision;
     manifest.genesis = mainnet();
     manifest.start_height = activation();
     manifest.end_height = activation() + offset;
@@ -93,7 +99,7 @@ fn publication(offset: u32, hash: Hash) -> (Snapshot, Vec<u8>) {
             record
         })
         .collect();
-    let snapshot = Snapshot::build(manifest, &records, &[]).unwrap();
+    let snapshot = Snapshot::build(manifest, &records).unwrap();
     let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
     let proof = WitnessSnapshot::build(
         &receiver_indexer::verify::publication(&snapshot.manifest).unwrap(),
@@ -122,7 +128,6 @@ fn stage(
     )
     .unwrap();
     std::fs::write(dir.join(format!("{revision}.rows")), &snapshot.data).unwrap();
-    std::fs::write(dir.join(format!("{revision}.filters")), &snapshot.filters).unwrap();
     if let Some(witness) = witness {
         std::fs::write(dir.join(format!("{revision}.witness")), witness).unwrap();
     }
@@ -437,6 +442,94 @@ async fn restart_rechecks_the_record_and_reorgs_revoke_serving() {
     check_staged_publication(StagedCase::Restart).await;
 }
 
+/// A correction record that raises the history revision and then fails its rows is
+/// refused once. Raising the revision revoked the served publication, and that
+/// self-revocation is not mistaken for an outside one, so the same invalid record is
+/// not loaded again on every poll.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_correction_is_loaded_once() {
+    let world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start();
+    let a_id = session(&a);
+    world
+        .until("first publication", &mut served, |h| h["serving"] == a_id)
+        .await;
+    let mut manifest = a.manifest.clone();
+    manifest.history_revision = 1;
+    let corrected = Snapshot {
+        manifest,
+        data: a.data.clone(),
+    };
+    let (dir, rev) = stage(&root, "corrected", &corrected, Some(&a_witness));
+    let rows = dir.join(format!("{rev}.rows"));
+    let mut bytes = std::fs::read(&rows).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&rows, bytes).unwrap();
+    world.assign(&dir, &rev);
+    world
+        .until("refused correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == rev.as_str()
+                && refusal(h).0 == "invalid_source"
+        })
+        .await;
+    // Several record polls later the record has still been prepared only once.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let log = std::fs::read_to_string(world.root.path().join("worker.log")).unwrap();
+    let prepared = log
+        .lines()
+        .filter(|l| l.contains("publication prepared") && l.contains(rev.as_str()))
+        .count();
+    assert_eq!(prepared, 1, "{log}");
+}
+
+/// A correction whose floor cannot be recorded yet is deferred, not refused: once the
+/// state directory takes the floor again, the next poll activates it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unrecordable_floor_defers_the_correction() {
+    let world = World::new().await;
+    let root = world.root.path().join("publications");
+    let mut served = Vec::new();
+    let (a, a_witness) = publication(1, [0xa1; 32]);
+    world.node.set(activation() + 1, [0xa1; 32]);
+    let (a_dir, a_rev) = stage(&root, "a", &a, Some(&a_witness));
+    world.assign(&a_dir, &a_rev);
+    let _worker = world.start();
+    world
+        .until("first publication", &mut served, |h| {
+            h["serving"] == session(&a)
+        })
+        .await;
+    // A directory where the floor file goes makes recording it fail.
+    let floor = world
+        .root
+        .path()
+        .join("state")
+        .join(receiver_indexer::serve_publication::HISTORY_FILE);
+    std::fs::create_dir(&floor).unwrap();
+    let (b, b_witness) = corrected_publication(2, [0xb2; 32], 1);
+    world.node.set(activation() + 2, [0xb2; 32]);
+    let (b_dir, b_rev) = stage(&root, "b", &b, Some(&b_witness));
+    world.assign(&b_dir, &b_rev);
+    world
+        .until("deferred correction", &mut served, |h| {
+            h["publication"]["assigned"]["revision"] == b_rev.as_str()
+                && refusal(h).0 == "unavailable"
+        })
+        .await;
+    std::fs::remove_dir(&floor).unwrap();
+    world
+        .until("corrected publication", &mut served, |h| {
+            h["serving"] == session(&b)
+        })
+        .await;
+}
+
 async fn check_staged_publication(case: StagedCase) {
     let world = World::new().await;
     let root = world.root.path().join("publications");
@@ -450,12 +543,26 @@ async fn check_staged_publication(case: StagedCase) {
     world.assign(&a_dir, &a_rev);
     let worker = world.start();
     let a_id = session(&a);
+    // The record is reported loaded just after the publication starts serving, so
+    // health can briefly show one without the other.
     let health = world
-        .until("first publication", &mut served, |h| h["serving"] == a_id)
+        .until("first publication", &mut served, |h| {
+            h["serving"] == a_id && h["publication"]["loaded"]["revision"] == a_rev.as_str()
+        })
         .await;
-    assert_eq!(health["publication"]["loaded"]["revision"], a_rev);
     assert_eq!(health["indexer"]["mode"], "serve-publication");
     if case == StagedCase::Payments {
+        assert!(!a_dir.join(format!("{a_rev}.filters")).exists());
+        assert_eq!(
+            world
+                .client
+                .get(format!("{}/v1/receiver/block-filters/head", world.origin))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
         let mut found = world.lookup(activation() + 1, [0xa1; 32]).await;
         found.sort_by_key(|payment| payment.position);
         let expected: Vec<_> = (0..2)
@@ -515,7 +622,7 @@ async fn check_staged_publication(case: StagedCase) {
         let wrong = root.join("wrong-revision");
         std::fs::create_dir_all(&wrong).unwrap();
         let other_rev = "cd".repeat(32);
-        for ext in ["json", "rows", "filters", "witness"] {
+        for ext in ["json", "rows", "witness"] {
             std::fs::copy(
                 b_dir.join(format!("{b_rev}.{ext}")),
                 wrong.join(format!("{other_rev}.{ext}")),
@@ -533,7 +640,7 @@ async fn check_staged_publication(case: StagedCase) {
         // Another network.
         let (mut other_net, _) = publication(2, [0xb2; 32]);
         other_net.manifest.genesis = [1; 32];
-        let other_net = Snapshot::build(other_net.manifest, &[], &[]).unwrap();
+        let other_net = Snapshot::build(other_net.manifest, &[]).unwrap();
         let (net_dir, net_rev) = stage(&root, "network", &other_net, None);
         // An anchor the node does not have.
         let (fork, fork_witness) = publication(3, [0xf0; 32]);

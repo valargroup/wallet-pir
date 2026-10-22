@@ -6,6 +6,8 @@
 mod common;
 #[path = "common/history.rs"]
 mod history;
+#[path = "common/router.rs"]
+mod router;
 use common::{manifest, receiver, record};
 use history::history;
 use receiver_directory::snapshot::Snapshot;
@@ -14,7 +16,8 @@ use receiver_pir::{
     transport::{DirectoryClient, Transport},
     AcceptedCoverage, Error,
 };
-use receiver_pir_server::{router_with_publications, Publication, Publications};
+use receiver_pir_server::{Publication, Publications};
+use router::router_with_publications;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
@@ -35,7 +38,7 @@ fn snapshot(count: u32) -> Snapshot {
     let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
     let mut manifest = manifest(MIN_ROWS);
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records, &[]).unwrap()
+    Snapshot::build(manifest, &records).unwrap()
 }
 
 struct Running {
@@ -154,29 +157,6 @@ async fn the_library_client_looks_up_over_pir() {
     let mut other = receiver();
     other[0] ^= 1;
     assert!(history(&client, other).await.unwrap().is_empty());
-}
-
-/// The library client checks the publication's filter file against its manifest and
-/// tests receivers against it.
-#[tokio::test]
-async fn the_library_client_reads_the_publication_filters() {
-    let server = serve(Publication::verified(
-        Server::new(snapshot(1)).unwrap(),
-        None,
-    ))
-    .await;
-    let http = Http::new();
-    let manifest = DirectoryClient::fetch_manifest(&server.origin, &http)
-        .await
-        .unwrap();
-    let filters = DirectoryClient::fetch_filters(&server.origin, &http, &manifest)
-        .await
-        .unwrap();
-    let paid = filters.get(receiver_directory::filter::PAID).unwrap();
-    assert_eq!(
-        paid.matches(&manifest.directory.salt, &[receiver()]),
-        [true]
-    );
 }
 
 /// The common witness file reaches the library client byte for byte; a publication

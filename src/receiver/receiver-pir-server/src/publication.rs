@@ -50,6 +50,8 @@ const GRACE: Duration = Duration::from_secs(60);
 #[derive(Default)]
 struct State {
     epoch: u64,
+    history_revision: u64,
+    filters: Option<Arc<crate::blocks::BlockWindow>>,
     current: Option<Arc<Publication>>,
     previous: Option<(Arc<Publication>, Instant)>,
 }
@@ -78,6 +80,11 @@ impl State {
     fn anchors(&self) -> Vec<(u32, Hash)> {
         self.live()
             .map(|p| (p.manifest().end_height, p.manifest().end_hash))
+            .chain(
+                self.filters
+                    .iter()
+                    .map(|f| (f.head().tip.height, f.head().tip.hash)),
+            )
             .collect()
     }
 
@@ -93,6 +100,7 @@ impl State {
     fn revoke(&mut self) {
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
         (self.current, self.previous) = (None, None);
+        self.filters = None;
     }
 }
 
@@ -101,6 +109,56 @@ impl State {
 pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
+    /// Changes the correction generation before collecting, immediately revoking older
+    /// sessions so direct-PIR callers cannot finish on stale negatives during preparation.
+    pub fn advance_history_revision(&self, revision: u64) -> bool {
+        let mut state = self.0.write().unwrap();
+        if revision < state.history_revision {
+            return false;
+        }
+        if revision > state.history_revision {
+            state.revoke();
+            state.history_revision = revision;
+        }
+        true
+    }
+
+    /// Activates hints before PIR preparation, fenced by the same canonical guard.
+    /// The serial owner checks the new anchor independently before calling this.
+    pub fn publish_filters(
+        &self,
+        filters: crate::blocks::BlockWindow,
+        expected_epoch: u64,
+    ) -> bool {
+        let mut state = self.0.write().unwrap();
+        if state.epoch != expected_epoch
+            || filters.head().revision != state.history_revision
+            || state.filters.as_ref().is_some_and(|old| {
+                old.head().tip.height > filters.head().tip.height
+                    || old.head().revision > filters.head().revision
+            })
+        {
+            return false;
+        }
+        state.filters = Some(Arc::new(filters));
+        true
+    }
+
+    /// The rolling window served now, if any; a revocation clears it.
+    pub fn filter_window(&self) -> Option<Arc<crate::blocks::BlockWindow>> {
+        self.0.read().unwrap().filters.clone()
+    }
+
+    /// The current rolling window, whether or not a PIR publication is ready.
+    pub(crate) fn filters(&self) -> Result<Arc<crate::blocks::BlockWindow>, StatusCode> {
+        self.0
+            .read()
+            .unwrap()
+            .filters
+            .clone()
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+    }
+
     /// Runs [`State::expire`]. Every read path calls it, including the owner's periodic
     /// [`Self::anchors`] check, so an idle service frees it within a poll; [`Self::publish`]
     /// expires under its own lock.
@@ -112,9 +170,24 @@ impl Publications {
         }
     }
 
+    /// The highest history correction revision accepted so far.
+    pub fn history_revision(&self) -> u64 {
+        self.0.read().unwrap().history_revision
+    }
+
     /// The recovery epoch. Every revocation advances it.
     pub fn epoch(&self) -> u64 {
         self.0.read().unwrap().epoch
+    }
+
+    /// The active PIR anchor, excluding filter-only coverage and predecessor sessions.
+    pub fn current_anchor(&self) -> Option<(u32, Hash)> {
+        self.0
+            .read()
+            .unwrap()
+            .current
+            .as_ref()
+            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
     }
 
     /// Anchors that still accept new requests, current first. Validate independently of
@@ -160,6 +233,14 @@ impl Publications {
         if state.epoch != expected_epoch {
             return false;
         }
+        let revision = publication.manifest().history_revision;
+        if revision < state.history_revision {
+            return false;
+        }
+        if revision > state.history_revision {
+            state.revoke();
+            state.history_revision = revision;
+        }
         state.expire();
         if state
             .current
@@ -180,6 +261,37 @@ impl Publications {
         }
         state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
+        true
+    }
+
+    /// Replaces the report of the current publication anchored at `anchor`, sharing its
+    /// prepared PIR state and keeping its session, epoch and any predecessor's grace.
+    /// Refuses, returning false, after a revocation since `expected_epoch` or once
+    /// another publication is current.
+    pub fn update_report(
+        &self,
+        anchor: (u32, Hash),
+        report: serde_json::Value,
+        expected_epoch: u64,
+    ) -> bool {
+        let mut state = self.0.write().unwrap();
+        let Some(current) = state
+            .current
+            .as_ref()
+            .filter(|p| (p.manifest().end_height, p.manifest().end_hash) == anchor)
+        else {
+            return false;
+        };
+        if state.epoch != expected_epoch {
+            return false;
+        }
+        let updated = Publication {
+            server: current.server.clone(),
+            witnesses: current.witnesses.clone(),
+            id: current.id,
+            report: Some(report),
+        };
+        state.current = Some(Arc::new(updated));
         true
     }
 
@@ -237,7 +349,7 @@ mod tests {
         let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
         manifest.salt[0] = salt;
         manifest.end_hash = [hash; 32];
-        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
         crate::prepared::prepare(snapshot, None).unwrap()
     }
 
@@ -280,7 +392,7 @@ mod tests {
         assert!(publications.publish(publication_at(1, 1), 0));
         let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
-        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[], &[]).unwrap();
+        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[]).unwrap();
         let newer = crate::prepared::prepare(snapshot, None).unwrap();
         assert!(publications.publish(newer, 0));
         let ended = Instant::now()
@@ -341,5 +453,50 @@ mod tests {
         assert!(publications.publish(publication(2), 0));
         assert_eq!(publications.ready_at(), Some(ready));
         assert_eq!(publications.anchors().len(), 2);
+    }
+    /// A report update keeps the current session and its prepared PIR state, and is
+    /// refused for another anchor or after a revocation.
+    #[test]
+    fn a_report_update_keeps_the_prepared_session() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let (before, _) = publications.select(None).unwrap();
+        let anchor = (101, [1; 32]);
+        assert!(!publications.update_report((101, [2; 32]), serde_json::json!(1), 0));
+        assert!(!publications.update_report(anchor, serde_json::json!(1), 1));
+        assert!(publications.update_report(anchor, serde_json::json!(2), 0));
+        let (after, epoch) = publications.select(None).unwrap();
+        assert_eq!((after.id, epoch), (before.id, 0));
+        assert!(std::ptr::eq(
+            before.server.public().as_ptr(),
+            after.server.public().as_ptr()
+        ));
+        assert_eq!(
+            publications.health().0,
+            Some((before.id, Some(serde_json::json!(2))))
+        );
+        assert!(publications.ready_at().is_none());
+        publications.revoke();
+        assert!(!publications.update_report(anchor, serde_json::json!(3), 0));
+    }
+    /// A correction fences direct lookups before the replacement PIR table is ready.
+    #[test]
+    fn correction_revokes_old_sessions_and_refuses_old_preparations() {
+        let publications = Publications::default();
+        let old = publication(1);
+        let old_id = old.id;
+        assert!(publications.publish(old, 0));
+        assert!(publications.advance_history_revision(1));
+        assert!(publications.select(Some(old_id)).is_err());
+        assert!(publications.select(None).is_err());
+        assert!(!publications.advance_history_revision(0));
+        assert!(!publications.publish(publication(2), publications.epoch()));
+        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.history_revision = 1;
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
+        let corrected = crate::prepared::prepare(snapshot, None).unwrap();
+        assert!(publications.publish(corrected, publications.epoch()));
+        assert!(publications.select(None).is_ok());
+        assert!(publications.select(Some(old_id)).is_err());
     }
 }

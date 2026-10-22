@@ -1,10 +1,12 @@
 //! The receiver indexer's durable stores: atomic contiguous coverage with explicit
-//! rewind (empty blocks are retained too), and the provider feeds' `ProviderStore`.
+//! rewind (empty blocks are retained too), and the provider feeds' `PayoutStore`.
 //!
 //! Records, placement and publications are wallet-libraries'
 //! `zakura-receiver-directory`; this crate only persists them.
+pub mod blocks;
+
 use receiver_directory::{
-    snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
+    snapshot::{self, Manifest, Snapshot, PROFILE, TREE_SIZE},
     Hash, Payment, RawRecord, ReceiverBytes,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -118,12 +120,15 @@ impl Store {
         if version > 2 {
             return Err(Error::Malformed);
         }
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS filter_revision (revision INTEGER NOT NULL);
+            INSERT INTO filter_revision SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM filter_revision);
+            CREATE TABLE IF NOT EXISTS config (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS blocks (height INTEGER PRIMARY KEY, hash BLOB NOT NULL, end_position INTEGER NOT NULL, coinbase_actions INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS payments (height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE,
                 receiver BLOB NOT NULL, position INTEGER NOT NULL UNIQUE, txid BLOB NOT NULL, action INTEGER NOT NULL, record BLOB NOT NULL,
                 UNIQUE(txid,action));
             CREATE INDEX IF NOT EXISTS receiver_payments ON payments(receiver,position);
+            CREATE INDEX IF NOT EXISTS payments_height ON payments(height);
             CREATE TABLE IF NOT EXISTS commitments (position INTEGER PRIMARY KEY, height INTEGER NOT NULL REFERENCES blocks(height) ON DELETE CASCADE, cmx BLOB NOT NULL CHECK(length(cmx)=32));
             PRAGMA user_version=2;")?;
         let encoded = serde_json::to_string(&config)?;
@@ -315,15 +320,43 @@ impl Store {
             .ok_or(Error::Malformed)
     }
 
+    /// The history correction revision recorded as accepted, zero until one is.
+    pub fn history_revision(&self) -> Result<u64, Error> {
+        Ok(self
+            .db
+            .query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?)
+    }
+
+    /// Durably records `revision` as the accepted history correction revision, refusing
+    /// one below the recorded revision with [`Error::Coverage`].
+    pub fn raise_history_revision(&mut self, revision: u64) -> Result<(), Error> {
+        if revision > i64::MAX as u64 {
+            return Err(Error::Malformed);
+        }
+        let tx = self.db.transaction()?;
+        let recorded: u64 =
+            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
+        if revision < recorded {
+            return Err(Error::Coverage);
+        }
+        tx.execute("UPDATE filter_revision SET revision = ?1", [revision])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
     /// overflowed at `rows`, or the history has more payments than `rows` has slots,
-    /// found without loading more records than that. `provider` holds the swap provider
-    /// filter sets (see [`ProviderStore::sets`]).
-    pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
+    /// found without loading more records than that. Correction revisions bind every session.
+    pub fn snapshot(&mut self, rows: u32, history_revision: u64) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
+        let stored_revision: u64 =
+            tx.query_row("SELECT revision FROM filter_revision", [], |r| r.get(0))?;
+        if history_revision != stored_revision {
+            return Err(Error::Coverage);
+        }
         let anchor = tip(&tx, &self.config)?;
         if anchor.height < self.config.start_height {
             return Err(Error::Coverage);
@@ -359,6 +392,7 @@ impl Store {
             let manifest = Manifest {
                 profile: PROFILE.into(),
                 genesis: self.config.genesis,
+                history_revision,
                 start_height: self.config.start_height,
                 start_parent: self.config.start_parent,
                 start_position: self.config.start_position,
@@ -369,10 +403,8 @@ impl Store {
                 salt: salt(&anchor.hash, attempt),
                 records: 0,
                 data_sha256: [0; 32],
-                filters: Vec::new(),
-                filters_sha256: [0; 32],
             };
-            match Snapshot::build(manifest, &records, provider) {
+            match Snapshot::build(manifest, &records) {
                 Err(receiver_directory::Error::Capacity) => continue,
                 built => return Ok(built?),
             }
@@ -402,25 +434,21 @@ impl Store {
         )?)
     }
 }
-/// Receivers a swap provider was given, for the recent and seen filters. It is kept
-/// apart from chain coverage: the provider's data is not chain data and survives rewinds.
-pub struct ProviderStore {
+/// Optional provider-reported payouts, independent of chain coverage and publication.
+pub struct PayoutStore {
     db: Connection,
 }
 
-impl ProviderStore {
-    /// Opens or creates the provider database. Earlier development schemas are not
-    /// migrated: the indexer keeps this one in `providers.sqlite` and ignores the
-    /// `provider.sqlite` of earlier builds. Deleting `providers.sqlite` rebuilds it
-    /// from `--near-since`.
+impl PayoutStore {
+    /// Opens the audit store, creating its tables if absent.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
+        // The previous release still reads `feeds.started_at` and keeps its global
+        // `receivers` table here. Rolling back reuses this file, so this release keeps
+        // both and never reads or writes them. A later release drops them.
         db.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
-            CREATE TABLE IF NOT EXISTS receivers (receiver BLOB NOT NULL CHECK(length(receiver)=43),
-                payout INTEGER NOT NULL CHECK(payout IN (0,1)), seen_at INTEGER NOT NULL,
-                PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
                 cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
@@ -430,36 +458,20 @@ impl ProviderStore {
         Ok(Self { db })
     }
 
-    /// Records one complete read of `feed` that began at `read_at`, atomically: the
-    /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
-    /// each with its swap's creation time; the completed payouts it saw, each a payout
-    /// receiver, the transaction (protocol byte order) that paid it and when the read
-    /// saw it complete; and, for the feed's first read, `initial_since`, where it
-    /// began. A receiver keeps its latest time and a payout its earliest. The cursor and
-    /// read time move as one pair and never backwards, so a stale read cannot make the
-    /// feed look fresher.
+    /// Commits completed payouts and their cursor atomically, keeping the first observation.
     pub fn record(
         &mut self,
         feed: &str,
-        initial_since: Option<i64>,
-        receivers: &[(ReceiverBytes, bool, i64)],
         completions: &[(ReceiverBytes, Hash, i64)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
-        for (receiver, payout, seen_at) in receivers {
-            tx.execute(
-                "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
-                 DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
-                params![receiver.as_slice(), payout, seen_at],
-            )?;
-        }
         tx.execute(
-            "INSERT INTO feeds VALUES (?1,?2,?3,?4) ON CONFLICT(feed)
+            "INSERT INTO feeds (feed,cursor,read_at) VALUES (?1,?2,?3) ON CONFLICT(feed)
              DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
              WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
-            params![feed, initial_since, cursor, read_at],
+            params![feed, cursor, read_at],
         )?;
         for (receiver, txid, seen_at) in completions {
             tx.execute(
@@ -502,11 +514,6 @@ impl ProviderStore {
         .collect()
     }
 
-    /// The creation time from which `feed` first read swaps, if it ever started.
-    pub fn started(&self, feed: &str) -> Result<Option<i64>, Error> {
-        self.feed(feed, "started_at")
-    }
-
     /// When the last complete read of `feed` began, if one finished.
     pub fn read(&self, feed: &str) -> Result<Option<i64>, Error> {
         self.feed(feed, "read_at")
@@ -528,25 +535,6 @@ impl ProviderStore {
             )
             .optional()?
             .flatten())
-    }
-
-    /// The receivers seen at or after `since`, and every receiver seen at all, payout or
-    /// refund.
-    pub fn sets(&self, since: i64) -> Result<(Vec<ReceiverBytes>, Vec<ReceiverBytes>), Error> {
-        let read = |sql: &str, args: &[i64]| -> Result<Vec<ReceiverBytes>, Error> {
-            let mut query = self.db.prepare(sql)?;
-            let rows =
-                query.query_map(rusqlite::params_from_iter(args), |r| r.get::<_, Vec<u8>>(0))?;
-            rows.map(|bytes| bytes?.try_into().map_err(|_| Error::Malformed))
-                .collect()
-        };
-        Ok((
-            read(
-                "SELECT DISTINCT receiver FROM receivers WHERE seen_at>=?1",
-                &[since],
-            )?,
-            read("SELECT DISTINCT receiver FROM receivers", &[])?,
-        ))
     }
 }
 
