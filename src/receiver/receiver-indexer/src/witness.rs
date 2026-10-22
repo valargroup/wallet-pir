@@ -221,7 +221,6 @@ mod tests {
     use super::*;
     use crate::probe::common;
     use receiver_store::{Config, IndexedBlock};
-    use zakura_receiver_crypto::witness::payloads as fresh;
 
     const L: u64 = SHARD_LEAVES;
 
@@ -268,11 +267,37 @@ mod tests {
         }
     }
 
-    /// Every commitment `store` holds, read as an oracle shard by shard.
-    fn tree(store: &Store) -> Vec<Hash> {
-        let size = store.tip().unwrap().position;
-        (0..size.div_ceil(L))
-            .flat_map(|s| store.commitments(s * L, size.min((s + 1) * L)).unwrap())
+    /// A store starting at height 100 after parent `[2; 32]`, at position zero.
+    fn open(dir: &std::path::Path) -> Store {
+        let config = Config {
+            genesis: [1; 32],
+            start_height: 100,
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        Store::open(dir.join("directory.sqlite"), config).unwrap()
+    }
+
+    /// The commitments [`block`] gives positions `start..end` on chain `variant`.
+    fn leaves(start: u64, end: u64, variant: u8) -> Vec<Hash> {
+        (start..end).map(|p| cmx(p, variant)).collect()
+    }
+
+    /// Oracle paths of Ironwood shard `shard` over `leaves`, built from the commitments
+    /// the test chose, apart from the store and the cache under test. Extending them as
+    /// the test appends keeps each shard to one full build per test, which a per-case
+    /// time budget needs: a build hashes 2^16 leaves.
+    fn reference(shard: u32, leaves: &[Hash]) -> ShardPaths {
+        let mut paths = ShardPaths::new(shard);
+        paths.extend(leaves).unwrap();
+        paths
+    }
+
+    /// The oracle payloads of `positions`, each from the paths of its shard in `shards`.
+    fn expected(shards: &[&ShardPaths], positions: &[u64]) -> Vec<[u8; PAYLOAD_BYTES]> {
+        positions
+            .iter()
+            .map(|&p| shards[(p / L) as usize].payload(p).unwrap())
             .collect()
     }
 
@@ -294,17 +319,12 @@ mod tests {
     }
 
     /// A correction adding payments to two completed shards repairs each from its own
-    /// commitments in turn, and the payloads equal a fresh rebuild.
+    /// commitments in turn under its recorded root: every payload, old and added, folds
+    /// from its commitment to that root, which pins it to the one path at its position.
     #[test]
     fn a_correction_across_completed_shards_repairs_each_in_turn() {
         let dir = tempfile::tempdir().unwrap();
-        let config = Config {
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-        };
-        let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+        let mut store = open(dir.path());
         let a = block(100, 0, [2; 32], 0, L, &[5]);
         let b = block(101, 0, a.hash, L, 2 * L + 2, &[L + 5]);
         store.append(&a).unwrap();
@@ -313,16 +333,21 @@ mod tests {
         let mut witnesses = Witnesses::default();
         witnesses.payloads(&mut store, &tip, &[5, L + 5]).unwrap();
         assert_eq!(store.completed_shards().unwrap(), 2);
+        let roots =
+            |store: &Store| [0, 1].map(|shard| store.completed_shard(shard).unwrap().unwrap().root);
+        let recorded = roots(&store);
         let corrected = [
             block(100, 0, [2; 32], 0, L, &[5, 9]),
             block(101, 0, a.hash, L, 2 * L + 2, &[L + 5, L + 9]),
         ];
         store.correct(1, &corrected).unwrap();
         let positions = [5, 9, L + 5, L + 9];
-        assert_eq!(
-            witnesses.payloads(&mut store, &tip, &positions).unwrap(),
-            fresh(&tree(&store), &positions).unwrap()
-        );
+        let built = witnesses.payloads(&mut store, &tip, &positions).unwrap();
+        assert_eq!(roots(&store), recorded);
+        for (&position, payload) in positions.iter().zip(&built) {
+            let root = shard_root(payload, position, &cmx(position, 0), tip.position).unwrap();
+            assert_eq!(root, Some(recorded[(position / L) as usize]), "{position}");
+        }
         assert!(store
             .payloads(&positions)
             .unwrap()
@@ -330,65 +355,116 @@ mod tests {
             .all(Option::is_some));
     }
 
-    /// Payloads built incrementally across a shard's completion equal fresh rebuilds from
-    /// every commitment, and keep doing so after a restart, a rewind past the completing
-    /// block, a replacement chain, and a correction that adds a payment to the completed
-    /// shard, which rebuilds only that shard under its recorded root.
+    /// Payloads built incrementally before and across a shard's completion equal the
+    /// oracle's, the completed shard records the oracle's root and final payloads, and a
+    /// restart rebuilds the filling shard from its own commitments.
     #[test]
-    fn incremental_payloads_follow_completion_restart_reorg_and_correction() {
+    fn incremental_payloads_follow_completion_and_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let config = Config {
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-        };
-        let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+        let mut store = open(dir.path());
         let a = block(100, 0, [2; 32], 0, L - 6, &[3, 70]);
         store.append(&a).unwrap();
         let mut witnesses = Witnesses::default();
-        let check = |store: &mut Store, witnesses: &mut Witnesses, positions: &[u64]| {
-            let tip = store.tip().unwrap();
-            let built = witnesses.payloads(store, &tip, positions).unwrap();
-            assert_eq!(built, fresh(&tree(store), positions).unwrap());
-            built
-        };
-        check(&mut store, &mut witnesses, &[3, 70]);
+        let mut shard0 = reference(0, &leaves(0, L - 6, 0));
+        let tip = store.tip().unwrap();
+        assert_eq!(
+            witnesses.payloads(&mut store, &tip, &[3, 70]).unwrap(),
+            expected(&[&shard0], &[3, 70])
+        );
         assert_eq!(store.completed_shards().unwrap(), 0);
         let b = block(101, 0, a.hash, L - 6, L + 4, &[L - 1, L + 2]);
         store.append(&b).unwrap();
+        shard0.extend(&leaves(L - 6, L, 0)).unwrap();
+        let shard1 = reference(1, &leaves(L, L + 4, 0));
         let all = [3, 70, L - 1, L + 2];
-        let built = check(&mut store, &mut witnesses, &all);
+        let tip = store.tip().unwrap();
+        let built = witnesses.payloads(&mut store, &tip, &all).unwrap();
+        assert_eq!(built, expected(&[&shard0, &shard1], &all));
         let shard = store.completed_shard(0).unwrap().unwrap();
         assert_eq!((shard.height, shard.hash), (101, b.hash));
+        assert_eq!(Some(shard.root), shard0.root());
         assert_eq!(
             store.payloads(&all).unwrap(),
             [Some(built[0]), Some(built[1]), Some(built[2]), None]
         );
         // A restart rebuilds the filling shard from its own commitments.
-        assert_eq!(check(&mut store, &mut Witnesses::default(), &all), built);
-        // A rewind past the completing block drops the shard; the cache must not survive.
+        let restarted = Witnesses::default().payloads(&mut store, &tip, &all);
+        assert_eq!(restarted.unwrap(), built);
+    }
+
+    /// A rewind past the completing block drops the completed shard, and the cached paths
+    /// must not survive it: the filling shard is rebuilt, then extends along a replacement
+    /// chain to the oracle's payloads for that chain.
+    #[test]
+    fn a_rewind_past_completion_drops_the_cached_shard() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open(dir.path());
+        let a = block(100, 0, [2; 32], 0, L - 6, &[3, 70]);
+        store.append(&a).unwrap();
+        store
+            .append(&block(101, 0, a.hash, L - 6, L + 4, &[L - 1, L + 2]))
+            .unwrap();
+        let mut witnesses = Witnesses::default();
+        let all = [3, 70, L - 1, L + 2];
+        let tip = store.tip().unwrap();
+        let built = witnesses.payloads(&mut store, &tip, &all).unwrap();
+        assert_eq!(store.completed_shards().unwrap(), 1);
         store.rewind(100, a.hash).unwrap();
         assert_eq!(store.completed_shards().unwrap(), 0);
-        check(&mut store, &mut witnesses, &[3, 70]);
+        let mut shard0 = reference(0, &leaves(0, L - 6, 0));
+        let tip = store.tip().unwrap();
+        assert_eq!(
+            witnesses.payloads(&mut store, &tip, &[3, 70]).unwrap(),
+            expected(&[&shard0], &[3, 70])
+        );
         let replacement = block(101, 1, a.hash, L - 6, L + 4, &[L - 1, L + 2]);
         store.append(&replacement).unwrap();
-        let replaced = check(&mut store, &mut witnesses, &all);
+        shard0.extend(&leaves(L - 6, L, 1)).unwrap();
+        let shard1 = reference(1, &leaves(L, L + 4, 1));
+        let tip = store.tip().unwrap();
+        let replaced = witnesses.payloads(&mut store, &tip, &all).unwrap();
+        assert_eq!(replaced, expected(&[&shard0, &shard1], &all));
         assert_ne!(replaced[0], built[0]);
+        let shard = store.completed_shard(0).unwrap().unwrap();
+        assert_eq!(
+            (shard.hash, Some(shard.root)),
+            (replacement.hash, shard0.root())
+        );
+    }
+
+    /// A correction that adds a payment to a completed shard rebuilds only that shard,
+    /// under its recorded root, to the oracle's payloads. A publication's final payloads
+    /// then fold to that root, and swapping two of them between ordinals is refused
+    /// before serving.
+    #[test]
+    fn a_correction_rebuilds_a_completed_shard_under_its_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = open(dir.path());
+        let a = block(100, 0, [2; 32], 0, L - 6, &[3, 70]);
+        store.append(&a).unwrap();
+        store
+            .append(&block(101, 0, a.hash, L - 6, L + 4, &[L - 1, L + 2]))
+            .unwrap();
+        let mut witnesses = Witnesses::default();
+        let tip = store.tip().unwrap();
+        witnesses
+            .payloads(&mut store, &tip, &[3, 70, L - 1, L + 2])
+            .unwrap();
         let root = store.completed_shard(0).unwrap().unwrap().root;
         // A correction adds a payment at position 10 of the completed shard.
         let corrected = block(100, 0, [2; 32], 0, L - 6, &[3, 10, 70]);
         store.correct(1, &[corrected]).unwrap();
         assert_eq!(store.payloads(&[10]).unwrap(), [None]);
         let fixed = [3, 10, 70, L - 1, L + 2];
-        check(&mut store, &mut Witnesses::default(), &fixed);
+        let shard0 = reference(0, &leaves(0, L, 0));
+        let shard1 = reference(1, &leaves(L, L + 4, 0));
+        let repaired = Witnesses::default().payloads(&mut store, &tip, &fixed);
+        assert_eq!(repaired.unwrap(), expected(&[&shard0, &shard1], &fixed));
         assert_eq!(store.completed_shard(0).unwrap().unwrap().root, root);
+        assert_eq!(shard0.root(), Some(root));
         assert!(store.payloads(&[10]).unwrap()[0].is_some());
 
-        // A publication's final payloads fold to the recorded root; swapping two of them
-        // between ordinals is refused before serving.
         let snapshot = store.snapshot(8, 1).unwrap();
-        let tip = store.tip().unwrap();
         let mut payloads = witnesses.payloads(&mut store, &tip, &fixed).unwrap();
         let table = super::table(&snapshot, &payloads).unwrap();
         let roots = crate::verify::check_publication(&snapshot, &table).unwrap();
