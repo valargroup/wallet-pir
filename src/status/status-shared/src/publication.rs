@@ -2,8 +2,8 @@
 //! inventory and authority subject. Hashes bind bytes, not chain truth.
 use crate::{profile, protocol::*};
 use pir_publication::{
-    AuthorityCheckRequest, MaterialIdentity, ObjectReference, PublicationEnvelope,
-    PublicationReference, PublicationScope,
+    AuthorityCheckRequest, AuthorityCheckResponse, MaterialIdentity, ObjectReference,
+    PublicationEnvelope, PublicationReference, PublicationScope,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +17,7 @@ pub type Failure = Box<dyn std::error::Error + Send + Sync>;
 pub type AnchorSubject = (u32, Hash);
 /// Status's authority check: anchors of candidate and serving views.
 pub type AnchorCheckRequest = AuthorityCheckRequest<AnchorSubject>;
+pub type AnchorCheckResponse = AuthorityCheckResponse<AnchorSubject>;
 
 /// Status's publication envelope. Everything except the descriptor is the
 /// shared publication contract.

@@ -8,8 +8,7 @@ use axum::{
     Json, Router,
 };
 use pir_publication::{
-    conditional_token, AuthorityCheckResponse, SourceObservation, SubjectAuthority,
-    AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH, SOURCE_AUTHORITY_LIFETIME,
+    conditional_token, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
 use pir_sync_manager::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
@@ -18,7 +17,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     RwLock,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
@@ -167,15 +165,17 @@ async fn setup() -> (
                     if let Some(replayed) = shared.replayed_check.read().unwrap().clone() {
                         return replayed.into_response();
                     }
-                    Json(AuthorityCheckResponse {
+                    let still_authoritative = shared.canonical.load(Ordering::SeqCst);
+                    Json(AnchorCheckResponse {
                         authority: shared.current.read().unwrap().authority().unwrap(),
-                        answers: vec![
-                            SubjectAuthority {
-                                still_authoritative: shared.canonical.load(Ordering::SeqCst),
-                                source: SourceObservation::starting_now(),
-                            };
-                            request.subjects.len()
-                        ],
+                        answers: request
+                            .subjects
+                            .into_iter()
+                            .map(|subject| SubjectAnswer {
+                                subject,
+                                still_authoritative,
+                            })
+                            .collect(),
                     })
                     .into_response()
                 }
@@ -912,13 +912,22 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
 
     // The publisher advances while checking the candidate. Its live answer
     // for sequence 7 is captured first, to be replayed afterwards.
-    let earlier = AuthorityCheckResponse {
-        authority: source.current.read().unwrap().authority().unwrap(),
-        answers: vec![SubjectAuthority {
-            still_authoritative: true,
-            source: SourceObservation::starting_now(),
+    let candidate = (
+        inventory.manifest.anchor_height,
+        inventory.manifest.anchor_hash,
+    );
+    let answer = |authority, subject, still_authoritative| AnchorCheckResponse {
+        authority,
+        answers: vec![SubjectAnswer {
+            subject,
+            still_authoritative,
         }],
     };
+    let earlier = answer(
+        source.current.read().unwrap().authority().unwrap(),
+        candidate,
+        true,
+    );
     source.advance_during_check.store(true, Ordering::SeqCst);
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
     assert!(worker.state.lock().await.controller.is_none());
@@ -934,28 +943,26 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     );
     assert!(worker.state.lock().await.controller.is_none());
 
-    // A body bound to the live authority confirms nothing once its source
-    // observation is past the lifetime, however recently it arrived.
-    let observed_unix_ms = (SystemTime::now() - SOURCE_AUTHORITY_LIFETIME)
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-        - 1;
-    let stale = AuthorityCheckResponse {
-        authority: source.current.read().unwrap().authority().unwrap(),
-        answers: vec![SubjectAuthority {
-            still_authoritative: true,
-            source: SourceObservation { observed_unix_ms },
-        }],
-    };
-    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&stale).unwrap());
+    // A live-bound answer of the same count for another anchor neither
+    // confirms the candidate nor, being negative, invalidates it.
+    let mut other = candidate;
+    other.1[0] ^= 1;
+    let substituted = answer(
+        source.current.read().unwrap().authority().unwrap(),
+        other,
+        false,
+    );
+    *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&substituted).unwrap());
     let error = task.synchronize().await.unwrap_err();
     assert_eq!(
         error.downcast_ref::<PublicationLifecycleError>(),
-        Some(&PublicationLifecycleError::SourceObservationExpired),
+        Some(&PublicationLifecycleError::AuthorityResponseMismatch),
         "{error}"
     );
     assert!(worker.state.lock().await.controller.is_none());
+    assert!(!task
+        .floor()
+        .is_invalidated(&ViewIdentity(inventory.manifest.id())));
     *source.replayed_check.write().unwrap() = None;
 
     // A withdrawal during the candidate's check leaves nothing serving.

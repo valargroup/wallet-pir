@@ -57,7 +57,10 @@ pub trait PublicationAdapter: Send {
     /// envelope field and its succession rule are shared.
     type Descriptor: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync + 'static;
     /// What the publisher checks per serving view (for Status, an anchor).
-    type AuthoritySubject: Serialize + Send + Sync;
+    /// A positive answer confirms the subject only at the publisher's check;
+    /// how long a view may then serve stays the adapter's own freshness rule
+    /// (for Status, the manifest's observation age at admission).
+    type AuthoritySubject: PartialEq + Serialize + DeserializeOwned + Send + Sync;
     /// What the adapter keeps about a view once it is installed (for Status,
     /// the inventory whose material may later be re-identified).
     type InstalledView: Send + 'static;
@@ -214,11 +217,9 @@ pub enum PublicationLifecycleError {
     /// The publisher refused an authority check for a reason other than an
     /// advanced authority.
     AuthorityCheckRefused(u16),
-    /// The authority response binds another authority or subject count.
+    /// The authority response binds another authority, or answers subjects
+    /// other than exactly the requested ones in their order.
     AuthorityResponseMismatch,
-    /// A positive authority answer whose source observation is absent, in the
-    /// future or past its lifetime: it confirms nothing.
-    SourceObservationExpired,
     /// The candidate was invalidated by the floor.
     CandidateInvalidated,
     /// The envelope was withdrawn between planning and commit.
@@ -241,9 +242,6 @@ impl fmt::Display for PublicationLifecycleError {
                 write!(f, "publisher refused the authority check (HTTP {status})")
             }
             Self::AuthorityResponseMismatch => f.write_str("authority check response differs"),
-            Self::SourceObservationExpired => {
-                f.write_str("authority answer's source observation expired")
-            }
             Self::CandidateInvalidated => f.write_str("publication candidate was invalidated"),
             Self::WithdrawnBeforeCommit => f.write_str("publication withdrawn before commit"),
             Self::MalformedEnvelope => f.write_str("publication envelope is malformed"),
