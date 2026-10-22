@@ -343,16 +343,25 @@ pub(crate) async fn tls_router(root: &Path, router: Router) -> Tls {
     std::fs::write(&key, &MATERIAL.1).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    // The helper's inventory faults need current checksums, which Python's
+    // standard library cannot compute; this test-owned listener names them.
+    let hasher = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let checksums = hasher.local_addr().unwrap();
+    let hash = Router::new().route(
+        "/",
+        axum::routing::post(|body: axum::body::Bytes| async move {
+            axum::Json(pir_artifact::checksum(&body))
+        }),
+    );
     let server = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        let (served, hashed) = tokio::join!(axum::serve(listener, router), axum::serve(hasher, hash));
+        served.unwrap();
+        hashed.unwrap();
     });
     let control = root.join("fault");
     std::fs::write(&control, "").unwrap();
     let mut child = tokio::process::Command::new("python3")
-        .env(
-            "PIR_ARTIFACT_HASH_COMMAND",
-            env!("CARGO_BIN_EXE_pir-publisher"),
-        )
+        .env("TLS_CHECKSUM_ADDRESS", checksums.to_string())
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../pir-publisher/tests/support/distribution_tls.py"
@@ -1619,7 +1628,7 @@ fn restore_refuses_an_inventory_that_is_not_exactly_the_publication() {
         .iter_mut()
         .find(|a| a.kind == Kind::RecentTable)
         .unwrap()
-        .sha256 = "11".repeat(32);
+        .checksum = "11".repeat(32);
     case.refuse(
         &with_inventory(&case.record, &wrong),
         &case.expected,
@@ -1784,7 +1793,7 @@ fn correctness_fails_a_runtime_whose_listed_digest_names_corrupt_bytes() {
         .iter_mut()
         .find(|a| a.path == runtime.path)
         .unwrap()
-        .sha256 = transparent_shared::publication::digest(&bad);
+        .checksum = transparent_shared::publication::digest(&bad);
     let restored = Finalized::restore_completed(
         &case.directory,
         &with_inventory(&case.record, &corrupt),
@@ -2309,7 +2318,7 @@ async fn restarted_controller_serves_before_validation_and_keeps_serving_a_corre
         .iter_mut()
         .find(|a| a.path == runtime.path)
         .unwrap()
-        .sha256 = transparent_shared::publication::digest(&bad);
+        .checksum = transparent_shared::publication::digest(&bad);
     startup.write_record(&with_inventory(&startup.record, &inventory));
     let (tls, task, shutdown) = startup.start("front").await;
     // Serving, eligible and retrievable while validation is held: nothing
@@ -2530,8 +2539,9 @@ async fn without_completion_evidence_corrupt_bytes_are_prepared_in_full_and_neve
     )
     .unwrap();
     let failures = startup.config.publication_root.join(INTEGRITY_FAILURES);
-    let recorded = serde_json::json!([{"path":table.path,"expected_checksum":table.sha256,
-        "found_checksum":null,"inventory_checksum":"00".repeat(32),
+    let tagged = |digest: &str| serde_json::json!({"algorithm":"blake3","digest":digest});
+    let recorded = serde_json::json!([{"path":table.path,"expected_checksum":tagged(&table.checksum),
+        "found_checksum":null,"inventory_checksum":tagged(&"00".repeat(32)),
         "map_sha256":startup.record.map_sha256,"reason":"recorded by an earlier process"}]);
     std::fs::write(&failures, serde_json::to_vec(&recorded).unwrap()).unwrap();
     let (tls, task, shutdown) = startup.start("front").await;

@@ -4,7 +4,6 @@
 No publication construction or consumer logic lives here. Optional transport
 faults exercise authenticated-origin failure behavior through real sockets.
 """
-import subprocess
 import http.client
 import http.server
 import json
@@ -168,10 +167,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             else:
                 inventory["artifacts"] = [f for f in inventory["artifacts"] if f["kind"] != "recent_runtime"]
             body = json.dumps(inventory, separators=(",", ":")).encode()
-            current["inventory_checksum"] = json.loads(subprocess.run(
-                [os.environ["PIR_ARTIFACT_HASH_COMMAND"], "artifact-checksum", "hash"],
-                input=body, stdout=subprocess.PIPE, check=True, timeout=10,
-            ).stdout)
+            hasher = http.client.HTTPConnection(os.environ["TLS_CHECKSUM_ADDRESS"], timeout=10)
+            hasher.request("POST", "/", body=body)
+            current["inventory_checksum"] = json.loads(hasher.getresponse().read())
+            hasher.close()
             if self.path.endswith("/current"):
                 body = json.dumps(current, separators=(",", ":")).encode()
             self.send_response(200)
