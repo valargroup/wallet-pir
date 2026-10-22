@@ -9,9 +9,9 @@ use crate::tx_detail::fixture::{block_hash, chain_sources};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::offline::{bench_recent, synthetic_records};
 use crate::tx_detail::offline::{plan_start, verify};
-#[cfg(feature = "qualification-tests")]
-use crate::tx_detail::publisher::CANDIDATE_PREFIX;
 use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::publisher::{verify_dir, CANDIDATE_PREFIX};
 use crate::tx_detail::source::{open_writer, Script, ScriptStep};
 use crate::tx_detail::timeline::read_timeline;
 use std::collections::BTreeSet;

@@ -49,7 +49,7 @@ impl Distribution {
         // Reserve a durable process boundary before exposing any publication.
         crate::history::distribution::advance_distribution_revision(root)?;
         Ok(Self(Arc::new(Inner {
-            root: root.to_path_buf(),
+            root: std::fs::canonicalize(root)?,
             rpc,
             active: RwLock::new(None),
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -76,6 +76,19 @@ impl Distribution {
         shutdown: &pir_pipeline::service::Shutdown,
         publication: &super::publisher::ActiveRecord,
     ) -> Result<(), BoxError> {
+        let objects = self
+            .0
+            .root
+            .join(transparent_shared::publication::OBJECT_STORE);
+        if publication.directory.parent() != Some(self.0.root.as_path())
+            || publication.map_sha256 != finalized.inventory.map_sha256
+            || finalized.files.values().any(|(path, _)| {
+                !path.starts_with(&publication.directory)
+                    && path.parent() != Some(objects.as_path())
+            })
+        {
+            return Err("display prepared files and restart record have different owners".into());
+        }
         let lease = crate::storage::PublicationLease::acquire(&publication.directory)?;
         let mut active = self.0.active.write().unwrap();
         if shutdown.requested() {
