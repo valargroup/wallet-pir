@@ -88,6 +88,7 @@
     "family": "transparent",
     "targets": [
       "transparent:transparent-query-server:test:assignment",
+      "transparent:transparent-query-server:test:history_migration",
       "transparent:transparent-query-server:test:revisions_and_cache",
       "transparent:transparent-query-server:test:round_trip",
       "transparent:transparent-query-server:test:txid_client"
