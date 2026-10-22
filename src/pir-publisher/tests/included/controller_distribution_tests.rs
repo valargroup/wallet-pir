@@ -224,6 +224,10 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
         State((hash, genesis, available)): State<RpcState>,
         axum::Json(request): axum::Json<serde_json::Value>,
     ) -> impl IntoResponse {
+        // The root follower reads the tip; the anchor at height two is the tip.
+        if request["method"] == "getblockcount" && available.load(Ordering::Acquire) {
+            return axum::Json(serde_json::json!({"id":request["id"],"result":2,"error":null}));
+        }
         assert_eq!(request["method"], "getblockhash");
         let result = if !available.load(Ordering::Acquire) {
             None
