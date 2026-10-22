@@ -1,11 +1,11 @@
 //! What the display controller reports on `/metrics`.
 //!
-//! Workers keep serving the last activation whatever the controller does, so
-//! a stalled or halted controller looks healthy from the wallet's side. These
-//! series are how an operator sees it: the node and published tips, how long
-//! the oldest unpublished block has waited, and how long each cycle and each
-//! of its stages took. The controller loop writes them; the status listener
-//! renders them in the Prometheus text format.
+//! Query servers keep serving the last publication whatever the controller
+//! does, so a stalled or halted controller looks healthy from the wallet's
+//! side. These series are how an operator sees it: the node and published
+//! tips, how long the oldest unpublished block has waited, and how long each
+//! cycle and each of its stages took. The controller loop writes them; the
+//! status listener renders them in the Prometheus text format.
 
 use super::now_ms;
 use pir_observability::Distribution;
@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Cycle stages, each observed once per successful cycle.
-pub const STAGES: [&str; 8] = [
-    "build", "verify", "digest", "write", "prebuild", "ship", "prepare", "activate",
-];
+pub const STAGES: [&str; 6] = ["build", "verify", "digest", "write", "prebuild", "activate"];
 
 /// The gauges, replaced together whenever the controller updates its status.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -31,7 +29,7 @@ pub struct Gauges {
     pub seal_queue: u64,
     /// Unix milliseconds of the last activation by a cycle, or 0.
     pub last_success_ms: u64,
-    /// Unix milliseconds of the last seal staged on its owners, or 0.
+    /// Unix milliseconds of the last seal built, or 0.
     pub last_seal_ms: u64,
 }
 

@@ -48,9 +48,6 @@ pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Re
     let settings = Settings {
         distribution: Some(distribution.clone()),
         trust_sealed: config.trust_sealed,
-        ship_runtimes: Some(
-            transparent_shared::tx_detail::prebuild::build_shipped as controller::Prebuild,
-        ),
         max_recent_records: config.max_recent_records,
         ..Settings::default()
     };
@@ -61,7 +58,7 @@ pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Re
         controller::status_router(status.clone(), metrics).merge(distribution.router())
     }));
     owner.own(&server);
-    let mut controller = Controller::open(&config.root, store, source, Vec::new(), settings)?;
+    let mut controller = Controller::open(&config.root, store, source, settings)?;
     // Listener failure asks for a boundary stop rather than cancelling activation.
     let watch_stop = stop.clone();
     let watcher = tokio::spawn(async move {

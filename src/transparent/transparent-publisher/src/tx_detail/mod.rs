@@ -11,8 +11,8 @@
 //!   root from the journal and verifies what is on disk.
 //! - [`source`] supplies blocks: live from the node, replayed from an ingested
 //!   journal, or scripted by tests.
-//! - [`serving`] drives display workers over their control protocol.
 //! - [`controller`] is the loop that seals, rebuilds and publishes.
+//! - [`distribution`] serves finalized publications to query servers over HTTPS.
 //! - [`offline`] verifies a root against its journal, plans a bootstrap
 //!   start, benches recent shards and writes synthetic journals.
 //! - [`timeline`] records what happened and when, for measurement.
@@ -24,7 +24,6 @@ pub mod distribution;
 pub mod metrics;
 pub mod offline;
 pub mod publisher;
-pub mod serving;
 pub mod source;
 pub mod timeline;
 

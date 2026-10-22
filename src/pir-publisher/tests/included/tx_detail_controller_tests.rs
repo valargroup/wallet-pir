@@ -1,5 +1,3 @@
-#[cfg(feature = "qualification-tests")]
-use zakura_pir_client::transparent::txid_client as transparent_txid_client;
 use zakura_pir_publisher::transparent as transparent_shard;
 #[cfg(feature = "qualification-tests")]
 use zakura_pir_publisher::transparent::filter as transparent_filter;
@@ -14,16 +12,10 @@ use crate::tx_detail::offline::{plan_start, verify};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::publisher::CANDIDATE_PREFIX;
 use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
-#[cfg(feature = "qualification-tests")]
-use crate::tx_detail::serving::WorkersFile;
-#[cfg(feature = "qualification-tests")]
-use crate::tx_detail::serving::{Transport, WorkerRole};
 use crate::tx_detail::source::{open_writer, Script, ScriptStep};
 use crate::tx_detail::timeline::read_timeline;
 use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
-#[cfg(feature = "qualification-tests")]
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 #[cfg(feature = "qualification-tests")]
 use transparent_filter::BlockHash;
 #[cfg(feature = "qualification-tests")]
@@ -31,11 +23,18 @@ use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
 #[cfg(feature = "qualification-tests")]
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
+/// Leaves runtimes to finalization; only the tests that check runtimes
+/// build them.
+fn no_prebuild(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
+    Ok(Vec::new())
+}
+
 fn settings() -> Settings {
     Settings {
         exit_when_idle: true,
         trust_sealed: true,
         record_maps: true,
+        prebuild: no_prebuild,
         ..Settings::default()
     }
 }
@@ -68,19 +67,12 @@ async fn run_script(
     root: &Path,
     journal: &Path,
     steps: Vec<ScriptStep>,
-    workers: Vec<WorkerConfig>,
     settings: Settings,
 ) -> Run {
     let store = open_writer(journal).unwrap();
     let status = settings.status.clone();
-    let mut controller = Controller::open(
-        root,
-        store,
-        Source::Script(Script::new(steps)),
-        workers,
-        settings,
-    )
-    .unwrap();
+    let mut controller =
+        Controller::open(root, store, Source::Script(Script::new(steps)), settings).unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(120), controller.run())
         .await
         .unwrap_or_else(|_| panic!("the controller settles: {}", status.read().unwrap()))
@@ -197,7 +189,7 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
     let first = active_map(&root);
-    let run = run_script(&root, &journal, advance(112, 130, 2), vec![], settings()).await;
+    let run = run_script(&root, &journal, advance(112, 130, 2), settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &first);
     let original = |h: u64| chain_records(0, h).len() as u64;
@@ -219,7 +211,7 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
         ancestor: tip - 1,
         blocks: vec![(block_hash(9, tip), vec![])],
     }];
-    let run = run_script(&root, &journal, steps, vec![], settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &last);
     check_windows(&run.maps, 25, forked);
@@ -228,7 +220,7 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
 
     // A restart reloads the cache from the window's floor and goes on.
     let steps = vec![ScriptStep::Extend(fork(9, tip + 1, tip + 12))];
-    let run = run_script(&root, &journal, steps, vec![], settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &moved);
     check_windows(&run.maps, 25, forked);
@@ -271,14 +263,7 @@ async fn incremental_stepping_reproduces_bootstrap() {
             whole.len()
         );
         let first = active_map(&root);
-        let run = run_script(
-            &root,
-            &journal,
-            advance(112, through, step),
-            vec![],
-            settings(),
-        )
-        .await;
+        let run = run_script(&root, &journal, advance(112, through, step), settings()).await;
         assert_eq!(run.outcome, Outcome::Idle);
         assert_eq!(
             identities(&run.active.seals),
@@ -323,6 +308,25 @@ async fn incremental_stepping_reproduces_bootstrap() {
     }
 }
 
+/// The first replaced height of every rollback the timeline recorded, in order.
+#[cfg(feature = "qualification-tests")]
+fn reorgs_from(root: &Path) -> Vec<u64> {
+    read_timeline(root)
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "reorg")
+        .filter_map(|e| e["from_height"].as_u64())
+        .collect()
+}
+
+/// The rollback record `invalidate.json` holds.
+#[cfg(feature = "qualification-tests")]
+fn saved_rollback(root: &Path) -> Value {
+    serde_json::from_slice::<Value>(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
+        ["rollback"]
+        .clone()
+}
+
 #[cfg(feature = "qualification-tests")]
 fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)> {
     (from..=through)
@@ -339,12 +343,6 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     let sealed = bootstrap_at(&journal, &root, &layout, 118);
-    let (log, _states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-    let workers = vec![socket_worker(
-        temp.path(),
-        "recent",
-        WorkerRole::RecentReplica,
-    )];
 
     // A fork two blocks below the tip, inside the margin.
     let steps = vec![
@@ -354,7 +352,7 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
             blocks: fork(1, 120, 122),
         },
     ];
-    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     let (before, after) = (&run.maps[0], run.maps.last().unwrap());
     check_maps(&run.maps, before);
@@ -382,15 +380,8 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
             before.shards.last().unwrap().manifest_digest
         );
     }
-    // Published coverage is withdrawn from the first replaced height.
-    let invalidations: Vec<_> = log
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(_, c)| c["operation"] == "invalidate")
-        .map(|(_, c)| c["from_height"].as_u64().unwrap())
-        .collect();
-    assert_eq!(invalidations, vec![120]);
+    // The rollback replaced published coverage from the first forked height.
+    assert_eq!(reorgs_from(&root), vec![120]);
     // The tooling index followed the fork.
     let index = HeightIndex::open(&root).unwrap();
     let orphaned: BTreeSet<_> = chain_records(0, 120).iter().map(|r| r.txid.0).collect();
@@ -410,7 +401,7 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
         ancestor: floor - 1,
         blocks: fork(2, floor, floor + 8),
     }];
-    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert!(
         matches!(run.outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
         "{:?}",
@@ -426,7 +417,7 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
     );
     drop(store);
     // A halted root stays halted across restarts.
-    let run = run_script(&root, &journal, advance(122, 123, 1), workers, settings()).await;
+    let run = run_script(&root, &journal, advance(122, 123, 1), settings()).await;
     assert!(matches!(run.outcome, Outcome::Halted(_)));
 }
 
@@ -466,25 +457,11 @@ async fn restart_resumes_without_touching_sealed_files() {
     let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, through);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
-    let first = run_script(
-        &root,
-        &journal,
-        advance(112, middle, 9),
-        vec![],
-        verifying(),
-    )
-    .await;
+    let first = run_script(&root, &journal, advance(112, middle, 9), verifying()).await;
     assert_eq!(first.outcome, Outcome::Idle);
     let sealed_before = sealed_files(&root);
     // Recovery verifies sealed bytes and continues from the activated tip.
-    let second = run_script(
-        &root,
-        &journal,
-        advance(middle, through, 9),
-        vec![],
-        verifying(),
-    )
-    .await;
+    let second = run_script(&root, &journal, advance(middle, through, 9), verifying()).await;
     assert_eq!(second.outcome, Outcome::Idle);
     assert_eq!(identities(&second.active.seals), identities(&whole));
     let sealed_after = sealed_files(&root);
@@ -514,9 +491,9 @@ async fn restart_resumes_without_touching_sealed_files() {
         .unwrap()
         .write_all_at(&[first_byte ^ 1], 0)
         .unwrap();
-    let run = run_script(&root, &journal, vec![], vec![], settings()).await;
+    let run = run_script(&root, &journal, vec![], settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
-    let run = run_script(&root, &journal, vec![], vec![], verifying()).await;
+    let run = run_script(&root, &journal, vec![], verifying()).await;
     assert!(
         matches!(run.outcome, Outcome::Halted(ref r) if r.contains(&victim)),
         "{:?}",
@@ -542,14 +519,7 @@ async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
     let first = active_map(&root);
     assert_eq!(first.first_shard_id, started.len() as u64 - 2);
     let sealed_before = sealed_files(&root);
-    let run = run_script(
-        &root,
-        &journal,
-        advance(112, through, 6),
-        vec![],
-        settings(),
-    )
-    .await;
+    let run = run_script(&root, &journal, advance(112, through, 6), settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &first);
     assert!(run.maps.iter().all(|m| sealed_count(m) <= 2));
@@ -582,476 +552,14 @@ async fn the_window_drops_oldest_archives_and_keeps_the_rest() {
 }
 
 #[cfg(feature = "qualification-tests")]
-type Log = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
-#[cfg(feature = "qualification-tests")]
-type States = BTreeMap<String, Arc<std::sync::Mutex<Fake>>>;
-
-/// A display worker that keeps only control state. After its first
-/// activation it refuses a prepare naming an archive it was not staged with.
-#[cfg(feature = "qualification-tests")]
-#[derive(Default)]
-struct Fake {
-    active: Option<(String, String, Vec<String>)>,
-    prepared: Option<(String, String, Vec<String>)>,
-    staged: BTreeSet<String>,
-    /// Refuse this many invalidations.
-    fail_invalidations: u32,
-    /// Apply this activation (counting from 1) but reply that it failed.
-    lose_activation: Option<usize>,
-    activations: usize,
-    /// Hold every stage reply this long.
-    stage_delay: Duration,
-    /// After this many stages, the next prepare finds the worker restarted:
-    /// staging is lost and the prepare fails.
-    restart_after_stages: Option<usize>,
-    stages: usize,
-    /// Request this stop when applying this activation (counting from 1),
-    /// before replying.
-    stop_at_activation: Option<(usize, pir_pipeline::service::Shutdown)>,
-    /// Hold the next invalidation reply: signal the sender once the request
-    /// arrives, and reply once the receiver is released.
-    hold_invalidation: Option<(
-        tokio::sync::oneshot::Sender<()>,
-        tokio::sync::oneshot::Receiver<()>,
-    )>,
-}
-
-#[cfg(feature = "qualification-tests")]
-fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
-    let expected = state
-        .active
-        .as_ref()
-        .map_or("", |a| a.0.as_str())
-        .to_string();
-    let fail = |e: String| json!({"ok": false, "error": e});
-    match command["operation"].as_str().unwrap_or_default() {
-        "status" => json!({"ok": true, "role": role,
-            "active": state.active.as_ref().map(|(sha, dir, _)| json!({"directory": dir, "map_sha256": sha})),
-            "staged": state.staged, "warm": true, "binary_sha256": "fake"}),
-        "stage" => {
-            let dir = PathBuf::from(command["directory"].as_str().unwrap());
-            let digest = dir.file_name().unwrap().to_string_lossy().into_owned();
-            match verify_dir(&dir, &digest) {
-                Ok(manifest) if manifest.sealed => {
-                    state.stages += 1;
-                    state.staged.insert(digest.clone());
-                    json!({"ok": true, "digest": digest, "built": 2, "seconds": 0.0})
-                }
-                other => fail(format!("bad staged revision: {:?}", other.err())),
-            }
-        }
-        "prepare" => {
-            if command["expected"] != expected {
-                return fail("active predecessor changed".into());
-            }
-            let dir = command["publication"]["directory"]
-                .as_str()
-                .unwrap()
-                .to_string();
-            let sha = command["publication"]["map_sha256"]
-                .as_str()
-                .unwrap()
-                .to_string();
-            let map = match read_map(Path::new(&dir), &sha) {
-                Ok(map) => map,
-                Err(e) => return fail(e.to_string()),
-            };
-            let sealed: Vec<String> = map
-                .shards
-                .iter()
-                .filter(|s| s.sealed)
-                .map(|s| s.manifest_digest.clone())
-                .collect();
-            command["sealed"] = json!(sealed);
-            if state
-                .restart_after_stages
-                .is_some_and(|n| state.stages >= n)
-            {
-                state.restart_after_stages = None;
-                state.staged.clear();
-                return fail("worker restarted".into());
-            }
-            let holds_sealed = role == "archive-owner" || role == "combined";
-            if let (true, Some((_, _, served))) = (holds_sealed, &state.active) {
-                if let Some(new) = sealed
-                    .iter()
-                    .find(|d| !served.contains(d) && !state.staged.contains(*d))
-                {
-                    return fail(format!("unstaged archive {new}"));
-                }
-            }
-            state.prepared = Some((sha, dir, sealed));
-            json!({"ok": true, "warm": true, "built": 1, "reused": 0, "seconds": 0.0})
-        }
-        "activate" => {
-            if command["expected"] != expected {
-                return fail("active predecessor changed".into());
-            }
-            match state.prepared.take() {
-                Some(prepared) if command["map_sha256"] == prepared.0 => {
-                    state.staged.retain(|d| !prepared.2.contains(d));
-                    state.active = Some(prepared);
-                    state.activations += 1;
-                    if let Some((_, stop)) = state
-                        .stop_at_activation
-                        .as_ref()
-                        .filter(|(n, _)| *n == state.activations)
-                    {
-                        stop.request();
-                    }
-                    if state.lose_activation == Some(state.activations) {
-                        return fail("reply lost".into());
-                    }
-                    json!({"ok": true})
-                }
-                other => {
-                    state.prepared = other;
-                    fail("not prepared".into())
-                }
-            }
-        }
-        "invalidate" => {
-            if command["expected"] != expected {
-                return fail("active predecessor changed".into());
-            }
-            if state.fail_invalidations > 0 {
-                state.fail_invalidations -= 1;
-                return fail("invalidation refused".into());
-            }
-            json!({"ok": true})
-        }
-        "collect" => json!({"ok": true, "removed": []}),
-        "discard" => {
-            state.prepared = None;
-            json!({"ok": true})
-        }
-        other => fail(format!("unknown operation {other}")),
-    }
-}
-
-#[cfg(feature = "qualification-tests")]
-fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
-    let log: Log = Default::default();
-    let mut states = BTreeMap::new();
-    for (name, role) in workers {
-        let listener = tokio::net::UnixListener::bind(dir.join(format!("{name}.sock"))).unwrap();
-        let state: Arc<std::sync::Mutex<Fake>> = Default::default();
-        states.insert(name.to_string(), state.clone());
-        let (log, name, role) = (log.clone(), name.to_string(), *role);
-        tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let (read, mut write) = stream.into_split();
-                let mut line = String::new();
-                tokio::io::BufReader::new(read)
-                    .read_line(&mut line)
-                    .await
-                    .unwrap();
-                let mut command: Value = serde_json::from_str(&line).unwrap();
-                let (reply, delay, hold) = {
-                    let mut state = state.lock().unwrap();
-                    let reply = fake_reply(&mut state, role, &mut command);
-                    let staged = command["operation"] == "stage";
-                    let hold = (command["operation"] == "invalidate")
-                        .then(|| state.hold_invalidation.take())
-                        .flatten();
-                    (reply, state.stage_delay * u32::from(staged), hold)
-                };
-                tokio::time::sleep(delay).await;
-                log.lock().unwrap().push((name.clone(), command));
-                if let Some((started, release)) = hold {
-                    let _ = started.send(());
-                    let _ = release.await;
-                }
-                write
-                    .write_all(format!("{reply}\n").as_bytes())
-                    .await
-                    .unwrap();
-            }
-        });
-    }
-    (log, states)
-}
-
-#[cfg(feature = "qualification-tests")]
-fn socket_worker(dir: &Path, name: &str, role: WorkerRole) -> WorkerConfig {
-    WorkerConfig {
-        name: name.into(),
-        role,
-        transport: Transport::Socket {
-            socket: dir.join(format!("{name}.sock")),
-        },
-    }
-}
-
-#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
-async fn archive_owners_stage_before_any_map_names_a_seal() {
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 128, 0);
-    let layout = layout(&journal, 100);
-    let root = temp.path().join("root");
-    let bootstrapped = bootstrap_at(&journal, &root, &layout, 112);
-    let (log, states) = spawn_fakes(
-        temp.path(),
-        &[("archive", "archive-owner"), ("recent", "recent-replica")],
-    );
-    let workers = vec![
-        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
-        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
-    ];
-    let run = run_script(&root, &journal, advance(112, 128, 4), workers, settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let log = log.lock().unwrap().clone();
-    let ops = |worker: &str, op: &str| -> Vec<(usize, Value)> {
-        log.iter()
-            .enumerate()
-            .filter(|(_, (w, c))| w == worker && c["operation"] == op)
-            .map(|(i, (_, c))| (i, c.clone()))
-            .collect()
-    };
-    let new_seals = &run.active.seals[bootstrapped.len()..];
-    assert!(new_seals.len() >= 2, "{} seals", new_seals.len());
-    let archive_prepares = ops("archive", "prepare");
-    let archive_activations = ops("archive", "activate");
-    let recent_prepares = ops("recent", "prepare");
-    let stages = ops("archive", "stage");
-    for seal in new_seals {
-        let named = |prepares: &[(usize, Value)]| {
-            prepares
-                .iter()
-                .find(|(_, c)| {
-                    c["sealed"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|d| d == &seal.digest)
-                })
-                .map(|(i, _)| *i)
-                .unwrap()
-        };
-        let staged = stages
-            .iter()
-            .find(|(_, c)| c["directory"].as_str().unwrap().ends_with(&seal.digest))
-            .map(|(i, _)| *i)
-            .expect("every seal is staged");
-        let archive = named(&archive_prepares);
-        let activated = archive_activations
-            .iter()
-            .find(|(i, _)| *i > archive)
-            .unwrap()
-            .0;
-        let recent = named(&recent_prepares);
-        assert!(
-            staged < archive && archive < activated && activated < recent,
-            "{seal:?}"
-        );
-    }
-    // Archive owners are prepared only when the sealed set changes: once for
-    // bootstrap's archives, then once per publication of new seals.
-    let sets: Vec<_> = archive_prepares
-        .iter()
-        .map(|(_, c)| c["sealed"].clone())
-        .collect();
-    assert!(sets.windows(2).all(|pair| pair[0] != pair[1]));
-    let mut seal_cycles = 0;
-    let mut previous = bootstrapped.len();
-    for map in &run.maps {
-        if sealed_count(map) != previous {
-            seal_cycles += 1;
-            previous = sealed_count(map);
-        }
-    }
-    assert_eq!(archive_prepares.len(), seal_cycles + 1);
-    // Recent replicas take every map, starting from bootstrap's.
-    assert_eq!(recent_prepares.len(), run.maps.len() + 1);
-    let recent = states["recent"].lock().unwrap();
-    assert_eq!(recent.active.as_ref().unwrap().0, run.active.map_sha256);
-    // A socket worker serves straight from the root: the directory it holds
-    // survives collection while it is active.
-    let archive = states["archive"].lock().unwrap();
-    assert!(Path::new(&archive.active.as_ref().unwrap().1)
-        .join("txid-shards.json")
-        .exists());
-    assert!(archive.staged.is_empty());
-}
-
-/// One combined worker serves the whole publication: every seal is staged on
-/// it before any prepare names it, it takes every map like a recent replica,
-/// and a reorg is delivered to it before anything newer.
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_combined_worker_is_staged_follows_every_map_and_is_invalidated() {
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 128, 0);
-    let root = temp.path().join("root");
-    let bootstrapped = bootstrap_at(&journal, &root, &layout(&journal, 100), 112);
-    let (log, states) = spawn_fakes(temp.path(), &[("display", "combined")]);
-    let workers = vec![socket_worker(temp.path(), "display", WorkerRole::Combined)];
-    let run = run_script(&root, &journal, advance(112, 128, 4), workers, settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let ops = commands(&log, "display");
-    let new_seals = &run.active.seals[bootstrapped.len()..];
-    assert!(new_seals.len() >= 2, "{} seals", new_seals.len());
-    for seal in new_seals {
-        let staged = ops
-            .iter()
-            .position(|c| {
-                c["operation"] == "stage"
-                    && c["directory"].as_str().unwrap().ends_with(&seal.digest)
-            })
-            .expect("every seal is staged");
-        let named = ops
-            .iter()
-            .position(|c| {
-                c["operation"] == "prepare"
-                    && c["sealed"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .any(|d| d == &seal.digest)
-            })
-            .unwrap();
-        assert!(staged < named, "{seal:?}");
-    }
-    let prepares = ops.iter().filter(|c| c["operation"] == "prepare").count();
-    assert_eq!(prepares, run.maps.len() + 1);
-    {
-        let display = states["display"].lock().unwrap();
-        assert_eq!(display.active.as_ref().unwrap().0, run.active.map_sha256);
-        assert!(display.staged.is_empty());
-    }
-
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 125, 0);
-    let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout(&journal, 100), 118);
-    let (log, states) = spawn_fakes(temp.path(), &[("display", "combined")]);
-    let workers = vec![socket_worker(temp.path(), "display", WorkerRole::Combined)];
-    let steps = vec![
-        ScriptStep::Advance(119),
-        ScriptStep::Reorg {
-            ancestor: 118,
-            blocks: fork(1, 119, 121),
-        },
-    ];
-    let run = run_script(&root, &journal, steps, workers, settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let invalidations: Vec<u64> = commands(&log, "display")
-        .iter()
-        .filter(|c| c["operation"] == "invalidate")
-        .map(|c| c["from_height"].as_u64().unwrap())
-        .collect();
-    assert_eq!(invalidations, vec![119]);
-    assert_eq!(run.active.tip, 121);
-    assert_eq!(
-        states["display"].lock().unwrap().active.as_ref().unwrap().0,
-        run.active.map_sha256
-    );
-    assert_eq!(pending_invalidations(&root), json!({}));
-}
-
-#[cfg(feature = "qualification-tests")]
-fn commands(log: &Log, worker: &str) -> Vec<Value> {
-    log.lock()
-        .unwrap()
-        .iter()
-        .filter(|(w, _)| w == worker)
-        .map(|(_, c)| c.clone())
-        .collect()
-}
-
-#[cfg(feature = "qualification-tests")]
-fn invalidated(log: &Log) -> Vec<u64> {
-    commands(log, "recent")
-        .iter()
-        .filter(|c| c["operation"] == "invalidate")
-        .map(|c| c["from_height"].as_u64().unwrap())
-        .collect()
-}
-
-#[cfg(feature = "qualification-tests")]
-fn pending_invalidations(root: &Path) -> Value {
-    serde_json::from_slice::<Value>(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
-        ["pending"]
-        .clone()
-}
-
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread")]
-async fn invalidations_reach_every_replica_before_it_moves_on() {
+async fn a_restart_after_a_rollback_rewrites_what_it_replaced() {
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 125, 0);
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 118);
-    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-    {
-        let mut recent = states["recent"].lock().unwrap();
-        // Tip 119 takes effect on the replica, but the reply is lost, so the
-        // controller never commits it; then the first invalidation fails.
-        recent.lose_activation = Some(2);
-        recent.fail_invalidations = 1;
-    }
-    let workers = vec![socket_worker(
-        temp.path(),
-        "recent",
-        WorkerRole::RecentReplica,
-    )];
-    let steps = vec![
-        ScriptStep::Advance(119),
-        ScriptStep::Reorg {
-            ancestor: 118,
-            blocks: fork(1, 119, 121),
-        },
-    ];
-    let run = run_script(&root, &journal, steps, workers, settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let ops = commands(&log, "recent");
-    let lost = ops
-        .iter()
-        .filter(|c| c["operation"] == "activate")
-        .nth(1)
-        .unwrap()["map_sha256"]
-        .clone();
-    // Above the committed tip but below what the replica serves: withdrawn
-    // anyway, naming the map the replica actually serves, and retried.
-    let invalidations: Vec<usize> = (0..ops.len())
-        .filter(|i| ops[*i]["operation"] == "invalidate")
-        .collect();
-    assert_eq!(invalidated(&log), vec![119, 119]);
-    assert!(invalidations.iter().all(|i| ops[*i]["expected"] == lost));
-    // Nothing newer reaches the replica until it acknowledges.
-    assert!(ops[invalidations[0]..invalidations[1]]
-        .iter()
-        .all(|c| c["operation"] != "prepare" && c["operation"] != "activate"));
-    assert_eq!(run.active.tip, 121);
-    assert_eq!(
-        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
-        run.active.map_sha256
-    );
-    assert_eq!(pending_invalidations(&root), json!({}));
-}
-
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_restart_after_a_rollback_still_invalidates() {
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 125, 0);
-    let layout = layout(&journal, 100);
-    let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout, 118);
-    let (log, _states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-    let workers = vec![socket_worker(
-        temp.path(),
-        "recent",
-        WorkerRole::RecentReplica,
-    )];
 
     // Tip 121 is published; the journal then rolls back to 119 and the next
     // journal write fails, before the controller hears of the rollback.
@@ -1060,7 +568,6 @@ async fn a_restart_after_a_rollback_still_invalidates() {
         &root,
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(steps)),
-        workers.clone(),
         settings(),
     )
     .unwrap();
@@ -1070,20 +577,26 @@ async fn a_restart_after_a_rollback_still_invalidates() {
         .unwrap_err();
     assert!(error.to_string().contains("scripted journal failure"));
     assert_eq!(controller.active().tip, 121);
+    let activated = controller.active().map_sha256.clone();
     drop(controller);
-    assert!(invalidated(&log).is_empty());
-    assert_eq!(pending_invalidations(&root), json!({"recent": 120}));
+    assert!(reorgs_from(&root).is_empty());
+    let record = saved_rollback(&root);
+    assert_eq!(record["ancestor"], 119);
+    assert_eq!(record["map_sha256"], json!(activated));
 
-    // The restart withdraws exactly what the rollback replaced.
+    // The restart rewrites exactly what the rollback replaced.
     let steps = vec![ScriptStep::Extend(fork(1, 120, 122))];
-    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
-    assert_eq!(invalidated(&log), vec![120]);
+    assert_eq!(reorgs_from(&root), vec![120]);
     assert_eq!(run.active.tip_hash, block_hash(1, 122).to_display_hex());
-    assert_eq!(pending_invalidations(&root), json!({}));
+    assert!(
+        saved_rollback(&root).is_null(),
+        "a new publication clears it"
+    );
 
     // A journal moved without a record (another writer, while the controller
-    // was down) withdraws the whole recent range, and the tooling index is
+    // was down) rewrites the whole recent range, and the tooling index is
     // rewritten over it.
     let recent_start = active_map(&root).shards.last().unwrap().start_height;
     {
@@ -1098,9 +611,9 @@ async fn a_restart_after_a_rollback_still_invalidates() {
         }
         store.commit().unwrap();
     }
-    let run = run_script(&root, &journal, vec![], workers, settings()).await;
+    let run = run_script(&root, &journal, vec![], settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
-    assert_eq!(invalidated(&log), vec![120, recent_start]);
+    assert_eq!(reorgs_from(&root), vec![120, recent_start]);
     assert_eq!(run.active.tip_hash, block_hash(2, 122).to_display_hex());
     let index: BTreeSet<_> = HeightIndex::open(&root)
         .unwrap()
@@ -1151,16 +664,6 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     counts.truncate((tip - 101) as usize);
     let after = decided(&counts, tip - 1);
     assert_eq!(after, before - 1);
-    let (log, states) = spawn_fakes(
-        temp.path(),
-        &[("archive", "archive-owner"), ("recent", "recent-replica")],
-    );
-    // Staging outlasts the rollback that follows the decision.
-    states["archive"].lock().unwrap().stage_delay = Duration::from_millis(500);
-    let workers = vec![
-        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
-        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
-    ];
     // The block that put the seal a margin below the tip is rolled back.
     let steps = vec![
         ScriptStep::Advance(tip),
@@ -1169,19 +672,38 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
             blocks: vec![],
         },
     ];
-    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    assert_eq!(run.active.seals.len(), after);
-    let staged = commands(&log, "archive")
-        .iter()
-        .filter(|c| c["operation"] == "stage")
-        .count();
-    assert_eq!(staged, before - started);
-    let mut maps = run.maps;
-    states["archive"].lock().unwrap().stage_delay = Duration::ZERO;
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(steps)),
+        settings(),
+    )
+    .unwrap();
+    while controller.cache.tip().map(|t| t.0) < Some(tip) {
+        controller.poll_source().await.unwrap();
+    }
+    assert_eq!(controller.queue.len(), before - started);
+    // Every decided seal is built before the rollback arrives.
+    while controller.queue.iter().any(|j| j.state != JobState::Built) {
+        controller.schedule();
+        let event = controller.receiver.recv().await.unwrap();
+        controller.background(event);
+    }
+    controller.poll_source().await.unwrap();
+    assert_eq!(controller.cache.tip().map(|t| t.0), Some(tip - 1));
+    assert_eq!(
+        controller.queue.len(),
+        before - started,
+        "the undone seal is kept"
+    );
+    assert_eq!(controller.publishable(), after - started, "and waits");
+    assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
+    assert_eq!(controller.active().seals.len(), after);
+    let mut maps = controller.maps().to_vec();
+    drop(controller);
     // The same seal publishes once the margin holds again.
     let steps = vec![ScriptStep::Extend(fork(3, tip, tip + 3))];
-    let run = run_script(&root, &journal, steps, workers, settings()).await;
+    let run = run_script(&root, &journal, steps, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     assert!(run.active.seals.len() >= before);
     maps.extend(run.maps);
@@ -1200,50 +722,20 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
 
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
-async fn an_archive_owner_that_lost_staging_is_staged_again() {
+async fn an_exceeded_recent_bound_alerts_once_and_seals_publish_once() {
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 124, 0);
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     let started = bootstrap_at(&journal, &root, &layout, 112).len();
-    let (log, states) = spawn_fakes(
-        temp.path(),
-        &[("archive", "archive-owner"), ("recent", "recent-replica")],
-    );
-    states["archive"].lock().unwrap().restart_after_stages = Some(1);
-    let workers = vec![
-        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
-        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
-    ];
     let settings = Settings {
         max_recent_records: Some(1),
         ..settings()
     };
-    let run = run_script(&root, &journal, advance(112, 124, 4), workers, settings).await;
+    let run = run_script(&root, &journal, advance(112, 124, 4), settings).await;
     assert_eq!(run.outcome, Outcome::Idle);
     assert!(run.active.seals.len() > started);
-    let digest = &run.active.seals[started].digest;
-    let log = log.lock().unwrap().clone();
-    let position = |pred: &dyn Fn(&(String, Value)) -> bool| -> Vec<usize> {
-        (0..log.len()).filter(|i| pred(&log[*i])).collect()
-    };
-    let stages = position(&|(w, c)| {
-        w == "archive"
-            && c["operation"] == "stage"
-            && c["directory"].as_str().unwrap().ends_with(digest.as_str())
-    });
-    assert_eq!(stages.len(), 2, "staged again after the restart");
-    // The archive owner refused the seal once, then took it once staged
-    // again; without that, every cycle would repeat the refusal.
-    let naming = position(&|(w, c)| {
-        w == "archive" && c["operation"] == "prepare" && c["sealed"].to_string().contains(digest)
-    });
-    assert!(naming[0] < stages[1] && stages[1] < naming[1]);
-    assert_eq!(
-        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
-        run.active.map_sha256
-    );
     let events = read_timeline(&root).unwrap();
     let seals: Vec<_> = events
         .iter()
@@ -1261,103 +753,6 @@ async fn an_archive_owner_that_lost_staging_is_staged_again() {
 
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
-async fn command_adapters_ship_then_relay_control() {
-    use std::os::unix::fs::PermissionsExt;
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 124, 0);
-    let layout = layout(&journal, 100);
-    let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout, 112);
-    let (_log, states) = spawn_fakes(
-        temp.path(),
-        &[("archive", "archive-owner"), ("recent", "recent-replica")],
-    );
-    let adapter = temp.path().join("adapter.py");
-    std::fs::write(
-        &adapter,
-        r#"#!/usr/bin/env python3
-import json, socket, sys
-config = json.load(open(sys.argv[1]))
-request = json.load(sys.stdin)
-with open(config["log"], "a") as log:
-    log.write(json.dumps(request) + "\n")
-if request["operation"] == "ship":
-    print(json.dumps({"ok": True, "directory": request["source"], "seconds": 0.0}))
-else:
-    s = socket.socket(socket.AF_UNIX)
-    s.connect(config["sockets"][request["worker"]])
-    s.sendall((json.dumps(request["command"]) + "\n").encode())
-    print(json.dumps({"ok": True, "reply": json.loads(s.makefile().readline()), "seconds": 0.0}))
-"#,
-    )
-    .unwrap();
-    std::fs::set_permissions(&adapter, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let adapter_log = temp.path().join("adapter.log");
-    let config = temp.path().join("fleet.json");
-    let sockets = json!({"archive": temp.path().join("archive.sock"),
-        "recent": temp.path().join("recent.sock")});
-    std::fs::write(
-        &config,
-        serde_json::to_vec(&json!({"log": adapter_log, "sockets": sockets})).unwrap(),
-    )
-    .unwrap();
-    let workers: WorkersFile = serde_json::from_value(json!({"workers": [
-        {"name": "archive", "role": "archive-owner",
-            "transport": {"command": adapter, "config": config}},
-        {"name": "recent", "role": "recent-replica",
-            "transport": {"command": adapter, "config": config}},
-    ]}))
-    .unwrap();
-    let run = run_script(
-        &root,
-        &journal,
-        advance(112, 124, 4),
-        workers.workers,
-        settings(),
-    )
-    .await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let requests: Vec<Value> = std::fs::read_to_string(&adapter_log)
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    let ships: Vec<_> = requests
-        .iter()
-        .filter(|r| r["operation"] == "ship")
-        .collect();
-    let staged: Vec<_> = ships.iter().filter(|r| r["kind"] == "staged").collect();
-    assert!(!staged.is_empty());
-    for ship in staged {
-        assert!(ship["link_dest"].is_null());
-        assert!(ship["source"]
-            .as_str()
-            .unwrap()
-            .ends_with(ship["name"].as_str().unwrap()));
-    }
-    let candidates: Vec<_> = ships
-        .iter()
-        .filter(|r| r["kind"] == "candidate" && r["worker"] == "recent")
-        .collect();
-    assert!(candidates.len() >= 3);
-    // Each candidate after the first links against the worker's previous one.
-    assert!(candidates[0]["link_dest"].is_null());
-    for pair in candidates.windows(2) {
-        assert_eq!(pair[1]["link_dest"], pair[0]["source"]);
-    }
-    assert_eq!(
-        candidates.last().unwrap()["name"],
-        json!(run.active.map_sha256)
-    );
-    assert_eq!(
-        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
-        run.active.map_sha256
-    );
-}
-
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread")]
 async fn replay_paces_coalesces_and_stops_at_its_end() {
     use crate::tx_detail::source::ReplaySource;
     let temp = tempfile::tempdir().unwrap();
@@ -1369,14 +764,8 @@ async fn replay_paces_coalesces_and_stops_at_its_end() {
     // A 1 ms step is always overrun by a cycle, so steps coalesce; the
     // replay end stops short of the journal end.
     let source = Source::Replay(ReplaySource::new(3, Duration::from_millis(1), 124), None);
-    let mut controller = Controller::open(
-        &root,
-        open_writer(&journal).unwrap(),
-        source,
-        vec![],
-        settings(),
-    )
-    .unwrap();
+    let mut controller =
+        Controller::open(&root, open_writer(&journal).unwrap(), source, settings()).unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(120), controller.run())
         .await
         .unwrap()
@@ -1450,7 +839,6 @@ fn verify_reproduces_a_running_root() {
         &root,
         &journal,
         advance(112, through, 7),
-        vec![],
         settings(),
     ));
     assert_eq!(run.outcome, Outcome::Idle);
@@ -1646,25 +1034,16 @@ mod live {
         bootstrap(&store, &root, &layout, 3).unwrap();
         drop(store);
 
-        let (log, _states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-        let workers = vec![socket_worker(
-            temp.path(),
-            "recent",
-            WorkerRole::RecentReplica,
-        )];
-        let settings = Settings::default();
+        let settings = Settings {
+            prebuild: super::no_prebuild,
+            ..Settings::default()
+        };
         let status = settings.status.clone();
         let live = LiveSource::new(client, Duration::from_millis(20));
         let replay = ReplaySource::new(1, Duration::from_millis(20), 5);
         let source = Source::Replay(replay, Some(live));
-        let mut controller = Controller::open(
-            &root,
-            open_writer(&journal).unwrap(),
-            source,
-            workers,
-            settings,
-        )
-        .unwrap();
+        let mut controller =
+            Controller::open(&root, open_writer(&journal).unwrap(), source, settings).unwrap();
 
         let driver = tokio::spawn({
             let chain = chain.clone();
@@ -1701,14 +1080,7 @@ mod live {
             matches!(outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
             "{outcome:?}"
         );
-        let invalidations: Vec<_> = log
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(_, c)| c["operation"] == "invalidate")
-            .map(|(_, c)| c["from_height"].clone())
-            .collect();
-        assert_eq!(invalidations, vec![json!(7)]);
+        assert_eq!(reorgs_from(&root), vec![7]);
         // The halted controller left the journal on the last followed chain.
         assert_eq!(controller.store().covered_through(), Some(9));
         assert_eq!(controller.map().covered_through(), Some(9));
@@ -1725,8 +1097,8 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-/// With `--ship-runtimes` every candidate carries one runtime per table
-/// segment of its recent revision, as plain files at its root; the cycle
+/// Every candidate carries one runtime per table segment of its recent
+/// revision, as plain files at its root; the cycle
 /// records the prebuild; revision directories still hold exactly their
 /// manifests' files; and collection removes a candidate with its files.
 #[cfg(feature = "qualification-tests")]
@@ -1746,11 +1118,11 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
     let settings = Settings {
-        ship_runtimes: Some(build_shipped),
+        prebuild: build_shipped,
         retain_candidates: 1,
         ..settings()
     };
-    let run = run_script(&root, &journal, advance(112, through, 3), vec![], settings).await;
+    let run = run_script(&root, &journal, advance(112, through, 3), settings).await;
     assert_eq!(run.outcome, Outcome::Idle);
     let cycles: Vec<Value> = read_timeline(&root)
         .unwrap()
@@ -1808,9 +1180,9 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
 }
 
 /// A prebuild failure is counted, leaves no file behind and never stops the
-/// cycle: the candidate is published without runtimes.
+/// cycle: the candidate is published, and finalization builds the runtimes.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_prebuild_still_publishes_without_runtimes() {
+async fn a_failed_prebuild_still_publishes() {
     fn fails(revision: &Path, candidate: &Path) -> Result<Vec<Shipped>, String> {
         assert!(revision.starts_with(candidate));
         std::fs::write(candidate.join("ab-cd.partial"), b"half").unwrap();
@@ -1824,10 +1196,10 @@ async fn a_failed_prebuild_still_publishes_without_runtimes() {
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
     let settings = Settings {
-        ship_runtimes: Some(fails),
+        prebuild: fails,
         ..settings()
     };
-    let run = run_script(&root, &journal, advance(112, 118, 3), vec![], settings).await;
+    let run = run_script(&root, &journal, advance(112, 118, 3), settings).await;
     assert_eq!(run.outcome, Outcome::Idle);
     assert_eq!(run.active.tip, 118);
     let events = read_timeline(&root).unwrap();
@@ -1894,7 +1266,7 @@ async fn metrics_report_cycles_stages_and_freshness() {
     bootstrap_at(&journal, &root, &layout, 112);
     let settings = settings();
     let metrics = settings.metrics.clone();
-    let run = run_script(&root, &journal, advance(112, 118, 3), vec![], settings).await;
+    let run = run_script(&root, &journal, advance(112, 118, 3), settings).await;
     assert_eq!(run.outcome, Outcome::Idle);
     let cycles = read_timeline(&root)
         .unwrap()
@@ -1941,302 +1313,8 @@ async fn metrics_report_cycles_stages_and_freshness() {
     for stage in crate::tx_detail::metrics::STAGES {
         let labels = format!("stage=\"{stage}\"");
         let (count, _) = histogram(&text, "txid_display_cycle_stage_seconds", &labels);
-        // Runtimes are not shipped here, so no prebuild stage runs.
-        let expected = if stage == "prebuild" { 0. } else { cycles };
-        assert_eq!(count, expected, "{stage}");
+        assert_eq!(count, cycles, "{stage}");
     }
-}
-
-// Reuse the serving tests' independent wallet transport and per-process pure
-// profile cache. This controller still owns fresh journal/root/worker state.
-#[cfg(feature = "qualification-tests")]
-use crate::tx_detail::display_world;
-
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn shared_display_lifecycle_serves_before_and_after_ordered_seals_and_restart() {
-    use transparent_query_server::tx_detail::live::{reply_line, DisplayCommand};
-    use transparent_shared::tx_detail::DisplayRole;
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 112, 0);
-    let layout = layout(&journal, 100);
-    let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout, 103);
-    let archive = display_world::Worker::new(
-        temp.path(),
-        DisplayRole::ArchiveOwner,
-        display_world::config(),
-        vec![root.clone()],
-    );
-    let recent = display_world::Worker::new(
-        temp.path(),
-        DisplayRole::RecentReplica,
-        display_world::config(),
-        vec![root.clone()],
-    );
-    let log: Log = Arc::default();
-    let archive_unavailable = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let refuse_first_stage = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    struct Tasks(Vec<tokio::task::JoinHandle<()>>);
-    impl Drop for Tasks {
-        fn drop(&mut self) {
-            for task in &self.0 {
-                task.abort();
-            }
-        }
-    }
-    let mut tasks = Tasks(Vec::new());
-    for (name, live) in [
-        ("archive", archive.live.clone()),
-        ("recent", recent.live.clone()),
-    ] {
-        let listener =
-            tokio::net::UnixListener::bind(temp.path().join(format!("{name}.sock"))).unwrap();
-        let log = log.clone();
-        let unavailable = archive_unavailable.clone();
-        let refuse_first_stage = refuse_first_stage.clone();
-        tasks.0.push(tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let (read, mut write) = stream.into_split();
-                let mut line = String::new();
-                tokio::io::BufReader::new(read)
-                    .read_line(&mut line)
-                    .await
-                    .unwrap();
-                let command: DisplayCommand = serde_json::from_str(&line).unwrap();
-                let mut observed = serde_json::to_value(&command).unwrap();
-                if observed["operation"] == "prepare" {
-                    let publication = &observed["publication"];
-                    let map = read_map(
-                        Path::new(publication["directory"].as_str().unwrap()),
-                        publication["map_sha256"].as_str().unwrap(),
-                    )
-                    .unwrap();
-                    observed["sealed"] = json!(map
-                        .shards
-                        .iter()
-                        .filter(|s| s.sealed)
-                        .map(|s| &s.manifest_digest)
-                        .collect::<Vec<_>>());
-                }
-                let refuse = name == "archive"
-                    && ((observed["operation"] == "prepare"
-                        && unavailable.load(std::sync::atomic::Ordering::Acquire))
-                        || (observed["operation"] == "stage"
-                            && refuse_first_stage
-                                .swap(false, std::sync::atomic::Ordering::AcqRel)));
-                log.lock().unwrap().push((name.into(), observed));
-                if refuse {
-                    // A real control-transport EOF: no fabricated readiness or
-                    // activation reply can qualify this unavailable archive.
-                    drop(write);
-                    continue;
-                }
-                let reply = reply_line(live.command(command).await);
-                write
-                    .write_all(format!("{reply}\n").as_bytes())
-                    .await
-                    .unwrap();
-            }
-        }));
-    }
-    let app = axum::Router::new()
-        .fallback(display_world::edge)
-        .with_state(display_world::Edge {
-            archive: archive.live.router(),
-            recent: recent.live.router(),
-            faults: Default::default(),
-        });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", listener.local_addr().unwrap());
-    tasks.0.push(tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    }));
-    let workers = vec![
-        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
-        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
-    ];
-    let mut controller = Controller::open(
-        &root,
-        open_writer(&journal).unwrap(),
-        Source::Script(Script::new(vec![ScriptStep::Advance(112)])),
-        workers.clone(),
-        settings(),
-    )
-    .unwrap();
-    controller
-        .sync_workers()
-        .await
-        .map_err(|_| "bootstrap activation")
-        .unwrap();
-    let mut wallet = display_world::Wallet::at(&origin);
-    let (_, transcript) = wallet.found(&chain_records(0, 103)[0], 103);
-    let query = transcript
-        .iter()
-        .find(|sent| sent.method == transparent_txid_client::Method::Post)
-        .unwrap();
-    let expected_reply = reqwest::Client::new()
-        .post(format!("{origin}{}", query.path))
-        .body(query.body.clone())
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-    use tower::ServiceExt;
-    let retained = recent
-        .live
-        .router()
-        .oneshot(
-            axum::http::Request::post(&query.path)
-                .body(axum::body::Body::from(query.body.clone()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(retained.status(), axum::http::StatusCode::OK);
-    let original = controller.active().map_sha256.clone();
-    // Acquire one ordered batch through the actual source, then let every
-    // production build/stage job finish before this bounded publication attempt.
-    controller.poll_source().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(15), async {
-        while controller
-            .queue
-            .iter()
-            .any(|job| job.state != JobState::Staged)
-        {
-            controller.schedule();
-            if controller
-                .queue
-                .iter()
-                .all(|job| job.state == JobState::Staged)
-            {
-                break;
-            }
-            // Staging can fail transiently. Wake at its retry deadline even
-            // when no build or stage job remains to send another event.
-            let wake_at = controller
-                .queue
-                .iter()
-                .filter_map(|job| job.retry_at)
-                .min()
-                .unwrap_or_else(|| Instant::now() + Duration::from_secs(3600));
-            tokio::select! {
-                event = controller.receiver.recv() => controller.background(event.unwrap()),
-                () = tokio::time::sleep_until(wake_at.into()) => {},
-            }
-        }
-    })
-    .await
-    .expect("ordered seals did not finish building and staging");
-    assert!(!refuse_first_stage.load(std::sync::atomic::Ordering::Acquire));
-    let recent_prepares = || {
-        log.lock()
-            .unwrap()
-            .iter()
-            .filter(|(name, c)| name == "recent" && c["operation"] == "prepare")
-            .count()
-    };
-    let before = recent_prepares();
-    archive_unavailable.store(true, std::sync::atomic::Ordering::Release);
-    assert!(matches!(
-        controller.cycle().await,
-        Err(CycleError::Retry(_))
-    ));
-    assert_eq!(
-        recent_prepares(),
-        before,
-        "unavailable archive cannot retire the old recent view"
-    );
-    assert_eq!(controller.active().map_sha256, original);
-    assert_eq!(recent.live.expected(), original);
-    wallet.found(&chain_records(0, 103)[0], 103);
-    archive_unavailable.store(false, std::sync::atomic::Ordering::Release);
-    assert_eq!(controller.run().await.unwrap(), Outcome::Idle);
-    assert_ne!(controller.active().map_sha256, original);
-    let retained_reply = axum::body::to_bytes(retained.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    assert_eq!(
-        retained_reply, expected_reply,
-        "admitted display response keeps its old binding and independently decoded answer"
-    );
-    let active = controller.active().clone();
-    assert!(
-        active.seals.len() >= 2,
-        "every planned seal must survive: {:?}",
-        active.seals
-    );
-    // The oracle comes from the journal source fixture, not a read-back of the
-    // controller's published rows. Query both the archive and advanced recent.
-    let mut wallet = display_world::Wallet::at(&origin);
-    wallet.found(&chain_records(0, 101)[0], 101);
-    wallet.found(&chain_records(0, 112)[0], 112);
-    {
-        let commands = log.lock().unwrap();
-        for seal in &active.seals {
-            let stage = commands
-                .iter()
-                .position(|(w, c)| {
-                    w == "archive"
-                        && c["operation"] == "stage"
-                        && c["directory"]
-                            .as_str()
-                            .is_some_and(|p| p.ends_with(&seal.digest))
-                })
-                .unwrap();
-            let named = |worker: &str| {
-                commands
-                    .iter()
-                    .enumerate()
-                    .find(|(_, (w, c))| {
-                        if w != worker || c["operation"] != "prepare" {
-                            return false;
-                        }
-                        c["sealed"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .any(|digest| digest == &seal.digest)
-                    })
-                    .map(|(i, _)| i)
-                    .unwrap()
-            };
-            let archive_prepare = named("archive");
-            let activated = commands
-                .iter()
-                .enumerate()
-                .find(|(i, (w, c))| {
-                    *i > archive_prepare && w == "archive" && c["operation"] == "activate"
-                })
-                .unwrap()
-                .0;
-            assert!(
-                stage < archive_prepare
-                    && archive_prepare < activated
-                    && activated < named("recent")
-            );
-        }
-    }
-    drop(controller);
-    let mut restarted = Controller::open(
-        &root,
-        open_writer(&journal).unwrap(),
-        Source::Script(Script::new(Vec::new())),
-        workers,
-        settings(),
-    )
-    .unwrap();
-    assert_eq!(restarted.run().await.unwrap(), Outcome::Idle);
-    assert_eq!(restarted.active().map_sha256, active.map_sha256);
-    assert_eq!(
-        identities(&restarted.active().seals),
-        identities(&active.seals)
-    );
-    wallet.found(&chain_records(0, 112)[0], 112);
 }
 
 /// A stop requested before activation abandons the candidate as a normal
@@ -2254,7 +1332,6 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
         &root,
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(advance(112, 118, 6))),
-        vec![],
         settings(),
     )
     .unwrap();
@@ -2286,7 +1363,7 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
     drop(controller);
 
-    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), settings()).await;
     assert_eq!(resumed.outcome, Outcome::Idle);
     assert!(
         resumed.active.tip > before.tip,
@@ -2322,9 +1399,8 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
         &root,
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(advance(112, 118, 6))),
-        vec![],
         Settings {
-            ship_runtimes: Some(held),
+            prebuild: held,
             ..settings()
         },
     )
@@ -2362,115 +1438,30 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
     lock.try_lock()
         .expect("dropping the controller releases the root");
     drop(lock);
-    let resumed = run_script(&root, &journal, advance(112, 118, 6), vec![], settings()).await;
+    let resumed = run_script(&root, &journal, advance(112, 118, 6), settings()).await;
     assert!(resumed.active.tip > before.tip, "a later run activates");
 }
 
-/// A stop requested once worker activation has begun does not interrupt the
-/// cycle: the activation is committed to `active.json`, the worker and the
-/// controller agree on the map, no failure is counted and nothing is retried,
-/// and a controller opened afterwards recovers the same activation.
+/// A stop requested after a candidate is prepared abandons it: nothing
+/// activates, and the active record and saved rollback record are
+/// unchanged. A later run resumes.
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
-async fn a_stop_during_worker_activation_still_commits_the_cycle() {
-    let temp = tempfile::tempdir().unwrap();
-    let journal = temp.path().join("journal");
-    fixture::write_journal(&journal, 100, 118, 0);
-    let layout = layout(&journal, 100);
-    let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout, 112);
-    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-    let shutdown = pir_pipeline::service::Shutdown::default();
-    // The first activation brings the new worker to the bootstrapped map;
-    // the second is the cycle's.
-    states["recent"].lock().unwrap().stop_at_activation = Some((2, shutdown.clone()));
-    let settings = settings();
-    let metrics = settings.metrics.clone();
-    let mut controller = Controller::open(
-        &root,
-        open_writer(&journal).unwrap(),
-        Source::Script(Script::new(advance(112, 118, 6))),
-        vec![socket_worker(
-            temp.path(),
-            "recent",
-            WorkerRole::RecentReplica,
-        )],
-        settings,
-    )
-    .unwrap();
-    let before = controller.active().clone();
-    assert_eq!(
-        controller.run_until(shutdown.clone()).await.unwrap(),
-        Outcome::Idle
-    );
-    assert!(shutdown.requested());
-    let active = controller.active().clone();
-    assert_eq!(active.tip, 118, "the cycle activated");
-    assert_eq!(active.cycle, before.cycle + 1);
-    let stored = ActiveRecord::load(&root).unwrap();
-    assert_eq!(
-        (stored.tip, &stored.map_sha256, &stored.directory),
-        (active.tip, &active.map_sha256, &active.directory)
-    );
-    {
-        let recent = states["recent"].lock().unwrap();
-        assert_eq!(recent.activations, 2, "no activation was retried");
-        assert_eq!(recent.active.as_ref().unwrap().0, active.map_sha256);
-    }
-    let activations = commands(&log, "recent")
-        .iter()
-        .filter(|c| c["operation"] == "activate")
-        .count();
-    assert_eq!(activations, 2);
-    let events = read_timeline(&root).unwrap();
-    assert_eq!(events.iter().filter(|e| e["kind"] == "cycle").count(), 1);
-    assert!(events.iter().all(|e| e["kind"] != "error"), "{events:?}");
-    let text = metrics.render();
-    assert_eq!(series(&text, "txid_display_cycle_failures_total"), 0.);
-    assert_eq!(series(&text, "txid_display_consecutive_failures"), 0.);
-    assert_eq!(series(&text, "txid_display_published_height"), 118.);
-    drop(controller);
-
-    // Recovery re-verifies the sealed revisions and reloads the same record.
-    let reopened = Controller::open(
-        &root,
-        open_writer(&journal).unwrap(),
-        Source::Script(Script::new(vec![])),
-        vec![],
-        verifying(),
-    )
-    .unwrap();
-    assert_eq!(reopened.active().map_sha256, active.map_sha256);
-    assert_eq!(reopened.active().tip, active.tip);
-}
-
-/// A stop requested while an owed invalidation awaits its worker abandons
-/// the candidate once delivery returns: nothing activates, and the active
-/// record and saved rollback record are unchanged. A later run resumes.
-#[cfg(feature = "qualification-tests")]
-#[tokio::test(flavor = "multi_thread")]
-async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
+async fn a_stop_before_activation_keeps_the_rollback_record() {
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
     fixture::write_journal(&journal, 100, 125, 0);
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 118);
-    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
-    let workers = vec![socket_worker(
-        temp.path(),
-        "recent",
-        WorkerRole::RecentReplica,
-    )];
 
     // Tip 121 is published; the journal then rolls back to 119 and the next
-    // journal write fails, leaving an owed invalidation and a rollback record.
+    // journal write fails, leaving a rollback record.
     let steps = [ScriptStep::Advance(121), ScriptStep::FailAfterRollback(119)];
     let mut controller = Controller::open(
         &root,
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(steps)),
-        workers.clone(),
         settings(),
     )
     .unwrap();
@@ -2480,61 +1471,27 @@ async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
         .unwrap_err();
     assert!(error.to_string().contains("scripted journal failure"));
     drop(controller);
-    let saved = || -> Value {
-        serde_json::from_slice(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
-    };
-    let before_record = saved();
-    assert_eq!(before_record["pending"], json!({"recent": 120}));
-    assert!(
-        !before_record["rollback"].is_null(),
-        "a rollback is recorded"
-    );
+    let before_record = saved_rollback(&root);
+    assert!(!before_record.is_null(), "a rollback is recorded");
 
     let mut controller = Controller::open(
         &root,
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(vec![ScriptStep::Extend(fork(1, 120, 122))])),
-        workers.clone(),
         settings(),
     )
     .unwrap();
     let before = controller.active().clone();
-    let served = states["recent"].lock().unwrap().active.clone().unwrap().0;
     while controller.cache.tip().map(|t| t.0) < Some(122) {
         controller.poll_source().await.unwrap();
     }
     let Ok(Input::Work(candidate)) = controller.prepare_cycle().await else {
         panic!("a candidate is due");
     };
+    controller.shutdown.request();
     assert!(
-        invalidated(&log).is_empty(),
-        "the invalidation is still owed"
-    );
-    let (started, held) = tokio::sync::oneshot::channel();
-    let (release, released) = tokio::sync::oneshot::channel();
-    states["recent"].lock().unwrap().hold_invalidation = Some((started, released));
-    let shutdown = controller.shutdown.clone();
-    let (activated, ()) = tokio::join!(controller.activate_cycle(candidate), async move {
-        held.await.unwrap();
-        shutdown.request();
-        release.send(()).unwrap();
-    });
-    assert!(activated.is_ok(), "stopped as a normal outcome");
-    assert_eq!(
-        invalidated(&log),
-        vec![120],
-        "the invalidation was delivered"
-    );
-    assert!(
-        commands(&log, "recent")
-            .iter()
-            .skip_while(|c| c["operation"] != "invalidate")
-            .all(|c| c["operation"] != "prepare" && c["operation"] != "activate"),
-        "no worker activation began"
-    );
-    assert_eq!(
-        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
-        served
+        controller.activate_cycle(candidate).await.is_ok(),
+        "stopped as a normal outcome"
     );
     assert_eq!(controller.active().map_sha256, before.map_sha256);
     let stored = ActiveRecord::load(&root).unwrap();
@@ -2542,10 +1499,9 @@ async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
         (stored.tip, stored.map_sha256),
         (before.tip, before.map_sha256.clone())
     );
-    let after_record = saved();
-    assert_eq!(after_record["pending"], json!({}));
     assert_eq!(
-        after_record["rollback"], before_record["rollback"],
+        saved_rollback(&root),
+        before_record,
         "the rollback record is kept"
     );
     // The stop also ends the loop before another cycle starts.
@@ -2555,18 +1511,8 @@ async fn a_stop_during_invalidation_delivery_does_not_activate_the_candidate() {
     assert_eq!(ActiveRecord::load(&root).unwrap().tip, before.tip);
     drop(controller);
 
-    let run = run_script(
-        &root,
-        &journal,
-        vec![ScriptStep::Advance(122)],
-        workers,
-        settings(),
-    )
-    .await;
+    let run = run_script(&root, &journal, vec![ScriptStep::Advance(122)], settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     assert_eq!(run.active.tip, 122, "a later run activates");
-    assert_eq!(
-        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
-        run.active.map_sha256
-    );
+    assert!(saved_rollback(&root).is_null());
 }

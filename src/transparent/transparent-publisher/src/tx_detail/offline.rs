@@ -1,6 +1,6 @@
 //! Offline tools around the display controller: verifying a root against its
 //! journal, planning a bootstrap start, benching recent shards and writing
-//! synthetic journals. None of them serve or publish to workers.
+//! synthetic journals. None of them publish.
 
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
