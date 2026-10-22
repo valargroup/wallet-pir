@@ -1,6 +1,7 @@
 //! Continuous, chain-checked publication. Ingest owns the journal; builders use
 //! copied suffix snapshots, and query servers pull each finalized full
 //! publication over HTTPS.
+mod preparation;
 mod workflow;
 use workflow::HistoryPublication;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
@@ -169,9 +170,13 @@ fn read_public(directory: PathBuf, upstreams: Vec<String>) -> Result<Public, Box
     })
 }
 
-pub async fn run(config: Config) -> Result<(), BoxError> {
+pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+    config: Config,
+    executor: E,
+) -> Result<(), BoxError> {
     run_managed(
         config,
+        executor,
         pir_pipeline::service::Http::new(|addr, app| async move {
             axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await
         }),
@@ -181,8 +186,9 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
 }
 
 /// Owns ingestion and authority through shutdown; transactions finish before stopping.
-pub async fn run_managed(
+pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
     config: Config,
+    executor: E,
     http: pir_pipeline::service::Http<Router>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<(), BoxError> {
@@ -384,18 +390,21 @@ pub async fn run_managed(
             ),
         }
     }
-    pir_pipeline::publisher::PublisherService::new(HistoryPublication {
-        config,
-        rpc,
-        store,
-        authority,
-        shutdown: shutdown.clone(),
-        server,
-        ingest,
-        updates,
-    })
-    .run(shutdown.cancelled())
-    .await
+    executor
+        .run(
+            HistoryPublication {
+                config,
+                rpc,
+                store,
+                authority,
+                shutdown: shutdown.clone(),
+                server,
+                ingest,
+                updates,
+            },
+            shutdown,
+        )
+        .await
 }
 
 // Independent from publication: backpressure or slow candidate preparation cannot
@@ -662,23 +671,6 @@ async fn ingest_once(
     Ok(())
 }
 
-struct HistoryProgress;
-impl pir_pipeline::Observer for HistoryProgress {
-    fn finished(
-        &mut self,
-        phase: pir_pipeline::Phase,
-        elapsed: std::time::Duration,
-        succeeded: bool,
-    ) {
-        tracing::debug!(
-            ?phase,
-            seconds = elapsed.as_secs_f64(),
-            succeeded,
-            "history lifecycle phase"
-        );
-    }
-}
-
 // Product-owned tokens retain the immutable source snapshot and activation
 // evidence. The shared engine owns neither stores nor publication authority.
 struct HistoryWork {
@@ -702,6 +694,7 @@ struct HistoryCandidate {
 
 type HistorySeal = fn(&Geometry) -> DecoupledPolicy;
 
+#[cfg(all(test, feature = "fixtures", feature = "qualification-tests"))]
 async fn publish_once(
     config: &Config,
     rpc: &NodeClient,
@@ -720,6 +713,7 @@ async fn publish_once(
     .await
 }
 
+#[cfg(all(test, feature = "fixtures"))]
 async fn publish_candidate(
     config: &Config,
     rpc: &NodeClient,
@@ -729,39 +723,50 @@ async fn publish_candidate(
     archive_geometry: Option<String>,
     recent_from: Option<u64>,
 ) -> Result<(), BoxError> {
-    let input = pir_pipeline::acquire(
-        acquire_history(config, rpc, store, authority),
-        &mut HistoryProgress,
-    )
-    .await?;
-    struct Foreground<'a>(&'a AtomicU64);
-    impl Drop for Foreground<'_> {
-        fn drop(&mut self) {
-            self.0.fetch_sub(1, Ordering::AcqRel);
-        }
-    }
-    let _foreground = matches!(input, Input::Work(_)).then(|| {
-        authority.0.foreground.fetch_add(1, Ordering::AcqRel);
-        Foreground(&authority.0.foreground)
-    });
-    pir_pipeline::publisher::PublicationPass::new(
-        async { Ok::<_, BoxError>(input) },
-        |work| {
-            prepare_candidate(
+    use pir_pipeline::publisher::PublisherExecutor;
+    if let Input::Work(work) = acquire_history(config, rpc, store, authority).await? {
+        crate::host_engine::PublisherEngine
+            .publish(preparation::HistoryPreparation::new(
                 config,
                 rpc,
                 authority,
                 work,
                 seal,
-                archive_geometry.clone(),
+                archive_geometry,
                 recent_from,
-            )
-        },
-        |candidate| activate_history(config, rpc, authority, candidate),
-    )
-    .run(&mut HistoryProgress)
-    .await?;
+            ))
+            .await?;
+    }
     Ok(())
+}
+#[cfg(all(test, feature = "fixtures"))]
+async fn prepare_candidate<'a>(
+    config: &'a Config,
+    rpc: &'a NodeClient,
+    authority: &'a Authority,
+    work: HistoryWork,
+    seal: HistorySeal,
+    archive_geometry: Option<String>,
+    recent_from: Option<u64>,
+) -> Result<
+    Input<crate::host_engine::PreparedPublication<preparation::HistoryPreparation<'a>>>,
+    BoxError,
+> {
+    match crate::host_engine::PublisherEngine
+        .prepare(preparation::HistoryPreparation::new(
+            config,
+            rpc,
+            authority,
+            work,
+            seal,
+            archive_geometry,
+            recent_from,
+        ))
+        .await
+    {
+        Err(_) if authority.0.shutdown.requested() => Ok(Input::Unchanged),
+        result => result.map(Input::Work),
+    }
 }
 
 async fn acquire_history(
@@ -818,182 +823,6 @@ async fn acquire_history(
     }))
 }
 
-async fn prepare_candidate(
-    config: &Config,
-    rpc: &NodeClient,
-    authority: &Authority,
-    work: HistoryWork,
-    seal: HistorySeal,
-    archive_geometry: Option<String>,
-    recent_from: Option<u64>,
-) -> Result<Input<HistoryCandidate>, BoxError> {
-    let HistoryWork {
-        old,
-        epoch,
-        snapshot,
-        height,
-        hash,
-    } = work;
-    let started = std::time::Instant::now();
-    // A stop ends preparation as a normal outcome: the active publication is
-    // untouched and activation never begins. Blocking work is always awaited.
-    let stopped = || {
-        tracing::info!(height, "candidate preparation stopped by shutdown");
-        Ok(Input::Unchanged)
-    };
-    if authority.0.shutdown.requested() {
-        return stopped();
-    }
-    // Asked by every interruptible blocking step below, between its units.
-    let stop = {
-        let authority = authority.clone();
-        move || {
-            authority.0.shutdown.requested() || authority.0.epoch.load(Ordering::Acquire) != epoch
-        }
-    };
-    let same = height == old.publication.height && hash == old.publication.hash;
-    let directory = if same {
-        old.publication.directory.clone()
-    } else {
-        config.publication_root.join(format!(
-            "candidate-{height}-{hash}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
-        ))
-    };
-    // What storing this candidate's segments and runtimes, verifying its
-    // tables and listing its inventory cost, for the cycle record.
-    let mut storage = serde_json::json!({});
-    // Prefix equality, not publication height alone, determines reuse after forks.
-    if !same {
-        std::fs::create_dir(&directory)?;
-        let options = PublishOptions {
-            data_dir: config.data_dir.clone(),
-            output: directory.clone(),
-            previous: Some(old.publication.directory.clone()),
-            recent_geometry: config.recent_geometry.clone(),
-            archive_geometry,
-            recent_from,
-            zakura_rpc_url: config.rpc_url.clone(),
-            zakura_cookie: config.rpc_cookie.clone(),
-            through: Some(height),
-            record: Some(directory.join("publication.json")),
-            source_sha: Some(config.source_sha.clone()),
-            directory_choice: config.directory_choice,
-            range_profile: config.range_profile.clone(),
-        };
-        let stop = stop.clone();
-        // Publications store each table segment once beside them.
-        let output = directory.clone();
-        let published = tokio::task::spawn_blocking(move || {
-            publication::publish_until(
-                &options,
-                &snapshot,
-                BlockHash::from_internal_bytes([0; 32]),
-                &seal,
-                &stop,
-            )?;
-            let adopted = crate::history::store::adopt_segments(&output, &stop)?;
-            tracing::info!(?adopted, "stored candidate table segments");
-            Ok::<_, BoxError>(adopted)
-        })
-        .await?;
-        match published {
-            Err(_) if authority.0.shutdown.requested() => return stopped(),
-            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
-                return Err("candidate invalidated while preparing".into())
-            }
-            result => storage["segments"] = serde_json::to_value(result?)?,
-        }
-    }
-    if authority.0.shutdown.requested() {
-        return stopped();
-    }
-    let mut candidate = read_public(directory.clone(), Vec::new())?;
-    authority.0.status.write().unwrap()["candidate_height"] = height.into();
-    let published_unix = unix_now();
-    let runtimes = match prepare_runtimes(config, authority, &directory, epoch, &mut storage).await
-    {
-        Err(_) if authority.0.shutdown.requested() => return stopped(),
-        result => result?,
-    };
-    {
-        // Reuse the exact verified set just used to prepare the candidate.
-        let set = authority
-            .0
-            .prepared_set
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or("prepared distribution has no verified candidate")?;
-        let root = directory.clone();
-        let cutoff = config.recent_from;
-        let mut checked = std::mem::take(&mut *authority.0.checked_runtimes.lock().unwrap());
-        let started = std::time::Instant::now();
-        let stop = stop.clone();
-        let (set, checked, distribution) = tokio::task::spawn_blocking(move || {
-            let result = transparent_shared::publication::Finalized::prepare_reusing_until(
-                &root,
-                &set,
-                cutoff,
-                true,
-                &mut checked,
-                &stop,
-            );
-            (set, checked, result)
-        })
-        .await?;
-        tracing::info!(
-            loaded = checked.loaded,
-            reused = checked.reused,
-            bytes_hashed = checked.bytes_hashed,
-            bytes_reused = checked.bytes_reused,
-            seconds = started.elapsed().as_secs_f64(),
-            "prepared distribution inventory"
-        );
-        storage["inventory"] = serde_json::json!({
-            "runtimes_loaded": checked.loaded,
-            "runtimes_reused": checked.reused,
-            "bytes_hashed": checked.bytes_hashed,
-            "bytes_reused": checked.bytes_reused,
-        });
-        *authority.0.checked_runtimes.lock().unwrap() = checked;
-        *authority.0.prepared_set.lock().unwrap() = Some(set);
-        candidate.distribution = Some(match distribution {
-            Err(_) if authority.0.shutdown.requested() => return stopped(),
-            Err(error) if error.is::<transparent_shared::publication::Stopped>() => {
-                return Err("candidate invalidated while preparing".into())
-            }
-            result => result?,
-        });
-    }
-    if authority.0.shutdown.requested() {
-        return stopped();
-    }
-    if authority.0.epoch.load(Ordering::Acquire) != epoch
-        || rpc.block_hash_display(height).await? != hash
-    {
-        return Err("candidate invalidated while preparing".into());
-    }
-    // Shutdown can arrive while the canonicality request is awaiting its reply.
-    if authority.0.shutdown.requested() {
-        return stopped();
-    }
-    let prepared_unix = unix_now();
-    Ok(Input::Work(HistoryCandidate {
-        candidate,
-        epoch,
-        height,
-        hash,
-        started,
-        published_unix,
-        prepared_unix,
-        runtimes,
-        storage,
-    }))
-}
-
 /// Publication roots whose next activation a test interrupts once its intent
 /// is written, as a process dying there would.
 #[cfg(test)]
@@ -1017,13 +846,8 @@ async fn activate_history(
         runtimes,
         storage,
     } = ready;
-    // The candidate is only evidence. Recheck at the owner boundary before
-    // writing activation intent.
-    if authority.0.epoch.load(Ordering::Acquire) != epoch
-        || rpc.block_hash_display(height).await? != hash
-        // Ingest can invalidate while the canonicality RPC is awaiting its reply.
-        || authority.0.epoch.load(Ordering::Acquire) != epoch
-    {
+    // The host rechecked this exact source immediately before entering commit.
+    if authority.0.epoch.load(Ordering::Acquire) != epoch {
         return Err("candidate invalidated before activation".into());
     }
     // The node request can outlive a stop request. Until activation intent is
@@ -1054,7 +878,7 @@ async fn activate_history(
             &serde_json::to_vec(&record)?,
         )?;
     }
-    publication::write_atomic(
+    publication::write_durable(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&candidate.publication)?,
     )?;
@@ -1085,10 +909,13 @@ async fn activate_history(
         .fold(0f64, f64::max);
     {
         let _gate = authority.0.publication_gate.lock().unwrap();
+        if authority.0.shutdown.requested() {
+            return Err(transparent_shared::publication::Stopped.into());
+        }
         if authority.0.epoch.load(Ordering::Acquire) != epoch {
             return Err("reorg raced the public pointer commit".into());
         }
-        publication::write_atomic(
+        publication::write_durable(
             &config.publication_root.join("active.json"),
             &serde_json::to_vec(&candidate.publication)?,
         )?;
@@ -2213,12 +2040,15 @@ mod tests {
         }
     }
 
-    async fn prepare_follow(
-        config: &Config,
-        rpc: &NodeClient,
-        authority: &Authority,
+    async fn prepare_follow<'a>(
+        config: &'a Config,
+        rpc: &'a NodeClient,
+        authority: &'a Authority,
         work: HistoryWork,
-    ) -> Result<Input<HistoryCandidate>, BoxError> {
+    ) -> Result<
+        Input<crate::host_engine::PreparedPublication<preparation::HistoryPreparation<'a>>>,
+        BoxError,
+    > {
         #[cfg(not(feature = "qualification-tests"))]
         {
             return prepare_candidate(config, rpc, authority, work, two_script_seal, None, None)
@@ -2472,7 +2302,8 @@ mod tests {
             panic!("prepared candidate expected");
         };
         authority.0.epoch.fetch_add(1, Ordering::AcqRel);
-        assert!(activate_history(&config, &client, &authority, ready)
+        assert!(ready
+            .commit()
             .await
             .unwrap_err()
             .to_string()
@@ -2553,7 +2384,7 @@ mod tests {
             .err()
             .expect("an invalidated candidate must not prepare")
             .to_string()
-            .contains("candidate invalidated while preparing"));
+            .contains("candidate invalidated"));
         assert_eq!(authority.0.active.read().unwrap().publication.height, 2);
         publish_follow(&config, &client, &store, &authority)
             .await

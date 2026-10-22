@@ -180,6 +180,16 @@ impl DisplayRevision {
         size_only: bool,
         stop: Stop<'_>,
     ) -> Result<Self, LoadError> {
+        let physical = crate::verification::revision_directory(
+            self.dir
+                .parent()
+                .ok_or_else(|| invalid("display revision has no publication directory"))?,
+            &self.dir,
+        )
+        .map_err(|source| LoadError::Io {
+            path: self.dir.clone(),
+            source,
+        })?;
         let earlier = earlier.filter(|earlier| earlier.digest == self.digest && earlier.held());
         let geometry = self.geometry;
         let shard_id = self.manifest.shard_id;
@@ -203,7 +213,7 @@ impl DisplayRevision {
                     )));
                 }
                 let source = SegmentSource::published(
-                    self.dir.join(table.file_name(index)),
+                    physical.join(table.file_name(index)),
                     rows,
                     row_bytes,
                     segment.sha256.clone(),
@@ -406,7 +416,16 @@ impl DisplaySet {
                 source,
             })?;
             if entry.path().is_dir() {
-                let revision = DisplayRevision::read(&entry.path())?;
+                let path = crate::verification::revision_directory(dir, &entry.path()).map_err(
+                    |source| LoadError::Io {
+                        path: entry.path(),
+                        source,
+                    },
+                )?;
+                let mut revision = DisplayRevision::read(&path)?;
+                // Membership and runtime files belong to the publication;
+                // only table reads use the checked physical catalog target.
+                revision.dir = entry.path();
                 found.insert(revision.digest.clone(), revision);
             } else if ShippedRuntimes::is_entry(&entry.file_name().to_string_lossy()) {
                 shipped = Some(ShippedRuntimes::new(dir.to_path_buf()));

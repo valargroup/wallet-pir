@@ -11,27 +11,49 @@ pub(super) struct HistoryPublication {
     pub(super) ingest: tokio::task::JoinHandle<Result<(), BoxError>>,
     pub(super) updates: tokio::sync::watch::Receiver<u64>,
 }
-impl pir_pipeline::publisher::Workflow for HistoryPublication {
+impl pir_pipeline::publisher::Publisher for HistoryPublication {
     type Error = BoxError;
-    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
+    type Report = ();
+    type Publication<'a>
+        = preparation::HistoryPreparation<'a>
+    where
+        Self: 'a;
+    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
         if self.server.is_finished() || self.ingest.is_finished() {
             return Err("history publisher background service stopped".into());
         }
-        if let Err(error) =
-            publish_once(&self.config, &self.rpc, &self.store, &self.authority).await
-        {
-            if self.shutdown.requested() {
-                tracing::info!(%error, "publication cycle ended by shutdown");
-                return Ok(pir_pipeline::publisher::Control::Continue);
-            }
+        Ok(
+            match acquire_history(&self.config, &self.rpc, &self.store, &self.authority).await? {
+                Input::Work(work) => Input::Work(preparation::HistoryPreparation::new(
+                    &self.config,
+                    &self.rpc,
+                    &self.authority,
+                    work,
+                    DecoupledPolicy::for_geometry,
+                    Some(self.config.archive_geometry.clone()),
+                    Some(self.config.recent_from),
+                )),
+                Input::Unchanged => Input::Unchanged,
+                Input::Deferred => Input::Deferred,
+            },
+        )
+    }
+    fn failed(&mut self, error: &BoxError) -> pir_pipeline::FailurePolicy {
+        if self.server.is_finished() || self.ingest.is_finished() {
+            return pir_pipeline::FailurePolicy::Stop;
+        }
+        if !self.shutdown.requested() {
             self.authority
                 .0
                 .publication_failures
                 .fetch_add(1, Ordering::Relaxed);
-            tracing::error!(%error,"publication failed; keeping valid coverage and retrying");
+            tracing::error!(%error, "publication failed; keeping valid coverage and retrying");
             self.authority.0.status.write().unwrap()["publication_error"] =
                 error.to_string().into();
         }
+        pir_pipeline::FailurePolicy::NextPoll
+    }
+    fn settled(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
         let public_height = self.authority.0.active.read().unwrap().publication.height;
         let oldest = self
             .authority

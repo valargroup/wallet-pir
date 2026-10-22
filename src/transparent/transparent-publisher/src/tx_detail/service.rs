@@ -36,7 +36,12 @@ impl Config {
         Ok(())
     }
 }
-pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Result<(), BoxError> {
+pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+    config: Config,
+    executor: E,
+    http: Http<axum::Router>,
+    stop: Shutdown,
+) -> Result<(), BoxError> {
     config.validate()?;
     let store = open_writer(&config.journal)?;
     let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
@@ -67,7 +72,7 @@ pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Re
         result
     });
     owner.own(&watcher);
-    let result = controller.run_until(stop.clone()).await;
+    let result = controller.run_until(executor, stop.clone()).await;
     if !matches!(&result, Ok(Outcome::Idle)) {
         distribution.withdraw(0)?;
     }

@@ -8,7 +8,7 @@ mod retention;
 use crate::{
     chain_source::ZakuraClient,
     durable_state::{DistributionState, RetainedPublication},
-    publication::{self, read_metadata, PreparedPublication},
+    publication::{read_metadata, PreparedPublication},
 };
 use axum::{
     extract::DefaultBodyLimit,
@@ -131,94 +131,42 @@ impl PublicationDistribution {
     /// Install a completed publication after hashing every object it names.
     /// No consumer address or acknowledgment participates; the only remote
     /// dependency is the canonical chain source.
-    pub async fn publish(&self, manifest: Manifest, inventory: Inventory) -> Result<(), String> {
-        if !inventory.supports(&manifest)? {
-            return Err("inventory differs from wallet manifest".into());
-        }
-        self.install_publication(
-            manifest,
-            self.durable_current().withdrawal_revision,
-            move |root| publication::verify_publication(root, inventory),
-        )
-        .await
-    }
-
-    /// Install material this process prepared, rehashing only objects whose
-    /// file changed since preparation hashed it.
-    pub async fn publish_prepared(
+    /// Import checked product material through the host's publication engine.
+    pub async fn publish<E: pir_pipeline::publisher::PublisherExecutor>(
         &self,
         manifest: Manifest,
-        prepared: PreparedPublication,
+        inventory: Inventory,
+        executor: E,
     ) -> Result<(), String> {
-        self.publish_if_unwithdrawn(
-            manifest,
-            prepared,
-            self.durable_current().withdrawal_revision,
-        )
-        .await
-    }
-
-    pub(crate) async fn publish_if_unwithdrawn(
-        &self,
-        manifest: Manifest,
-        prepared: PreparedPublication,
-        withdrawal_revision: u64,
-    ) -> Result<(), String> {
-        if !prepared.inventory().supports(&manifest)? {
-            return Err("inventory differs from wallet manifest".into());
-        }
-        self.install_publication(manifest, withdrawal_revision, move |root| {
-            prepared.recheck(root)
-        })
-        .await
-    }
-
-    async fn install_publication(
-        &self,
-        manifest: Manifest,
-        withdrawal_revision: u64,
-        verify: impl FnOnce(&Path) -> Result<PreparedPublication, String> + Send + 'static,
-    ) -> Result<(), String> {
-        // Use the producer's lock too: collection must not race a candidate
-        // writer, another commit, or verification of a not-yet-current object.
-        let preparation = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.root.join("prepare.lock"))
-            .map_err(|e| e.to_string())?;
-        preparation
-            .try_lock()
-            .map_err(|_| "Enhance publication preparation already owned")?;
-        let predecessor = self.disk.lock().unwrap().current.clone();
-        if predecessor.withdrawal_revision != withdrawal_revision {
-            return Err("Enhance publication withdrawn during preparation".into());
-        }
-        let root = self.root.clone();
-        let prepared = tokio::task::spawn_blocking(move || verify(&root))
+        executor
+            .publish(
+                crate::publisher::preparation::EnhancePublication::inventory(
+                    self, manifest, inventory,
+                )?,
+            )
             .await
-            .map_err(|e| e.to_string())??;
-        let inventory = prepared.inventory();
-        self.check_canonical_anchor(&manifest).await?;
-        let bytes = serde_json::to_vec(inventory).map_err(|e| e.to_string())?;
-        let object = Object {
-            sha256: digest(inventory),
-            bytes: bytes.len() as u64,
-        };
-        if object.bytes > METADATA_LIMIT {
-            return Err("inventory exceeds metadata limit".into());
-        }
-        let directory = self.root.join("inventories");
-        fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-        artifact::write_atomic(&directory, &format!("{}.json", object.sha256), |f| {
-            f.write_all(&bytes)
-        })
-        .map_err(|e| e.to_string())?;
-        File::open(&directory)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+    }
+    pub async fn publish_prepared<E: pir_pipeline::publisher::PublisherExecutor>(
+        &self,
+        manifest: Manifest,
+        prepared: PreparedPublication,
+        executor: E,
+    ) -> Result<(), String> {
+        executor
+            .publish(crate::publisher::preparation::EnhancePublication::prepared(
+                self, manifest, prepared,
+            )?)
+            .await
+    }
+
+    pub(crate) fn commit_candidate(
+        &self,
+        predecessor: &Current,
+        manifest: Manifest,
+        object: Object,
+    ) -> Result<(), String> {
         let mut disk = self.disk.lock().unwrap();
-        if disk.current != predecessor {
+        if disk.current != *predecessor {
             return Err("Enhance publication authority changed during preparation".into());
         }
         for shard in &manifest.coverage.shards {

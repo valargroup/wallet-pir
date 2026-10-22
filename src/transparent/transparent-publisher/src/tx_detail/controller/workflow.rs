@@ -9,16 +9,83 @@ pub(super) struct DetailPublication<'a> {
     pub(super) controller: &'a mut Controller,
     pub(super) wake: Option<DetailWake>,
 }
-impl pir_pipeline::publisher::Workflow for DetailPublication<'_> {
+impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
     type Error = BoxError;
-    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
+    type Report = ();
+    type Publication<'a>
+        = super::preparation::DisplayPreparation<'a>
+    where
+        Self: 'a;
+    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
         match self.wake.take() {
             Some(DetailWake::Background(Some(event))) => self.controller.background(event),
             Some(DetailWake::Background(None)) => unreachable!("the controller holds a sender"),
             Some(DetailWake::Source) => self.controller.poll_source().await?,
             None => {}
         }
-        self.controller.publication_step().await
+        let controller = &mut *self.controller;
+        while let Ok(event) = controller.receiver.try_recv() {
+            controller.background(event);
+        }
+        if controller.halted.is_some() {
+            return Ok(pir_pipeline::Input::Unchanged);
+        }
+        controller.schedule();
+        if controller.retry_at.is_none_or(|t| Instant::now() >= t) {
+            if controller.needs_cycle() {
+                return Ok(pir_pipeline::Input::Work(
+                    super::preparation::DisplayPreparation::new(controller),
+                ));
+            }
+            controller.failures = 0;
+            controller.retry_at = None;
+        }
+        Ok(pir_pipeline::Input::Unchanged)
+    }
+    fn completed(&mut self, _: ()) {
+        self.controller.settings.metrics.cycle_finished(true);
+        self.controller.failures = 0;
+        self.controller.retry_at = None;
+    }
+    fn failed(&mut self, error: &BoxError) -> pir_pipeline::FailurePolicy {
+        if self.controller.shutdown.requested() {
+            return pir_pipeline::FailurePolicy::NextPoll;
+        }
+        let Some(error) = error.downcast_ref::<CycleError>() else {
+            return pir_pipeline::FailurePolicy::Stop;
+        };
+        let controller = &mut *self.controller;
+        controller.settings.metrics.cycle_finished(false);
+        match error {
+            CycleError::Halt(halt) => controller.halt(halt.clone()),
+            CycleError::Retry(error) => {
+                tracing::warn!(%error, "display publication failed; retrying");
+                controller
+                    .timeline
+                    .record("error", json!({"stage": "cycle", "error": error}));
+                controller.retry_at = Some(Instant::now() + backoff(controller.failures));
+                controller.failures += 1;
+                controller.stalled(error);
+                controller.collect();
+            }
+        }
+        pir_pipeline::FailurePolicy::NextPoll
+    }
+    fn settled(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
+        let controller = &mut *self.controller;
+        controller.check_recent_bound();
+        controller.update_status();
+        Ok(
+            if controller.halted.is_some()
+                || (controller.settings.exit_when_idle
+                    && controller.retry_at.is_none()
+                    && controller.idle())
+            {
+                pir_pipeline::publisher::Control::Complete
+            } else {
+                pir_pipeline::publisher::Control::Continue
+            },
+        )
     }
     async fn wait(&mut self) -> Result<(), BoxError> {
         let controller = &mut self.controller;

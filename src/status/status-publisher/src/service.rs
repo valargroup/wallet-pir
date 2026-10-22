@@ -17,19 +17,25 @@ impl Config {
         self.publisher.validate()
     }
 }
-pub async fn run(config: Config, http: Http<axum::Router>, stop: Shutdown) -> Result<()> {
+pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+    config: Config,
+    http: Http<axum::Router>,
+    stop: Shutdown,
+    executor: E,
+) -> Result<()> {
     config.validate()?;
     let publisher = Publisher::new(config.publisher)?;
     let rpc = NodeClient::from_cookie_file(config.rpc_url, config.cookie)?;
     pir_pipeline::publisher::dedicated_runtime("status-publisher", move || async move {
-        publisher.run_managed(rpc, http, stop).await
+        publisher.run_managed(rpc, http, stop, executor).await
     })
     .await
 }
 
 /// Validate and declare this publisher without opening credentials or state.
-pub fn configure(
+pub fn configure<E: pir_pipeline::publisher::PublisherExecutor>(
     config: Config,
+    executor: E,
 ) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
     use pir_pipeline::publisher::{
         PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,
@@ -47,6 +53,6 @@ pub fn configure(
     Ok(PublisherDefinition::new(
         "status",
         resources,
-        move |context| run(config, context.http, context.shutdown),
+        move |context| run(config, context.http, context.shutdown, executor),
     ))
 }

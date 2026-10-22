@@ -921,7 +921,12 @@ async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
     let shutdown = pir_pipeline::service::Shutdown::default();
     shutdown.request();
     let error = distribution
-        .restore_until(initial.candidate.clone(), vec![], shutdown)
+        .restore_until(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+            shutdown,
+        )
         .await
         .unwrap_err();
     assert!(error.is::<transparent_shared::publication::Stopped>());
@@ -931,7 +936,12 @@ async fn a_stopped_display_restore_commits_nothing_and_can_resume() {
         "nothing committed"
     );
     assert!(distribution
-        .restore_until(initial.candidate.clone(), vec![], Default::default())
+        .restore_until(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+            Default::default()
+        )
         .await
         .unwrap());
     assert!(root.join("http-current.json").exists());
@@ -969,7 +979,11 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
     let directory = initial.candidate.clone();
     // The first restore builds the runtimes and self-checks every one.
     assert!(distribution
-        .restore(directory.clone(), vec![])
+        .restore(
+            crate::host_engine::PublisherEngine,
+            directory.clone(),
+            vec![]
+        )
         .await
         .unwrap());
     let (set, loaded, _) = distribution.evidence();
@@ -982,7 +996,13 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
         let shutdown = pir_pipeline::service::Shutdown::default();
         let (checks, stop) = stop_at(u32::MAX, shutdown.clone());
         assert!(distribution
-            .restore_asking(directory.clone(), vec![], shutdown, stop)
+            .restore_asking(
+                crate::host_engine::PublisherEngine,
+                directory.clone(),
+                vec![],
+                shutdown,
+                stop
+            )
             .await
             .unwrap());
         let made = checks.swap(0, Ordering::SeqCst);
@@ -1006,7 +1026,13 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
         let shutdown = pir_pipeline::service::Shutdown::default();
         let (checks, stop) = stop_at(at, shutdown.clone());
         let error = match distribution
-            .restore_asking(directory.clone(), vec![], shutdown, stop)
+            .restore_asking(
+                crate::host_engine::PublisherEngine,
+                directory.clone(),
+                vec![],
+                shutdown,
+                stop,
+            )
             .await
         {
             Ok(_) => panic!(
@@ -1037,7 +1063,10 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
         "the node was not asked"
     );
 
-    assert!(distribution.restore(directory, vec![]).await.unwrap());
+    assert!(distribution
+        .restore(crate::host_engine::PublisherEngine, directory, vec![])
+        .await
+        .unwrap());
     assert_eq!(
         distribution.evidence(),
         (set, 0, reused),

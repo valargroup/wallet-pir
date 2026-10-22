@@ -20,3 +20,9 @@ pub mod rebuild;
 pub mod service;
 
 pub mod commands;
+
+// Exercise the host's actual executor without a product-to-application Cargo edge.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../pir-publisher/src/publisher/engine.rs"]
+mod host_engine;

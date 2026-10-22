@@ -79,7 +79,12 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     let publisher_owner = publisher.clone();
     let _publisher = Abort(tokio::spawn(async move {
         publisher
-            .run_managed(source_rpc, http, pir_pipeline::service::Shutdown::default())
+            .run_managed(
+                source_rpc,
+                http,
+                pir_pipeline::service::Shutdown::default(),
+                crate::host_engine::PublisherEngine,
+            )
             .await
             .unwrap()
     }));

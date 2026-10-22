@@ -369,7 +369,10 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
         .unwrap()
         .unwrap();
     publisher.revoke_after(0).unwrap();
-    assert!(publisher.publish(work).await.is_err());
+    assert!(publisher
+        .publish(work, pir_publisher::publisher::PublisherEngine)
+        .await
+        .is_err());
     assert_eq!(
         journal.tree_size(),
         2,
@@ -390,7 +393,10 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
         .unwrap()
         .unwrap();
     assert_eq!(journal.tree_size(), 2);
-    publisher.publish(work).await.unwrap();
+    publisher
+        .publish(work, pir_publisher::publisher::PublisherEngine)
+        .await
+        .unwrap();
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
     assert!(collect(&mut journal, &publisher, &source).await.is_err());
@@ -401,7 +407,10 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
         .unwrap()
         .unwrap();
     assert_eq!(journal.tree_size(), 2);
-    publisher.publish(work).await.unwrap();
+    publisher
+        .publish(work, pir_publisher::publisher::PublisherEngine)
+        .await
+        .unwrap();
     assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
     node.abort();
 }

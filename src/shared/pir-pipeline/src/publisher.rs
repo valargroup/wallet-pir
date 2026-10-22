@@ -1,10 +1,12 @@
 //! Product-independent publisher lifecycle and registration contracts.
 //! Products keep storage, canonicality and publication authority. The application
 //! supplies HTTP serving; only registration erases concrete workflow types.
+mod operations;
 mod pass;
 mod registration;
 mod runtime;
 pub(crate) mod workflow;
+pub use operations::{Publication, Publisher, PublisherExecutor, PublisherRun};
 pub use pass::PublicationPass;
 pub use registration::{
     PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule, ServiceContext,

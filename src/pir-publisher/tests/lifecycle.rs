@@ -158,39 +158,104 @@ async fn product_startup_failure_is_visible_without_stopping_management() {
 /// A product unknown to the application runs through the real host without any
 /// compiled product feature, controller import or product-specific match arm.
 #[tokio::test]
-async fn a_registered_workflow_runs_without_any_builtin_product() {
+async fn a_registered_publication_requires_completed_and_current_preparation() {
     use pir_pipeline::publisher::{
-        Control, PublicationPass, PublisherDefinition, PublisherResources, PublisherService,
-        ReadinessProbe, ReadinessRule, Workflow,
+        Publication, Publisher, PublisherDefinition, PublisherExecutor, PublisherResources,
+        ReadinessProbe, ReadinessRule,
     };
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
-    struct FakePublication(Arc<AtomicUsize>);
-    impl Workflow for FakePublication {
+    struct ExampleWork {
+        published: Arc<AtomicUsize>,
+        source_valid: Arc<AtomicBool>,
+        reject_material: bool,
+    }
+    impl Publication for ExampleWork {
         type Error = pir_pipeline::publisher::Error;
-        async fn step(&mut self) -> Result<Control, Self::Error> {
-            PublicationPass::new(
-                async { Ok::<_, Self::Error>(pir_pipeline::Input::Work(3)) },
-                |work| async move { Ok(pir_pipeline::Input::Work(work + 1)) },
-                |candidate| async move {
-                    self.0.store(candidate, Ordering::SeqCst);
-                    Ok(())
-                },
-            )
-            .run(&mut ())
-            .await?;
-            Ok(Control::Continue)
+        type Material = usize;
+        type Stored = usize;
+        type Verified = usize;
+        type Candidate = usize;
+        type Report = ();
+        fn check(&self) -> Result<(), Self::Error> {
+            if !self.source_valid.load(Ordering::SeqCst) {
+                return Err("source withdrawn".into());
+            }
+            Ok(())
+        }
+        async fn build(&mut self) -> Result<usize, Self::Error> {
+            Ok(3)
+        }
+        async fn store(&mut self, material: usize) -> Result<usize, Self::Error> {
+            Ok(material + 1)
+        }
+        async fn verify(&mut self, stored: usize) -> Result<usize, Self::Error> {
+            if self.reject_material {
+                return Err("material failed verification".into());
+            }
+            Ok(stored)
+        }
+        async fn assemble(&mut self, verified: usize) -> Result<usize, Self::Error> {
+            Ok(verified)
+        }
+        async fn recheck(&mut self, _: &mut usize) -> Result<(), Self::Error> {
+            self.check()
+        }
+        async fn commit(self, candidate: usize) -> Result<(), Self::Error> {
+            self.published.store(candidate, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    struct ExamplePublisher(Option<ExampleWork>);
+    impl Publisher for ExamplePublisher {
+        type Error = pir_pipeline::publisher::Error;
+        type Report = ();
+        type Publication<'a> = ExampleWork;
+        async fn acquire(&mut self) -> Result<pir_pipeline::Input<ExampleWork>, Self::Error> {
+            Ok(self
+                .0
+                .take()
+                .map_or(pir_pipeline::Input::Unchanged, pir_pipeline::Input::Work))
         }
         async fn wait(&mut self) -> Result<(), Self::Error> {
             std::future::pending().await
         }
     }
+    let engine = pir_publisher::publisher::PublisherEngine;
     let management = port();
     let product = port();
     let published = Arc::new(AtomicUsize::new(0));
     let observed = published.clone();
+    let source_valid = Arc::new(AtomicBool::new(true));
+    let work = |reject_material| ExampleWork {
+        published: published.clone(),
+        source_valid: source_valid.clone(),
+        reject_material,
+    };
+    assert!(engine.publish(work(true)).await.is_err());
+    assert_eq!(
+        observed.load(Ordering::SeqCst),
+        0,
+        "failed preparation is never current"
+    );
+    let prepared = engine.prepare(work(false)).await.unwrap();
+    assert_eq!(
+        observed.load(Ordering::SeqCst),
+        0,
+        "preparation alone grants no authority"
+    );
+    source_valid.store(false, Ordering::SeqCst);
+    assert!(prepared.commit().await.is_err());
+    assert_eq!(
+        observed.load(Ordering::SeqCst),
+        0,
+        "withdrawal fences a retained candidate"
+    );
+    source_valid.store(true, Ordering::SeqCst);
+    let work = work(false);
+
     let definition = PublisherDefinition::new(
         "example_publisher",
         PublisherResources {
@@ -212,8 +277,8 @@ async fn a_registered_workflow_runs_without_any_builtin_product() {
             );
             let mut tasks = pir_pipeline::service::Tasks::default();
             tasks.own(&serving);
-            PublisherService::new(FakePublication(published))
-                .run(context.shutdown.cancelled())
+            engine
+                .run(ExamplePublisher(Some(work)), context.shutdown)
                 .await
         },
     );

@@ -78,7 +78,11 @@ impl Published {
             unit_identities: [(0, domain.plan.units.clone())].into(),
         };
         distribution
-            .publish_prepared(manifest.clone(), prepared)
+            .publish_prepared(
+                manifest.clone(),
+                prepared,
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         Self {

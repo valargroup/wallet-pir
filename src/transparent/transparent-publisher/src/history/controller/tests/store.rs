@@ -652,7 +652,7 @@ async fn collection_keeps_every_object_an_active_pending_or_validating_publicati
     else {
         panic!("a prepared candidate expected");
     };
-    let pending = ready.candidate.publication.clone();
+    let pending = ready.candidate().candidate.publication.clone();
     publication::write_atomic(
         &config.publication_root.join("activation.json"),
         &serde_json::to_vec(&pending).unwrap(),

@@ -249,7 +249,10 @@ impl System {
         .unwrap();
         journal.append_block(height, hash, &records).unwrap();
         publisher
-            .publish(publisher.work(&journal).unwrap().unwrap())
+            .publish(
+                publisher.work(&journal).unwrap().unwrap(),
+                pir_publisher::publisher::PublisherEngine,
+            )
             .await
             .unwrap();
         let publisher_http = serve(distribution_router(publisher.distribution())).await;
@@ -391,7 +394,10 @@ impl System {
             .unwrap()
             .insert(anchor.height, anchor.hash.clone());
         if let Some(work) = self.publisher.work(&self.journal).unwrap() {
-            self.publisher.publish(work).await.unwrap();
+            self.publisher
+                .publish(work, pir_publisher::publisher::PublisherEngine)
+                .await
+                .unwrap();
         }
         let response: AuthorityResponse = self
             .transport

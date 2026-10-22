@@ -1219,7 +1219,11 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         crate::ingest::zakura::connect(format!("http://{node_address}"), cookie).unwrap();
     let distribution = Distribution::new(&display_root, display_rpc).unwrap();
     distribution
-        .finalize(initial.candidate.clone(), vec![])
+        .restore(
+            crate::host_engine::PublisherEngine,
+            initial.candidate.clone(),
+            vec![],
+        )
         .await
         .unwrap();
     let display_tls_root = root.path().join("display-tls");
@@ -1256,6 +1260,18 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         }},
     }))
     .unwrap();
+    // Seed checked display state so the host also exercises rediscovery on restart.
+    let mut details = config
+        .transaction_details
+        .as_ref()
+        .unwrap()
+        .settings
+        .clone()
+        .unwrap();
+    details.verify_only = true;
+    transparent_query_server::tx_detail::process::run(details)
+        .await
+        .unwrap();
     let running = tokio::spawn(pir_query_server::run(
         config,
         pir_pipeline::service::Shutdown::default(),
@@ -1263,18 +1279,27 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
 
     // Both products serve before the publisher changes.
     let ready = format!("http://{}/ready", addrs[0]);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(20);
     loop {
         assert!(!running.is_finished(), "host stopped before serving");
-        if reqwest::get(&ready)
-            .await
+        let response = client.get(&ready).send().await;
+        if response
+            .as_ref()
             .is_ok_and(|response| response.status().is_success())
         {
             break;
         }
+        let state = match response {
+            Ok(response) => response.text().await.unwrap_or_default(),
+            Err(error) => error.to_string(),
+        };
         assert!(
             tokio::time::Instant::now() < deadline,
-            "both products never became ready"
+            "both products never became ready: {state}"
         );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
@@ -1513,13 +1538,29 @@ fn restore_offers_the_exact_prepared_inventory_and_its_bodies_validate() {
     assert_eq!(restored.finalized.sha256(), case.finalized.sha256());
     for artifact in &case.finalized.inventory().artifacts {
         assert_eq!(
-            restored.finalized.file(&artifact.sha256),
-            case.finalized.file(&artifact.sha256),
+            restored
+                .finalized
+                .open_file(&artifact.sha256)
+                .unwrap()
+                .map(|f| {
+                    use std::os::unix::fs::MetadataExt;
+                    let m = f.metadata().unwrap();
+                    (m.dev(), m.ino(), m.len())
+                }),
+            case.finalized
+                .open_file(&artifact.sha256)
+                .unwrap()
+                .map(|f| {
+                    use std::os::unix::fs::MetadataExt;
+                    let m = f.metadata().unwrap();
+                    (m.dev(), m.ino(), m.len())
+                }),
             "{}",
             artifact.path
         );
     }
     let inventory = case.inventory();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     let verified = restored
         .validation
         .integrity(&inventory, None, &|| false)
@@ -1567,9 +1608,11 @@ fn an_imported_stored_publication_restores_unchanged_and_serves_in_flight_reads(
     assert_eq!(restored.finalized.sha256(), case.finalized.sha256());
     let inventory = case.inventory();
     for artifact in &inventory.artifacts {
-        if let Some(path) = restored.finalized.file(&artifact.sha256) {
+        if let Some(mut file) = restored.finalized.open_file(&artifact.sha256).unwrap() {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes).unwrap();
             assert_eq!(
-                transparent_shared::publication::digest(&std::fs::read(path).unwrap()),
+                transparent_shared::publication::digest(&bytes),
                 artifact.sha256,
                 "{}",
                 artifact.path
@@ -1590,12 +1633,12 @@ fn an_imported_stored_publication_restores_unchanged_and_serves_in_flight_reads(
     // A response reading a stored runtime keeps its bytes when the
     // publication is retired and its objects are collected.
     let runtime = case.artifact(Kind::RecentRuntime);
-    let path = restored
+    let path = case.directory.join(&runtime.path).canonicalize().unwrap();
+    let mut in_flight = restored
         .finalized
-        .file(&runtime.sha256)
+        .open_file(&runtime.sha256)
         .unwrap()
-        .to_path_buf();
-    let mut in_flight = std::fs::File::open(&path).unwrap();
+        .unwrap();
     let mut head = vec![0u8; 64];
     in_flight.read_exact(&mut head).unwrap();
     std::fs::remove_dir_all(&case.directory).unwrap();
@@ -1789,6 +1832,7 @@ fn correctness_checks_only_the_inodes_integrity_verified() {
     let inventory = case.inventory();
     let memory = RestoreCase::memory();
     for kind in [Kind::RecentRuntime, Kind::RecentTable] {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         let verified = restored
             .validation
             .integrity(&inventory, None, &|| false)
@@ -2241,7 +2285,12 @@ impl Startup {
             }
         });
         let shutdown = pir_pipeline::service::Shutdown::default();
-        let task = tokio::spawn(run_managed(self.config.clone(), http, shutdown.clone()));
+        let task = tokio::spawn(run_managed(
+            self.config.clone(),
+            crate::host_engine::PublisherEngine,
+            http,
+            shutdown.clone(),
+        ));
         let router = tokio::time::timeout(std::time::Duration::from_secs(20), routed)
             .await
             .expect("router")
@@ -2435,6 +2484,7 @@ async fn restarted_controller_refuses_unusable_evidence_without_suggesting_its_d
         std::time::Duration::from_secs(20),
         run_managed(
             startup.config.clone(),
+            crate::host_engine::PublisherEngine,
             pir_pipeline::service::Http::new(|_, _: Router| std::future::pending()),
             Default::default(),
         ),

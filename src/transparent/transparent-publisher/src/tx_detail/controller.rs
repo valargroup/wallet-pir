@@ -19,6 +19,7 @@
 //! `invalidate.json` before the journal changes. A restart that finds the
 //! journal off the activated chain without such a record rewrites everything
 //! from the recent start.
+mod preparation;
 mod workflow;
 use workflow::DetailPublication;
 
@@ -124,21 +125,9 @@ pub enum Halt {
     SealedEntryChanged(String),
 }
 
-struct DisplayProgress;
-impl pir_pipeline::Observer for DisplayProgress {
-    fn finished(&mut self, phase: pir_pipeline::Phase, elapsed: Duration, succeeded: bool) {
-        tracing::debug!(
-            ?phase,
-            seconds = elapsed.as_secs_f64(),
-            succeeded,
-            "display lifecycle phase"
-        );
-    }
-}
-
 // A prepared publication retains every ordered seal at the queue head. It
 // borrows its controller through `advance`; no store or seal queue is copied.
-struct DisplayCandidate {
+struct DisplayMaterial {
     started: Instant,
     tip: u64,
     tip_hash: String,
@@ -150,14 +139,27 @@ struct DisplayCandidate {
     recent_id: u64,
     recent: PublishedShard,
     map: DisplayMap,
+}
+
+struct DisplayCandidate {
+    material: DisplayMaterial,
     candidate: PathBuf,
     sha: String,
     candidate_ms: u64,
     prebuild: Option<(u64, Vec<Shipped>)>,
 }
+/// Prepared HTTP material and the authority revision under which it was built.
+struct DisplayActivation {
+    distribution: super::distribution::Distribution,
+    revision: Option<u64>,
+    finalized: transparent_shared::tx_detail::distribution::Finalized,
+}
 
+#[derive(Debug, thiserror::Error)]
 enum CycleError {
+    #[error("{0}")]
     Halt(Halt),
+    #[error("{0}")]
     Retry(String),
 }
 
@@ -688,16 +690,20 @@ impl Controller {
 
     /// Runs until halted, or until idle when the settings ask for it.
     /// Journal write failures return an error: restart from its checkpoint.
-    pub async fn run(&mut self) -> Result<Outcome, BoxError> {
-        self.run_until(pir_pipeline::service::Shutdown::default())
+    pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+        &mut self,
+        executor: E,
+    ) -> Result<Outcome, BoxError> {
+        self.run_until(executor, pir_pipeline::service::Shutdown::default())
             .await
     }
-    pub async fn run_until(
+    pub async fn run_until<E: pir_pipeline::publisher::PublisherExecutor>(
         &mut self,
+        executor: E,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<Outcome, BoxError> {
         self.shutdown = shutdown.clone();
-        let result = self.run_loop(shutdown).await;
+        let result = self.run_loop(executor, shutdown).await;
         // Every return path waits for the seal builder before dropping the
         // controller and its exclusive root/journal ownership.
         while self.building {
@@ -707,8 +713,9 @@ impl Controller {
         }
         result
     }
-    async fn run_loop(
+    async fn run_loop<E: pir_pipeline::publisher::PublisherExecutor>(
         &mut self,
+        executor: E,
         shutdown: pir_pipeline::service::Shutdown,
     ) -> Result<Outcome, BoxError> {
         if let Some(reason) = &self.halted {
@@ -722,6 +729,7 @@ impl Controller {
             // A stop ends the restore before it commits; nothing was activated.
             match distribution
                 .restore_until(
+                    executor.clone(),
                     self.active.directory.clone(),
                     vec![self.active.directory.clone()],
                     shutdown.clone(),
@@ -740,60 +748,19 @@ impl Controller {
             }
         }
         self.plan();
-        pir_pipeline::publisher::PublisherService::new(DetailPublication {
-            controller: self,
-            wake: None,
-        })
-        .run(shutdown.cancelled())
-        .await?;
+        executor
+            .run(
+                DetailPublication {
+                    controller: self,
+                    wake: None,
+                },
+                shutdown,
+            )
+            .await?;
         Ok(match &self.halted {
             Some(reason) => Outcome::Halted(reason.clone()),
             None => Outcome::Idle,
         })
-    }
-
-    async fn publication_step(&mut self) -> Result<pir_pipeline::publisher::Control, BoxError> {
-        while let Ok(event) = self.receiver.try_recv() {
-            self.background(event);
-        }
-        if self.halted.is_some() {
-            return Ok(pir_pipeline::publisher::Control::Complete);
-        }
-        self.schedule();
-        if self.retry_at.is_none_or(|t| Instant::now() >= t) {
-            let result = if self.needs_cycle() {
-                let result = self.cycle().await;
-                self.settings.metrics.cycle_finished(result.is_ok());
-                Some(result)
-            } else {
-                None
-            };
-            match result {
-                None | Some(Ok(())) => {
-                    self.failures = 0;
-                    self.retry_at = None;
-                }
-                Some(Err(CycleError::Halt(halt))) => self.halt(halt),
-                Some(Err(CycleError::Retry(error))) => {
-                    tracing::warn!(%error, "display publication failed; retrying");
-                    self.timeline
-                        .record("error", json!({"stage": "cycle", "error": error}));
-                    self.retry_at = Some(Instant::now() + backoff(self.failures));
-                    self.failures += 1;
-                    self.stalled(&error);
-                    self.collect();
-                }
-            }
-        }
-        self.check_recent_bound();
-        self.update_status();
-        if self.halted.is_some() {
-            return Ok(pir_pipeline::publisher::Control::Complete);
-        }
-        if self.settings.exit_when_idle && self.retry_at.is_none() && self.idle() {
-            return Ok(pir_pipeline::publisher::Control::Complete);
-        }
-        Ok(pir_pipeline::publisher::Control::Continue)
     }
 
     async fn poll_source(&mut self) -> Result<(), BoxError> {
@@ -1071,33 +1038,12 @@ impl Controller {
         }
     }
 
-    /// Publishes the current tip and every publishable seal at the queue's
-    /// head.
-    async fn cycle(&mut self) -> Result<(), CycleError> {
-        pir_pipeline::publisher::PublicationPass::new(
-            async { Ok::<_, CycleError>(Input::Work(self)) },
-            |controller| async move {
-                match controller.prepare_cycle().await? {
-                    Input::Work(candidate) => Ok(Input::Work((controller, candidate))),
-                    Input::Unchanged => Ok(Input::Unchanged),
-                    Input::Deferred => Ok(Input::Deferred),
-                }
-            },
-            |(controller, candidate)| async move { controller.activate_cycle(candidate).await },
-        )
-        .run(&mut DisplayProgress)
-        .await?;
-        Ok(())
-    }
-
-    async fn prepare_cycle(&mut self) -> Result<Input<DisplayCandidate>, CycleError> {
+    /// Build the recent shard and map from the committed cache and ordered seals.
+    async fn build_cycle(&mut self) -> Result<DisplayMaterial, CycleError> {
         let started = Instant::now();
         let (tip, tip_hash) = self.cache.tip().ok_or_else(|| retry("empty cache"))?;
         let tip_hash = tip_hash.to_display_hex();
         let count = self.publishable();
-        if count == 0 && (tip, &tip_hash) == (self.published_tip.0, &self.published_tip.1) {
-            return Ok(Input::Deferred);
-        }
         let built: Vec<&SealJob> = self.queue.iter().take(count).collect();
         let new_seals: Vec<SealRecord> = built.iter().map(|j| j.record()).collect();
         let mut archives: Vec<DisplayMapEntry> = self
@@ -1180,7 +1126,7 @@ impl Controller {
             stopped
         };
         if stopped(self) {
-            return Ok(Input::Unchanged);
+            return Err(retry("display publication stopped"));
         }
         let parts = self.cache.records(recent_start..=tip);
         let (root, layout) = (self.root.clone(), self.layout.clone());
@@ -1189,22 +1135,14 @@ impl Controller {
                 .await
                 .map_err(retry)??;
         if stopped(self) {
-            return Ok(Input::Unchanged);
+            return Err(retry("display publication stopped"));
         }
         let map = self.layout.map(&archives, recent.entry.clone());
         map.check_shape()
             .map_err(|e| CycleError::Halt(Halt::SealedEntryChanged(e)))?;
         check_sealed_continuity(&self.map, &map, dropped.len())
             .map_err(|e| CycleError::Halt(Halt::SealedEntryChanged(e)))?;
-        let candidate_started = Instant::now();
-        let (candidate, sha) = write_candidate(&self.root, &map).map_err(retry)?;
-        let candidate_ms = ms(candidate_started);
-        let prebuild = self.prebuild(&candidate, &recent.digest).await;
-        if stopped(self) {
-            return Ok(Input::Unchanged);
-        }
-
-        Ok(Input::Work(DisplayCandidate {
+        Ok(DisplayMaterial {
             started,
             tip,
             tip_hash,
@@ -1216,31 +1154,34 @@ impl Controller {
             recent_id,
             recent,
             map,
-            candidate,
-            sha,
-            candidate_ms,
-            prebuild,
-        }))
+        })
     }
 
-    async fn activate_cycle(&mut self, candidate: DisplayCandidate) -> Result<(), CycleError> {
+    async fn activate_cycle(
+        &mut self,
+        candidate: DisplayCandidate,
+        finalized: Option<DisplayActivation>,
+    ) -> Result<(), CycleError> {
         let DisplayCandidate {
-            started,
-            tip,
-            tip_hash,
-            new_seals,
-            dropped,
-            floor,
-            unsealed,
-            recent_start,
-            recent_id,
-            recent,
-            map,
+            material,
             candidate,
             sha,
             candidate_ms,
             prebuild,
         } = candidate;
+        let DisplayMaterial {
+            started,
+            tip,
+            tip_hash,
+            new_seals,
+            dropped,
+            floor,
+            unsealed,
+            recent_start,
+            recent_id,
+            recent,
+            map,
+        } = material;
         // A stop requested during preparation abandons the unactivated
         // candidate. Once finalization begins, it and its commit finish.
         if self.shutdown.requested() {
@@ -1257,10 +1198,14 @@ impl Controller {
             self.rollback = None;
         }
         let finalize_started = Instant::now();
-        if let Some(distribution) = &self.settings.distribution {
+        if let Some(DisplayActivation {
+            distribution,
+            revision,
+            finalized,
+        }) = finalized
+        {
             distribution
-                .finalize(candidate.clone(), vec![self.active.directory.clone()])
-                .await
+                .commit(finalized, revision, &self.shutdown)
                 .map_err(retry)?;
         }
         let activate_ms = ms(finalize_started);

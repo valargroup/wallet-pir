@@ -1421,7 +1421,7 @@ impl ShardSet {
                 path: dir.to_path_buf(),
                 source,
             })?;
-            let path = entry.path();
+            let mut path = entry.path();
             if path.is_symlink()
                 && entry
                     .file_name()
@@ -1433,27 +1433,12 @@ impl ShardSet {
                 continue;
             }
             if path.is_symlink() {
-                // Fleet publications may reference a revision stored once in
-                // this worker's sibling catalog. Do not accept redirects out
-                // of that catalog or through another symlink.
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                let catalog = dir.parent().unwrap_or(dir).join(".sources");
-                let target = catalog.join(name.as_ref());
-                let expected = Path::new("../.sources").join(name.as_ref());
-                if name.len() != 64
-                    || !name
-                        .bytes()
-                        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
-                    || std::fs::read_link(&path).ok().as_ref() != Some(&expected)
-                    || !std::fs::symlink_metadata(&catalog).is_ok_and(|m| m.is_dir())
-                    || !std::fs::symlink_metadata(&target).is_ok_and(|m| m.is_dir())
-                {
-                    return Err(LoadError::Invalid(format!(
-                        "invalid revision catalog link: {}",
-                        path.display()
-                    )));
-                }
+                path = crate::verification::revision_directory(dir, &path).map_err(|source| {
+                    LoadError::Io {
+                        path: path.clone(),
+                        source,
+                    }
+                })?;
             } else if !path.is_dir() {
                 continue;
             }
@@ -1463,7 +1448,7 @@ impl ShardSet {
             // digest is still required, so the source of a revision is
             // unambiguous.
             if by_digest
-                .insert(meta.digest.clone(), (entry.path(), meta))
+                .insert(meta.digest.clone(), (path, meta))
                 .is_some()
             {
                 return Err(LoadError::Invalid(format!(
