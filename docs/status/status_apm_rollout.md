@@ -16,8 +16,10 @@ PIR_APM_STATUS_TOPOLOGY='Enhance host → CPU router + worker'
 ```
 
 The first source is local. Router and worker monitoring use the existing
-`status-control-tunnel` authenticated SSH forwards. Public monitoring does not
-expose these private listeners. No new credentials were created for this change.
+`wallet-pir-control-sessions` supervised SSH forwards. HTTPS publication replaces
+artifact forwarding; it does not replace these monitoring connections. Public
+monitoring does not expose these private listeners. No new credentials were
+created for this change.
 The old synthetic monitoring tunnel on port 8384 was retired with the P4000 host.
 
 The APM scraper fetches all three role samples every five seconds. Publication
@@ -27,7 +29,7 @@ role scrape marks the aggregate unavailable/stale and preserves the previous
 sample. Failure to obtain a valid manifest is shown as publication unavailable,
 separately from monitoring reachability. Observation age uses the 20-second gate.
 
-Deployed sidecar:
+Recorded sidecar from the original APM rollout (not a current binary check):
 `/opt/enhance-pir/releases/apm-live-d04da53aed43306a/pir-apm`.
 SHA-256: `d04da53aed43306ad51742599aa86f3ada32206768b6a817f7268b6dc9a63b18`.
 The existing systemd override and credential-loading wrapper are retained.
@@ -67,11 +69,13 @@ latencies remain blank until requests occur across successful scrapes.
 cargo test --locked -p pir-apm
 cargo clippy --locked -p pir-apm --all-targets -- -D warnings
 curl -fsS 'https://enhance-pir.valargroup.dev/apm/?pane=status'
-ssh root@167.99.42.60 'systemctl is-active pir-apm status-control-tunnel'
+ssh-check root@167.99.42.60 -- systemctl is-active pir-apm wallet-pir-control-sessions
 ```
 
-Public Status serving remains disabled pending qualification. Monitoring the live
-roles does not enable public Status queries or imply that load gates have passed.
+Status publication uses HTTPS, while public wallet requests retain the existing
+`/v1/status/*` routes. Check those routes and independent encrypted answers to
+verify serving; monitoring reachability alone does not establish serving health
+or completion of load qualification.
 
 ## Rollback
 

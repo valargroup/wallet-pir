@@ -1,8 +1,8 @@
 # Status prepared-publication distribution
 
-This is the source interface for autonomous Status HTTPS consumers. It does not
-claim a production cutover. Retained deployment records describe the binary and
-configuration that were actually observed at their stated times.
+Status uses autonomous HTTPS publication. This page describes the source
+interface and operating model; retained deployment records describe the binary
+and configuration observed at their stated times.
 
 ## Ownership and data flow
 
@@ -79,8 +79,8 @@ Authority/revocation records are never garbage-collected with artifact files.
 
 ## Timing and wallet compatibility
 
-The shared loop currently waits about five seconds after successful passes and
-backs off after failures. The old five-second publisher-contact watchdog and
+Status configures the shared loop to wait one second after successful passes
+and back off after failures. The old five-second publisher-contact watchdog and
 push preparation/activation routes are removed. Retry timing is scheduling,
 never permission to answer queries.
 
@@ -108,61 +108,17 @@ installed additional trust root. The router's `worker_origin` remains a loopback
 HTTP evaluation address. The typed examples live beside `tools/status/deploy/`.
 Old push-mode settings are rejected rather than selecting a compatibility mode.
 
-## Production preparation and rollback
+## Operations and qualification
 
-`tools/scripts/wallet-pir-deploy.py status-https-{plan,preflight,deploy,status,rollback}`
-is the supported direct-cutover path. This PR prepares that path; using `deploy`
-requires a separate production decision and qualified release artifacts.
+Use the [fleet operator guide](../operations.md) for normal deployment, status
+and rollback procedures. The one-time push-to-HTTPS cutover commands are retired;
+new deployments use the HTTPS role configurations directly. Retained transaction
+records and predecessor state are historical evidence, not configuration inputs.
 
-A private `status-https-cutover/1` request pins the full source revision, existing
-public HTTPS origin, machine identities, the publisher/worker/router installed
-configuration hashes, staged binary paths/digests and desired configurations.
-Every binary must already be in its immutable digest-named release directory.
-The request also binds the fleet's independent encrypted-answer probes for
-Enhance, Status, Transparent history and transaction details.
-
-`plan` is read-only. `preflight` checks the current identities and files, validates
-candidate configurations in temporary copies, validates the TLS edge and runs
-baseline probes. It does not open a second writer against live source state.
-Measured publisher CPU/memory and active/candidate storage requirements remain
-release gates; the free-space floor alone is not proof of capacity.
-
-The reviewed `plan_sha256` is required by `deploy`. Under the existing production
-lock it journals the previous configuration, executable identities and every
-intent; preserves credential launchers, other products and wallet routes; installs
-only the Status configurations, service overrides, fleet variables and new TLS
-distribution handler; then starts the publisher and both consumers. New consumer
-state directories are separate from the predecessor directories.
-
-The twenty-minute recovery window starts at the first service-affecting change.
-Every forward effect checks that window; service commands use its remaining
-time. Expiration goes directly to restoration without starting another candidate.
-The runner verifies executable identities, fresh readiness and all four independent
-answer probes. Failure or expiration starts rollback. Run this operation in the
-persistent operator job infrastructure: a durable journal permits recovery after
-runner failure, but does not itself execute rollback if the runner disappears.
-
-If an operator interrupts restoration after the three services have stopped,
-`status-https-resume` accepts the same request and reviewed plan digest. It checks
-machine identities, staged executables, unit definitions and every managed file
-against the retained transaction before reapplying the candidate and starting it.
-It retains the original recovery deadline. A resumed attempt holds the candidate
-on failure rather than starting another automatic rollback; inspect its status
-and repair the reported failure before making the next operator decision.
-
-With the same request and its exact checksum, recover using:
-
-```sh
-python3 tools/scripts/wallet-pir-deploy.py --inventory "$INV" --state-dir "$STATE" \
-  status-https-status --request "$REQUEST" --request-sha256 "$REQUEST_SHA"
-python3 tools/scripts/wallet-pir-deploy.py --inventory "$INV" --state-dir "$STATE" \
-  status-https-rollback --request "$REQUEST" --request-sha256 "$REQUEST_SHA"
-```
-
-Rollback refuses foreign managed-file or unit changes and changed rollback
-executables. It restores the captured configuration and verifies the predecessor
-services and independent answers. New synchronization directories and safety
-records remain intact; no journal, source history or revocation record is erased.
+Publication no longer needs an SSH artifact reverse forward. The shared session
+supervisor still carries private worker/router monitoring and the wallet query
+connection. The publisher's private listener remains the upstream for the HTTPS
+edge; the router's worker connection remains private encrypted evaluation.
 
 The external-worker installation rehearsal proves process identity and restart
 only when no real HTTPS publication is configured. It reports encrypted answers

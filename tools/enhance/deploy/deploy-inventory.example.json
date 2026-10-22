@@ -233,7 +233,7 @@
               "network_hex": "08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400",
               "state_dir": "/var/lib/status-pir-worker-native",
               "listen": "127.0.0.1:8481",
-              "artifact_origin": "http://127.0.0.1:8495",
+              "publisher": "https://enhance.example",
               "worker_origin": "http://127.0.0.1:8481"
             }
           }
@@ -245,7 +245,7 @@
               "network_hex": "08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400",
               "state_dir": "/var/lib/status-pir-router-native",
               "listen": "127.0.0.1:8482",
-              "artifact_origin": "http://127.0.0.1:8481",
+              "publisher": "https://enhance.example",
               "worker_origin": "http://127.0.0.1:8481",
               "query_listen": "127.0.0.1:8484"
             }

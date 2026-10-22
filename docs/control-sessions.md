@@ -90,7 +90,11 @@ The key line is
   listeners to the configured literal `IPv4:port` endpoints.
 
 For the Status example the generator reproduces the key line in
-`tools/infra/digitalocean/status/cloud-init.yaml.tftpl` byte for byte.
+`tools/infra/digitalocean/status/cloud-init.yaml.tftpl` byte for byte. Status now
+uses only local forwards: worker/router monitoring on 8481/8482 and wallet queries
+on 8492 to the router on 8484. Publication uses HTTPS; no artifact reverse forward
+is configured. Its Match block sets `AllowTcpForwarding local` and
+`PermitListen none`. The publisher listener on 8480 remains the HTTPS edge upstream.
 An empty `permitopen` list would allow every destination, so a key needs at
 least one local forward.
 
@@ -191,8 +195,9 @@ Status query path, so it needs a window.
      old;
    - restart the Status host.
 
-   Rollback is starting the two tunnel units again after stopping the
-   supervisor. Their templates stay in `tools/status/deploy/`.
+   This describes the historical transport swap. The standalone tunnel templates
+   are retired; use the shared supervisor configuration for current deployments.
+   Do not restore the predecessor artifact reverse forward for HTTPS consumers.
 2. **Transparent.**
    - Decide on and build the loopback TCP control endpoint.
    - Add a `pir-control` account through Terraform cloud-init, with its key in

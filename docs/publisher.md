@@ -161,7 +161,7 @@ Only a verified source observation supplies a new timestamp. Immutable artifacts
 are reused across metadata-only publications. Query servers independently fetch,
 verify, load and activate material through `pir-sync-manager`; Status no longer
 uses publisher heartbeats. The twenty-second wallet observation-age limit is
-unchanged. See [Status distribution and cutover](status/status_distributed.md).
+unchanged. See [Status distribution](status/status_distributed.md).
 This describes source capability, not a production cutover record.
 
 ## Autonomous Transparent HTTP prototype

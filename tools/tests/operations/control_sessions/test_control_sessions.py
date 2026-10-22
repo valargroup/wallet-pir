@@ -25,8 +25,6 @@ from wallet_pir_ops import control_sessions as cs, pinned_ssh  # noqa: E402
 
 FAKE_SSH = Path(__file__).resolve().parent / 'fake_ssh.py'
 EXAMPLE = ROOT / 'tools/status/deploy/control-sessions.example.json'
-UNITS = {'status-control': ROOT / 'tools/status/deploy/status-control-tunnel.service.in',
-         'status-query': ROOT / 'tools/status/deploy/status-query-tunnel.service.in'}
 CLOUD_INIT = ROOT / 'tools/infra/digitalocean/status/cloud-init.yaml.tftpl'
 PUBLIC_KEY = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOVJfyTmLRUrVY7xJ3LvsjGEEBPy/b0TkM5A2HpVRZl9 status-control'
 
@@ -127,43 +125,28 @@ class HelperTest(unittest.TestCase):
 
 
 class ConfigTest(unittest.TestCase):
-    def test_status_example_reproduces_both_tunnel_units(self):
+    def test_status_example_keeps_monitoring_and_wallet_forwards_only(self):
         config = cs.Config.parse(status_example())
-        sessions = {s.name: s for s in config.sessions}
-        self.assertEqual(set(sessions), set(UNITS))
-        for name, unit in UNITS.items():
-            with self.subTest(unit=unit.name):
-                line = next(l for l in unit.read_text().splitlines() if l.startswith('ExecStart='))
-                argv = shlex.split(line.removeprefix('ExecStart=').replace('@STATUS_HOST@', '10.124.0.7'))
-                self.assertEqual(argv[0], '/usr/bin/ssh')
-                options = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv) if a == '-o')
+        sessions = {session.name: session for session in config.sessions}
+        expected = {
+            'status-control': (('127.0.0.1:8481', '127.0.0.1:8481'),
+                               ('127.0.0.1:8482', '127.0.0.1:8482')),
+            'status-query': (('127.0.0.1:8492', '127.0.0.1:8484'),),
+        }
+        self.assertEqual(set(sessions), set(expected))
+        for name, forwards in expected.items():
+            with self.subTest(session=name):
                 session = sessions[name]
-                self.assertEqual(argv[-1], session.destination)
-                self.assertEqual(argv[argv.index('-i') + 1], session.identity_file)
-                self.assertEqual(options['UserKnownHostsFile'], session.known_hosts)
-                self.assertEqual(options['StrictHostKeyChecking'], 'yes')
-                self.assertEqual(options['IdentitiesOnly'], 'yes')
-                self.assertEqual(options['ExitOnForwardFailure'], 'yes')
-                self.assertEqual(int(options['ServerAliveInterval']), session.server_alive_interval)
-                self.assertEqual(int(options['ServerAliveCountMax']), session.server_alive_count_max)
-                self.assertEqual('-C' in argv, session.compression)
-                self.assertIn('-N', argv)
-                def split(spec):
-                    parts = spec.split(':')
-                    return ':'.join(parts[:2]), ':'.join(parts[2:])
-                self.assertEqual([split(argv[i + 1]) for i, a in enumerate(argv) if a == '-L'], list(session.local_forwards))
-                self.assertEqual([split(argv[i + 1]) for i, a in enumerate(argv) if a == '-R'], list(session.reverse_forwards))
+                self.assertEqual(session.local_forwards, forwards)
+                self.assertEqual(session.reverse_forwards, ())
                 self.assertEqual(session.unix_forwards, ())
-                # The supervisor's own master carries the same forwards and options.
+                self.assertEqual(session.destination, 'status-control@10.124.0.7')
+                self.assertEqual(session.known_hosts_sha256, 'a' * 64)
                 master = session.master_args(config.runtime_dir)
-                for flag in ('-L', '-R'):
-                    self.assertEqual([master[i + 1] for i, a in enumerate(master) if a == flag],
-                                     [argv[i + 1] for i, a in enumerate(argv) if a == flag])
-                for option in ('StrictHostKeyChecking=yes', 'IdentitiesOnly=yes',
-                               'UserKnownHostsFile=' + session.known_hosts):
-                    self.assertIn(option, master)
+                self.assertNotIn('-R', master)
+                self.assertIn('StrictHostKeyChecking=yes', master)
+                self.assertIn('IdentitiesOnly=yes', master)
                 self.assertIn('-oExitOnForwardFailure=yes', master)
-                self.assertIn(f'-oServerAliveCountMax={options["ServerAliveCountMax"]}', master)
 
     def test_status_master_arguments(self):
         config = cs.Config.parse(status_example())
@@ -177,7 +160,7 @@ class ConfigTest(unittest.TestCase):
             '-oControlPath=/run/wallet-pir-control-sessions/c-fe1630be37e16c83c38ef7217c48b8d0',
             '-oServerAliveInterval=2', '-oServerAliveCountMax=4', '-N', '-oExitOnForwardFailure=yes',
             '-L', '127.0.0.1:8481:127.0.0.1:8481', '-L', '127.0.0.1:8482:127.0.0.1:8482',
-            '-R', '127.0.0.1:8495:127.0.0.1:8480', 'status-control@10.124.0.7'])
+            'status-control@10.124.0.7'])
         self.assertEqual(query.master_args(config.runtime_dir), common + [
             '-oControlMaster=yes', '-oControlPersist=no',
             '-oControlPath=/run/wallet-pir-control-sessions/c-4521f885e4dea936d78a21a8e310f634',
@@ -224,8 +207,8 @@ class AccountTest(unittest.TestCase):
         block = cs.sshd_match_block('status-control', config.sessions, '/etc/ssh/status-control/authorized_keys')
         lines = [l.strip() for l in block.splitlines()]
         for expected in ['Match User status-control', 'AuthorizedKeysFile /etc/ssh/status-control/authorized_keys',
-                         'AllowTcpForwarding yes', 'AllowStreamLocalForwarding no',
-                         'PermitOpen 127.0.0.1:8481 127.0.0.1:8482 127.0.0.1:8484', 'PermitListen 127.0.0.1:8495',
+                         'AllowTcpForwarding local', 'AllowStreamLocalForwarding no',
+                         'PermitOpen 127.0.0.1:8481 127.0.0.1:8482 127.0.0.1:8484', 'PermitListen none',
                          'AllowAgentForwarding no', 'X11Forwarding no', 'PermitTTY no', 'ForceCommand /bin/false',
                          'ClientAliveInterval 2', 'ClientAliveCountMax 3']:
             self.assertIn(expected, lines)
@@ -233,11 +216,28 @@ class AccountTest(unittest.TestCase):
         self.assertIn('    AllowTcpForwarding local', local_only.splitlines())
         self.assertIn('    PermitListen none', local_only.splitlines())
 
+    def test_status_cloud_init_allows_only_local_tcp_forwarding(self):
+        lines = [line.strip() for line in CLOUD_INIT.read_text().splitlines()]
+        for restriction in ('AllowTcpForwarding local', 'PermitListen none',
+                            'PermitOpen 127.0.0.1:8481 127.0.0.1:8482 127.0.0.1:8484',
+                            'AllowStreamLocalForwarding no'):
+            self.assertIn(restriction, lines)
+
+    def test_generic_reverse_forward_grants_remain_supported(self):
+        session = cs.Session.parse(dict(name='generic', destination='pir-control@10.0.0.5',
+                                       identity_file='/k', known_hosts='/h',
+                                       local_forwards=[['127.0.0.1:19001', '127.0.0.1:19002']],
+                                       reverse_forwards=[['127.0.0.1:19003', '127.0.0.1:19004']]))
+        self.assertIn('permitlisten="127.0.0.1:19003"', cs.authorized_keys_line([session], PUBLIC_KEY))
+        block = cs.sshd_match_block('pir-control', [session], '/k')
+        self.assertIn('    AllowTcpForwarding yes', block.splitlines())
+        self.assertIn('    PermitListen 127.0.0.1:19003', block.splitlines())
+
     def test_unrestrictable_or_malformed_grants_are_refused(self):
         unix = cs.Session.parse(dict(name='t', destination='pir-control@10.0.0.5', identity_file='/k', known_hosts='/h',
                                      unix_forwards=[['/run/w/s.sock', '/run/transparent-pir/control.sock']]))
         reverse_only = cs.Session.parse(dict(name='r', destination='pir-control@10.0.0.5', identity_file='/k',
-                                             known_hosts='/h', reverse_forwards=[['127.0.0.1:8495', '127.0.0.1:8480']]))
+                                             known_hosts='/h', reverse_forwards=[['127.0.0.1:19003', '127.0.0.1:19004']]))
         config = cs.Config.parse(status_example())
         with self.assertRaisesRegex(ValueError, 'loopback TCP'):
             cs.authorized_keys_line([unix], PUBLIC_KEY)
@@ -289,7 +289,7 @@ class SupervisorTest(unittest.TestCase):
                      restart_initial_seconds=0.05, restart_max_seconds=0.2, stable_seconds=30,
                      sessions=[session('status-control', [[f'127.0.0.1:{self.ports[0]}', '127.0.0.1:8481'],
                                                           [f'127.0.0.1:{self.ports[1]}', '127.0.0.1:8482']],
-                                       reverse_forwards=[['127.0.0.1:8495', '127.0.0.1:8480']], compression=True),
+                                       compression=True),
                                session('status-query', [[f'127.0.0.1:{self.ports[2]}', '127.0.0.1:8484']])])
         value.update(changes)
         return cs.Config.parse(value)
@@ -371,7 +371,7 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(config.status_file.stat().st_mode & 0o777, 0o640)
         ok, report = cs.check(config)
         self.assertTrue(ok, report)
-        self.assertEqual([f['kind'] for f in report[0]['forwards']], ['local', 'local', 'reverse'])
+        self.assertEqual([f['kind'] for f in report[0]['forwards']], ['local', 'local'])
         self.assertTrue(all(entry['known_hosts_pinned'] for entry in report))
         # A killed master is restarted; its supervisor keeps running.
         pid = sessions['status-query']['pid']
@@ -431,7 +431,9 @@ class SupervisorTest(unittest.TestCase):
             self.assertEqual(cs.main(['--config', str(path), 'sshd-match', '--user', 'status-control',
                                       '--authorized-keys-file', '/etc/ssh/status-control/authorized_keys']), 0)
             self.assertEqual(cs.main(['--config', str(path), 'validate']), 0)
-        self.assertIn('permitlisten="127.0.0.1:8495" ' + PUBLIC_KEY, output.getvalue())
+        self.assertNotIn('permitlisten=', output.getvalue())
+        self.assertIn('AllowTcpForwarding local', output.getvalue())
+        self.assertIn('PermitListen none', output.getvalue())
         self.assertIn('AllowStreamLocalForwarding no', output.getvalue())
         config = self.config()
         path.write_text(json.dumps(dict(schema=cs.SCHEMA, runtime_dir=str(config.runtime_dir),
