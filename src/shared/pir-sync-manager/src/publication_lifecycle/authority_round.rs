@@ -12,8 +12,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// Ask whether `subjects` are still authoritative under exactly the
     /// publication and fence of the eligible `envelope`. A conflict
     /// re-observes the envelope, so a withdrawal or new fence fences serving
-    /// before the pass defers. Every negative answer fences serving, then
-    /// permanently invalidates that view in the persisted floor. A response
+    /// before the pass defers. A negative answer revokes only its named view,
+    /// then makes that invalidation durable. Unaffected views keep serving. A response
     /// that answers anything other than exactly `subjects`, in order, under
     /// that authority confirms and invalidates nothing.
     pub(super) async fn check_authority(
@@ -58,10 +58,8 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             .filter_map(|(identity, authoritative)| (!authoritative).then_some(identity))
             .collect();
         if !refuted.is_empty() {
-            self.fence_serving().await;
-            self.floor.invalidate(refuted);
-        }
-        if !self.floor.is_durable() {
+            self.invalidate_views(refuted).await?;
+        } else if !self.floor.is_durable() {
             self.persist_floor().await?;
         }
         Ok(())

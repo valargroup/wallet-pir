@@ -20,6 +20,7 @@ use std::sync::{
 struct Origin {
     current: RwLock<Current>,
     canonical: AtomicBool,
+    noncanonical: RwLock<BTreeSet<AnchorSubject>>,
     advance_during_check: AtomicBool,
     withdraw_during_check: AtomicBool,
     /// An earlier authority answer replayed instead of a live one.
@@ -109,6 +110,7 @@ async fn setup() -> (
     let current = Arc::new(Origin {
         current: RwLock::new(pointer()),
         canonical: AtomicBool::new(true),
+        noncanonical: RwLock::default(),
         advance_during_check: AtomicBool::new(false),
         withdraw_during_check: AtomicBool::new(false),
         replayed_check: RwLock::default(),
@@ -172,8 +174,9 @@ async fn setup() -> (
                             .subjects
                             .into_iter()
                             .map(|subject| SubjectAnswer {
+                                still_authoritative: still_authoritative
+                                    && !shared.noncanonical.read().unwrap().contains(&subject),
                                 subject,
-                                still_authoritative,
                             })
                             .collect(),
                     })
@@ -275,6 +278,80 @@ async fn failure_to_persist_authority_closes_admission() {
     assert!(service.state.lock().await.poisoned);
     assert!(service.serving().await.is_err());
     server.abort();
+}
+
+#[tokio::test]
+async fn a_refuted_anchor_leaves_other_status_sessions_available() {
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    for refute_current in [false, true] {
+        let (_root, service, mut task, source, _tls, server) = setup().await;
+        let controller = service.state.lock().await.controller.clone().unwrap();
+        let predecessor = controller.current().manifest().clone();
+        let mut current = predecessor.clone();
+        current.generation += 1;
+        current.anchor_height += 1;
+        current.anchor_hash = [9; 32];
+        controller
+            .activate(Generation::public_only(current.clone(), Arc::new(vec![])))
+            .unwrap();
+        {
+            let mut envelope = source.current.write().unwrap();
+            envelope.sequence += 1;
+            envelope.publication = Some(publication(current.generation));
+        }
+        let (refuted, unaffected) = if refute_current {
+            (&current, &predecessor)
+        } else {
+            (&predecessor, &current)
+        };
+        source
+            .noncanonical
+            .write()
+            .unwrap()
+            .insert((refuted.anchor_height, refuted.anchor_hash));
+
+        // The fixture has no prepared candidate, but the real HTTPS authority
+        // exchange must apply its negative answer before that download fails.
+        assert!(task.synchronize().await.is_err());
+        assert!(task.floor().is_invalidated(&view(refuted)));
+        assert!(!task.floor().is_invalidated(&view(unaffected)));
+        assert_eq!(
+            controller.check(&controller.resolve(refuted.id()).unwrap()),
+            Err(StatusCode::GONE)
+        );
+        assert!(controller
+            .check(&controller.resolve(unaffected.id()).unwrap())
+            .is_ok());
+
+        // Session requests refer to their own view, even if the newest view
+        // was the one invalidated. The public route keeps its existing 410.
+        let router = Service {
+            role: Role::Router,
+            ..service.clone()
+        };
+        for (manifest, expected) in [(refuted, StatusCode::GONE), (unaffected, StatusCode::OK)] {
+            let response = router
+                .query_routes()
+                .oneshot(
+                    Request::get(format!("/v1/status/session/{}", hex::encode(manifest.id())))
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        let reopened: AuthorityFloor<StatusDescriptor> = AuthorityFloor::open(
+            service.state_dir.join(FLOOR_FILE),
+            task.floor().source().clone(),
+        )
+        .unwrap();
+        assert!(reopened.is_invalidated(&view(refuted)));
+        assert!(!reopened.is_invalidated(&view(unaffected)));
+        server.abort();
+    }
 }
 
 #[tokio::test]
