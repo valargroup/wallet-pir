@@ -90,11 +90,12 @@ COMPONENTS = ('workers', 'controller')
 PUBLISHER_UNIT = 'pir-publisher.service'
 PUBLISHER_CONFIG = '/etc/wallet-pir/publisher.json'
 # Autonomous HTTPS History providers, the only History workers of the unified
-# publisher: each worker pins its configuration and unit, and its holdings decide the only ready identity it may
-# report. A full-holdings provider has no assignment; a recent provider owns the
-# `assignment.json` its own bootstrap staged (routing/manager.rs). Settings are
-# the enabled `transparent_history.settings` of the `--config FILE`, whose whole
-# bytes are pinned.
+# publisher: each worker pins its configuration and unit, and its holdings
+# decide the only ready identity it may report. A full-holdings provider has no
+# assignment; a recent provider owns the `assignment.json` its own bootstrap
+# staged (routing/manager.rs). Settings are the enabled
+# `transparent_history.settings` of the `--config FILE`, whose whole bytes are
+# pinned.
 PROVIDER_PIN_KEYS = {'ready_identity', 'limits', 'args', 'config_sha256', 'unit_sha256'}
 # The publisher discovery contract (src/shared/pir-service-discovery) a current
 # query server requires before it synchronizes; same major is compatible.
@@ -394,8 +395,8 @@ class Upgrade:
                 # Providers synchronize from the unified publisher's HTTPS publication.
                 problem_if(not self.unified, 'HTTPS provider workers need %s' % PUBLISHER_UNIT, problems)
             elif self.unified:
-                problem_if(True, '%s publishes History over HTTPS only; pin each provider worker configuration instead'
-                           % PUBLISHER_UNIT, problems)
+                problems.append('%s publishes History over HTTPS only; pin each provider worker configuration '
+                                'instead' % PUBLISHER_UNIT)
             else:
                 # The standalone fleet controller's own configuration file.
                 for key, value in self.product['config_absent_or'].items():
