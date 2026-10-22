@@ -27,16 +27,6 @@ impl ProductSupervisor {
         }
     }
 
-    #[cfg_attr(
-        not(any(
-            feature = "enhance",
-            feature = "status",
-            feature = "transparent-history",
-            feature = "transparent-detail",
-            feature = "receiver"
-        )),
-        allow(dead_code)
-    )]
     pub(super) fn start<F>(
         &mut self,
         product: PublisherProduct,
@@ -72,7 +62,7 @@ impl ProductSupervisor {
                             owner.shutdown.request();
                             self.status.set_phase(owner.product, ProductPhase::Failed);
                             if let Err(error) = result {
-                                tracing::error!(product=owner.product.name(), %error, "publisher stopped; other products continue");
+                                tracing::error!(product=owner.product, %error, "publisher stopped; other products continue");
                             }
                         }
                         Err(_) => {

@@ -6,7 +6,7 @@ license = "MIT"
 description = "Internal ingestion and publication lifecycle without product authority"
 
 [dependencies]
-tokio = { version = "1", features = ["time", "macros", "rt", "sync"] }
+tokio = { version = "1", features = ["time", "macros", "rt-multi-thread", "sync"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "test-util"] }

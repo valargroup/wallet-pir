@@ -54,30 +54,17 @@ pub async fn run_until(
     http: tokio::task::JoinHandle<std::io::Result<()>>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<()> {
-    let (latest, mut pending) = tokio::sync::watch::channel::<Option<Work>>(None);
+    let (latest, pending) = tokio::sync::watch::channel::<Option<Work>>(None);
     let preparing = publisher.clone();
     let stop = shutdown.clone();
     let publication = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                biased;
-                _ = stop.cancelled() => return,
-                changed = pending.changed() => if changed.is_err() { return; },
-            }
-            let work = pending.borrow_and_update().clone();
-            if let Some(work) = work {
-                let result = pir_pipeline::advance(
-                    Input::Work(work),
-                    |work| async { Ok::<_, String>(Input::Work(work)) },
-                    |work| preparing.publish(work),
-                    &mut (),
-                )
-                .await;
-                if let Err(error) = result {
-                    tracing::error!(%error, "Enhance local publication deferred");
-                }
-            }
-        }
+        pir_pipeline::publisher::PublisherService::new(Publication {
+            publisher: preparing,
+            pending,
+            closed: false,
+        })
+        .run(stop.cancelled())
+        .await
     });
     let result = pir_pipeline::supervise(
         &mut Acquisition {
@@ -94,7 +81,7 @@ pub async fn run_until(
     .await;
     // Dropping acquisition closes the latest-work slot. A running publication
     // finishes its current owner operation before observing shutdown or closure.
-    publication.await?;
+    publication.await??;
     result
 }
 struct Acquisition<'a> {
@@ -103,7 +90,7 @@ struct Acquisition<'a> {
     source: Source,
     latest: tokio::sync::watch::Sender<Option<Work>>,
     http: tokio::task::JoinHandle<std::io::Result<()>>,
-    publication: &'a tokio::task::JoinHandle<()>,
+    publication: &'a tokio::task::JoinHandle<Result<()>>,
 }
 impl pir_pipeline::Task for Acquisition<'_> {
     type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -135,5 +122,39 @@ impl pir_pipeline::Task for Acquisition<'_> {
             tracing::error!(%error, "Enhance canonical acquisition deferred");
             FailurePolicy::NextPoll
         }
+    }
+}
+
+struct Publication {
+    publisher: Publisher,
+    pending: tokio::sync::watch::Receiver<Option<Work>>,
+    closed: bool,
+}
+impl pir_pipeline::publisher::Workflow for Publication {
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    async fn step(&mut self) -> Result<pir_pipeline::publisher::Control> {
+        use pir_pipeline::publisher::{Control, PublicationPass};
+        if self.closed {
+            return Ok(Control::Complete);
+        }
+        let work = self.pending.borrow_and_update().clone();
+        if let Some(work) = work {
+            PublicationPass::new(
+                async { Ok::<_, String>(Input::Work(work)) },
+                |work| async { Ok(Input::Work(work)) },
+                |work| self.publisher.publish(work),
+            )
+            .run(&mut ())
+            .await?;
+        }
+        Ok(Control::Continue)
+    }
+    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
+        tracing::error!(%error, "Enhance local publication deferred");
+        FailurePolicy::NextPoll
+    }
+    async fn wait(&mut self) -> Result<()> {
+        self.closed = self.pending.changed().await.is_err();
+        Ok(())
     }
 }

@@ -10,3 +10,6 @@ pub mod ingest;
 pub mod tx_detail;
 
 pub mod commands;
+
+/// Product service definitions used by the application composition root.
+pub mod service;
