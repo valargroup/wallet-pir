@@ -1727,21 +1727,17 @@ mod tests {
 
     /// More sealed shards than the table budget holds still serve every payment over
     /// real encrypted PIR: prepared tables are cached within the budget and reloaded from
-    /// the data directory when evicted, and a restart prepares none of them again.
+    /// the data directory when evicted, and a restart prepares none of them again. A
+    /// sealed shard and the recent tier are four tables against a budget of two, the
+    /// most one lookup needs at once.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_tables_beyond_the_budget_load_on_demand() {
-        use super::common::{receiver, seeded_receiver};
-        let table = 3 * receiver_pir::MIN_ROWS as usize * receiver_directory::snapshot::ROW_BYTES;
-        let budget = 3 * table;
+        use super::common::receiver;
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
         let publications = Publications::new(std::time::Duration::from_secs(600), budget);
         let mut paused = Paused::serving(|_| {}, publications.clone()).await;
         paused.args.shard_target = Some(1);
-        let payees = [
-            receiver(),
-            seeded_receiver(1),
-            seeded_receiver(2),
-            seeded_receiver(3),
-        ];
+        let payees = [receiver()];
         for payee in payees {
             paused.extend(&[payee], 0, 0);
         }
@@ -1750,7 +1746,7 @@ mod tests {
         let tables = publications.tables();
         assert!(tables.resident() <= budget);
         let (client, _) = paused.capture(false).await;
-        assert_eq!(client.inventory().shards().len(), 5);
+        assert_eq!(client.inventory().shards().len(), 2);
         let loads = tables.loads();
         for payee in payees {
             let found = lookup(&client, payee).await;
