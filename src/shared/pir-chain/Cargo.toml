@@ -50,7 +50,7 @@ zcash_protocol = { package = "zakura-protocol", version = "=4.0.0" }
 # https://github.com/zakura-core/wallet-libraries/pull/287. It depends only on
 # zakura-protocol and two hash crates, so reading transactions does not compile the
 # Sapling, Orchard or Halo2 stack. It checks framing, not curve points or proofs.
-zcash_transaction_wire = { package = "zakura-transaction-wire", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "f715e4f638f147bf944810c0a058e94fc987a962" }
+zcash_transaction_wire = { package = "zakura-transaction-wire", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a7c842fd4f16790ed6739346f44557a97065d242" }
 orchard = { package = "zakura-orchard", version = "=4.0.0", default-features = false, features = ["std", "backend-halo2"], optional = true }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: the
 # `rocksdb` reader opens the node's database directly, so its format must match
