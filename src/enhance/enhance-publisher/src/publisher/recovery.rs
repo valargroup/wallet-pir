@@ -4,8 +4,8 @@ use crate::{
     chain_source::ZakuraClient, distribution::PublicationDistribution,
     durable_state::PublisherState,
 };
-use enhance_material::artifact;
-use enhance_material::{
+use enhance_shared::artifact;
+use enhance_shared::{
     protocol::{self, MAX_QUERY_SHARDS},
     publication::Revocation,
 };
@@ -134,7 +134,7 @@ impl EnhancePublisher {
 }
 fn persist_publisher_state(root: &Path, state: &PublisherState) -> Result<(), String> {
     let bytes = serde_json::to_vec(state).map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > enhance_material::publication::METADATA_LIMIT {
+    if bytes.len() as u64 > enhance_shared::publication::METADATA_LIMIT {
         return Err("publisher state exceeds metadata limit".into());
     }
     artifact::write_atomic(root, "publisher.json", |file| file.write_all(&bytes))

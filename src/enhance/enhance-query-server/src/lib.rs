@@ -3,13 +3,13 @@
 //! HTTP surfaces.
 //!
 //! Records, the wire protocol, the publication contract, prepared runtimes and
-//! the wallet client live in `enhance-material` and are re-exported here for
+//! the wallet client live in `enhance-shared` and are re-exported here for
 //! serving callers. This library must not depend on `enhance-publisher`, chain
 //! readers, ingestion or tools; the publisher exposes prepared material through
 //! HTTPS and the serving roles own activation. `tools/ci/boundary.py` enforces
 //! the boundary.
 
-pub use enhance_material::*;
+pub use enhance_shared::*;
 use pir_control::admission;
 pub mod internal_auth;
 pub mod telemetry;

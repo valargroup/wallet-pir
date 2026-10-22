@@ -16,8 +16,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = 'src/shared/pir-cuda/'
 CONTRACTS = (
-    'src/enhance/enhance-material/src/matvec',
-    'src/enhance/enhance-material/src/runtime',
+    'src/enhance/enhance-shared/src/matvec',
+    'src/enhance/enhance-shared/src/runtime',
     'src/enhance/enhance-query-server/src/worker',
     'src/status/status-material/src/backend.rs',
     'src/status/status-material/src/generation.rs',
@@ -44,7 +44,7 @@ TOOLS = {
 WORKFLOWS = {'.github/workflows/ci.yml', '.github/workflows/ci-full.yml',
              '.github/workflows/ci-qualify.yml', '.github/workflows/ci-matrix-audit.yml'}
 FORWARDERS = {
-    'src/enhance/enhance-material/Cargo.toml',
+    'src/enhance/enhance-shared/Cargo.toml',
     'src/enhance/enhance-query-server/Cargo.toml',
     'src/status/status-material/Cargo.toml',
     'src/status/status-query-server/Cargo.toml',

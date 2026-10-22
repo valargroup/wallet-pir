@@ -35,8 +35,8 @@ jobs:
       - name: Lint CUDA integration
         run: >-
           python3 tools/ci/stage.py lint:cuda -- cargo clippy --locked --all-targets
-          -p pir-cuda -p enhance-material -p enhance-query-server -p status-query-server -p status-publisher -p pir-query-server
-          --features pir-cuda/cuda,enhance-material/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,status-query-server/cuda,status-publisher/cuda,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
+          -p pir-cuda -p enhance-shared -p enhance-query-server -p status-query-server -p status-publisher -p pir-query-server
+          --features pir-cuda/cuda,enhance-shared/cuda,enhance-query-server/cuda,enhance-query-server/native-reinspiring,status-query-server/cuda,status-publisher/cuda,pir-query-server/enhance,pir-query-server/native-reinspiring,pir-query-server/cuda
           -- -D warnings
       - name: Reject CUDA in a CPU-only Status consumer of a mixed build
         run: >-

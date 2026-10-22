@@ -11,14 +11,14 @@ publish = false
 autobins = false
 [features]
 # Restore the larger ordinary-domain test campaigns during full qualification.
-qualification-tests = ["enhance-material/qualification-tests"]
+qualification-tests = ["enhance-shared/qualification-tests"]
 default = []
-native-reinspiring = ["enhance-material/native-reinspiring"]
-cuda = ["enhance-material/cuda"]
+native-reinspiring = ["enhance-shared/native-reinspiring"]
+cuda = ["enhance-shared/cuda"]
 
-client = ["enhance-material/client"]
+client = ["enhance-shared/client"]
 [dependencies]
-enhance-material = { path = "../enhance-material" }
+enhance-shared = { path = "../enhance-shared" }
 pir-observability = { path = "../../shared/pir-observability", features = ["http"] }
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-runtime = { path = "../../shared/pir-runtime" }
@@ -41,7 +41,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 # Injected kernel faults and synthetic records drive the role regressions.
-enhance-material = { path = "../enhance-material", features = ["test-support"] }
+enhance-shared = { path = "../enhance-shared", features = ["test-support"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 

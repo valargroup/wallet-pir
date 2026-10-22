@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use enhance_material::{
+use enhance_shared::{
     artifact,
     protocol::canonical_hash,
     publication::{AuthorityRequest, AuthorityResponse, Object},

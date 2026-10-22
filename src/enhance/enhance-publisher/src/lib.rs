@@ -1,9 +1,9 @@
 //! Enhance publication: canonical ingestion, durable recovery floors and local
 //! preparation. Workers, packing routers and ingress synchronize independently.
 
-// Neutral Enhance material modules the publication code builds on, named at the
-// crate root so publisher modules refer to them alongside their own.
-use enhance_material::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
+// Shared Enhance modules the publication code builds on, named at the crate
+// root so publisher modules refer to them alongside their own.
+use enhance_shared::{artifact, prepared_packing, runtime, types, wire, PackingBudget};
 
 mod durable_state;
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-FORWARDERS = {'enhance-material', 'enhance-query-server', 'status-material', 'status-query-server', 'status-publisher',
+FORWARDERS = {'enhance-shared', 'enhance-query-server', 'status-material', 'status-query-server', 'status-publisher',
               'pir-e2e-tests', 'pir-query-server'}
 
 

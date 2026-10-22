@@ -28,14 +28,14 @@ def cpu_features(names, root=Path(__file__).resolve().parents[2]):
                               if feature != 'cuda')
     return sorted(result)
 
-NATIVE = ['enhance-material/native-reinspiring', 'enhance-material/client',
+NATIVE = ['enhance-shared/native-reinspiring', 'enhance-shared/client',
           'enhance-query-server/native-reinspiring', 'status-material/native-reinspiring',
           'status-material/client', 'status-query-server/native-reinspiring',
           'enhance-publisher/native-reinspiring', 'status-publisher/native-reinspiring', 'status-publisher/cli',
           'enhance-pir-client/native-reinspiring', 'enhance-pir-load-test/native-reinspiring',
           'native-certificate/native-reinspiring', 'pir-query-server/status',
           'pir-query-server/native-reinspiring']
-CUDA = ['enhance-material/cuda', 'enhance-material/native-reinspiring',
+CUDA = ['enhance-shared/cuda', 'enhance-shared/native-reinspiring',
         'enhance-query-server/cuda', 'enhance-query-server/native-reinspiring', 'status-material/cuda',
         'status-query-server/cuda',
         'status-publisher/cuda', 'pir-query-server/enhance', 'pir-query-server/native-reinspiring',

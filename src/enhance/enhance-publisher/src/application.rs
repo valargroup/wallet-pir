@@ -40,7 +40,7 @@ pub async fn collect(
     }
     let next = journal
         .committed_height()
-        .map_or(enhance_material::ACTIVATION_HEIGHT, |h| h + 1);
+        .map_or(enhance_shared::ACTIVATION_HEIGHT, |h| h + 1);
     for height in next..=tip {
         journal.append_block(
             &crate::chain_source::block(&source.rpc, height, &source.prevouts).await?,

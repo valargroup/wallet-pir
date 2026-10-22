@@ -101,7 +101,7 @@
         {
           "any-glob-to-any-file": [
             "src/pir-query-server/**",
-            "src/enhance/enhance-material/**",
+            "src/enhance/enhance-shared/**",
             "src/enhance/enhance-query-server/**",
             "src/status/status-query-server/**",
             "src/transparent/transparent-query-server/**",

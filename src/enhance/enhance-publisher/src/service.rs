@@ -59,7 +59,7 @@ pub async fn run(
                 .into(),
         );
     }
-    enhance_material::artifact::write_atomic(&config.data_dir, "source-mode", |file| {
+    enhance_shared::artifact::write_atomic(&config.data_dir, "source-mode", |file| {
         file.write_all(b"canonical-archive")
     })?;
     let mut tasks = Tasks::default();

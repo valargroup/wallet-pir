@@ -1,5 +1,5 @@
 use super::*;
-use enhance_material::types::{DatabaseId, ENHANCE_LAYOUT};
+use enhance_shared::types::{DatabaseId, ENHANCE_LAYOUT};
 use std::fs;
 fn journal(root: &Path) -> RecordJournal {
     let mut journal =
@@ -8,7 +8,7 @@ fn journal(root: &Path) -> RecordJournal {
         .append_block(
             1,
             format!("{:064x}", 1),
-            &vec![vec![0u8; enhance_material::RECORD_BYTES]; 67],
+            &vec![vec![0u8; enhance_shared::RECORD_BYTES]; 67],
         )
         .unwrap();
     journal
@@ -90,7 +90,7 @@ async fn local_publication_needs_no_consumers_and_never_reuses_prewithdrawal_wor
     let first = publisher.distribution.durable_current();
     let manifest = first.manifest.as_ref().unwrap();
     assert!(first.eligible);
-    let inventory: enhance_material::publication::Inventory = crate::publication::read_metadata(
+    let inventory: enhance_shared::publication::Inventory = crate::publication::read_metadata(
         &publisher
             .distribution
             .root()

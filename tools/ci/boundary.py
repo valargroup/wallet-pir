@@ -100,13 +100,13 @@ PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime',
     'transparent-shared', 'transparent-query-server',
-    'enhance-material', 'enhance-query-server', 'status-query-server', 'status-material', 'pir-serving',
+    'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-material', 'pir-serving',
     'pir-publication',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-material', 'enhance-query-server', 'status-query-server', 'status-material', 'transparent-shared',
+SERVING = {'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-material', 'transparent-shared',
            'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'zakura-server-chain', 'enhance-publisher', 'receiver-indexer',
@@ -175,13 +175,13 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
     'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-material',
-    'enhance-material', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
+    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.
 RUNTIME_PENDING = {
-    'enhance-material', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
+    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
