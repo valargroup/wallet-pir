@@ -1,0 +1,189 @@
+{
+  "product:enhance": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/enhance/**",
+            "tools/enhance/**",
+            "docs/enhance/**",
+            "evidence/enhance/**",
+            ".github/workflows/*enhance*.yml",
+            "tools/infra/digitalocean/enhance/**",
+            "tools/infra/digitalocean/enhance-*/**"
+          ]
+        }
+      ]
+    }
+  ],
+  "product:status": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/status/**",
+            "tools/status/**",
+            "docs/status/**",
+            "evidence/status/**",
+            ".github/workflows/*status*.yml",
+            "tools/infra/digitalocean/status/**",
+            "tools/infra/digitalocean/status-*/**"
+          ]
+        }
+      ]
+    }
+  ],
+  "product:transparent": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/transparent/**",
+            "tools/transparent/**",
+            "docs/transparent/**",
+            "evidence/transparent/**",
+            ".github/workflows/*transparent*.yml",
+            "tools/infra/digitalocean/transparent/**",
+            "tools/infra/digitalocean/transparent-*/**",
+            "tools/txid/**",
+            "docs/txid/**",
+            "evidence/txid/**",
+            "docs/transparent-*.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "product:receiver": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/receiver/**",
+            "tools/receiver/**",
+            "docs/receiver/**",
+            "evidence/receiver/**",
+            ".github/workflows/*receiver*.yml",
+            "tools/infra/digitalocean/receiver/**",
+            "tools/infra/digitalocean/receiver-*/**"
+          ]
+        }
+      ]
+    }
+  ],
+  "area:publisher": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/pir-publisher/**",
+            "src/enhance/enhance-publisher/**",
+            "src/status/status-publisher/**",
+            "src/transparent/transparent-publisher/**",
+            "src/receiver/receiver-indexer/**",
+            "src/receiver/receiver-store/**",
+            "tools/deploy/publisher/**",
+            "docs/publisher.md",
+            "tools/transparent/deploy/transparent-publish-controller.service",
+            "tools/txid/deploy/transparent-txid-display-controller.service.in",
+            ".github/workflows/deploy-transparent-publisher.yml",
+            ".github/workflows/publish-transparent-shards.yml",
+            ".github/workflows/backfill-transparent-events.yml",
+            "tools/receiver/digitalocean/receiver-pir.service.in"
+          ]
+        }
+      ]
+    }
+  ],
+  "area:query-server": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/pir-query-server/**",
+            "src/enhance/enhance-query-server/**",
+            "src/status/status-query-server/**",
+            "src/transparent/transparent-query-server/**",
+            "src/receiver/receiver-pir-server/**",
+            "tools/deploy/query-server/**",
+            "docs/query-server.md",
+            "tools/*/deploy/*worker*",
+            "tools/*/deploy/*router*",
+            "tools/*/deploy/*query-ingress*",
+            "tools/receiver/deploy/receiver-serve-publication.service",
+            "tools/receiver/digitalocean/receiver-pir.service.in"
+          ]
+        }
+      ]
+    }
+  ],
+  "area:shared": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "src/shared/**",
+            "tools/shared/**",
+            "tools/lib/**"
+          ]
+        }
+      ]
+    }
+  ],
+  "area:ci": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            ".github/**",
+            "tools/ci/**",
+            "tools/dev/**",
+            "tools/tests/test_*.py",
+            "Makefile"
+          ]
+        }
+      ]
+    }
+  ],
+  "area:operations": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "tools/deploy/**",
+            "tools/infra/**",
+            "tools/scripts/**",
+            "tools/lib/**",
+            "tools/tests/operations/**",
+            "tools/*/deploy/**",
+            "tools/*/digitalocean/**",
+            "tools/*/scripts/**",
+            "tools/*/lib/**",
+            "docs/operations.md",
+            ".github/workflows/deploy-*.yml",
+            ".github/workflows/configure-*.yml",
+            ".github/workflows/backfill-*.yml",
+            ".github/workflows/load-*.yml",
+            ".github/workflows/publish-*.yml",
+            ".github/workflows/inventory-*.yml",
+            ".github/workflows/sample-*.yml",
+            ".github/workflows/verify-*.yml"
+          ]
+        }
+      ]
+    }
+  ],
+  "documentation": [
+    {
+      "changed-files": [
+        {
+          "any-glob-to-any-file": [
+            "docs/**",
+            "**/*.md",
+            "*.md"
+          ]
+        }
+      ]
+    }
+  ]
+}

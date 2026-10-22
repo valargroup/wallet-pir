@@ -200,7 +200,7 @@ fn full_retention_window_is_small_and_configurable() {
     for from in (100..=window.head().tip.height).step_by(256) {
         bytes += window.batch(0, from, 256).unwrap().len();
     }
-    assert!(bytes < 1024 * 1024);
+    assert!(bytes < 3 * 1024 * 1024, "{bytes}");
     assert_eq!(window.head().first, 100);
     let shortened = BlockWindow::new([1; 32], 0, store.block_filters(1, 0).unwrap()).unwrap();
     assert_eq!(shortened.head().first, window.head().tip.height);
@@ -209,5 +209,37 @@ fn full_retention_window_is_small_and_configurable() {
         "rolling filter fixture: {} blocks, {bytes} bytes, {:?}",
         receiver_store::blocks::MAX_FILTER_BLOCKS,
         started.elapsed()
+    );
+}
+
+/// The byte bound still holds whatever the block count allows: a window whose older
+/// blocks would take it past the bound leaves them out.
+#[test]
+fn the_byte_bound_still_limits_the_window() {
+    let mut store = index(std::path::Path::new(":memory:"));
+    for height in 100..110 {
+        append(&mut store, height, [height as u8; 32], true);
+    }
+    let all = store.block_filters(10, 0).unwrap();
+    let bytes = |filters: &[receiver_directory::blocks::BlockFilter]| -> usize {
+        filters
+            .iter()
+            .map(|f| {
+                Batch::new([1; 32], 0, vec![f.clone()])
+                    .unwrap()
+                    .encode()
+                    .unwrap()
+                    .len()
+            })
+            .sum()
+    };
+    let capped = store.block_filters_within(10, 0, bytes(&all[7..])).unwrap();
+    assert_eq!(capped, all[7..]);
+    assert!(
+        store
+            .block_filters_within(10, 0, bytes(&all[7..]) - 1)
+            .unwrap()
+            .len()
+            < 3
     );
 }

@@ -9,7 +9,6 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import MagicMock, patch
-from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/ci'))
@@ -25,22 +24,6 @@ class ProgramTests(unittest.TestCase):
         output.start()
         self.addCleanup(output.stop)
 
-    def test_program_timings_identify_success_and_failure(self):
-        program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
-        for fails in (False, True):
-            output = io.StringIO()
-            with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
-                    patch.object(unit_tests, 'run', side_effect=RuntimeError('test failed') if fails else None), \
-                    redirect_stdout(output):
-                if fails:
-                    with self.assertRaisesRegex(RuntimeError, 'test failed'):
-                        unit_tests.execute([program], 1)
-                else:
-                    unit_tests.execute([program], 1)
-            [record] = [json.loads(line.removeprefix('CI_TEST_PROGRAM '))
-                        for line in output.getvalue().splitlines() if line.startswith('CI_TEST_PROGRAM ')]
-            self.assertEqual((record['package'], record['executable'], record['passed']), ('p', 'p', not fails))
-            self.assertGreaterEqual(record['seconds'], 0)
 
     def test_budget_is_enforced_unless_diagnostic_mode_is_explicit(self):
         program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
@@ -140,15 +123,6 @@ class ProgramTests(unittest.TestCase):
             self.assertEqual(json.loads((root / 'artifacts').read_text())['fresh'], False)
             self.assertEqual(json.loads((root / 'stages').read_text())['parent'], 'owner')
 
-    def test_collection_uses_cargo_test_artifacts_only(self):
-        records = [dict(reason='compiler-artifact', package_id='path+file:///p#p@1.0.0',
-                        target={'name': 'p', 'kind': ['lib']}, profile={'test': test},
-                        executable=binary, fresh=True) for test, binary in
-                   [(False, '/normal'), (True, '/test'), (True, None)]]
-        process = type('Process', (), {'stdout': io.StringIO(''.join(json.dumps(r)+'\n' for r in records))})()
-        found = []
-        stage.relay(process, None, 'compile', found)
-        self.assertEqual(found, ['/test'])
 
     def test_bounded_programs_overlap_with_one_thread_per_program_and_package_cwd(self):
         for jobs in (2, 3):

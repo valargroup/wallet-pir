@@ -1,0 +1,70 @@
+{
+  "product:enhance": {
+    "color": "1d76db",
+    "description": "Affects the Enhance product."
+  },
+  "product:status": {
+    "color": "1d76db",
+    "description": "Affects the Status product."
+  },
+  "product:transparent": {
+    "color": "1d76db",
+    "description": "Affects the Transparent product."
+  },
+  "product:receiver": {
+    "color": "1d76db",
+    "description": "Affects the Receiver product."
+  },
+  "area:publisher": {
+    "color": "7057ff",
+    "description": "Chain ingestion, journals, preparation, and publication."
+  },
+  "area:query-server": {
+    "color": "7057ff",
+    "description": "Query serving, synchronization, routing, and encrypted evaluation."
+  },
+  "area:shared": {
+    "color": "7057ff",
+    "description": "Shared libraries, repository-wide changes, or components without a narrower functional area."
+  },
+  "area:ci": {
+    "color": "7057ff",
+    "description": "CI workflows, validation, and development tooling."
+  },
+  "area:operations": {
+    "color": "7057ff",
+    "description": "Deployment, infrastructure, and fleet operations."
+  },
+  "documentation": {
+    "color": "0075ca",
+    "description": "Documentation, guides, and retained evidence documentation."
+  },
+  "migration": {
+    "color": "d73a4a",
+    "description": "Persisted-state schema changes, data conversions, backfills, or upgrade migration behavior."
+  },
+  "wallet-api-breaking": {
+    "color": "d73a4a",
+    "description": "Incompatible wallet/client API, encoding, endpoint, or protocol behavior."
+  },
+  "publish-api-breaking": {
+    "color": "d73a4a",
+    "description": "Incompatible publisher-to-query-server discovery, publication, or distribution contract."
+  },
+  "journal-breaking": {
+    "color": "d73a4a",
+    "description": "Existing ingestion journals require a rebuild, conversion, or incompatible reader/writer."
+  },
+  "security-review": {
+    "color": "fbca04",
+    "description": "Security-sensitive behavior or trust boundaries deserve attention; no additional gate."
+  },
+  "privacy-review": {
+    "color": "fbca04",
+    "description": "Wallet/user privacy or observable information deserves attention; no additional gate."
+  },
+  "pir-scheme": {
+    "color": "fbca04",
+    "description": "PIR parameters, scheme selection, query encryption, or privacy-sensitive query construction."
+  }
+}

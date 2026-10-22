@@ -25,8 +25,10 @@
   session manifest is at most 16 KiB.
 - Serve bounded rolling block filters, one per block and derived from the chain
   index, independently of PIR preparation, with pruning, canonical revocation and
-  history correction revisions shared with PIR publications. Wallets use them only
-  to decide which receivers to look up over PIR.
+  history correction revisions shared with PIR publications. The window spans
+  seven days of target time, more blocks after NU7, and `--filter-blocks` can
+  only shorten it. Wallets use them only to decide which receivers to look up
+  over PIR.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback and serves each canonical tip
   from memory while revoking orphaned sessions. With an optional NEAR Intents

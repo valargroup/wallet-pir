@@ -13,7 +13,7 @@ use encrypted::record;
 /// No HTTP listeners or consumer processes participate in publication preparation.
 #[test]
 fn offline_publication_loads_and_answers_without_consumers() {
-    use enhance_publisher::publication::Hashed;
+    use enhance_publisher::publication::VerificationStats;
     use enhance_query_server::{
         client::QuerySession,
         prepared_packing,
@@ -28,12 +28,16 @@ fn offline_publication_loads_and_answers_without_consumers() {
         .unwrap();
     let epochs = [(0, "0".into())].into();
     let source = |start, count| Ok((start..start + count as u64).flat_map(record).collect());
-    let prepared =
-        enhance_publisher::publication::prepare(root.path(), coverage.clone(), &epochs, source)
-            .unwrap();
+    let prepared = enhance_publisher::publication::prepare_publication(
+        root.path(),
+        coverage.clone(),
+        &epochs,
+        source,
+    )
+    .unwrap();
     let cold = started.elapsed();
     let inventory = prepared.inventory().clone();
-    enhance_publisher::publication::verify(root.path(), inventory.clone()).unwrap();
+    enhance_publisher::publication::verify_publication(root.path(), inventory.clone()).unwrap();
     let domain = &inventory.domains[0];
     let object_path = domain.packing_object().path(root.path()).unwrap();
     let installed = std::fs::metadata(&object_path).unwrap().modified().unwrap();
@@ -108,7 +112,8 @@ fn offline_publication_loads_and_answers_without_consumers() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let began_reuse = std::time::Instant::now();
     let reused =
-        enhance_publisher::publication::prepare(root.path(), coverage, &epochs, source).unwrap();
+        enhance_publisher::publication::prepare_publication(root.path(), coverage, &epochs, source)
+            .unwrap();
     assert_eq!(
         protocol::digest(&inventory),
         protocol::digest(reused.inventory())
@@ -144,27 +149,27 @@ fn offline_publication_loads_and_answers_without_consumers() {
             objects.insert(object.sha256.clone(), object.bytes);
         }
     }
-    let every_object = Hashed {
+    let every_object = VerificationStats {
         files: objects.len() as u64,
         bytes: objects.values().sum(),
         reused: 0,
     };
     assert_eq!(
-        reused.hashed(),
+        reused.verification_stats(),
         every_object,
         "preparation reads each referenced object once"
     );
     assert_eq!(
-        enhance_publisher::publication::verify(root.path(), inventory.clone())
+        enhance_publisher::publication::verify_publication(root.path(), inventory.clone())
             .unwrap()
-            .hashed(),
+            .verification_stats(),
         every_object,
         "an inventory without evidence is hashed in full"
     );
     let published = reused.recheck(root.path()).unwrap();
     assert_eq!(
-        published.hashed(),
-        Hashed {
+        published.verification_stats(),
+        VerificationStats {
             files: 0,
             bytes: 0,
             reused: objects.len() as u64,
@@ -179,7 +184,7 @@ fn offline_publication_loads_and_answers_without_consumers() {
     aliased.domains[0].hint.sha256 = rows.sha256;
     aliased.validate().unwrap();
     assert!(
-        enhance_publisher::publication::verify(root.path(), aliased).is_err(),
+        enhance_publisher::publication::verify_publication(root.path(), aliased).is_err(),
         "a reference is checked against its own length, not an earlier one"
     );
     let rows_path = domain.rows[0].path(root.path()).unwrap();
@@ -189,7 +194,7 @@ fn offline_publication_loads_and_answers_without_consumers() {
         .unwrap()
         .set_len(1)
         .unwrap();
-    assert!(enhance_publisher::publication::verify(root.path(), inventory).is_err());
+    assert!(enhance_publisher::publication::verify_publication(root.path(), inventory).is_err());
     assert!(
         published.recheck(root.path()).is_err(),
         "a truncated object is rehashed despite preparation evidence"

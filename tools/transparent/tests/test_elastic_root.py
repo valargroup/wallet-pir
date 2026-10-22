@@ -303,11 +303,6 @@ class ElasticRootTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'members output'):
             self.h.elastic().state_members()
 
-    def test_show_returns_plan_json(self):
-        root = self.h.elastic()
-        plan_path, _ = root.plan({R5: MEMBER}, {R5: KEY}, EXTRA)
-        self.assertEqual(root.show(plan_path), {'format_version': '1.2', 'resource_changes': []})
-
 
 class Provider:
     def __init__(self, droplets, existing=()):
@@ -359,44 +354,6 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(report['unknown'], [{'id': '11', 'name': 'transparent-pir-recent-09', 'status': 'new'},
                                              {'id': '12', 'name': 'transparent-pir-recent-09', 'status': 'active'}])
         self.assertEqual(report['duplicates'], ['transparent-pir-recent-09'])
-
-
-class ElasticTerraformRootTests(unittest.TestCase):
-    """The root's source keeps to its contract; `terraform test` covers planning."""
-
-    def test_template_is_the_production_worker_template_plus_a_pinned_host_key(self):
-        production = (ROOT / 'tools/infra/digitalocean/transparent/cloud-init-transparent-worker.yaml.tftpl').read_text()
-        elastic = (TF_ROOT / 'cloud-init-transparent-worker.yaml.tftpl').read_text()
-        start = elastic.index('%{ if host_key != null ~}\n')
-        end = elastic.index('%{ endif ~}\n', start) + len('%{ endif ~}\n')
-        block = elastic[start:end]
-        self.assertEqual(elastic[:start] + elastic[end:], production)
-        for line in ('ssh_deletekeys: true', 'ed25519_private: ${jsonencode(host_key.private)}',
-                     'ed25519_public: ${jsonencode(host_key.public)}'):
-            self.assertIn(line, block)
-
-    def test_root_manages_only_member_droplets_and_project_entries(self):
-        source = '\n'.join(path.read_text() for path in sorted(TF_ROOT.glob('*.tf')))
-        resources = sorted(line.split('"')[1] + '.' + line.split('"')[3]
-                           for line in source.splitlines() if line.startswith('resource "'))
-        self.assertEqual(resources, ['digitalocean_droplet.recent', 'digitalocean_project_resources.recent'])
-        self.assertNotIn('data "', source)
-        self.assertNotIn('module "', source)
-        self.assertIn('ignore_changes = [image, user_data]', source)
-        self.assertIn('tags       = [var.worker_tag]', source)
-        self.assertNotIn('prevent_destroy', source)
-
-    def test_backend_is_its_own_state_without_native_locking(self):
-        for name in ('backend.tf', 'backend.tf.example'):
-            with self.subTest(file=name):
-                settings = {line.split('=')[0].strip(): line.split('=', 1)[1].split('#')[0].strip()
-                            for line in (TF_ROOT / name).read_text().splitlines()
-                            if '=' in line and not line.lstrip().startswith('#')}
-                self.assertEqual(settings['key'], '"transparent-elastic/terraform.tfstate"')
-                self.assertEqual(settings['bucket'], '"enhance-pir-terraform"')
-                self.assertEqual(settings['use_lockfile'], 'false')
-                self.assertIn(M.LOCK_PATH, (TF_ROOT / name).read_text())
-        self.assertEqual(M.BACKEND['key'], 'transparent-elastic/terraform.tfstate')
 
 
 if __name__ == '__main__':

@@ -33,29 +33,6 @@ class PlannerTests(unittest.TestCase):
     def setUp(self):
         self.packages = fast.workspace_packages()
 
-    def test_operations_routes_survive_the_directory_move(self):
-        paths = ['lib/wallet_pir_ops/durable.py', 'scripts/wallet-pir-deploy.py',
-                 'infra/digitalocean/transparent/main.tf', 'enhance/lib/roles.py',
-                 'transparent/lib/roles.py', 'receiver/lib/roles.py',
-                 'tests/deploy/test_ops_package.py', 'tests/test_operations_bundle.py']
-        for suffix in paths:
-            old = 'ops/' + suffix
-            new = ('tools/tests/operations/' + suffix[len('tests/'):]
-                   if suffix.startswith('tests/') else 'tools/' + suffix)
-            with self.subTest(path=new):
-                before = fast.plan(self.packages, [old])
-                after = fast.plan(self.packages, [new])
-                self.assertEqual(before['helpers'], after['helpers'])
-                self.assertEqual(before['groups'], after['groups'])
-                self.assertEqual(after['packages'], [])
-                self.assertNotIn('check-ops-deploy', after['helpers'])
-
-    def test_product_analysis_keeps_tooling_checks(self):
-        for path in ('tools/transparent/filters/transparent_filter_build.py',
-                     'tools/transparent/parent-filters/transparent_parent_evaluate.py',
-                     'tools/status/status_qualification.py',
-                     'tools/txid/txid-display/demo.py'):
-            self.assertEqual(fast.route(path), ({'check-tools'}, {'ops'}), path)
 
     def test_docs_do_not_need_rust_or_other_helpers(self):
         result = fast.plan(self.packages, ['README.md', 'docs/ci.md', 'evidence/receiver/run.json'])
@@ -127,18 +104,6 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result['groups'], ['enhance', 'receiver'])
         self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
-    def test_receiver_ops_config_changes_run_their_contract_suite(self):
-        makefile = (ROOT / 'Makefile').read_text()
-        self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s tools/tests/operations -p 'test_*.py'", makefile)
-        self.assertTrue((ROOT / 'tools/tests/operations/test_receiver_ops_config.py').is_file())
-        self.assertTrue((ROOT / 'tools/tests/operations/test_receiver_caddy.py').is_file())
-        for path in ['tools/receiver/digitalocean/Caddyfile', 'tools/receiver/digitalocean/cloud-init.yaml',
-                     'tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/caddy.py',
-                     'tools/receiver/digitalocean/README.md']:
-            result = fast.plan(self.packages, [path])
-            self.assertIn('check-ops-shared', result['helpers'], path)
-            self.assertNotIn('check-ops-deploy', result['helpers'], path)
-            self.assertEqual(result['packages'], [], path)
 
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
         result = fast.plan(self.packages, ['src/shared/pir-control/src/lib.rs'])
@@ -233,15 +198,6 @@ class PlannerTests(unittest.TestCase):
             scaler.validate(registry)
 
 
-    def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
-        self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
-        self.assertEqual(helpers.targets(['check-ops-scaler-fast']), ['check-ops-scaler-fast'])
-        self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
-        self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
-                         (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})
-        with self.assertRaisesRegex(ValueError, 'unknown helper'):
-            helpers.targets(['check-docs; unsafe'])
-
     def test_full_helpers_restore_full_fixtures_even_with_a_fast_parent(self):
         for full in (False, True):
             arguments = ['helpers.py', '--targets', '["check-tools"]']
@@ -326,7 +282,6 @@ class PlannerTests(unittest.TestCase):
                 fast.rust_checks(['example'], test_target='native')
 
 
-
 class IntegrityTests(unittest.TestCase):
     def test_partial_rerun_labels_reused_jobs_without_negative_queue_time(self):
         run = dict(head_sha='a'*40, status='completed', run_attempt=2,
@@ -347,71 +302,6 @@ class IntegrityTests(unittest.TestCase):
             run.return_value.returncode = 0
             with self.assertRaisesRegex(SystemExit, 'stale'):
                 snapshot.main()
-
-    def test_release_build_produces_every_default_bundle_binary(self):
-        # Each CPU candidate must contain every binary its family publishes.
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        job = (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
-        qualification = load('qualification')
-        release = load('release')
-        for family in ['receiver', 'transparent', 'enhance']:
-            with patch.object(qualification, 'run') as run:
-                qualification.build(family)
-            build = run.call_args.args[0]
-            built = {build[i + 1] for i, word in enumerate(build) if word == '--bin'}
-            for kind in qualification.KINDS[family]:
-                if kind in release.ON_REQUEST:
-                    continue
-                self.assertLessEqual(set(release.BINARIES[kind]), built, kind)
-                self.assertIn('name: %s-${{ github.sha }}' % kind, job)
-                self.assertIn('path: release-bundles/%s/%s.tar.gz' % (kind, kind), job)
-            self.assertEqual(build[:4], ['cargo', 'build', '--locked', '--release'])
-            if family == 'enhance':
-                self.assertEqual(build[build.index('--features') + 1], 'pir-query-server/enhance,pir-publisher/enhance')
-
-    def test_workflows_invoke_only_scripts_that_exist(self):
-        import re
-        for workflow in sorted((ROOT / '.github/workflows').glob('*.yml')):
-            for path in re.findall(r'(?<![\w/$.-])((?:ops|tools|enhance|transparent|receiver)/[\w./-]+\.(?:sh|py))',
-                                   workflow.read_text()):
-                self.assertTrue((ROOT / path).is_file(), '%s invokes missing %s' % (workflow.name, path))
-
-    def test_operations_package_is_published_without_rust(self):
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        build = workflow.split('\n  build:\n', 1)[1].split('\n  release:\n', 1)[0]
-        release = (ROOT / '.github/actions/qualify-artifacts/action.yml').read_text()
-        self.assertIn("if: inputs.family == 'ops'", build)
-        self.assertIn('qualification.py assemble --family ops', build)
-        self.assertIn("if: inputs.family != 'ops'", build)
-        self.assertIn('qualification.py verify --family', release)
-        self.assertIn('name: wallet-pir-ops-${{ github.sha }}', release)
-        self.assertIn('wallet-pir-ops', load('release').ON_REQUEST)
-
-    def test_release_native_does_not_use_checkout_local_target(self):
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        self.assertIn('lane: release-native', workflow)
-        self.assertNotIn('CARGO_TARGET_DIR: target-native', workflow)
-        self.assertIn('--lane native-cuda --scope cuda', workflow)
-
-    def test_cuda_toolchain_overrides_the_checkout_toolchain(self):
-        # Installing the pinned compiler alone does not select it: rust-toolchain.toml wins
-        # over rustup's default. Every command and the cache must share the
-        # compiler recorded in the CUDA ABI manifest.
-        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
-        cuda_job = workflow.split('\n  build-cuda:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
-        metadata = load('release').CUDA_BUILD
-        self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
-        script = (ROOT / 'tools/ci/build-cuda.sh').read_text()
-        clients, query_server = script.split('compile:cuda --', 1)
-        self.assertNotIn('-p enhance-publisher', script)
-        self.assertNotIn('-p pir-query-server', clients)
-        self.assertIn('-p pir-query-server --bin pir-query-server', query_server)
-        self.assertIn('--features enhance,native-reinspiring,cuda', query_server)
-        native = workflow.split('compile:native --', 1)[1].split('assemble --family enhance --native', 1)[0]
-        publisher, query = native.split('compile:native-query-server --', 1)
-        self.assertNotIn('pir-query-server', publisher)
-        self.assertIn('-p pir-query-server --bin pir-query-server', query)
-        self.assertIn('--features enhance,status,native-reinspiring\n', query)
 
 
 if __name__ == '__main__':

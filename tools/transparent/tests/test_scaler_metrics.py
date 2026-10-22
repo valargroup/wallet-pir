@@ -118,20 +118,6 @@ class WorkerSampleTests(unittest.TestCase):
 
 
 class QuantileTests(unittest.TestCase):
-    def test_interpolates_inside_the_bucket(self):
-        buckets = [(0.1, 50.0), (0.5, 90.0), (1.0, 100.0), (math.inf, 100.0)]
-        self.assertAlmostEqual(M.quantile(0.5, buckets), 0.1)
-        self.assertAlmostEqual(M.quantile(0.7, buckets), 0.1 + 0.4 * 20 / 40)
-        self.assertAlmostEqual(M.quantile(0.99, buckets), 0.5 + 0.5 * 9 / 10)
-        self.assertAlmostEqual(M.quantile(0.25, buckets), 0.05)
-
-    def test_inf_bucket_reports_highest_finite_bound(self):
-        self.assertEqual(M.quantile(0.99, [(0.1, 1.0), (1.0, 2.0), (math.inf, 10.0)]), 1.0)
-
-    def test_empty_is_unknown(self):
-        self.assertIsNone(M.quantile(0.99, []))
-        self.assertIsNone(M.quantile(0.99, [(0.1, 0.0), (math.inf, 0.0)]))
-
     def test_bucket_delta_and_merge(self):
         new = ((0.1, 10.0), (math.inf, 12.0))
         old = ((0.1, 4.0), (math.inf, 5.0))

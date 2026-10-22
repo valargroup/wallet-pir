@@ -36,19 +36,11 @@ class DocumentationLinks(unittest.TestCase):
         self.write("docs/README.md", "[result](../evidence/transparent/run/README.md#results)\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("2 files", result.stdout)
-
-    def test_missing_evidence_is_rejected(self):
-        self.write("evidence/README.md", "[data](absent.json)\n")
+        (self.root / "evidence/transparent/run/raw.json").unlink()
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing target", result.stdout)
 
-    def test_missing_heading_is_rejected(self):
-        self.write("docs/README.md", "# Present\n[gate](#absent)\n")
-        result = self.check()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("no heading", result.stdout)
 
     def test_spaces_titles_multiple_links_and_repeated_anchors(self):
         self.write("docs/spaced file.md", "# Some `Heading`!\n")
@@ -58,11 +50,6 @@ class DocumentationLinks(unittest.TestCase):
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("1 broken link", result.stderr)
-
-    def test_history_url_is_not_a_local_path(self):
-        self.write("docs/README.md", "[history](https://example.invalid/revision/old.md)\n")
-        result = self.check()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

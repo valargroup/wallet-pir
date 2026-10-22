@@ -20,6 +20,65 @@ ROLES = ('worker', 'external-worker', 'packing-router', 'query-ingress')
 PROVIDER = '\thandle /provider/enhance/v1/* {\n\t\treverse_proxy 127.0.0.1:8084\n\t}\n'
 
 
+def prune_qualification(args, executor=None):
+    """Delete only the explicitly approved, unused historical CPU fixture tree.
+
+    The normal fleet lock excludes deployments. Each host retains a durable
+    intent and result before/after this irreversible, explicitly named cleanup.
+    Serving state and release directories cannot be selected by this command.
+    """
+    from .descriptors import load_inventory
+    from .remote import SSHExecutor, production_lock
+    from .transaction import new_id
+    inventory = load_inventory(args.inventory)
+    allowed = {r['host'] for r in inventory.services['enhance']['roles']['worker']
+               if inventory.hosts[r['host']].get('accelerator') != 'cuda'
+               and r.get('settings', {}).get('matvec_backend') != 'cuda'}
+    require(args.host and len(set(args.host)) == len(args.host) and set(args.host) <= allowed,
+            'qualification cleanup requires distinct existing CPU worker hosts')
+    executor = executor or SSHExecutor(inventory)
+    identifier = new_id('qualification-prune', sha(json.dumps(sorted(args.host))))
+    program = '''import json,os,shutil,sys,time
+from pathlib import Path
+root=Path('/srv/enhance-pir-v7/qualification-worker')
+assert str(root)==sys.argv[1] and root.is_dir() and not root.is_symlink() and root.resolve()==root
+assert not any(line.split()[4]==str(root) or line.split()[4].startswith(str(root)+'/')
+               for line in Path('/proc/self/mountinfo').read_text().splitlines())
+for p in Path('/proc').iterdir():
+    if not p.name.isdecimal() or p.name==str(os.getpid()): continue
+    try:
+        command=(p/'cmdline').read_bytes()
+        assert not any(arg==str(root).encode() or arg.startswith(str(root).encode()+b'/')
+                       for arg in command.split(bytes([0]))[1:]), 'qualification directory is in a running command'
+        for f in [p/'cwd',*(p/'fd').iterdir()]:
+            try: target=os.readlink(f)
+            except OSError: continue
+            assert target!=str(root) and not target.startswith(str(root)+'/'), 'qualification directory is open'
+    except (FileNotFoundError,ProcessLookupError): pass
+receipt=Path('/opt/enhance-pir/maintenance')/sys.argv[2]
+receipt.mkdir(mode=0o700,parents=True,exist_ok=False)
+state={'path':str(root),'phase':'deleting','available_before':os.statvfs(root).f_bavail*os.statvfs(root).f_frsize}
+def save():
+    temporary=receipt/'state.tmp'
+    with temporary.open('w') as f:
+        json.dump(state,f);f.flush();os.fsync(f.fileno())
+    temporary.chmod(0o600);os.replace(temporary,receipt/'state.json')
+    fd=os.open(receipt,os.O_RDONLY);os.fsync(fd);os.close(fd)
+save()
+shutil.rmtree(root)
+state.update(phase='complete',available_after=os.statvfs(root.parent).f_bavail*os.statvfs(root.parent).f_frsize)
+save();print(json.dumps(state))
+'''
+    result = {'transaction': identifier, 'hosts': {}}
+    with production_lock(inventory, executor) as lock:
+        for host in args.host:
+            lock.verify()
+            code, output = executor.run(host, ['python3', '-c', program, args.confirm_path, identifier], 90)
+            require(code == 0, 'qualification cleanup refused on ' + host + ': ' + output[-1000:])
+            result['hosts'][host] = json.loads(output)
+    return result
+
+
 def validate(request, inventory):
     from .publisher_serving import validate_request
     validate_request(request, inventory)
@@ -220,11 +279,33 @@ class EnhanceServing(Serving):
         parent['enhance_handoff_rollback' if rollback else 'enhance_handoff'] = receipt
         owner.save(parent)
 
-    def activate(self, parent):
+    def prepare_handoff(self, parent):
         owner = self.cutover
         parent['enhance_handoff_started'] = True
         owner.save(parent)
         owner.effect(parent, 'preserve Enhance recovery floors', lambda: self.handoff(parent))
+
+    def publication_ready(self):
+        """Require eligible HTTPS material before interrupting any consumer."""
+        owner = self.cutover
+        origin = owner.request['enhance_https']['origin'].rstrip('/')
+        deadline = owner.clock() + 900
+        while True:
+            owner.supervision.guard()
+            discovery, _ = owner.ex.http_get(owner.host, origin + '/.well-known/pir-service-discovery')
+            code, body = owner.ex.http_get(owner.host, origin + '/provider/enhance/v1/current')
+            try:
+                current = json.loads(body)['current']
+                if (discovery == 200 and code == 200 and current['eligible'] is True
+                        and current.get('manifest') and current.get('inventory')):
+                    return
+            except (ValueError, KeyError, TypeError):
+                pass
+            require(owner.clock() < deadline, 'Enhance HTTPS publication readiness deadline exceeded')
+            owner.sleep(3)
+
+    def activate(self, parent):
+        owner = self.cutover
         for kind, deployer in self.groups.items():
             deployer.lock = owner.lock
             journal = GroupJournal(owner, parent, kind)

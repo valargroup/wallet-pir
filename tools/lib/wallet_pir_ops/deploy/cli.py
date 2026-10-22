@@ -436,7 +436,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
-            if not args.command.endswith(('-run', '-watchdog')):
+            if not args.command.endswith(('-run', '-watchdog', '-prune-qualification')):
                 request, _inventory = publisher.load_request(args.request, args.request_sha256,
                     recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
                 check_installed(mutation=mutation, revision=request['release']['git_sha'])

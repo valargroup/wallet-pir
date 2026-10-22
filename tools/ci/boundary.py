@@ -24,6 +24,8 @@ package, or a tool under `tools/`. Product packages live under `src/<product>/`,
 shared libraries under `src/shared/`, and the publisher and query-server hosts at
 `src/pir-publisher` and `src/pir-query-server`. Their workspace graphs (including
 their own dev-dependencies) and standalone graphs are resolved and checked too.
+Status serving additionally owns its HTTP runtime and may use the neutral
+`pir-pipeline` lifecycle utility; publisher and chain dependencies remain forbidden.
 
 Product publisher and query cores (`RUNTIME_FREE`) leave the Tokio runtime and
 HTTP transport (`TRANSPORT`) to the publisher and query-server hosts. They declare
@@ -165,7 +167,7 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
     'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store',
-    'enhance-publisher', 'enhance-query-server', 'status-publisher', 'status-query-server',
+    'enhance-publisher', 'enhance-query-server', 'status-publisher',
     'transparent-publisher', 'transparent-query-server', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
@@ -188,6 +190,14 @@ CANONICAL = {
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.
 EXCLUDED = ('evidence/', 'target/')
+
+
+def serving_ingestion_problem(owner, name, target):
+    """Status roles use the shared lifecycle utility without acquiring ingestion."""
+    if (owner == 'src/status/status-query-server/' and name == PIPELINE
+            and target == 'src/shared/pir-pipeline/'):
+        return False
+    return name in INGESTION
 
 
 def serving_target_problem(owner, target, name=None):
@@ -363,8 +373,10 @@ def violations(packages, allowed):
                                 f"{dependency['kind']} on ingestion engine {name}")
             if package['name'] in SERVING and not package.get('preserved'):
                 owner = package['manifest'].rsplit('/', 1)[0] + '/'
-                reason = ('chain reading or ingestion package' if name in INGESTION else
-                          dependency.get('path') and serving_target_problem(owner, dependency['path'], name))
+                reason = (
+                    'chain reading or ingestion package'
+                    if serving_ingestion_problem(owner, name, dependency.get('path'))
+                    else dependency.get('path') and serving_target_problem(owner, dependency['path'], name))
                 if reason:
                     problems.append(f"{package['manifest']}: serving library has a "
                                     f"{dependency['kind']} on {reason} {name}")
@@ -534,7 +546,7 @@ def serving_resolved_violations(root_id, packages, nodes):
         if current != root_id:
             local = target['source'] is None and relative_directory(
                 Path(target['manifest_path']).parent, ROOT)
-            if (target['name'] in INGESTION or target['name'] in NODE
+            if (serving_ingestion_problem(owner, target['name'], local) or target['name'] in NODE
                     or (local and serving_target_problem(owner, local, target['name']))):
                 problems.add(f"{package['name']}: serving library resolves {target['name']}")
         queue.extend(dep['pkg'] for dep in nodes[current]['deps'])

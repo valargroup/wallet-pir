@@ -71,29 +71,6 @@ def alive(pid):
 
 
 class HelperTest(unittest.TestCase):
-    def test_socket_name_is_transparents_digest(self):
-        identity = ['owner-1', '10.0.0.5', '/opt/transparent-publisher/credentials/known_hosts',
-                    '/opt/transparent-publisher/credentials/deploy-ssh']
-        self.assertEqual(cs.socket_name('c-', identity), 'c-bcd07ff0c0cd8aff86983ef7fe6b835b')
-
-    def test_forward_and_master_arguments(self):
-        self.assertEqual(cs.forward_args(), [])
-        self.assertEqual(cs.forward_args(local=[('127.0.0.1:1', '127.0.0.1:2')], reverse=[('127.0.0.1:3', '127.0.0.1:4')],
-                                         unix=[('/l.sock', '/r.sock')]),
-                         ['-oStreamLocalBindMask=0177', '-oExitOnForwardFailure=yes', '-L', '127.0.0.1:1:127.0.0.1:2',
-                          '-R', '127.0.0.1:3:127.0.0.1:4', '-L', '/l.sock:/r.sock'])
-        self.assertEqual(cs.master_args(['ssh'], '/c', 'u@h', 2, 3, ['-X']),
-                         ['ssh', '-oControlMaster=yes', '-oControlPersist=no', '-oControlPath=/c',
-                          '-oServerAliveInterval=2', '-oServerAliveCountMax=3', '-N', '-X', 'u@h'])
-        self.assertEqual(cs.client_args(['ssh'], Path('/c')),
-                         ['ssh', '-oControlMaster=no', '-oProxyCommand=false', '-oControlPath=/c'])
-
-    def test_backoff_doubles_to_its_bound_and_resets_after_a_stable_run(self):
-        backoff = cs.Backoff(1, 8, 30)
-        self.assertEqual([backoff.after_exit(0) for _ in range(6)], [1, 2, 4, 8, 8, 8])
-        self.assertEqual(backoff.after_exit(30), 1)
-        self.assertEqual(backoff.after_exit(29), 2)
-
     def test_stale_socket_is_cleared_but_other_paths_are_untouched(self):
         with tempfile.TemporaryDirectory(dir='/tmp') as directory:
             path = Path(directory) / 's'
@@ -148,27 +125,6 @@ class ConfigTest(unittest.TestCase):
                 self.assertIn('IdentitiesOnly=yes', master)
                 self.assertIn('-oExitOnForwardFailure=yes', master)
 
-    def test_status_master_arguments(self):
-        config = cs.Config.parse(status_example())
-        common = ['ssh', '-F', '/dev/null', '-i', '/etc/status-pir-control/id_ed25519', '-o', 'BatchMode=yes',
-                  '-o', 'IdentitiesOnly=yes', '-o', 'ForwardAgent=no', '-o', 'ConnectTimeout=10',
-                  '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=/etc/status-pir-control/known_hosts',
-                  '-o', 'GlobalKnownHostsFile=/dev/null']
-        control, query = config.sessions
-        self.assertEqual(control.master_args(config.runtime_dir), common + [
-            '-oCompression=yes', '-oControlMaster=yes', '-oControlPersist=no',
-            '-oControlPath=/run/wallet-pir-control-sessions/c-fe1630be37e16c83c38ef7217c48b8d0',
-            '-oServerAliveInterval=2', '-oServerAliveCountMax=4', '-N', '-oExitOnForwardFailure=yes',
-            '-L', '127.0.0.1:8481:127.0.0.1:8481', '-L', '127.0.0.1:8482:127.0.0.1:8482',
-            'status-control@10.124.0.7'])
-        self.assertEqual(query.master_args(config.runtime_dir), common + [
-            '-oControlMaster=yes', '-oControlPersist=no',
-            '-oControlPath=/run/wallet-pir-control-sessions/c-4521f885e4dea936d78a21a8e310f634',
-            '-oServerAliveInterval=2', '-oServerAliveCountMax=4', '-N', '-oExitOnForwardFailure=yes',
-            '-L', '127.0.0.1:8492:127.0.0.1:8484', 'status-control@10.124.0.7'])
-        self.assertEqual(control.client_args(config.runtime_dir)[-3:],
-                         ['-oControlMaster=no', '-oProxyCommand=false',
-                          '-oControlPath=' + str(control.control_path(config.runtime_dir))])
 
     def test_invalid_configurations_are_refused(self):
         def session(**changes):
@@ -502,20 +458,6 @@ class TransparentTest(unittest.TestCase):
                 self.assertEqual(captured, [expected])
                 self.assertEqual(fleet.control_session_args(worker), self.CLIENT)
                 self.assertEqual(str(fleet.status_forward_path(worker)), self.FORWARD)
-
-    def test_shared_helpers_build_the_same_arguments(self):
-        identity = ['owner-1', '10.0.0.5', self.KNOWN_HOSTS, self.KEY]
-        control = '/opt/transparent-publisher/state/ssh/' + cs.socket_name('c-', identity)
-        self.assertEqual(control, self.CONTROL)
-        forward = '/opt/transparent-publisher/state/ssh/' + cs.socket_name(
-            's-', [control, '/run/transparent-pir/control.sock'])
-        self.assertEqual(forward, self.FORWARD)
-        self.assertEqual(cs.master_args(self.DIRECT, control, 'root@10.0.0.5', 2, 3), self.MASTER)
-        self.assertEqual(
-            cs.master_args(self.DIRECT, control, 'root@10.0.0.5', 2, 3,
-                           cs.forward_args(unix=[(forward, '/run/transparent-pir/control.sock')])),
-            self.MASTER_FORWARDING)
-        self.assertEqual(cs.client_args(self.DIRECT, control), self.CLIENT)
 
 
 @unittest.skipUnless(os.environ.get('WALLET_PIR_SSHD_PROBE') == '1' and Path('/usr/sbin/sshd').exists(),

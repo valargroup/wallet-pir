@@ -56,7 +56,8 @@ renderer = "tools.enhance.lib.roles:worker"
 health = "http://{listen}/internal/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 300
-adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
+adopt_command_write_paths = true
+adoptable_drop_ins = ["50-candidate-5270482.conf", "60-candidate-216b999.conf", "90-v7.conf", "95-architecture2.conf", "99-apm-hour.conf", "zz-cleanup-*.conf", "zzz-latency-47ac3e3.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzzzzzz-main.conf"]
 
 # An external worker an operator adds: the whole unit and its configuration are
 # rendered by the product adapter from the inventory entry's `settings`, and a

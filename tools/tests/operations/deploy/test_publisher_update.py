@@ -326,14 +326,14 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
             self.target.restart()
         self.assertEqual(self.ex.effects, [])
 
-    def test_resume_load_option_is_boolean_and_only_for_normal_serving_updates(self):
+    def test_resume_load_option_requires_a_boolean_and_a_supported_update(self):
         for value in (None, 0, 1, 'false'):
             with self.subTest(value=value):
                 self.request['resume_load'] = value
-                with self.assertRaisesRegex(DeployError, 'boolean.*publisher-cutover/3'):
+                with self.assertRaisesRegex(DeployError, 'boolean.*publisher update'):
                     self.make_target()
         self.request['resume_load'] = False
         self.request['schema'] = publisher.EXPANDED_SCHEMA
         self.request.pop('serving')
-        with self.assertRaisesRegex(DeployError, 'publisher-cutover/3 only'):
+        with self.assertRaisesRegex(DeployError, 'publisher update or Enhance HTTPS'):
             self.make_target(recovery=True)

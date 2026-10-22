@@ -23,7 +23,7 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
     assert!(actions
         .iter()
         .all(|a| !a.has_transparent_inputs && !a.has_transparent_outputs));
-    let records = enhance_publisher::zakura::records(actions).unwrap();
+    let records = enhance_publisher::chain_source::records(actions).unwrap();
     let expected: Vec<_> = [
         include_str!("fixtures/ironwood-canonical-record-0.hex"),
         include_str!("fixtures/ironwood-canonical-record-1.hex"),

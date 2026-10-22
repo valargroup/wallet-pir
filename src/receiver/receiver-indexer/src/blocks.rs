@@ -11,6 +11,20 @@ pub fn ironwood_activation() -> u32 {
     Network::Mainnet.ironwood_activation()
 }
 
+/// The target time the rolling filter window spans: seven days.
+pub const FILTER_WINDOW_SECS: u32 = 7 * 24 * 3600;
+
+/// How many blocks the rolling filter window ending at `tip` retains: those spanning
+/// [`FILTER_WINDOW_SECS`] of mainnet target time (8,064 of 75 seconds before NU7, up to
+/// 24,192 of 25 seconds after it; see [`Network::blocks_spanning`]), or `limit` if an
+/// operator set a lower one. The store's byte bound may still leave older blocks out.
+pub fn filter_window_blocks(tip: u32, limit: Option<u32>) -> u32 {
+    let spanning = Network::Mainnet.blocks_spanning(tip, FILTER_WINDOW_SECS);
+    spanning
+        .min(receiver_store::blocks::MAX_FILTER_BLOCKS)
+        .min(limit.unwrap_or(u32::MAX))
+}
+
 /// The block at `height` and the Ironwood note position after it; see
 /// [`NodeClient::receiver_boundary`].
 pub async fn boundary(rpc: &NodeClient, height: u32) -> Result<Checkpoint, NodeError> {
@@ -63,5 +77,23 @@ mod tests {
     #[test]
     fn ironwood_activates_where_enhance_expects() {
         assert_eq!(super::ironwood_activation(), 3_428_143);
+    }
+
+    /// The window spans seven target days before NU7, across its activation and after
+    /// it, and an operator cap only ever shortens it.
+    #[test]
+    fn the_filter_window_spans_seven_target_days() {
+        use super::filter_window_blocks;
+        let nu7 = 3_543_405;
+        assert_eq!(
+            filter_window_blocks(super::ironwood_activation(), None),
+            8_064
+        );
+        assert_eq!(filter_window_blocks(nu7 - 1, None), 8_064);
+        assert_eq!(filter_window_blocks(nu7 + 2_999, None), 3_000 + 7_064);
+        assert_eq!(filter_window_blocks(nu7 + 24_191, None), 24_192);
+        assert_eq!(filter_window_blocks(nu7 + 100_000, None), 24_192);
+        assert_eq!(filter_window_blocks(nu7 + 100_000, Some(100)), 100);
+        assert_eq!(filter_window_blocks(nu7 - 1, Some(20_000)), 8_064);
     }
 }

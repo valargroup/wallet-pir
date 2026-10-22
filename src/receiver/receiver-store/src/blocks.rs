@@ -2,13 +2,30 @@
 use crate::{Error, Store};
 use receiver_directory::blocks::{BlockFilter, BlockId, MAX_RECEIVERS};
 
-/// Seven days at the target 75-second block interval. Operators may retain fewer blocks.
-pub const MAX_FILTER_BLOCKS: u32 = 7 * 24 * 48;
+/// The most blocks a window may retain: seven days at NU7's 25-second target spacing,
+/// the shortest. The indexer sizes the window by target time, which is fewer blocks
+/// wherever earlier 75-second blocks fall inside it.
+pub const MAX_FILTER_BLOCKS: u32 = 7 * 24 * 3600 / 25;
+
+/// The most encoded hint bytes a window holds; older blocks beyond it are left out.
+pub const MAX_FILTER_BYTES: usize = 64 * 1024 * 1024;
 
 impl Store {
-    /// Reads a consecutive suffix, including empty blocks, in one SQLite snapshot.
-    /// The correction revision must not decrease across restarts. Reorgs use hashes.
+    /// [`Self::block_filters_within`] [`MAX_FILTER_BYTES`].
     pub fn block_filters(&mut self, retain: u32, revision: u64) -> Result<Vec<BlockFilter>, Error> {
+        self.block_filters_within(retain, revision, MAX_FILTER_BYTES)
+    }
+
+    /// Reads a consecutive suffix of at most `retain` blocks, including empty blocks, in
+    /// one SQLite snapshot, stopping at the oldest block that would take its encoding past
+    /// `max_bytes`. The correction revision must not decrease across restarts. Reorgs use
+    /// hashes.
+    pub fn block_filters_within(
+        &mut self,
+        retain: u32,
+        revision: u64,
+        max_bytes: usize,
+    ) -> Result<Vec<BlockFilter>, Error> {
         if retain == 0 || retain > MAX_FILTER_BLOCKS || revision > i64::MAX as u64 {
             return Err(Error::Malformed);
         }
@@ -62,7 +79,7 @@ impl Store {
             )?
             .encode()?
             .len();
-            if bytes > 64 * 1024 * 1024 {
+            if bytes > max_bytes {
                 break;
             }
             filters.push(filter);

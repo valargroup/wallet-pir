@@ -1,68 +1,51 @@
 //! Read-only HTTPS distribution backed by immutable material and fresh node checks.
 //! Publication and revocation changes are durable before any HTTP observer can
 //! see them. Restart never restores authority from cached metadata alone.
+mod authority;
+mod http;
+mod retention;
+
 use crate::{
-    publication::{self, read_metadata, Prepared},
-    zakura::ZakuraClient,
+    chain_source::ZakuraClient,
+    durable_state::{DistributionState, RetainedPublication},
+    publication::{self, read_metadata, PreparedPublication},
 };
 use axum::{
-    body::Body,
-    extract::{DefaultBodyLimit, Path as HttpPath, State},
-    http::{header, StatusCode},
-    response::{IntoResponse, Response},
+    extract::DefaultBodyLimit,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
 use enhance_query_server::{
     artifact,
-    protocol::{canonical_hash, digest, Manifest, RETAINED_GENERATIONS},
-    publication::{
-        AuthorityRequest, AuthorityResponse, Current, Inventory, Object, METADATA_LIMIT, PREFIX,
-        VERSION,
-    },
+    protocol::{digest, Manifest, RETAINED_GENERATIONS},
+    publication::{Current, Inventory, Object, METADATA_LIMIT, PREFIX, VERSION},
     worker::Revocation,
 };
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Retained {
-    manifest: Manifest,
-    inventory: Object,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Disk {
-    current: Current,
-    retained: Vec<Retained>,
-}
-
+/// Durable publication selection and read-only artifact distribution.
+/// Stored eligibility is checked against the chain before granting authority.
 #[derive(Clone)]
-pub struct Distribution {
+pub struct PublicationDistribution {
     root: PathBuf,
     rpc: ZakuraClient,
-    disk: Arc<Mutex<Disk>>,
+    disk: Arc<Mutex<DistributionState>>,
     poisoned: Arc<AtomicBool>,
     _owner: Arc<File>,
 }
 
-type ApiResult<T> = Result<T, (StatusCode, String)>;
-fn refused(error: impl ToString) -> (StatusCode, String) {
-    (StatusCode::SERVICE_UNAVAILABLE, error.to_string())
-}
-
-impl Distribution {
+impl PublicationDistribution {
+    /// Lock distribution state for this owner's lifetime and validate retained
+    /// descriptors. Persist a withdrawal on every reopen; cached metadata alone
+    /// never restores fresh chain authority.
     pub fn open(root: &Path, rpc: ZakuraClient) -> Result<Self, String> {
         fs::create_dir_all(root).map_err(|e| e.to_string())?;
         let owner = OpenOptions::new()
@@ -74,10 +57,10 @@ impl Distribution {
         owner
             .try_lock()
             .map_err(|_| "Enhance distribution already owned")?;
-        let mut disk: Disk = if root.join("current.json").exists() {
+        let mut disk: DistributionState = if root.join("current.json").exists() {
             read_metadata(&root.join("current.json"))?
         } else {
-            Disk {
+            DistributionState {
                 current: Current {
                     version: VERSION,
                     revision: 1,
@@ -153,10 +136,10 @@ impl Distribution {
         if !inventory.supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(
+        self.install_publication(
             manifest,
             self.durable_current().withdrawal_revision,
-            move |root| publication::verify(root, inventory),
+            move |root| publication::verify_publication(root, inventory),
         )
         .await
     }
@@ -166,7 +149,7 @@ impl Distribution {
     pub async fn publish_prepared(
         &self,
         manifest: Manifest,
-        prepared: Prepared,
+        prepared: PreparedPublication,
     ) -> Result<(), String> {
         self.publish_if_unwithdrawn(
             manifest,
@@ -179,23 +162,23 @@ impl Distribution {
     pub(crate) async fn publish_if_unwithdrawn(
         &self,
         manifest: Manifest,
-        prepared: Prepared,
+        prepared: PreparedPublication,
         withdrawal_revision: u64,
     ) -> Result<(), String> {
         if !prepared.inventory().supports(&manifest)? {
             return Err("inventory differs from wallet manifest".into());
         }
-        self.install(manifest, withdrawal_revision, move |root| {
+        self.install_publication(manifest, withdrawal_revision, move |root| {
             prepared.recheck(root)
         })
         .await
     }
 
-    async fn install(
+    async fn install_publication(
         &self,
         manifest: Manifest,
         withdrawal_revision: u64,
-        verify: impl FnOnce(&Path) -> Result<Prepared, String> + Send + 'static,
+        verify: impl FnOnce(&Path) -> Result<PreparedPublication, String> + Send + 'static,
     ) -> Result<(), String> {
         // Use the producer's lock too: collection must not race a candidate
         // writer, another commit, or verification of a not-yet-current object.
@@ -217,7 +200,7 @@ impl Distribution {
             .await
             .map_err(|e| e.to_string())??;
         let inventory = prepared.inventory();
-        self.canonical(&manifest).await?;
+        self.check_canonical_anchor(&manifest).await?;
         let bytes = serde_json::to_vec(inventory).map_err(|e| e.to_string())?;
         let object = Object {
             sha256: digest(inventory),
@@ -262,7 +245,7 @@ impl Distribution {
             .retain(|r| digest(&r.manifest) != digest(&manifest));
         next.retained.insert(
             0,
-            Retained {
+            RetainedPublication {
                 manifest,
                 inventory: object,
             },
@@ -275,7 +258,7 @@ impl Distribution {
     }
 
     /// Withdraw before journal rewind, even when the rewind needs no new domain
-    /// epoch. Retained material is never deleted by an authority change.
+    /// epoch. RetainedPublication material is never deleted by an authority change.
     pub fn withdraw(&self, revocation: &Revocation) -> Result<(), String> {
         let mut disk = self.disk.lock().unwrap();
         let mut next = disk.clone();
@@ -296,7 +279,7 @@ impl Distribution {
         self.commit(&mut disk, next)
     }
 
-    fn commit(&self, disk: &mut Disk, next: Disk) -> Result<(), String> {
+    fn commit(&self, disk: &mut DistributionState, next: DistributionState) -> Result<(), String> {
         if self.poisoned.load(Ordering::Acquire) {
             return Err("Enhance distribution persistence failed; reopen required".into());
         }
@@ -312,237 +295,21 @@ impl Distribution {
         Ok(())
     }
 
-    async fn canonical(&self, manifest: &Manifest) -> Result<u64, String> {
-        let started = now_ms()?;
-        let elapsed = std::time::Instant::now();
-        if self
-            .rpc
-            .block_hash_display(manifest.anchor_height)
-            .await
-            .map_err(|e| e.to_string())?
-            != manifest.anchor_block_hash
-        {
-            return Err("Enhance publication anchor is no longer canonical".into());
-        }
-        if elapsed.elapsed() > pir_control::CONTROL_WATCHDOG {
-            return Err("Enhance source check exceeded authority lifetime".into());
-        }
-        Ok(started)
-    }
-
-    pub(crate) async fn authority(
-        &self,
-        requested: Option<&str>,
-    ) -> Result<AuthorityResponse, String> {
-        if self.poisoned.load(Ordering::Acquire) {
-            return Err("Enhance distribution persistence failed".into());
-        }
-        let (current, target) = {
-            let disk = self.disk.lock().unwrap();
-            let current = disk.current.clone();
-            let target = match requested {
-                Some(id) if canonical_hash(id) => disk
-                    .retained
-                    .iter()
-                    .find(|r| digest(&r.manifest) == id)
-                    .map(|r| r.manifest.clone()),
-                Some(_) => return Err("invalid requested manifest identity".into()),
-                None => current.manifest.clone(),
-            };
-            (current, target)
-        };
-        // Return durable withdrawal metadata without granting fresh authority.
-        if !current.eligible && requested.is_none() {
-            return Ok(AuthorityResponse {
-                current,
-                authorized_manifest_sha256: String::new(),
-                observed_unix_ms: 0,
-            });
-        }
-        let manifest = target.ok_or("Enhance publication is no longer retained")?;
-        if !current.eligible
-            || manifest.coverage.shards.iter().any(|s| {
-                manifest
-                    .session_id(s.id)
-                    .is_ok_and(|id| current.revoked.contains(&hex::encode(id)))
-            })
-        {
-            return Err("Enhance publication is withdrawn".into());
-        }
-        let observed_unix_ms = self.canonical(&manifest).await?;
-        // Recheck after the RPC: a withdrawal concurrent with the node check
-        // must be visible before the response grants any authority.
-        let disk = self.disk.lock().unwrap();
-        let latest = &disk.current;
-        if self.poisoned.load(Ordering::Acquire)
-            || !latest.eligible
-            || (requested.is_none() && latest.manifest != current.manifest)
-            || latest.withdrawal_revision != current.withdrawal_revision
-            || !disk
-                .retained
-                .iter()
-                .any(|retained| retained.manifest == manifest)
-            || manifest.coverage.shards.iter().any(|shard| {
-                manifest
-                    .session_id(shard.id)
-                    .is_ok_and(|id| latest.revoked.contains(&hex::encode(id)))
-            })
-        {
-            return Err("Enhance authority changed during source validation".into());
-        }
-        // Ordinary publication advancement does not revoke a retained binding.
-        // Return the latest floors together with this real canonical observation.
-        Ok(AuthorityResponse {
-            current: latest.clone(),
-            authorized_manifest_sha256: digest(&manifest),
-            observed_unix_ms,
-        })
-    }
-
     pub fn router(&self) -> Router {
         Router::new()
-            .route(&format!("{PREFIX}current"), get(current))
-            .route(&format!("{PREFIX}authority"), post(authority))
-            .route(&format!("{PREFIX}inventories/:digest"), get(inventory))
-            .route(&format!("{PREFIX}objects/:digest"), get(object))
+            .route(&format!("{PREFIX}current"), get(http::current))
+            .route(&format!("{PREFIX}authority"), post(http::authority))
+            .route(
+                &format!("{PREFIX}inventories/:digest"),
+                get(http::inventory),
+            )
+            .route(&format!("{PREFIX}objects/:digest"), get(http::object))
             .layer(DefaultBodyLimit::max(1024))
             .with_state(self.clone())
     }
-
-    fn objects(&self) -> Result<BTreeMap<String, Object>, String> {
-        let retained = self.disk.lock().unwrap().retained.clone();
-        let mut objects = BTreeMap::new();
-        for retained in retained {
-            let inventory: Inventory = read_metadata(
-                &self
-                    .root
-                    .join("inventories")
-                    .join(format!("{}.json", retained.inventory.sha256)),
-            )?;
-            if digest(&inventory) != retained.inventory.sha256
-                || !inventory.supports(&retained.manifest)?
-            {
-                return Err("retained Enhance inventory differs".into());
-            }
-            for domain in inventory.domains {
-                let packing = domain.packing_object();
-                for object in domain
-                    .rows
-                    .into_iter()
-                    .chain([domain.hint, domain.public, packing])
-                {
-                    objects.insert(object.sha256.clone(), object);
-                }
-            }
-        }
-        Ok(objects)
-    }
-
-    /// Called with the preparation lock after the current pointer is durable.
-    /// An open HTTP stream pins its inode across unlink. A bootstrap that has
-    /// not opened a retired object reconciles current and retries instead.
-    fn collect_retired(&self) -> Result<(), String> {
-        let retained = self.disk.lock().unwrap().retained.clone();
-        let mut inventories = BTreeSet::new();
-        let mut domains = BTreeSet::new();
-        let mut units = BTreeSet::new();
-        let mut packing = BTreeSet::new();
-        let mut objects = BTreeSet::new();
-        for retained in retained {
-            let name = format!("{}.json", retained.inventory.sha256);
-            let inventory: Inventory = read_metadata(&self.root.join("inventories").join(&name))?;
-            if digest(&inventory) != retained.inventory.sha256
-                || !inventory.supports(&retained.manifest)?
-            {
-                return Err("cannot collect: retained Enhance inventory differs".into());
-            }
-            inventories.insert(name);
-            for domain in inventory.domains {
-                domains.insert(format!("{}.json", digest(&domain.plan)));
-                units.extend(domain.plan.units.iter().map(|unit| unit.digest()));
-                packing.insert(domain.packing.name.clone());
-                packing.insert(format!("{}.json", domain.packing.name));
-                objects.insert(domain.packing.sha256);
-                objects.extend(
-                    domain
-                        .rows
-                        .iter()
-                        .chain([&domain.hint, &domain.public])
-                        .map(|o| o.sha256.clone()),
-                );
-            }
-        }
-        for (directory, keep) in [
-            ("objects", objects),
-            ("inventories", inventories),
-            ("domains", domains),
-            (enhance_query_server::prepared_packing::DIRECTORY, packing),
-        ] {
-            collect_files(&self.root.join(directory), &keep)?;
-        }
-        let directory = self.root.join("preparation/artifacts-9");
-        if directory.is_dir() {
-            for entry in fs::read_dir(&directory).map_err(|e| e.to_string())? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                if entry.file_type().map_err(|e| e.to_string())?.is_dir()
-                    && entry
-                        .file_name()
-                        .to_str()
-                        .is_some_and(|name| canonical_hash(name) && !units.contains(name))
-                {
-                    fs::remove_dir_all(entry.path()).map_err(|e| e.to_string())?;
-                }
-            }
-            File::open(directory)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
 }
 
-fn collect_files(directory: &Path, keep: &BTreeSet<String>) -> Result<(), String> {
-    if !directory.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let committed_name = name.strip_suffix(".tmp").unwrap_or(name);
-        let owned = canonical_hash(committed_name)
-            || committed_name
-                .strip_suffix(".json")
-                .is_some_and(canonical_hash)
-            || committed_name
-                .strip_suffix(".bin")
-                .is_some_and(canonical_hash)
-            || committed_name
-                .strip_suffix(".bin.json")
-                .is_some_and(canonical_hash);
-        if owned && !keep.contains(name) && entry.file_type().map_err(|e| e.to_string())?.is_file()
-        {
-            fs::remove_file(entry.path()).map_err(|e| e.to_string())?;
-        }
-    }
-    File::open(directory)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
-}
-
-fn now_ms() -> Result<u64, String> {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_millis(),
-    )
-    .map_err(|e| e.to_string())
-}
-
-fn persist(root: &Path, disk: &Disk) -> Result<(), String> {
+fn persist(root: &Path, disk: &DistributionState) -> Result<(), String> {
     let bytes = serde_json::to_vec(disk).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > METADATA_LIMIT {
         return Err("distribution state exceeds metadata limit".into());
@@ -554,145 +321,5 @@ fn persist(root: &Path, disk: &Disk) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-async fn current(State(distribution): State<Distribution>) -> ApiResult<Response> {
-    distribution
-        .authority(None)
-        .await
-        .map(metadata)
-        .map_err(refused)
-}
-
-async fn authority(
-    State(distribution): State<Distribution>,
-    Json(request): Json<AuthorityRequest>,
-) -> ApiResult<Response> {
-    distribution
-        .authority(Some(&request.manifest_sha256))
-        .await
-        .map(metadata)
-        .map_err(refused)
-}
-
-fn metadata(value: AuthorityResponse) -> Response {
-    ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response()
-}
-
-async fn inventory(
-    State(distribution): State<Distribution>,
-    HttpPath(id): HttpPath<String>,
-) -> ApiResult<Response> {
-    if !canonical_hash(&id) {
-        return Err((StatusCode::BAD_REQUEST, "invalid inventory digest".into()));
-    }
-    let descriptor = distribution
-        .disk
-        .lock()
-        .unwrap()
-        .retained
-        .iter()
-        .find(|r| r.inventory.sha256 == id)
-        .map(|r| r.inventory.clone())
-        .ok_or((
-            StatusCode::NOT_FOUND,
-            "inventory is no longer retained".into(),
-        ))?;
-    stream(
-        &distribution
-            .root
-            .join("inventories")
-            .join(format!("{id}.json")),
-        &descriptor,
-    )
-}
-
-async fn object(
-    State(distribution): State<Distribution>,
-    HttpPath(id): HttpPath<String>,
-) -> ApiResult<Response> {
-    if !canonical_hash(&id) {
-        return Err((StatusCode::BAD_REQUEST, "invalid object digest".into()));
-    }
-    let distribution_for_lookup = distribution.clone();
-    let objects = tokio::task::spawn_blocking(move || distribution_for_lookup.objects())
-        .await
-        .map_err(refused)?
-        .map_err(refused)?;
-    let descriptor = objects.get(&id).ok_or((
-        StatusCode::NOT_FOUND,
-        "object is not referenced by a retained inventory".into(),
-    ))?;
-    stream(
-        &descriptor.path(&distribution.root).map_err(refused)?,
-        descriptor,
-    )
-}
-
-fn stream(path: &Path, descriptor: &Object) -> ApiResult<Response> {
-    let artifact =
-        artifact::PublicationArtifact::open(path, descriptor.bytes, descriptor.sha256.clone())
-            .map_err(refused)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, "application/octet-stream"),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        Body::from_stream(artifact.stream()),
-    )
-        .into_response())
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn collect_files_removes_only_unretained_owned_files() {
-        let scratch = tempfile::tempdir().unwrap();
-        let directory = scratch.path().join("objects");
-        assert!(collect_files(&directory, &BTreeSet::new()).is_ok());
-        fs::create_dir(&directory).unwrap();
-        let (kept, stale) = ("ab".repeat(32), "cd".repeat(32));
-        let retained = [
-            kept.clone(),
-            format!("{kept}.json"),
-            format!("{kept}.bin"),
-            format!("{kept}.bin.json"),
-        ];
-        let removed = [
-            stale.clone(),
-            format!("{stale}.json"),
-            format!("{stale}.bin"),
-            format!("{stale}.bin.json"),
-            format!("{kept}.tmp"),
-            format!("{kept}.json.tmp"),
-            format!("{stale}.bin.tmp"),
-        ];
-        // Names the publisher does not own, including near-hashes, stay.
-        let foreign = [
-            "current.json".to_string(),
-            "distribution.lock".to_string(),
-            "AB".repeat(32),
-            format!("{}.json", "a".repeat(63)),
-            format!("{stale}.txt"),
-        ];
-        for name in retained.iter().chain(&removed).chain(&foreign) {
-            fs::write(directory.join(name), name).unwrap();
-        }
-        // A directory under an owned name is not a collected file.
-        fs::create_dir(directory.join("ef".repeat(32))).unwrap();
-        collect_files(&directory, &retained.iter().cloned().collect()).unwrap();
-        let mut remaining: Vec<_> = fs::read_dir(&directory)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-            .collect();
-        remaining.sort();
-        let mut expected: Vec<_> = retained
-            .iter()
-            .chain(&foreign)
-            .cloned()
-            .chain(["ef".repeat(32)])
-            .collect();
-        expected.sort();
-        assert_eq!(remaining, expected);
-    }
-}
+mod tests;

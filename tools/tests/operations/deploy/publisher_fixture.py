@@ -57,7 +57,7 @@ class Coordinator(FakeFleet):
             raise DeployError('publisher managed file must be a root-owned regular file')
         return {'machine_id': 'a' * 32, 'memory_available': self.memory, 'memory_total': 64 << 30,
                 'files': {p: {'mode': 0o600} if p in files else None for p in paths},
-                'disks': {p: {'available': 80 << 30, 'total': 100 << 30} for p in paths}}
+                'disks': {p: {'available': 80 << 30, 'total': 100 << 30, 'device': 1} for p in paths}}
 
     def systemctl(self, host, *args):
         self.effects.append(args)

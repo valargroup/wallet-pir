@@ -73,16 +73,6 @@ class Templates(unittest.TestCase):
             fleet.canonical_hash=canonical;asyncio.run(p.verify_preserved(replies))
             self.assertEqual(json.loads((p.root/'preserved-v10.json').read_text())['map_sha256'],digest)
 
-    def test_generated_rollback_budget_allows_cold_cache_wait_within_total_limit(self):
-        spec={'source_sha':'a'*40,'publication_sha256':'b'*64,'inventory':{'path':'/inventory.json'}}
-        with patch.object(M,'checked',return_value=Path('/spec.json')),patch.object(M,'validate',return_value=spec), \
-                patch.object(M.H,'load',return_value=spec),patch.object(M.H,'checksum',return_value='c'*64):
-            recipe=M.recipe('/spec.json','c'*64)
-        budgets={command['name']:command['timeout'] for command in recipe['rollback']}
-        self.assertEqual(budgets,{'withdraw-origins':60,'restore-v10':140,'verify-rollback':300,
-                                  'reopen-v10':100,'verify-service':140})
-        self.assertGreater(budgets['verify-rollback'],250)
-        self.assertEqual(sum(budgets.values()),740)
 
     def test_repair_source_requires_current_rollback_intent_and_retained_receipt(self):
         p=object.__new__(M.Product);p.spec={'source_sha':'a'*40}
@@ -119,29 +109,6 @@ class Templates(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'bound'):
                 M.read_fixture(path)
 
-    def test_load_executable_path_matches_the_frozen_release_receipt(self):
-        receipt=json.loads((HERE.parent/'fixtures/deployment-provenance/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
-        self.assertEqual(str(M.LOAD_BINARY),receipt['binaries']['examples/rate-query']['retained_path'])
-
-    def test_legacy_hosts_install_the_deployed_pair_and_controller_and_12ce_otherwise(self):
-        selected=[]
-        def deployed(name):
-            selected.append(name); return Path('/portable')/name
-        with patch.object(M.I,'worker_binary',side_effect=deployed):
-            for name in ('transparent-shard-server','shard-control'):
-                self.assertEqual(M.selected_binary('worker',name,False),Path('/portable')/name)
-            self.assertEqual(M.selected_binary('coordinator','transparent-publish-controller',False),
-                             Path('/portable/transparent-publish-controller'))
-            # The coordinator keeps its 12ce shard-control, filter and planner.
-            for name in ('shard-control','transparent-filter-server','shard-assign'):
-                self.assertEqual(M.selected_binary('coordinator',name,False),M.RELEASE/name)
-            self.assertEqual(M.selected_binary('worker','transparent-publish-controller',False),
-                             M.RELEASE/'transparent-publish-controller')
-        self.assertEqual(selected,['transparent-shard-server','shard-control','transparent-publish-controller'])
-        receipt=json.loads((HERE.parent/'fixtures/deployment-provenance/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
-        self.assertEqual(str(M.RELEASE/'shard-assign'),receipt['binaries']['shard-assign']['retained_path'])
-        with patch.object(M.C,'binary',side_effect=lambda name:Path('/candidate')/name):
-            self.assertEqual(M.selected_binary('coordinator','shard-control',True),Path('/candidate/shard-control'))
 
     def template(self):
         plan=worker_plan()

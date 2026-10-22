@@ -1,6 +1,14 @@
 //! Independent wallet client over real Status router and worker listeners.
-use super::*;
-use status_query_server::fixture;
+use super::Service;
+use crate::fixture;
+use crate::{
+    distributed::Role,
+    now_ms,
+    protocol::{Observation, HEADER_BYTES, QUERY_MAGIC},
+    Controller, Generation,
+};
+use ipir_sp::server::MatvecBackend;
+use std::path::Path as FsPath;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use zakura_pir_client::status as wallet;

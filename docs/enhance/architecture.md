@@ -183,6 +183,14 @@ and scheduling live in `pir-sync-manager`; Enhance policy stays in Enhance.
 The root hosts are `pir-publisher` and `pir-query-server`; product crates are
 libraries. Test/workload composition belongs under `tools/`.
 
+Within `enhance-publisher`, `chain_source` maps canonical blocks to records and
+`journal` owns committed record storage. `publisher::EnhancePublisher` reserves
+work and coordinates preparation; `publication` builds and verifies immutable
+material, and `distribution::PublicationDistribution` publishes it through HTTP.
+Each workflow keeps its lower-level mechanisms in private child modules.
+Runtime recovery and offline handoff share the private durable-state types;
+reading those types never grants serving authority.
+
 ## Validation and deployment
 
 Small correctness fixtures retain real TLS, independent plaintext oracles,

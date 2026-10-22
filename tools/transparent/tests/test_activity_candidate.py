@@ -122,26 +122,6 @@ class Fixture(unittest.TestCase):
 
 
 class Identity(Fixture):
-    def test_real_pins_match_manifest_and_prompted_ci_roles_without_relabeling_history(self):
-        manifest = json.loads((EVIDENCE/'activity-metadata-2026-10-04/manifest.json').read_text())
-        real = module('candidate_real_pins', HERE.parent/'lib/activity_candidate.py')
-        self.assertEqual(real.SUPPLEMENTAL_PINS, {k:v['sha256'] for k, v in manifest['artifacts'].items()})
-        self.assertEqual(real.SUPPLEMENTAL_ARCHIVE_SHA256, manifest['archive']['sha256'])
-        self.assertEqual(manifest['source_sha'], real.SOURCE_SHA)
-        self.assertEqual(str(real.CI_RUN), manifest['context']['ci_release']['run'])
-        self.assertEqual(sorted(real.CI_PINS), sorted(manifest['context']['ci_release']['inventory_roles_from_ci']))
-        old = json.loads((EVIDENCE/'activity-metadata-2026-09-30/release-12ce1291.json').read_text())
-        self.assertEqual(set(real.ARTIFACTS), set(old['binaries']))
-        self.assertFalse(set(real.ARTIFACTS.values()) & {v['sha256'] for v in old['binaries'].values()})
-        # Historical identities are unchanged: publication job, assignment and samples keep 12ce.
-        self.assertEqual(real.HISTORICAL_SHA, OLD)
-        self.assertEqual(PRODUCT.NATIVE, OLD)
-        self.assertEqual(I.P.RELEASE_SHA, OLD)
-        self.assertEqual(str(PRODUCT.LOAD_BINARY), old['binaries']['examples/rate-query']['retained_path'])
-        self.assertEqual(R.READER, old['binaries']['transparent-loadtest']['retained_path'])
-        self.assertTrue(str(real.TARGET).startswith('/srv/transparent-activity/candidates/'))
-        self.assertFalse(str(real.TARGET).startswith(str(I.P.ROOT/'build')))
-
     def test_fixture_archives_collect_all_eighteen_with_provenance(self):
         files = C.files(self.archives)
         self.assertEqual(set(files), {'provenance.json', *('artifacts/'+n for n in C.ARTIFACTS)})

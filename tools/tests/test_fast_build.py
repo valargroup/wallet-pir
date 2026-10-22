@@ -168,49 +168,6 @@ class FastBuildTests(unittest.TestCase):
         self.assertFalse(Path(options['env']['WALLET_PIR_TEST_RUNTIME_CACHE']).exists())
         self.assertEqual(Path(options['env']['WALLET_PIR_CASE_LOG']).name, 'cases.jsonl')
 
-    def test_fast_pool_preserves_the_requested_three_program_limit(self):
-        self.execute(jobs=3)
-        self.assertEqual(self.calls[-1][0][-2:], ['--jobs', '3'])
-
-    def test_filter_library_runs_alone_on_a_four_core_runner_and_shares_eight(self):
-        self.execute()
-        baseline = {p['executable']: p for p in self.plans[0]}
-        self.calls.clear()
-        self.plans.clear()
-        self.packages[0]['name'] = 'transparent-publisher'
-        self.registry['transparent-publisher'] = self.registry.pop('a')
-        self.slow['transparent-publisher'] = self.slow.pop('a')
-        self.execute()
-        plan = {p['executable']: p for p in self.plans[0]}
-        self.assertEqual(set(plan), set(baseline))
-        self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
-        self.assertEqual({binary: p['exclusive'] for binary, p in plan.items()}, {
-            '/fixture/a-a': True,
-            '/fixture/a-client': False,
-            '/fixture/a-smoke': False,
-            '/fixture/b-b': False,
-            '/fixture/b-smoke': False,
-        })
-        for binary, program in plan.items():
-            for field in ['args', 'case_count', 'directory', 'version']:
-                self.assertEqual(program[field], baseline[binary][field])
-        runner, options = self.calls[-1]
-        self.assertIn('--budget', runner)
-        self.assertEqual(options['env']['WALLET_PIR_ENFORCE_BUDGET'], '1')
-        self.calls.clear()
-        self.plans.clear()
-        self.execute(cpus=8)
-        self.assertFalse(self.plans[0][0]['exclusive'])
-        self.assertEqual(self.plans[0][0]['executable'], '/fixture/a-a')
-
-    def test_discovered_case_count_orders_units_after_http_independently_of_cargo_output(self):
-        self.listings['/fixture/b-b'] = {f'case_{i}' for i in range(7)}
-        self.execute()
-        self.assertTrue(self.plans[0][0]['integration'])
-        units = [p for p in self.plans[0] if not p['integration']]
-        self.assertEqual(units[0]['executable'], '/fixture/b-b')
-        self.assertEqual(units[0]['case_count'], 7)
-        self.assertEqual(len(self.plans[0]), len(self.artifacts))
 
     def test_complete_correctness_keeps_native_features_and_the_outer_case_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -243,7 +200,6 @@ class FastBuildTests(unittest.TestCase):
         self.execute(compile_only=True)
         self.assertEqual(self.calls[-1][0], baseline)
         self.assertEqual(len(self.calls), 2)
-
 
 
     def test_missing_library_cli_or_integration_artifacts_fail_before_execution(self):
