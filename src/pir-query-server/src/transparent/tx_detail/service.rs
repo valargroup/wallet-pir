@@ -289,7 +289,12 @@ impl DisplayState {
                     let key = runtime_key(&revision.digest, table, segment);
                     shipped
                         .check_size(&key, &params, source.sha256())
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| {
+                            format!(
+                                "required prepared runtime for display revision {} segment {segment}: {e}",
+                                revision.digest
+                            )
+                        })?;
                     checked += 1;
                 }
             }

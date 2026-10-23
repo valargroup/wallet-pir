@@ -525,7 +525,12 @@ impl ServiceState {
                     );
                     shipped
                         .check_size(&key, shared, source.sha256())
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| {
+                            format!(
+                                "required prepared runtime for shard {} segment {segment}: {e}",
+                                shard.manifest.shard_id
+                            )
+                        })?;
                     checked += 1;
                 }
             }
