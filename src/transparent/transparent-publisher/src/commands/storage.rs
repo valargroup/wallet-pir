@@ -68,7 +68,6 @@ impl Prepared {
 pub async fn run(args: Vec<std::ffi::OsString>) -> Result<(), BoxError> {
     let cli = Cli::parse_from(args);
     let target = cli.target_root.clone();
-    let product = cli.product;
     let configuration: serde_json::Value = serde_json::from_slice(&std::fs::read(&cli.config)?)?;
     tokio::task::spawn_blocking(move || prepare(cli)).await??;
     {
