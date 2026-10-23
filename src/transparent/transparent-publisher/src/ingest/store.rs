@@ -28,8 +28,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use transparent_filter::{filter_hash, BlockHash};
 
-/// Bump when any on-disk layout changes. A mismatch sets the directory aside
-/// and re-ingests rather than refusing to start.
+/// Bump when any on-disk layout changes. A store of another version is
+/// refused, untouched; it is never converted, set aside or re-derived.
 const STORE_VERSION: u16 = 1;
 
 const INDEX_RECORD_BYTES: usize = 32 + 8 + 4 + 32;
@@ -43,6 +43,17 @@ pub enum StoreError {
     Metadata(#[from] serde_json::Error),
     #[error("store invariant violated: {0}")]
     Invariant(String),
+    #[error(
+        "filter store at {dir} is {found}, not version {STORE_VERSION} profile {profile} \
+         genesis {genesis_hash} start {start_height}; it was left untouched"
+    )]
+    Incompatible {
+        dir: String,
+        found: String,
+        profile: String,
+        genesis_hash: String,
+        start_height: u64,
+    },
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -84,12 +95,14 @@ fn read_u64(bytes: &[u8]) -> u64 {
 }
 
 impl FilterStore {
-    /// Opens or creates the store.
+    /// Opens the store in `dir` in place, or creates one in a directory
+    /// without `meta.json`.
     ///
     /// An existing store whose version, profile, chain identity or start height
-    /// differs is moved aside and a fresh one begun. The archive node can
-    /// re-derive everything, and a restart must not require an operator on the
-    /// host.
+    /// differs, whose metadata is unreadable, or whose files disagree with its
+    /// checkpoint is refused before anything in `dir` changes: an operator
+    /// decides what happens to it. The only repair is discarding a tail written
+    /// after the last durable checkpoint.
     pub fn open(
         dir: impl AsRef<Path>,
         profile: &str,
@@ -97,7 +110,6 @@ impl FilterStore {
         start_height: u64,
     ) -> Result<Self, StoreError> {
         let dir = dir.as_ref().to_path_buf();
-        std::fs::create_dir_all(&dir)?;
         let wanted = Meta {
             version: STORE_VERSION,
             profile: profile.to_string(),
@@ -105,54 +117,31 @@ impl FilterStore {
             start_height,
         };
         let meta_path = dir.join("meta.json");
+        let checkpoint_path = dir.join("checkpoint.bin");
         if meta_path.exists() {
             let found: Result<Meta, _> = serde_json::from_slice(&std::fs::read(&meta_path)?);
-            let compatible = matches!(&found, Ok(found) if *found == wanted);
-            if !compatible {
-                let label = match &found {
-                    Ok(found) => format!("v{}-{}", found.version, found.profile),
-                    Err(_) => "unreadable".to_string(),
-                };
-                let superseded = dir.join(format!("superseded-{label}"));
-                std::fs::create_dir_all(&superseded)?;
-                for name in [
-                    "meta.json",
-                    "filters.bin",
-                    "index.bin",
-                    "chain.bin",
-                    "checkpoint.bin",
-                ] {
-                    let from = dir.join(name);
-                    if from.exists() {
-                        std::fs::rename(&from, superseded.join(name))?;
-                    }
-                }
-                File::open(&dir)?.sync_all()?;
-                tracing::warn!(
-                    path = %superseded.display(),
-                    "set aside an incompatible filter store; re-ingesting from the start height"
-                );
+            if !matches!(&found, Ok(found) if *found == wanted) {
+                return Err(StoreError::Incompatible {
+                    dir: dir.display().to_string(),
+                    found: match found {
+                        Ok(found) => format!(
+                            "version {} profile {} genesis {} start {}",
+                            found.version, found.profile, found.genesis_hash, found.start_height
+                        ),
+                        Err(error) => format!("unreadable ({error})"),
+                    },
+                    profile: wanted.profile,
+                    genesis_hash: wanted.genesis_hash,
+                    start_height,
+                });
             }
-        }
-        if !dir.join("meta.json").exists() {
-            let bytes = serde_json::to_vec_pretty(&wanted)?;
-            let temporary = dir.join("meta.json.tmp");
-            let mut file = File::create(&temporary)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-            std::fs::rename(temporary, dir.join("meta.json"))?;
-            File::open(&dir)?.sync_all()?;
+        } else if checkpoint_path.exists() {
+            return Err(StoreError::Invariant(
+                "checkpoint.bin exists without meta.json".into(),
+            ));
         }
 
-        for name in ["filters.bin", "index.bin", "chain.bin"] {
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join(name))?;
-        }
-
-        // Discard any tail written after the last durable checkpoint.
-        let checkpoint_path = dir.join("checkpoint.bin");
+        // Validate the checkpoint against every file before changing any.
         let (filters_len, index_len, chain_len) = if checkpoint_path.exists() {
             let bytes = std::fs::read(&checkpoint_path)?;
             if bytes.len() != 24 {
@@ -166,19 +155,57 @@ impl FilterStore {
         } else {
             (0, 0, 0)
         };
+        if index_len % INDEX_RECORD_BYTES as u64 != 0 {
+            return Err(StoreError::Invariant(
+                "index.bin is not a whole number of records".into(),
+            ));
+        }
+        if chain_len % CHAIN_RECORD_BYTES as u64 != 0 {
+            return Err(StoreError::Invariant(
+                "chain.bin is not a whole number of records".into(),
+            ));
+        }
         for (name, length) in [
             ("filters.bin", filters_len),
             ("index.bin", index_len),
             ("chain.bin", chain_len),
         ] {
-            let file = OpenOptions::new().write(true).open(dir.join(name))?;
-            if file.metadata()?.len() < length {
+            let present = match std::fs::metadata(dir.join(name)) {
+                Ok(metadata) => metadata.len(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(error) => return Err(error.into()),
+            };
+            if present < length {
                 return Err(StoreError::Invariant(format!(
                     "{name} is shorter than its checkpoint"
                 )));
             }
-            file.set_len(length)?;
+        }
+
+        std::fs::create_dir_all(&dir)?;
+        if !meta_path.exists() {
+            let bytes = serde_json::to_vec_pretty(&wanted)?;
+            let temporary = dir.join("meta.json.tmp");
+            let mut file = File::create(&temporary)?;
+            file.write_all(&bytes)?;
             file.sync_all()?;
+            std::fs::rename(temporary, &meta_path)?;
+            File::open(&dir)?.sync_all()?;
+        }
+        // Discard any tail written after the last durable checkpoint.
+        for (name, length) in [
+            ("filters.bin", filters_len),
+            ("index.bin", index_len),
+            ("chain.bin", chain_len),
+        ] {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join(name))?;
+            if file.metadata()?.len() != length {
+                file.set_len(length)?;
+                file.sync_all()?;
+            }
         }
 
         let mut index_bytes = Vec::new();
@@ -554,32 +581,93 @@ mod tests {
         assert_eq!(store.next_height(), START);
     }
 
+    /// Every path under `root` with its bytes.
+    fn tree(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        let mut found = std::collections::BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    found.insert(path.clone(), vec![]);
+                    pending.push(path);
+                } else {
+                    found.insert(path.clone(), std::fs::read(&path).unwrap());
+                }
+            }
+        }
+        found
+    }
+
     #[test]
-    fn an_incompatible_store_is_set_aside_rather_than_refusing_to_start() {
+    fn an_incompatible_or_corrupt_store_is_refused_untouched() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open(dir.path());
         fill(&mut store, START + 1);
         drop(store);
+        let before = tree(dir.path());
+        let other_genesis = "00".repeat(32);
+        for (profile, genesis, start) in [
+            ("some-other-profile-v9", GENESIS, START),
+            (PROFILE, other_genesis.as_str(), START),
+            (PROFILE, GENESIS, START - 1),
+        ] {
+            assert!(matches!(
+                FilterStore::open(dir.path(), profile, genesis, start),
+                Err(StoreError::Incompatible { .. })
+            ));
+            assert_eq!(tree(dir.path()), before, "refused without any change");
+        }
 
-        // A different profile must not be read as if it were this one.
-        let store =
-            FilterStore::open(dir.path(), "some-other-profile-v9", GENESIS, START).expect("open");
-        assert_eq!(store.covered_through(), None);
-        assert!(dir
-            .path()
-            .join("superseded-v1-zcash-transparent-basic-v1")
-            .exists());
+        // Another version, unreadable metadata, and files shorter than their
+        // checkpoint are refused the same way, with an uncommitted tail kept.
+        let meta = dir.path().join("meta.json");
+        let original = std::fs::read(&meta).unwrap();
+        let mut tail = OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("filters.bin"))
+            .unwrap();
+        tail.write_all(b"uncommitted").unwrap();
+        drop(tail);
+        let newer = String::from_utf8(original.clone())
+            .unwrap()
+            .replace("\"version\": 1", "\"version\": 2");
+        for (bytes, refusal) in [
+            (newer.into_bytes(), "is version 2 profile"),
+            (b"{not json".to_vec(), "unreadable"),
+        ] {
+            std::fs::write(&meta, &bytes).unwrap();
+            let before = tree(dir.path());
+            let error = FilterStore::open(dir.path(), PROFILE, GENESIS, START)
+                .err()
+                .expect("refused");
+            assert!(error.to_string().contains(refusal), "{error}");
+            assert_eq!(tree(dir.path()), before);
+        }
+        std::fs::write(&meta, &original).unwrap();
+        std::fs::write(dir.path().join("chain.bin"), [0u8; CHAIN_RECORD_BYTES]).unwrap();
+        let before = tree(dir.path());
+        assert!(matches!(
+            FilterStore::open(dir.path(), PROFILE, GENESIS, START),
+            Err(StoreError::Invariant(_))
+        ));
+        assert_eq!(tree(dir.path()), before);
+        assert!(!before
+            .keys()
+            .any(|path| path.to_string_lossy().contains("superseded")));
     }
 
     #[test]
-    fn a_different_chain_identity_sets_the_store_aside() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = open(dir.path());
-        fill(&mut store, START);
+    fn a_fresh_directory_initializes_and_a_compatible_store_reopens_in_place() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("filters");
+        let mut store = open(&dir);
+        fill(&mut store, START + 2);
         drop(store);
-
-        let other_genesis = "00".repeat(32);
-        let store = FilterStore::open(dir.path(), PROFILE, &other_genesis, START).expect("open");
-        assert_eq!(store.covered_through(), None);
+        let before = tree(&dir);
+        let reopened = open(&dir);
+        assert_eq!(reopened.covered_through(), Some(START + 2));
+        drop(reopened);
+        assert_eq!(tree(&dir), before, "a clean reopen changes nothing");
     }
 }
