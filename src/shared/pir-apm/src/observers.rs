@@ -41,6 +41,14 @@ pub struct Settings {
     pub hosts: Vec<Host>,
     #[serde(default)]
     pub decommissioned: Vec<String>,
+    /// Dynamic Transparent workers: each enrolled or draining roster member is
+    /// an expected host, enrolled with the `monitoring` record its bootstrap wrote.
+    #[serde(default)]
+    pub roster: Option<PathBuf>,
+    /// Host resources in the former sampler's `hosts.json` shape, for the
+    /// Transparent capacity views (`host_snapshot` in their config).
+    #[serde(default)]
+    pub host_snapshot: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -63,6 +71,112 @@ pub struct Host {
     /// Where to write the host's aggregate Caddy metrics for the edge rules.
     #[serde(default)]
     pub edge_output: Option<PathBuf>,
+    /// Names and main unit under which this host appears in `host_snapshot`.
+    #[serde(default)]
+    pub snapshot: Option<Snapshot>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Snapshot {
+    pub sources: Vec<String>,
+    pub unit: String,
+    /// The filesystem reported as the host's disk (a `disk:` or `volume:` check path).
+    #[serde(default = "root_path")]
+    pub data_path: String,
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+fn root_path() -> String {
+    "/".into()
+}
+
+/// A roster member's monitoring enrollment, written when its sidecar is installed.
+#[derive(Clone, Debug, Deserialize)]
+struct RosterMember {
+    id: String,
+    #[serde(default)]
+    intent: Option<String>,
+    #[serde(default)]
+    monitoring: Option<RosterMonitoring>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RosterMonitoring {
+    address: SocketAddr,
+    config_digest: String,
+    checks: Vec<String>,
+}
+
+/// Hosts the roster expects: enrolled members with their endpoints, and ids of
+/// members whose sidecar enrollment is missing. An unreadable roster is an error.
+pub fn roster_hosts(path: &Path) -> Result<Roster> {
+    let members: Vec<RosterMember> =
+        serde_json::from_slice(&std::fs::read(path)?).context("parsing roster")?;
+    let mut roster = Roster::default();
+    for m in members {
+        if !pir_host_observations::valid_name(&m.id, 80) {
+            continue;
+        }
+        match m.intent.as_deref().unwrap_or("enrolled") {
+            "enrolled" | "draining" => {}
+            // The actuator's deliberate retirement is an explicit decommission.
+            "retired" => {
+                roster.retired.push(m.id);
+                continue;
+            }
+            _ => continue,
+        }
+        match m.monitoring {
+            Some(record) => roster.hosts.push(Host {
+                tls_name: format!("{}.pir-monitoring", m.id),
+                host_id: m.id,
+                address: record.address,
+                config_digest: record.config_digest,
+                checks: record.checks,
+                edge_output: None,
+                snapshot: None,
+            }),
+            None => roster.unenrolled.push(m.id),
+        }
+    }
+    Ok(roster)
+}
+
+#[derive(Debug, Default)]
+pub struct Roster {
+    pub hosts: Vec<Host>,
+    /// Expected members whose bootstrap recorded no sidecar enrollment.
+    pub unenrolled: Vec<String>,
+    pub retired: Vec<String>,
+}
+
+/// Every host expected this round: the inventory's and the roster's.
+pub struct Expected {
+    pub hosts: Vec<Host>,
+    pub unenrolled: Vec<String>,
+    pub decommissioned: Vec<String>,
+}
+
+impl Expected {
+    pub fn of(settings: &Settings, roster: Option<Roster>) -> Self {
+        let mut expected = Self {
+            hosts: settings.hosts.clone(),
+            unenrolled: Vec::new(),
+            decommissioned: settings.decommissioned.clone(),
+        };
+        if let Some(roster) = roster {
+            let known: BTreeSet<String> = expected.hosts.iter().map(|h| h.host_id.clone()).collect();
+            expected
+                .hosts
+                .extend(roster.hosts.into_iter().filter(|h| !known.contains(&h.host_id)));
+            expected.unenrolled = roster.unenrolled;
+            expected.decommissioned.extend(roster.retired);
+        }
+        expected
+    }
 }
 
 fn credential(path: &Path) -> PathBuf {
@@ -217,7 +331,7 @@ impl Tracker {
 
     pub fn conditions(
         &self,
-        settings: &Settings,
+        expected: &Expected,
         enrolled: &BTreeSet<String>,
         existing: &[Incident],
         now: u64,
@@ -225,11 +339,14 @@ impl Tracker {
         let mut out = Vec::new();
         let empty = HostState::default();
         for host_id in enrolled {
-            let host = settings.hosts.iter().find(|h| &h.host_id == host_id);
+            let host = expected.hosts.iter().find(|h| &h.host_id == host_id);
             let state = self.hosts.get(host_id).unwrap_or(&empty);
             let since = state.last_valid_at.unwrap_or(self.started);
             let missing = now.saturating_sub(since) > MAX_AGE_SECONDS;
             let reason = match host {
+                None if expected.unenrolled.contains(host_id) => {
+                    "roster member has no sidecar enrollment"
+                }
                 None => "enrolled host is missing from the monitoring inventory",
                 Some(_) => state.failure.unwrap_or("no observation yet"),
             };
@@ -294,7 +411,7 @@ impl Tracker {
                 });
             }
         }
-        for host_id in &settings.decommissioned {
+        for host_id in &expected.decommissioned {
             let prefix = format!("host:{host_id}:");
             for incident in existing {
                 if let Some(c) = incident.condition.as_ref().filter(|c| c.key.starts_with(&prefix))
@@ -311,14 +428,15 @@ impl Tracker {
 }
 
 /// Persisted enrollment: inventory hosts join it; only decommissioning leaves it.
-pub fn enrollment(store: &Store, settings: &Settings) -> Result<BTreeSet<String>> {
+pub fn enrollment(store: &Store, expected: &Expected) -> Result<BTreeSet<String>> {
     let mut enrolled: BTreeSet<String> = store
         .metadata_value(ENROLLMENT_KEY)?
         .map(|v| serde_json::from_str(&v))
         .transpose()?
         .unwrap_or_default();
-    enrolled.extend(settings.hosts.iter().map(|h| h.host_id.clone()));
-    for gone in &settings.decommissioned {
+    enrolled.extend(expected.hosts.iter().map(|h| h.host_id.clone()));
+    enrolled.extend(expected.unenrolled.iter().cloned());
+    for gone in &expected.decommissioned {
         enrolled.remove(gone);
     }
     store.metadata(ENROLLMENT_KEY, &serde_json::to_string(&enrolled)?)?;
@@ -331,6 +449,104 @@ pub fn from_env() -> Result<Option<Settings>> {
         .transpose()
 }
 
+/// One host's entry in the former sampler's `hosts.json` shape. Properties a
+/// check does not report are left out, never filled in.
+pub fn snapshot_entry(host: &Host, snapshot: &Snapshot, doc: Option<&Observations>) -> serde_json::Value {
+    let mut entry = serde_json::Map::new();
+    entry.insert("host_id".into(), host.host_id.clone().into());
+    if let Some(size) = &snapshot.size {
+        entry.insert("size".into(), size.clone().into());
+    }
+    let Some(doc) = doc else {
+        entry.insert("at".into(), 0.into());
+        return entry.into();
+    };
+    let value = |check: &str, name: &str| {
+        doc.checks
+            .iter()
+            .find(|c| c.name == check && c.status != Status::Unknown)
+            .and_then(|c| c.values.iter().find(|v| v.name == name))
+            .map(|v| serde_json::json!(v.value as u64))
+    };
+    let mut put = |key: &str, v: Option<serde_json::Value>| {
+        if let Some(v) = v {
+            entry.insert(key.into(), v);
+        }
+    };
+    put("at", Some(doc.generated_at.into()));
+    put("unit", Some(snapshot.unit.clone().into()));
+    put("memory_available_bytes", value("memory", "available_bytes"));
+    put("memory_total_bytes", value("memory", "total_bytes"));
+    put("swap_total_bytes", value("swap", "total_bytes"));
+    put("swap_free_bytes", value("swap", "free_bytes"));
+    for disk in [format!("volume:{}", snapshot.data_path), format!("disk:{}", snapshot.data_path)] {
+        if let (Some(a), Some(t)) = (value(&disk, "available_bytes"), value(&disk, "usable_bytes")) {
+            put("disk_available_bytes", Some(a));
+            put("disk_total_bytes", Some(t));
+            break;
+        }
+    }
+    let main = snapshot.unit.to_lowercase();
+    put("restarts", value(&format!("unit:{main}:restarts"), "restarts"));
+    put("oom_kills", value(&format!("unit:{main}:oom"), "oom_kills"));
+    let mut units = serde_json::Map::new();
+    for check in &doc.checks {
+        let Some(unit) = check
+            .name
+            .strip_prefix("unit:")
+            .and_then(|n| n.strip_suffix(":active"))
+        else {
+            continue;
+        };
+        if check.status == Status::Unknown {
+            continue;
+        }
+        let mut u = serde_json::Map::new();
+        for v in &check.values {
+            u.insert(v.name.clone(), serde_json::json!(v.value as u64));
+        }
+        if !u.contains_key("memory_max_bytes") && u.contains_key("memory_current_bytes") {
+            u.insert("memory_max_bytes".into(), serde_json::Value::Null);
+        }
+        if let Some(oom) = value(&format!("unit:{unit}:oom"), "oom_kills") {
+            u.insert("oom_kills".into(), oom);
+        }
+        units.insert(unit.to_string(), u.into());
+    }
+    entry.insert("units".into(), units.into());
+    entry.into()
+}
+
+impl Tracker {
+    /// The valid, current document of a host, if any.
+    pub fn current(&self, host_id: &str) -> Option<&Observations> {
+        self.hosts
+            .get(host_id)
+            .filter(|s| s.failure.is_none())
+            .and_then(|s| s.latest.as_ref())
+    }
+}
+
+fn write_snapshot(path: &Path, tracker: &Tracker, hosts: &[Host], now: u64) -> Result<()> {
+    let mut out = serde_json::Map::new();
+    for host in hosts {
+        let Some(snapshot) = &host.snapshot else {
+            continue;
+        };
+        let doc = tracker
+            .current(&host.host_id)
+            .filter(|d| now.saturating_sub(d.generated_at) <= MAX_AGE_SECONDS);
+        let entry = snapshot_entry(host, snapshot, doc);
+        for source in &snapshot.sources {
+            out.insert(source.clone(), entry.clone());
+        }
+    }
+    let next = path.with_extension("next");
+    std::fs::write(&next, serde_json::to_vec(&out)?)?;
+    std::fs::rename(next, path)?;
+    Ok(())
+}
+
 /// Poll every enrolled sidecar and evaluate the `host` family until stopped.
 pub async fn run(
     settings: Settings,
@@ -339,19 +555,36 @@ pub async fn run(
     dashboard: String,
 ) -> Result<()> {
     let mut store = Store::open(&state_path)?.with_family(FAMILY);
-    let clients = settings
-        .hosts
-        .iter()
-        .map(|h| Ok((h.clone(), client(&settings, h)?)))
-        .collect::<Result<Vec<_>>>()?;
+    let mut clients: BTreeMap<(String, SocketAddr), reqwest::Client> = BTreeMap::new();
     let mut tracker = Tracker::new(crate::incidents::unix_time());
     let permits = Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut interval = tokio::time::interval(Duration::from_secs(POLL_SECONDS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
+        // An unreadable roster keeps the inventory's hosts and enrollment.
+        let roster = match &settings.roster {
+            Some(path) => match roster_hosts(path) {
+                Ok(roster) => Some(roster),
+                Err(_) => {
+                    eprintln!("observer roster unavailable");
+                    None
+                }
+            },
+            None => None,
+        };
+        let expected = Expected::of(&settings, roster);
         let mut set = tokio::task::JoinSet::new();
-        for (host, client) in clients.iter().cloned() {
+        for host in expected.hosts.iter().cloned() {
+            let key = (host.tls_name.clone(), host.address);
+            let client = match clients.get(&key) {
+                Some(c) => c.clone(),
+                None => {
+                    let c = client(&settings, &host)?;
+                    clients.insert(key, c.clone());
+                    c
+                }
+            };
             let permits = permits.clone();
             set.spawn(async move {
                 let _permit = permits.acquire_owned().await;
@@ -368,8 +601,13 @@ pub async fn run(
             }
         }
         let now = crate::incidents::unix_time();
-        let enrolled = enrollment(&store, &settings)?;
-        let conditions = tracker.conditions(&settings, &enrolled, &store.incidents()?, now);
+        if let Some(path) = &settings.host_snapshot {
+            if write_snapshot(path, &tracker, &expected.hosts, now).is_err() {
+                eprintln!("host snapshot could not be written");
+            }
+        }
+        let enrolled = enrollment(&store, &expected)?;
+        let conditions = tracker.conditions(&expected, &enrolled, &store.incidents()?, now);
         store.evaluate(&conditions, now, settings.shadow(), &environment, &dashboard)?;
     }
 }
@@ -396,9 +634,12 @@ mod tests {
                     config_digest: format!("sha256:{}", "0".repeat(64)),
                     checks: vec!["disk:/".into()],
                     edge_output: None,
+                    snapshot: None,
                 })
                 .collect(),
             decommissioned: decommissioned.iter().map(|s| s.to_string()).collect(),
+            roster: None,
+            host_snapshot: None,
         }
     }
 
@@ -439,9 +680,10 @@ mod tests {
         }
 
         fn tick(&mut self, s: &Settings, now: u64) {
-            let enrolled = enrollment(&self.store, s).unwrap();
+            let expected = Expected::of(s, None);
+            let enrolled = enrollment(&self.store, &expected).unwrap();
             let existing = self.store.incidents().unwrap();
-            let c = self.tracker.conditions(s, &enrolled, &existing, now);
+            let c = self.tracker.conditions(&expected, &enrolled, &existing, now);
             self.store.evaluate(&c, now, s.shadow(), "test", "").unwrap();
         }
 
@@ -517,9 +759,10 @@ mod tests {
         // A valid but stale document is unknown for its checks.
         let s2 = settings(&["w1"], &[]);
         h.tracker.record("w1", doc("w1", 1000, Status::Healthy), 1050);
+        let e2 = Expected::of(&s2, None);
         let c = h
             .tracker
-            .conditions(&s2, &enrollment(&h.store, &s2).unwrap(), &[], 1050);
+            .conditions(&e2, &enrollment(&h.store, &e2).unwrap(), &[], 1050);
         let disk = c.iter().find(|c| c.key == DISK).unwrap();
         assert_eq!(disk.firing, None);
         assert_eq!(disk.observed, "observation older than 45s");
@@ -549,7 +792,7 @@ mod tests {
         assert!(!h.active(COVERAGE));
         assert!(h.outbox().last().unwrap().contains("RETIRED"));
         assert_eq!(
-            enrollment(&h.store, &shrunk).unwrap(),
+            enrollment(&h.store, &Expected::of(&shrunk, None)).unwrap(),
             BTreeSet::from(["w2".to_string()])
         );
     }
@@ -571,5 +814,84 @@ mod tests {
         h.tick(&s, 1015);
         assert_eq!(h.outbox().len(), pending);
         assert!(h.outbox()[0].contains("critical"));
+    }
+
+    #[test]
+    fn roster_members_enroll_dynamically_and_retirement_decommissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let roster = dir.path().join("roster.json");
+        let digest = format!("sha256:{}", "0".repeat(64));
+        std::fs::write(
+            &roster,
+            serde_json::json!([
+                {"id": "w1", "intent": "enrolled", "monitoring": {"address": "10.0.0.9:9443",
+                    "config_digest": digest, "checks": ["disk:/"]}},
+                {"id": "w3", "intent": "draining"},
+                {"id": "w4", "intent": "retired"}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        let s = settings(&[], &[]);
+        let expected = Expected::of(&s, Some(roster_hosts(&roster).unwrap()));
+        assert_eq!(expected.hosts[0].tls_name, "w1.pir-monitoring");
+        assert_eq!(expected.unenrolled, ["w3"]);
+        assert_eq!(expected.decommissioned, ["w4"]);
+        let mut h = Harness::new();
+        let enrolled = enrollment(&h.store, &expected).unwrap();
+        assert_eq!(enrolled, BTreeSet::from(["w1".into(), "w3".into()]));
+        let c = h.tracker.conditions(&expected, &enrolled, &[], 1046);
+        let w3 = c.iter().find(|c| c.key == "host:w3:coverage").unwrap();
+        assert_eq!(w3.firing, Some(true));
+        assert_eq!(w3.observed, "roster member has no sidecar enrollment");
+        h.tracker.record("w1", doc("w1", 1046, Status::Healthy), 1046);
+        assert!(roster_hosts(&dir.path().join("absent.json")).is_err());
+    }
+
+    #[test]
+    fn snapshot_entries_keep_the_sampler_shape_and_omit_unreported_values() {
+        let host = settings(&["w1"], &[]).hosts.remove(0);
+        let snapshot = Snapshot {
+            sources: vec!["transparent-publisher".into()],
+            unit: "pir-publisher.service".into(),
+            data_path: "/".into(),
+            size: Some("m-8vcpu-64gb".into()),
+        };
+        let Poll::Valid(mut d) = doc("w1", 1000, Status::Healthy) else {
+            unreachable!()
+        };
+        let v = |name: &str, value: f64| pir_host_observations::Value {
+            name: name.into(),
+            value,
+            unit: pir_host_observations::Unit::Bytes,
+        };
+        d.checks[0].values = vec![v("available_bytes", 10.), v("usable_bytes", 40.)];
+        d.checks.push(Check {
+            name: "unit:pir-publisher.service:active".into(),
+            status: Status::Healthy,
+            reason: "active".into(),
+            observed_at: 1000,
+            values: vec![v("memory_current_bytes", 5.)],
+        });
+        d.checks.push(Check {
+            name: "unit:pir-publisher.service:oom".into(),
+            status: Status::Healthy,
+            reason: "none".into(),
+            observed_at: 1000,
+            values: vec![v("oom_kills", 2.)],
+        });
+        let entry = snapshot_entry(&host, &snapshot, Some(&d));
+        assert_eq!(entry["at"], 1000);
+        assert_eq!(entry["disk_available_bytes"], 10);
+        assert_eq!(entry["disk_total_bytes"], 40);
+        assert_eq!(entry["oom_kills"], 2);
+        assert_eq!(entry["size"], "m-8vcpu-64gb");
+        assert!(entry.get("memory_available_bytes").is_none());
+        let unit = &entry["units"]["pir-publisher.service"];
+        assert_eq!(unit["memory_current_bytes"], 5);
+        assert!(unit["memory_max_bytes"].is_null());
+        assert_eq!(unit["oom_kills"], 2);
+        let gone = snapshot_entry(&host, &snapshot, None);
+        assert_eq!((gone["at"].as_u64(), gone["host_id"].as_str()), (Some(0), Some("w1")));
     }
 }
