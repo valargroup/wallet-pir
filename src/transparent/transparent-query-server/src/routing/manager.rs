@@ -198,6 +198,30 @@ impl HistorySync {
             Input::Deferred => unreachable!("HTTPS acquisition never defers work"),
         }
     }
+    /// Collection is maintenance, not serving authority. Run it even while
+    /// activation is refused, and refuse another allocation if it cannot finish.
+    async fn collect(&self) -> Result<(), Error> {
+        if let Some(live) = self.live.as_ref().or(self.pending.as_ref()) {
+            let reply = live.command(Command::Collect).await?;
+            if reply["source_collection_deferred"] != false {
+                return Err("publication collection deferred; staging paused".into());
+            }
+            let status = live.command(Command::Status).await?;
+            let active: Publication = serde_json::from_value(status["active"].clone())?;
+            let root = self.config.directory.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::objects::collect_objects(&root, &active.directory.join("shards.json"))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            })
+            .await??;
+            return Ok(());
+        }
+        let root = self.config.directory.clone();
+        tokio::task::spawn_blocking(move || collect_saved(&root).map_err(|e| e.to_string()))
+            .await??;
+        Ok(())
+    }
     async fn acquire(&mut self) -> Result<Input<Acquired<'_>>, Error> {
         self.source.reset_budget();
         if let Some(live) = &self.live {
@@ -262,6 +286,7 @@ impl HistorySync {
                 }
             }
         }
+        self.collect().await?;
         Ok(Input::Work(Acquired {
             owner: self,
             current,
@@ -436,6 +461,53 @@ impl HistorySync {
         })
     }
 }
+
+/// No in-memory owner exists on this path. Keep the saved predecessor and all
+/// of its local inputs without treating that record as authority to serve it.
+fn collect_saved(root: &Path) -> Result<(), Error> {
+    let canonical = std::fs::canonicalize(root)?;
+    let root = canonical.as_path();
+    let mut keep = BTreeSet::new();
+    let saved = match std::fs::read(root.join("active.json")) {
+        Ok(bytes) => Some(serde_json::from_slice::<Publication>(&bytes)?),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if let Some(saved) = &saved {
+        for path in std::iter::once(&saved.directory)
+            .chain(saved.runtimes.iter())
+            .chain(saved.assignment.iter())
+        {
+            let path = std::fs::canonicalize(path)?;
+            let relative = path.strip_prefix(root)?;
+            let first = relative
+                .components()
+                .next()
+                .ok_or("saved input names provider root")?;
+            keep.insert(root.join(first));
+        }
+    }
+    if !crate::history::live::collect_publications(root, &keep)? {
+        return Err("publication collection deferred; staging paused".into());
+    }
+    // A retained map demonstrates the cache's hard-link mode. With no trees
+    // left there are no publication references, so only unlinked objects remain.
+    let linked = saved.map(|p| p.directory.join("shards.json")).or_else(|| {
+        std::fs::read_dir(root)
+            .ok()?
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let map = entry.path().join("shards.json");
+                (entry.file_type().ok()?.is_dir() && map.is_file()).then_some(map)
+            })
+    });
+    if let Some(linked) = linked {
+        crate::objects::collect_objects(root, &linked)?;
+    } else {
+        crate::objects::collect_orphan_objects(root)?;
+    }
+    Ok(())
+}
 impl pir_sync_manager::SyncTask for HistorySync {
     type Report = Progress;
     type Error = Error;
@@ -445,8 +517,17 @@ impl pir_sync_manager::SyncTask for HistorySync {
     async fn synchronize(&mut self) -> Result<Progress, Error> {
         // Every pass, unchanged ones included, rechecks the publisher's contract
         // version before any product request.
-        self.source.discover().await?;
-        self.reconcile().await
+        let result = async {
+            self.source.discover().await?;
+            self.reconcile().await
+        }
+        .await;
+        if result.is_err() || result.as_ref().is_ok_and(|progress| progress.unchanged) {
+            if let Err(error) = self.collect().await {
+                tracing::warn!(%error, "failed-publication collection refused; staging remains paused");
+            }
+        }
+        result
     }
     fn terminal(&self, error: &Error) -> bool {
         crate::source::is_incompatible(error)
@@ -1096,5 +1177,147 @@ mod revocation_tests {
         // One new sibling digest makes the whole recheck new evidence.
         let both = BTreeSet::from(["d".to_string(), "e".to_string()]);
         assert!(recheck_raises_watermark(true, &both, &floor.digests));
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn stage(root: &Path, revision: u64) -> std::path::PathBuf {
+        let digest = format!("{revision:064x}");
+        let object = root.join("objects").join(&digest);
+        std::fs::create_dir_all(root.join("objects")).unwrap();
+        std::fs::write(&object, vec![revision as u8; 4096]).unwrap();
+        let source = root.join(".sources").join(&digest);
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::hard_link(&object, source.join("rows")).unwrap();
+        let directory = root.join(format!("staging-{revision}-100"));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::hard_link(&object, directory.join("shards.json")).unwrap();
+        symlink(source, directory.join(&digest)).unwrap();
+        std::fs::File::open(&directory)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(revision + 1))
+            .unwrap();
+        directory
+    }
+
+    #[test]
+    fn failed_publications_bound_unique_objects_and_preserve_the_saved_predecessor() {
+        let root = tempfile::tempdir().unwrap();
+        let active = stage(root.path(), 0);
+        persist(
+            &root.path().join("active.json"),
+            &Publication {
+                directory: active.clone(),
+                assignment: None,
+                runtimes: Some(active.clone()),
+                map_sha256: "0".repeat(64),
+            },
+        )
+        .unwrap();
+        for revision in 1..20 {
+            stage(root.path(), revision);
+            collect_saved(root.path()).unwrap();
+            let objects = std::fs::read_dir(root.path().join("objects"))
+                .unwrap()
+                .count();
+            assert!(
+                objects <= 4,
+                "active plus three unused publications: {objects}"
+            );
+            assert_eq!(
+                std::fs::read(active.join("shards.json")).unwrap().len(),
+                4096
+            );
+        }
+    }
+
+    #[test]
+    fn a_provider_without_an_active_publication_still_collects_failed_stages() {
+        let root = tempfile::tempdir().unwrap();
+        for revision in 0..12 {
+            stage(root.path(), revision);
+            collect_saved(root.path()).unwrap();
+            assert!(
+                std::fs::read_dir(root.path().join("objects"))
+                    .unwrap()
+                    .count()
+                    <= 3
+            );
+        }
+    }
+
+    #[test]
+    fn downloads_from_an_interrupted_first_stage_are_collected_without_a_map() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("objects")).unwrap();
+        let object = root.path().join("objects").join("a".repeat(64));
+        std::fs::write(&object, b"downloaded before staging failed").unwrap();
+        collect_saved(root.path()).unwrap();
+        assert!(!object.exists());
+    }
+
+    #[test]
+    fn unreadable_or_escaping_saved_inputs_refuse_collection() {
+        let root = tempfile::tempdir().unwrap();
+        for revision in 0..6 {
+            stage(root.path(), revision);
+        }
+        for bytes in [
+            b"{".to_vec(),
+            serde_json::to_vec(&Publication {
+                directory: std::env::temp_dir(),
+                assignment: None,
+                runtimes: None,
+                map_sha256: "0".repeat(64),
+            })
+            .unwrap(),
+        ] {
+            std::fs::write(root.path().join("active.json"), bytes).unwrap();
+            assert!(collect_saved(root.path()).is_err());
+            assert_eq!(
+                std::fs::read_dir(root.path().join("objects"))
+                    .unwrap()
+                    .count(),
+                6
+            );
+        }
+    }
+
+    #[test]
+    fn staging_lock_contention_pauses_collection_without_deleting_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        for revision in 0..6 {
+            stage(root.path(), revision);
+        }
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        assert!(collect_saved(root.path())
+            .unwrap_err()
+            .to_string()
+            .contains("staging paused"));
+        assert_eq!(
+            std::fs::read_dir(root.path().join("objects"))
+                .unwrap()
+                .count(),
+            6
+        );
+        drop(lock);
+        collect_saved(root.path()).unwrap();
+        assert_eq!(
+            std::fs::read_dir(root.path().join("objects"))
+                .unwrap()
+                .count(),
+            3
+        );
     }
 }

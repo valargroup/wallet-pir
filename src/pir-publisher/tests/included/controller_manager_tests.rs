@@ -1385,6 +1385,130 @@ async fn manager_collects_obsolete_objects_after_publication_contents_change() {
     task.stop().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_recovers_when_retained_orphan_rechecks_repeat() {
+    for restart in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        // Both held shards must be fenced: the newer publication reuses one
+        // canonical digest while the old snapshot still has an orphan sibling.
+        let directory = root.path().join("first");
+        copy_archive_publication(2, &directory);
+        let set = ShardSet::open(&directory, 0).unwrap();
+        let distribution = Finalized::prepare_full(&directory, &set, 2).unwrap();
+        let rpc = canonical_rpc(root.path(), &set).await;
+        let owner = authority(&directory, Some(distribution), rpc.client.clone());
+        let tls = tls(root.path(), owner.clone()).await;
+        let state = root.path().join("provider");
+        let mut follow = manager(&tls, &state).await.with_full_holdings();
+        follow.poll_once().await.unwrap();
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        owner.0.withdrawn.store(true, Ordering::Release);
+        owner.0.invalidated_from.store(1, Ordering::Release);
+        assert!(follow.poll_once().await.is_err());
+        if restart {
+            drop(follow);
+            follow = restart_manager(&tls, &state).await.with_full_holdings();
+        }
+        // The old recent shard remains orphaned. The replacement's archive
+        // shard is canonical again, but its digest is still durably fenced.
+        *rpc.hash.write().unwrap() = Some("77".repeat(32));
+        let next_dir = root.path().join("next");
+        copy_archive_publication(3, &next_dir);
+        let next_set = ShardSet::open(&next_dir, 0).unwrap();
+        let next_distribution = Finalized::prepare_full(&next_dir, &next_set, 2).unwrap();
+        owner.0.withdrawn.store(false, Ordering::Release);
+        owner.0.invalidated_from.store(u64::MAX, Ordering::Release);
+        advance(&owner, &next_dir, next_distribution);
+        follow.poll_once().await.unwrap();
+        let live = follow.live().unwrap();
+        assert_eq!(
+            live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
+            next_set.map_digest
+        );
+        let (origin, task) = worker(live).await;
+        query(&origin, &next_set).await;
+        assert_eq!(
+            get(
+                &origin,
+                &format!(
+                    "/v2/shards/1/revisions/{}/setup/directory/0",
+                    set.get(1).unwrap().digest
+                )
+            )
+            .await
+            .status(),
+            StatusCode::CONFLICT
+        );
+        task.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_collects_failed_activations_without_a_successful_handover() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner.clone()).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state).await;
+    follow.poll_once().await.unwrap();
+    let live = follow.live().unwrap();
+    let (origin, task) = worker(live.clone()).await;
+    let (next_dir, _, next_distribution) = immutable_publication(3);
+    advance(&owner, &next_dir, next_distribution);
+    // Every attempt reaches durable activation and fails there. No successful
+    // handover can run the old success-only collection path.
+    std::fs::remove_file(state.join("active.json")).unwrap();
+    std::fs::create_dir(state.join("active.json")).unwrap();
+    for _ in 0..12 {
+        owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
+        assert!(follow.poll_once().await.is_err());
+        let trees = std::fs::read_dir(&state)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
+            .count();
+        assert!(
+            trees <= 5,
+            "active, candidate and three unused trees: {trees}"
+        );
+    }
+    assert_eq!(
+        live.command(Command::Status).await.unwrap()["active"]["map_sha256"],
+        set.map_digest
+    );
+    query(&origin, &set).await;
+    task.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_collects_saved_failed_stages_when_restart_needs_no_handover() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, set, distribution) = immutable_publication(2);
+    let rpc = canonical_rpc(root.path(), &set).await;
+    let owner = authority(&directory, Some(distribution), rpc.client.clone());
+    let tls = tls(root.path(), owner).await;
+    let state = root.path().join("provider");
+    let mut follow = manager(&tls, &state).await;
+    follow.poll_once().await.unwrap();
+    drop(follow);
+    for revision in 10..20 {
+        std::fs::create_dir(state.join(format!("staging-{revision}-100"))).unwrap();
+    }
+    let mut restarted = restart_manager(&tls, &state).await;
+    assert!(restarted.poll_once().await.unwrap().unchanged);
+    let trees = std::fs::read_dir(&state)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("staging-"))
+        .count();
+    assert_eq!(trees, 4, "saved active tree and three unused trees");
+    let (origin, task) = worker(restarted.live().unwrap()).await;
+    query(&origin, &set).await;
+    task.stop().await;
+}
+
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_bounds_memory_while_retaining_admitted_upload() {

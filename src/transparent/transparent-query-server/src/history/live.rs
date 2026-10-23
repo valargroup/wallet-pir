@@ -886,7 +886,7 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
 /// references, including private HTTPS staging trees. Staging uses the same
 /// file lock while linking catalog sources. Defer
 /// rather than blocking control commands behind a slow transfer.
-fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
+pub(crate) fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
     use std::fs::{self, OpenOptions, TryLockError};
     let lock = OpenOptions::new()
         .create(true)
