@@ -202,7 +202,7 @@ impl NodeClient {
 
     /// [`Self::batch`] for calls of any methods, each given as
     /// `{"method": ..., "params": ...}`.
-    #[cfg(any(test, feature = "enhance", feature = "transparent"))]
+    #[cfg(feature = "transparent")]
     pub(crate) async fn batch_mixed<T: DeserializeOwned>(
         &self,
         calls: Vec<serde_json::Value>,
