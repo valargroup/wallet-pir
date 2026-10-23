@@ -112,7 +112,7 @@ These source policies do not identify the release currently deployed.
 | V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
 | V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
 | Page-row target:capacity | `7936:8192` | `63488:65536` |
-| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 1 static owner holding every archive shard (0–76) |
+| Workers | 2 full recent replicas | 1 static owner holding every archive shard (0–76) |
 | Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized (`m-8vcpu-64gb`) |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
@@ -123,15 +123,22 @@ These source policies do not identify the release currently deployed.
 | Disk restore slots | 4 | 4 |
 | Revision retention | 3 superseded plus current, bounded disk policy | Same where revisions apply |
 | Local SSD target | Included disk (160 GiB price baseline) | 200 GiB each |
-| Warm state | All assigned tables and advertised tail; budget retained tail runtimes | Entire current assignment before fleet readiness |
+| Warm state | All held tables and advertised tail; budget retained tail runtimes | Every archive shard before readiness |
 
 These are proposed operating budgets within the accepted architecture, not target-host RSS measurements. Cache reservations omit overhead. Verify full-process and cgroup memory during cold builds, queued HTTP traffic, revision overlap and restart. Do not raise limits automatically to fit a failed census.
 
-Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's memory budget and run `pir-query-server --config /etc/transparent-pir/shard-server.json`; the generated `transparent_history` settings carry the roster's cache budget and `assignment`, `worker_id` and `prune_excess`. The service binds only the configured private listener (`pir-query-server` refuses unspecified addresses): fleet workers use the roster's `upstream`, and a single-host pilot uses `TRANSPARENT_WORKER_LISTEN`, defaulting to `TRANSPARENT_WORKER_HOST:8093`, which must then be a private IPv4 address. The pilot's own Caddyfile proxies to that same listener, and worker-local probes read it from `/etc/transparent-pir/shard-server.json`.
+Each worker runs `pir-query-server --config /etc/transparent-pir/shard-server.json` as a canonical HTTPS consumer: its `transparent_history` section names the publisher's HTTPS origin (`publisher`, `publisher_network`, `publisher_genesis`, optional `publisher_ca`), its `shard_dir`, `cache_bytes` and `build_slots`, and either an `archive_upstream` (with `archive_ca`) or `full_holdings`. The worker downloads and verifies the publication itself; no roster, assignment, `worker_id` or push setting configures it, and every section rejects unknown fields. Field reference: [query server](../query-server.md#transparent) and [HTTPS consumer](prepared-distribution.md#https-consumer). The service binds only its configured private `listen` address (`pir-query-server` refuses unspecified addresses), and worker-local probes read it from `/etc/transparent-pir/shard-server.json`.
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
 
 ### Elastic recent replicas
+
+> **Historical, not a current deployment instruction.** This section and the
+> commands below describe the push-fleet elastic proof of concept, whose roster
+> (`TRANSPARENT_FLEET_JSON`), assignment and `worker_id` settings HTTPS-only
+> publication removed on 2026-10-22. They are retained as the record behind the
+> two-replica floor evidence and the retained source; do not use them to
+> configure an HTTPS consumer.
 
 The accepted recent tier is two full copies; four hosts was a load target, not a
 requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
