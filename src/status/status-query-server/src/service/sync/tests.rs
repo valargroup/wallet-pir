@@ -34,8 +34,7 @@ struct Origin {
     publish_on_request: RwLock<Option<(String, Current)>>,
 }
 #[cfg(feature = "native-reinspiring")]
-#[path = "../../../tests/support/status_http.rs"]
-mod http;
+use crate::service::status_http as http;
 #[path = "../../../tests/support/status_tls.rs"]
 mod tls;
 
