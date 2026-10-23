@@ -59,7 +59,17 @@ def dispatch(args, executor=None):
                                     3000 if operation in ('prepare', 'activate') else 90)
         if code:
             raise DeployError('cache storage ' + operation + ' failed; retained transaction ' + transaction + ': ' + output[-1500:])
-        result = json.loads(output)
+        try:
+            result = json.loads(output)
+        except ValueError:
+            if operation == 'plan':
+                raise
+            # A child tool's diagnostic output must not cause a completed copy
+            # to be repeated. Its durable host receipt is the authoritative result.
+            recorded = json.loads(executor.read(request['host'], str(cache_data_host.receipt_path(transaction))))
+            if recorded['plan']['request'] != request:
+                raise DeployError('storage receipt differs from the reviewed request')
+            result = cache_data_host.summary(recorded)
         if operation == 'plan':
             return {'plan': result, 'plan_sha256': durable.digest(result)}
         durable.atomic_json(local, result, mode=0o600)

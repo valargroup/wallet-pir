@@ -18,7 +18,7 @@ from . import cache_storage_host as cache
 
 
 def run(arguments, timeout=60):
-    return subprocess.check_output(arguments, text=True, timeout=timeout).strip()
+    return subprocess.check_output(arguments, text=True, stderr=subprocess.STDOUT, timeout=timeout).strip()
 
 
 def mount_source(path):
@@ -234,6 +234,17 @@ def status(transaction):
     return state
 
 
+def summary(state):
+    planned = state['plan']
+    result = {key: state.get(key) for key in ('transaction', 'phase', 'intent', 'completed', 'backup')}
+    result.update(active_cache=planned['active_cache'], mount=planned['mount'],
+                  destination=planned['destination'], device=planned['device'])
+    for key in ('filesystems', 'worker'):
+        if key in state:
+            result[key] = state[key]
+    return result
+
+
 def main():
     operation, raw, expected, transaction = sys.argv[1:]
     request = json.loads(raw)
@@ -247,7 +258,7 @@ def main():
         result = status(transaction)
     else:
         raise ValueError('unknown cache storage operation')
-    print(json.dumps(result, sort_keys=True))
+    print(json.dumps(result if operation == 'plan' else summary(result), sort_keys=True))
 
 
 if __name__ == '__main__':

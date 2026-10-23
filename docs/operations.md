@@ -360,3 +360,25 @@ existing production and worker-pool state boundaries. Source paths are
 roots. Installed runtime paths, backend keys and writer locks retain their
 existing names. Follow the [activation gate](../tools/infra/digitalocean/fleet/activation.md)
 before installing this source or updating production state.
+
+### Recover transaction-detail query-cache capacity
+
+Use `wallet-pir-deploy.py cache-storage-plan` and `cache-storage-prune` to
+retire an explicitly selected, unused HTTPS cache beside the installed worker's
+active cache. Cleanup checks configuration, process handles, mappings and active
+links, binds the reviewed metadata digest, and records intent on the coordinator
+and operator disk before deleting anything. This also works when the query host
+has no space left to write its own journal.
+
+For an approved additional data volume, `cache-volume-plan` and
+`cache-volume-provision` verify the existing Valargroup project and droplet,
+record the new volume, and reuse it on retry. Supply the production credential
+through `DIGITALOCEAN_ACCESS_TOKEN` at runtime. `cache-data-plan` and
+`cache-data-prepare` verify that provisioning receipt and copy the running cache.
+`cache-data-activate` stops only the selected worker for the final copy, retains
+the original directory, and mounts the new copy at the existing path. Persistent
+mounts and unit dependencies prevent the worker from falling back to the root
+disk after a reboot. `cache-data-status` reads the retained transaction. Failures
+hold their recorded state; activation never automatically rolls back. Verify
+readiness, fresh publication advancement and the independent encrypted-answer
+probe before retiring the original cache with the same guarded cleanup command.
