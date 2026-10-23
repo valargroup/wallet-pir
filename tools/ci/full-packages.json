@@ -21,6 +21,8 @@
     "enhance-pir-load-test",
     "enhance-publisher",
     "pir-apm",
+    "pir-apm-sidecar",
+    "pir-host-observations",
     "pir-monitor",
     "pir-publisher",
     "pir-e2e-tests",

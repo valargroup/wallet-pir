@@ -12,7 +12,7 @@ order = ["observer"]
 [services.apm-sidecar.roles.observer]
 unit = "pir-apm-sidecar.service"
 mode = "role"
-template = "../../shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in"
+template = "pir-apm-sidecar.service.in"
 renderer = "wallet_pir_ops.monitoring:sidecar"
 # Settings: host_id, address (private), port?, required_volumes?, units?, hooks?, edge_metrics_url?.
 health = "http://127.0.0.1:9444/healthz"

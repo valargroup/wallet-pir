@@ -47,7 +47,7 @@ class ObserverInventory(unittest.TestCase):
         self.assertEqual(sorted(c.split(':')[0] for c in service['LoadCredential']),
                          ['monitoring-ca.pem', 'server.key', 'server.pem'])
         # Only pir-apm and pir-monitor hold notification credentials.
-        for path in ('tools/shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in',
+        for path in ('tools/deploy/monitoring/pir-apm-sidecar.service.in',
                      'tools/enhance/deploy/pir-apm-observers.conf'):
             directives = units.effective([(ROOT / path).read_text()])['Service']
             self.assertFalse([v for values in directives.values() for v in values
