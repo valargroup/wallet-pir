@@ -37,6 +37,9 @@ jobs:
     name: Prepare and validate cold fast units
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 30
+    # Same 6 GiB cap as routine fast checks. See CI / Fast checks.
+    env:
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
         with:

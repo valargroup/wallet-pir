@@ -355,8 +355,10 @@ listener in memory reclaim for hours without reaching the hard limit. The hard
 caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
-Both limit Cargo to four
-build processes. A build cannot occupy the fast service's queue, but both services
+The fast service limits Cargo to two build processes so a release-fast
+relink stays inside its 6 GiB cap; the build service allows four. The fast
+workflow sets the same cap, so a host registered with the previous four-job
+limit still compiles two at a time. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial

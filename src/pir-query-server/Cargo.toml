@@ -49,5 +49,6 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 # One query-host build carries history and detail for this command. The
 # publisher library does not depend on this host; that edge would link the
-# same libraries into the publisher test binary as well.
+# same libraries into the publisher test binary as well. Fast compiles this
+# closure two rustc processes at a time so the link stays inside 6 GiB.
 pir-query-server = { path = ".", features = ["transparent-history", "transparent-detail"] }

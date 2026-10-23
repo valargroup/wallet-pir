@@ -44,6 +44,11 @@ jobs:
     # Reserve this queue for main. PRs and branch dispatches use hosted runners
     # so their cold builds cannot delay a main push.
     runs-on: ${{ fromJSON(github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && vars.WALLET_PIR_MAIN_RUNNER || '"ubuntu-24.04"') }}
+    # The fast cgroup's hard cap is 6 GiB. Four concurrent release-fast rustc
+    # processes cross it during a workspace relink and the OOM kill drops the
+    # runner. Two stays inside the cap; a warm job does not compile.
+    env:
+      CARGO_BUILD_JOBS: '2'
     # Let validation finish; enforce the feedback target afterwards on main only.
     # A warm run stays within three minutes. A workspace relink may add its
     # compile time; a compile over five minutes still fails. GitHub's default
