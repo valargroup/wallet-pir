@@ -191,6 +191,8 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
         controller: controller.clone(),
         evaluator: Evaluator::Local,
         permits: service.permits.clone(),
+        #[cfg(test)]
+        blocking_started: None,
     };
     let result = evaluate(State(http_state), body).await?;
     service.available_controller().await?;
@@ -236,7 +238,7 @@ async fn router_query(
     // The ingress proxy sets the forwarding headers; the loopback peer address
     // carries no client identity.
     let key = pir_control::admission::client_key(&headers, None);
-    let Some(_slot) = service.clients.try_acquire(&key) else {
+    let Some(slot) = service.clients.try_acquire(&key) else {
         counters::admission_rejected("router", "client_concurrency");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     };
@@ -252,8 +254,10 @@ async fn router_query(
         controller: controller.clone(),
         evaluator,
         permits: service.permits.clone(),
+        #[cfg(test)]
+        blocking_started: None,
     };
-    let result = query(State(http_state), body).await?;
+    let result = query(State(http_state), body, Some(slot)).await?;
     service.available_controller().await?;
     controller.check(&generation)?;
     Ok(result)

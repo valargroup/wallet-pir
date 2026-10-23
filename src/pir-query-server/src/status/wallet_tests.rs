@@ -192,3 +192,122 @@ async fn independent_status_wallet_decrypts_a_combined_role() {
     assert_eq!(health["role"], "combined");
     assert_eq!(health["ready"], false);
 }
+
+/// Records the wallet's query bodies while forwarding every request.
+struct Capture<'a> {
+    inner: &'a Loopback,
+    queries: std::sync::Mutex<Vec<Vec<u8>>>,
+}
+impl wallet::transport::Transport for Capture<'_> {
+    async fn get(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, wallet::Error> {
+        wallet::transport::Transport::get(self.inner, url, max_bytes).await
+    }
+    async fn post(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, wallet::Error> {
+        if url.ends_with("/query") {
+            self.queries.lock().unwrap().push(body.clone());
+        }
+        wallet::transport::Transport::post(self.inner, url, body, max_bytes).await
+    }
+}
+
+/// A cancelled combined query keeps its per-client slot until the admitted
+/// evaluation and packing finish, then releases it. A request deadline drops
+/// the handler future the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancelled_combined_query_holds_its_client_slot_until_work_ends() {
+    use super::admission::Admission;
+    use super::serving::{query, Evaluator, HttpState};
+    use axum::{body::Bytes, extract::State};
+    use pir_control::admission::ClientSlots;
+    use std::sync::{Arc, Barrier};
+
+    let snapshot = fixture::snapshot(32, false).unwrap();
+    let (generation, _) = Generation::prepare(&snapshot, 1, 1, now_ms(), None).unwrap();
+    let generation = generation.reobserved(now_ms());
+    let dir = tempfile::tempdir().unwrap();
+    let combined = activated(
+        Role::Combined,
+        dir.path(),
+        String::new(),
+        generation.clone(),
+    )
+    .await;
+    let routes = serve(combined.routes()).await;
+    let transport = Loopback {
+        origin: routes.origin.clone(),
+        http: reqwest::Client::new(),
+        corrupt_answer: AtomicBool::new(false),
+    };
+    let capture = Capture {
+        inner: &transport,
+        queries: Default::default(),
+    };
+    let anchor = wallet::AcceptedAnchor {
+        network: snapshot.network,
+        height: snapshot.height,
+        hash: snapshot.anchor,
+    };
+    let client = wallet::transport::PendingClient::fetch(
+        &capture,
+        "https://status-wallet.invalid",
+        now_ms as fn() -> u64,
+    )
+    .await
+    .unwrap()
+    .accept(&capture, &anchor)
+    .await
+    .unwrap();
+    let coverage = wallet::LocalCoverageContext {
+        earliest_possible_inclusion: Some(snapshot.start),
+        required_through: Some(snapshot.height),
+    };
+    client
+        .observe(&capture, &fixture::txid(0), coverage)
+        .await
+        .unwrap();
+    let body = capture.queries.lock().unwrap().pop().unwrap();
+
+    let slots = ClientSlots::new(1);
+    let slot = slots.try_acquire("wallet").unwrap();
+    let (started, release) = (Arc::new(Barrier::new(2)), Arc::new(Barrier::new(2)));
+    let state = HttpState {
+        controller: Controller::new(generation),
+        evaluator: Evaluator::Local,
+        permits: Arc::new(Admission::production()),
+        blocking_started: Some(Arc::new({
+            let (started, release) = (started.clone(), release.clone());
+            move || {
+                started.wait();
+                release.wait();
+            }
+        })),
+    };
+    let request = tokio::spawn(query(State(state), Bytes::from(body), Some(slot)));
+    tokio::task::spawn_blocking({
+        let started = started.clone();
+        move || started.wait()
+    })
+    .await
+    .unwrap();
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert_eq!(slots.tracked(), 1, "cancellation released a running slot");
+    assert!(slots.try_acquire("wallet").is_none());
+    tokio::task::spawn_blocking(move || release.wait())
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while slots.tracked() != 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "slot never released"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(slots.try_acquire("wallet").is_some());
+}

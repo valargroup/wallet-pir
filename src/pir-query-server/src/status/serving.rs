@@ -3,6 +3,7 @@
 use super::admission;
 use crate::status::Controller;
 use axum::{body::Bytes, extract::State, http::StatusCode};
+use pir_control::admission::ClientSlot;
 use status_shared::{profile, protocol::*, telemetry};
 use std::{
     sync::Arc,
@@ -39,6 +40,9 @@ pub struct HttpState {
     pub controller: Controller,
     pub evaluator: Evaluator,
     pub permits: Arc<admission::Admission>,
+    /// Runs on the blocking thread before admitted work, so tests can hold it.
+    #[cfg(test)]
+    pub blocking_started: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 #[cfg(test)]
 impl HttpState {
@@ -50,6 +54,7 @@ impl HttpState {
                 http: serving_http_client().expect("Status HTTP client"),
             },
             permits: Arc::new(admission::Admission::production()),
+            blocking_started: None,
         }
     }
 }
@@ -119,8 +124,20 @@ async fn evaluate_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, Sta
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
-pub async fn query(State(state): State<HttpState>, body: Bytes) -> Result<Vec<u8>, StatusCode> {
-    match tokio::time::timeout(admission::REQUEST_BUDGET, query_admitted(state, body)).await {
+/// Answers one wallet query. `client` is the caller's per-client admission
+/// slot: like the global permit it moves into the admitted blocking work, so a
+/// cancelled or timed-out request keeps both until evaluation and packing end.
+pub async fn query(
+    State(state): State<HttpState>,
+    body: Bytes,
+    client: Option<ClientSlot>,
+) -> Result<Vec<u8>, StatusCode> {
+    match tokio::time::timeout(
+        admission::REQUEST_BUDGET,
+        query_admitted(state, body, client),
+    )
+    .await
+    {
         Ok(result) => result,
         Err(_) => {
             telemetry::admission_rejected("router", "request_deadline");
@@ -128,7 +145,11 @@ pub async fn query(State(state): State<HttpState>, body: Bytes) -> Result<Vec<u8
         }
     }
 }
-async fn query_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, StatusCode> {
+async fn query_admitted(
+    state: HttpState,
+    body: Bytes,
+    client: Option<ClientSlot>,
+) -> Result<Vec<u8>, StatusCode> {
     let generation = state.controller.for_body(&body)?;
     state.controller.check(&generation)?;
     let permit = state.permits.acquire("router").await?;
@@ -165,7 +186,11 @@ async fn query_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, Status
         Evaluator::Local => Evaluation::Pending(coefficients),
     };
     tokio::task::spawn_blocking(move || {
-        let _permit = permit;
+        let _admitted = (permit, client);
+        #[cfg(test)]
+        if let Some(started) = &state.blocking_started {
+            started();
+        }
         let values = match evaluation {
             Evaluation::Answered(response) => response[HEADER_BYTES..]
                 .chunks_exact(8)
@@ -272,7 +297,7 @@ mod tests {
         let mut body = vec![0; HEADER_BYTES];
         body[..4].copy_from_slice(QUERY_MAGIC);
         body[4..36].copy_from_slice(&controller.current().manifest().id());
-        let request = query(State(state), Bytes::from(body));
+        let request = query(State(state), Bytes::from(body), None);
         tokio::pin!(request);
         assert!(
             tokio::time::timeout(Duration::from_millis(10), &mut request)
@@ -296,7 +321,7 @@ mod tests {
         let mut body = vec![0; HEADER_BYTES];
         body[..4].copy_from_slice(QUERY_MAGIC);
         body[4..36].copy_from_slice(&controller.current().manifest().id());
-        let request = query(State(state), Bytes::from(body));
+        let request = query(State(state), Bytes::from(body), None);
         tokio::pin!(request);
         assert!(
             tokio::time::timeout(Duration::from_millis(120), &mut request)
