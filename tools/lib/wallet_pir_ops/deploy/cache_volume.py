@@ -123,4 +123,5 @@ def dispatch(args, executor=None):
         require(digest == args.expect_plan_sha256, 'volume provisioning plan is stale')
         lock.verify()
         receipt = Path(args.state_dir) / ('volume-' + plan['request_sha256'][:16] + '.json')
+        receipt.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         return provision(plan, api, lambda state: durable.atomic_json(receipt, state, mode=0o600))

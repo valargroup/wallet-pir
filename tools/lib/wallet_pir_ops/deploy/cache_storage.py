@@ -41,6 +41,7 @@ def dispatch(args, executor=None):
         receipt = Path(args.state_dir) / (identifier + '.json')
         remote_receipt = '/opt/wallet-pir/maintenance/' + identifier + '/state.json'
         if operation == 'prune':
+            receipt.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             intent = {'transaction': identifier, 'phase': 'deleting', 'host': args.host,
                       'request': request, 'expected_plan_sha256': args.expect_plan_sha256}
             durable.atomic_json(receipt, intent, mode=0o600)
