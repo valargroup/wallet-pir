@@ -91,6 +91,38 @@ class ObserverInventory(unittest.TestCase):
                                      external_hosts={'gpu-01': ['198.51.100.7']})
         self.assertEqual(report['missing_declarations'], [])
 
+    def test_enrollment_is_generated_from_terraform_outputs_and_external_hosts(self):
+        outputs = {
+            'wallet_pir_coordinator_public_ipv4': {'value': '203.0.113.2'},
+            'wallet_pir_coordinator_private_ipv4': {'value': '10.0.0.2'},
+            'enhance_worker_groups': {'value': [{'name': 'g0', 'replicas': [
+                {'name': 'enhance-01', 'public_ipv4': '203.0.113.3', 'private_ipv4': '10.0.0.3'}]}]},
+            'transparent_router_public_ipv4': {'value': '203.0.113.9'},
+        }
+        document = inventory(COORDINATOR)
+        document['hosts'] = {'coordinator': {'address': '203.0.113.2'}, 'enhance-01': {'address': '203.0.113.3'},
+                             'gpu-01': {'address': '198.51.100.7'}}
+        document['services']['enhance'] = {'roles': {'worker': [{'host': 'enhance-01'}]}}
+        units = {('enhance', 'worker'): 'enhance-pir-worker.service', ('apm', 'server'): 'pir-apm.service'}
+        enrolled, report = monitoring.enroll(document, terraform_outputs=outputs, role_units=units,
+                                             external_hosts={'gpu-01': ['198.51.100.7']})
+        self.assertEqual(report['added'], ['enhance-01', 'gpu-01'])
+        self.assertEqual(report['undeclared'], ['transparent_router'], 'a provisioned host the inventory lacks')
+        observers = {e['host']: e['settings'] for e in enrolled['services']['apm-sidecar']['roles']['observer']}
+        self.assertEqual(observers['coordinator'], COORDINATOR, 'existing observers are kept as they are')
+        self.assertEqual(observers['enhance-01'], {'host_id': 'enhance-01', 'address': '10.0.0.3',
+                                                   'units': ['enhance-pir-worker.service']})
+        self.assertTrue(observers['gpu-01']['external'])
+        rendered = monitoring.observers(enrolled, mode='shadow')
+        self.assertEqual(sorted(h['host_id'] for h in rendered['hosts']), ['coordinator', 'enhance-01', 'gpu-01'])
+        again, report = monitoring.enroll(enrolled, terraform_outputs=outputs, role_units=units,
+                                          external_hosts={'gpu-01': ['198.51.100.7']})
+        self.assertEqual((again, report['added']), (enrolled, []), 'idempotent')
+        bare = inventory(dict(COORDINATOR, required_volumes=[]))
+        bare['hosts'] = {'coordinator': {'address': '10.0.0.2'}}
+        _, report = monitoring.enroll(bare, terraform_outputs=outputs, role_units=units)
+        self.assertEqual(report['volumes_to_bind'], {'coordinator': sorted(monitoring.COORDINATOR_VOLUMES)})
+
     def test_the_example_inventory_renders(self):
         example = json.loads((ROOT / 'tools/deploy/monitoring/monitoring-inventory.example.json').read_text())
         example['hosts'] = {entry['host']: {} for entry in example['services']['apm-sidecar']['roles']['observer']}

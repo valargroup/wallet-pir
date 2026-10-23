@@ -407,3 +407,67 @@ def bind_volume(inventory_path, host, volume):
     sidecar_document(entry['settings'])  # the bound volume must still render
     durable.atomic_json(path, document, mode=os.stat(path).st_mode & 0o777)
     return 'bound'
+
+
+def _host_units(inventory, host, role_units):
+    """Units the deployment inventory runs on `host`, from its service role entries."""
+    found = set()
+    for service, spec in inventory.get('services', {}).items():
+        for role, entries in spec.get('roles', {}).items():
+            for entry in entries:
+                unit = entry.get('unit') or role_units.get((service, role))
+                if entry.get('host') == host and unit and service != SERVICE:
+                    found.add(unit)
+    return sorted(found)
+
+
+def enroll(inventory, *, terraform_outputs, role_units, external_hosts=()):
+    """Add an observer for every provisioned host the deployment inventory names.
+
+    Provisioned hosts come from `terraform output -json` and the declared
+    external hosts; each is matched to an inventory host by address. A matched
+    host without an observer gets one, dialed at its private address (an
+    external host at its declared address), checking the units its service
+    roles run. Existing observers are never changed or removed: only an
+    explicit retirement decommissions. Returns the new inventory and a report
+    naming provisioned hosts the inventory does not declare and observers that
+    still need required-volume identities bound (the coordinator's data volumes).
+    """
+    inventory = json.loads(json.dumps(inventory))
+    roles = inventory.setdefault('services', {}).setdefault(SERVICE, {}).setdefault('roles', {}).setdefault(ROLE, [])
+    observed = {entry['host'] for entry in roles}
+    by_address = {}
+    for name, entry in inventory.get('hosts', {}).items():
+        for address in _addresses(dict(entry, ipv4=entry.get('address'))):
+            by_address[address] = name
+    external = {name: frozenset(addresses) for name, addresses in dict(external_hosts).items()}
+    provisioned = provisioned_hosts(terraform_outputs) + sorted(external.items())
+    added, undeclared = [], []
+    for label, addresses in provisioned:
+        hosts = {by_address[a] for a in addresses if a in by_address}
+        if len(hosts) != 1:
+            undeclared.append(label)
+            continue
+        host = hosts.pop()
+        if host in observed:
+            continue
+        private = sorted(a for a in addresses if _private(ipaddress.ip_address(a)))
+        settings = {'host_id': host, 'units': _host_units(inventory, host, role_units)}
+        if label in external and not private:
+            settings.update(address=sorted(addresses)[0], external=True)
+        elif private:
+            settings['address'] = private[0]
+        else:
+            undeclared.append(label)
+            continue
+        sidecar_document(settings)
+        roles.append({'host': host, 'install': True, 'settings': settings})
+        observed.add(host)
+        added.append(host)
+    apm = {e['host'] for e in inventory['services'].get('apm', {}).get('roles', {}).get('server', [])}
+    unbound = {}
+    for entry in roles:
+        declared = {v['path'] for v in entry['settings'].get('required_volumes', [])}
+        if entry['host'] in apm and set(COORDINATOR_VOLUMES) - declared:
+            unbound[entry['host']] = sorted(set(COORDINATOR_VOLUMES) - declared)
+    return inventory, {'added': added, 'undeclared': sorted(set(undeclared)), 'volumes_to_bind': unbound}
