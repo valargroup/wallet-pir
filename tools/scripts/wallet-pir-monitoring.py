@@ -47,6 +47,24 @@ def coverage(args):
     return 1 if gaps or report['partial'] else 0
 
 
+def enroll(args):
+    """Generate observer entries from Terraform outputs and declared external hosts."""
+    from wallet_pir_ops import durable
+    from wallet_pir_ops.deploy import descriptors
+    services = descriptors.load_descriptors(Path(__file__).resolve().parents[1] / 'deploy/services.toml')
+    role_units = {(name, role): spec.unit for name, service in services.items()
+                  for role, spec in service.roles.items()}
+    role_units[('apm', 'server')] = monitoring_certs.COLLECTOR_UNIT
+    path = Path(args.inventory)
+    document, report = monitoring.enroll(json.loads(path.read_text()),
+                                         terraform_outputs=_json(args.terraform_outputs),
+                                         role_units=role_units, external_hosts=_json(args.external_hosts) or {})
+    if args.write and report['added']:
+        durable.atomic_json(path, document, mode=os.stat(path).st_mode & 0o777)
+    print(json.dumps(dict(report, written=bool(args.write and report['added'])), indent=2, sort_keys=True))
+    return 1 if report['undeclared'] else 0
+
+
 def issue(args):
     if args.command == 'issue-ca':
         print(monitoring_certs.issue_ca(args.output))
@@ -145,6 +163,12 @@ def main(argv=None):
     child.add_argument('--expected-volumes')
     child.add_argument('--state-dir', help='deploy state directory holding cache-data receipts')
     child.set_defaults(handler=coverage)
+    child = sub.add_parser('enroll', help='add observers for provisioned inventory hosts')
+    child.add_argument('--inventory', required=True)
+    child.add_argument('--terraform-outputs', required=True)
+    child.add_argument('--external-hosts', help='JSON map of declared external hosts to their addresses')
+    child.add_argument('--write', action='store_true', help='update the deployment inventory in place')
+    child.set_defaults(handler=enroll)
     child = sub.add_parser('issue-ca')
     child.add_argument('--output', required=True)
     child.set_defaults(handler=issue)
