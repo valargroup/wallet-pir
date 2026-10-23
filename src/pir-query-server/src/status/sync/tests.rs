@@ -1286,18 +1286,28 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
         now_ms(),
         Some(&first),
     );
-    let (blocks, mut mempool, forks) = fixture::source(32, true);
-    mempool.push(fixture::txid(u64::MAX - 3));
-    let third_snapshot =
-        status_shared::index::Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks).unwrap();
-    let third = cached_generation(&third_snapshot, 6, 2, now_ms(), Some(&next));
     // Fixture preparation can contend with other native tests. Start the
     // observation window once all synthetic material is ready, before any
     // publication or synchronization; loading must preserve this timestamp.
     let observed_ms = now_ms();
     let first = first.reobserved(observed_ms);
     let next = next.reobserved(observed_ms);
-    let third = third.reobserved(observed_ms);
+    // The reference profile's fast case already prepared two distinct
+    // databases above. A third 96 MiB generation does not fit the case
+    // deadline beside the rest of the pool, so the following generation
+    // reuses the second database under a new publication identity. The native
+    // wallet path still prepares the extra transaction below.
+    #[cfg(not(feature = "native-reinspiring"))]
+    let third = next.reidentified(6, 2, observed_ms);
+    #[cfg(feature = "native-reinspiring")]
+    let third = {
+        let (blocks, mut mempool, forks) = fixture::source(32, true);
+        mempool.push(fixture::txid(u64::MAX - 3));
+        let third_snapshot =
+            status_shared::index::Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks)
+                .unwrap();
+        cached_generation(&third_snapshot, 6, 2, observed_ms, Some(&next)).reobserved(observed_ms)
+    };
     let mut inventory = export(&source, &first);
     let object = publish_inventory(&source, &mut inventory);
     let mut newer = export(&source, &next);
@@ -1471,7 +1481,8 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
-        assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+        // Generation 6 reuses generation 5's database, so the load of the new
+        // material follows that already-published identity in the same pass.
         assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
     }
     assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
