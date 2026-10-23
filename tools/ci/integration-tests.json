@@ -47,6 +47,7 @@
   "transparent-tools": {
     "fast": [],
     "full": [
+      "assignment_planning",
       "compact_export",
       "compact_recovery",
       "parent_filters",

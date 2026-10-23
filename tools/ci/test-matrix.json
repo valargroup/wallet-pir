@@ -87,7 +87,8 @@
       "transparent:pir-query-server:test:assignment",
       "transparent:pir-query-server:test:revisions_and_cache",
       "transparent:pir-query-server:test:round_trip",
-      "transparent:pir-query-server:test:txid_client"
+      "transparent:pir-query-server:test:txid_client",
+      "transparent:transparent-tools:test:assignment_planning"
     ]
   },
   "transparent-sharded": {
