@@ -271,6 +271,12 @@ origin and are not checked.
 ## Readiness
 
 Management `/health` stays up while a product is failing. `/ready` answers 503
-until every enabled product returns success from its existing probe: Enhance
-`GET /internal/health`, Status `GET /control/health`, and Transparent
-`GET /v1/ready`.
+until every enabled product is running and its own in-process check reports an
+authorized, usable serving view; the host calls that check directly rather
+than probing the product's private routes over loopback HTTP. The response
+lists each product's phase and readiness. A product that stops with an
+ordinary error withdraws its wallet namespaces and stays not ready while the
+other products continue; a confirmed publisher incompatibility, or a panicked
+product task, stops the whole host. The products' private health routes
+(Enhance `GET /internal/health`, Status `GET /control/health`, Transparent
+`GET /v1/ready`) are unchanged for deployment checks.
