@@ -416,8 +416,14 @@ fn revoke(
     current: &Current,
     digests: BTreeSet<String>,
 ) -> Result<(), Error> {
-    floor.revision = floor.revision.max(current.revision);
+    // Rechecking a still-revoked predecessor must not move the recovery floor
+    // up to every new canonical publication. Recovery clears the live fence,
+    // so a later invalidation of the same digest still raises the floor.
+    if !live.revocations_cover(&digests) || !digests.is_subset(&floor.digests) {
+        floor.revision = floor.revision.max(current.revision);
+    }
     floor.digests.extend(digests.iter().cloned());
+    // Always fence and retry both durable writes, including after a prior error.
     let owner = live.revoke(&digests);
     let saved = persist(&root.join("revocation-floor.json"), floor);
     owner?;
@@ -489,3 +495,6 @@ async fn refresh_serving(
     reconciled?;
     Ok(current)
 }
+
+#[cfg(test)]
+mod tests;
