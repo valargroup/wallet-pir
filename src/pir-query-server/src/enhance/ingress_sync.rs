@@ -1,7 +1,8 @@
 //! Public wallet routing follows publisher metadata and privately pinned routers.
 use crate::enhance::{
+    peers::RouterEndpoint,
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
-    worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
+    worker_sync::{ReadinessRequest, Release, PIN_LIFETIME},
 };
 use crate::synchronization::SyncTask;
 use axum::{
@@ -11,9 +12,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use enhance_shared::{
-    protocol::{self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS},
-    publication::METADATA_LIMIT,
+use enhance_shared::protocol::{
+    self, digest, Manifest, QueryBinding, HEADER_BYTES, RETAINED_GENERATIONS,
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
 use serde::Deserialize;
@@ -73,8 +73,7 @@ impl Config {
 }
 #[derive(Clone)]
 struct Peer {
-    url: String,
-    control_origin: String,
+    endpoint: RouterEndpoint,
     incarnation: String,
     deadline: Instant,
 }
@@ -97,6 +96,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct QueryIngress {
     config: Config,
+    routers: BTreeMap<u64, Vec<RouterEndpoint>>,
     root: PathBuf,
     authority: Authority,
     inner: Arc<Mutex<Inner>>,
@@ -129,6 +129,53 @@ impl QueryIngress {
         uploads: usize,
     ) -> Result<Self, Error> {
         config.validate()?;
+        let routers = config
+            .routers
+            .iter()
+            .map(|(shard, peers)| {
+                (
+                    *shard,
+                    peers.iter().cloned().map(RouterEndpoint::Http).collect(),
+                )
+            })
+            .collect();
+        Self::open_with(root, config, routers, requests, uploads)
+    }
+
+    /// An ingress forwarding to the packing router in this process, which it
+    /// calls directly for readiness, release, sessions and queries.
+    pub(crate) fn open_local(
+        root: &Path,
+        source: SourceConfig,
+        router: &crate::enhance::router_sync::PackingRouter,
+        shards: &BTreeSet<u64>,
+        requests: usize,
+        uploads: usize,
+    ) -> Result<Self, Error> {
+        source.validate()?;
+        let config = Config {
+            source,
+            routers: Default::default(),
+        };
+        let routers = shards
+            .iter()
+            .map(|shard| {
+                (
+                    *shard,
+                    vec![RouterEndpoint::Local(Box::new(router.clone()))],
+                )
+            })
+            .collect();
+        Self::open_with(root, config, routers, requests, uploads)
+    }
+
+    fn open_with(
+        root: &Path,
+        config: Config,
+        routers: BTreeMap<u64, Vec<RouterEndpoint>>,
+        requests: usize,
+        uploads: usize,
+    ) -> Result<Self, Error> {
         if !(1..=64).contains(&requests) || uploads < requests || uploads > 4096 {
             return Err("ingress concurrency exceeds qualified limits".into());
         }
@@ -153,6 +200,7 @@ impl QueryIngress {
         Ok(Self {
             root: root.into(),
             config,
+            routers,
             authority,
             inner: Default::default(),
             http: crate::enhance::internal_auth::client_builder()
@@ -210,13 +258,13 @@ impl QueryIngress {
     async fn peers(&self, manifest: &Manifest) -> Result<Option<BTreeMap<u64, Vec<Peer>>>, Error> {
         let mut requests = tokio::task::JoinSet::new();
         for domain in &manifest.coverage.shards {
-            let Some(origins) = self.config.routers.get(&domain.id) else {
+            let Some(endpoints) = self.routers.get(&domain.id) else {
                 return Err("published domain has no configured router".into());
             };
-            for origin in origins {
+            for endpoint in endpoints {
                 let (http, endpoint, manifest, holder, shard) = (
                     self.http.clone(),
-                    origin.clone(),
+                    endpoint.clone(),
                     manifest.clone(),
                     self.incarnation.clone(),
                     domain.id,
@@ -224,22 +272,15 @@ impl QueryIngress {
                 requests.spawn(async move {
                     let started = Instant::now();
                     let result = async {
-                        let response = http
-                            .post(format!("{}/internal/readiness", endpoint.control_origin))
-                            .timeout(Duration::from_secs(2))
-                            .json(&ReadinessRequest {
-                                manifest_sha256: digest(&manifest),
-                                holder: Some(holder),
-                            })
-                            .send()
-                            .await?
-                            .error_for_status()?;
-                        let bytes = crate::enhance::query_serving::bounded(
-                            response,
-                            METADATA_LIMIT as usize,
-                        )
-                        .await?;
-                        let ready: Readiness = serde_json::from_slice(&bytes)?;
+                        let ready = endpoint
+                            .readiness(
+                                &http,
+                                &ReadinessRequest {
+                                    manifest_sha256: digest(&manifest),
+                                    holder: Some(holder),
+                                },
+                            )
+                            .await?;
                         if ready.manifest != manifest
                             || ready.manifest_sha256 != digest(&manifest)
                             || !ready.shards.contains(&shard)
@@ -252,8 +293,7 @@ impl QueryIngress {
                             );
                         }
                         Ok(Peer {
-                            url: endpoint.query_origin,
-                            control_origin: endpoint.control_origin,
+                            endpoint,
                             incarnation: ready.incarnation,
                             deadline: started + PIN_LIFETIME,
                         })
@@ -279,11 +319,16 @@ impl QueryIngress {
     }
     async fn release(&self, manifest: &Manifest, peers: &BTreeMap<u64, Vec<Peer>>) {
         let mut tasks = tokio::task::JoinSet::new();
-        for (url, incarnation) in peers
+        for ((_, incarnation), endpoint) in peers
             .values()
             .flatten()
-            .map(|p| (p.control_origin.clone(), p.incarnation.clone()))
-            .collect::<BTreeSet<_>>()
+            .map(|p| {
+                (
+                    (p.endpoint.key().to_string(), p.incarnation.clone()),
+                    p.endpoint.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>()
         {
             let http = self.http.clone();
             let request = Release {
@@ -291,14 +336,7 @@ impl QueryIngress {
                 holder: self.incarnation.clone(),
                 worker_incarnation: incarnation,
             };
-            tasks.spawn(async move {
-                let _ = http
-                    .post(format!("{url}/internal/release"))
-                    .timeout(Duration::from_secs(2))
-                    .json(&request)
-                    .send()
-                    .await;
-            });
+            tasks.spawn(async move { endpoint.release(&http, request).await });
         }
         while tasks.join_next().await.is_some() {}
     }
@@ -464,17 +502,31 @@ impl SyncTask for Synchronizer {
         pir_sync_manager::is_incompatible(error.as_ref())
     }
 }
+impl QueryIngress {
+    pub(crate) fn ready(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .as_ref()
+            .is_some_and(|v| self.authority.check(&v.manifest).is_ok())
+    }
+    pub(crate) fn health(&self) -> serde_json::Value {
+        let ready = self.ready();
+        let inner = self.inner.lock().unwrap();
+        serde_json::json!({ "binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": self.incarnation, "active": inner.active.as_ref().map(|v| digest(&v.manifest)), "generation": inner.active.as_ref().map(|v| v.manifest.generation),
+        "ready": ready })
+    }
+    pub(crate) fn metrics_text(&self) -> String {
+        self.metrics.render()
+    }
+}
 async fn health(State(r): State<QueryIngress>) -> Json<serde_json::Value> {
-    let inner = r.inner.lock().unwrap();
-    Json(
-        serde_json::json!({ "binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": r.incarnation, "active": inner.active.as_ref().map(|v| digest(&v.manifest)), "generation": inner.active.as_ref().map(|v| v.manifest.generation),
-        "ready": inner.active.as_ref().is_some_and(|v| r.authority.check(&v.manifest).is_ok()) }),
-    )
+    Json(r.health())
 }
 async fn metrics(State(r): State<QueryIngress>) -> impl IntoResponse {
     (
         [("content-type", "text/plain; version=0.0.4")],
-        r.metrics.render(),
+        r.metrics_text(),
     )
 }
 async fn init(State(r): State<QueryIngress>) -> Response {
@@ -565,18 +617,13 @@ async fn forward_session(r: QueryIngress, id: String) -> Response {
             .await
             .map_err(unavailable)?;
         let peer = r.select(&view, shard).await?;
-        let response = r
-            .http
-            .get(format!("{}/v1/enhance/session/{id}", peer.url))
-            .header("x-enhance-router-incarnation", peer.incarnation)
-            .send()
+        let forwarded = peer
+            .endpoint
+            .session(&r.http, &peer.incarnation, &id, SESSION_LIMIT)
             .await
             .map_err(peer_failed)?;
-        let status = response.status();
-        let content_type = response.headers().get("content-type").cloned();
-        let bytes = crate::enhance::query_serving::bounded(response, SESSION_LIMIT)
-            .await
-            .map_err(peer_failed)?;
+        let (status, bytes) = (forwarded.status, forwarded.body);
+        let content_type = forwarded.headers.get("content-type").cloned();
         let guard = guard
             .fresh_for_release(&r.authority)
             .await
@@ -644,19 +691,12 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, ApiError> 
     // The admitted task owns its permit and exact view even if the wallet disconnects.
     tokio::spawn(async move {
         guard.check().map_err(unavailable)?;
-        let response = r
-            .http
-            .post(format!("{}/v1/enhance/query", peer.url))
-            .header("x-enhance-router-incarnation", peer.incarnation)
-            .body(bytes)
-            .send()
+        let forwarded = peer
+            .endpoint
+            .query(&r.http, &peer.incarnation, bytes, 1024 * 1024)
             .await
             .map_err(peer_failed)?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let bytes = crate::enhance::query_serving::bounded(response, 1024 * 1024)
-            .await
-            .map_err(peer_failed)?;
+        let (status, headers, bytes) = (forwarded.status, forwarded.headers, forwarded.body);
         let guard = guard
             .fresh_for_release(&r.authority)
             .await
@@ -680,6 +720,7 @@ async fn serve(r: QueryIngress, request: Request) -> Result<Response, ApiError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use enhance_shared::publication::METADATA_LIMIT;
     use tower::ServiceExt;
     fn ingress() -> (tempfile::TempDir, QueryIngress) {
         let root = tempfile::tempdir().unwrap();

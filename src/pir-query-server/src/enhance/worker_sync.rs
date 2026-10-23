@@ -196,6 +196,11 @@ impl Worker {
         })
     }
 
+    /// The operator-assigned domains this worker evaluates.
+    pub(crate) fn shards(&self) -> &BTreeSet<u64> {
+        &self.config.shards
+    }
+
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
             _ownership: self
@@ -505,66 +510,88 @@ impl SyncTask for Synchronizer {
     }
 }
 
-async fn health(State(worker): State<Worker>) -> Json<serde_json::Value> {
-    let inner = worker.inner.lock().unwrap();
-    Json(
+impl Worker {
+    pub(crate) fn ready(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .as_ref()
+            .and_then(|id| inner.views.get(id))
+            .is_some_and(|view| view.lease.check(&view.manifest, &self.safety).is_ok())
+    }
+
+    pub(crate) fn health(&self) -> serde_json::Value {
+        let ready = self.ready();
+        let inner = self.inner.lock().unwrap();
         serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256,
-        "incarnation": worker.incarnation, "matvec": worker.backend, "placement_policy": worker.policy,
+        "incarnation": self.incarnation, "matvec": self.backend, "placement_policy": self.policy,
         "active": inner.active, "protocol": protocol::PROTOCOL_REVISION,
-        "ready": inner.active.as_ref().and_then(|id| inner.views.get(id))
-            .is_some_and(|view| view.lease.check(&view.manifest, &worker.safety).is_ok())}),
-    )
+        "ready": ready})
+    }
+
+    /// Worker metrics; `memory` adds this process's memory observation.
+    pub(crate) fn metrics_text(&self, memory: bool) -> String {
+        let (plans, retained, ready) = {
+            let inner = self.inner.lock().unwrap();
+            let active = inner.active.as_ref().and_then(|id| inner.views.get(id));
+            let plans = active
+                .map(|view| {
+                    view.domains
+                        .values()
+                        .map(|d| d.plan.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let ready =
+                active.is_some_and(|view| view.lease.check(&view.manifest, &self.safety).is_ok());
+            (plans, inner.views.len(), ready)
+        };
+        let mut metrics = crate::enhance::telemetry::Metrics::default();
+        metrics.number("enhance_worker_up", 1);
+        metrics.number("enhance_worker_ready", u64::from(ready));
+        metrics.number("enhance_worker_retained_generations", retained as u64);
+        metrics.number(
+            "enhance_worker_live_database_bytes",
+            self.live().values().sum(),
+        );
+        metrics.number(
+            "enhance_worker_queries_in_flight",
+            (2 - self.evaluation.available_permits()) as u64,
+        );
+        let plans = plans.iter().collect::<Vec<_>>();
+        match self.reservation(&plans) {
+            Ok(reserved) => {
+                metrics.number("enhance_worker_memory_sample_available", 1);
+                metrics.number("enhance_worker_model_reserved_bytes", reserved);
+                metrics.number("enhance_worker_model_within_limit", 1);
+            }
+            Err(_) => {
+                metrics.number("enhance_worker_memory_sample_available", 0);
+            }
+        }
+        use prometheus::{core::Collector, Encoder};
+        let mut histogram = Vec::new();
+        prometheus::TextEncoder::new()
+            .encode(&self.matvec_latency.collect(), &mut histogram)
+            .unwrap();
+        metrics.finish()
+            + &String::from_utf8(histogram).unwrap()
+            + &if memory {
+                crate::enhance::memory_observation::observe().render("enhance_worker_")
+            } else {
+                String::new()
+            }
+    }
+}
+
+async fn health(State(worker): State<Worker>) -> Json<serde_json::Value> {
+    Json(worker.health())
 }
 
 async fn metrics(State(worker): State<Worker>) -> impl IntoResponse {
-    let (plans, retained, ready) = {
-        let inner = worker.inner.lock().unwrap();
-        let active = inner.active.as_ref().and_then(|id| inner.views.get(id));
-        let plans = active
-            .map(|view| {
-                view.domains
-                    .values()
-                    .map(|d| d.plan.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let ready =
-            active.is_some_and(|view| view.lease.check(&view.manifest, &worker.safety).is_ok());
-        (plans, inner.views.len(), ready)
-    };
-    let mut metrics = crate::enhance::telemetry::Metrics::default();
-    metrics.number("enhance_worker_up", 1);
-    metrics.number("enhance_worker_ready", u64::from(ready));
-    metrics.number("enhance_worker_retained_generations", retained as u64);
-    metrics.number(
-        "enhance_worker_live_database_bytes",
-        worker.live().values().sum(),
-    );
-    metrics.number(
-        "enhance_worker_queries_in_flight",
-        (2 - worker.evaluation.available_permits()) as u64,
-    );
-    let plans = plans.iter().collect::<Vec<_>>();
-    match worker.reservation(&plans) {
-        Ok(reserved) => {
-            metrics.number("enhance_worker_memory_sample_available", 1);
-            metrics.number("enhance_worker_model_reserved_bytes", reserved);
-            metrics.number("enhance_worker_model_within_limit", 1);
-        }
-        Err(_) => {
-            metrics.number("enhance_worker_memory_sample_available", 0);
-        }
-    }
-    use prometheus::{core::Collector, Encoder};
-    let mut histogram = Vec::new();
-    prometheus::TextEncoder::new()
-        .encode(&worker.matvec_latency.collect(), &mut histogram)
-        .unwrap();
     (
         [("content-type", "text/plain; version=0.0.4")],
-        metrics.finish()
-            + &String::from_utf8(histogram).unwrap()
-            + &crate::enhance::memory_observation::observe().render("enhance_worker_"),
+        worker.metrics_text(true),
     )
 }
 
@@ -572,90 +599,120 @@ async fn release(
     State(worker): State<Worker>,
     Json(request): Json<Release>,
 ) -> ApiResult<StatusCode> {
-    if request.worker_incarnation != worker.incarnation {
-        return Err((StatusCode::CONFLICT, "worker incarnation changed".into()));
-    }
-    worker
-        .inner
-        .lock()
-        .unwrap()
-        .pins
-        .remove(&(request.holder, request.manifest_sha256));
-    Ok(StatusCode::NO_CONTENT)
+    worker.release_promise(request)
 }
 
 async fn readiness(
     State(worker): State<Worker>,
     Json(request): Json<ReadinessRequest>,
 ) -> ApiResult<Json<Readiness>> {
-    let manifest = worker
-        .inner
-        .lock()
-        .unwrap()
-        .views
-        .get(&request.manifest_sha256)
-        .map(|view| view.manifest.clone())
-        .ok_or_else(|| unavailable("requested worker material is not loaded"))?;
-    let lease = worker.renew(&manifest).await.map_err(unavailable)?;
-    lease
-        .check(&manifest, &worker.safety)
-        .map_err(unavailable)?;
-    let mut inner = worker.inner.lock().unwrap();
-    let view = inner
-        .views
-        .get(&request.manifest_sha256)
-        .ok_or_else(|| unavailable("worker material retired"))?;
-    let shards = view.domains.keys().copied().collect();
-    if let Some(holder) = &request.holder {
-        if holder.len() != 32
-            || !holder
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err((StatusCode::BAD_REQUEST, "invalid peer incarnation".into()));
-        }
-        inner
-            .pins
-            .retain(|_, deadline| *deadline > std::time::Instant::now());
-        let key = (holder.clone(), request.manifest_sha256.clone());
-        if !inner.pins.contains_key(&key) && inner.pins.len() >= MAX_PINS {
-            return Err(unavailable("worker handover pin capacity reached"));
-        }
-        inner
-            .pins
-            .insert(key, std::time::Instant::now() + PIN_LIFETIME);
-    }
-    Ok(Json(Readiness {
-        incarnation: worker.incarnation.clone(),
-        manifest_sha256: request.manifest_sha256,
-        manifest,
-        shards,
-    }))
+    worker.readiness(request).await.map(Json)
 }
 
-async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
-    let admitted = async {
-        if request
-            .headers()
-            .get("x-enhance-worker-incarnation")
-            .is_some_and(|header| header != worker.incarnation.as_str())
-        {
+/// An evaluation admitted by this worker: its capacity permit and exact
+/// loaded rows stay owned by the work until its answer is released.
+struct Admitted {
+    query: Evaluate,
+    loaded: Arc<Loaded>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    manifest: Manifest,
+    lease: Lease,
+}
+
+/// A finished evaluation and the resources its answer still holds.
+struct Evaluated {
+    result: Intermediate,
+    micros: u64,
+    held: (Arc<Loaded>, tokio::sync::OwnedSemaphorePermit),
+    manifest: Manifest,
+    lease: Lease,
+}
+
+/// Why a direct evaluation did not produce an answer. `NotAccepted` is the
+/// only outcome after which the caller may try another replica.
+pub(crate) enum EvaluationFailure {
+    NotAccepted((StatusCode, String)),
+    Failed((StatusCode, String)),
+}
+
+impl Worker {
+    pub(crate) fn release_promise(&self, request: Release) -> ApiResult<StatusCode> {
+        if request.worker_incarnation != self.incarnation {
+            return Err((StatusCode::CONFLICT, "worker incarnation changed".into()));
+        }
+        self.inner
+            .lock()
+            .unwrap()
+            .pins
+            .remove(&(request.holder, request.manifest_sha256));
+        Ok(StatusCode::NO_CONTENT)
+    }
+
+    pub(crate) async fn readiness(&self, request: ReadinessRequest) -> ApiResult<Readiness> {
+        let manifest = self
+            .inner
+            .lock()
+            .unwrap()
+            .views
+            .get(&request.manifest_sha256)
+            .map(|view| view.manifest.clone())
+            .ok_or_else(|| unavailable("requested worker material is not loaded"))?;
+        let lease = self.renew(&manifest).await.map_err(unavailable)?;
+        lease.check(&manifest, &self.safety).map_err(unavailable)?;
+        let mut inner = self.inner.lock().unwrap();
+        let view = inner
+            .views
+            .get(&request.manifest_sha256)
+            .ok_or_else(|| unavailable("worker material retired"))?;
+        let shards = view.domains.keys().copied().collect();
+        if let Some(holder) = &request.holder {
+            if holder.len() != 32
+                || !holder
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            {
+                return Err((StatusCode::BAD_REQUEST, "invalid peer incarnation".into()));
+            }
+            inner
+                .pins
+                .retain(|_, deadline| *deadline > std::time::Instant::now());
+            let key = (holder.clone(), request.manifest_sha256.clone());
+            if !inner.pins.contains_key(&key) && inner.pins.len() >= MAX_PINS {
+                return Err(unavailable("worker handover pin capacity reached"));
+            }
+            inner
+                .pins
+                .insert(key, std::time::Instant::now() + PIN_LIFETIME);
+        }
+        Ok(Readiness {
+            incarnation: self.incarnation.clone(),
+            manifest_sha256: request.manifest_sha256,
+            manifest,
+            shards,
+        })
+    }
+
+    fn check_incarnation(&self, incarnation: Option<&str>) -> ApiResult<()> {
+        if incarnation.is_some_and(|value| value != self.incarnation) {
             return Err(unavailable("worker incarnation changed"));
         }
-        let permit = worker
-            .evaluation
+        Ok(())
+    }
+
+    fn evaluation_permit(&self) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {
+        self.evaluation
             .clone()
             .try_acquire_owned()
-            .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-        let bytes = pir_control::admission::read_body(
-            request.into_body(),
-            1024 * 1024,
-            Duration::from_secs(30),
-        )
-        .await
-        .map_err(unavailable)?;
-        let query: Evaluate =
-            serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+            .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))
+    }
+
+    /// Bind a decoded request to loaded material and fresh authority. Every
+    /// refusal here happens before evaluation is accepted.
+    async fn admit_evaluation(
+        &self,
+        query: Evaluate,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> ApiResult<Admitted> {
         let binding = QueryBinding::decode(
             query
                 .binding
@@ -672,7 +729,7 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             return Err(unavailable("evaluation binding mismatch"));
         }
         let (manifest, loaded) = {
-            let inner = worker.inner.lock().unwrap();
+            let inner = self.inner.lock().unwrap();
             let view = inner
                 .views
                 .values()
@@ -709,14 +766,119 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
         {
             return Err((StatusCode::BAD_REQUEST, "invalid query coefficients".into()));
         }
-        let lease = worker.renew(&manifest).await.map_err(unavailable)?;
-        lease
-            .check(&manifest, &worker.safety)
-            .map_err(unavailable)?;
-        Ok::<_, (StatusCode, String)>((query, loaded, permit, manifest, lease))
+        let lease = self.renew(&manifest).await.map_err(unavailable)?;
+        lease.check(&manifest, &self.safety).map_err(unavailable)?;
+        Ok(Admitted {
+            query,
+            loaded,
+            permit,
+            manifest,
+            lease,
+        })
+    }
+
+    /// Run accepted work to completion. The blocking task owns the permit and
+    /// rows, so a cancelled caller cannot release capacity before work ends.
+    async fn run(&self, admitted: Admitted) -> ApiResult<Evaluated> {
+        let Admitted {
+            query,
+            loaded,
+            permit,
+            manifest,
+            lease,
+        } = admitted;
+        let result = tokio::task::spawn_blocking(move || {
+            let began = std::time::Instant::now();
+            let coefficients = loaded.evaluate(&query.coefficients)?;
+            let micros = began.elapsed().as_micros().min(u64::MAX as u128) as u64;
+            Ok::<_, String>((
+                Intermediate {
+                    binding: query.binding,
+                    generation: query.generation,
+                    shard_id: query.shard_id,
+                    epoch: query.epoch,
+                    coefficients,
+                },
+                loaded,
+                permit,
+                micros,
+            ))
+        })
+        .await;
+        match result {
+            Ok(Ok((result, loaded, permit, micros))) => {
+                self.matvec_latency.observe(micros as f64 / 1_000_000.);
+                let lease = match self.renew(&manifest).await {
+                    Ok(fresh) if fresh.continues(&lease) => fresh,
+                    Ok(_) => return Err(unavailable("publication withdrawn during evaluation")),
+                    Err(error) => return Err(unavailable(error)),
+                };
+                Ok(Evaluated {
+                    result,
+                    micros,
+                    held: (loaded, permit),
+                    manifest,
+                    lease,
+                })
+            }
+            Ok(Err(error)) => {
+                tracing::error!(%error, "worker evaluation failed");
+                Err(unavailable("matrix-vector evaluation unavailable"))
+            }
+            Err(error) => Err(unavailable(error)),
+        }
+    }
+
+    /// Evaluate for a packing router in this process. The answer is checked
+    /// against current authority before it is returned, as the HTTP body is
+    /// checked at the end of its transport.
+    pub(crate) async fn evaluate_local(
+        &self,
+        incarnation: &str,
+        query: Evaluate,
+    ) -> Result<(Intermediate, Duration), EvaluationFailure> {
+        let admitted = async {
+            self.check_incarnation(Some(incarnation))?;
+            let permit = self.evaluation_permit()?;
+            self.admit_evaluation(query, permit).await
+        }
+        .await
+        .map_err(EvaluationFailure::NotAccepted)?;
+        let evaluated = self
+            .run(admitted)
+            .await
+            .map_err(EvaluationFailure::Failed)?;
+        evaluated
+            .lease
+            .check(&evaluated.manifest, &self.safety)
+            .map_err(|e| EvaluationFailure::Failed(unavailable(e)))?;
+        drop(evaluated.held);
+        Ok((evaluated.result, Duration::from_micros(evaluated.micros)))
+    }
+}
+
+async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
+    let admitted = async {
+        worker.check_incarnation(
+            request
+                .headers()
+                .get("x-enhance-worker-incarnation")
+                .map(|header| header.to_str().unwrap_or("")),
+        )?;
+        let permit = worker.evaluation_permit()?;
+        let bytes = pir_control::admission::read_body(
+            request.into_body(),
+            1024 * 1024,
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(unavailable)?;
+        let query: Evaluate =
+            serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        worker.admit_evaluation(query, permit).await
     }
     .await;
-    let (query, loaded, permit, manifest, lease) = match admitted {
+    let admitted = match admitted {
         Ok(value) => value,
         Err(error) => {
             let mut response = error.into_response();
@@ -726,50 +888,28 @@ async fn evaluate(State(worker): State<Worker>, request: Request) -> Response {
             return response;
         }
     };
-    let result = tokio::task::spawn_blocking(move || {
-        let began = std::time::Instant::now();
-        let coefficients = loaded.evaluate(&query.coefficients)?;
-        let micros = began.elapsed().as_micros().min(u64::MAX as u128) as u64;
-        let bytes = serde_json::to_vec(&Intermediate {
-            binding: query.binding,
-            generation: query.generation,
-            shard_id: query.shard_id,
-            epoch: query.epoch,
-            coefficients,
-        })
-        .map_err(|e| e.to_string())?;
-        Ok::<_, String>((bytes, loaded, permit, micros))
-    })
-    .await;
-    match result {
-        Ok(Ok((bytes, loaded, permit, micros))) => {
-            worker.matvec_latency.observe(micros as f64 / 1_000_000.);
-            let refreshed = match worker.renew(&manifest).await {
-                Ok(fresh) if fresh.continues(&lease) => fresh,
-                Ok(_) => {
-                    return unavailable("publication withdrawn during evaluation").into_response()
-                }
-                Err(error) => return unavailable(error).into_response(),
-            };
-            let lease = refreshed;
-            let safety = worker.safety.clone();
+    let evaluated = match worker.run(admitted).await {
+        Ok(evaluated) => evaluated,
+        Err(error) => return error.into_response(),
+    };
+    let bytes = match serde_json::to_vec(&evaluated.result) {
+        Ok(bytes) => bytes,
+        Err(error) => return unavailable(error).into_response(),
+    };
+    let (manifest, lease, safety) = (evaluated.manifest, evaluated.lease, worker.safety.clone());
+    (
+        [
+            ("content-type", "application/json".to_string()),
             (
-                [
-                    ("content-type", "application/json".to_string()),
-                    ("x-enhance-matvec-microseconds", micros.to_string()),
-                ],
-                crate::enhance::response_body::guarded(bytes, (loaded, permit), move || {
-                    lease.check(&manifest, &safety)
-                }),
-            )
-                .into_response()
-        }
-        Ok(Err(error)) => {
-            tracing::error!(%error, "worker evaluation failed");
-            unavailable("matrix-vector evaluation unavailable").into_response()
-        }
-        Err(error) => unavailable(error).into_response(),
-    }
+                "x-enhance-matvec-microseconds",
+                evaluated.micros.to_string(),
+            ),
+        ],
+        crate::enhance::response_body::guarded(bytes, evaluated.held, move || {
+            lease.check(&manifest, &safety)
+        }),
+    )
+        .into_response()
 }
 
 #[cfg(test)]

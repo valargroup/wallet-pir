@@ -268,16 +268,16 @@ mod tests {
         feature = "transparent-detail"
     ))]
     #[test]
-    fn all_product_example_keeps_independent_roles() {
+    fn all_product_example_serves_complete_products() {
         let config: Config = serde_json::from_str(include_str!(
             "../../../tools/deploy/query-server/query-server.example.json"
         ))
         .unwrap();
         let layout = config.validate().unwrap();
         assert_eq!(layout.probes.len(), 4);
-        // Management, one Enhance worker, Status combined control and wallet
+        // Management, Enhance and Status combined wallet and control
         // listeners, and one listener per Transparent product.
-        assert_eq!(layout.listeners.len(), 6);
+        assert_eq!(layout.listeners.len(), 7);
     }
 
     #[cfg(feature = "transparent-history")]

@@ -105,7 +105,8 @@ configuration, not a production inventory. Sections are `enhance`, `status`,
 `transparent_history`, and `transaction_details`. Each has `enabled` and
 `settings`. An omitted or disabled section starts nothing.
 
-Enhance settings name one role: `worker`, `query-ingress`, or `packing-router`.
+Enhance settings name one role: `worker`, `query-ingress`, `packing-router`
+or `combined`.
 Every role takes a `synchronization` object naming its HTTPS
 `publisher_origin`, optional `trusted_ca`, `download_budget_bytes` and
 `cache_limit_bytes`: workers add their `shards`, query ingress its `routers`
@@ -115,7 +116,17 @@ domain. A worker also needs `listen`, an absolute `data_dir`, and optional
 and `cuda_device` only for CUDA). Query ingress needs `data_dir`, `listen`,
 `control_listen`, and optional `requests` (default 16) and `uploads` (default
 256). A packing router needs `data_dir`, `listen`, `control_listen`, and
-optional `max_objects` (default 6) and `requests` (default 4). Status settings
+optional `max_objects` (default 6) and `requests` (default 4). A `combined`
+Enhance role runs a query ingress, packing router and worker for the worker's
+`shards` in one process, calling each other directly instead of over private
+HTTP, so it names no routers or workers and needs no bearer token between
+them. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
+ingress's `requests` and `uploads`, the router's `max_objects` and
+`packing_requests` (the router's `requests`), an absolute `data_dir` holding
+`worker`, `router` and `ingress` state directories, the wallet `listen` and the
+private `control_listen`. Wallets see a generation only after all three hold
+fresh authority for it, and its health is ready only while all three are.
+Status settings
 name `worker`, `router` or `combined`. Each requires `publisher` (an HTTPS
 origin), `network_hex`, an exclusively owned `state_dir`, and loopback listeners.
 `publisher_ca` optionally adds an installed PEM trust root. The router also

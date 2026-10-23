@@ -175,6 +175,8 @@ pub struct System {
     pub workers: Vec<worker_sync::Synchronizer>,
     pub routers: Vec<router_sync::Synchronizer>,
     pub ingress: ingress_sync::Synchronizer,
+    /// The one-process role, when the system serves through it.
+    pub combined: Option<pir_query_server::enhance::combined::Combined>,
     canonical: Arc<Mutex<std::collections::BTreeMap<u64, String>>>,
     transport: Tls,
     _listeners: Vec<Listening>,
@@ -206,6 +208,43 @@ impl System {
         replicas: usize,
         height: u64,
         hash: String,
+    ) -> Self {
+        Self::build(
+            records,
+            backend,
+            maximum_domains,
+            replicas,
+            height,
+            hash,
+            false,
+        )
+        .await
+    }
+    /// The same publisher, served by one combined Enhance role whose ingress,
+    /// packing router and worker call each other directly.
+    pub async fn combined(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+    ) -> Self {
+        Self::build(
+            records,
+            backend,
+            1,
+            1,
+            enhance_shared::ACTIVATION_HEIGHT,
+            "01".repeat(32),
+            true,
+        )
+        .await
+    }
+    async fn build(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+        maximum_domains: u64,
+        replicas: usize,
+        height: u64,
+        hash: String,
+        combined: bool,
     ) -> Self {
         assert!((1..=enhance_shared::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
         assert!((1..=2).contains(&replicas));
@@ -273,6 +312,45 @@ impl System {
             .unwrap();
         let manifest = response.current.manifest.unwrap();
         let mut listeners = vec![node, publisher_http];
+        if combined {
+            let role = pir_query_server::enhance::combined::Combined::open(
+                &root.path().join("combined"),
+                worker_sync::Config {
+                    source: source.clone(),
+                    shards: (0..maximum_domains).collect(),
+                },
+                pir_query_server::enhance::combined::Limits {
+                    sealed_shards: 6,
+                    requests: 16,
+                    uploads: 256,
+                    max_objects: 6,
+                    packing_requests: 4,
+                },
+                backend,
+            )
+            .unwrap();
+            let synchronizers = role.synchronizers().unwrap();
+            let public = serve(role.public_router()).await;
+            let origin = public.url.clone();
+            listeners.push(public);
+            let mut system = Self {
+                root,
+                publisher,
+                journal,
+                manifest,
+                origin,
+                source,
+                workers: vec![synchronizers.worker],
+                routers: vec![synchronizers.router],
+                ingress: synchronizers.ingress,
+                combined: Some(role),
+                canonical,
+                transport,
+                _listeners: listeners,
+            };
+            system.synchronize().await;
+            return system;
+        }
         let mut workers = Vec::new();
         let mut worker_origins: std::collections::BTreeMap<u64, Vec<String>> = Default::default();
         for first in (0..maximum_domains).step_by(5) {
@@ -358,6 +436,7 @@ impl System {
             workers,
             routers,
             ingress: ingress_sync,
+            combined: None,
             canonical,
             transport,
             _listeners: listeners,

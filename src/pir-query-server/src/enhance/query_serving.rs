@@ -1,4 +1,5 @@
 //! Shared worker-evaluation contract for remote and compatibility serving.
+use crate::enhance::{peers::WorkerEndpoint, worker_sync::EvaluationFailure};
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -55,24 +56,49 @@ pub(crate) struct Answer {
 /// Retry only when the previous worker demonstrably did not accept evaluation.
 /// The selected lease remains charged until the complete worker response is read.
 /// Autonomous peers also bind acceptance to the process that promised readiness.
+/// A worker in this process is called directly; only its typed `NotAccepted`
+/// refusal counts as nonacceptance, and a failure or panic after admission is
+/// as final as an HTTP worker that may have received the request.
 pub(crate) async fn evaluate_exact<G>(
     http: &reqwest::Client,
     request: &Evaluate,
     route_count: usize,
-    mut select: impl FnMut(Option<&str>) -> Result<(String, String, G), Error>,
+    mut select: impl FnMut(Option<&str>) -> Result<(WorkerEndpoint, String, G), Error>,
 ) -> Result<Answer, Error> {
     let mut excluded = None;
     for attempt in 0..2 {
         let (worker, incarnation, _lease) = select(excluded.as_deref())?;
+        let retry = attempt == 0 && route_count > 1;
+        let url = match &worker {
+            WorkerEndpoint::Http(url) => url,
+            WorkerEndpoint::Local(local) => {
+                match local.evaluate_local(&incarnation, request.clone()).await {
+                    Ok((result, worker_time)) => {
+                        return answer(request, result, Some(worker_time));
+                    }
+                    Err(EvaluationFailure::NotAccepted((status, _))) => {
+                        if refusal_allows_replay(status) && retry {
+                            excluded = Some(worker.key().to_string());
+                            continue;
+                        }
+                        return Err(refusal(status, true));
+                    }
+                    Err(EvaluationFailure::Failed((_, error))) => {
+                        tracing::warn!(%error, "local worker evaluation failed; no replay");
+                        return Err(unavailable("worker evaluation failed; no replay"));
+                    }
+                }
+            }
+        };
         let builder = http
-            .post(format!("{worker}/internal/evaluate"))
+            .post(format!("{url}/internal/evaluate"))
             .timeout(std::time::Duration::from_secs(30))
             .json(request)
             .header("x-enhance-worker-incarnation", incarnation);
         let response = builder.send().await;
         match response {
-            Err(e) if e.is_connect() && attempt == 0 && route_count > 1 => {
-                excluded = Some(worker);
+            Err(e) if e.is_connect() && retry => {
+                excluded = Some(url.clone());
             }
             Err(e) => {
                 tracing::warn!(error = %e, "worker evaluation transport failed; no replay");
@@ -80,26 +106,16 @@ pub(crate) async fn evaluate_exact<G>(
             }
             Ok(response) => {
                 let status = response.status();
-                let rejected = response
+                let not_accepted = response
                     .headers()
                     .get("x-enhance-evaluation")
-                    .is_some_and(|v| v == "not-accepted")
-                    && matches!(
-                        status,
-                        StatusCode::TOO_MANY_REQUESTS
-                            | StatusCode::GONE
-                            | StatusCode::SERVICE_UNAVAILABLE
-                    );
-                if rejected && attempt == 0 && route_count > 1 {
-                    excluded = Some(worker);
+                    .is_some_and(|v| v == "not-accepted");
+                if not_accepted && refusal_allows_replay(status) && retry {
+                    excluded = Some(url.clone());
                     continue;
                 }
                 if !status.is_success() {
-                    return Err(if rejected && status == StatusCode::TOO_MANY_REQUESTS {
-                        (StatusCode::TOO_MANY_REQUESTS, "workers not admitted".into())
-                    } else {
-                        unavailable("worker evaluation failed; no replay")
-                    });
+                    return Err(refusal(status, not_accepted));
                 }
                 let worker_time = response
                     .headers()
@@ -109,21 +125,45 @@ pub(crate) async fn evaluate_exact<G>(
                     .map(std::time::Duration::from_micros);
                 let bytes = bounded(response, 1024 * 1024).await.map_err(unavailable)?;
                 let result: Intermediate = serde_json::from_slice(&bytes).map_err(unavailable)?;
-                if result.binding != request.binding
-                    || result.generation != request.generation
-                    || result.shard_id != request.shard_id
-                    || result.epoch != request.epoch
-                {
-                    return Err(unavailable("worker binding mismatch"));
-                }
-                return Ok(Answer {
-                    coefficients: result.coefficients,
-                    worker_time,
-                });
+                return answer(request, result, worker_time);
             }
         }
     }
     Err(unavailable("no admitted evaluation"))
+}
+
+/// Refusals another replica may still accept.
+fn refusal_allows_replay(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::GONE | StatusCode::SERVICE_UNAVAILABLE
+    )
+}
+
+fn refusal(status: StatusCode, not_accepted: bool) -> Error {
+    if not_accepted && status == StatusCode::TOO_MANY_REQUESTS {
+        (StatusCode::TOO_MANY_REQUESTS, "workers not admitted".into())
+    } else {
+        unavailable("worker evaluation failed; no replay")
+    }
+}
+
+fn answer(
+    request: &Evaluate,
+    result: Intermediate,
+    worker_time: Option<std::time::Duration>,
+) -> Result<Answer, Error> {
+    if result.binding != request.binding
+        || result.generation != request.generation
+        || result.shard_id != request.shard_id
+        || result.epoch != request.epoch
+    {
+        return Err(unavailable("worker binding mismatch"));
+    }
+    Ok(Answer {
+        coefficients: result.coefficients,
+        worker_time,
+    })
 }
 
 pub async fn bounded(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
@@ -259,11 +299,11 @@ mod tests {
         let (b, bc, bt) = server(StatusCode::OK, false, vec![7]).await;
         let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             Ok((
-                if excluded.is_none() {
+                WorkerEndpoint::Http(if excluded.is_none() {
                     a.clone()
                 } else {
                     b.clone()
-                },
+                }),
                 "01".repeat(16),
                 (),
             ))
@@ -369,11 +409,11 @@ mod tests {
             let (second, calls, second_task) = server(StatusCode::OK, false, vec![7]).await;
             let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
                 Ok((
-                    if excluded.is_none() {
+                    WorkerEndpoint::Http(if excluded.is_none() {
                         first.clone()
                     } else {
                         second.clone()
-                    },
+                    }),
                     "01".repeat(16),
                     (),
                 ))
@@ -400,11 +440,11 @@ mod tests {
         let (second, calls, second_task) = server(StatusCode::OK, false, vec![7]).await;
         let result = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             Ok((
-                if excluded.is_none() {
+                WorkerEndpoint::Http(if excluded.is_none() {
                     first.clone()
                 } else {
                     second.clone()
-                },
+                }),
                 "01".repeat(16),
                 (),
             ))
@@ -429,11 +469,11 @@ mod tests {
                 server_timing(StatusCode::OK, false, vec![7], header).await;
             let answer = evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
                 Ok((
-                    if excluded.is_none() {
+                    WorkerEndpoint::Http(if excluded.is_none() {
                         first.clone()
                     } else {
                         second.clone()
-                    },
+                    }),
                     "01".repeat(16),
                     (),
                 ))
@@ -456,11 +496,11 @@ mod tests {
         evaluate_exact(&reqwest::Client::new(), &request(), 2, |excluded| {
             selections.push(excluded.map(str::to_owned));
             Ok((
-                if excluded.is_none() {
+                WorkerEndpoint::Http(if excluded.is_none() {
                     unavailable.clone()
                 } else {
                     available.clone()
-                },
+                }),
                 "01".repeat(16),
                 (),
             ))

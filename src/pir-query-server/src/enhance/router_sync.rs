@@ -1,5 +1,6 @@
 //! Consumer-owned packing activation and exact worker handover.
 use crate::enhance::{
+    peers::WorkerEndpoint,
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
@@ -85,7 +86,9 @@ impl Config {
 
 #[derive(Clone)]
 struct Peer {
+    /// The selection key: a worker origin, or the local worker.
     url: String,
+    endpoint: WorkerEndpoint,
     incarnation: String,
     deadline: Instant,
 }
@@ -114,6 +117,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct PackingRouter {
     config: Config,
+    workers: BTreeMap<u64, Vec<WorkerEndpoint>>,
     root: PathBuf,
     authority: Authority,
     inner: Arc<Mutex<Inner>>,
@@ -141,6 +145,57 @@ impl PackingRouter {
         requests: usize,
     ) -> Result<Self, Error> {
         config.validate()?;
+        let workers = config
+            .workers
+            .iter()
+            .map(|(shard, urls)| {
+                (
+                    *shard,
+                    urls.iter().cloned().map(WorkerEndpoint::Http).collect(),
+                )
+            })
+            .collect();
+        Self::open_with(root, config, workers, max_objects, requests)
+    }
+
+    /// A router packing for the worker in this process, which it calls
+    /// directly for readiness, release and evaluation.
+    pub(crate) fn open_local(
+        root: &Path,
+        source: SourceConfig,
+        worker: &crate::enhance::worker_sync::Worker,
+        max_objects: usize,
+        requests: usize,
+    ) -> Result<Self, Error> {
+        source.validate()?;
+        let shards = worker.shards();
+        let config = Config {
+            source,
+            workers: shards
+                .iter()
+                .map(|shard| (*shard, vec![crate::enhance::peers::LOCAL.to_string()]))
+                .collect(),
+            preferred: Default::default(),
+        };
+        let workers = shards
+            .iter()
+            .map(|shard| {
+                (
+                    *shard,
+                    vec![WorkerEndpoint::Local(Box::new(worker.clone()))],
+                )
+            })
+            .collect();
+        Self::open_with(root, config, workers, max_objects, requests)
+    }
+
+    fn open_with(
+        root: &Path,
+        config: Config,
+        workers: BTreeMap<u64, Vec<WorkerEndpoint>>,
+        max_objects: usize,
+        requests: usize,
+    ) -> Result<Self, Error> {
         if !(1..=6).contains(&max_objects)
             || !(1..=4).contains(&requests)
             || config.workers.len() > max_objects
@@ -173,6 +228,7 @@ impl PackingRouter {
         Ok(Self {
             root: root.into(),
             config,
+            workers,
             authority,
             inner: Default::default(),
             http: crate::enhance::internal_auth::client_builder()
@@ -230,7 +286,7 @@ impl PackingRouter {
 
     async fn peers(&self, manifest: &Manifest) -> Result<Option<BTreeMap<u64, Vec<Peer>>>, Error> {
         let mut requests = tokio::task::JoinSet::new();
-        for (&shard, urls) in &self.config.workers {
+        for (&shard, endpoints) in &self.workers {
             if !manifest
                 .coverage
                 .shards
@@ -239,30 +295,24 @@ impl PackingRouter {
             {
                 continue;
             }
-            for url in urls {
+            for endpoint in endpoints {
                 let http = self.http.clone();
-                let url = url.clone();
+                let endpoint = endpoint.clone();
                 let manifest = manifest.clone();
                 let holder = self.incarnation.clone();
                 requests.spawn(async move {
                     let started = Instant::now();
-                    let response = http
-                        .post(format!("{url}/internal/readiness"))
-                        .timeout(Duration::from_secs(1))
-                        .json(&ReadinessRequest {
-                            manifest_sha256: digest(&manifest),
-                            holder: Some(holder),
-                        })
-                        .send()
-                        .await;
                     let result = async {
-                        let response = response?.error_for_status()?;
-                        let bytes = crate::enhance::query_serving::bounded(
-                            response,
-                            METADATA_LIMIT as usize,
-                        )
-                        .await?;
-                        let ready: Readiness = serde_json::from_slice(&bytes)?;
+                        let ready = endpoint
+                            .readiness(
+                                &http,
+                                &ReadinessRequest {
+                                    manifest_sha256: digest(&manifest),
+                                    holder: Some(holder),
+                                },
+                                Duration::from_secs(1),
+                            )
+                            .await?;
                         if ready.manifest != manifest
                             || ready.manifest_sha256 != digest(&manifest)
                             || !ready.shards.contains(&shard)
@@ -275,7 +325,8 @@ impl PackingRouter {
                             );
                         }
                         Ok(Peer {
-                            url,
+                            url: endpoint.key().to_string(),
+                            endpoint,
                             incarnation: ready.incarnation,
                             deadline: started + PIN_LIFETIME,
                         })
@@ -293,7 +344,6 @@ impl PackingRouter {
             }
         }
         Ok(self
-            .config
             .workers
             .keys()
             .filter(|id| {
@@ -312,23 +362,21 @@ impl PackingRouter {
         let unique = peers
             .values()
             .flatten()
-            .map(|peer| (peer.url.clone(), peer.incarnation.clone()))
-            .collect::<BTreeSet<_>>();
-        for (url, incarnation) in unique {
+            .map(|peer| {
+                (
+                    (peer.url.clone(), peer.incarnation.clone()),
+                    peer.endpoint.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        for ((_, incarnation), endpoint) in unique {
             let http = self.http.clone();
             let request = Release {
                 manifest_sha256: digest(manifest),
                 holder: self.incarnation.clone(),
                 worker_incarnation: incarnation,
             };
-            requests.spawn(async move {
-                let _ = http
-                    .post(format!("{url}/internal/release"))
-                    .timeout(Duration::from_secs(1))
-                    .json(&request)
-                    .send()
-                    .await;
-            });
+            requests.spawn(async move { endpoint.release(&http, request).await });
         }
         while requests.join_next().await.is_some() {}
     }
@@ -421,7 +469,7 @@ impl PackingRouter {
         loaded: &Loaded,
         shard: u64,
         excluded: Option<&str>,
-    ) -> Result<(String, String, Outstanding), ApiError> {
+    ) -> Result<(WorkerEndpoint, String, Outstanding), ApiError> {
         let mut inner = self.inner.lock().unwrap();
         let peers = loaded.peers.lock().unwrap();
         let peers = peers
@@ -463,7 +511,7 @@ impl PackingRouter {
         inner.cursor = inner.cursor.wrapping_add(1);
         *inner.outstanding.entry(chosen.url.clone()).or_default() += 1;
         Ok((
-            chosen.url.clone(),
+            chosen.endpoint.clone(),
             chosen.incarnation.clone(),
             Outstanding {
                 inner: self.inner.clone(),
@@ -735,178 +783,244 @@ impl SyncTask for Synchronizer {
     }
 }
 
+impl PackingRouter {
+    pub(crate) fn ready(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .active
+            .as_ref()
+            .is_some_and(|view| self.authority.check(&view.manifest).is_ok())
+    }
+    pub(crate) fn health(&self) -> serde_json::Value {
+        let ready = self.ready();
+        let inner = self.inner.lock().unwrap();
+        serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": self.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
+        "packing_charged_bytes": self.budget.charged_bytes(),
+        "ready": ready})
+    }
+    /// Router metrics; `memory` adds this process's memory observation.
+    pub(crate) fn metrics_text(&self, memory: bool) -> String {
+        format!(
+            "{}enhance_packing_router_charged_bytes {}\n{}",
+            self.timing.render(),
+            self.budget.charged_bytes(),
+            if memory {
+                crate::enhance::memory_observation::observe().render("enhance_packing_router_")
+            } else {
+                String::new()
+            }
+        )
+    }
+}
 async fn health(State(router): State<PackingRouter>) -> Json<serde_json::Value> {
-    let inner = router.inner.lock().unwrap();
-    Json(
-        serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": router.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
-        "packing_charged_bytes": router.budget.charged_bytes(),
-        "ready": inner.active.as_ref().is_some_and(|view| router.authority.check(&view.manifest).is_ok())}),
-    )
+    Json(router.health())
 }
 async fn metrics(State(router): State<PackingRouter>) -> impl IntoResponse {
     (
         [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
-        format!(
-            "{}enhance_packing_router_charged_bytes {}\n{}",
-            router.timing.render(),
-            router.budget.charged_bytes(),
-            crate::enhance::memory_observation::observe().render("enhance_packing_router_")
-        ),
+        router.metrics_text(true),
     )
 }
-async fn readiness(
-    State(router): State<PackingRouter>,
-    Json(request): Json<ReadinessRequest>,
-) -> Result<Json<Readiness>, ApiError> {
-    let loaded = {
-        let inner = router.inner.lock().unwrap();
-        inner
-            .active
-            .iter()
-            .chain(inner.retained.values())
-            .find(|view| digest(&view.manifest) == request.manifest_sha256)
-            .cloned()
-            .ok_or_else(|| unavailable("requested router material is not loaded"))?
-    };
-    let guard = router
-        .authority
-        .fresh(&loaded.manifest)
-        .await
-        .map_err(unavailable)?;
-    guard.check().map_err(unavailable)?;
-    let peers = router
-        .peers(&loaded.manifest)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(|| unavailable("compatible workers are not ready"))?;
-    *loaded.peers.lock().unwrap() = peers;
-    guard.check().map_err(unavailable)?;
-    if let Some(holder) = &request.holder {
-        if holder.len() != 32
-            || !holder
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        {
-            return Err((StatusCode::BAD_REQUEST, "invalid peer incarnation".into()));
-        }
-        let mut inner = router.inner.lock().unwrap();
-        inner.pins.retain(|_, deadline| *deadline > Instant::now());
-        let key = (holder.clone(), request.manifest_sha256.clone());
-        if !inner.pins.contains_key(&key) && inner.pins.len() >= 64 {
-            return Err(unavailable("router handover pin capacity reached"));
-        }
-        if inner
-            .active
-            .as_ref()
-            .is_none_or(|active| !Arc::ptr_eq(active, &loaded))
-        {
-            if !inner.retained.contains_key(&request.manifest_sha256)
-                && inner.retained.len() >= protocol::RETAINED_GENERATIONS - 1
-            {
-                return Err(unavailable("router retained material capacity reached"));
-            }
-            inner
-                .retained
-                .insert(request.manifest_sha256.clone(), loaded.clone());
-        }
-        inner.pins.insert(key, Instant::now() + PIN_LIFETIME);
-    }
-    Ok(Json(Readiness {
-        incarnation: router.incarnation,
-        manifest_sha256: request.manifest_sha256,
-        manifest: loaded.manifest.clone(),
-        shards: loaded.packing.keys().copied().collect(),
-    }))
-}
-async fn session(
-    State(router): State<PackingRouter>,
-    UrlPath(id): UrlPath<String>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    let result = async {
-        check_incarnation(&router, &headers)?;
-        if !protocol::canonical_hash(&id) {
-            return Err((StatusCode::BAD_REQUEST, "invalid session id".into()));
-        }
+impl PackingRouter {
+    /// Promise exact loaded material to an ingress holder for `PIN_LIFETIME`.
+    pub(crate) async fn readiness(&self, request: ReadinessRequest) -> Result<Readiness, ApiError> {
+        let router = self;
         let loaded = {
             let inner = router.inner.lock().unwrap();
             inner
                 .active
                 .iter()
                 .chain(inner.retained.values())
-                .find(|view| {
-                    view.manifest.coverage.shards.iter().any(|shard| {
-                        view.manifest
-                            .session_id(shard.id)
-                            .is_ok_and(|hash| hex::encode(hash) == id)
-                    })
-                })
+                .find(|view| digest(&view.manifest) == request.manifest_sha256)
                 .cloned()
-                .ok_or((StatusCode::GONE, "session_unavailable".into()))?
+                .ok_or_else(|| unavailable("requested router material is not loaded"))?
         };
-        let shard = loaded
-            .manifest
-            .coverage
-            .shards
-            .iter()
-            .find(|shard| {
-                loaded
-                    .manifest
-                    .session_id(shard.id)
-                    .is_ok_and(|hash| hex::encode(hash) == id)
-            })
-            .ok_or((StatusCode::GONE, "session_unavailable".into()))?
-            .id;
-        let packing = loaded
-            .packing
-            .get(&shard)
-            .cloned()
-            .ok_or((StatusCode::GONE, "session_unavailable".into()))?;
         let guard = router
             .authority
             .fresh(&loaded.manifest)
             .await
             .map_err(unavailable)?;
-        let bytes =
-            serde_json::to_vec(&packing.session(&loaded.manifest, shard)).map_err(unavailable)?;
-        Ok::<_, ApiError>(
-            (
-                [("content-type", "application/json")],
-                crate::enhance::response_body::guarded(bytes, (loaded, packing), move || {
-                    guard.check()
-                }),
-            )
-                .into_response(),
-        )
+        guard.check().map_err(unavailable)?;
+        let peers = router
+            .peers(&loaded.manifest)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(|| unavailable("compatible workers are not ready"))?;
+        *loaded.peers.lock().unwrap() = peers;
+        guard.check().map_err(unavailable)?;
+        if let Some(holder) = &request.holder {
+            if holder.len() != 32
+                || !holder
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            {
+                return Err((StatusCode::BAD_REQUEST, "invalid peer incarnation".into()));
+            }
+            let mut inner = router.inner.lock().unwrap();
+            inner.pins.retain(|_, deadline| *deadline > Instant::now());
+            let key = (holder.clone(), request.manifest_sha256.clone());
+            if !inner.pins.contains_key(&key) && inner.pins.len() >= 64 {
+                return Err(unavailable("router handover pin capacity reached"));
+            }
+            if inner
+                .active
+                .as_ref()
+                .is_none_or(|active| !Arc::ptr_eq(active, &loaded))
+            {
+                if !inner.retained.contains_key(&request.manifest_sha256)
+                    && inner.retained.len() >= protocol::RETAINED_GENERATIONS - 1
+                {
+                    return Err(unavailable("router retained material capacity reached"));
+                }
+                inner
+                    .retained
+                    .insert(request.manifest_sha256.clone(), loaded.clone());
+            }
+            inner.pins.insert(key, Instant::now() + PIN_LIFETIME);
+        }
+        Ok(Readiness {
+            incarnation: router.incarnation.clone(),
+            manifest_sha256: request.manifest_sha256,
+            manifest: loaded.manifest.clone(),
+            shards: loaded.packing.keys().copied().collect(),
+        })
     }
-    .await;
-    result.unwrap_or_else(crate::enhance::query_serving::public_error)
 }
+
+async fn readiness(
+    State(router): State<PackingRouter>,
+    Json(request): Json<ReadinessRequest>,
+) -> Result<Json<Readiness>, ApiError> {
+    router.readiness(request).await.map(Json)
+}
+
+async fn session(
+    State(router): State<PackingRouter>,
+    UrlPath(id): UrlPath<String>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let incarnation = incarnation_header(&headers);
+    router.session_answer(incarnation.as_deref(), &id).await
+}
+
+impl PackingRouter {
+    /// One session's packing setup, as the public session route answers it.
+    pub(crate) async fn session_answer(&self, incarnation: Option<&str>, id: &str) -> Response {
+        let router = self.clone();
+        let id = id.to_string();
+        let result = async {
+            check_incarnation(&router, incarnation)?;
+            if !protocol::canonical_hash(&id) {
+                return Err((StatusCode::BAD_REQUEST, "invalid session id".into()));
+            }
+            let loaded = {
+                let inner = router.inner.lock().unwrap();
+                inner
+                    .active
+                    .iter()
+                    .chain(inner.retained.values())
+                    .find(|view| {
+                        view.manifest.coverage.shards.iter().any(|shard| {
+                            view.manifest
+                                .session_id(shard.id)
+                                .is_ok_and(|hash| hex::encode(hash) == id)
+                        })
+                    })
+                    .cloned()
+                    .ok_or((StatusCode::GONE, "session_unavailable".into()))?
+            };
+            let shard = loaded
+                .manifest
+                .coverage
+                .shards
+                .iter()
+                .find(|shard| {
+                    loaded
+                        .manifest
+                        .session_id(shard.id)
+                        .is_ok_and(|hash| hex::encode(hash) == id)
+                })
+                .ok_or((StatusCode::GONE, "session_unavailable".into()))?
+                .id;
+            let packing = loaded
+                .packing
+                .get(&shard)
+                .cloned()
+                .ok_or((StatusCode::GONE, "session_unavailable".into()))?;
+            let guard = router
+                .authority
+                .fresh(&loaded.manifest)
+                .await
+                .map_err(unavailable)?;
+            let bytes = serde_json::to_vec(&packing.session(&loaded.manifest, shard))
+                .map_err(unavailable)?;
+            Ok::<_, ApiError>(
+                (
+                    [("content-type", "application/json")],
+                    crate::enhance::response_body::guarded(bytes, (loaded, packing), move || {
+                        guard.check()
+                    }),
+                )
+                    .into_response(),
+            )
+        }
+        .await;
+        result.unwrap_or_else(crate::enhance::query_serving::public_error)
+    }
+
+    /// Answer one wallet query body. Timing covers the work after the body
+    /// arrived plus `body_read`, the time its upload took.
+    pub(crate) async fn query_answer(
+        &self,
+        incarnation: Option<&str>,
+        bytes: axum::body::Bytes,
+        body_read: Duration,
+    ) -> Response {
+        let started = Instant::now();
+        let result = async {
+            check_incarnation(self, incarnation)?;
+            serve(self.clone(), bytes, body_read).await
+        }
+        .await;
+        self.observed(result, started.checked_sub(body_read).unwrap_or(started))
+    }
+
+    fn observed(&self, result: Result<Response, ApiError>, started: Instant) -> Response {
+        match result {
+            Ok(mut response) => {
+                if let Some(stages) = response
+                    .extensions_mut()
+                    .remove::<crate::enhance::query_timing::CompletedStages>()
+                {
+                    self.timing.observe(stages, started.elapsed());
+                }
+                response
+            }
+            Err(error) => crate::enhance::query_serving::public_error(error),
+        }
+    }
+}
+
 async fn query(State(router): State<PackingRouter>, request: Request) -> Response {
     let started = Instant::now();
-    match serve(router.clone(), request).await {
-        Ok(mut response) => {
-            if let Some(stages) = response
-                .extensions_mut()
-                .remove::<crate::enhance::query_timing::CompletedStages>()
-            {
-                router.timing.observe(stages, started.elapsed());
-            }
-            response
-        }
-        Err(error) => crate::enhance::query_serving::public_error(error),
+    let result = async {
+        check_incarnation(&router, incarnation_header(request.headers()).as_deref())?;
+        let bytes = read_body(request.into_body(), BODY_LIMIT, Duration::from_secs(30))
+            .await
+            .map_err(|e| match e {
+                BodyError::Timeout => (StatusCode::REQUEST_TIMEOUT, e.to_string()),
+                BodyError::Read(_) => (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
+            })?;
+        serve(router.clone(), bytes, started.elapsed()).await
     }
+    .await;
+    router.observed(result, started)
 }
-async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiError> {
-    check_incarnation(&router, request.headers())?;
-    let began = Instant::now();
-    let bytes = read_body(request.into_body(), BODY_LIMIT, Duration::from_secs(30))
-        .await
-        .map_err(|e| match e {
-            BodyError::Timeout => (StatusCode::REQUEST_TIMEOUT, e.to_string()),
-            BodyError::Read(_) => (StatusCode::PAYLOAD_TOO_LARGE, e.to_string()),
-        })?;
-    let body_read = began.elapsed();
+async fn serve(
+    router: PackingRouter,
+    bytes: axum::body::Bytes,
+    body_read: Duration,
+) -> Result<Response, ApiError> {
     let permit = Queue::with_permits(
         router.admission.clone(),
         router.waiters.clone(),
@@ -992,30 +1106,34 @@ async fn serve(router: PackingRouter, request: Request) -> Result<Response, ApiE
     .await?
 }
 
-fn check_incarnation(
-    router: &PackingRouter,
-    headers: &axum::http::HeaderMap,
-) -> Result<(), ApiError> {
-    if headers
+/// A header that is not text cannot match any incarnation.
+fn incarnation_header(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
         .get("x-enhance-router-incarnation")
-        .is_some_and(|value| value != router.incarnation.as_str())
-    {
+        .map(|value| value.to_str().unwrap_or("").to_string())
+}
+fn check_incarnation(router: &PackingRouter, incarnation: Option<&str>) -> Result<(), ApiError> {
+    if incarnation.is_some_and(|value| value != router.incarnation) {
         return Err(unavailable("router incarnation changed"));
     }
     Ok(())
+}
+impl PackingRouter {
+    pub(crate) fn release_promise(&self, request: Release) -> Result<StatusCode, ApiError> {
+        if request.worker_incarnation != self.incarnation {
+            return Err((StatusCode::CONFLICT, "router incarnation changed".into()));
+        }
+        self.inner
+            .lock()
+            .unwrap()
+            .pins
+            .remove(&(request.holder, request.manifest_sha256));
+        Ok(StatusCode::NO_CONTENT)
+    }
 }
 async fn release_pin(
     State(router): State<PackingRouter>,
     Json(request): Json<Release>,
 ) -> Result<StatusCode, ApiError> {
-    if request.worker_incarnation != router.incarnation {
-        return Err((StatusCode::CONFLICT, "router incarnation changed".into()));
-    }
-    router
-        .inner
-        .lock()
-        .unwrap()
-        .pins
-        .remove(&(request.holder, request.manifest_sha256));
-    Ok(StatusCode::NO_CONTENT)
+    router.release_promise(request)
 }

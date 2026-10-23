@@ -25,6 +25,9 @@ mod http_metrics;
 
 mod query_timing;
 
+mod peers;
+
+pub mod combined;
 pub mod ingress_sync;
 pub mod router_sync;
 pub mod service;

@@ -3,8 +3,9 @@
   "enhance": {
     "enabled": true,
     "settings": {
-      "role": "worker",
+      "role": "combined",
       "listen": "127.0.0.1:8091",
+      "control_listen": "127.0.0.1:8096",
       "data_dir": "/srv/pir-query-server/enhance",
       "sealed_shards": 6,
       "synchronization": {
