@@ -987,13 +987,64 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         .unwrap()
         .current();
     assert!(Arc::ptr_eq(current.public(), loaded.public()));
-    // Held generations would make the controller defer the next preparation.
-    drop((current, loaded));
+    drop(current);
+
+    // Keep the original view pinned, as the router does during a handover.
+    // Metadata may advance without allocating another material generation.
+    assert!(!worker
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .can_prepare());
+    let mut newest = refreshed.clone();
+    newest.manifest.generation = 6;
+    let newest_object = publish(&mut newest, 9);
+    let requested = source.requested_objects.read().unwrap().len();
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
+    assert_eq!(
+        &source.requested_objects.read().unwrap()[requested..],
+        std::slice::from_ref(&newest_object.sha256)
+    );
+    assert!(Arc::ptr_eq(
+        worker
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .unwrap()
+            .current()
+            .public(),
+        loaded.public()
+    ));
+
+    // Different material still waits for the old view's pin to drain.
+    let changed = cached_generation(
+        &fixture::snapshot(32, true).unwrap(),
+        7,
+        2,
+        now_ms(),
+        Some(&loaded),
+    );
+    let mut changed = export(&source, &changed);
+    let changed_object = publish(&mut changed, 10);
+    let requested = source.requested_objects.read().unwrap().len();
+    deferred(task.synchronize().await.unwrap());
+    assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
+    assert_eq!(
+        &source.requested_objects.read().unwrap()[requested..],
+        std::slice::from_ref(&changed_object.sha256)
+    );
+    drop(loaded);
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 7);
 
     // Reusing material never skips the live authority check.
-    let mut withheld = refreshed.clone();
-    withheld.manifest.generation = 6;
-    publish(&mut withheld, 9);
+    let mut withheld = changed.clone();
+    withheld.manifest.generation = 8;
+    publish(&mut withheld, 11);
     source.canonical.store(false, Ordering::SeqCst);
     let error = task.synchronize().await.unwrap_err();
     assert_eq!(

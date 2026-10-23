@@ -240,10 +240,6 @@ impl PublicationAdapter for StatusPublication {
         let already_serving = previous
             .as_ref()
             .is_some_and(|g| g.manifest().id() == inventory.manifest.id());
-        if !already_serving && controller.as_ref().is_some_and(|c| !c.can_prepare()) {
-            self.waiting("waiting_for_retention").await;
-            return Ok(PublicationPlan::Deferred);
-        }
         // Reuse only material this process already verified and loaded. The
         // new publication identity still passes live authority and freshness
         // checks.
@@ -251,6 +247,16 @@ impl PublicationAdapter for StatusPublication {
             .as_ref()
             .zip(self.loaded_inventory.as_ref())
             .and_then(|(serving, loaded)| reidentify(serving, loaded, &inventory));
+        // Pins bound the number of distinct loaded materials. Re-identifying
+        // the current material shares those same allocations and must still
+        // accept fresh publisher observations while the router holds an old view.
+        if !already_serving
+            && reidentified.is_none()
+            && controller.as_ref().is_some_and(|c| !c.can_prepare())
+        {
+            self.waiting("waiting_for_retention").await;
+            return Ok(PublicationPlan::Deferred);
+        }
         let (material, required_objects) = if already_serving {
             (CandidateMaterial::AlreadyServing, Vec::new())
         } else if let Some(generation) = reidentified {
