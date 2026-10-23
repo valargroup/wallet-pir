@@ -341,7 +341,10 @@ class FastBuildTests(unittest.TestCase):
         # Hosts stay named on the stable command. Taking them off for an Enhance
         # diff and putting them back afterwards rebuilds the closure.
         self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS))
-        self.assertEqual(hint_packages, ['pir-e2e-tests', 'pir-query-server'])
+        # The hint command names the same roots so shared crates resolve with
+        # the stable features and are not compiled again.
+        self.assertEqual(hint_packages, stable_packages)
+        self.assertTrue(set(stable_features) <= set(hint_features))
         self.assertIn('--lib', stable)
         self.assertIn('--lib', hint)
         self.assertNotIn('--bins', stable)
@@ -352,7 +355,8 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(hint_bins, [])
         # Shared crates keep a feature set that does not name a product host.
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
-        self.assertEqual(hint_features, ['pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES])
+        self.assertEqual(sorted(set(hint_features) - set(stable_features)),
+                         sorted({'pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES} - set(stable_features)))
         # status-publisher stays in the stable closure, so its fast object-access
         # HTTP target is compiled for every subset. Host tests stay there too.
         self.assertEqual(stable_tests, [
@@ -388,6 +392,7 @@ class FastBuildTests(unittest.TestCase):
         _packages, _bins, tests, features = self._command_parts(builds[1])
         self.assertEqual(tests, ['ci_hint', 'operator'])
         self.assertEqual(features, ['pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES])
+        self.assertEqual(self._command_parts(builds[1])[0], self._command_parts(builds[0])[0])
         self.assertIn('--lib', builds[1])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):

@@ -470,8 +470,16 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         # run it. Building it here with the roles the stable command unifies
         # in as well keeps it a superset of every compiled operator test.
         features.update(HINT_HOST_ROLES)
+        # Naming only the two hosts drops leaf features the stable roots
+        # unify in (serde `rc`, zeroize `derive`, ...) and rebuilt about a
+        # hundred shared crates. Naming the stable roots with their features
+        # resolves every other crate exactly as the stable command did, so
+        # only the hosts and their dependents' harnesses compile again; those
+        # repeat the stable cases and are not run twice.
+        hint_packages = sorted(stable['names'] | {'pir-e2e-tests', 'pir-query-server'})
+        features.update(stable['features'])
         commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
-                         '-p', 'pir-e2e-tests', '-p', 'pir-query-server', '--lib',
+                         *[arg for name in hint_packages for arg in ('-p', name)], '--lib',
                          '--test', 'ci_hint', '--test', 'operator',
                          '--features', ','.join(sorted(features))])
     if not commands:
