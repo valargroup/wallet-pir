@@ -54,7 +54,11 @@ transparent-tests = [
     "pir-query-server/transparent-history",
     "pir-query-server/transparent-detail",
     # The shared public listener case runs a combined Status role beside history.
+    # The unchanged Status wallet speaks only the native protocol, so the host
+    # and its fixture publication use the deployed native backend.
     "pir-query-server/status",
+    "pir-query-server/native-reinspiring",
+    "status-shared/native-reinspiring",
     "zakura-pir-client/status",
     # The copied shard-assign administration tool and its fleet planner.
     "dep:transparent-tools",

@@ -215,8 +215,8 @@ async fn start(binary: &Path, args: &[String], cwd: &Path, origin: &str) -> toki
         .current_dir(cwd)
         .env("PYTHONPATH", "")
         .kill_on_drop(true)
+        .stdout(log.try_clone().unwrap())
         .stderr(log)
-        .stdout(Stdio::null())
         .spawn()
         .unwrap();
     for _ in 0..400 {
@@ -867,19 +867,32 @@ async fn shared_listener(
     let config = write_config(root, "shared", &document);
     let mut child = start(binary, &config_args(&config, false), root, origin).await;
     let management = document["management_listen"].as_str().unwrap().to_string();
-    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+    let log = root.join("provider.log");
+    let mut readiness = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
         loop {
             if let Ok(response) = reqwest::get(format!("http://{management}/ready")).await {
-                if response.status().is_success() {
+                let ready = response.status().is_success();
+                readiness = response.text().await.unwrap_or_default();
+                if ready {
                     break;
                 }
             }
-            assert!(child.try_wait().unwrap().is_none(), "host exited");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "host exited: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     })
     .await
-    .expect("both products become ready on the shared host");
+    .unwrap_or_else(|_| {
+        panic!(
+            "shared host never became ready: {readiness}\n{}",
+            std::fs::read_to_string(&log).unwrap_or_default()
+        )
+    });
     let public_origin = format!("http://{public}");
     // Transparent history: exact producer rows decode through the shared
     // listener's deployed alias, and the canonical namespace is served too.
@@ -903,12 +916,7 @@ async fn shared_listener(
     }
     // Status: the independent wallet accepts the served anchor and decrypts
     // every fixture case from the combined role through the same listener.
-    status_wallet(
-        &public_origin,
-        &publisher.snapshot,
-        &root.join("provider.log"),
-    )
-    .await;
+    status_wallet(&public_origin, &publisher.snapshot, &log).await;
     let http = reqwest::Client::new();
     for prefix in ["/v1/status", "/status/v1"] {
         let malformed = http
@@ -968,26 +976,17 @@ async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot, 
         height: snapshot.height,
         hash: snapshot.anchor,
     };
-    // Host readiness probes the Status control listener; its wallet routes
-    // answer once the combined role has committed the publication.
-    let pending = tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        loop {
-            match wallet::transport::PendingClient::fetch(
-                &transport,
-                "https://status-wallet.invalid",
-                status_shared::now_ms as fn() -> u64,
-            )
-            .await
-            {
-                Ok(pending) => break pending,
-                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
-            }
-        }
-    })
+    // The host reports ready only after the combined Status role serves its
+    // committed publication, so the first wallet fetch must already succeed.
+    let pending = wallet::transport::PendingClient::fetch(
+        &transport,
+        "https://status-wallet.invalid",
+        status_shared::now_ms as fn() -> u64,
+    )
     .await
-    .unwrap_or_else(|_| {
+    .unwrap_or_else(|error| {
         panic!(
-            "Status wallet routes never served the publication: {}",
+            "Status wallet fetch failed on a ready host: {error:?}\n{}",
             std::fs::read_to_string(log).unwrap_or_default()
         )
     });
