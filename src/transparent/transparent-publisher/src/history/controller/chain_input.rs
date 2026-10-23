@@ -261,16 +261,16 @@ pub(super) async fn invalidate(
 }
 
 /// Canonical hash lookups through History's node client.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 struct NodeChain<'a>(&'a NodeClient);
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 impl pir_pipeline::ingestion::CanonicalChain for NodeChain<'_> {
     fn hash_at(&self, height: u64) -> pir_pipeline::ingestion::ChainFuture<'_, String> {
         Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 impl HistoryIngestion {
     /// The writer (or follower) startup builds, over an already open store.
     pub(super) async fn fixture(
@@ -321,7 +321,7 @@ impl HistoryIngestion {
 }
 
 /// Bring the journal to the node's tip through the root ingestion contract.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(super) async fn ingest_once(
     config: &Config,
     rpc: &NodeClient,
@@ -339,7 +339,7 @@ pub(super) async fn ingest_once(
 
 /// The configured node client and a root follower over it, as the host injects
 /// them; the follower stops with `shutdown`.
-#[cfg(test)]
+#[cfg(all(test, feature = "fixtures"))]
 pub(super) fn chain_fixture(
     config: &Config,
     shutdown: &pir_pipeline::service::Shutdown,
