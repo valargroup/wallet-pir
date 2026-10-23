@@ -469,6 +469,112 @@ async fn the_follower_delivers_unchanged_tips_and_network_switches() {
     task.await.unwrap();
 }
 
+/// A journal whose backfill blocks inside one batch until released.
+struct Blocked {
+    entered: Arc<tokio::sync::Notify>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+impl Ingestion for Blocked {
+    type Error = String;
+    fn start_height(&self, _tip: u64) -> u64 {
+        0
+    }
+    fn committed(&self) -> Option<BlockId> {
+        None
+    }
+    async fn checkpoint_at_or_below(&self, _height: u64) -> Option<BlockId> {
+        None
+    }
+    async fn withdraw_above(&mut self, _: Option<&BlockId>) -> Result<(), String> {
+        Ok(())
+    }
+    async fn rewind(&mut self, _: Option<&BlockId>) -> Result<(), String> {
+        Ok(())
+    }
+    async fn ingest(&mut self, _from: u64, _through: u64) -> Result<(), String> {
+        self.entered.notify_one();
+        let _permit = self.gate.acquire().await.unwrap();
+        Err("released".into())
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_backfill_never_delays_another_products_observations_or_withdrawal() {
+    let chain = Chain::new(10 + BACKFILL_BLOCKS * 4, "a");
+    let tip = chain.tip(0).tip.height;
+    let follower = ChainFollower::new(chain.clone(), Duration::from_millis(2));
+    let shutdown = Shutdown::default();
+    let (entered, gate) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Semaphore::new(0)),
+    );
+    let blocked = tokio::spawn(schedule::run(
+        Blocked {
+            entered: entered.clone(),
+            gate: gate.clone(),
+        },
+        follower.feed(),
+        shutdown.clone(),
+    ));
+    let events = Arc::new(Mutex::new(vec![]));
+    let current = Journal {
+        start: 0,
+        blocks: (0..=tip)
+            .map(|height| BlockId {
+                height,
+                hash: format!("a{height}"),
+            })
+            .collect(),
+        chain: chain.clone(),
+        events: events.clone(),
+        fail_ingest: Arc::default(),
+        networks: Arc::default(),
+    };
+    let scheduled = tokio::spawn(schedule::run(current, follower.feed(), shutdown.clone()));
+    let following = tokio::spawn(follower.run(shutdown.clone()));
+    let wait = |done: Box<dyn Fn(&[Event]) -> bool + Send>| {
+        let events = events.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while !done(&events.lock().unwrap()) {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            })
+            .await
+            .expect("the unblocked product progressed")
+        }
+    };
+    // The first product is inside a long backfill batch.
+    entered.notified().await;
+    // The other keeps its unchanged-tip cadence meanwhile.
+    wait(Box::new(move |e| {
+        e.iter().filter(|e| **e == Event::CaughtUp(tip)).count() >= 5
+    }))
+    .await;
+    // And withdraws before rewinding on a reorg, still while blocked.
+    chain.reorg(tip - 1, tip, "b");
+    wait(Box::new(move |e| {
+        e.contains(&Event::CaughtUp(tip)) && e.contains(&Event::Rewind(Some(tip - 2)))
+    }))
+    .await;
+    let recorded = events.lock().unwrap().clone();
+    let withdrawn = recorded
+        .iter()
+        .position(|e| *e == Event::Withdraw(Some(tip - 2)))
+        .expect("withdrawal precedes the rewind");
+    assert_eq!(recorded[withdrawn + 1], Event::Rewind(Some(tip - 2)));
+    assert_eq!(
+        gate.available_permits(),
+        0,
+        "the backfill was still blocked"
+    );
+    gate.add_permits(1);
+    shutdown.request();
+    scheduled.await.unwrap().unwrap();
+    blocked.await.unwrap().unwrap();
+    following.await.unwrap();
+}
+
 #[test]
 fn live_window_is_smaller_than_a_backfill_batch() {
     assert!(LIVE_BLOCKS < BACKFILL_BLOCKS);
