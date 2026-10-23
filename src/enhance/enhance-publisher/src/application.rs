@@ -289,4 +289,98 @@ mod tests {
         assert_eq!(ingestion.committed(), keep);
         assert_eq!(ingestion.journal.tree_size(), 6);
     }
+
+    /// The canonical chain an old journal was ingested from.
+    struct Canonical(Vec<BlockId>);
+    impl pir_pipeline::ingestion::CanonicalChain for Canonical {
+        fn hash_at(&self, height: u64) -> pir_pipeline::ingestion::ChainFuture<'_, String> {
+            let hash = self
+                .0
+                .iter()
+                .find(|b| b.height == height)
+                .map(|b| b.hash.clone());
+            Box::pin(async move { hash.ok_or_else(|| "beyond the fixture".into()) })
+        }
+    }
+
+    /// A version-7 journal laid down by hand as a deployed writer committed
+    /// it, not by this binary: it opens in place under the root scheduler, an
+    /// unchanged tip rewrites nothing, and the journal keeps one writer. An
+    /// unsupported version is refused and left untouched.
+    #[tokio::test]
+    async fn a_hand_laid_version_seven_journal_resumes_in_place_under_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("enhance");
+        fs::create_dir_all(&dir).unwrap();
+        let first = enhance_shared::ACTIVATION_HEIGHT;
+        let blocks: Vec<BlockId> = (0..3)
+            .map(|i| BlockId {
+                height: first + i,
+                hash: format!("{:064x}", 0xe000 + i),
+            })
+            .collect();
+        let entries: Vec<String> = blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                format!(
+                    r#"{{"height":{},"hash":"{}","first_position":{},"action_count":2}}"#,
+                    b.height,
+                    b.hash,
+                    2 * i
+                )
+            })
+            .collect();
+        let manifest = format!(
+            r#"{{"version":7,"record_bytes":653,"records_per_row":33,"table":"enhance","tree_size":6,"blocks":[{}]}}"#,
+            entries.join(",")
+        );
+        fs::write(dir.join("manifest.json"), &manifest).unwrap();
+        fs::write(dir.join("records.bin"), vec![7u8; 6 * 653]).unwrap();
+        let before = files(&dir);
+
+        let cookie = root.path().join("cookie");
+        fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
+        let publisher =
+            EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
+        let (mut ingestion, _pending) = EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            publisher,
+            CanonicalSource {
+                rpc,
+                prevouts: Prevouts::new(16),
+            },
+        );
+        assert!(EnhanceJournal::open(root.path()).is_err(), "one writer");
+        let chain = Canonical(blocks.clone());
+        for pass in 1..=2 {
+            let observation = ChainObservation {
+                genesis: String::new(),
+                tip: blocks[2].clone(),
+                pass,
+            };
+            pir_pipeline::ingestion::catch_up(&mut ingestion, &chain, &observation)
+                .await
+                .unwrap();
+        }
+        assert_eq!(ingestion.committed(), Some(blocks[2].clone()));
+        assert_eq!(ingestion.journal.tree_size(), 6);
+        drop(ingestion);
+        let mut after = files(&dir);
+        after.retain(|path, _| !path.ends_with("journal.lock"));
+        assert_eq!(after, before, "no committed byte was rewritten");
+        let reopened = EnhanceJournal::open(root.path()).unwrap();
+        assert_eq!(
+            reopened.highest_committed(),
+            Some((first + 2, blocks[2].hash.clone()))
+        );
+        drop(reopened);
+
+        let older = manifest.replacen(r#""version":7"#, r#""version":6"#, 1);
+        fs::write(dir.join("manifest.json"), &older).unwrap();
+        let held = files(&dir);
+        assert!(EnhanceJournal::open(root.path()).is_err());
+        assert_eq!(files(&dir), held, "an unsupported journal stays as it was");
+    }
 }
