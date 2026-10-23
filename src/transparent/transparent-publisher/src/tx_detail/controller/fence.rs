@@ -44,6 +44,12 @@ impl RollbackFence {
         }
     }
 
+    /// A fence with no distribution or recorded rollback, for writer tests.
+    #[cfg(test)]
+    pub(crate) fn detached(root: &Path, floor: u64) -> Self {
+        Self::new(root, None, Invalidations::default(), "", floor)
+    }
+
     /// The highest height a rollback may not reach below.
     pub fn floor(&self) -> u64 {
         self.state.lock().unwrap().floor
