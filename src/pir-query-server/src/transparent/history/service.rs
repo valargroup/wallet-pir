@@ -605,6 +605,13 @@ impl ServiceState {
         &self.inner.set
     }
 
+    /// Waits until local and forwarded requests admitted by any snapshot
+    /// sharing this admission have ended.
+    pub(crate) async fn drained(&self) {
+        self.inner.admission.drained().await;
+        self.inner.forwarding_admission.drained().await;
+    }
+
     pub(crate) fn is_invalidated(&self) -> bool {
         self.inner.warm.cancelled.load(Ordering::Acquire)
     }

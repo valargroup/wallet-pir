@@ -74,6 +74,9 @@ pub enum AdmissionError {
 /// The bounds, shared by every request.
 pub struct Admission {
     waiters: Arc<Semaphore>,
+    /// Every waiting place, fixed at construction: [`Admission::drained`]
+    /// waits for all of them, not for those free when it is called.
+    places: u32,
     body: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     config: AdmissionConfig,
@@ -162,10 +165,10 @@ impl Admitted {
 impl Admission {
     pub fn new(config: AdmissionConfig, metrics: Arc<Metrics>) -> Self {
         Metrics::set(&metrics.query_slots, config.query_slots.max(1) as u64);
+        let places = config.query_slots.max(1) + config.max_waiters;
         Self {
-            waiters: Arc::new(Semaphore::new(
-                config.query_slots.max(1) + config.max_waiters,
-            )),
+            waiters: Arc::new(Semaphore::new(places)),
+            places: u32::try_from(places).expect("waiting places fit in u32"),
             body: Arc::new(Semaphore::new(
                 usize::try_from(config.max_body_bytes / BODY_UNIT)
                     .unwrap_or(usize::MAX)
@@ -188,6 +191,7 @@ impl Admission {
         let reserved = local_body_bytes.div_ceil(BODY_UNIT);
         Self {
             waiters: Arc::new(Semaphore::new(1)),
+            places: 1,
             body: self.body.clone(),
             slots: Arc::new(Semaphore::new(1)),
             config: AdmissionConfig {
@@ -201,6 +205,14 @@ impl Admission {
             // local evaluation utilization: forwarding only uses Pending.
             metrics: self.metrics.clone(),
         }
+    }
+
+    /// Waits until every counted request has ended. Admitted evaluation
+    /// carries its place into blocking work, so this includes work whose
+    /// wallet request was cancelled or outlived the listener's drain. Owners
+    /// call it at shutdown before releasing what that work uses.
+    pub async fn drained(&self) {
+        let _all = self.waiters.acquire_many(self.places).await;
     }
 
     pub fn config(&self) -> &AdmissionConfig {
@@ -370,6 +382,61 @@ mod tests {
             Some(AdmissionError::BodyBudget)
         );
         assert!(no_surplus.try_enter(None).is_ok());
+    }
+
+    /// Shutdown waits for blocking evaluation whose request future is gone,
+    /// even when places were already taken before the drain began.
+    #[tokio::test]
+    async fn drained_waits_for_admitted_blocking_work_after_its_request_is_dropped() {
+        let admission = Arc::new(admission(1, 2, 1 << 20));
+        let waiting = admission.try_enter(Some(1)).unwrap();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let request = {
+            let admission = admission.clone();
+            async move {
+                let admitted = admission.wait_slot(admission.try_enter(None)?).await?;
+                tokio::task::spawn_blocking(move || {
+                    gate.recv().unwrap();
+                    admitted.complete();
+                })
+                .await
+                .unwrap();
+                Ok::<_, AdmissionError>(())
+            }
+        };
+        // The wallet disconnects after evaluation was handed to blocking work.
+        let request = tokio::spawn(request);
+        while admission.slots.available_permits() != 0 {
+            tokio::task::yield_now().await;
+        }
+        request.abort();
+        let drained = tokio::spawn({
+            let admission = admission.clone();
+            async move { admission.drained().await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished(), "drained before admitted work ended");
+        drop(waiting);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished(), "drained while evaluation still ran");
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), drained)
+            .await
+            .unwrap()
+            .unwrap();
+        // An idle admission, and its forwarding share, drain at once.
+        let forwarding = admission.forwarding(0);
+        let _forwarded = forwarding.try_enter(Some(1)).unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), forwarding.drained())
+                .await
+                .is_err(),
+            "a forwarded request in flight holds the drain"
+        );
+        drop(_forwarded);
+        tokio::time::timeout(Duration::from_secs(1), forwarding.drained())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

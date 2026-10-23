@@ -426,6 +426,12 @@ impl DisplayLive {
         self.ready_in(&self.0.active.read().unwrap())
     }
 
+    /// Waits until admitted work has ended; every snapshot shares the
+    /// runtime's admission. The role keeps its directory and runtimes until then.
+    pub(crate) async fn drained(&self) {
+        self.0.runtime.admission.drained().await
+    }
+
     fn ready_in(&self, active: &Option<Active>) -> bool {
         active.as_ref().is_some_and(|a| {
             a.state.is_ready()

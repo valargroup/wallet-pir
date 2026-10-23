@@ -496,6 +496,13 @@ impl LiveService {
                 .any(|s| invalid.contains(&s.manifest_digest))
     }
 
+    /// Waits until admitted work of every snapshot has ended; snapshots share
+    /// one admission. The role keeps its directory and runtimes until then.
+    pub(crate) async fn drained(&self) {
+        let state = self.0.active.read().unwrap().state.clone();
+        state.drained().await
+    }
+
     pub fn router(&self) -> Router {
         let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
         Router::new()

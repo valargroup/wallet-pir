@@ -182,6 +182,7 @@ pub async fn run_with(
         }
         let app = manager.router();
         let live = manager.live();
+        let draining = live.clone();
         readiness.register(move || std::future::ready(live.ready()));
         if let Some(public) = public {
             public.install(app.clone());
@@ -191,7 +192,7 @@ pub async fn run_with(
             None => tokio::net::TcpListener::bind(config.listen).await?,
         };
         let stopped = stop.clone();
-        return crate::supervision::supervise(
+        let result = crate::supervision::supervise(
             "display",
             listener,
             app,
@@ -199,6 +200,10 @@ pub async fn run_with(
             stop,
         )
         .await;
+        // Admitted lookups that outlived their request keep their runtimes;
+        // the live provider keeps its directory lock until they end.
+        draining.drained().await;
+        return result;
     }
     // Serving always synchronizes from an HTTPS publisher; without one, only
     // a local publication is verified.

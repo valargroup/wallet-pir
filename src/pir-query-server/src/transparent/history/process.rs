@@ -205,6 +205,7 @@ pub async fn run_with(
             }
             let app = manager.router()?;
             let live = manager.live().ok_or("provider did not activate")?;
+            let draining = live.clone();
             readiness.register(move || std::future::ready(live.ready()));
             if let Some(public) = public {
                 public.install(app.clone());
@@ -214,7 +215,7 @@ pub async fn run_with(
                 None => tokio::net::TcpListener::bind(config.listen).await?,
             };
             let stopped = stop.clone();
-            return crate::supervision::supervise(
+            let result = crate::supervision::supervise(
                 "history",
                 listener,
                 app,
@@ -222,6 +223,11 @@ pub async fn run_with(
                 stop,
             )
             .await;
+            // The host bounds how long it drains wallet requests, but admitted
+            // evaluation and forwarding that outlived their request keep their
+            // runtimes; the live provider keeps its directory lock until they end.
+            draining.drained().await;
+            return result;
         }
         let report = crate::transparent::routing::bootstrap::verify(provider).await?;
         println!("{}", serde_json::to_string(&report)?);
