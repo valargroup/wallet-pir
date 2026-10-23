@@ -2,6 +2,7 @@
 import copy
 import json
 import io
+import tomllib
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
@@ -393,6 +394,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertIn('ci_smoke', tests)
         self.assertNotIn('pir-e2e-tests/transparent-tests', features)
         self.assertNotIn('pir-publisher/transparent-history', features)
+        self.assertNotIn('transparent-tools/query-host', features)
         self.assertIn('commands', tests)
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])

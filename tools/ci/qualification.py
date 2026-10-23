@@ -127,7 +127,7 @@ def build(family):
         # Transparent features; the admin tools are transparent-tools binaries.
         command += ['-p', 'pir-publisher', '-p', 'pir-query-server',
                     '-p', 'transparent-tools', '--features',
-                    'pir-publisher/transparent-history,pir-publisher/transparent-detail,pir-publisher/rocksdb-reader,transparent-tools/test-support,'
+                    'pir-publisher/transparent-history,pir-publisher/transparent-detail,pir-publisher/rocksdb-reader,transparent-tools/test-support,transparent-tools/query-host,'
                     'pir-query-server/transparent-history,pir-query-server/transparent-detail']
         for name in sorted({name for kind in KINDS[family] for name in release.BINARIES[kind]}):
             command += ['--bin', name]

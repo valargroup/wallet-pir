@@ -58,7 +58,8 @@ a stable dev-dependency closure so a smaller affected set reuses the warm
 dependency graph; only affected packages run. Transparent publication tests
 stay in that closure. The query host still receives history and detail through
 the publisher library's dev-dependency. The publisher host binary does not:
-those features link the same library again. Publisher fixtures stay off this
+those features link the same library again.
+Publisher fixtures stay off this
 command. The publisher and query hosts stay on that command for every diff. The
 in-process Enhance hint graph stays on a separate command and does not join
 it; moving the hosts onto that command rebuilds the closure. Chain-node
@@ -262,7 +263,9 @@ that build the database-reader tools enable it explicitly.
 
 `transparent-journal` owns the saved event journal and its display sidecars.
 Journal consumers such as `transparent-measure` depend on it directly, so they
-do not compile the publisher, node parser or database reader.
+do not compile the publisher, node parser or database reader. `transparent-measure`,
+`shard-assign` and `parent-evaluation-server` link the query server through the
+`query-host` feature; fast diagnostic binaries leave that feature off.
 
 ## Publisher source layout
 

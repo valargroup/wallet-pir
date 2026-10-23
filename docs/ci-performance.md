@@ -39,7 +39,8 @@ that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
 command. History and detail reach the query host through the publisher
 library's dev-dependency; the publisher host binary does not enable them,
-because that links the same library again. The in-process Enhance hint graph compiles on a
+because that links the same library again. Fast diagnostic binaries leave `transparent-tools/query-host`
+off for the same reason. The in-process Enhance hint graph compiles on a
 second command and does not take the hosts with it. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast
@@ -358,8 +359,11 @@ listener in memory reclaim for hours without reaching the hard limit. The hard
 caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
-Both limit Cargo to four
-build processes. A build cannot occupy the fast service's queue, but both services
+Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
+persistent target identity, so the fast compile step overrides it to one
+after setup. Two concurrent release-fast rustc processes still exceed the
+fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
+and reuses the existing target. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial

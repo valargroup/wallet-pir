@@ -281,7 +281,7 @@ crate tests the oracle independently.
 cargo test -p transparent-tools --features benchmarks --test compact_recovery
 cargo test -p pir-query-server --features transparent-history --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
-cargo test -p transparent-tools --test regression_runner
+cargo test -p transparent-tools --features query-host --test regression_runner
 ```
 
 The artifact build selects service workspace targets only. Library-internal

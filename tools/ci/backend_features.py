@@ -40,7 +40,8 @@ CUDA = ['enhance-shared/cuda', 'enhance-shared/native-reinspiring',
         'pir-query-server/enhance', 'pir-query-server/native-reinspiring',
         'pir-query-server/cuda', 'enhance-pir-load-test/native-reinspiring']
 TRANSPARENT = ['pir-publisher/rocksdb-reader', 'transparent-tools/test-support',
-               'transparent-tools/compact-export', 'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',
+               'transparent-tools/compact-export', 'transparent-tools/query-host',
+               'pir-publisher/transparent-history', 'pir-publisher/transparent-detail',
                'pir-e2e-tests/transparent-tests',
                'pir-query-server/transparent-history',
                'pir-query-server/transparent-detail']

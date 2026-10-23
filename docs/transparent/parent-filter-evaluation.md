@@ -9,7 +9,7 @@ Build `hierarchical-filter-eval` from `transparent-regression` and `transparent-
 ```sh
 cargo build --profile release-fast -p transparent-tools --bin hierarchical-filter-eval
 cargo build --profile release-fast -p transparent-tools --features benchmarks --bin transparent-loadtest
-cargo build --profile release-fast -p transparent-tools --bin parent-evaluation-server
+cargo build --profile release-fast -p transparent-tools --features query-host --bin parent-evaluation-server
 
 target/release-fast/hierarchical-filter-eval extract \
   --data-dir /path/to/journal --publication /path/to/frozen/publication \

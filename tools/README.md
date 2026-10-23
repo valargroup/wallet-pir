@@ -28,7 +28,7 @@ release directories and their recorded paths are immutable.
 | `shared/pir-monitor/` | Independent public PIR correctness monitor | [observability](../docs/enhance/observability-alerting.md) |
 | [transparent-loadtest](transparent/loadtest/README.md) | Wallet simulations, block comparison and interactive reports | `make transparent-sim-help` |
 | [transparent-regression](transparent/fixtures/regression/README.md) | Frozen accepted-anchor correctness fixtures and parent-filter conformance | `make transparent-regression` |
-| `tools/transparent/src/measure/` | Current-shard recovery measurement used by the backfill workflow | `cargo run --release -p transparent-tools --bin transparent-measure -- --help` |
+| `tools/transparent/src/measure/` | Current-shard recovery measurement used by the backfill workflow | `cargo run --release -p transparent-tools --features query-host --bin transparent-measure -- --help` |
 | [filters](transparent/filters/README.md) | Sample collection, filter encoding and format-specific validation | Python CLI help |
 | [parent-filters](transparent/parent-filters/README.md) | Active opt-in parent-filter selection and paired HTTP evaluation | Python CLI help |
 | `check-doc-links.sh` | Documentation/evidence links and heading anchors | `make check-docs` |

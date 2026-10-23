@@ -22,8 +22,11 @@ benchmarks = ["dep:prost", "dep:prost-build", "dep:flate2"]
 publisher-tools = ["dep:transparent-publisher", "dep:zakura-server-chain"]
 # Direct node-database readers; implies the publisher diagnostics.
 rocksdb-reader = ["publisher-tools", "transparent-publisher/rocksdb-reader", "zakura-server-chain/rocksdb"]
+# Bins and full tests that link the shard server. Fast tool binaries leave it off
+# so a query-server rebuild does not relink every diagnostic executable.
+query-host = ["dep:pir-query-server"]
 # Reproduce the non-AVX-512 backend in the moved scaling and residency tools.
-portable-kernel = ["transparent-shared/portable-kernel", "pir-query-server/portable-kernel"]
+portable-kernel = ["transparent-shared/portable-kernel", "query-host", "pir-query-server/portable-kernel"]
 # Synthetic transaction-detail publications for the inventory diagnostic.
 test-support = ["transparent-shared/test-support"]
 # Compact blocks exported from the node database for the benchmark baseline.
@@ -32,6 +35,7 @@ compact-export = ["benchmarks", "rocksdb-reader"]
 [[bin]]
 name = "transparent-measure"
 path = "src/measure/main.rs"
+required-features = ["query-host"]
 
 [[bin]]
 name = "transparent-regression"
@@ -99,6 +103,7 @@ required-features = ["test-support"]
 [[bin]]
 name = "parent-evaluation-server"
 path = "src/bin/parent-evaluation-server.rs"
+required-features = ["query-host"]
 
 [[bin]]
 name = "hierarchical-filter-eval"
@@ -170,24 +175,27 @@ path = "examples/activity-reopen.rs"
 [[example]]
 name = "transparent-txid-demo"
 path = "examples/transparent-txid-demo.rs"
-required-features = ["publisher-tools"]
+required-features = ["publisher-tools", "query-host"]
 
 [[test]]
 name = "txid_shipped_runtimes"
 path = "tests/txid_shipped_runtimes.rs"
-required-features = ["publisher-tools"]
+required-features = ["publisher-tools", "query-host"]
 
 [[test]]
 name = "regression_runner"
 path = "tests/regression_runner.rs"
+required-features = ["query-host"]
 
 [[test]]
 name = "parent_filters"
 path = "tests/parent_filters.rs"
+required-features = ["query-host"]
 
 [[test]]
 name = "assignment_planning"
 path = "tests/assignment_planning.rs"
+required-features = ["query-host"]
 
 [[test]]
 name = "service_tools"
@@ -196,7 +204,7 @@ path = "tests/service_tools.rs"
 [[test]]
 name = "simulation"
 path = "tests/simulation.rs"
-required-features = ["benchmarks"]
+required-features = ["benchmarks", "query-host"]
 
 [[test]]
 name = "compact_recovery"
@@ -212,6 +220,7 @@ required-features = ["benchmarks", "publisher-tools"]
 [[bin]]
 name = "shard-assign"
 path = "src/bin/shard-assign.rs"
+required-features = ["query-host"]
 
 [[bin]]
 name = "shard-prune"
@@ -220,7 +229,7 @@ path = "src/bin/shard-prune.rs"
 [dependencies]
 pir-runtime = { path = "../../src/shared/pir-runtime" }
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
-pir-query-server = { path = "../../src/pir-query-server", features = ["transparent-history", "transparent-detail"] }
+pir-query-server = { path = "../../src/pir-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared" }
 anyhow = "1"
 base64 = "0.22"
@@ -237,7 +246,7 @@ rayon = "1"
 reinspiring = "=0.1.3-rc.1"
 libc = "0.2"
 prost = { version = "0.13", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
