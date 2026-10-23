@@ -99,8 +99,8 @@ The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
 Transparent History and Transparent Filters require it and no longer accept
 their own node endpoint, cookie or polling settings (`zakura_rpc_url`,
 `zakura_cookie`, `poll_seconds`, `rpc_url`, `rpc_cookie`, `cookie`). Transaction
-details still carry their own source settings and follow the node themselves
-until they move to the root follower. Receiver keeps its own multi-node settings
+details also use the root follower and require the root chain settings.
+Receiver keeps its own multi-node settings
 and never uses the root section.
 
 ### Root chain following
