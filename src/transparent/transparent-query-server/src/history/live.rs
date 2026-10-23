@@ -665,6 +665,13 @@ impl LiveService {
         .map_err(|e| format!("snapshot collection task failed: {e}"))
     }
 
+    /// Whether every digest is already fenced. Anchor rechecks use this to tell
+    /// repeated evidence from a new invalidation, including one after recovery
+    /// has cleared the fence.
+    pub(crate) fn revocations_cover(&self, digests: &BTreeSet<String>) -> bool {
+        digests.is_subset(&self.0.invalid.read().unwrap())
+    }
+
     /// A negative exact-anchor attestation revokes that revision, not a newer
     /// canonical replacement whose range overlaps it. Use the same owner fence,
     /// cancellation and durable digest set as range invalidation.

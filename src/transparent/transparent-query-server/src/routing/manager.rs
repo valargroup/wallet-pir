@@ -815,16 +815,48 @@ async fn revoke(
             );
         }
     }
-    revoke_digests(root, live, current, digests, memory).await
+    revoke_digests(root, live, current, digests, memory, Watermark::Advance).await
 }
+
+/// Whether a revocation moves the recovery watermark up to `current`.
+enum Watermark {
+    /// A withdrawal or an invalidation range. Replay protection needs the
+    /// watermark at this source revision even when every digest is already fenced.
+    Advance,
+    /// An exact-anchor recheck. Digests already fenced and recorded stay at the
+    /// revision that first revoked them, so a later canonical publication can
+    /// clear them. A new digest, or one missing from either record, still advances.
+    Recheck,
+}
+
+/// Whether an exact-anchor recheck of `digests` is new evidence. `covered` means
+/// the live fence already contains every digest; `recorded` is the durable floor.
+/// The watermark advances when either record is missing a digest.
+fn recheck_raises_watermark(
+    covered: bool,
+    digests: &BTreeSet<String>,
+    recorded: &BTreeSet<String>,
+) -> bool {
+    !covered || !digests.is_subset(recorded)
+}
+
 async fn revoke_digests(
     root: &Path,
     live: &LiveService,
     current: &Current,
     digests: BTreeSet<String>,
     memory: &mut Revocations,
+    watermark: Watermark,
 ) -> Result<(), Error> {
-    memory.revision = memory.revision.max(current.revision);
+    let raise = match watermark {
+        Watermark::Advance => true,
+        Watermark::Recheck => {
+            recheck_raises_watermark(live.revocations_cover(&digests), &digests, &memory.digests)
+        }
+    };
+    if raise {
+        memory.revision = memory.revision.max(current.revision);
+    }
     memory.digests.extend(digests.iter().cloned());
     let durable = (|| -> Result<(), Error> {
         let saved = combined_floor(root, memory);
@@ -885,7 +917,7 @@ async fn apply_snapshot(
             })
             .filter_map(|s| s["digest"].as_str().map(str::to_string))
             .collect();
-        revoke_digests(root, live, current, digests, memory).await?;
+        revoke_digests(root, live, current, digests, memory, Watermark::Advance).await?;
     }
     // Revalidate all retained anchors after missed revisions, rather than infer
     // their validity from the publisher's most recent invalidation range.
@@ -942,7 +974,7 @@ async fn fresh_anchors(
             .collect();
         if !negative.is_empty() {
             canonical = false;
-            revoke_digests(root, live, current, negative, memory).await?;
+            revoke_digests(root, live, current, negative, memory, Watermark::Recheck).await?;
             if stop {
                 break;
             }
@@ -1037,5 +1069,32 @@ mod revocation_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_repeated_anchor_recheck_leaves_room_for_a_later_recovery() {
+        let digest = BTreeSet::from(["d".to_string()]);
+        let mut floor = Revocations::default();
+        assert!(recheck_raises_watermark(false, &digest, &floor.digests));
+        floor.revision = floor.revision.max(7);
+        floor.digests.extend(digest.iter().cloned());
+
+        // The same bytes are still noncanonical on a newer publication, and
+        // both the live fence and the floor already record them. Recovery
+        // requires a strictly newer source revision than this watermark.
+        assert!(!recheck_raises_watermark(true, &digest, &floor.digests));
+        assert!(9 > floor.revision);
+
+        // Fenced in the live owner but missing from the floor: still new.
+        assert!(recheck_raises_watermark(
+            true,
+            &digest,
+            &Revocations::default().digests
+        ));
+        // Recovery clears the live fence. The same bytes failing again advance.
+        assert!(recheck_raises_watermark(false, &digest, &floor.digests));
+        // One new sibling digest makes the whole recheck new evidence.
+        let both = BTreeSet::from(["d".to_string(), "e".to_string()]);
+        assert!(recheck_raises_watermark(true, &both, &floor.digests));
     }
 }
