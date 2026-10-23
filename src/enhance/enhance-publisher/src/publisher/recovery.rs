@@ -108,6 +108,8 @@ impl EnhancePublisher {
                 poisoned: false,
                 preparing: None,
                 error: None,
+                last_advancement: None,
+                consecutive_failures: 0,
             })),
             distribution,
             preparation: Arc::new(Semaphore::new(1)),

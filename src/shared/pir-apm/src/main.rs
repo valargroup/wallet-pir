@@ -169,24 +169,6 @@ async fn scrape_loop(
         let mut scrape_error = None;
         let mut metrics_success = false;
 
-        let domain_ready_replicas = metrics_result.as_ref().ok().map(|r| {
-            r.body
-                .lines()
-                .filter_map(|line| {
-                    let sample = metrics::parse_line(line).ok()?;
-                    if sample.name != "enhance_shard_published_ready_replicas"
-                        || !sample.value.is_finite()
-                        || sample.value < 0.0
-                    {
-                        return None;
-                    }
-                    Some((
-                        sample.labels.get("shard")?.parse::<u64>().ok()?,
-                        sample.value,
-                    ))
-                })
-                .collect()
-        });
         let group_metrics = metrics_result.as_ref().ok().map(|r| {
             fleet::groups(
                 &r.body,
@@ -245,18 +227,9 @@ async fn scrape_loop(
                 view.groups = groups;
             }
             if metrics_success {
-                view.domain_ready_replicas = domain_ready_replicas.unwrap_or_default();
                 view.last_scrape = Some(SystemTime::now());
             }
             view.scrape_error = scrape_error;
-            placement::update(
-                &mut view,
-                health_result
-                    .as_ref()
-                    .ok()
-                    .filter(|r| (200..300).contains(&r.status))
-                    .map(|r| r.body.as_str()),
-            );
             view.monitoring
                 .loops
                 .insert("coordinator".into(), pir_apm::incidents::unix_time());
@@ -265,6 +238,11 @@ async fn scrape_loop(
                 .as_ref()
                 .ok()
                 .map(|response| response.body.clone());
+            view.enhance_publication = health_result
+                .as_ref()
+                .ok()
+                .filter(|r| (200..300).contains(&r.status))
+                .and_then(|r| placement::Published::parse(&r.body));
             view.ready_status = ready_status;
             view.publisher_configured = config.publisher_url.is_some();
             if let Some(products) = publisher_products {
@@ -293,6 +271,7 @@ async fn scrape_loop(
             view.host = host;
             view.active_alerts = alerts.active();
             view.recent_alerts = alerts.recent();
+            placement::update(&mut view, SystemTime::now());
         }
         for transition in transitions.into_iter().filter(|_| !monitoring::enabled()) {
             let result = match transition {
