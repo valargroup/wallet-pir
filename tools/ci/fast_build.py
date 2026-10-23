@@ -71,10 +71,11 @@ def publisher_runs_alone(name, kinds):
 def status_runs_alone(name, kinds, names):
     """Status sync cases each prepare a generation on every core.
 
-    Below eight cores, sharing those cores with the pool pushes a single case
-    past its budget, so the query host's Status unit program runs alone there.
+    One generation prepare is a 96 MiB database; sharing those cores with the
+    pool, or with the publisher, pushes a single case past its budget, so the
+    query host's Status unit program runs alone.
     """
-    return (name == 'pir-query-server' and 'lib' in kinds and available_cpus() < 8
+    return (name == 'pir-query-server' and 'lib' in kinds
             and any(case.startswith('status::') for case in names))
 
 

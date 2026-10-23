@@ -139,7 +139,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertIsNone(fast_build.cgroup_cpus(root, membership))
         self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
 
-    def test_status_unit_program_runs_alone_only_on_small_hosts(self):
+    def test_status_unit_program_runs_alone_on_every_host(self):
         names = {'status::sync::tests::case', 'config::tests::case'}
         with patch.object(fast_build, 'available_cpus', return_value=3):
             self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
@@ -148,7 +148,7 @@ class FastBuildTests(unittest.TestCase):
             self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['test'], names))
             self.assertFalse(fast_build.status_runs_alone('receiver-indexer', ['lib'], names))
         with patch.object(fast_build, 'available_cpus', return_value=8):
-            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
 
     def test_rust_tests_wait_for_helpers_only_on_small_hosts(self):
         from concurrent.futures import Future

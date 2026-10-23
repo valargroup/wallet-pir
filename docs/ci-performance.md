@@ -172,8 +172,10 @@ three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. Below eight CPUs, counting any cgroup quota, the Enhance and
-Receiver runtime libraries also run alone, because single cases overran the
+build threads. The query host's Status unit program runs alone first: one
+generation prepare is a 96 MiB database, and overlapping that prepare with the
+publisher crosses the 30-second case deadline. Below eight CPUs, counting any
+cgroup quota, the Enhance and Receiver runtime libraries also run alone, because single cases overran the
 30-second deadline beside each other. On those hosts Rust test programs also
 start only after the helper checks finish; compilation still overlaps them. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
 it is excluded from fast compilation and execution. Independent hint and
