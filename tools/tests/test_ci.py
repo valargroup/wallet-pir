@@ -321,16 +321,18 @@ class BoundaryTests(unittest.TestCase):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
                                         for dep in dependencies]}
-        metadata = {
-            'packages': [dict(id=name, name=name, source=None) for name in
-                         ('transparent-publisher', 'zakura-server-chain', 'rocksdb')],
-            'resolve': {'nodes': [node('transparent-publisher', ['zakura-server-chain']),
-                                  node('zakura-server-chain'), node('rocksdb')]},
-        }
-        self.assertEqual(boundary.database_reader_violations(metadata), [])
-        metadata['resolve']['nodes'][1] = node('zakura-server-chain', ['rocksdb'])
-        self.assertEqual(boundary.database_reader_violations(metadata),
-                         ['transparent-publisher: default build resolves rocksdb'])
+        for database in ('rocksdb', 'librocksdb-sys', 'zakura-rocksdb', 'zakura-librocksdb-sys'):
+            with self.subTest(database=database):
+                metadata = {
+                    'packages': [dict(id=name, name=name, source=None) for name in
+                                 ('transparent-publisher', 'zakura-server-chain', database)],
+                    'resolve': {'nodes': [node('transparent-publisher', ['zakura-server-chain']),
+                                          node('zakura-server-chain'), node(database)]},
+                }
+                self.assertEqual(boundary.database_reader_violations(metadata), [])
+                metadata['resolve']['nodes'][1] = node('zakura-server-chain', [database])
+                self.assertEqual(boundary.database_reader_violations(metadata),
+                                 [f'transparent-publisher: default build resolves {database}'])
 
     def test_standalone_consumer_keeps_the_workspace_dependency_sources(self):
         with tempfile.TemporaryDirectory() as directory:

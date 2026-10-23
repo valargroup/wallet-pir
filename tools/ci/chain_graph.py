@@ -47,7 +47,8 @@ NODE = {
     'zakura-network', 'zakura-node-services', 'zakura-rpc', 'zakura-script',
     'zakura-state', 'zakura-test',
 }
-DATABASE = {'rocksdb', 'librocksdb-sys'}
+# RocksDB under its upstream names and the node's renamed fork.
+DATABASE = {'rocksdb', 'librocksdb-sys', 'zakura-rocksdb', 'zakura-librocksdb-sys'}
 # The typed transaction decoder and the shielded proving stacks behind it.
 SHIELDED = {
     'zakura-primitives', 'zakura-orchard', 'zakura-orchard-legacy', 'zakura-sapling-crypto',

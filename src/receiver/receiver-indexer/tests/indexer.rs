@@ -4,7 +4,7 @@ mod bound;
 use axum::{extract::State, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use zakura_server_chain::testing::receiver::{ironwood_root, RefundBlock};
+use zakura_server_chain::testing::receiver::RefundBlock;
 
 /// Ironwood's mainnet activation height, as the tests count heights.
 fn activation() -> u64 {
@@ -64,17 +64,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             }
             "getblockheader" => json!({"time": 1_800_000_000}),
             "getblock" => json!(b.raw_hex()),
-            // The root comes from the node's own tree over every Action up to the block.
-            "z_gettreestate" => {
-                let extended = r["params"][0] == second.display_hash();
-                let root = hex::encode(if extended {
-                    ironwood_root(&[first, &second])
-                } else {
-                    ironwood_root(&[first])
-                });
-                json!({"hash": r["params"][0], "height": height + u64::from(extended),
-                    "ironwood": {"commitments": {"finalRoot": root}}})
-            }
             _ => panic!("unexpected method"),
         };
         Json(json!({"result":result,"error":null}))

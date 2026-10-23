@@ -23,8 +23,6 @@ pub enum NodeError {
     Block(String),
     #[error("Ironwood tree size is unavailable at height {0}")]
     MissingTreeSize(u64),
-    #[error("Ironwood tree root is unavailable at height {0}")]
-    MissingTreeRoot(u64),
     #[error("response is larger than {0} bytes")]
     Oversized(usize),
     #[error("invalid RPC response: {0}")]

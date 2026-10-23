@@ -11,9 +11,9 @@
 //! opens no index database, ingests no blocks and reads no partner key.
 //!
 //! Each record is loaded and verified in full before it can be served: the layout must
-//! digest to the expected identity and be for mainnet, every manifest must hold its
-//! listed revision and commit to the row and companion witness files beside it, which
-//! the Receiver server library re-validates record by record while preparing PIR,
+//! digest to the expected identity and be for mainnet, every payment and witness
+//! manifest must hold its listed revision and commit to its `.rows` or `.witness` file
+//! beside it, which the Receiver server library re-validates while preparing PIR,
 //! every filter must hold its digest, and the shards must form one contiguous
 //! inventory from Ironwood activation. Its anchor must then be canonical on the
 //! freshest node. Throughout, an independent guard checks every served anchor and
@@ -21,7 +21,7 @@
 //! owns epochs, monotonic coverage and retention of displaced inventories.
 //!
 //! Updates are serial. A newer record supersedes one still preparing; a record that
-//! does not verify is refused and the valid publication already served stays. A
+//! does not verify is refused and the valid publication already served stays.
 //! A validated higher history revision revokes old answers before loading its rows,
 //! even if replacement preparation fails, and is recorded in the state directory's
 //! [`HISTORY_FILE`] first, so a restart never serves older, uncorrected history again

@@ -101,7 +101,7 @@ The rolling window spans seven days of target time: 8,064 blocks of 75 seconds b
 
 Increase `--history-revision` after an indexing correction on an unchanged chain. The store refuses a lower revision after restart, and the same revision is bound into PIR publication identity. Advancing it immediately revokes older sessions before replacement preparation, including direct-PIR sessions. Reorgs use block hashes. A wallet must not settle a queued hit with an older history revision or a PIR frontier below the hit. Filters and PIR may become available at different times. Measure both availability lag and time to credit. Hints never delay ordinary wallet sync.
 
-A publication is an inventory of Receiver shards, each with its payment tables, their companion witness tables and, once sealed, a shard filter (see [Sealed shards](#sealed-shards)). The global NEAR recent/seen sets, the aggregate snapshot envelope with its `.filters` file and the aggregate HTTP filter route are gone. Rolling block hints are the only filters, and nothing published is an issuance input.
+A publication is an inventory of Receiver shards, each with its payment tables, their companion witness tables and, once sealed, a shard filter (see [Sealed shards](#sealed-shards)). Nothing published is an issuance input.
 
 ## Witnesses
 
@@ -255,8 +255,8 @@ PIR hides which receivers a wallet looks up. It does not authenticate the chain.
 A wallet accepts a publication only at a block of its own chain, as
 `AcceptedCoverage` (genesis, required history start, terminal height and hash),
 and revalidates that anchor if its chain changes during a lookup. It trial
-decrypts each payment with its own key and checks witness paths against its own
-tree root, never only the file's root. A directory match proves neither
+decrypts each payment with its own key and checks witness payloads against its own
+tree. A directory match proves neither
 ownership nor spendability. An indexer can still omit payments, so an empty page
 zero means no indexed payment in that publication, not an unused address. Missing
 or inconsistent pages and transport failures are errors, never absence or a
@@ -307,7 +307,7 @@ payment table's `<revision>.json` and `.rows`, each companion's own
 `<digest>.filter`, then point the record at the layout's identity, the SHA-256 of
 its bytes, atomically (write beside it, rename over it). It is a private local control input; there is no update route.
 
-Staged serving publishes the immutable PIR directory and proofs only. Rolling hint routes return unavailable, so wallets use direct PIR. Run its probe with `--without-block-filters`. Indexing deployments retain the default probe, which requires live hints. No aggregate `.filters` file is produced or loaded.
+Staged serving publishes the staged inventory only. Rolling hint routes return unavailable, so wallets use direct PIR. Run its probe with `--without-block-filters`. Indexing deployments retain the default probe, which requires live hints.
 
 Each record is verified in full before it can serve: the layout must digest to the
 recorded identity and be for mainnet, every manifest must hold its listed revision
