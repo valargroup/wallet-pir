@@ -5,7 +5,8 @@ use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
-use crate::history::publication::{BoxError, Journal};
+use crate::ingest::journal::Journal;
+use crate::BoxError;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use transparent_events::TransparentEvent;
@@ -89,33 +90,6 @@ impl Journal for Snapshot {
     fn journal_version(&self) -> u16 {
         self.journal_version
     }
-    fn display_at(
-        &self,
-        height: u64,
-    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
-        let block = self
-            .blocks
-            .get(&height)
-            .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
-        let sources = transparent_shared::journal::display_journal::read_sources(
-            &self.display_dir,
-            block.block_hash,
-        )?;
-        transparent_shared::journal::display_journal::validate_events(
-            &sources,
-            &self.events_at(height)?.ok_or_else(|| {
-                EventStoreError::Invariant("snapshot display events missing".into())
-            })?,
-        )?;
-        sources
-            .iter()
-            .map(|source| {
-                source
-                    .display_record()
-                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
-            })
-            .collect()
-    }
     fn genesis_hash(&self) -> &str {
         &self.genesis
     }
@@ -174,5 +148,35 @@ impl Journal for Snapshot {
             }
         }
         Ok(events)
+    }
+}
+
+impl crate::ingest::journal::DisplayJournal for Snapshot {
+    fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
+        let block = self
+            .blocks
+            .get(&height)
+            .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
+        let sources = transparent_shared::journal::display_journal::read_sources(
+            &self.display_dir,
+            block.block_hash,
+        )?;
+        transparent_shared::journal::display_journal::validate_events(
+            &sources,
+            &self.events_at(height)?.ok_or_else(|| {
+                EventStoreError::Invariant("snapshot display events missing".into())
+            })?,
+        )?;
+        sources
+            .iter()
+            .map(|source| {
+                source
+                    .display_record()
+                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
+            })
+            .collect()
     }
 }

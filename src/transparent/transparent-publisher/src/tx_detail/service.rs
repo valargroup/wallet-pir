@@ -3,7 +3,7 @@ use super::{
     controller::{self, Controller, Outcome, Settings},
     source::{open_writer, LiveSource, Source},
 };
-use crate::history::publication::BoxError;
+use crate::BoxError;
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
@@ -21,8 +21,6 @@ pub struct Config {
     pub rpc_cookie: PathBuf,
     pub poll_ms: u64,
     pub status_listen: SocketAddr,
-    #[serde(default)]
-    pub trust_sealed: bool,
     pub max_recent_records: Option<u64>,
 }
 impl Config {
@@ -43,6 +41,7 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     stop: Shutdown,
 ) -> Result<(), BoxError> {
     config.validate()?;
+    crate::storage::layout::require(&config.root, "transaction_details")?;
     let store = open_writer(&config.journal)?;
     let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
     if rpc.block_hash_display(0).await? != store.genesis_hash() {
@@ -52,7 +51,6 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     let source = Source::Live(LiveSource::new(rpc, Duration::from_millis(config.poll_ms)));
     let settings = Settings {
         distribution: Some(distribution.clone()),
-        trust_sealed: config.trust_sealed,
         max_recent_records: config.max_recent_records,
         ..Settings::default()
     };

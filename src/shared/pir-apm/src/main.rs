@@ -147,11 +147,20 @@ async fn scrape_loop(
     loop {
         interval.tick().await;
         let now = Instant::now();
-        let (metrics_result, health_result, ready_result) = tokio::join!(
+        let (metrics_result, health_result, ready_result, publisher_result) = tokio::join!(
             fetch(&client, &config.scrape_url, &config.metrics_path, true),
             fetch(&client, &config.scrape_url, &config.health_path, false),
             fetch(&client, &config.scrape_url, &config.ready_path, false),
+            async {
+                match &config.publisher_url {
+                    Some(url) => fetch(&client, url, "/health", true).await.ok(),
+                    None => None,
+                }
+            },
         );
+        let publisher_products = publisher_result
+            .as_ref()
+            .and_then(|r| monitoring::publisher_products(&r.body));
         let health_status = health_result.as_ref().ok().map(|response| response.status);
         let ready_status = ready_result.as_ref().ok().map(|response| response.status);
         let ready_ok = ready_status.is_some_and(|status| (200..300).contains(&status));
@@ -160,24 +169,6 @@ async fn scrape_loop(
         let mut scrape_error = None;
         let mut metrics_success = false;
 
-        let domain_ready_replicas = metrics_result.as_ref().ok().map(|r| {
-            r.body
-                .lines()
-                .filter_map(|line| {
-                    let sample = metrics::parse_line(line).ok()?;
-                    if sample.name != "enhance_shard_published_ready_replicas"
-                        || !sample.value.is_finite()
-                        || sample.value < 0.0
-                    {
-                        return None;
-                    }
-                    Some((
-                        sample.labels.get("shard")?.parse::<u64>().ok()?,
-                        sample.value,
-                    ))
-                })
-                .collect()
-        });
         let group_metrics = metrics_result.as_ref().ok().map(|r| {
             fleet::groups(
                 &r.body,
@@ -236,18 +227,9 @@ async fn scrape_loop(
                 view.groups = groups;
             }
             if metrics_success {
-                view.domain_ready_replicas = domain_ready_replicas.unwrap_or_default();
                 view.last_scrape = Some(SystemTime::now());
             }
             view.scrape_error = scrape_error;
-            placement::update(
-                &mut view,
-                health_result
-                    .as_ref()
-                    .ok()
-                    .filter(|r| (200..300).contains(&r.status))
-                    .map(|r| r.body.as_str()),
-            );
             view.monitoring
                 .loops
                 .insert("coordinator".into(), pir_apm::incidents::unix_time());
@@ -256,7 +238,17 @@ async fn scrape_loop(
                 .as_ref()
                 .ok()
                 .map(|response| response.body.clone());
+            view.enhance_publication = health_result
+                .as_ref()
+                .ok()
+                .filter(|r| (200..300).contains(&r.status))
+                .and_then(|r| placement::Published::parse(&r.body));
             view.ready_status = ready_status;
+            view.publisher_configured = config.publisher_url.is_some();
+            if let Some(products) = publisher_products {
+                view.publisher_products = products;
+                view.publisher_sample = Some(SystemTime::now());
+            }
             view.endpoints = windows;
             view.snapshot_gauges = latest
                 .map(|snapshot| snapshot.snapshot_gauges.clone())
@@ -279,6 +271,7 @@ async fn scrape_loop(
             view.host = host;
             view.active_alerts = alerts.active();
             view.recent_alerts = alerts.recent();
+            placement::update(&mut view, SystemTime::now());
         }
         for transition in transitions.into_iter().filter(|_| !monitoring::enabled()) {
             let result = match transition {

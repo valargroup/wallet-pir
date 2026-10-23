@@ -794,7 +794,42 @@ impl PackingRouter {
     pub(crate) fn health(&self) -> serde_json::Value {
         let ready = self.ready();
         let inner = self.inner.lock().unwrap();
+        let now = Instant::now();
+        // Eligibility belongs to this active manifest and its unexpired worker
+        // promises, rather than an independently sampled worker ready flag.
+        let domain_workers: BTreeMap<_, BTreeMap<_, _>> = self
+            .config
+            .workers
+            .iter()
+            .filter(|(domain, _)| {
+                inner.active.as_ref().is_none_or(|view| {
+                    view.manifest
+                        .coverage
+                        .shards
+                        .iter()
+                        .any(|shard| shard.id == **domain)
+                })
+            })
+            .map(|(domain, workers)| {
+                let peers = inner.active.as_ref().map(|view| view.peers.lock().unwrap());
+                (
+                    *domain,
+                    observed_workers(
+                        workers,
+                        peers
+                            .as_ref()
+                            .and_then(|peers| peers.get(domain))
+                            .map(Vec::as_slice)
+                            .unwrap_or_default(),
+                        ready,
+                        now,
+                    ),
+                )
+            })
+            .collect();
         serde_json::json!({"binary_sha256": pir_control::Identity::process().binary_sha256, "incarnation": self.incarnation, "active": inner.active.as_ref().map(|view| digest(&view.manifest)),
+        "generation": inner.active.as_ref().map(|view| view.manifest.generation),
+        "domain_workers": domain_workers,
         "packing_charged_bytes": self.budget.charged_bytes(),
         "ready": ready})
     }
@@ -815,6 +850,24 @@ impl PackingRouter {
 async fn health(State(router): State<PackingRouter>) -> Json<serde_json::Value> {
     Json(router.health())
 }
+fn observed_workers(
+    workers: &[String],
+    peers: &[Peer],
+    ready: bool,
+    now: Instant,
+) -> BTreeMap<String, bool> {
+    workers
+        .iter()
+        .map(|url| {
+            let eligible = ready
+                && peers
+                    .iter()
+                    .any(|peer| peer.url == *url && peer.deadline > now);
+            (url.clone(), eligible)
+        })
+        .collect()
+}
+
 async fn metrics(State(router): State<PackingRouter>) -> impl IntoResponse {
     (
         [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
@@ -1136,4 +1189,36 @@ async fn release_pin(
     Json(request): Json<Release>,
 ) -> Result<StatusCode, ApiError> {
     router.release_promise(request)
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+    #[test]
+    fn eligibility_requires_an_unexpired_promise_for_the_active_view() {
+        let now = Instant::now();
+        let workers: Vec<String> =
+            vec!["http://worker-a:8091".into(), "http://worker-b:8091".into()];
+        let peers = vec![
+            Peer {
+                url: workers[0].clone(),
+                incarnation: "a".into(),
+                deadline: now + Duration::from_secs(1),
+            },
+            Peer {
+                url: workers[1].clone(),
+                incarnation: "b".into(),
+                deadline: now,
+            },
+        ];
+        let values = observed_workers(&workers, &peers, true, now);
+        assert!(values[&workers[0]]);
+        assert!(!values[&workers[1]]);
+        assert!(observed_workers(&workers, &peers, false, now)
+            .values()
+            .all(|ready| !ready));
+        assert!(observed_workers(&workers, &[], true, now)
+            .values()
+            .all(|ready| !ready));
+    }
 }

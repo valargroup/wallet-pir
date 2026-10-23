@@ -99,6 +99,7 @@ pub async fn run(
     }
     let ingest_state = state.clone();
     let ingest_cli = cli.clone();
+    let ingest_stop = stop.clone();
     let ingestion = tokio::spawn(async move {
         ingest::run(
             zakura,
@@ -106,16 +107,78 @@ pub async fn run(
             ingest_cli.cache_outputs,
             ingest_cli.poll_seconds,
             ingest_cli.commit_every,
+            ingest_stop,
         )
         .await
     });
 
+    tracing::info!(listen = %cli.listen, "transparent filter service started");
+    supervise(ingestion, http.serve(cli.listen, router(state)), stop).await
+}
+
+/// Listener exit requests a boundary stop and waits for ingestion to commit.
+/// An unexpected ingestion exit propagates to the root instead of serving stale
+/// coverage indefinitely. An already requested shutdown is a normal completion.
+async fn supervise(
+    mut ingestion: tokio::task::JoinHandle<Result<(), ingest::BoxError>>,
+    listener: pir_pipeline::service::HttpFuture,
+    stop: Shutdown,
+) -> Result<(), ingest::BoxError> {
     let mut tasks = Tasks::default();
     tasks.own(&ingestion);
-    tracing::info!(listen = %cli.listen, "transparent filter service started");
-    tokio::select! {
-        result = http.serve(cli.listen, router(state)) => result?,
-        _ = stop.cancelled() => {}
+    let result = tokio::select! {
+        result = listener => result.map_err(ingest::BoxError::from),
+        result = &mut ingestion => {
+            let stopping = stop.requested();
+            stop.request();
+            result??;
+            return if stopping { Ok(()) } else {
+                Err("filter ingestion ended before publisher shutdown".into())
+            };
+        },
+        _ = stop.cancelled() => Ok(()),
+    };
+    stop.request();
+    ingestion.await??;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn unexpected_ingestion_exit_stops_the_service() {
+        let stop = Shutdown::default();
+        let ingestion = tokio::spawn(async { Err("journal unavailable".into()) });
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            supervise(ingestion, Box::pin(std::future::pending()), stop.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap_err().to_string(), "journal unavailable");
+        assert!(stop.requested());
     }
-    Ok(())
+    #[tokio::test]
+    async fn listener_failure_waits_for_ingestion_to_finish() {
+        let stop = Shutdown::default();
+        let (finished, received) = tokio::sync::oneshot::channel();
+        let ingestion = tokio::spawn({
+            let stop = stop.clone();
+            async move {
+                stop.cancelled().await;
+                tokio::task::yield_now().await;
+                finished.send(()).unwrap();
+                Ok(())
+            }
+        });
+        let result = supervise(
+            ingestion,
+            Box::pin(async { Err(std::io::Error::other("listener unavailable")) }),
+            stop,
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "listener unavailable");
+        received.await.unwrap();
+    }
 }

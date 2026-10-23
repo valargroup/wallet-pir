@@ -19,14 +19,17 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::DisplayCache;
 use super::now_ms;
-use crate::history::publication::BoxError;
 use crate::ingest::blocks::build_fetched_block_events;
 use crate::ingest::prevout::OutputCache;
 use crate::ingest::zakura::NodeClient;
-use std::collections::{BTreeMap, VecDeque};
+use crate::BoxError;
+use std::collections::BTreeMap;
+#[cfg(feature = "fixtures")]
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use transparent_filter::BlockHash;
 use transparent_shard::txid::DisplayRecord;
+#[cfg(feature = "fixtures")]
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 use transparent_shared::journal::events::{EventStore, EventStoreError};
 
@@ -294,6 +297,7 @@ impl LiveSource {
 }
 
 /// Advances a visible tip over an ingested journal at a fixed pace.
+#[cfg(feature = "fixtures")]
 pub struct ReplaySource {
     blocks_per_step: u64,
     interval: Duration,
@@ -302,6 +306,7 @@ pub struct ReplaySource {
     next_tick_ms: u64,
 }
 
+#[cfg(feature = "fixtures")]
 impl ReplaySource {
     pub fn new(blocks_per_step: u64, interval: Duration, end: u64) -> Self {
         Self {
@@ -355,6 +360,7 @@ impl ReplaySource {
 }
 
 /// One step of a test script.
+#[cfg(feature = "fixtures")]
 pub enum ScriptStep {
     /// Make the journal visible through this height.
     Advance(u64),
@@ -371,11 +377,13 @@ pub enum ScriptStep {
     FailAfterRollback(u64),
 }
 
+#[cfg(feature = "fixtures")]
 #[derive(Default)]
 pub struct Script {
     steps: VecDeque<ScriptStep>,
 }
 
+#[cfg(feature = "fixtures")]
 impl Script {
     pub fn new(steps: impl IntoIterator<Item = ScriptStep>) -> Self {
         Self {
@@ -437,6 +445,7 @@ impl Script {
 
 /// Commits `blocks` after the journal's end, with the events their source
 /// records imply.
+#[cfg(feature = "fixtures")]
 fn append(
     store: &mut EventStore,
     blocks: Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)>,
@@ -457,7 +466,9 @@ fn append(
 pub enum Source {
     Live(LiveSource),
     /// Replay, then optionally live once the replay end is visible.
+    #[cfg(feature = "fixtures")]
     Replay(ReplaySource, Option<LiveSource>),
+    #[cfg(feature = "fixtures")]
     Script(Script),
 }
 
@@ -466,17 +477,23 @@ impl Source {
     pub async fn wait(&self) {
         match self {
             Self::Live(live) => live.wait().await,
+            #[cfg(feature = "fixtures")]
             Self::Replay(replay, _) => replay.wait().await,
+            #[cfg(feature = "fixtures")]
             Self::Script(script) if !script.steps.is_empty() => {}
+            #[cfg(feature = "fixtures")]
             Self::Script(_) => std::future::pending().await,
         }
     }
 
     /// Whether this source will never produce another block.
+    #[cfg(feature = "fixtures")]
     pub fn exhausted(&self, cache: &DisplayCache) -> bool {
         match self {
             Self::Live(_) => false,
+            #[cfg(feature = "fixtures")]
             Self::Replay(replay, live) => live.is_none() && replay.exhausted(cache),
+            #[cfg(feature = "fixtures")]
             Self::Script(script) => script.steps.is_empty(),
         }
     }
@@ -485,6 +502,7 @@ impl Source {
     pub fn node_tip(&self) -> Option<u64> {
         match self {
             Self::Live(live) => live.node_tip,
+            #[cfg(feature = "fixtures")]
             Self::Replay(..) | Self::Script(_) => None,
         }
     }
@@ -494,6 +512,7 @@ impl Source {
     pub fn oldest_unfetched_ms(&self) -> Option<u64> {
         match self {
             Self::Live(live) => live.first_seen.values().min().copied(),
+            #[cfg(feature = "fixtures")]
             Self::Replay(..) | Self::Script(_) => None,
         }
     }
@@ -501,8 +520,11 @@ impl Source {
     pub fn mode(&self) -> &'static str {
         match self {
             Self::Live(_) => "live",
+            #[cfg(feature = "fixtures")]
             Self::Replay(_, None) => "replay",
+            #[cfg(feature = "fixtures")]
             Self::Replay(_, Some(_)) => "replay-then-live",
+            #[cfg(feature = "fixtures")]
             Self::Script(_) => "script",
         }
     }
@@ -514,6 +536,7 @@ impl Source {
         floor: u64,
         before_rollback: BeforeRollback<'_>,
     ) -> Result<SourceUpdate, SourceError> {
+        #[cfg(feature = "fixtures")]
         if let Self::Replay(replay, live) = self {
             if replay.exhausted(cache) && live.is_some() {
                 tracing::info!(
@@ -525,7 +548,9 @@ impl Source {
         }
         match self {
             Self::Live(live) => live.poll(store, cache, floor, before_rollback).await,
+            #[cfg(feature = "fixtures")]
             Self::Replay(replay, _) => replay.poll(store, cache, floor),
+            #[cfg(feature = "fixtures")]
             Self::Script(script) => script.poll(store, cache, floor, before_rollback),
         }
     }

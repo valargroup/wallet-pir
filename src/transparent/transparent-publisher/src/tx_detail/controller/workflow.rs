@@ -16,10 +16,15 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
         = super::preparation::DisplayPreparation<'a>
     where
         Self: 'a;
-    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
+    async fn background<E: pir_pipeline::publisher::PublisherExecutor>(
+        &mut self,
+        executor: E,
+    ) -> Result<(), BoxError> {
         match self.wake.take() {
             Some(DetailWake::Background(Some(event))) => self.controller.background(event),
-            Some(DetailWake::Background(None)) => unreachable!("the controller holds a sender"),
+            Some(DetailWake::Background(None)) => {
+                return Err("archive preparation channel ended".into())
+            }
             Some(DetailWake::Source) => self.controller.poll_source().await?,
             None => {}
         }
@@ -27,10 +32,16 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
         while let Ok(event) = controller.receiver.try_recv() {
             controller.background(event);
         }
+        if controller.halted.is_none() {
+            controller.schedule(executor);
+        }
+        Ok(())
+    }
+    async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
+        let controller = &mut *self.controller;
         if controller.halted.is_some() {
             return Ok(pir_pipeline::Input::Unchanged);
         }
-        controller.schedule();
         if controller.retry_at.is_none_or(|t| Instant::now() >= t) {
             if controller.needs_cycle() {
                 return Ok(pir_pipeline::Input::Work(
@@ -76,11 +87,7 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
         controller.check_recent_bound();
         controller.update_status();
         Ok(
-            if controller.halted.is_some()
-                || (controller.settings.exit_when_idle
-                    && controller.retry_at.is_none()
-                    && controller.idle())
-            {
+            if controller.halted.is_some() || controller.finite_source_complete() {
                 pir_pipeline::publisher::Control::Complete
             } else {
                 pir_pipeline::publisher::Control::Continue
@@ -105,6 +112,11 @@ impl pir_pipeline::publisher::Publisher for DetailPublication<'_> {
         Ok(())
     }
     async fn finish(&mut self) -> Result<(), BoxError> {
+        // A wait can consume completion just before the root observes shutdown.
+        // Apply that saved completion before waiting for any outstanding build.
+        if let Some(DetailWake::Background(Some(event))) = self.wake.take() {
+            self.controller.background(event);
+        }
         while self.controller.building {
             if let Some(event) = self.controller.receiver.recv().await {
                 self.controller.background(event);

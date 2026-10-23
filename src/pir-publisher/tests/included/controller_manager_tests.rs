@@ -491,7 +491,7 @@ fn artifact_requests(tls: &Tls) -> usize {
         .count()
 }
 fn advance(owner: &Authority, directory: &Path, distribution: Finalized) {
-    let mut public = read_public(directory.to_path_buf(), Vec::new()).unwrap();
+    let mut public = read_public(directory.to_path_buf()).unwrap();
     public.distribution = Some(distribution);
     let _gate = owner.0.publication_gate.lock().unwrap();
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);
@@ -1059,7 +1059,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
         })
         .unwrap();
     assert!(prepared.failures.is_empty());
-    let mut public = read_public(directory.clone(), Vec::new()).unwrap();
+    let mut public = read_public(directory.clone()).unwrap();
     public.distribution = Some(Finalized::prepare(&directory, &set, 0).unwrap());
     *owner.0.active.write().unwrap() = Arc::new(public);
     owner.0.distribution_revision.fetch_add(1, Ordering::AcqRel);

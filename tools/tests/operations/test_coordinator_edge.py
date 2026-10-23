@@ -264,7 +264,8 @@ class LiveEdge(unittest.TestCase):
                 self.assertEqual((status, reply), (200, name.encode() if name in ('enhance', 'status') else
                                                    {'transparent': TRANSPARENT_HOST, 'receiver': RECEIVER_HOST}[name].encode()))
                 seen = self.only(name)
-                self.assertEqual((seen['method'], seen['path'], seen['body']), ('POST', path, query))
+                backend_path = path.replace('/enhance/v1', '/v1/enhance').replace('/transparent/v1', '/v2').replace('/receiver/v1', '/v1/receiver')
+                self.assertEqual((seen['method'], seen['path'], seen['body']), ('POST', backend_path, query))
                 self.assertEqual(seen['forwarded_for'], '127.0.0.1')
         for path, name in (('/enhance/v1/init', 'enhance'), ('/status/v1/session/00', 'status'),
                            ('/transparent/v1/filters/info', 'filters'), ('/transparent/v1/filters/range', 'filters'),
@@ -277,6 +278,15 @@ class LiveEdge(unittest.TestCase):
         self.assertEqual(self.request(UNIFIED_HOST, 'GET', '/transparent/v1/filters/parents/parent.bin'),
                          (200, b'parent filter'))
         self.nothing_reached()
+
+    def test_recovery_metadata_and_queries_use_the_same_active_publication(self):
+        for path in ('/transparent/v1/shards', '/transparent/v1/filters/shards',
+                     '/transparent/v1/filters/shards/3/filter'):
+            self.assertEqual(self.request(UNIFIED_HOST, 'GET', path), (200, TRANSPARENT_HOST.encode()))
+            self.assertEqual(self.only('transparent')['path'], path.replace('/transparent/v1', '/v2'))
+        path = '/transparent/v1/filters/range?start=1&end=2'
+        self.assertEqual(self.request(UNIFIED_HOST, 'GET', path)[0], 200)
+        self.assertEqual(self.only('filters')['path'], '/v1/filters/range?start=1&end=2')
 
     def test_cross_origin_hops_name_the_origin_as_host_and_sni(self):
         for host, name in ((TRANSPARENT_HOST, 'transparent'), (RECEIVER_HOST, 'receiver')):

@@ -503,7 +503,9 @@ class PublisherBootstrap(unittest.IsolatedAsyncioTestCase):
             await self.product.publisher_bootstrap()
 
     async def test_native_startup_refusal_is_observed_then_full_proof_remains_separate(self):
-        native = (HERE.parents[2]/'src/transparent/transparent-publisher/src/history/controller.rs').read_text()
+        controller = HERE.parents[2]/'src/transparent/transparent-publisher/src/history/controller'
+        native = '\n'.join(path.read_text() for path in
+                           (controller.with_suffix('.rs'), controller/'startup.rs', controller/'http.rs'))
         self.assertIn('withdrawn: AtomicBool::new(true)',native)
         self.assertIn(self.body.decode(),native)
         await self.observe()

@@ -48,9 +48,11 @@ It is a second site on the coordinator's Caddy
 ([`tools/deploy/coordinator/Caddyfile`](../tools/deploy/coordinator/Caddyfile),
 rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
 `tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
-filter operations reach the coordinator's loopback services; Transparent
-queries, history filter shards and Receiver cross to `transparent-pir` and
-`receiver-pir` over verified HTTPS, naming each origin as Host and SNI. It
+compact-filter operations reach the coordinator's loopback services. History
+shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
+`receiver-pir` over verified HTTPS, naming each origin as Host and SNI. The edge
+translates canonical paths to existing backend aliases where needed. Recovery
+metadata and encrypted History queries share the query server's active publication. It
 serves no legacy alias and no operator path. The product hosts keep serving both
 forms for released wallets. Receiver's edge trusts only the coordinator's
 address to forward `X-Forwarded-For`, so its per-client admission still keys on
@@ -62,7 +64,18 @@ reloads, probes the host locally (canonical routes 200, legacy and operator path
 and restores the exact previous file on any failure. Its request is
 `{"schema": "coordinator-unified-edge/1", "host", "machine_id", "enhance_public_url"}`.
 Product cutovers edit their own site in place and keep it. Whether the host is
-live is recorded in the product status pages, not here.
+live is recorded in the product status pages, not here. For an explicitly
+forward-only rollout, pass `--preserve-on-failure` to `coordinator-edge-deploy`;
+it leaves installed routes in place if verification fails. Complete that same
+transaction with `coordinator-edge-verify` after repairing the cause.
+
+When the coordinator still has the older flat Terraform root, use
+`coordinator-edge-dns-plan` and `coordinator-edge-dns-stage` to stage only the
+unified DNS resource under the production lock. Review and apply its saved
+Terraform plan through the existing coordinator Terraform wrapper. This preserves
+the resource address used by the fleet root and does not update any service.
+Remove the staged `wallet-unified-dns.tf` when installing a fleet root whose
+`shared.tf` already declares that record, keeping its existing Terraform state address.
 
 ## Features
 

@@ -175,7 +175,7 @@ impl Publication for HistoryPreparation<'_> {
         } = material;
         let config = self.config;
         let authority = self.authority;
-        let mut candidate = read_public(directory.clone(), Vec::new())?;
+        let mut candidate = read_public(directory.clone())?;
         let stop = self.stop();
         {
             // Reuse the exact verified set just used to prepare the candidate.

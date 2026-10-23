@@ -24,7 +24,7 @@ HISTORY = {'data_dir': '/srv/transparent-activity/full-v3/journal',
 DISPLAY = {'root': '/srv/txid-display-genesis/v4/root', 'journal': '/srv/txid-display-genesis/journal-v3',
            'rpc_url': 'http://127.0.0.1:8232',
            'rpc_cookie': '/root/.cache/zakura/.cookie', 'poll_ms': 500, 'status_listen': '127.0.0.1:8098',
-           'trust_sealed': False, 'max_recent_records': None}
+           'max_recent_records': None}
 
 
 class Coordinator(FakeFleet):

@@ -18,14 +18,17 @@
 //!
 //! Read-only against the journal.
 
+#[cfg(test)]
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
-use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes};
+#[cfg(test)]
+use transparent_filter::ScriptBytes;
+use transparent_filter::{filter_hash, BlockHash};
+#[cfg(test)]
 use transparent_shared::journal::events::EventStore;
 
 use transparent_shard::build::{Built, BuiltChild, BuiltDirectory, ShardStream};
@@ -36,77 +39,23 @@ use transparent_shard::manifest::{
 };
 use transparent_shard::seal::{DecoupledPolicy, SealedDirectory};
 
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+pub use crate::BoxError;
 
-#[derive(Parser)]
-#[command(name = "shard-publish", about = "Publish a transparent shard set")]
+/// Inputs and shard policy for one immutable history build.
+#[derive(Clone, Debug)]
 pub struct PublishOptions {
-    #[arg(long, default_value = "./transparent-event-data")]
     pub data_dir: PathBuf,
-    /// Continue a verified publication, reusing its unchanged sealed prefix.
-    #[arg(long)]
     pub previous: Option<PathBuf>,
-    #[arg(long, default_value = "./transparent-shards")]
     pub output: PathBuf,
-    /// Geometry for history at and after `--recent-from`.
-    ///
-    /// The window wallets synchronise constantly, so it is sized for a small
-    /// query rather than for holding the most content.
-    #[arg(long, default_value = "decoupled-2k-8k")]
     pub recent_geometry: String,
-    /// Geometry for history before `--recent-from`.
-    ///
-    /// Defaults to the recent geometry, which publishes a single-geometry set —
-    /// what every existing published set is. Give both this and `--recent-from`
-    /// to publish the two-tier set the deployment plan describes.
-    #[arg(long)]
     pub archive_geometry: Option<String>,
-    /// First height of the recent tier.
-    ///
-    /// A forced shard boundary: a shard's rows are addressed at one row count,
-    /// so no shard may span the change. Derive it from the pinned anchor's
-    /// chain timestamp rather than from a block count — a height standing in
-    /// for "six months" drifts with the interval, and re-deriving it later
-    /// would re-shard the chain.
-    #[arg(long)]
     pub recent_from: Option<u64>,
-    /// Needed for exactly one thing: the block hash before the journal's first
-    /// height, which is shard zero's parent and is by definition not in the
-    /// journal.
-    #[arg(long, default_value = "http://127.0.0.1:8232")]
     pub zakura_rpc_url: String,
-    #[arg(long)]
     pub zakura_cookie: PathBuf,
-    /// Last height to publish, inclusive. Defaults to the journal's end.
-    ///
-    /// The anchor a publication is pinned to. A journal keeps growing under
-    /// ingest, and a publish that silently took whatever it found would move
-    /// the anchor every run; naming it keeps the published range the one the
-    /// cutoff record and the correctness pilot were computed for.
-    #[arg(long)]
     pub through: Option<u64>,
-    /// Where to write a JSON record of this publication: inputs, journal
-    /// identity, range, geometries, map digest, shard count and elapsed time.
-    #[arg(long)]
     pub record: Option<PathBuf>,
-    /// Source commit of this tool, recorded verbatim.
-    #[arg(long)]
     pub source_sha: Option<String>,
-    /// Which newly built shards publish a directory choice table.
-    ///
-    /// `off` publishes none, which is every set before this option. `sealed`
-    /// adds one to shards as they seal, `all` to tail revisions too. A shard
-    /// whose published revision is reproduced keeps whatever it published, so
-    /// turning this on never changes an existing digest.
-    #[arg(long, value_enum, default_value_t = DirectoryChoice::Off)]
     pub directory_choice: DirectoryChoice,
-    /// Range-filter profile every shard is published under.
-    ///
-    /// Fixes the filters' Golomb-Rice parameters and is named in the map and
-    /// every manifest. Changing it changes every filter, so a publication
-    /// under a new profile cannot continue a previous one and must be written
-    /// into a directory of its own.
-    #[arg(long, default_value = transparent_filter::RANGE_PROFILE)]
     pub range_profile: String,
 }
 
@@ -130,103 +79,9 @@ pub enum DirectoryChoice {
     All,
 }
 
-/// Writes `bytes` to `path` so that a reader sees either all of them or none.
-///
-/// Temp file, fsync, rename. A published set is read back by a service that
-/// refuses to start on a file that does not match its digest, so a half-written
-/// file is not a corruption a reader has to detect — but only if the partial
-/// state is never visible under the final name. `std::fs::write` truncates in
-/// place, so an interrupted publish leaves a short file *at the name the map
-/// points to*, which is exactly the state a deploy would then try to ship.
-pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
-    use std::io::Write;
-    let temp = path.with_extension("tmp");
-    {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        // The rename is ordered after the data only if the data is on disk
-        // first. Without this, a crash can leave the new name pointing at a
-        // file whose contents never arrived.
-        file.sync_all()?;
-    }
-    std::fs::rename(&temp, path)?;
-    // Durably link the new name into the directory, so the rename survives a
-    // crash rather than only the bytes it points to.
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = std::fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
-    Ok(())
-}
-
-/// [`write_atomic`] for a record that must survive a crash before its caller
-/// acts on it: completion evidence that permits activation and cheap restart,
-/// and the integrity-failure record that keeps corrupt bytes withdrawn.
-///
-/// Unlike [`write_atomic`], every step is an error: the parent directory is
-/// opened before the final name changes, and a failed directory sync fails
-/// the write. After a sync failure the final name may already hold the new
-/// bytes, but the caller has not been told they are durable. A failed attempt
-/// removes its temporary and leaves the final name as it was or whole.
-pub fn write_durable(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
-    write_durable_with(
-        path,
-        bytes,
-        |p| std::fs::File::open(p),
-        std::fs::File::sync_all,
-    )
-}
-
-pub(crate) fn write_durable_with(
-    path: &Path,
-    bytes: &[u8],
-    open_directory: impl FnOnce(&Path) -> std::io::Result<std::fs::File>,
-    sync_directory: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
-) -> Result<(), BoxError> {
-    use std::io::Write;
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let directory = open_directory(parent)
-        .map_err(|error| format!("open {} to sync it: {error}", parent.display()))?;
-    let temp = path.with_extension("tmp");
-    let replaced = (|| {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    if let Err(error) = replaced {
-        let _ = std::fs::remove_file(&temp);
-        return Err(format!("write {}: {error}", path.display()).into());
-    }
-    sync_directory(&directory).map_err(|error| {
-        format!(
-            "sync {} after replacing {}: {error}",
-            parent.display(),
-            path.display()
-        )
-    })?;
-    Ok(())
-}
-
-pub fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {
-    let path = dir.join(name);
-    if path.exists() {
-        // Published shards are immutable. If the bytes differ, either the
-        // journal or the builder changed while the identity did not, and
-        // overwriting would replace a published shard in place.
-        let existing = std::fs::read(&path)?;
-        if existing != bytes {
-            return Err(format!("{} already exists with different content", path.display()).into());
-        }
-        return Ok(());
-    }
-    write_atomic(&path, bytes)
-}
+#[cfg(test)]
+pub(crate) use crate::storage::records::write_durable_with;
+pub use crate::storage::records::{write_atomic, write_durable, write_immutable};
 
 pub fn publish(
     cli: &PublishOptions,
@@ -687,13 +542,7 @@ fn seal_parameters(policy: &DecoupledPolicy) -> transparent_filter::SealParamete
     }
 }
 
-/// The file one segment of page shard `child` is published under.
-pub fn page_segment_file(child: u32, segment: usize) -> String {
-    format!(
-        "{}.{segment}.bin",
-        transparent_shard::manifest::pages_table(child)
-    )
-}
+pub use crate::storage::page_segment_file;
 
 /// Writes a page shard's segments into the staging directory of its
 /// directory shard and describes it.
@@ -1036,73 +885,7 @@ fn sha256_file(path: &Path) -> Result<[u8; 32], BoxError> {
     Ok(hasher.finalize().into())
 }
 
-/// Immutable journal view used by both the one-shot tool and controller snapshots.
-pub trait Journal {
-    fn journal_version(&self) -> u16;
-    fn display_at(
-        &self,
-        _height: u64,
-    ) -> Result<
-        Vec<transparent_shard::txid::DisplayRecord>,
-        transparent_shared::journal::events::EventStoreError,
-    > {
-        Err(
-            transparent_shared::journal::events::EventStoreError::Invariant(
-                "journal has no display capability".into(),
-            ),
-        )
-    }
-    fn genesis_hash(&self) -> &str;
-    fn start_height(&self) -> u64;
-    fn covered_through(&self) -> Option<u64>;
-    fn events_stored(&self) -> u64;
-    fn block_at(&self, height: u64) -> Option<transparent_shared::journal::events::BlockEntry>;
-    fn events_at(
-        &self,
-        height: u64,
-    ) -> Result<
-        Option<Vec<(ScriptBytes, transparent_events::TransparentEvent)>>,
-        transparent_shared::journal::events::EventStoreError,
-    >;
-}
-impl Journal for EventStore {
-    fn journal_version(&self) -> u16 {
-        self.version()
-    }
-    fn display_at(
-        &self,
-        height: u64,
-    ) -> Result<
-        Vec<transparent_shard::txid::DisplayRecord>,
-        transparent_shared::journal::events::EventStoreError,
-    > {
-        self.display_at(height)
-    }
-    fn genesis_hash(&self) -> &str {
-        self.genesis_hash()
-    }
-    fn start_height(&self) -> u64 {
-        self.start_height()
-    }
-    fn covered_through(&self) -> Option<u64> {
-        self.covered_through()
-    }
-    fn events_stored(&self) -> u64 {
-        self.events_stored()
-    }
-    fn block_at(&self, height: u64) -> Option<transparent_shared::journal::events::BlockEntry> {
-        self.block_at(height)
-    }
-    fn events_at(
-        &self,
-        height: u64,
-    ) -> Result<
-        Option<Vec<(ScriptBytes, transparent_events::TransparentEvent)>>,
-        transparent_shared::journal::events::EventStoreError,
-    > {
-        self.events_at(height)
-    }
-}
+pub use crate::ingest::journal::Journal;
 
 /// Carries the newest three superseded tail revisions of each shard forward
 /// from `previous`, for wallets still holding them, while their endpoints are
@@ -1158,42 +941,9 @@ fn link_superseded_tails(
     Ok(())
 }
 
+use crate::storage::link_file;
 /// Copies immutable revision files without rebuilding their contents.
-pub fn link_revision(from: &Path, to: &Path, digest: &str) -> Result<(), BoxError> {
-    if from == to {
-        return Ok(());
-    }
-    let target = to.join(digest);
-    std::fs::create_dir_all(&target)?;
-    for entry in std::fs::read_dir(from.join(digest))? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        if !kind.is_file() && !kind.is_symlink() {
-            return Err("unexpected revision artifact".into());
-        }
-        let dest = target.join(entry.file_name());
-        if std::fs::symlink_metadata(&dest).is_ok() {
-            continue;
-        }
-        if link_file(&entry.path(), &dest).is_err() {
-            if kind.is_symlink() {
-                return Err("could not link a stored revision segment".into());
-            }
-            std::fs::copy(entry.path(), &dest)?;
-        }
-    }
-    Ok(())
-}
-
-/// Gives `to` the file `from` names. A link into the publisher's segment
-/// store is linked again, never followed, so republishing a stored segment
-/// leaves its object untouched; the loader checks the link is exact.
-fn link_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    if std::fs::symlink_metadata(from)?.file_type().is_symlink() {
-        return std::os::unix::fs::symlink(std::fs::read_link(from)?, to);
-    }
-    std::fs::hard_link(from, to)
-}
+pub use crate::storage::link_revision;
 
 trait ValidatePrevious {
     fn pipe_validate(

@@ -666,12 +666,15 @@ mod domain_tests {
         )
         .unwrap();
         data.fleet = crate::fleet::inventory(r#"{"groups":[{"name":"legacy-group","replicas":[{"name":"worker-a","url":"http://10.0.1.1:8091"},{"name":"worker-b","url":"http://10.0.1.2:8091"}]}]}"#).unwrap();
-        crate::placement::update(
-            &mut data,
-            Some(
-                r#"{"placement_revision":4,"pool":{"placements":{"0":["worker-a"],"2":["worker-b","unknown-worker"]}}}"#,
-            ),
-        );
+        data.placement = Some(crate::placement::Placement {
+            revision: Some(4),
+            domains: BTreeMap::from([
+                (0, vec!["worker-a".into()]),
+                (2, vec!["worker-b".into(), "unknown-worker".into()]),
+            ]),
+        });
+        data.placement_success = Some(SystemTime::now());
+        data.placement_error = false;
         let html = overview(&data);
         let domain_zero = html
             .split("data-domain=\"0\"")

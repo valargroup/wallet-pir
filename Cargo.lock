@@ -3700,7 +3700,6 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
- "tracing-subscriber",
  "transparent-shared",
  "zakura-pir-client",
  "zakura-pir-protocol",

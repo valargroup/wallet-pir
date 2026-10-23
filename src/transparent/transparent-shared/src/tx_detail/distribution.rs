@@ -132,7 +132,10 @@ impl Finalized {
         let previous = &checked.passed;
         checked.loaded = 0;
         checked.reused = 0;
+        checked.bytes_hashed = 0;
+        checked.bytes_reused = 0;
         let mut passed = BTreeMap::new();
+        let mut evidence = BTreeMap::new();
         let shipped = ShippedRuntimes::required(root.to_path_buf());
         let mut inventory = Inventory {
             schema: SCHEMA.into(),
@@ -189,6 +192,17 @@ impl Finalized {
                 }
             }
         }
+        for (path, kind, known) in &mut pending {
+            if matches!(kind, Kind::RecentRuntime | Kind::ArchiveRuntime) {
+                *known = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(|name| checked.evidence.get(name))
+                    .map(|(sha256, bytes, stamp)| {
+                        crate::publication::Known::from_evidence(sha256.clone(), *bytes, *stamp)
+                    });
+            }
+        }
         // Hash immutable artifacts on the bounded CPU pool. Native handles
         // stay open so the later self-check reads the inode just hashed.
         let mut runtimes = BTreeMap::new();
@@ -197,9 +211,16 @@ impl Finalized {
             path,
             physical,
             opened: file,
-            ..
+            stamp,
+            settled,
+            read,
         } in hash_listed(root, pending, stop)?
         {
+            if read {
+                checked.bytes_hashed += artifact.bytes;
+            } else {
+                checked.bytes_reused += artifact.bytes;
+            }
             if expected
                 .get(&path)
                 .is_some_and(|sha256| *sha256 != artifact.sha256)
@@ -207,7 +228,16 @@ impl Finalized {
                 return Err("display source differs from its manifest".into());
             }
             if let Some(file) = file {
-                runtimes.insert(path.clone(), (artifact.sha256.clone(), file));
+                runtimes.insert(
+                    path.clone(),
+                    (
+                        artifact.sha256.clone(),
+                        file,
+                        physical.clone(),
+                        stamp,
+                        settled,
+                    ),
+                );
             }
             files.insert(artifact.sha256.clone(), (physical, artifact.bytes));
             inventory.artifacts.push(artifact);
@@ -219,7 +249,9 @@ impl Finalized {
                 .and_then(|name| name.to_str())
                 .ok_or("non-UTF8 display runtime name")?
                 .to_owned();
-            let (sha256, file) = runtimes.remove(&path).ok_or("unhashed display runtime")?;
+            let (sha256, file, physical, stamp, settled) =
+                runtimes.remove(&path).ok_or("unhashed display runtime")?;
+            let probe = file.try_clone()?;
             // The derived name binds parameters and source; the whole-file
             // digest binds the exact bytes checked by a previous inventory.
             if previous.get(&name) == Some(&sha256) {
@@ -233,6 +265,13 @@ impl Finalized {
                     .self_check(&shared, &source.load()?)?;
                 checked.loaded += 1;
             }
+            stamp.check(&physical, &probe)?;
+            if settled {
+                evidence.insert(
+                    name.clone(),
+                    (sha256.clone(), probe.metadata()?.len(), stamp),
+                );
+            }
             passed.insert(name, sha256);
         }
         inventory.artifacts.sort_by(|a, b| a.path.cmp(&b.path));
@@ -240,6 +279,7 @@ impl Finalized {
         let bytes = serde_json::to_vec(&inventory)?;
         let terminal = set.map.shards.last().ok_or("empty display map")?;
         checked.passed = passed;
+        checked.evidence = evidence;
         Ok(Self {
             sha256: digest(&bytes),
             bytes,
@@ -476,6 +516,14 @@ mod tests {
             );
         }
 
+        let before = hashed();
+        Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
+        assert_eq!(
+            hashed() - before,
+            metadata,
+            "unchanged source and runtime bytes are reused"
+        );
+
         // Same size, changed bytes, modification time restored: the changed
         // ctime voids the evidence, so the source is hashed and refused.
         let file = std::fs::File::options()
@@ -503,7 +551,11 @@ mod tests {
         replace(&sources[1], &original);
         let before = hashed();
         Finalized::prepare_reusing(&dir, &set, &mut checked).unwrap();
-        assert_eq!(hashed() - before, metadata + runtimes + 2);
+        assert_eq!(
+            hashed() - before,
+            metadata + 2,
+            "only changed source identities and metadata are rehashed; runtime evidence survives"
+        );
         let changed = flip_in_place_keeping_size(&sources[1]);
         assert!(Finalized::prepare_reusing(&dir, &set, &mut checked).is_err());
         drop(changed);

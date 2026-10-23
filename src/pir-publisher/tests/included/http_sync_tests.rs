@@ -16,6 +16,129 @@ use transparent_shared::journal::events::EventStore;
 
 use super::display_world;
 
+/// Offer an independently built fixture through the real root publication
+/// phases. Its objects must first belong to this publisher's storage root.
+async fn offer_fixture(
+    distribution: &Distribution,
+    root: &Path,
+    source: std::path::PathBuf,
+    retained: Vec<std::path::PathBuf>,
+) -> Result<bool, crate::BoxError> {
+    use super::publisher::ActiveRecord;
+    use pir_pipeline::publisher::{Publication, PublisherExecutor};
+    use transparent_shared::tx_detail::distribution::Finalized;
+    type Error = crate::BoxError;
+    fn import(
+        from: &Path,
+        to: &Path,
+        objects: &pir_publication::ObjectInstaller,
+    ) -> Result<(), Error> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let target = to.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                import(&entry.path(), &target, objects)?;
+            } else if entry.file_type()?.is_symlink() {
+                let alias = std::fs::read_link(entry.path())?;
+                let digest = alias
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or("invalid fixture object")?;
+                objects.install_prepared_file(
+                    &std::fs::canonicalize(entry.path())?,
+                    Some(digest),
+                    &|| false,
+                )?;
+                if !target.exists() {
+                    std::os::unix::fs::symlink(alias, target)?;
+                }
+            } else if !target.exists() {
+                std::fs::hard_link(entry.path(), target)?;
+            }
+        }
+        Ok(())
+    }
+    struct Offering<'a> {
+        distribution: &'a Distribution,
+        root: &'a Path,
+        source: std::path::PathBuf,
+        retained: Vec<std::path::PathBuf>,
+        publication: ActiveRecord,
+        revision: Option<u64>,
+    }
+    impl Publication for Offering<'_> {
+        type Error = Error;
+        type Material = std::path::PathBuf;
+        type Stored = Self::Material;
+        type Verified = Finalized;
+        type Candidate = Finalized;
+        type Report = bool;
+        fn check(&self) -> Result<(), Error> {
+            if self.distribution.revision() != self.revision {
+                return Err("fixture publication authority changed".into());
+            }
+            Ok(())
+        }
+        async fn build(&mut self) -> Result<Self::Material, Error> {
+            let directory = std::fs::canonicalize(self.root)?.join(
+                self.source
+                    .file_name()
+                    .ok_or("fixture has no directory name")?,
+            );
+            if directory != self.source {
+                let objects = pir_publication::ObjectInstaller::open(self.root.join(".objects"))?;
+                import(&self.source, &directory, &objects)?;
+            }
+            self.publication.directory = directory.clone();
+            Ok(directory)
+        }
+        async fn store(&mut self, directory: Self::Material) -> Result<Self::Stored, Error> {
+            Ok(directory)
+        }
+        async fn verify(&mut self, directory: Self::Stored) -> Result<Finalized, Error> {
+            self.distribution
+                .prepare(directory, self.retained.clone(), Default::default(), || {
+                    false
+                })
+                .await
+        }
+        async fn assemble(&mut self, finalized: Finalized) -> Result<Finalized, Error> {
+            Ok(finalized)
+        }
+        async fn recheck(&mut self, finalized: &mut Finalized) -> Result<(), Error> {
+            if !self
+                .distribution
+                .canonical(finalized, &Default::default())
+                .await?
+            {
+                return Err("fixture publication is not canonical".into());
+            }
+            Ok(())
+        }
+        async fn commit(self, finalized: Finalized) -> Result<bool, Error> {
+            self.distribution.commit_publication(
+                finalized,
+                self.revision,
+                &Default::default(),
+                &self.publication,
+            )?;
+            Ok(true)
+        }
+    }
+    let publication = ActiveRecord::load(source.parent().ok_or("fixture has no root")?)?;
+    crate::host_engine::PublisherEngine
+        .publish(Offering {
+            distribution,
+            root,
+            source,
+            retained,
+            publication,
+            revision: distribution.revision(),
+        })
+        .await
+}
+
 async fn manager(root: &Path, origin: &str, cert: reqwest::Certificate) -> Manager {
     Manager::new(
         Config {
@@ -196,14 +319,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
             .status(),
         axum::http::StatusCode::OK
     );
-    assert!(distribution
-        .restore(
-            crate::host_engine::PublisherEngine,
-            next.candidate.clone(),
-            vec![initial.candidate.clone()],
-        )
-        .await
-        .unwrap());
+    assert!(offer_fixture(
+        &distribution,
+        &root,
+        next.candidate.clone(),
+        vec![initial.candidate.clone()]
+    )
+    .await
+    .unwrap());
     // Change authority after staging but before the checked activation commits.
     std::fs::write(&tls.control, "pause-current-2").unwrap();
     let checking = tokio::spawn(async move {
@@ -241,14 +364,14 @@ async fn full_display_consumers_follow_https_and_restart_without_building() {
         !second.ready().await,
         "withdrawal must fence the previous view too"
     );
-    assert!(distribution
-        .restore(
-            crate::host_engine::PublisherEngine,
-            next.candidate.clone(),
-            vec![initial.candidate.clone()],
-        )
-        .await
-        .unwrap());
+    assert!(offer_fixture(
+        &distribution,
+        &root,
+        next.candidate.clone(),
+        vec![initial.candidate.clone()]
+    )
+    .await
+    .unwrap());
     second.poll_once().await.unwrap();
     assert!(second.ready().await);
     canonical.store(false, Ordering::Release);
@@ -521,14 +644,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
             .body(axum::body::Body::from(query.body.clone()))
             .unwrap()
     };
-    assert!(distribution
-        .restore(
-            crate::host_engine::PublisherEngine,
-            next.candidate.clone(),
-            vec![initial.candidate.clone()],
-        )
-        .await
-        .unwrap());
+    assert!(offer_fixture(
+        &distribution,
+        &root,
+        next.candidate.clone(),
+        vec![initial.candidate.clone()]
+    )
+    .await
+    .unwrap());
     let pause = match phase {
         Recheck::AfterPreparation | Recheck::FloorWriteFailure => "pause-current-2".to_string(),
         Recheck::AfterAnchors => "pause-current-3".to_string(),
@@ -559,14 +682,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
             distribution.withdraw(3).unwrap();
         }
         let offered = if reorg { &recovered } else { &next };
-        assert!(distribution
-            .restore(
-                crate::host_engine::PublisherEngine,
-                offered.candidate.clone(),
-                vec![initial.candidate.clone()],
-            )
-            .await
-            .unwrap());
+        assert!(offer_fixture(
+            &distribution,
+            &root,
+            offered.candidate.clone(),
+            vec![initial.candidate.clone()]
+        )
+        .await
+        .unwrap());
         // The consumer receives the recovered canonical pointer, not the
         // intervening withdrawal. Negative ranges are not a cumulative log.
         let response = distribution
@@ -614,14 +737,14 @@ async fn recheck_after_recovery(phase: Recheck, reorg: bool) {
         std::fs::remove_dir(&failed_floor).unwrap();
     }
     if matches!(phase, Recheck::CandidateAnchor) {
-        assert!(distribution
-            .restore(
-                crate::host_engine::PublisherEngine,
-                recovered.candidate.clone(),
-                vec![initial.candidate.clone()],
-            )
-            .await
-            .unwrap());
+        assert!(offer_fixture(
+            &distribution,
+            &root,
+            recovered.candidate.clone(),
+            vec![initial.candidate.clone()]
+        )
+        .await
+        .unwrap());
     }
     consumer.poll_once().await.unwrap();
     assert!(
@@ -897,14 +1020,14 @@ async fn cold_display_bootstrap_retries_a_publication_changed_during_loading() {
         panic!("bootstrap stopped before the final source check: {result:?}");
     }
     assert!(tls.control.with_extension("entered").exists());
-    assert!(distribution
-        .restore(
-            crate::host_engine::PublisherEngine,
-            next.candidate.clone(),
-            vec![initial.candidate],
-        )
-        .await
-        .unwrap());
+    assert!(offer_fixture(
+        &distribution,
+        &root,
+        next.candidate.clone(),
+        vec![initial.candidate]
+    )
+    .await
+    .unwrap());
     std::fs::write(&tls.control, "").unwrap();
     let (mut consumer, result) = checking.await.unwrap();
     assert!(
@@ -1137,4 +1260,36 @@ async fn a_display_restore_stopped_mid_scan_keeps_its_evidence() {
         "the completed restore commits"
     );
     node_task.abort();
+}
+
+/// Preparation and durable restart state must describe the same owned view.
+#[tokio::test]
+async fn activation_refuses_a_restart_record_for_another_prepared_map() {
+    let scratch = tempfile::tempdir().unwrap();
+    let journal = scratch.path().join("journal");
+    fixture::write_journal(&journal, 0, 4, 0);
+    let store = EventStore::open_existing(&journal).unwrap();
+    let root = scratch.path().join("publisher");
+    let initial = bootstrap(&store, &root, &fixture::layout(&store, 1, 16), 3).unwrap();
+    let (rpc, _, node) = counting_node(scratch.path()).await;
+    let distribution = Distribution::new(&root, rpc).unwrap();
+    let prepared = distribution
+        .prepare(initial.candidate, vec![], Default::default(), || false)
+        .await
+        .unwrap();
+    let saved = super::publisher::ActiveRecord::load(&root).unwrap();
+    let mut wrong = saved.clone();
+    wrong.map_sha256 = "ff".repeat(32);
+    assert!(distribution
+        .commit_publication(prepared, None, &Default::default(), &wrong)
+        .is_err());
+    assert_eq!(distribution.revision(), None);
+    assert_eq!(
+        super::publisher::ActiveRecord::load(&root)
+            .unwrap()
+            .map_sha256,
+        saved.map_sha256
+    );
+    assert!(!root.join("activation.json").exists());
+    node.abort();
 }

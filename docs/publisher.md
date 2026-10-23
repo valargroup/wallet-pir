@@ -159,11 +159,11 @@ changing the active publication; the build writes no map, and an interrupted
 hash records no evidence or receipt. Display stops the same way while it
 restores its saved distribution at startup (verification, row checks, runtime
 segments, finalization) and between the recent-shard build, candidate write and
-runtime prebuild of a cycle. Blocking work is awaited before state is released:
+runtime preparation of a cycle. Blocking work is awaited before state is released:
 the unit already running when the stop arrives, one shard's files, one runtime
-build or self-check, or one Display recent-shard build or prebuild, finishes
-first. Activation that has begun still completes, including the Display
-inventory it finalizes.
+build or self-check, or one Display recent-shard build or runtime preparation, finishes
+first. Activation that has begun still completes; inventory preparation is
+already complete at that boundary.
 Application lock files for Enhance, Status and Receiver prevent two updated
 processes from owning the same state. Older binaries do not know these locks:
 operator cutover must stop their services first. Do not forcibly remove locks
@@ -194,10 +194,11 @@ workers file and publishes only from its live node (`rpc_cookie` is required).
 The retired `http_only`, `distribute_prepared`, `ship_runtimes`, `shadow`,
 `fleet_command` and `fleet_config` History settings and the `http_only`,
 `ship_runtimes`, `workers`, `mode`, `blocks_per_step`, `step_interval_ms`,
-`replay_end` and `exit_when_idle` transaction-detail settings are rejected at
-startup. A publisher update requires the installed configuration to equal the
-reviewed request exactly, so an installed configuration that still carries one
-of them must be corrected and reviewed separately before an ordinary update.
+`replay_end`, `exit_when_idle` and `trust_sealed` transaction-detail settings are rejected at
+startup. An ordinary update removes these retired settings only when their installed
+values describe the same live, prepared HTTPS behavior. Every other setting must
+match the reviewed request, except the explicit storage preparation below. The
+original configuration remains in the deployment journal for rollback.
 The publisher still needs its existing journal, initial publication or display
 controller root, node access and durable state. It finalizes data without waiting
 for consumers, and refuses to publish incomplete prepared material.
@@ -206,9 +207,78 @@ History and Display finalization list a source table with the digest their
 verified set proved when this process hashed that same file and its device, inode, length,
 modification and change times are unchanged; any other table is hashed again,
 and every listed table must match its manifest digest. A runtime self-check
-reads its source rows under the same rule. Every runtime is hashed; one whose
-name and whole-file digest match a runtime this process already loaded and
-self-checked is not loaded again.
+reads its source rows under the same rule. Runtimes use the same exact-file evidence: unchanged objects are neither
+rehashed nor loaded again after this process has verified and self-checked them.
+
+Both products store large immutable files once in `.objects/`, with checked
+relative references from publication directories. Existing legacy roots require
+explicit preparation before the service starts; startup never converts them.
+Preparation clones the selected active publication into separate sibling roots
+using Linux reflinks (independent files sharing unchanged data blocks), verifies
+the tables and runtimes, then installs references in those new roots. It refuses
+filesystems without reflink support, conflicting targets, changed source files
+and unresolved publication state. There is no hard-link or full-copy fallback.
+Existing checked table and runtime references are resolved through the artifact
+reader before cloning; arbitrary source links remain forbidden, including on resume.
+Active views,
+preparation and HTTP readers retain their publication directories while collection
+removes only unowned directories and objects with no remaining references.
+Object installation and reference creation hold a shared lock for that store;
+collection takes its exclusive lock for the complete reference scan and deletion.
+Background archive writes therefore cannot introduce a reference after collection
+has decided which objects to retain.
+
+The deployment CLI separates storage preparation from service activation:
+
+1. In a normal four-product cutover request, change only History's
+   `publication_root` (and the corresponding `initial_publication`) and Display's
+   `root` to `<old-root>.prepared-<id>`. Keep both journals and all other current
+   settings unchanged. Use `publisher-storage-plan --preparation <id> --request
+   FILE --request-sha256 SHA` to review the source owner and destinations.
+2. Run `publisher-storage-prepare` with those arguments plus the candidate
+   `--archive` and reviewed `--expect-plan-sha256`. It holds the production lock
+   while the old publisher keeps serving. Repeated preparation uses the same
+   owned roots; corrupt or foreign material is refused. Check progress with
+   `publisher-storage-status`. The manifest lives under
+   `/opt/pir-publisher/storage-preparations/<id>/manifest.json`; the command
+   returns its digest. No service, route, active configuration or journal moves.
+3. Add the returned `prepared_storage: {"id": "...", "manifest_sha256": "..."}`
+   to the deployment request. Review a new `publisher-cutover-plan`, then use
+   the normal separately authorized deployment transaction. It checks the
+   manifest and exact prepared file identities while staging and again after
+   stopping the old owner. The old publisher may advance while
+   its independent prepared snapshot is verified. The node must still confirm
+   that snapshot's anchor at preparation and handoff; withdrawal, a source
+   rollback below that anchor, or changed prepared files refuses the handoff. It never performs a surprise
+   full conversion after stopping services. Normal runtime chain checks still
+   decide whether the prepared publication may serve.
+4. Activation carries each distribution revision high-water mark into the new
+   root. Rollback restores the saved binary and configuration, carries revision
+   high-water marks back, and starts from the untouched old publication files.
+   The ingestion journals stay in their original locations throughout. Display
+   preparation also clones and trims its derived lookup index, so startup only
+   catches up the recent suffix instead of rebuilding that index from genesis.
+5. After the deployment's qualification gates pass and rollback is no longer
+   needed, review `publisher-storage-cleanup-plan` using the deployment request
+   and preparation id. `publisher-storage-cleanup --expect-plan-sha256 SHA`
+   explicitly retires rollback and deletes only the unchanged retained source
+   roots. Cleanup refuses changed ownership or data, cannot delete journals or
+   active roots, and resumes an interrupted deletion from its durable journal.
+
+The Rust maintenance command `pir-publisher prepare-transparent-storage` performs
+one product's cloning and verification for this workflow. Its `--verify-only`
+mode reads completed evidence without changing files. A layout record identifies
+a completed storage format; it never grants permission to serve. This workflow
+does not migrate old retained publications into the new active root: those stay
+readable in the original root until explicit cleanup. It does not change wallet
+APIs, rebuild chain inputs, alter Enhance or Status storage, or update services
+during preparation.
+
+Transaction-detail activation first saves a durable intent containing the next
+restart record and HTTP authority, then commits both records before switching the
+in-memory view. Startup completes any intent under the root lock before opening
+state or collecting files. Recovered material still needs preparation and a live
+chain check before serving.
 
 History keeps `/provider/v1/`. Display offers the same discovery/immutable-file
 pattern under `/provider/txid/v1/`, with a distinct inventory schema. Each product

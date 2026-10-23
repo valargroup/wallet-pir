@@ -7,7 +7,7 @@ use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::publisher::{read_map, verify_dir, ActiveRecord, DisplayRoot, SealRecord, ShardSpec};
-use crate::history::publication::{BoxError, Journal};
+use crate::BoxError;
 use serde_json::{json, Value};
 use std::path::Path;
 use transparent_shard::display::plan_seals;
@@ -175,7 +175,7 @@ fn rebuild_seal(
 /// and the end is the last tip before seal `archives + 1` is decided, so the
 /// recent shard starts near its largest and replay seals right away.
 pub fn plan_start(
-    store: &impl Journal,
+    store: &impl crate::ingest::journal::DisplayJournal,
     seal: &transparent_shard::display::DisplaySealParams,
     archives: u64,
     replay_seals: u64,

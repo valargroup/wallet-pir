@@ -12,6 +12,7 @@ foreign changes.
 """
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -28,11 +29,13 @@ HOST = coordinator_edge.UNIFIED_HOST
 # GET operations each product answers without a session, and paths the unified
 # host must refuse: legacy aliases stay on the product hosts, operator routes
 # are never public.
-SERVED = ('/enhance/v1/init', '/status/v1/init', '/transparent/v1/shards', '/receiver/v1/inventory')
+SERVED = ('/enhance/v1/init', '/status/v1/init', '/transparent/v1/shards',
+          '/transparent/v1/filters/shards', '/receiver/v1/inventory')
 REFUSED = ('/metrics', '/v1/enhance/init', '/v1/status/init', '/v2/shards', '/v1/receiver/inventory',
            '/receiver/v1/health')
 PROBE_ATTEMPTS = 12
 PROBE_INTERVAL = 10
+DNS_SOURCE = '/opt/enhance-pir/infra/production/wallet-unified-dns.tf'
 
 
 def digest(value):
@@ -121,6 +124,93 @@ class UnifiedEdge:
                 'template_sha256': digest(self.template), 'action': 'skip' if before == after else 'reload'}
         return plan, before, after
 
+    def dns_plan(self):
+        """Prepare only the missing record in the coordinator's existing Terraform root.
+
+        Terraform's normal locked wrapper reviews and applies this source separately;
+        this operation never writes provider state or changes a DNS record itself.
+        """
+        self.ex.check_identity(self.host)
+        require(self.run(['cat', '/etc/machine-id']) == self.request['machine_id'], 'coordinator identity changed')
+        address = str(ipaddress.IPv4Address(self.inventory.hosts[self.host]['address']))
+        before = self.ex.read(self.host, DNS_SOURCE)
+        after = ('# Unified public entry point; same resource address as the fleet root.\n'
+                 'resource "cloudflare_dns_record" "wallet_pir" {\n'
+                 '  zone_id = var.cloudflare_zone_id\n'
+                 '  name = "' + HOST + '"\n  type = "A"\n  content = "' + address + '"\n'
+                 '  ttl = 300\n  proxied = false\n'
+                 '  comment = "Unified Wallet PIR entry point on the shared coordinator; managed by Terraform"\n}\n')
+        require(before in (None, after), 'DNS source changed outside this operation')
+        program = ('from pathlib import Path; import sys; root=Path(sys.argv[1]); '
+                   'files=[p for p in root.glob("*.tf") if p.name!=sys.argv[2]]; '
+                   'assert files and not any(\'resource "cloudflare_dns_record" "wallet_pir"\' in p.read_text() for p in files), '
+                   '"unified DNS resource already declared elsewhere"; '
+                   'assert any(\'variable "cloudflare_zone_id"\' in p.read_text() for p in files), "zone input missing"')
+        self.run(['python3', '-c', program, '/opt/enhance-pir/infra/production', 'wallet-unified-dns.tf'])
+        plan = {'request': self.request, 'path': DNS_SOURCE, 'before_sha256': digest(before) if before else None,
+                'after_sha256': digest(after), 'address': address}
+        return plan, after
+
+    def stage_dns(self, expected):
+        with self.lock_factory() as lock:
+            self.lock = lock
+            mutation_fence(self.inventory, self.ex, lock)
+            plan, after = self.dns_plan()
+            require(digest(json.dumps(plan, sort_keys=True)) == expected, 'DNS source plan changed since review')
+            journal = Journal.create(self.state_dir, 'coordinator-edge-dns-source', digest(after), plan, [], {})
+            journal.data.update(request=self.request, after=after)
+            journal.set_status('installing')
+            self.persist(journal)
+            self.write(DNS_SOURCE, after.encode(), 0o644)
+            require(self.ex.read(self.host, DNS_SOURCE) == after, 'installed DNS source differs')
+            journal.set_status('committed')
+            self.persist(journal)
+            return {'phase': journal.status, 'transaction': journal.id, 'plan': plan}
+
+    def history_relay_plan(self):
+        """Point the private History relay at the listener its public site uses."""
+        self.ex.check_identity(self.host)
+        require(self.run(['cat', '/etc/machine-id']) == self.request['machine_id'], 'History host identity changed')
+        address = str(ipaddress.IPv4Address(self.inventory.hosts[self.host]['address']))
+        before = self.ex.read(self.host, CONFIG)
+        require(before is not None, 'History Caddyfile is absent')
+        public = coordinator_edge.site_span(before, 'transparent-pir-v12.valargroup.dev')
+        active = 'reverse_proxy ' + address + ':8093'
+        require(active in before[slice(*public)], 'public History listener differs')
+        private = coordinator_edge.site_span(before, 'http://' + address + ':8080')
+        block = before[slice(*private)]
+        stale = 'reverse_proxy ' + address + ':8193'
+        require(block.count(stale) == 1 and active not in block, 'private History relay differs')
+        after = coordinator_edge.replace_in_site(before, private, lambda value: value.replace(stale, active))
+        self.validate(after)
+        code, body = self.ex.http_get(self.host, 'http://' + address + ':8093/v2/filters/shards')
+        require(code == 200 and isinstance(json.loads(body).get('shards'), list), 'current History listener is not serving')
+        plan = {'request': self.request, 'before_sha256': digest(before), 'after_sha256': digest(after),
+                'listener': address + ':8093'}
+        return plan, before, after
+
+    def repair_history_relay(self, expected):
+        """Reload only the checked relay; retain the candidate on any failure."""
+        with self.lock_factory() as lock:
+            self.lock = lock
+            mutation_fence(self.inventory, self.ex, lock)
+            plan, before, after = self.history_relay_plan()
+            require(digest(json.dumps(plan, sort_keys=True)) == expected, 'History relay plan changed since review')
+            journal = Journal.create(self.state_dir, 'transparent-history-relay', digest(after), plan, [], {})
+            journal.data.update(request=self.request, before=before, after=after)
+            journal.set_status('installing')
+            self.persist(journal)
+            require(self.ex.read(self.host, CONFIG) == before, 'History routes changed before installation')
+            self.write(CONFIG, after.encode(), 0o644)
+            self.reload()
+            require(self.ex.read(self.host, CONFIG) == after, 'installed History relay differs')
+            address = self.inventory.hosts[self.host]['address']
+            code, body = self.ex.http_get(self.host, 'http://' + address + ':8080/v2/filters/shards')
+            require(code == 200 and isinstance(json.loads(body).get('shards'), list), 'History relay is not serving')
+            journal.set_status('committed')
+            self.persist(journal)
+            return {'phase': journal.status, 'transaction': journal.id, 'plan': plan}
+
     def status_code(self, path):
         return self.run(['curl', '-sS', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '20',
                          '--resolve', HOST + ':443:127.0.0.1', 'https://' + HOST + path], 40)
@@ -173,7 +263,7 @@ class UnifiedEdge:
         journal.set_status('rolled-back')
         self.persist(journal)
 
-    def deploy(self, expected):
+    def deploy(self, expected, *, preserve_on_failure=False):
         with self.lock_factory() as lock:
             self.lock = lock
             mutation_fence(self.inventory, self.ex, lock)
@@ -198,7 +288,11 @@ class UnifiedEdge:
                 self.probe()
                 journal.set_status('committed')
                 self.persist(journal)
-            except Exception:
+            except Exception as failure:
+                if preserve_on_failure:
+                    journal.set_status('verification-failed', error=str(failure))
+                    self.persist(journal)
+                    raise
                 try:
                     self.restore(journal)
                 except Exception as error:
@@ -207,6 +301,22 @@ class UnifiedEdge:
                     raise
                 raise
             return {'phase': journal.status, 'transaction': journal.id, 'plan': plan}
+
+    def verify(self, identifier=None):
+        """Finish an installed candidate without changing or restoring its routes."""
+        with self.lock_factory() as lock:
+            self.lock = lock
+            mutation_fence(self.inventory, self.ex, lock)
+            journal = Journal.load(self.state_dir, SERVICE, identifier)
+            require(journal is not None and journal.data['request'] == self.request,
+                    'edge transaction/request mismatch')
+            require(Journal.load(self.state_dir, SERVICE).id == journal.id, 'verify the latest edge transaction')
+            require(self.run(['cat', '/etc/machine-id']) == self.request['machine_id'], 'coordinator identity changed')
+            require(self.ex.read(self.host, CONFIG) == journal.data['after'], 'installed Caddyfile differs')
+            self.probe()
+            journal.set_status('committed')
+            self.persist(journal)
+            return {'phase': journal.status, 'transaction': journal.id}
 
     def rollback(self, identifier=None):
         journal = Journal.load(self.state_dir, SERVICE, identifier)
