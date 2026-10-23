@@ -179,10 +179,11 @@ async fn a_stop_ends_only_the_wait_between_complete_passes() {
     stop.notify_one();
     tokio::time::advance(Duration::from_secs(1)).await;
     assert!(running.await.unwrap().is_none());
-    let p = probe.lock().unwrap();
-    assert_eq!(p.events, ["started", "work", "finished"]);
-    assert_eq!(p.calls, 1, "no pass starts after the stop");
-    drop(p);
+    {
+        let p = probe.lock().unwrap();
+        assert_eq!(p.events, ["started", "work", "finished"]);
+        assert_eq!(p.calls, 1, "no pass starts after the stop");
+    }
 
     let probe = Arc::new(Mutex::new(Probe::default()));
     let stop = Arc::new(tokio::sync::Notify::new());
