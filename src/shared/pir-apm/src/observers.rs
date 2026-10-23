@@ -16,7 +16,9 @@
 //! inventory; only an explicit `decommissioned` entry retires its incidents.
 use crate::incidents::{Condition, Incident, Store};
 use anyhow::{Context, Result};
-use pir_host_observations::{Observations, Status, MAX_AGE_SECONDS, MAX_BODY_BYTES, PATH};
+use pir_host_observations::{
+    Observations, Status, MAX_AGE_SECONDS, MAX_BODY_BYTES, MAX_FUTURE_SECONDS, PATH,
+};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -49,6 +51,54 @@ pub struct Settings {
     /// Transparent capacity views (`host_snapshot` in their config).
     #[serde(default)]
     pub host_snapshot: Option<PathBuf>,
+    /// How roster members appear in `host_snapshot`, as the former sampler's
+    /// `roster` block did: under their own id, with the unit of their role.
+    #[serde(default)]
+    pub roster_snapshot: Option<RosterSnapshot>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RosterSnapshot {
+    pub unit: String,
+    #[serde(default)]
+    pub role_units: BTreeMap<String, String>,
+    #[serde(default = "root_path")]
+    pub data_path: String,
+    #[serde(default)]
+    pub size: Option<String>,
+}
+
+impl RosterSnapshot {
+    fn for_member(&self, id: &str, role: Option<&str>) -> Snapshot {
+        Snapshot {
+            sources: vec![id.to_string()],
+            unit: role
+                .and_then(|r| self.role_units.get(r))
+                .unwrap_or(&self.unit)
+                .clone(),
+            data_path: self.data_path.clone(),
+            size: self.size.clone(),
+        }
+    }
+}
+
+fn valid_unit(unit: &str) -> bool {
+    (1..=128).contains(&unit.len())
+        && unit
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'@'))
+}
+
+fn valid_snapshot(unit: &str, size: Option<&String>, data_path: &str) -> bool {
+    valid_unit(unit)
+        && data_path.starts_with('/')
+        && pir_host_observations::valid_name(data_path, 128)
+        && size.is_none_or(|s| {
+            (1..=40).contains(&s.len())
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -99,6 +149,8 @@ struct RosterMember {
     #[serde(default)]
     intent: Option<String>,
     #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
     monitoring: Option<RosterMonitoring>,
 }
 
@@ -112,7 +164,8 @@ struct RosterMonitoring {
 
 /// Hosts the roster expects: enrolled members with their endpoints, and ids of
 /// members whose sidecar enrollment is missing. An unreadable roster is an error.
-pub fn roster_hosts(path: &Path) -> Result<Roster> {
+/// `snapshot`, when set, maps each enrolled member into the host snapshot.
+pub fn roster_hosts(path: &Path, snapshot: Option<&RosterSnapshot>) -> Result<Roster> {
     let members: Vec<RosterMember> =
         serde_json::from_slice(&std::fs::read(path)?).context("parsing roster")?;
     let mut roster = Roster::default();
@@ -132,12 +185,12 @@ pub fn roster_hosts(path: &Path) -> Result<Roster> {
         match m.monitoring {
             Some(record) => roster.hosts.push(Host {
                 tls_name: format!("{}.pir-monitoring", m.id),
+                snapshot: snapshot.map(|s| s.for_member(&m.id, m.role.as_deref())),
                 host_id: m.id,
                 address: record.address,
                 config_digest: record.config_digest,
                 checks: record.checks,
                 edge_output: None,
-                snapshot: None,
             }),
             None => roster.unenrolled.push(m.id),
         }
@@ -210,6 +263,21 @@ impl Settings {
             anyhow::ensure!(
                 !settings.decommissioned.contains(&h.host_id),
                 "a decommissioned host is still in the observer inventory"
+            );
+            if let Some(s) = &h.snapshot {
+                anyhow::ensure!(
+                    !s.sources.is_empty()
+                        && s.sources.iter().all(|n| valid_unit(n))
+                        && valid_snapshot(&s.unit, s.size.as_ref(), &s.data_path),
+                    "invalid host snapshot mapping"
+                );
+            }
+        }
+        if let Some(s) = &settings.roster_snapshot {
+            anyhow::ensure!(
+                s.role_units.values().all(|u| valid_unit(u))
+                    && valid_snapshot(&s.unit, s.size.as_ref(), &s.data_path),
+                "invalid roster snapshot mapping"
             );
         }
         Ok(settings)
@@ -303,16 +371,23 @@ pub async fn edge(client: &reqwest::Client, host: &Host) -> Result<()> {
 #[derive(Default)]
 struct HostState {
     latest: Option<Observations>,
-    last_valid_at: Option<u64>,
     failure: Option<&'static str>,
-    /// Identity of the latest distinct document and when it first arrived.
-    distinct: Option<(String, u64)>,
-    distinct_at: u64,
+    /// The latest fresh document's identity, its `generated_at`, and when the
+    /// APM first saw it. Only a new, fresh document renews coverage: a cached
+    /// or frozen document served again does not.
+    progress: Option<((String, u64), u64)>,
+    /// Per check: the newest `observed_at` with a fresh known status, and when
+    /// the APM first saw it.
+    known: BTreeMap<String, (u64, u64)>,
 }
 
 pub struct Tracker {
     started: u64,
     hosts: BTreeMap<String, HostState>,
+}
+
+fn fresh(at: u64, now: u64) -> bool {
+    at <= now + MAX_FUTURE_SECONDS && now.saturating_sub(at) <= MAX_AGE_SECONDS
 }
 
 impl Tracker {
@@ -328,12 +403,20 @@ impl Tracker {
         match poll {
             Poll::Valid(doc) => {
                 let identity = (doc.incarnation.clone(), doc.generated_at);
-                if state.distinct.as_ref() != Some(&identity) {
-                    state.distinct = Some(identity);
-                    state.distinct_at = now;
+                let seen = state.progress.as_ref().map(|(i, _)| i);
+                if fresh(doc.generated_at, now) && seen != Some(&identity) {
+                    state.progress = Some((identity, now));
+                }
+                for c in &doc.checks {
+                    let newer = state
+                        .known
+                        .get(&c.name)
+                        .is_none_or(|(at, _)| c.observed_at > *at);
+                    if newer && Observations::status_at(c, now) != Status::Unknown {
+                        state.known.insert(c.name.clone(), (c.observed_at, now));
+                    }
                 }
                 state.latest = Some(doc);
-                state.last_valid_at = Some(now);
                 state.failure = None;
             }
             Poll::Failed(reason) => state.failure = Some(reason),
@@ -352,13 +435,17 @@ impl Tracker {
         for host_id in enrolled {
             let host = expected.hosts.iter().find(|h| &h.host_id == host_id);
             let state = self.hosts.get(host_id).unwrap_or(&empty);
-            let since = state.last_valid_at.unwrap_or(self.started);
+            let progress = state.progress.as_ref().map(|((_, at), seen)| (*at, *seen));
+            let since = progress.map_or(self.started, |(at, _)| at);
             let missing = now.saturating_sub(since) > MAX_AGE_SECONDS;
             let reason = match host {
                 None if expected.unenrolled.contains(host_id) => {
                     "roster member has no sidecar enrollment"
                 }
                 None => "enrolled host is missing from the monitoring inventory",
+                Some(_) if state.failure.is_none() && state.latest.is_some() => {
+                    "sidecar serves no fresh observation"
+                }
                 Some(_) => state.failure.unwrap_or("no observation yet"),
             };
             let current = state
@@ -373,17 +460,52 @@ impl Tracker {
                 firing: if missing {
                     Some(true)
                 } else {
-                    state.last_valid_at.map(|_| false)
+                    progress.map(|_| false)
                 },
                 observed: if missing || current.is_none() {
                     reason.into()
                 } else {
                     "valid observation".into()
                 },
-                threshold: "no valid sidecar observation for 45s".into(),
+                threshold: "no fresh sidecar observation for 45s".into(),
                 hold_seconds: 0,
-                sample: if missing { now } else { state.distinct_at },
+                sample: if missing {
+                    now
+                } else {
+                    progress.map_or(0, |(_, seen)| seen)
+                },
             });
+            // Each configured check is covered on its own, so healthy checks
+            // never mask one that stays unknown. While the whole host is
+            // missing its coverage incident alone reports it.
+            for name in host.iter().flat_map(|h| &h.checks) {
+                let known = state.known.get(name).copied();
+                let since = known.map_or(self.started, |(at, _)| at);
+                let stale = now.saturating_sub(since) > MAX_AGE_SECONDS;
+                out.push(Condition {
+                    retired: false,
+                    key: format!("host:{host_id}:coverage:{name}"),
+                    resource: host_id.clone(),
+                    severity: "warning".into(),
+                    firing: match (missing, stale) {
+                        (true, _) => None,
+                        (false, true) => Some(true),
+                        (false, false) => known.map(|_| false),
+                    },
+                    observed: if stale {
+                        format!("no fresh known status for check {name}")
+                    } else {
+                        "fresh known status".into()
+                    },
+                    threshold: format!("check {name} unknown or stale for 45s"),
+                    hold_seconds: 0,
+                    sample: if stale {
+                        now
+                    } else {
+                        known.map_or(0, |(_, seen)| seen)
+                    },
+                });
+            }
             let mut names: BTreeSet<&str> = host
                 .map(|h| h.checks.iter().map(String::as_str).collect())
                 .unwrap_or_default();
@@ -464,11 +586,13 @@ pub fn from_env() -> Result<Option<Settings>> {
 }
 
 /// One host's entry in the former sampler's `hosts.json` shape. Properties a
-/// check does not report are left out, never filled in.
+/// check does not report, or reports unknown, stale or from the future as of
+/// `now`, are left out, never filled in.
 pub fn snapshot_entry(
     host: &Host,
     snapshot: &Snapshot,
     doc: Option<&Observations>,
+    now: u64,
 ) -> serde_json::Value {
     let mut entry = serde_json::Map::new();
     entry.insert("host_id".into(), host.host_id.clone().into());
@@ -482,7 +606,7 @@ pub fn snapshot_entry(
     let value = |check: &str, name: &str| {
         doc.checks
             .iter()
-            .find(|c| c.name == check && c.status != Status::Unknown)
+            .find(|c| c.name == check && Observations::status_at(c, now) != Status::Unknown)
             .and_then(|c| c.values.iter().find(|v| v.name == name))
             .map(|v| serde_json::json!(v.value as u64))
     };
@@ -525,7 +649,7 @@ pub fn snapshot_entry(
         else {
             continue;
         };
-        if check.status == Status::Unknown {
+        if Observations::status_at(check, now) == Status::Unknown {
             continue;
         }
         let mut u = serde_json::Map::new();
@@ -562,8 +686,8 @@ fn write_snapshot(path: &Path, tracker: &Tracker, hosts: &[Host], now: u64) -> R
         };
         let doc = tracker
             .current(&host.host_id)
-            .filter(|d| now.saturating_sub(d.generated_at) <= MAX_AGE_SECONDS);
-        let entry = snapshot_entry(host, snapshot, doc);
+            .filter(|d| fresh(d.generated_at, now));
+        let entry = snapshot_entry(host, snapshot, doc, now);
         for source in &snapshot.sources {
             out.insert(source.clone(), entry.clone());
         }
@@ -591,7 +715,7 @@ pub async fn run(
         interval.tick().await;
         // An unreadable roster keeps the inventory's hosts and enrollment.
         let roster = match &settings.roster {
-            Some(path) => match roster_hosts(path) {
+            Some(path) => match roster_hosts(path, settings.roster_snapshot.as_ref()) {
                 Ok(roster) => Some(roster),
                 Err(_) => {
                     eprintln!("observer roster unavailable");
@@ -673,6 +797,7 @@ mod tests {
             decommissioned: decommissioned.iter().map(|s| s.to_string()).collect(),
             roster: None,
             host_snapshot: None,
+            roster_snapshot: None,
         }
     }
 
@@ -886,7 +1011,7 @@ mod tests {
         )
         .unwrap();
         let s = settings(&[], &[]);
-        let expected = Expected::of(&s, Some(roster_hosts(&roster).unwrap()));
+        let expected = Expected::of(&s, Some(roster_hosts(&roster, None).unwrap()));
         assert_eq!(expected.hosts[0].tls_name, "w1.pir-monitoring");
         assert_eq!(expected.unenrolled, ["w3"]);
         assert_eq!(expected.decommissioned, ["w4"]);
@@ -899,7 +1024,7 @@ mod tests {
         assert_eq!(w3.observed, "roster member has no sidecar enrollment");
         h.tracker
             .record("w1", doc("w1", 1046, Status::Healthy), 1046);
-        assert!(roster_hosts(&dir.path().join("absent.json")).is_err());
+        assert!(roster_hosts(&dir.path().join("absent.json"), None).is_err());
     }
 
     #[test]
@@ -934,7 +1059,7 @@ mod tests {
             observed_at: 1000,
             values: vec![v("oom_kills", 2.)],
         });
-        let entry = snapshot_entry(&host, &snapshot, Some(&d));
+        let entry = snapshot_entry(&host, &snapshot, Some(&d), 1000);
         assert_eq!(entry["at"], 1000);
         assert_eq!(entry["disk_available_bytes"], 10);
         assert_eq!(entry["disk_total_bytes"], 40);
@@ -945,10 +1070,148 @@ mod tests {
         assert_eq!(unit["memory_current_bytes"], 5);
         assert!(unit["memory_max_bytes"].is_null());
         assert_eq!(unit["oom_kills"], 2);
-        let gone = snapshot_entry(&host, &snapshot, None);
+        let gone = snapshot_entry(&host, &snapshot, None, 1000);
         assert_eq!(
             (gone["at"].as_u64(), gone["host_id"].as_str()),
             (Some(0), Some("w1"))
         );
+    }
+
+    fn two_checks(at: u64, other_at: u64, other: Status) -> Poll {
+        let Poll::Valid(mut d) = doc("w1", at, Status::Healthy) else {
+            unreachable!()
+        };
+        d.checks.push(Check {
+            name: "memory".into(),
+            status: other,
+            reason: "hook failed".into(),
+            observed_at: other_at,
+            values: vec![],
+        });
+        Poll::Valid(d)
+    }
+
+    #[test]
+    fn frozen_documents_and_persistently_unknown_checks_lose_coverage() {
+        let mut s = settings(&["w1"], &[]);
+        s.hosts[0].checks.push("memory".into());
+        let mut h = Harness::new();
+        // The same document served for 46 seconds never renews coverage.
+        for now in [1000, 1015, 1030, 1046] {
+            h.tracker
+                .record("w1", two_checks(1000, 1000, Status::Healthy), now);
+            h.tick(&s, now);
+        }
+        assert!(h.active(COVERAGE), "a frozen snapshot is not progress");
+        assert!(
+            !h.active("host:w1:coverage:memory"),
+            "host coverage alone reports a host that is missing"
+        );
+        // Fresh documents, but one check stays unknown: its own coverage warns
+        // while the healthy check cannot mask it.
+        let mut h = Harness::new();
+        for now in (1000..=1050).step_by(5) {
+            h.tracker
+                .record("w1", two_checks(now, now, Status::Unknown), now);
+            h.tick(&s, now);
+        }
+        assert!(!h.active(COVERAGE));
+        assert!(h.active("host:w1:coverage:memory"));
+        assert!(!h.active("host:w1:coverage:disk:/"));
+        // One check's observation frozen while the document advances.
+        let mut h = Harness::new();
+        for now in (1000..=1050).step_by(5) {
+            h.tracker
+                .record("w1", two_checks(now, 1000, Status::Healthy), now);
+            h.tick(&s, now);
+        }
+        assert!(h.active("host:w1:coverage:memory"));
+        // Two distinct fresh known observations recover it; a repeat does not.
+        h.tracker
+            .record("w1", two_checks(1055, 1055, Status::Healthy), 1055);
+        h.tick(&s, 1055);
+        h.tracker
+            .record("w1", two_checks(1055, 1055, Status::Healthy), 1058);
+        h.tick(&s, 1058);
+        assert!(h.active("host:w1:coverage:memory"));
+        h.tracker
+            .record("w1", two_checks(1060, 1060, Status::Healthy), 1060);
+        h.tick(&s, 1060);
+        assert!(!h.active("host:w1:coverage:memory"));
+    }
+
+    #[test]
+    fn future_documents_are_not_progress() {
+        let s = settings(&["w1"], &[]);
+        let mut h = Harness::new();
+        for now in [1000, 1020, 1046] {
+            h.tracker
+                .record("w1", doc("w1", now + 60, Status::Healthy), now);
+            h.tick(&s, now);
+        }
+        assert!(h.active(COVERAGE));
+    }
+
+    #[test]
+    fn snapshots_omit_stale_checks_and_map_dynamic_workers() {
+        let host = settings(&["w1"], &[]).hosts.remove(0);
+        let snapshot = Snapshot {
+            sources: vec!["w1".into()],
+            unit: "transparent-pir.service".into(),
+            data_path: "/".into(),
+            size: None,
+        };
+        let Poll::Valid(mut d) = doc("w1", 1040, Status::Healthy) else {
+            unreachable!()
+        };
+        let bytes = |name: &str| pir_host_observations::Value {
+            name: name.into(),
+            value: 7.,
+            unit: pir_host_observations::Unit::Bytes,
+        };
+        d.checks[0].observed_at = 990;
+        d.checks[0].values = vec![bytes("available_bytes"), bytes("usable_bytes")];
+        d.checks.push(Check {
+            name: "memory".into(),
+            status: Status::Healthy,
+            reason: "ok".into(),
+            observed_at: 1040,
+            values: vec![bytes("available_bytes")],
+        });
+        // The document is fresh but its slow disk measurement is not.
+        let entry = snapshot_entry(&host, &snapshot, Some(&d), 1040);
+        assert!(entry.get("disk_available_bytes").is_none());
+        assert_eq!(entry["memory_available_bytes"], 7);
+
+        let dir = tempfile::tempdir().unwrap();
+        let roster = dir.path().join("roster.json");
+        std::fs::write(
+            &roster,
+            serde_json::json!([{"id": "w1", "intent": "enrolled", "role": "recent",
+                "monitoring": {"address": "10.0.0.9:9443",
+                    "config_digest": format!("sha256:{}", "0".repeat(64)),
+                    "checks": ["disk:/"]}}])
+            .to_string(),
+        )
+        .unwrap();
+        let spec = RosterSnapshot {
+            unit: "transparent-pir.service".into(),
+            role_units: BTreeMap::from([("recent".into(), "transparent-recent.service".into())]),
+            data_path: "/".into(),
+            size: Some("m-4vcpu-32gb".into()),
+        };
+        let mut s = settings(&[], &[]);
+        s.roster_snapshot = Some(spec.clone());
+        let expected = Expected::of(&s, Some(roster_hosts(&roster, Some(&spec)).unwrap()));
+        let mut tracker = Tracker::new(1000);
+        tracker.record("w1", doc("w1", 1040, Status::Healthy), 1040);
+        let out = dir.path().join("hosts.json");
+        write_snapshot(&out, &tracker, &expected.hosts, 1041).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+        // The quality loop looks hosts up by the member's target id.
+        assert_eq!(written["w1"]["unit"], "transparent-recent.service");
+        assert_eq!(written["w1"]["size"], "m-4vcpu-32gb");
+        assert_eq!(written["w1"]["at"], 1040);
     }
 }

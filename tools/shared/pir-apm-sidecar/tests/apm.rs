@@ -89,6 +89,7 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         decommissioned: vec![],
         roster: None,
         host_snapshot: None,
+        roster_snapshot: None,
     };
     let host = |id: &str, digest: &str, checks: &[&str]| Host {
         host_id: id.into(),
@@ -142,6 +143,46 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         failed(poll(settings("collector"), wrong_name).await),
         "sidecar unreachable or authentication failed"
     );
+    // A sidecar that keeps serving one frozen document renews nothing: after
+    // 45 seconds the host's coverage and each check are unavailable, although
+    // every poll still authenticates and parses.
+    let at = doc.generated_at;
+    let expected_hosts = observers::Expected {
+        hosts: vec![good.clone()],
+        unenrolled: vec![],
+        decommissioned: vec![],
+    };
+    let enrolled = std::collections::BTreeSet::from(["w1".to_string()]);
+    let mut tracker = observers::Tracker::new(at);
+    let firing = |t: &observers::Tracker, now: u64, key: &str| {
+        t.conditions(&expected_hosts, &enrolled, &[], now)
+            .into_iter()
+            .find(|c| c.key == key)
+            .unwrap()
+            .firing
+    };
+    for now in [at, at + 20, at + 40, at + 46] {
+        let p = poll(settings("collector"), good.clone()).await;
+        assert!(matches!(p, Poll::Valid(_)), "frozen document still parses");
+        tracker.record("w1", p, now);
+    }
+    assert_eq!(firing(&tracker, at + 46, "host:w1:coverage"), Some(true));
+    assert_eq!(firing(&tracker, at + 46, "host:w1:check:certificate"), None);
+    // Future-dated documents never renew coverage either.
+    let mut future = doc.clone();
+    future.generated_at = at + 300;
+    for c in &mut future.checks {
+        c.observed_at = at + 300;
+    }
+    tx.send_replace(server::Cache {
+        observations: Bytes::from(serde_json::to_vec(&future).unwrap()),
+        edge_metrics: None,
+    });
+    let mut tracker = observers::Tracker::new(at);
+    for now in [at, at + 46] {
+        tracker.record("w1", poll(settings("collector"), good.clone()).await, now);
+    }
+    assert_eq!(firing(&tracker, at + 46, "host:w1:coverage"), Some(true));
     // An incompatible schema and an empty cache are rejected too.
     let mut v2 = serde_json::to_value(&doc).unwrap();
     v2["schema_version"] = 2.into();

@@ -3,7 +3,7 @@
 //! A hook is a fixed argument vector run under the sidecar account in its own
 //! process group, with an empty environment apart from a fixed `PATH`. It
 //! prints `{"checks":[{"name","status","reason","values"}]}` on stdout. A
-//! timeout kills the whole process group; any execution, size or parse failure
+//! timeout kills the hook's process group; any execution, size, count or parse failure
 //! reports `hook:<name>` as unknown with a fixed reason, never raw output.
 use crate::config::Hook;
 use pir_host_observations::{Check, Status, Value};
@@ -12,6 +12,9 @@ use std::{process::Stdio, time::Duration};
 use tokio::io::AsyncReadExt;
 
 pub const MAX_OUTPUT: usize = 64 * 1024;
+/// Most checks one hook may report; a longer list makes the hook unknown
+/// rather than silently dropping results past the limit.
+pub const MAX_RESULTS: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -78,7 +81,9 @@ pub async fn run(hook: &Hook, now: u64) -> Vec<Check> {
         Ok((buffer, Some(status)))
     };
     let result = tokio::time::timeout(Duration::from_secs(hook.timeout_seconds), work).await;
-    // Descendants that outlived or detached from the hook are terminated too.
+    // Descendants still in the hook's process group are terminated too. One
+    // that starts its own session or group escapes this signal and is only
+    // reaped when systemd stops the sidecar unit's control group.
     kill_group(pid);
     let (buffer, status) = match result {
         Err(_) => return unknown(hook, "hook timed out", now),
@@ -92,6 +97,9 @@ pub async fn run(hook: &Hook, now: u64) -> Vec<Check> {
     let Ok(output) = serde_json::from_slice::<Output>(&buffer) else {
         return unknown(hook, "hook output is not a valid check document", now);
     };
+    if output.checks.len() > MAX_RESULTS {
+        return unknown(hook, "hook reported more than 32 checks", now);
+    }
     let mut checks = vec![Check {
         name: format!("hook:{}", hook.name),
         status: Status::Healthy,
@@ -99,7 +107,7 @@ pub async fn run(hook: &Hook, now: u64) -> Vec<Check> {
         observed_at: now,
         values: vec![],
     }];
-    for r in output.checks.into_iter().take(32) {
+    for r in output.checks {
         checks.push(Check {
             name: format!("hook:{}:{}", hook.name, r.name),
             status: r.status,
@@ -185,6 +193,26 @@ mod tests {
             run(&missing, 1).await[0].reason,
             "hook could not be started"
         );
+    }
+
+    #[tokio::test]
+    async fn result_lists_past_the_limit_are_unknown_not_truncated() {
+        let script = |n: usize, last: &str| {
+            let mut entries: Vec<String> = (1..n)
+                .map(|i| format!(r#"{{"name":"c{i}","status":"healthy","reason":"ok"}}"#))
+                .collect();
+            entries.push(format!(
+                r#"{{"name":"c{n}","status":"{last}","reason":"bad"}}"#
+            ));
+            format!("echo '{{\"checks\":[{}]}}'", entries.join(","))
+        };
+        let at_limit = run(&hook(&script(MAX_RESULTS, "critical"), 5), 1).await;
+        assert_eq!(at_limit.len(), MAX_RESULTS + 1);
+        assert_eq!(at_limit[MAX_RESULTS].status, Status::Critical);
+        let over = run(&hook(&script(MAX_RESULTS + 1, "critical"), 5), 1).await;
+        assert_eq!(over.len(), 1);
+        assert_eq!(over[0].status, Status::Unknown);
+        assert_eq!(over[0].reason, "hook reported more than 32 checks");
     }
 
     #[tokio::test]
