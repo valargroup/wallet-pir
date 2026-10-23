@@ -28,7 +28,7 @@ SCRIPTS = Path(__file__).resolve().parent
 LIB = str(SCRIPTS.parents[2]/'tools/lib')
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
-from wallet_pir_ops import transparent_unit  # noqa: E402
+from wallet_pir_ops import monitoring_install, transparent_unit  # noqa: E402
 NAME = re.compile(r'^transparent-pir-recent-(\d{2,3})$')
 SERVE_DEADLINE = 25 * 60
 DRAIN_SECONDS = 120
@@ -83,7 +83,8 @@ class Actuator:
         self.scaler = Path(self.c['scaler_dir'])
         self.journal = self.scaler/'journal'
         self.state = Path(self.fleet['state_dir'])
-        self.inventory = INVENTORY.Inventory(self.state, self.fleet['roster'], self.fleet.get('known_hosts'))
+        self.inventory = INVENTORY.Inventory(self.state, self.fleet['roster'], self.fleet.get('known_hosts'),
+                                             self.fleet.get('monitoring_roster'))
         self.elastic = elastic
         self.do = do
         self.remote = remote or Remote(self.fleet)
@@ -630,12 +631,45 @@ def bootstrap(actuator, op, name):
         try:
             ready = http_json(f'http://{host}:8093/v1/ready')
             if ready.get('ready') and ready.get('binary_sha256') == release['binary_sha256']:
+                if not install_monitoring(actuator, name, host):
+                    return False
                 log('member_installed', member=name, map_sha256=digest)
                 return True
         except (OSError, ValueError):
             pass
         time.sleep(5)
     raise ActuatorError(f'{name} did not become ready within 20 minutes')
+
+
+def install_monitoring(actuator, name, host):
+    """Install and enroll the member's APM sidecar through the shared path.
+
+    `monitoring` in the actuator config pins the sidecar binary and the
+    member's observer settings beyond its id and address. Credentials are
+    issued from the CA the actuator receives as runtime references. A member is
+    installed only once its sidecar is ready and its enrollment is recorded.
+    """
+    spec = actuator.c.get('monitoring')
+    if spec is None:
+        return True
+    settings = {'host_id': name, 'address': host, **spec.get('settings', {})}
+    try:
+        record = monitoring_install.install_and_enroll(
+            actuator.remote, host, settings, binary=spec['sidecar_binary'],
+            credentials=monitoring_install.issue_from_environment(name))
+    except (ActuatorError, RuntimeError, OSError, subprocess.SubprocessError) as error:
+        log('monitoring_waiting', member=name, reason=type(error).__name__)
+        return False
+
+    def enroll(inv):
+        for m in inv['members']:
+            if m['id'] == name:
+                m['monitoring'] = record
+        return inv
+    inv = actuator.inventory.load()
+    actuator.inventory.write(inv['revision'], enroll, 'actuator:monitoring:' + name)
+    log('monitoring_enrolled', member=name, config_digest=record['config_digest'])
+    return True
 
 
 def publication_fresh(actuator):
