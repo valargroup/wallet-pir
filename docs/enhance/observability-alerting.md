@@ -383,27 +383,25 @@ Open Transparent incidents are left as they are, not retired, until a valid
 config is back.
 
 The existing fleet roster is authoritative. No public metrics route is added.
-The host sampler uses explicitly configured private SSH targets and loopback
-Caddy metrics. Its output contains resource numbers and fixed source names.
-With a `roster` block (`{"path": ".../roster.json", "unit":
-"transparent-shard-server.service"}`) it derives one target per enrolled or
-draining transparent worker from the roster on every cycle, so elastic members
-and replaced owners are sampled under their own names. A static list sampled
-archive-03 as `transparent-pir-recent-03` after the 2026-09-29 owner move.
-An explicit target may also name its machine (`host_id`, default its first
-source), its DigitalOcean size slug (`size`) and up to eight more systemd
-`units` to report beside `unit`; the `roster` block accepts `size` for every
-derived target and `role_units` (roster `role` to unit), and a derived target's
-`host_id` is its worker id (at most 80 letters, digits, `_`, `.`, `@` or `-`,
-the APM's own limit; anything else falls back to the first source). Each
-snapshot entry then adds `unit` (the main unit), `host_id`, `size`,
+Host resources come from per-host APM sidecars (`pir-apm-sidecar`), not SSH.
+Each managed host runs one, deployed as the `apm-sidecar.observer` role from
+the deployment inventory, measuring its filesystems, required volumes, memory,
+swap, configured units and hooks every 15 s and serving the result over mTLS
+on port 9443. The APM polls every enrolled sidecar every 5 s as the
+`pir-apm-collector` identity of the dedicated monitoring CA, raises its
+`host` family (below) and writes `host_snapshot` in the former sampler's shape
+for the hosts whose observer settings carry `snapshot` (`sources`, main `unit`,
+optional `data_path` and `size`); with `roster` in its observer inventory,
+every enrolled or draining roster member is an expected host. Aggregate Caddy
+metrics are read by the router's sidecar on loopback and written to
+`edge_output`. `tools/scripts/wallet-pir-monitoring.py` renders the observer
+inventory, reports coverage gaps against Terraform outputs, declared external
+hosts and the roster, issues monitoring certificates and installs credentials
+under the production lock. Each snapshot entry has `unit`, `host_id`, `size`,
 `swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
 `memory_current_bytes`, `memory_anon_bytes` (`anon` plus `shmem` from the
 cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
-unlimited) and `oom_kills`. A value the host does not report, or a unit systemd
-has not loaded, is left out. The existing fields are unchanged.
-[`pir-quality-hosts.example.json`](../../tools/enhance/deploy/pir-quality-hosts.example.json)
-samples the coordinator, the router, the v12 roster and the one-query txid site.
+unlimited) and `oom_kills`; a value the sidecar does not report is left out.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
@@ -412,8 +410,8 @@ estimates and service payload byte counters have different semantics.
 A schema cutover moves these inputs. Since v11 (2026-10-03) the fleet roster is
 `/opt/transparent-publisher/v11/roster.json` and the continuous load writes
 `/srv/transparent-activity/canonical-load/v11/status.json`; point the APM config
-and the host sampler's `roster` block at them, then restart `pir-apm`, which
-reads its config only at start (the sampler rereads its own each cycle). The pre-v11 roster and
+and the observer inventory's `roster` at them, then restart `pir-apm`, which
+reads both only at start. The pre-v11 roster and
 `/opt/transparent-5qps-20260929/status.json` stopped changing at the cutover, so
 an unmoved APM shows retired workers and a stale load. The v11 load pins worker
 binaries in `canonical-load/v11/pins.json`. `/etc/pir-quality/qualified-workers.json`
@@ -633,9 +631,6 @@ txid display controller.
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |
 | `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples | 120 s |
-| `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
-| `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
-| `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 
 History keeps its 30 s and 60 s unpublished-age rules, which already page
 earlier than 180 s; the txid display seals every block, so it has only the 180 s
@@ -660,15 +655,36 @@ yet, so their 5xx and latency rules stay unknown until they export `pir_http_*`.
 Histogram deltas need a `*process_start_time_seconds` gauge on each scraped
 process to detect restarts.
 
-When a service's inventory is valid, incidents of a source it no longer lists
+Host memory, disk and OOM rules moved to the sidecar `host` family; incidents
+the former `memory_`, `disk_`, `oom_` and `host_coverage_` rules left open are
+retired. When a service's inventory is valid, incidents of a source it no longer lists
 are retired, and incidents of a service no longer configured (or keys of the old
 single-service shape) are retired by the shared family.
 
+## Host family (sidecars)
+
+The `host` family has its own mode (`mode` in `/etc/pir-apm/observers.json`)
+and keys `host:<host>:check:<check>` and `host:<host>:coverage`. Sidecars decide
+each check; the APM propagates status and reason. Built-in checks: `disk:<mount>`
+per writable local block filesystem (deduplicated by device, root-reserved
+blocks excluded; below 15% available warns at once), `volume:<path>` per
+required volume bound to its filesystem UUID (absent, replaced by its parent
+directory, another filesystem or read-only is critical from the first
+observation), `memory` (< 15% available for 120 s warns), `swap`,
+`unit:<unit>:{active,restarts,oom}` (an automatic restart warns and a new OOM
+kill is critical for 5 minutes), `certificate` (serving certificate expires in
+< 30 days warns, < 7 critical), `hook:<name>` and `edge`. A check older than
+45 s, a missing configured check, an unreachable, unauthenticated, malformed,
+other-schema, other-host or other-configuration document is unknown and never
+recovers an incident; coverage warns after 45 s without a valid document,
+including hosts never observed. Recovery needs two distinct healthy
+observations. Enrollment persists until the host is retired in the deployment
+inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
+
 ## Transparent RAM capacity
 
-The host sampler's snapshot (`host_snapshot`) has one entry per source with
-`at`, memory, disk, restarts, `cgroup_memory_bytes`, `cpu_seconds` and
-`oom_kills`, and may add `host_id` (stable host name; several sources may share
+The APM's host snapshot (`host_snapshot`) has one entry per source with
+`at`, memory, disk, restarts and `oom_kills`, and may add `host_id` (stable host name; several sources may share
 a host), `size` (DigitalOcean size), `swap_total_bytes`, `swap_free_bytes` and
 `units`: `{"<unit>": {"memory_current_bytes", "memory_anon_bytes",
 "memory_peak_bytes", "memory_max_bytes" (null when unlimited), "oom_kills"}}`.

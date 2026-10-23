@@ -128,8 +128,8 @@ class PublisherTests(PublisherFixture, unittest.TestCase):
 
     def test_stale_managed_file_refuses_before_staging(self):
         plan = self.target.plan()
-        sampler = json.loads(self.ex.read('coordinator', publisher.SAMPLER))
-        self.ex.put('coordinator', publisher.SAMPLER, json.dumps({**sampler, 'changed': True}))
+        observers = json.loads(self.ex.read('coordinator', publisher.OBSERVERS))
+        self.ex.put('coordinator', publisher.OBSERVERS, json.dumps({**observers, 'changed': True}))
         with self.assertRaisesRegex(DeployError, 'stale'):
             self.target.deploy(self.binary, plan['plan_sha256'], self.serving_binary)
         self.assertEqual(self.ex.effects, [])

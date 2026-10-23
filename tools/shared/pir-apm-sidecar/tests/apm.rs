@@ -69,6 +69,8 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         },
         hosts: vec![],
         decommissioned: vec![],
+        roster: None,
+        host_snapshot: None,
     };
     let host = |id: &str, digest: &str, checks: &[&str]| Host {
         host_id: id.into(),
@@ -77,6 +79,7 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         config_digest: digest.into(),
         checks: checks.iter().map(|c| c.to_string()).collect(),
         edge_output: None,
+        snapshot: None,
     };
     let poll = |s: Settings, h: Host| async move {
         observers::poll(&observers::client(&s, &h).unwrap(), &h).await
