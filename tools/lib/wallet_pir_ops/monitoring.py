@@ -25,7 +25,7 @@ import re
 from .paths import ROOT
 from .role_config import RenderedRole, directory, render, settings_of
 
-TEMPLATE = ROOT / 'tools/shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in'
+TEMPLATE = ROOT / 'tools/deploy/monitoring/pir-apm-sidecar.service.in'
 CONFIG = '/etc/pir-apm-sidecar/sidecar.json'
 STATE = '/var/lib/pir-apm-sidecar/state.json'
 CREDENTIALS = '/etc/pir-apm-sidecar/credentials'
