@@ -90,7 +90,7 @@ class BoundaryTests(unittest.TestCase):
         packages = {package['name']: package for package in boundary.manifests()
                     if not package['preserved']}
         backend = 'transparent-shared'
-        worker = 'transparent-query-server'
+        worker = 'pir-query-server'
         publisher = 'transparent-publisher'
         self.assertIn(backend, boundary.PURE)
         manifest = tomllib.loads((ROOT / packages[publisher]['manifest']).read_text())
@@ -150,7 +150,7 @@ class BoundaryTests(unittest.TestCase):
         for kind in ['dependencies', 'build-dependencies', 'target.cfg(unix).dev-dependencies']:
             changed = {**fixture, 'dependencies': [self.edge('zakura-transparent', kind)]}
             self.assertTrue(boundary.violations([changed], []), kind)
-        for change in [{'name': 'transparent-query-server'}, {'manifest': 'other/Cargo.toml'}, {'publish': True},
+        for change in [{'name': 'pir-query-server'}, {'manifest': 'other/Cargo.toml'}, {'publish': True},
                        {'dependencies': [self.edge('zakura-chain', 'dev-dependencies')]}]:
             self.assertTrue(boundary.violations([{**fixture, **change}], []), change)
 
@@ -297,7 +297,7 @@ class BoundaryTests(unittest.TestCase):
                     'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]} for dep in deps]}
         metadata = {
             'packages': [
-                {'id': 'pir', 'name': 'transparent-query-server', 'source': None},
+                {'id': 'pir', 'name': 'pir-query-server', 'source': None},
                 {'id': 'client', 'name': 'zakura-pir-client',
                  'source': 'git+https://github.com/zakura-core/wallet-libraries'},
                 {'id': 'orchard', 'name': 'zakura-orchard', 'source': 'registry'},
@@ -309,13 +309,13 @@ class BoundaryTests(unittest.TestCase):
         }
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True), [])
         self.assertEqual(boundary.resolved_violations(metadata),
-                         ['transparent-query-server: resolves zakura-orchard'])
+                         ['pir-query-server: resolves zakura-orchard'])
         metadata['resolve']['nodes'][1] = node('client', ['orchard', 'chain'], ['testing'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['transparent-query-server: resolves zakura-chain'])
+                         ['pir-query-server: resolves zakura-chain'])
         metadata['resolve']['nodes'][1] = node('client', ['orchard'])
         self.assertEqual(boundary.resolved_violations(metadata, workspace_unified=True),
-                         ['transparent-query-server: resolves zakura-orchard'])
+                         ['pir-query-server: resolves zakura-orchard'])
 
     def test_default_publisher_refuses_transitive_database_dependencies(self):
         def node(name, dependencies=()):

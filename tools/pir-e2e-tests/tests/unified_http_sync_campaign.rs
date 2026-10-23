@@ -30,7 +30,7 @@ use zakura_pir_publisher::transparent::{
     seal::DecoupledPolicy,
 };
 
-#[path = "../../../src/transparent/transparent-query-server/tests/support/display_world.rs"]
+#[path = "../../../src/pir-query-server/tests/transparent/support/display_world.rs"]
 mod display_world;
 
 const GENESIS: &str = filter::MAINNET_GENESIS_DISPLAY;

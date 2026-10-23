@@ -23,7 +23,7 @@ fixtures = [
     "zakura-pir-client/transparent",
     "zakura-pir-client/testing",
     "transparent-shared/test-support",
-    "dep:transparent-query-server",
+    "dep:pir-query-server",
     "dep:pir-service-discovery",
     "dep:base64",
     "dep:libc",
@@ -67,7 +67,7 @@ base64 = { version = "0.22", optional = true }
 libc = { version = "0.2", optional = true }
 tower = { version = "0.5", features = ["util"], optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
-transparent-query-server = { path = "../transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
+pir-query-server = { path = "../../pir-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]

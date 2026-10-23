@@ -32,7 +32,7 @@ class CudaSelectionTests(unittest.TestCase):
                 self.assertTrue(self.select([path])['cuda'])
 
     def test_unrelated_products_docs_helpers_and_ci_do_not_select_cuda(self):
-        paths = ['docs/enhance/cuda_workers.md', 'src/transparent/transparent-query-server/src/lib.rs',
+        paths = ['docs/enhance/cuda_workers.md', 'src/pir-query-server/src/transparent/mod.rs',
                  'src/enhance/enhance-query-server/src/router.rs',
                  'src/status/status-shared/src/generation.rs',
                  'src/status/status-query-server/src/distributed.rs',

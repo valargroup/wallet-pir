@@ -44,8 +44,21 @@
     ],
     "full": []
   },
-  "transparent-query-server": {
+  "transparent-tools": {
+    "fast": [],
+    "full": [
+      "compact_export",
+      "compact_recovery",
+      "parent_filters",
+      "regression_runner",
+      "service_tools",
+      "simulation",
+      "txid_shipped_runtimes"
+    ]
+  },
+  "pir-query-server": {
     "fast": [
+      "operator",
       "ci_smoke"
     ],
     "full": [
@@ -61,24 +74,6 @@
       "wallet_recut",
       "wallet_sync"
     ]
-  },
-  "transparent-tools": {
-    "fast": [],
-    "full": [
-      "compact_export",
-      "compact_recovery",
-      "parent_filters",
-      "regression_runner",
-      "service_tools",
-      "simulation",
-      "txid_shipped_runtimes"
-    ]
-  },
-  "pir-query-server": {
-    "fast": [
-      "operator"
-    ],
-    "full": []
   },
   "pir-publisher": {
     "fast": [

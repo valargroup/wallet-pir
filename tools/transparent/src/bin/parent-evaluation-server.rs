@@ -2,8 +2,8 @@
 //! Deliberately does not start whole-publication prewarming or live activation.
 //! The driver warms the selected baseline workload before each paired wave.
 use clap::Parser;
+use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
 use std::{net::SocketAddr, path::PathBuf};
-use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 #[derive(Parser)]
 struct Args {

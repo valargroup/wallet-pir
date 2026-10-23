@@ -70,8 +70,9 @@ def main():
         paths += [ROOT / 'Cargo.toml', ROOT / 'Cargo.lock']
         paths += sorted((ROOT / 'src/transparent').glob('*/Cargo.toml'))
         paths += sorted((ROOT / 'src/shared').glob('*/Cargo.toml'))
-        paths += [ROOT / 'src/pir-publisher/Cargo.toml']
-        paths += sorted((ROOT / 'src/transparent/transparent-query-server').rglob('*.rs'))
+        paths += [ROOT / 'src/pir-publisher/Cargo.toml', ROOT / 'src/pir-query-server/Cargo.toml']
+        paths += sorted((ROOT / 'src/pir-query-server/src/transparent').rglob('*.rs'))
+        paths += sorted((ROOT / 'src/pir-query-server/tests/transparent').rglob('*.rs'))
         paths += sorted((ROOT / 'src/transparent/transparent-shared').rglob('*.rs'))
         json.dump({'source_sha': source, 'machine': platform.platform(), 'cpu_info': Path('/proc/cpuinfo').read_text() if Path('/proc/cpuinfo').exists() else None,
                    'external_clients': args.external_clients, 'client_cpus': '4-7' if args.systemd and args.external_clients else None,
@@ -81,7 +82,7 @@ def main():
                    'test_binary_sha256': hashlib.sha256(args.test_binary.read_bytes()).hexdigest() if args.test_binary else None,
                    'source_files_sha256': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if not p.name.startswith('._')}}, stream, indent=2)
     print(f'Reports: {output}', flush=True)
-    command = ['cargo', 'test', '--release', '-p', 'transparent-shard-server',
+    command = ['cargo', 'test', '--release', '-p', 'pir-query-server', '--features', 'transparent-history',
                '--test', 'revisions_and_cache', 'burst::publication_burst_under_exact_load',
                '--', '--ignored', '--exact', '--nocapture']
     if args.test_binary:

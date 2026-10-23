@@ -9,7 +9,7 @@
 //! HTTP PIR without being deleted or recreated.
 #![cfg(feature = "transparent-history")]
 
-#[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
+#[path = "../../../src/pir-query-server/tests/transparent/common/mod.rs"]
 mod common;
 use common::*;
 use std::path::Path;

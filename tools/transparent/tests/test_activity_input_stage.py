@@ -454,7 +454,7 @@ class ServiceInputs(unittest.TestCase):
         self.preparation(r).render()
         roster[-1]['archive_range']=[0,1];r['files']['roster.json']=json.dumps(roster)
         with self.assertRaisesRegex(ValueError,'gap, overlap'):self.preparation(r).render()
-        native=(Path(__file__).parents[3]/'src/transparent/transparent-query-server/src/routing/router.rs').read_text()
+        native=(Path(__file__).parents[3]/'src/pir-query-server/src/transparent/routing/router.rs').read_text()
         self.assertIn('next != recent_from_shard',native)
         self.assertIn('pinned archive ranges must be contiguous from shard 0',native)
 

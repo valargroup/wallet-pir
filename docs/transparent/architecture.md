@@ -96,7 +96,7 @@ and local evidence only.
 | Ingest, census, publish | `src/transparent/transparent-publisher` | Resolve events, persist journal, seal and build shards, serve filters |
 | Shared publication and runtime | `src/transparent/transparent-shared` | Journal, verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Raw PIR runtime | `src/shared/pir-runtime` | Retained P16 adapter uses shared scan parameters and `PreparedDatabase`; current Directory, Pages and TxDirectory tables all select P8. Enhance and Status are the active u16 consumers |
-| Retrieval service | `src/transparent/transparent-query-server` (library; features `transparent-history`, `transparent-detail`) | Verify publication, bound runtime cache, revision-addressed setup/query; runs inside `pir-query-server` |
+| Retrieval service | `src/pir-query-server/src/transparent` (the query server's `transparent` module; features `transparent-history`, `transparent-detail`) | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Worker administration | `tools/transparent` (package `transparent-tools`) | `shard-assign`, `shard-prune` |
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |

@@ -1,7 +1,7 @@
 //! Exercise the executable, actual HTTP paths, reopened stores and report files.
 use zakura_pir_publisher::transparent as transparent_shard;
 
-#[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
+#[path = "../../../src/pir-query-server/tests/transparent/common/mod.rs"]
 mod common;
 use common::*;
 use sha2::{Digest, Sha256};
@@ -306,7 +306,7 @@ async fn serve_traced_failures(
     dir: &std::path::Path,
     failures: usize,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-    use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
+    use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
     use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
     let state = ServiceState::build(
         ShardSet::open(dir, DEFAULT_RETAIN_REVISIONS).unwrap(),

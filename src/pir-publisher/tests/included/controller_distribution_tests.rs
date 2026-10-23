@@ -4,10 +4,10 @@ use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::*;
+use pir_query_server::transparent::routing::bootstrap;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use transparent_events::TransparentEvent;
 use transparent_filter::ScriptBytes;
-use transparent_query_server::routing::bootstrap;
 use transparent_shared::history::shardset::ShardSet;
 use transparent_shared::publication::{Finalized, Kind};
 
@@ -136,7 +136,7 @@ fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, Sh
     (output, set)
 }
 fn recent_options(set: &ShardSet) -> transparent_shared::history::shardset::LoadOptions {
-    use transparent_query_server::routing::router::{plan, RosterEntry};
+    use pir_query_server::transparent::routing::router::{plan, RosterEntry};
     use transparent_shared::history::assignment::{GeneratedBy, WorkerRole};
     use transparent_shared::history::shardset::{LoadOptions, LoadScope};
     let roster = [
@@ -1053,9 +1053,9 @@ async fn full_history_http_holdings_include_archive_runtimes() {
     let rpc = canonical_rpc(root.path(), &set).await;
     let authority = authority(&directory, Some(finalized), rpc.client.clone());
     let tls = tls(root.path(), authority).await;
-    let mut manager = transparent_query_server::routing::manager::Manager::new(
+    let mut manager = pir_query_server::transparent::routing::manager::Manager::new(
         config(&tls, root.path().join("consumer")),
-        transparent_query_server::config::ServiceConfig {
+        pir_query_server::transparent::config::ServiceConfig {
             cache_bytes: 4 << 30,
             ..Default::default()
         },
@@ -1067,7 +1067,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
     let status = manager
         .live()
         .unwrap()
-        .command(transparent_query_server::history::live::Command::Status)
+        .command(pir_query_server::transparent::history::live::Command::Status)
         .await
         .unwrap();
     assert_eq!(status["runtimes"]["built"], 0);
@@ -1079,9 +1079,9 @@ async fn full_history_http_holdings_include_archive_runtimes() {
         .iter()
         .any(|r| r["end_height"] == 1));
     drop(manager);
-    let mut restarted = transparent_query_server::routing::manager::Manager::new(
+    let mut restarted = pir_query_server::transparent::routing::manager::Manager::new(
         config(&tls, root.path().join("consumer")),
-        transparent_query_server::config::ServiceConfig {
+        pir_query_server::transparent::config::ServiceConfig {
             cache_bytes: 4 << 30,
             ..Default::default()
         },
@@ -1112,7 +1112,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
     let status = restarted
         .live()
         .unwrap()
-        .command(transparent_query_server::history::live::Command::Status)
+        .command(pir_query_server::transparent::history::live::Command::Status)
         .await
         .unwrap();
     assert_eq!(status["runtimes"]["built"], 0);
@@ -1128,9 +1128,9 @@ async fn full_history_http_holdings_include_archive_runtimes() {
         serde_json::from_slice(&std::fs::read(consumer.join("active.json")).unwrap()).unwrap();
     let staged = std::path::PathBuf::from(active["directory"].as_str().unwrap());
     std::fs::write(staged.join("verified-inventory.json"), b"{").unwrap();
-    let mut damaged = transparent_query_server::routing::manager::Manager::new(
+    let mut damaged = pir_query_server::transparent::routing::manager::Manager::new(
         config(&tls, consumer.clone()),
-        transparent_query_server::config::ServiceConfig {
+        pir_query_server::transparent::config::ServiceConfig {
             cache_bytes: 4 << 30,
             ..Default::default()
         },
@@ -1152,7 +1152,7 @@ async fn full_history_http_holdings_include_archive_runtimes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
     use crate::tx_detail::{distribution::Distribution, fixture, publisher::bootstrap};
-    use pir_query_server::transparent::history::{run, run_with, HistoryProcess};
+    use pir_query_server::transparent::history::process::{run, run_with, HistoryProcess};
     use transparent_shared::journal::events::EventStore;
     let root = tempfile::tempdir().unwrap();
 
@@ -1186,7 +1186,7 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
     std::fs::write(&history.control, "discovery-missing").unwrap();
     let error = run(history_process(&absent, true)).await.unwrap_err();
     assert!(error.to_string().contains("HTTP 404"), "{error}");
-    assert!(!transparent_query_server::is_incompatible(&error));
+    assert!(!pir_query_server::transparent::is_incompatible(&error));
     assert!(!absent.exists(), "verification opened consumer state");
     std::fs::write(&history.control, "").unwrap();
 
@@ -1269,7 +1269,7 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         .clone()
         .unwrap();
     details.verify_only = true;
-    pir_query_server::transparent::detail::run(details)
+    pir_query_server::transparent::tx_detail::process::run(details)
         .await
         .unwrap();
     let running = tokio::spawn(pir_query_server::run(
@@ -1314,7 +1314,10 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         .expect("an incompatible publisher must stop the unified host")
         .unwrap()
         .unwrap_err();
-    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    assert!(
+        pir_query_server::transparent::is_incompatible(&error),
+        "{error}"
+    );
     let text = error.to_string();
     assert!(
         text.contains("2.0.0") && text.contains(&display.origin),
@@ -1337,7 +1340,10 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
     let error = run_with(history_process(&history_consumer, false), None)
         .await
         .unwrap_err();
-    assert!(transparent_query_server::is_incompatible(&error), "{error}");
+    assert!(
+        pir_query_server::transparent::is_incompatible(&error),
+        "{error}"
+    );
 }
 
 /// A source change during the final check stays private. Clearing a withdrawal
@@ -1365,9 +1371,9 @@ async fn cold_history_bootstrap_retry(
     let _ = std::fs::remove_file(tls.control.with_extension("current-count"));
     let _ = std::fs::remove_file(tls.control.with_extension("entered"));
     std::fs::write(&tls.control, "pause-current-2").unwrap();
-    let mut manager = transparent_query_server::routing::manager::Manager::new(
+    let mut manager = pir_query_server::transparent::routing::manager::Manager::new(
         config(tls, consumer_root.to_path_buf()),
-        transparent_query_server::config::ServiceConfig {
+        pir_query_server::transparent::config::ServiceConfig {
             cache_bytes: 4 << 30,
             ..Default::default()
         },

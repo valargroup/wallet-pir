@@ -46,9 +46,9 @@ class MatrixTests(unittest.TestCase):
             elif change == 'duplicate': shard.append(shard[0])
             elif change == 'stale': shard[0] += '-removed'
             else:
-                target = copy.deepcopy(discovered['transparent-query-server']['targets'][-1])
+                target = copy.deepcopy(discovered['pir-query-server']['targets'][-1])
                 target['name'] = 'new_wallet_boundary'
-                discovered['transparent-query-server']['targets'].append(target)
+                discovered['pir-query-server']['targets'].append(target)
             with self.subTest(change=change), self.assertRaises(ValueError):
                 matrix.load_plan(selected, discovered)
 

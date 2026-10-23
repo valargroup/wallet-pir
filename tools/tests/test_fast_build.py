@@ -351,12 +351,14 @@ class FastBuildTests(unittest.TestCase):
         # History and detail reach the query host through the publisher
         # library's dev-dependency. Enabling them on pir-publisher links that
         # library again. The fixture feature would compile it a third time.
+        # The host's own `ci_smoke` names the history role it already unifies.
         builds = self._cargo_tests(['transparent-publisher'])
         self.assertEqual(len(builds), 1)
         packages, _bins, tests, features = self._command_parts(builds[0])
         self.assertIn('pir-publisher', packages)
         self.assertIn('pir-query-server', packages)
-        self.assertEqual(features, [])
+        self.assertEqual(features, ['pir-query-server/transparent-history'])
+        self.assertIn('ci_smoke', tests)
         self.assertNotIn('pir-e2e-tests/transparent-tests', features)
         self.assertNotIn('pir-publisher/transparent-history', features)
         self.assertIn('commands', tests)
@@ -367,7 +369,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('pir-publisher/status-tests', features)
         self.assertNotIn('ci_hint', tests)
         builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
-        self.assertEqual(self._command_parts(builds[0])[3], [])
+        self.assertEqual(self._command_parts(builds[0])[3], ['pir-query-server/transparent-history'])
         _packages, _bins, tests, features = self._command_parts(builds[1])
         self.assertEqual(tests, ['ci_hint', 'operator'])
         self.assertEqual(features, ['pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES])

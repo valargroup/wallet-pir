@@ -35,7 +35,6 @@
   "transparent": [
     "transparent-shared",
     "transparent-publisher",
-    "transparent-query-server",
     "transparent-tools"
   ]
 }

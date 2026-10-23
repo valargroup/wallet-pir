@@ -4,7 +4,9 @@ Cargo unifies features for every package named in one command. Shared crates,
 product libraries, and the publisher and query hosts stay on one command with
 a fixed feature set, so a warm cache still hits. Transparent publication tests
 live in those libraries. Enabling history and detail on the host binary links
-the publisher again and is not part of this command. Moving the hosts onto
+the publisher again and is not part of this command. The query host's own
+Transparent `ci_smoke` names `pir-query-server/transparent-history`, which the
+publisher library's dev-dependency already unifies in. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
 in-process Enhance hint graph stays on a second command and never joins the
 first. Chain-node fixtures stay in qualification: they pull the wallet client
@@ -97,7 +99,6 @@ FAST_FEATURE_ROOTS = frozenset({
     'status-publisher',
     'status-query-server',
     'transparent-publisher',
-    'transparent-query-server',
     'transparent-shared',
     'transparent-tools',
 })

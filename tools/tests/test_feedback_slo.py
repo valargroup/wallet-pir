@@ -54,7 +54,7 @@ class FeedbackTests(unittest.TestCase):
                 'stage': 'compile:fast', 'seconds': 151.0, 'exit': 0, 'id': 'compile', 'parent': None}) + '\n')
             (root / 'artifacts.jsonl').write_text(json.dumps({
                 'unit': 'query-server-lib', 'fresh': False, 'source': 'path',
-                'package': 'transparent-query-server', 'command': 'build'}) + '\n')
+                'package': 'pir-query-server', 'command': 'build'}) + '\n')
             evidence = timings.compile_evidence({
                 'WALLET_PIR_STAGE_LOG': str(root / 'stages.jsonl'),
                 'WALLET_PIR_ARTIFACT_LOG': str(root / 'artifacts.jsonl')})

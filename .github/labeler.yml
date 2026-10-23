@@ -41,6 +41,8 @@
         {
           "any-glob-to-any-file": [
             "src/transparent/**",
+            "src/pir-query-server/src/transparent/**",
+            "src/pir-query-server/tests/transparent/**",
             "tools/transparent/**",
             "docs/transparent/**",
             "evidence/transparent/**",
@@ -105,7 +107,6 @@
             "src/enhance/enhance-shared/**",
             "src/enhance/enhance-query-server/**",
             "src/status/status-query-server/**",
-            "src/transparent/transparent-query-server/**",
             "src/receiver/receiver-pir-server/**",
             "tools/deploy/query-server/**",
             "docs/query-server.md",

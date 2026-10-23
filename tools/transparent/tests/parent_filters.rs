@@ -2,7 +2,7 @@
 use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent::filter::ParentPublisherExt as _;
 
-#[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
+#[path = "../../../src/pir-query-server/tests/transparent/common/mod.rs"]
 mod common;
 use axum::{
     extract::{Path, State},

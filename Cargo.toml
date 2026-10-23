@@ -29,7 +29,6 @@ members = [
     "src/enhance/enhance-publisher",
     "src/shared/pir-apm",
     "src/transparent/transparent-publisher",
-    "src/transparent/transparent-query-server",
     # Development and validation tools; package/binary names stay stable.
     "tools/enhance/client",
     "tools/enhance/native-certificate",

@@ -23,7 +23,7 @@ publisher-tools = ["dep:transparent-publisher", "dep:zakura-server-chain"]
 # Direct node-database readers; implies the publisher diagnostics.
 rocksdb-reader = ["publisher-tools", "transparent-publisher/rocksdb-reader", "zakura-server-chain/rocksdb"]
 # Reproduce the non-AVX-512 backend in the moved scaling and residency tools.
-portable-kernel = ["transparent-shared/portable-kernel", "transparent-query-server/portable-kernel"]
+portable-kernel = ["transparent-shared/portable-kernel", "pir-query-server/portable-kernel"]
 # Synthetic transaction-detail publications for the inventory diagnostic.
 test-support = ["transparent-shared/test-support"]
 # Compact blocks exported from the node database for the benchmark baseline.
@@ -215,7 +215,7 @@ path = "src/bin/shard-prune.rs"
 
 [dependencies]
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
-transparent-query-server = { path = "../../src/transparent/transparent-query-server", features = ["transparent-history", "transparent-detail"] }
+pir-query-server = { path = "../../src/pir-query-server", features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared" }
 anyhow = "1"
 base64 = "0.22"

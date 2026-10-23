@@ -7,9 +7,9 @@ use zakura_pir_client::transparent::native::TableClientExt as _;
 use zakura_pir_publisher::transparent as transparent_shard;
 
 use super::*;
-use transparent_query_server::history::live::Command;
-use transparent_query_server::history::service::ServiceConfig;
-use transparent_query_server::routing::manager::Manager;
+use pir_query_server::transparent::history::live::Command;
+use pir_query_server::transparent::history::service::ServiceConfig;
+use pir_query_server::transparent::routing::manager::Manager;
 
 // Prepare immutable producer bytes once per test process. Each test receives
 // separate copies: corruption, missing-file and restart cases must stay isolated.
@@ -470,7 +470,9 @@ async fn serve_worker(app: axum::Router) -> (String, Listening) {
     )
 }
 
-async fn worker(live: transparent_query_server::history::live::LiveService) -> (String, Listening) {
+async fn worker(
+    live: pir_query_server::transparent::history::live::LiveService,
+) -> (String, Listening) {
     serve_worker(live.router()).await
 }
 async fn get(origin: &str, path: &str) -> reqwest::Response {
@@ -1065,7 +1067,7 @@ async fn manager_refuses_changed_holdings_on_an_unchanged_map() {
     assert!(
         failure
             .to_string()
-            .contains(transparent_query_server::history::live::ASSIGNMENT_CHANGED),
+            .contains(pir_query_server::transparent::history::live::ASSIGNMENT_CHANGED),
         "{failure}"
     );
     query(&origin, &set).await;

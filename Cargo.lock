@@ -2203,7 +2203,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transparent-publisher",
- "transparent-query-server",
  "transparent-shared",
  "zakura-pir-client",
  "zakura-pir-protocol",
@@ -2289,6 +2288,7 @@ name = "pir-query-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "enhance-query-server",
  "enhance-shared",
@@ -2296,6 +2296,7 @@ dependencies = [
  "hex",
  "http",
  "http-body",
+ "ipir-sp",
  "memmap2",
  "pir-control",
  "pir-observability",
@@ -2311,16 +2312,20 @@ dependencies = [
  "sha2 0.10.9",
  "status-query-server",
  "status-shared",
+ "sysinfo",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tower",
  "tracing",
  "tracing-subscriber",
- "transparent-query-server",
  "transparent-shared",
  "url",
  "zakura-pir-client",
+ "zakura-pir-protocol",
+ "zakura-pir-publisher",
+ "zakura-pir-query-server",
 ]
 
 [[package]]
@@ -3695,41 +3700,11 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
- "transparent-query-server",
  "transparent-shared",
  "zakura-pir-client",
  "zakura-pir-protocol",
  "zakura-pir-publisher",
  "zakura-server-chain",
-]
-
-[[package]]
-name = "transparent-query-server"
-version = "0.1.0-rc.4"
-dependencies = [
- "axum",
- "base64",
- "hex",
- "http-body",
- "ipir-sp",
- "pir-control",
- "pir-observability",
- "pir-pipeline",
- "pir-sync-manager",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tower",
- "tracing",
- "transparent-shared",
- "zakura-pir-client",
- "zakura-pir-protocol",
- "zakura-pir-publisher",
- "zakura-pir-query-server",
 ]
 
 [[package]]
@@ -3778,6 +3753,7 @@ dependencies = [
  "humantime",
  "ipir-sp",
  "libc",
+ "pir-query-server",
  "prost",
  "prost-build",
  "rayon",
@@ -3793,7 +3769,6 @@ dependencies = [
  "tower",
  "tracing-subscriber",
  "transparent-publisher",
- "transparent-query-server",
  "transparent-shared",
  "zakura-pir-client",
  "zakura-pir-protocol",

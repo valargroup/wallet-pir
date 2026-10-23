@@ -49,5 +49,5 @@ mod http_sync_tests;
 // The serving tests' independent wallet transport, mounted once for both
 // qualification harnesses below this module.
 #[cfg(all(test, feature = "qualification-tests", feature = "fixtures"))]
-#[path = "../../../transparent-query-server/tests/support/display_world.rs"]
+#[path = "../../../../pir-query-server/tests/transparent/support/display_world.rs"]
 pub(crate) mod display_world;
