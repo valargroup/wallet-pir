@@ -593,6 +593,7 @@ mod tests {
 fn collection_removes_only_orphaned_object_receipts_and_check_markers() {
     let root = tempfile::tempdir().unwrap();
     let objects = prepare_objects(root.path()).unwrap();
+    let objects = objects.directory();
     let old = "a".repeat(64);
     let kept = "b".repeat(64);
     std::fs::write(objects.join(&old), b"old").unwrap();
