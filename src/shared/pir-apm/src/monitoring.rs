@@ -139,6 +139,7 @@ fn fresh(t: u64, now: u64) -> bool {
 
 pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     let scaling = crate::scaling::Settings::from_env()?;
+    let disks = crate::disk_alerts::Settings::from_env()?;
     let Some(path) = std::env::var_os("PIR_APM_STATE_PATH").map(PathBuf::from) else {
         anyhow::ensure!(!enabled(), "active alerting requires PIR_APM_STATE_PATH");
         anyhow::ensure!(
@@ -146,6 +147,7 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             "{} requires PIR_APM_STATE_PATH",
             crate::scaling::STATUS_VAR
         );
+        anyhow::ensure!(disks.is_none(), "disk alerts require PIR_APM_STATE_PATH");
         return Ok(());
     };
     let mode = std::env::var("PIR_APM_ALERT_MODE").unwrap_or_else(|_| "shadow".into());
@@ -185,6 +187,9 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     // Optional and independent: absent PIR_APM_SCALER_STATUS opens nothing.
     let mut scaling = scaling
         .map(|settings| crate::scaling::Family::open(settings, &path))
+        .transpose()?;
+    let mut disks = disks
+        .map(|settings| crate::disk_alerts::Family::open(settings, &path))
         .transpose()?;
     // A disabled family retires the incidents it left in the shared database.
     let mut retired_scaling = match scaling {
@@ -331,6 +336,9 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                 )?;
                 if let Some(family) = scaling.as_mut() {
                     family.evaluate(now, &config.environment, &transparent_url)?;
+                }
+                if let Some(family) = disks.as_mut() {
+                    family.evaluate(now, &config.environment, &url)?;
                 }
                 if let Some(store) = retired_scaling.as_mut() {
                     crate::scaling::retire_disabled(
@@ -887,16 +895,18 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         }
     }
     // Existing local host protection continues under the durable evaluator.
-    add(
-        "disk_usage".into(),
-        "coordinator_host".into(),
-        "critical",
-        (d.host.disk_total_bytes > 0).then_some(d.host.disk_used_ratio > 0.9),
-        format!("{}% used", d.host.disk_used_ratio * 100.),
-        ">90%".into(),
-        0,
-        coordinator_sample,
-    );
+    if !crate::disk_alerts::configured() {
+        add(
+            "disk_usage".into(),
+            "coordinator_host".into(),
+            "critical",
+            (d.host.disk_total_bytes > 0).then_some(d.host.disk_used_ratio > 0.9),
+            format!("{}% used", d.host.disk_used_ratio * 100.),
+            ">90%".into(),
+            0,
+            coordinator_sample,
+        );
+    }
     add(
         "memory_available".into(),
         "coordinator_host".into(),

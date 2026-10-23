@@ -38,71 +38,87 @@ import shlex
 import subprocess
 import time
 
-REMOTE = r'''
+DISK_PROBE = Path(__file__).with_name('host-disks.py').read_text()
+
+REMOTE = DISK_PROBE + r'''
 import json, os, pathlib, subprocess, sys, time, urllib.request
 unit, directory, mode = sys.argv[1:4]
 extra = sys.argv[4:]
-out = {'at': int(time.time()), 'unit': unit}
-memory = {}
-for line in pathlib.Path('/proc/meminfo').read_text().splitlines():
-    key, value = line.split(':', 1)
-    memory[key] = int(value.split()[0]) * 1024
-out['memory_available_bytes'] = memory['MemAvailable']
-out['memory_total_bytes'] = memory['MemTotal']
-for field, source in [('swap_total_bytes','SwapTotal'),('swap_free_bytes','SwapFree')]:
-    if source in memory: out[field] = memory[source]
-v = os.statvfs(directory)
-out['disk_available_bytes'] = v.f_bavail * v.f_frsize
-out['disk_total_bytes'] = v.f_blocks * v.f_frsize
-raw = subprocess.check_output(['systemctl','show',unit,'-p','NRestarts','-p','ControlGroup','-p','CPUUsageNSec','-p','MemoryCurrent'], text=True, timeout=3)
-props = dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
-for field, source in [('restarts','NRestarts'),('cgroup_memory_bytes','MemoryCurrent')]:
-    if props.get(source,'').isdigit(): out[field] = int(props[source])
-if props.get('CPUUsageNSec','').isdigit(): out['cpu_seconds'] = int(props['CPUUsageNSec']) // 1000000000
-group = props.get('ControlGroup','')
-if group.startswith('/system.slice/') and '..' not in group:
-    p = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/') / 'memory.events'
-    if p.exists():
-        events = dict(line.split() for line in p.read_text().splitlines())
-        out['oom_kills'] = int(events['oom_kill'])
-def cgroup_file(group, name):
-    if group.startswith('/system.slice/') and '..' not in group:
-        p = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/') / name
-        if p.exists(): return p.read_text()
-    return None
-units = {}
-for name in [unit] + [u for u in extra if u != unit]:
-    try:
-        raw = subprocess.check_output(['systemctl','show',name,'-p','LoadState','-p','MemoryCurrent','-p','MemoryPeak','-p','MemoryMax','-p','ControlGroup'], text=True, timeout=3)
-    except Exception:
-        continue
+out = {'at': int(time.time())}
+try:
+    out['machine_id'] = pathlib.Path('/etc/machine-id').read_text().strip()
+    out['filesystems'] = disk_filesystems()
+except Exception:
+    out['disk_error'] = 'filesystem observation unavailable'
+def service_resources():
+    out = {'unit': unit}
+    if unit == '-':
+        return out
+    memory = {}
+    for line in pathlib.Path('/proc/meminfo').read_text().splitlines():
+        key, value = line.split(':', 1)
+        memory[key] = int(value.split()[0]) * 1024
+    out['memory_available_bytes'] = memory['MemAvailable']
+    out['memory_total_bytes'] = memory['MemTotal']
+    for field, source in [('swap_total_bytes','SwapTotal'),('swap_free_bytes','SwapFree')]:
+        if source in memory: out[field] = memory[source]
+    v = os.statvfs(directory)
+    out['disk_available_bytes'] = v.f_bavail * v.f_frsize
+    out['disk_total_bytes'] = v.f_blocks * v.f_frsize
+    raw = subprocess.check_output(['systemctl','show',unit,'-p','NRestarts','-p','ControlGroup','-p','CPUUsageNSec','-p','MemoryCurrent'], text=True, timeout=3)
     props = dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
-    if props.get('LoadState') != 'loaded': continue
+    for field, source in [('restarts','NRestarts'),('cgroup_memory_bytes','MemoryCurrent')]:
+        if props.get(source,'').isdigit(): out[field] = int(props[source])
+    if props.get('CPUUsageNSec','').isdigit(): out['cpu_seconds'] = int(props['CPUUsageNSec']) // 1000000000
     group = props.get('ControlGroup','')
-    entry = {}
-    for field, source, cgroup_name in [('memory_current_bytes','MemoryCurrent',None),('memory_peak_bytes','MemoryPeak','memory.peak'),('memory_max_bytes','MemoryMax',None)]:
-        value = props.get(source,'')
-        if value.isdigit(): entry[field] = int(value)
-        elif field == 'memory_max_bytes' and value == 'infinity': entry[field] = None
-        elif cgroup_name:
-            text = cgroup_file(group, cgroup_name)
-            if text is not None and text.strip().isdigit(): entry[field] = int(text.strip())
-    stat = cgroup_file(group, 'memory.stat')
-    if stat is not None:
-        stat = dict(line.split() for line in stat.splitlines() if len(line.split()) == 2)
-        if stat.get('anon', '').isdigit():
-            shmem = stat.get('shmem', '')
-            entry['memory_anon_bytes'] = int(stat['anon']) + (int(shmem) if shmem.isdigit() else 0)
-    events = cgroup_file(group, 'memory.events')
-    if events is not None:
-        events = dict(line.split() for line in events.splitlines())
-        if 'oom_kill' in events: entry['oom_kills'] = int(events['oom_kill'])
-    units[name] = entry
-out['units'] = units
-if mode=='edge':
-    text = urllib.request.urlopen('http://127.0.0.1:2019/metrics',timeout=3).read(2097152).decode()
-    lines = [line for line in text.splitlines() if line.startswith(('caddy_http_','caddy_config_last_reload_','process_start_time_seconds'))]
-    out['edge_metrics'] = '\n'.join(lines)+'\npir_observation_timestamp_seconds '+str(out['at'])+'\n'
+    if group.startswith('/system.slice/') and '..' not in group:
+        p = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/') / 'memory.events'
+        if p.exists():
+            events = dict(line.split() for line in p.read_text().splitlines())
+            out['oom_kills'] = int(events['oom_kill'])
+    def cgroup_file(group, name):
+        if group.startswith('/system.slice/') and '..' not in group:
+            p = pathlib.Path('/sys/fs/cgroup') / group.lstrip('/') / name
+            if p.exists(): return p.read_text()
+        return None
+    units = {}
+    for name in [unit] + [u for u in extra if u != unit]:
+        try:
+            raw = subprocess.check_output(['systemctl','show',name,'-p','LoadState','-p','MemoryCurrent','-p','MemoryPeak','-p','MemoryMax','-p','ControlGroup'], text=True, timeout=3)
+        except Exception:
+            continue
+        props = dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+        if props.get('LoadState') != 'loaded': continue
+        group = props.get('ControlGroup','')
+        entry = {}
+        for field, source, cgroup_name in [('memory_current_bytes','MemoryCurrent',None),('memory_peak_bytes','MemoryPeak','memory.peak'),('memory_max_bytes','MemoryMax',None)]:
+            value = props.get(source,'')
+            if value.isdigit(): entry[field] = int(value)
+            elif field == 'memory_max_bytes' and value == 'infinity': entry[field] = None
+            elif cgroup_name:
+                text = cgroup_file(group, cgroup_name)
+                if text is not None and text.strip().isdigit(): entry[field] = int(text.strip())
+        stat = cgroup_file(group, 'memory.stat')
+        if stat is not None:
+            stat = dict(line.split() for line in stat.splitlines() if len(line.split()) == 2)
+            if stat.get('anon', '').isdigit():
+                shmem = stat.get('shmem', '')
+                entry['memory_anon_bytes'] = int(stat['anon']) + (int(shmem) if shmem.isdigit() else 0)
+        events = cgroup_file(group, 'memory.events')
+        if events is not None:
+            events = dict(line.split() for line in events.splitlines())
+            if 'oom_kill' in events: entry['oom_kills'] = int(events['oom_kill'])
+        units[name] = entry
+    out['units'] = units
+    if mode=='edge':
+        text = urllib.request.urlopen('http://127.0.0.1:2019/metrics',timeout=3).read(2097152).decode()
+        lines = [line for line in text.splitlines() if line.startswith(('caddy_http_','caddy_config_last_reload_','process_start_time_seconds'))]
+        out['edge_metrics'] = '\n'.join(lines)+'\npir_observation_timestamp_seconds '+str(out['at'])+'\n'
+    return out
+try:
+    out.update(service_resources())
+except Exception:
+    out['resource_error'] = 'service observation unavailable'
 print(json.dumps(out))
 '''
 
@@ -122,13 +138,11 @@ def extra_units(target):
 
 
 def sample(target, ssh):
-    if not UNIT.fullmatch(target['unit']):
+    if target.get('unit') and not UNIT.fullmatch(target['unit']):
         raise ValueError('invalid service unit')
-    args = [target['unit'], target['data_dir'], 'edge' if target.get('edge') else '-', *extra_units(target)]
+    args = [target.get('unit', '-'), target.get('data_dir', '/'), 'edge' if target.get('edge') else '-', *extra_units(target)]
     if target.get('host'):
-        command = ['ssh', '-i', ssh['key'], '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
-                   '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile='+ssh['known_hosts'],
-                   '-o', 'ConnectTimeout=4', target['host'],
+        command = [*ssh_command(ssh, target), target['host'],
                    'python3 - '+' '.join(shlex.quote(a) for a in args)]
     else:
         command = ['python3', '-', *args]
@@ -136,6 +150,20 @@ def sample(target, ssh):
     if len(run.stdout)>2097152:
         raise ValueError('snapshot exceeds limit')
     return json.loads(run.stdout)
+
+
+def ssh_command(ssh, target):
+    """The same key and host-key pins apply to every hop, including jump hosts."""
+    options = ['ssh', '-i', ssh['key'], '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+               '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + ssh['known_hosts'],
+               '-o', 'ConnectTimeout=4']
+    proxy = None
+    for jump in target.get('jump', '').split(',') if target.get('jump') else []:
+        command = list(options)
+        if proxy:
+            command += ['-o', 'ProxyCommand=' + proxy]
+        proxy = shlex.join([*command, '-W', '%h:%p', jump])
+    return options + (['-o', 'ProxyCommand=' + proxy] if proxy else [])
 
 
 def atomic(path, text):
@@ -182,14 +210,68 @@ def identity(target):
     return found
 
 
+def inventory_targets(path):
+    """Every non-retired operator host, including hosts with no product unit.
+
+    Authentication stays in the sampler's SSH configuration. Only addresses,
+    users and jump routes are read from the operator inventory.
+    """
+    inventory = json.loads(Path(path).read_text())
+    hosts = inventory['hosts']
+    retired = inventory.get('retired_hosts', {})
+
+    def destination(name):
+        host = hosts[name]
+        user = host.get('user', inventory.get('ssh', {}).get('user', 'root'))
+        address = host['address']
+        if not (re.fullmatch(r'[A-Za-z0-9_.-]+', user)
+                and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.:-]*', address)):
+            raise ValueError('invalid inventory SSH destination')
+        return user + '@' + ('[' + address + ']' if ':' in address else address)
+
+    targets = []
+    for name, host in hosts.items():
+        if name in retired:
+            continue
+        if not HOST_ID.fullmatch(name):
+            raise ValueError('invalid inventory host name')
+        target = {'sources': ['disk-host-' + name], 'host_id': name, 'host': destination(name)}
+        jumps, visited = [], {name}
+        jump = host.get('jump')
+        while jump:
+            if jump in visited:
+                raise ValueError('inventory jump cycle')
+            visited.add(jump)
+            jumps.insert(0, destination(jump))
+            jump = hosts[jump].get('jump')
+        if jumps:
+            target['jump'] = ','.join(jumps)
+        targets.append(target)
+    return targets, list(retired)
+
+
 def collect(config):
     result = {}
-    targets = list(config['targets'])
+    disk_hosts = {}
+    machines = {}
+    inventory_ok = True
+    retired = list(config.get('retired_hosts', []))
+    targets = []
+    if config.get('fleet_inventory'):
+        try:
+            targets, inventory_retired = inventory_targets(config['fleet_inventory'])
+            retired.extend(inventory_retired)
+        except (OSError, ValueError, KeyError, TypeError):
+            inventory_ok = False
+            print(json.dumps({'event': 'fleet_inventory_unavailable'}), flush=True)
+    targets += list(config.get('targets', []))
     if config.get('roster'):
         # An unreadable roster keeps the explicit targets rather than stopping sampling.
         try:
-            targets = roster_targets(config['roster']) + targets
+            # Operator host names take precedence over product/roster aliases.
+            targets += roster_targets(config['roster'])
         except (OSError, ValueError, KeyError, TypeError):
+            inventory_ok = False
             print(json.dumps({'event': 'roster_unavailable'}), flush=True)
     if len(targets)>64:
         raise ValueError('too many hosts')
@@ -200,15 +282,33 @@ def collect(config):
                 value = future.result()
                 edge = value.pop('edge_metrics', None)
                 if edge is not None:
-                    atomic(config['edge_output'],edge)
+                    try:
+                        atomic(config['edge_output'],edge)
+                    except OSError:
+                        print(json.dumps({'event': 'edge_output_unavailable'}), flush=True)
                 value.update(identity(target))
+                # A machine serving several roles produces only one disk entry.
+                host_id = value['host_id']
+                machine = value.get('machine_id')
+                canonical = machines.setdefault(machine, host_id) if machine else host_id
+                disk_hosts.setdefault(canonical, {
+                    'at': value['at'], 'filesystems': value.get('filesystems', []),
+                    'error': value.get('disk_error'),
+                })
                 for source in target['sources']:
                     result[source] = value
             except Exception:
+                disk_hosts.setdefault(identity(target)['host_id'], {'at': 0, 'filesystems': []})
                 for source in target['sources']:
                     result[source] = {'at': 0, **identity(target)}
                 # No raw SSH errors, command lines, credentials, or server bodies.
                 print(json.dumps({'event':'host_sample_unavailable','sources':target['sources']}),flush=True)
+    if config.get('disk_output'):
+        atomic(config['disk_output'], json.dumps({
+            'at': int(time.time()), 'inventory_ok': inventory_ok, 'hosts': disk_hosts,
+            'retired_hosts': sorted(set(retired)),
+            'retired_filesystems': config.get('retired_filesystems', {}),
+        }))
     atomic(config['output'],json.dumps(result))
 
 

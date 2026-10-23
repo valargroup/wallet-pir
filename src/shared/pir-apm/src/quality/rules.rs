@@ -310,6 +310,9 @@ fn source_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
             0.10,
         ),
     ] {
+        if kind == "disk" && crate::disk_alerts::configured() {
+            continue;
+        }
         let ratio = gauge(available)
             .zip(gauge(total))
             .filter(|(_, t)| *t > 0.)

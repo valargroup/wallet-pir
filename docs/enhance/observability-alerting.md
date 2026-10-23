@@ -174,6 +174,66 @@ it in environment files, Terraform variables, logs, or checked-in artifacts.
 The node RPC cookie is loaded as a systemd credential; restart APM after cookie
 rotation so it receives the new value.
 
+## Fleet disk space
+
+The disk family covers every non-retired host in the operator inventory, plus
+explicit host-sampler targets and enrolled/draining roster members. Include
+monitoring, checker and load-generation hosts explicitly when they are absent
+from the operator inventory. Inventory and roster files are reread every cycle;
+SSH users and jump routes are preserved, using the sampler's existing key and
+known-host pins. No infrastructure API credentials are needed.
+
+Install `host-disks.py` beside `quality-host-sampler.py`. In the sampler config,
+set `fleet_inventory` to `/etc/wallet-pir/fleet.json` and `disk_output` to
+`/var/lib/pir-apm/disks.json`. The existing quality `output` is unchanged. A
+host-only target needs `sources`, `host_id` and its SSH `host`, with no service
+unit. See the [host configuration example](../../tools/enhance/deploy/pir-quality-hosts.example.json).
+Every monitored Linux host needs Python 3 and `findmnt` from util-linux.
+
+Set `PIR_APM_DISK_SNAPSHOT=/var/lib/pir-apm/disks.json` and
+`PIR_APM_DISK_ALERT_MODE=active` on the existing APM service to send to the
+existing credential-backed **#pir-alerts** webhook. The mode defaults to
+`shadow`; `PIR_APM_STATE_PATH` is required. This family is independent of the
+Enhance, Status and Transparent modes, product metrics, chain RPC and quality
+history. While configured, it replaces the older single-directory disk rules.
+Changing the file or environment requires the normal locked monitoring rollout;
+merging this change does not activate it in production.
+
+Every writable local block filesystem is measured separately, including `/`
+and mounted attached volumes. Virtual filesystems, temporary RAM filesystems,
+container overlays, loop devices and read-only mounts are excluded. UUIDs
+identify filesystems across reboot; resolved device paths are the fallback.
+Bind mounts and subvolumes of one filesystem produce one incident. Available
+space excludes blocks reserved for root. Capacity on different volumes is never
+added together.
+
+The sampler runs every 15 seconds and APM evaluates every five seconds. A
+warning opens on the first valid sample **below 15% available**, with no dwell
+time; exactly 15% is healthy. The Slack message names the host, mount, device,
+filesystem identity and available/total bytes. Warnings do not repeat while
+open. Two distinct healthy samples send one recovery. Notification retries and
+restart persistence use the existing incident database and durable Slack outbox.
+Delivery remains at least once, so a transport timeout after Slack accepted a
+message can repeat the same incident ID.
+
+Samples older than 45 seconds, invalid data, an unreachable host and a
+previously observed filesystem that disappears are unknown, never healthy.
+Coverage warnings open after 45 seconds without a valid observation, and open
+low-space incidents remain open. An unmounted volume is not measured using its
+parent filesystem. Intentional host retirement must be recorded in the operator
+inventory's `retired_hosts` or the sampler config's `retired_hosts` list.
+Intentional volume retirement uses `retired_filesystems`, a map of host name to
+filesystem IDs, in the sampler config. Removing a target alone does not retire
+its incidents.
+
+Before activation, compare sampler host coverage against the operator inventory
+and current rosters, including external GPU hosts, routers, monitoring and
+load-generation hosts. Check that each host reports `/` and every expected
+attached volume, then confirm a synthetic disk warning and recovery through the
+real Slack outbox. Preserve incident state and unrelated monitoring modes. A
+missing mount is detectable after its first observation; initial coverage of
+expected mounts must be verified during activation.
+
 ## Delivery and response
 
 Transitions and their outbox records commit together. An independent worker uses
@@ -624,7 +684,7 @@ txid display controller.
 | `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |
 | `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples | 120 s |
-| `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
+| `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or legacy disk < 10% available (disk rule replaced when fleet disk monitoring is configured) | 120 s |
 | `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
 | `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 

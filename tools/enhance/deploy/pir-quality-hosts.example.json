@@ -1,5 +1,5 @@
 {
-  "_comment": "Example /etc/pir-quality/hosts.json for quality-host-sampler.py. Addresses are placeholders; copy the private addresses from Terraform output or the roster. Only v12 history and the one-query txid display site are sampled.",
+  "_comment": "Example /etc/pir-quality/hosts.json. fleet_inventory covers all operator hosts; include monitor/checker/load-generator machines as explicit targets if not in that inventory. Addresses are placeholders. SSH credentials remain in the existing sampler configuration.",
   "ssh": {
     "key": "/etc/pir-quality/ssh/id_ed25519",
     "known_hosts": "/etc/pir-quality/ssh/known_hosts"
@@ -18,7 +18,9 @@
   },
   "targets": [
     {
-      "sources": ["transparent-publisher"],
+      "sources": [
+        "transparent-publisher"
+      ],
       "host_id": "wallet-pir-coordinator-01",
       "unit": "transparent-v12-publish-controller.service",
       "units": [
@@ -28,7 +30,9 @@
       "data_dir": "/"
     },
     {
-      "sources": ["transparent-edge"],
+      "sources": [
+        "transparent-edge"
+      ],
       "host_id": "transparent-pir-router",
       "unit": "caddy.service",
       "data_dir": "/",
@@ -36,12 +40,25 @@
       "edge": true
     },
     {
-      "sources": ["transparent-pir-txid-k8-01"],
+      "sources": [
+        "transparent-pir-txid-k8-01"
+      ],
       "size": "m-8vcpu-64gb-intel",
       "unit": "transparent-txid-display-worker.service",
-      "units": ["caddy.service"],
+      "units": [
+        "caddy.service"
+      ],
       "data_dir": "/srv/transparent-txid-display",
       "host": "root@10.0.0.3"
+    },
+    {
+      "sources": [
+        "pir-monitor-host"
+      ],
+      "host_id": "wallet-pir-monitor-01",
+      "host": "root@10.0.0.4"
     }
-  ]
+  ],
+  "fleet_inventory": "/etc/wallet-pir/fleet.json",
+  "disk_output": "/var/lib/pir-apm/disks.json"
 }

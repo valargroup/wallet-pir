@@ -3,6 +3,7 @@ mod capacity_alerts;
 mod charts;
 mod config;
 mod dashboard;
+mod disk_alerts;
 mod entrypoints;
 mod fleet;
 mod history;

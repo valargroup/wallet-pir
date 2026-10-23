@@ -160,14 +160,16 @@ impl AlertEngine {
             );
         }
 
-        conditions.insert(
-            "disk_usage".to_string(),
-            (
-                input.host.disk_used_ratio > thresholds::DISK_USED_RATIO,
-                format!("{:.1}% used", input.host.disk_used_ratio * 100.0),
-                format!("> {:.0}%", thresholds::DISK_USED_RATIO * 100.0),
-            ),
-        );
+        if !crate::disk_alerts::configured() {
+            conditions.insert(
+                "disk_usage".to_string(),
+                (
+                    input.host.disk_used_ratio > thresholds::DISK_USED_RATIO,
+                    format!("{:.1}% used", input.host.disk_used_ratio * 100.0),
+                    format!("> {:.0}%", thresholds::DISK_USED_RATIO * 100.0),
+                ),
+            );
+        }
         conditions.insert(
             "memory_available".to_string(),
             (
