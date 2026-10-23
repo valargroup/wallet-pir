@@ -207,7 +207,7 @@ public origin and both nodes.
 These steps prepare a new Droplet before it serves anything; no deploy reaches it
 before its baseline is captured.
 
-1. `cloud-init.yaml` installs Caddy, creates the `receiver-pir` user,
+1. `cloud-init.yaml` installs Caddy from Caddy's stable repository (the `Caddyfile` needs 2.6.4 or later, and Ubuntu 24.04 ships 2.6.2), creates the `receiver-pir` user,
    `/opt/receiver-pir/releases` and `/srv/receiver-pir`.
 2. Install the first `receiver-directory` from a verified bundle (`tools/ci/release.py
    extract`, as for [the monitor](#monitoring)) as

@@ -177,6 +177,10 @@ def check_cloud_init(text, bind):
     """Check the service account and its directories without installing a host firewall."""
     packages = next(line for line in text.splitlines() if line.startswith('packages:'))
     assert 'caddy' in packages and 'ufw' not in packages, packages
+    # Ubuntu's Caddy predates the Caddyfile's `servers` options, so Caddy's own
+    # repository supplies it, signed by its pinned key.
+    assert 'https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main' in text
+    assert '-----BEGIN PGP PUBLIC KEY BLOCK-----' in text
     commands = runcmd(text)
     assert ['useradd', '--system', '--home-dir', STATE, '--shell', '/usr/sbin/nologin', USER] in commands
     assert ['install', '-d', '-o', USER, '-g', USER, '-m', '0750', STATE] in commands
