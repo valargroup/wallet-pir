@@ -1029,7 +1029,8 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
         serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
-/// Observer collection readiness: 200 once a poll round completed with the
+/// Observer collection readiness: 200 while the latest poll round, at most 45
+/// seconds old, collected a fresh document from every expected host with the
 /// inventory whose `revision` it reports; the deployment checks both.
 pub async fn observers_ready() -> (StatusCode, Json<pir_apm::observers::Readiness>) {
     let r = pir_apm::observers::readiness();
@@ -1106,6 +1107,27 @@ fn update_router_rates(d: &mut DashboardData, history: &mut RouterHistory, now: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn observer_readiness_endpoint_expires_with_its_round() {
+        let now = incidents::unix_time();
+        let round = |at: u64| pir_apm::observers::Readiness {
+            configured: true,
+            ready: true,
+            rounds: 1,
+            expected_hosts: 1,
+            valid_hosts: 1,
+            evaluated_at: at,
+            ..Default::default()
+        };
+        pir_apm::observers::set_readiness(round(now));
+        assert_eq!(observers_ready().await.0, StatusCode::OK);
+        pir_apm::observers::set_readiness(round(now - 60));
+        let (code, Json(r)) = observers_ready().await;
+        assert_eq!(code, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!r.ready);
+    }
+
     fn view(now: u64) -> DashboardData {
         let mut d = DashboardData::new(
             "test".into(),
