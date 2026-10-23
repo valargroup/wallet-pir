@@ -1154,15 +1154,22 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
         now_ms(),
         Some(&first),
     );
-    let mut inventory = export(&source, &first);
-    let object = publish_inventory(&source, &mut inventory);
-    let mut newer = export(&source, &next);
-    let newer_object = publish_inventory(&source, &mut newer);
     let (blocks, mut mempool, forks) = fixture::source(32, true);
     mempool.push(fixture::txid(u64::MAX - 3));
     let third_snapshot =
         status_shared::index::Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks).unwrap();
     let third = cached_generation(&third_snapshot, 6, 2, now_ms(), Some(&next));
+    // Fixture preparation can contend with other native tests. Start the
+    // observation window once all synthetic material is ready, before any
+    // publication or synchronization; loading must preserve this timestamp.
+    let observed_ms = now_ms();
+    let first = first.reobserved(observed_ms);
+    let next = next.reobserved(observed_ms);
+    let third = third.reobserved(observed_ms);
+    let mut inventory = export(&source, &first);
+    let object = publish_inventory(&source, &mut inventory);
+    let mut newer = export(&source, &next);
+    let newer_object = publish_inventory(&source, &mut newer);
     let mut newest = export(&source, &third);
     let newest_object = publish_inventory(&source, &mut newest);
     assert_ne!(inventory.material_identity(), newer.material_identity());
