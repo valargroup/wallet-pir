@@ -55,11 +55,23 @@ def under(target, root):
 
 def require_unused(root, active, proc=Path('/proc'), configuration=Path('/etc')):
     """Reject process handles, mappings, configuration references and active-tree links."""
+    # SSH's helper ancestors carry the reviewed path in their command arguments.
+    # They still must pass the open-handle and memory-mapping checks below.
+    ancestors, parent = set(), os.getpid()
+    while parent > 1 and str(parent) not in ancestors:
+        ancestors.add(str(parent))
+        try:
+            status = (proc / str(parent) / 'status').read_text()
+        except FileNotFoundError:
+            break
+        parent = int(next(line.split()[1] for line in status.splitlines() if line.startswith('PPid:')))
     for process in proc.iterdir():
         if not process.name.isdecimal() or process.name == str(os.getpid()):
             continue
         try:
-            require(str(root).encode() not in (process / 'cmdline').read_bytes(), 'cache is named by a running process')
+            if process.name not in ancestors:
+                require(str(root).encode() not in (process / 'cmdline').read_bytes(),
+                        'cache is named by a running process: ' + process.name)
             require(str(root) not in (process / 'maps').read_text(), 'cache is mapped by a running process')
             for descriptor in [process / 'cwd', *list((process / 'fd').iterdir())]:
                 try:
