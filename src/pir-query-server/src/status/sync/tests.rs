@@ -983,13 +983,26 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
     server.abort();
 }
 
-/// The candidate's own pre-commit authority check is bound to the exact
-/// envelope it was revalidated under: an advance, a withdrawal or a replayed
-/// answer for an earlier envelope never activates it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope() {
+/// A worker whose first candidate check saw the publisher advance: the
+/// candidate was deferred, nothing serves, and the floor holds the newer
+/// envelope. The sibling cases below continue from here.
+struct AdvancedCandidate {
+    _root: tempfile::TempDir,
+    _tls: tls::Tls,
+    _service: Service,
+    source: Arc<Origin>,
+    server: tokio::task::JoinHandle<()>,
+    worker: Service,
+    task: StatusSynchronization,
+    inventory: Inventory,
+    /// The publisher's live answer for sequence 7, captured before it
+    /// advanced, to be replayed afterwards.
+    earlier: AnchorCheckResponse,
+}
+
+async fn candidate_deferred_by_an_advance() -> AdvancedCandidate {
     use status_shared::fixture::{self, NETWORK, SALT};
-    let (root, _service, task, source, tls, server) = setup().await;
+    let (root, service, task, source, tls, server) = setup().await;
     drop(task);
     let generation =
         cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
@@ -1013,28 +1026,52 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     )
     .unwrap();
 
-    // The publisher advances while checking the candidate. Its live answer
-    // for sequence 7 is captured first, to be replayed afterwards.
-    let candidate = (
-        inventory.manifest.anchor_height,
-        inventory.manifest.anchor_hash,
-    );
-    let answer = |authority, subject, still_authoritative| AnchorCheckResponse {
-        authority,
+    // The publisher advances while checking the candidate.
+    let earlier = AnchorCheckResponse {
+        authority: source.current.read().unwrap().authority().unwrap(),
         answers: vec![SubjectAnswer {
-            subject,
-            still_authoritative,
+            subject: (
+                inventory.manifest.anchor_height,
+                inventory.manifest.anchor_hash,
+            ),
+            still_authoritative: true,
         }],
     };
-    let earlier = answer(
-        source.current.read().unwrap().authority().unwrap(),
-        candidate,
-        true,
-    );
     source.advance_during_check.store(true, Ordering::SeqCst);
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
     assert!(worker.state.lock().await.controller.is_none());
     assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    AdvancedCandidate {
+        _root: root,
+        _tls: tls,
+        _service: service,
+        source,
+        server,
+        worker,
+        task,
+        inventory,
+        earlier,
+    }
+}
+
+/// The candidate's own pre-commit authority check is bound to the exact
+/// envelope it was revalidated under: neither an answer replayed from an
+/// earlier envelope nor a live answer for another anchor activates it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_candidate_refuses_replayed_or_substituted_authority_answers() {
+    let AdvancedCandidate {
+        source,
+        server,
+        worker,
+        mut task,
+        inventory,
+        earlier,
+        // Hold the directories, TLS terminator and service until the end.
+        _root,
+        _tls,
+        _service,
+        ..
+    } = candidate_deferred_by_an_advance().await;
 
     // An answer replayed from the earlier envelope is not live authority.
     *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&earlier).unwrap());
@@ -1048,13 +1085,18 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
 
     // A live-bound answer of the same count for another anchor neither
     // confirms the candidate nor, being negative, invalidates it.
-    let mut other = candidate;
-    other.1[0] ^= 1;
-    let substituted = answer(
-        source.current.read().unwrap().authority().unwrap(),
-        other,
-        false,
+    let mut other = (
+        inventory.manifest.anchor_height,
+        inventory.manifest.anchor_hash,
     );
+    other.1[0] ^= 1;
+    let substituted = AnchorCheckResponse {
+        authority: source.current.read().unwrap().authority().unwrap(),
+        answers: vec![SubjectAnswer {
+            subject: other,
+            still_authoritative: false,
+        }],
+    };
     *source.replayed_check.write().unwrap() = Some(serde_json::to_vec(&substituted).unwrap());
     let error = task.synchronize().await.unwrap_err();
     assert_eq!(
@@ -1066,7 +1108,26 @@ async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope()
     assert!(!task
         .floor()
         .is_invalidated(&ViewIdentity(inventory.manifest.id())));
-    *source.replayed_check.write().unwrap() = None;
+    server.abort();
+}
+
+/// After an advance deferred the candidate, a withdrawal during its next
+/// check leaves nothing serving, and the same material republished under a
+/// live answer for its exact envelope then activates.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope() {
+    let AdvancedCandidate {
+        source,
+        server,
+        worker,
+        mut task,
+        mut inventory,
+        // Hold the directories, TLS terminator and service until the end.
+        _root,
+        _tls,
+        _service,
+        ..
+    } = candidate_deferred_by_an_advance().await;
 
     // A withdrawal during the candidate's check leaves nothing serving.
     source.advance_during_check.store(true, Ordering::SeqCst);
