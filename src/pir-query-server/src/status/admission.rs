@@ -43,6 +43,11 @@ impl Admission {
             role,
         })
     }
+    /// Waits until admitted work has ended, including blocking evaluation
+    /// and packing that outlived a cancelled or abandoned request.
+    pub(super) async fn drained(&self) {
+        self.0.drained().await
+    }
 }
 struct Gauge {
     role: &'static str,
@@ -97,6 +102,32 @@ mod tests {
         assert_eq!(a.0.waiting_available(), 1);
         drop(active);
         assert!(a.acquire("router").await.is_ok());
+    }
+    #[tokio::test]
+    async fn shutdown_drain_waits_for_blocking_work_past_its_request() {
+        let a = std::sync::Arc::new(Admission::new(2, 1, Duration::from_millis(10)));
+        let permit = a.acquire("worker").await.unwrap();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let request = tokio::spawn(tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            started_tx.send(()).unwrap();
+            rx.recv().unwrap();
+        }));
+        started_rx.await.unwrap();
+        request.abort();
+        let _ = request.await;
+        let drained = tokio::spawn({
+            let a = a.clone();
+            async move { a.drained().await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished());
+        tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), drained)
+            .await
+            .unwrap()
+            .unwrap();
     }
     #[tokio::test]
     async fn cancelled_blocking_work_keeps_execution_permit() {

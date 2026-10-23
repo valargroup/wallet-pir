@@ -91,12 +91,18 @@ pub async fn serve_role_on(
         None => service.routes(),
     };
     let stopped = stop.clone();
-    crate::supervision::supervise(
+    let result = crate::supervision::supervise(
         "status",
         listen,
         routes,
         manager.run_until(async move { stopped.cancelled().await }),
         stop,
     )
-    .await
+    .await;
+    // The host bounds how long it drains wallet requests, but blocking
+    // evaluation and packing that outlived its request keep their permit,
+    // client slot and generation; the role keeps its directory lock until
+    // that work ends.
+    service.permits.drained().await;
+    result
 }
