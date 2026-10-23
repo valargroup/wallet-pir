@@ -2,13 +2,14 @@
 //!
 //! Both serve the same kind of table through the same runtime cache, admission
 //! and work-memory bounds; they differ in how a request names its revision and
-//! table. Each worker resolves that address itself, then hands the rest to
-//! [`answer_query`]: the declared-length check, admission, the body read, the
-//! runtime handles, the memory reservation and evaluation. Refusals are one
+//! table. Each worker's snapshot resolves that address into a
+//! [`PreparedQuery`], then hands it to [`answer_query`]: the declared-length
+//! check, admission, the body read, the runtime handles, the memory
+//! reservation and evaluation. Refusals are one
 //! [`RequestError`], so a wallet sees the same status codes, retry delays and
 //! body shapes from either.
 
-use crate::transparent::admission::{Admission, AdmissionError, Admitted};
+use crate::transparent::admission::{Admission, AdmissionError};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -17,7 +18,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use transparent_shared::runtime::memory::WorkMemory;
 use transparent_shared::runtime::metrics::Metrics;
-use transparent_shared::runtime::{CacheError, RuntimeHandle, SharedParams};
+use transparent_shared::runtime::CacheError;
+use transparent_shared::serving::{PreparedQuery, ServingError};
 
 /// Why a request could not be answered.
 pub enum RequestError {
@@ -62,6 +64,17 @@ impl From<CacheError> for RequestError {
         match error {
             CacheError::Overloaded => RequestError::Overloaded,
             CacheError::Failed(message) => RequestError::Bad(message),
+        }
+    }
+}
+
+impl From<ServingError> for RequestError {
+    fn from(error: ServingError) -> Self {
+        match error {
+            ServingError::Invalid(message) => RequestError::Bad(message),
+            ServingError::Stale { message, retry } => RequestError::Stale { message, retry },
+            ServingError::WrongHoldings(message) => RequestError::Misdirected(message),
+            ServingError::Capacity => RequestError::Overloaded,
         }
     }
 }
@@ -200,43 +213,16 @@ impl Worker<'_> {
     }
 }
 
-/// A query whose revision and table the worker has resolved.
-pub struct Query {
-    pub shared: Arc<SharedParams>,
-    /// The rows a selection spans: every row, or for a growing tail's pages
-    /// only those its manifest says can hold data.
-    pub query_rows: usize,
-    /// The table as refusals and traces name it.
-    pub table: String,
-    /// The revision, for traces.
-    pub revision: String,
-    /// The prefix that names the revision and table. The same bytes come back
-    /// in the response, so a query answered by the wrong runtime fails a check
-    /// at both ends rather than decoding into rows nobody asked for.
-    pub binding: [u8; 8],
-}
-
-/// Answers a resolved query: everything from the declared length to the
-/// evaluated answer.
+/// Answers a query the snapshot resolved: everything from the declared
+/// length to the evaluated answer.
 ///
-/// `acquire` takes every segment's runtime once a slot is held, refusing as
-/// the worker's address requires; it is given the admission so it can bound
-/// each acquisition by what is left of the request's deadline.
-pub async fn answer_query(
-    worker: Worker<'_>,
-    request: Request,
-    query: Query,
-    acquire: impl AsyncFnOnce(&Admitted) -> Result<Vec<RuntimeHandle>, Response>,
-) -> Response {
-    let Query {
-        shared,
-        query_rows,
-        table,
-        revision,
-        binding,
-    } = query;
+/// Every segment's runtime is taken once a slot is held, each bounded by what
+/// is left of the request's deadline.
+pub async fn answer_query(worker: Worker<'_>, request: Request, query: PreparedQuery) -> Response {
     let metrics = worker.metrics;
     let map_digest = worker.map_digest;
+    let table = query.table().to_string();
+    let revision = query.revision().to_string();
 
     // The exact lengths this table's query may have — each width its profile
     // accepts, over every row or, for a growing tail's pages, over only the
@@ -261,13 +247,13 @@ pub async fn answer_query(
     };
     let Some(expected) = usize::try_from(declared)
         .ok()
-        .filter(|&len| shared.accepts_query_bytes(query_rows, len))
+        .filter(|&len| query.accepts_len(len))
     else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
             "a {table} query for geometry {} must be exactly {} bytes, not {declared}",
-            shared.geometry.name,
-            shared.query_lengths(query_rows),
+            query.geometry(),
+            query.lengths(),
         ))
         .into_response(map_digest);
         return worker.refuse_unread(request, refused).await;
@@ -337,10 +323,17 @@ pub async fn answer_query(
     // a multi-segment table would thrash rather than be answered. Holding them
     // together also means a table whose segments do not fit the budget is
     // refused once, retryably, instead of making progress it cannot keep.
-    let handles = match acquire(&admitted).await {
-        Ok(handles) => handles,
-        Err(refused) => return refused,
-    };
+    let mut handles = Vec::with_capacity(query.segments());
+    for segment in 0..query.segments() {
+        let runtime = async { query.runtime(segment).await.map_err(RequestError::from) };
+        match within(admitted.remaining(), metrics, runtime).await {
+            Ok(handle) => handles.push(handle),
+            Err(error) => {
+                Metrics::incr(&metrics.query_errors);
+                return error.into_response(map_digest);
+            }
+        }
+    }
 
     tracing::debug!(revision = %revision, table = %table, seconds = query_stage.elapsed().as_secs_f64(), stage = "query_runtime", "query stage");
 
@@ -352,10 +345,7 @@ pub async fn answer_query(
     let memory_started = std::time::Instant::now();
     let memory = match worker
         .work_memory
-        .reserve_query(
-            shared.reserved_bytes().saturating_mul(2),
-            admitted.remaining(),
-        )
+        .reserve_query(query.work_bytes(), admitted.remaining())
         .await
     {
         Some(memory) => memory,
@@ -373,18 +363,14 @@ pub async fn answer_query(
     };
     tracing::debug!(revision = %revision, table = %table, seconds = memory_started.elapsed().as_secs_f64(), admitted = true, stage = "query_memory_admission", "query stage");
     let evaluation_metrics = metrics.clone();
+    let evaluator = query.evaluator();
+    drop(query);
     let query_stage = std::time::Instant::now();
     let evaluated = pir_control::admission::spawn_admitted((handles, memory), move |(handles, _)| {
         tracing::debug!(revision = %revision, table = %table, seconds = query_stage.elapsed().as_secs_f64(), stage = "query_dispatch", "query stage");
         let query_stage = std::time::Instant::now();
         let _timer = evaluation_metrics.evaluation_seconds.timer();
-        // The key and selection are parsed once: every segment shares the
-        // table's packing setup and query masks, so one parse serves them all.
-        let query = shared.parse(binding, &body, query_rows)?;
-        let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
-        for handle in handles {
-            answer.extend(handle.get().answer(binding, &query)?);
-        }
+        let answer = evaluator.evaluate(handles, &body)?;
         tracing::debug!(revision = %revision, table = %table, seconds = query_stage.elapsed().as_secs_f64(), stage = "query_evaluate", "query stage");
         admitted.complete();
         Ok::<_, String>(answer)

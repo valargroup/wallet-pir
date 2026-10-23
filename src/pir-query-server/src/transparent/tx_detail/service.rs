@@ -9,10 +9,10 @@
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
-use crate::transparent::admission::{Admission, AdmissionConfig, Admitted};
+use crate::transparent::admission::{Admission, AdmissionConfig};
 use crate::transparent::config::ServiceConfig;
 pub(crate) use crate::transparent::request::json;
-use crate::transparent::request::{answer_query, within, Query, RequestError, Worker};
+use crate::transparent::request::{answer_query, within, RequestError, Worker};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -20,21 +20,16 @@ use axum::routing::{get, post};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use transparent_shard::display::{self, DisplayTable};
+use transparent_shard::display;
 use transparent_shard::layout::Geometry;
-use transparent_shared::history::shardset::{SegmentSource, Table};
+use transparent_shared::history::shardset::Table;
 use transparent_shared::runtime::metrics::{Metrics, Snapshot};
-use transparent_shared::runtime::{
-    disk::{DiskCache, ShippedRuntimes},
-    CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
-};
-use transparent_shared::tx_detail::set::{DisplayRevision, DisplaySet};
-use transparent_shared::tx_detail::{kind, runtime_key, tier};
-
-type ParamsKey = (&'static str, Table);
+use transparent_shared::runtime::{disk::DiskCache, Produced, RuntimeCache};
+use transparent_shared::tx_detail::serving::{DisplayParams, DisplayServing};
+use transparent_shared::tx_detail::set::DisplaySet;
 
 /// What every snapshot of one process shares: the cache, admission, metrics
 /// and the native parameters, which are a function of geometry and kind only.
@@ -46,7 +41,7 @@ pub struct DisplayRuntime {
     pub cache: Arc<RuntimeCache>,
     pub admission: Arc<Admission>,
     pub metrics: Arc<Metrics>,
-    params: Mutex<HashMap<ParamsKey, Arc<SharedParams>>>,
+    params: DisplayParams,
 }
 
 impl DisplayRuntime {
@@ -80,74 +75,8 @@ impl DisplayRuntime {
             cache,
             admission,
             metrics,
-            params: Mutex::new(HashMap::new()),
+            params: DisplayParams::default(),
         })
-    }
-
-    /// The shared parameters of one geometry's table kind, derived once.
-    pub fn params(
-        &self,
-        geometry: &'static Geometry,
-        table: Table,
-    ) -> Result<Arc<SharedParams>, String> {
-        let mut params = self.params.lock().expect("display params");
-        if let Some(shared) = params.get(&(geometry.name, table)) {
-            return Ok(shared.clone());
-        }
-        let shared = Arc::new(SharedParams::build_display(geometry, table)?);
-        params.insert((geometry.name, table), shared.clone());
-        Ok(shared)
-    }
-
-    /// Finds or builds the runtime of one segment, retrying transient
-    /// admission pressure as the prewarm does. Also says whether and how it
-    /// had to be produced (`None` when it was resident): an operation reports
-    /// its own builds this way, not as a delta of the process-wide counter,
-    /// which concurrent stages and requests move.
-    ///
-    /// `shipped` is tried before a restore or build, for an unsealed revision
-    /// only: archives are built once per seal by `stage`, and are never
-    /// shipped.
-    pub(crate) async fn runtime(
-        &self,
-        revision: &DisplayRevision,
-        table: DisplayTable,
-        segment: u32,
-        cancelled: &AtomicBool,
-        shipped: Option<&ShippedRuntimes>,
-    ) -> Result<(RuntimeHandle, Option<Produced>), CacheError> {
-        let source = revision
-            .segment(table, segment)
-            .cloned()
-            .ok_or_else(|| CacheError::Failed("display segment is not held".into()))?;
-        let key = runtime_key(&revision.digest, table, segment);
-        if let Some(handle) = self.cache.cached(&key) {
-            return Ok((handle, None));
-        }
-        let shared = self
-            .params(revision.geometry, kind(table))
-            .map_err(CacheError::Failed)?;
-        let shipped = if self.required {
-            Some(shipped.ok_or_else(|| {
-                CacheError::Failed("managed display requires prepared material".into())
-            })?)
-        } else {
-            shipped.filter(|_| !revision.manifest.sealed)
-        };
-        transparent_shared::runtime::prewarm::retry(
-            cancelled,
-            std::time::Duration::from_secs(30),
-            || {
-                self.cache.get_background_from(
-                    key.clone(),
-                    shared.clone(),
-                    source.clone(),
-                    shipped.cloned(),
-                )
-            },
-        )
-        .await
-        .map(|(handle, produced)| (handle, Some(produced)))
     }
 }
 
@@ -191,11 +120,9 @@ impl WarmState {
 
 struct Inner {
     validation: std::sync::OnceLock<crate::transparent::validation::Scope>,
-    set: DisplaySet,
+    /// The loaded set, its parameters and the shared runtime cache.
+    serving: DisplayServing,
     runtime: Arc<DisplayRuntime>,
-    /// One parameter set per geometry the set names, per table kind.
-    params: HashMap<ParamsKey, Arc<SharedParams>>,
-    max_query_bytes: usize,
     warm: WarmState,
     prewarm_slots: usize,
     /// Set once a successor is active; see [`DisplayState::retire`].
@@ -266,69 +193,24 @@ pub struct SetupResponse {
 impl DisplayState {
     /// Prepare a serving snapshot without loading its runtimes. Required
     /// publisher material is checked by size before activation.
-    pub fn build(mut set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
-        if runtime.required {
-            // Check required files by size even if runtimes are already resident.
-            let root = set
-                .current()
-                .first()
-                .and_then(|r| r.dir.parent())
-                .ok_or("display set has no root")?
-                .to_path_buf();
-            let shipped = ShippedRuntimes::required(root);
-            // The set above already checked the map and source tables. Verify
-            // native files here without rebuilding a publisher distribution:
-            // provider-owned stable revision links are not publisher inputs.
-            let mut checked = 0usize;
-            for revision in set.current() {
-                for (table, segment) in revision.targets() {
-                    let source = revision
-                        .segment(table, segment)
-                        .ok_or("missing display source")?;
-                    let params = runtime.params(revision.geometry, kind(table))?;
-                    let key = runtime_key(&revision.digest, table, segment);
-                    shipped
-                        .check_size(&key, &params, source.sha256())
-                        .map_err(|e| {
-                            format!(
-                                "required prepared runtime for display revision {} segment {segment}: {e}",
-                                revision.digest
-                            )
-                        })?;
-                    checked += 1;
-                }
-            }
-            tracing::info!(checked, "display required runtime sizes checked");
-            set.shipped = Some(shipped);
-        }
-        let mut params = HashMap::new();
-        let mut max_query_bytes = 0usize;
-        for geometry in set.geometries() {
-            let shared = runtime.params(geometry, Table::TxDirectory)?;
-            max_query_bytes = max_query_bytes.max(shared.query_bytes());
-            params.insert((geometry.name, Table::TxDirectory), shared);
-        }
-        if params.is_empty() {
-            return Err("the display set names no geometry to serve".into());
-        }
+    pub fn build(set: DisplaySet, runtime: &Arc<DisplayRuntime>) -> Result<Self, String> {
+        let serving = DisplayServing::new(
+            set,
+            &runtime.params,
+            runtime.cache.clone(),
+            runtime.metrics.clone(),
+            runtime.required,
+        )?;
         // Each held table at its built size, plus the bound for as many as
         // the prewarm can have in flight; see `runtime::warm_bytes`.
-        let mut held = Vec::new();
-        for revision in set.current().iter().filter(|r| r.held()) {
-            for (table, _) in revision.targets() {
-                held.push(params[&(revision.geometry.name, kind(table))].as_ref());
-            }
-        }
-        let target = held.len();
+        let target = serving.warm_target_count();
         Metrics::set(&runtime.metrics.target_runtimes, target as u64);
         let prewarm_slots = runtime.cache.prewarm_concurrency();
         let state = Self {
             inner: Arc::new(Inner {
                 validation: std::sync::OnceLock::new(),
-                set,
+                serving,
                 runtime: runtime.clone(),
-                params,
-                max_query_bytes,
                 warm: WarmState {
                     target,
                     finished: AtomicBool::new(false),
@@ -357,7 +239,7 @@ impl DisplayState {
             let inner = &state.inner;
             let started = std::time::Instant::now();
             let queue = Arc::new(Mutex::new(std::collections::VecDeque::from(
-                inner.set.warm_targets(),
+                inner.serving.set().warm_targets(),
             )));
             let mut workers = tokio::task::JoinSet::new();
             for _ in 0..inner.prewarm_slots {
@@ -374,20 +256,15 @@ impl DisplayState {
                             break;
                         };
                         if state.validation().unavailable(&digest) { continue; }
-                        let Some(revision) = inner.set.held(&digest) else {
+                        if inner.warm.stopped.load(Ordering::Acquire) { break; }
+                        let Some(produced) = inner
+                            .serving
+                            .warm(&digest, table, segment, &inner.warm.cancelled)
+                            .await
+                        else {
                             continue;
                         };
-                        if inner.warm.stopped.load(Ordering::Acquire) { break; }
-                        match inner
-                            .runtime
-                            .runtime(
-                                revision,
-                                table,
-                                segment,
-                                &inner.warm.cancelled,
-                                inner.set.shipped.as_ref(),
-                            )
-                            .await
+                        match produced
                         {
                             Ok((handle, produced)) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) || inner.warm.stopped.load(Ordering::Acquire) {
@@ -416,7 +293,7 @@ impl DisplayState {
                 warm = inner.warm.count.load(Ordering::Acquire),
                 target = inner.warm.target,
                 seconds = started.elapsed().as_secs_f64(),
-                map = %inner.set.map_digest,
+                map = %inner.serving.set().map_digest,
                 "display prewarm finished"
             );
         });
@@ -437,41 +314,32 @@ impl DisplayState {
     fn validation(&self) -> &crate::transparent::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::transparent::validation::Scope::default();
-            for revision in self.inner.set.current().iter().filter(|r| r.held()) {
+            for revision in self
+                .inner
+                .serving
+                .set()
+                .current()
+                .iter()
+                .filter(|r| r.held())
+            {
                 scope.current(revision.manifest.shard_id, &revision.digest);
             }
             // A wallet can still request a retained predecessor by its digest.
-            for revision in self.inner.set.revisions().iter().filter(|r| r.held()) {
-                for (table, segment) in revision.targets() {
-                    let Some(source) = revision.segment(table, segment) else {
-                        continue;
-                    };
-                    let shared = &self.inner.params[&(revision.geometry.name, kind(table))];
-                    let key = runtime_key(&revision.digest, table, segment);
-                    scope.add(
-                        &revision.digest,
-                        revision.manifest.shard_id,
-                        source.path(),
-                        &self.inner.runtime.cache,
-                        &key,
-                    );
-                    if let Some(shipped) = &self.inner.set.shipped {
-                        scope.add(
-                            &revision.digest,
-                            revision.manifest.shard_id,
-                            &shipped.path(&key, shared, source.sha256()),
-                            &self.inner.runtime.cache,
-                            &key,
-                        );
-                    }
-                }
+            for artifact in self.inner.serving.artifacts() {
+                scope.add(
+                    &artifact.digest,
+                    artifact.shard_id,
+                    &artifact.path,
+                    &self.inner.runtime.cache,
+                    &artifact.key,
+                );
             }
             scope
         })
     }
 
     pub fn set(&self) -> &DisplaySet {
-        &self.inner.set
+        &self.inner.serving.set()
     }
 
     pub fn runtime(&self) -> &Arc<DisplayRuntime> {
@@ -484,22 +352,11 @@ impl DisplayState {
 
     /// The largest body any geometry of this set can legitimately send.
     pub fn max_query_bytes(&self) -> usize {
-        self.inner.max_query_bytes
+        self.inner.serving.max_query_bytes()
     }
 
     pub(crate) fn resident_targets(&self) -> usize {
-        self.inner
-            .set
-            .warm_targets()
-            .into_iter()
-            .filter(|(digest, table, segment)| {
-                self.inner
-                    .runtime
-                    .cache
-                    .cached(&runtime_key(digest, *table, *segment))
-                    .is_some()
-            })
-            .count()
+        self.inner.serving.resident_targets()
     }
 
     pub fn warm_target(&self) -> usize {
@@ -541,7 +398,8 @@ impl DisplayState {
     pub(crate) fn stop_warming(&self, digests: Option<&BTreeSet<String>>) {
         if digests.is_none_or(|digests| {
             self.inner
-                .set
+                .serving
+                .set()
                 .current()
                 .iter()
                 .any(|r| digests.contains(&r.digest))
@@ -567,88 +425,23 @@ impl DisplayState {
         self.inner.retired.load(Ordering::Acquire)
     }
 
-    /// The runtimes of `segments` of `table`, if all are resident; for a
-    /// retired snapshot, which never builds.
-    fn resident(
-        &self,
-        shard_id: u64,
-        digest: &str,
-        table: DisplayTable,
-        segments: std::ops::Range<u32>,
-    ) -> Result<Vec<RuntimeHandle>, RequestError> {
-        segments
-            .map(|segment| {
-                self.inner
-                    .runtime
-                    .cache
-                    .cached(&runtime_key(digest, table, segment))
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| {
-                Metrics::incr(&self.inner.runtime.metrics.stale_revisions);
-                stale(shard_id, digest)
-            })
-    }
-
-    fn shared(&self, revision: &DisplayRevision, table: DisplayTable) -> Arc<SharedParams> {
-        self.inner
-            .params
-            .get(&(revision.geometry.name, kind(table)))
-            .expect("every named geometry has parameters")
-            .clone()
-    }
-
-    /// Resolves a digest-addressed request inside this snapshot.
-    ///
-    /// The tier must be the revision's own and the role must hold it; both
-    /// are routing faults (421), not stale clients. A digest this snapshot
-    /// does not know is stale (409), and the client refreshes its map.
-    fn revision(
-        &self,
-        sealed: bool,
-        shard_id: u64,
-        digest: &str,
-    ) -> Result<&DisplayRevision, RequestError> {
-        let metrics = &self.inner.runtime.metrics;
-        let Some(revision) = self.inner.set.revision(digest) else {
-            Metrics::incr(&metrics.stale_revisions);
-            return Err(stale(shard_id, digest));
-        };
-        if revision.manifest.shard_id != shard_id {
-            return Err(RequestError::Bad(format!(
-                "revision {digest} is not a revision of display shard {shard_id}"
-            )));
-        }
-        if revision.manifest.sealed != sealed {
-            Metrics::incr(&metrics.unassigned_refusals);
-            return Err(RequestError::Misdirected(format!(
-                "revision {digest} of display shard {shard_id} is {}, not {}",
-                tier(revision.manifest.sealed),
-                tier(sealed)
-            )));
-        }
-        if !revision.held() {
-            Metrics::incr(&metrics.unassigned_refusals);
-            return Err(RequestError::Misdirected(format!(
-                "this {} worker does not serve {} display revisions",
-                self.inner.set.role.as_str(),
-                tier(sealed)
-            )));
-        }
-        Ok(revision)
-    }
-
     fn snapshot(&self) -> Snapshot {
         let inner = &self.inner;
         Snapshot {
             labels: vec![
-                ("map_sha256".into(), inner.set.map_digest.clone()),
-                ("role".into(), inner.set.role.as_str().into()),
+                ("map_sha256".into(), inner.serving.set().map_digest.clone()),
+                ("role".into(), inner.serving.set().role.as_str().into()),
             ],
-            shards: inner.set.map.shards.len() as u64,
-            assigned_shards: inner.set.current().iter().filter(|r| r.held()).count() as u64,
-            revisions: inner.set.revisions().len() as u64,
-            prunable_revisions: inner.set.excess.len() as u64,
+            shards: inner.serving.set().map.shards.len() as u64,
+            assigned_shards: inner
+                .serving
+                .set()
+                .current()
+                .iter()
+                .filter(|r| r.held())
+                .count() as u64,
+            revisions: inner.serving.set().revisions().len() as u64,
+            prunable_revisions: inner.serving.set().excess.len() as u64,
             cache_budget_bytes: inner.runtime.cache.budget(),
             warm_runtimes: inner.warm.count.load(Ordering::Acquire),
             work_memory_reserved_bytes: inner.runtime.cache.work_memory().reserved_bytes(),
@@ -666,17 +459,14 @@ impl DisplayState {
             work_memory: runtime.cache.work_memory(),
             metrics: &runtime.metrics,
             max_query_bytes: self.max_query_bytes(),
-            map_digest: &self.inner.set.map_digest,
+            map_digest: &self.inner.serving.set().map_digest,
         }
     }
 }
 
 /// The revision named is no longer served: the wallet refreshes its txid map.
 fn stale(shard_id: u64, digest: &str) -> RequestError {
-    RequestError::Stale {
-        message: format!("revision {digest} of display shard {shard_id} is no longer served"),
-        retry: "refresh the txid map",
-    }
+    transparent_shared::tx_detail::serving::stale(shard_id, digest).into()
 }
 
 /// The request body limit: the longest query any display geometry accepts,
@@ -749,11 +539,11 @@ async fn health(State(state): State<DisplayState>) -> Response {
         StatusCode::OK,
         serde_json::json!({
             "phase": "serving",
-            "role": inner.set.role.as_str(),
-            "map_sha256": inner.set.map_digest,
-            "shards": inner.set.map.shards.len(),
-            "held_revisions": inner.set.revisions().iter().filter(|r| r.held()).count(),
-            "geometries": inner.set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
+            "role": inner.serving.set().role.as_str(),
+            "map_sha256": inner.serving.set().map_digest,
+            "shards": inner.serving.set().map.shards.len(),
+            "held_revisions": inner.serving.set().revisions().iter().filter(|r| r.held()).count(),
+            "geometries": inner.serving.set().geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
             "cache_budget_bytes": cache.budget(),
             "cache_resident_bytes": cache.resident_bytes(),
             "runtimes_built": cache.entries(),
@@ -774,14 +564,14 @@ async fn ready(State(state): State<DisplayState>) -> Response {
     let mut body = serde_json::json!({
         "artifact_validation": state.validation().status(),
         "ready": state.is_ready(),
-        "role": inner.set.role.as_str(),
-        "map_sha256": inner.set.map_digest,
+        "role": inner.serving.set().role.as_str(),
+        "map_sha256": inner.serving.set().map_digest,
         "warm": warm,
         "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
         "target_runtimes": inner.warm.target,
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
         "prewarm_failed": Metrics::get(&inner.runtime.metrics.prewarm_failed),
-        "covered_through": inner.set.map.covered_through(),
+        "covered_through": inner.serving.set().map.covered_through(),
         "binary_sha256": pir_control::binary_sha256(),
         "incarnation": pir_control::Identity::process().incarnation,
     });
@@ -810,9 +600,12 @@ async fn metrics(State(state): State<DisplayState>) -> Response {
 
 async fn init(State(state): State<DisplayState>) -> Response {
     let inner = &state.inner;
-    let set = &inner.set;
+    let set = &inner.serving.set();
     let table = |geometry: &'static Geometry, kind: Table| {
-        let shared = &inner.params[&(geometry.name, kind)];
+        let shared = inner
+            .serving
+            .params(geometry.name, kind)
+            .expect("every named geometry has parameters");
         TableInit {
             rows: kind.rows(geometry),
             row_bytes: kind.row_bytes(geometry),
@@ -850,7 +643,7 @@ async fn init(State(state): State<DisplayState>) -> Response {
 
 /// The map exactly as loaded. Not cacheable: it changes at every publication.
 async fn shard_map(State(state): State<DisplayState>) -> Response {
-    let set = &state.inner.set;
+    let set = &state.inner.serving.set();
     (
         StatusCode::OK,
         [
@@ -865,7 +658,7 @@ async fn shard_map(State(state): State<DisplayState>) -> Response {
 
 /// The recent map of the split. Not cacheable: it changes every block.
 async fn recent_map(State(state): State<DisplayState>) -> Response {
-    let split = &state.inner.set.split;
+    let split = &state.inner.serving.set().split;
     (
         StatusCode::OK,
         [
@@ -884,8 +677,8 @@ async fn index_chunk(
     State(state): State<DisplayState>,
     AxumPath((base, digest)): AxumPath<(u64, String)>,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
-    let Some((chunk_base, bytes)) = state.inner.set.chunk(&digest) else {
+    let map_digest = state.inner.serving.set().map_digest.clone();
+    let Some((chunk_base, bytes)) = state.inner.serving.set().chunk(&digest) else {
         Metrics::incr(&state.metrics().stale_revisions);
         return json(
             StatusCode::CONFLICT,
@@ -919,8 +712,8 @@ async fn manifest(
     State(state): State<DisplayState>,
     AxumPath((shard_id, digest)): AxumPath<(u64, String)>,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
-    let Some(revision) = state.inner.set.revision(&digest) else {
+    let map_digest = state.inner.serving.set().map_digest.clone();
+    let Some(revision) = state.inner.serving.set().revision(&digest) else {
         Metrics::incr(&state.metrics().stale_revisions);
         return stale(shard_id, &digest).into_response(&map_digest);
     };
@@ -962,29 +755,12 @@ async fn query_recent(state: State<DisplayState>, path: QueryPath, request: Requ
     query(state, false, path, request).await
 }
 
-/// A table label of `revision`, and its segment count. A bucket at or past
-/// the shard's bucket count is a bad request, not a stale one.
-fn display_table(
-    revision: &DisplayRevision,
-    label: &str,
-) -> Result<(DisplayTable, u32), RequestError> {
-    let table = DisplayTable::parse(label)
-        .ok_or_else(|| RequestError::Bad(format!("unknown display table {label:?}")))?;
-    let segments = revision.segments(table).ok_or_else(|| {
-        RequestError::Bad(format!(
-            "display shard {} has {} buckets; {label} is not one of them",
-            revision.manifest.shard_id, revision.manifest.n_buckets
-        ))
-    })?;
-    Ok((table, segments))
-}
-
 async fn setup(
     State(state): State<DisplayState>,
     sealed: bool,
     AxumPath((shard_id, digest, label, segment)): SetupPath,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
+    let map_digest = state.inner.serving.set().map_digest.clone();
     let runtime = state.runtime().clone();
     // Counted as a waiter while the runtime is acquired or built, as for a
     // history setup request.
@@ -992,53 +768,39 @@ async fn setup(
         Ok(pending) => pending,
         Err(error) => return RequestError::from(error).into_response(&map_digest),
     };
-    let resolved = state
-        .revision(sealed, shard_id, &digest)
-        .and_then(|revision| {
-            let (table, segments) = display_table(revision, &label)?;
-            if segment >= segments {
-                return Err(RequestError::Bad(format!(
-                    "{label} of display shard {shard_id} has {segments} segments"
-                )));
-            }
-            let source = revision.segment(table, segment).cloned().ok_or_else(|| {
-                RequestError::Bad(format!("{label} segment {segment} is not held"))
-            })?;
-            Ok((
-                table,
-                segments,
-                revision.geometry.name,
-                state.shared(revision, table),
-                source,
-            ))
-        });
-    let (table, segments, geometry, shared, source) = match resolved {
-        Ok(resolved) => resolved,
+    let prepared = state
+        .inner
+        .serving
+        .prepare_setup(
+            sealed,
+            shard_id,
+            &digest,
+            &label,
+            segment,
+            state.is_retired(),
+        )
+        .map_err(RequestError::from);
+    let setup = match prepared {
+        Ok(prepared) => {
+            let load = async { prepared.load().await.map_err(RequestError::from) };
+            within(pending.remaining(), &runtime.metrics, load).await
+        }
+        Err(error) => Err(error),
+    };
+    let setup = match setup {
+        Ok(setup) => setup,
         Err(error) => return error.into_response(&map_digest),
     };
-    let handle = if state.is_retired() {
-        match state.resident(shard_id, &digest, table, segment..segment + 1) {
-            Ok(mut handles) => handles.pop().expect("one segment"),
-            Err(error) => return error.into_response(&map_digest),
-        }
-    } else {
-        let key = runtime_key(&digest, table, segment);
-        let built = async { Ok::<_, RequestError>(runtime.cache.get(key, shared, source).await?) };
-        match within(pending.remaining(), &runtime.metrics, built).await {
-            Ok(handle) => handle,
-            Err(error) => return error.into_response(&map_digest),
-        }
-    };
     pending.complete();
-    let built = handle.get();
+    let built = setup.runtime.get();
     let body = SetupResponse {
         shard_id,
         manifest_digest: digest,
-        geometry: geometry.into(),
-        table: table.label(),
-        bucket: table.bucket(),
-        segment,
-        segments,
+        geometry: setup.geometry.into(),
+        table: setup.table,
+        bucket: setup.bucket.expect("a display table names its bucket"),
+        segment: setup.segment,
+        segments: setup.segments,
         public_params: BASE64_STANDARD.encode(&built.public_params),
         public_params_sha256: built.public_params_sha256.clone(),
         public_params_epoch: hex::encode(built.public_params_epoch),
@@ -1074,73 +836,20 @@ async fn query_inner(
     let worker = state.worker();
     let map_digest = worker.map_digest;
     let metrics = worker.metrics;
-    let resolved = state
-        .revision(sealed, shard_id, &digest)
-        .and_then(|revision| {
-            let (table, segments) = display_table(revision, &label)?;
-            let sources = (0..segments)
-                .map(|segment| revision.segment(table, segment).cloned())
-                .collect::<Option<Vec<SegmentSource>>>()
-                .ok_or_else(|| RequestError::Bad(format!("{label} is not held")))?;
-            Ok((table, state.shared(revision, table), sources))
-        });
     // A retired snapshot is refused before the body is queued if a segment
     // has already gone; the check is repeated when the handles are taken.
-    let segments = |sources: &[SegmentSource]| 0..sources.len() as u32;
-    let resolved = resolved.and_then(|(table, shared, sources)| {
-        if state.is_retired() {
-            state.resident(shard_id, &digest, table, segments(&sources))?;
-        }
-        Ok((table, shared, sources))
-    });
-    let (table, shared, sources) = match resolved {
-        Ok(resolved) => resolved,
+    let prepared =
+        state
+            .inner
+            .serving
+            .prepare_query(sealed, shard_id, &digest, &label, state.is_retired());
+    let query = match prepared {
+        Ok(query) => query,
         Err(error) => {
             Metrics::incr(&metrics.query_errors);
-            let refused = error.into_response(map_digest);
+            let refused = RequestError::from(error).into_response(map_digest);
             return worker.refuse_unread(request, refused).await;
         }
     };
-    let query = Query {
-        query_rows: shared.profile.rows,
-        shared: shared.clone(),
-        table: label,
-        revision: digest.clone(),
-        // Names the revision and the bucket: a body prepared for another
-        // bucket's table is refused by `SharedParams::parse`.
-        binding: display::query_binding(&digest, table),
-    };
-
-    let acquire = async |admitted: &Admitted| {
-        if state.is_retired() {
-            return state
-                .resident(shard_id, &digest, table, segments(&sources))
-                .map_err(|error| {
-                    Metrics::incr(&metrics.query_errors);
-                    error.into_response(map_digest)
-                });
-        }
-        let mut handles = Vec::with_capacity(sources.len());
-        for (segment, source) in sources.into_iter().enumerate() {
-            let key = runtime_key(&digest, table, segment as u32);
-            let built = async {
-                Ok::<_, RequestError>(
-                    state
-                        .runtime()
-                        .cache
-                        .get(key, shared.clone(), source)
-                        .await?,
-                )
-            };
-            match within(admitted.remaining(), metrics, built).await {
-                Ok(handle) => handles.push(handle),
-                Err(error) => {
-                    Metrics::incr(&metrics.query_errors);
-                    return Err(error.into_response(map_digest));
-                }
-            }
-        }
-        Ok(handles)
-    };
-    answer_query(worker, request, query, acquire).await
+    answer_query(worker, request, query).await
 }

@@ -39,9 +39,9 @@
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
-use crate::transparent::admission::{Admission, Admitted};
+use crate::transparent::admission::Admission;
 pub use crate::transparent::config::ServiceConfig;
-use crate::transparent::request::{answer_query, json, within, Query, RequestError, Worker};
+use crate::transparent::request::{answer_query, json, within, RequestError, Worker};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -49,14 +49,13 @@ use axum::routing::{get, post};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use transparent_shard::manifest::query_binding;
-use transparent_shared::history::shardset::{LoadedShard, ShardSet, Table, TableRef};
+use transparent_shared::history::serving::HistoryServing;
+use transparent_shared::history::shardset::{ShardSet, Table, TableRef};
 use transparent_shared::runtime::disk::{DiskCache, ShippedRuntimes};
 use transparent_shared::runtime::metrics::{Metrics, Snapshot};
-use transparent_shared::runtime::{Produced, RuntimeCache, RuntimeHandle, SharedParams};
+use transparent_shared::runtime::{Produced, RuntimeCache};
 
 /// The prewarm's progress toward holding every assigned runtime.
 struct WarmState {
@@ -98,27 +97,16 @@ impl PrewarmProduced {
     }
 }
 
-/// A runtime's address before the digest is resolved.
-type ParamsKey = (&'static str, Table);
-
 pub struct Inner {
     validation: std::sync::OnceLock<crate::transparent::validation::Scope>,
-    set: ShardSet,
-    /// One parameter set per geometry the loaded set actually uses, per table.
-    params: HashMap<ParamsKey, Arc<SharedParams>>,
-    cache: Arc<RuntimeCache>,
+    /// The loaded set, its parameters, runtime cache and shipped runtimes.
+    serving: HistoryServing,
     admission: Arc<Admission>,
     forwarding_admission: Arc<Admission>,
     metrics: Arc<Metrics>,
-    max_query_bytes: usize,
     warm: WarmState,
     /// Prewarm jobs; the cache separately bounds cold builds and disk restores.
     prewarm_slots: usize,
-    /// Runtimes the publisher prepared beside this publication, tried before
-    /// a restore or build by the prewarm and by requests alike. `None` when
-    /// the publication was staged without them: the worker then produces
-    /// every runtime itself, as it always has.
-    shipped: Option<ShippedRuntimes>,
     archive: Option<Arc<crate::transparent::routing::archive::Archive>>,
 }
 
@@ -269,26 +257,6 @@ impl ServiceState {
         let metrics = previous
             .map(|s| s.inner.metrics.clone())
             .unwrap_or_else(|| Arc::new(Metrics::default()));
-        // Every geometry the set names, held here or not: the init document
-        // is set-wide and a wallet refuses a map it does not fully declare.
-        // Not every registered geometry, which would publish parameters for
-        // shapes no shard in the set uses.
-        let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
-        let mut max_query_bytes = 0usize;
-        for geometry in set.geometries() {
-            for table in Table::HISTORY {
-                let shared =
-                    match previous.and_then(|s| s.inner.params.get(&(geometry.name, table))) {
-                        Some(shared) => shared.clone(),
-                        None => Arc::new(SharedParams::build(geometry, table)?),
-                    };
-                max_query_bytes = max_query_bytes.max(shared.query_bytes());
-                params.insert((geometry.name, table), shared);
-            }
-        }
-        if params.is_empty() {
-            return Err("the shard set names no geometry to serve".into());
-        }
         let current: std::collections::HashSet<&str> =
             set.current().map(|shard| shard.digest.as_str()).collect();
         let target = set
@@ -296,13 +264,22 @@ impl ServiceState {
             .iter()
             .filter(|(digest, _, _)| current.contains(digest.as_str()))
             .count();
-        let cache = previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
-            Arc::new(
-                RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
-                    .with_disk(disk),
-            )
-        });
+        let cache = previous
+            .map(|s| s.inner.serving.cache().clone())
+            .unwrap_or_else(|| {
+                Arc::new(
+                    RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
+                        .with_disk(disk),
+                )
+            });
         Metrics::set(&metrics.target_runtimes, target as u64);
+        let serving = HistoryServing::new(
+            set,
+            cache.clone(),
+            metrics.clone(),
+            shipped,
+            previous.map(|s| &s.inner.serving),
+        )?;
         let prewarm_slots = cache.prewarm_concurrency();
         let admission = previous
             .map(|s| s.inner.admission.clone())
@@ -313,13 +290,7 @@ impl ServiceState {
                 // Reserve uploads for the original local execution capacity,
                 // even when later snapshots introduce another approved geometry.
                 // This derives parameters only; no PIR runtime is constructed.
-                let mut largest = 0u64;
-                for geometry in transparent_shard::layout::PROFILES {
-                    for table in Table::HISTORY {
-                        let bytes = SharedParams::build(geometry, table)?.query_bytes() as u64;
-                        largest = largest.max(bytes.div_ceil(1024) * 1024);
-                    }
-                }
+                let largest = HistoryServing::largest_query_bytes()?;
                 Arc::new(
                     admission.forwarding(largest.saturating_mul(config.query_slots.max(1) as u64)),
                 )
@@ -328,13 +299,10 @@ impl ServiceState {
         let state = Self {
             inner: Arc::new(Inner {
                 validation: std::sync::OnceLock::new(),
-                set,
-                params,
-                cache,
+                serving,
                 admission,
                 forwarding_admission,
                 metrics,
-                max_query_bytes,
                 warm: WarmState {
                     target,
                     finished: AtomicBool::new(false),
@@ -345,7 +313,6 @@ impl ServiceState {
                     produced: PrewarmProduced::default(),
                 },
                 prewarm_slots,
-                shipped,
                 archive: previous.and_then(|s| s.inner.archive.clone()),
             }),
         };
@@ -368,7 +335,8 @@ impl ServiceState {
             let inner = &state.inner;
             let started = std::time::Instant::now();
             let current: std::collections::BTreeSet<String> = inner
-                .set
+                .serving
+                .set()
                 .current()
                 .map(|shard| shard.digest.clone())
                 .collect();
@@ -376,7 +344,8 @@ impl ServiceState {
             // still queue behind the independent, smaller cold-build limit.
             let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
                 inner
-                    .set
+                    .serving
+                    .set()
                     .warm_targets()
                     .into_iter()
                     .filter(|(digest, _, _)| current.contains(digest))
@@ -397,19 +366,14 @@ impl ServiceState {
                             break;
                         };
                         if state.validation().unavailable(&digest) { continue; }
-                        let Some(shard) = inner.set.revision(&digest) else {
+                        let Some(target) = inner.serving.warm_target(&digest, table, segment) else {
                             continue;
                         };
-                        let shared = state.shared(shard, table.kind());
-                        let Some(source) = shard.segment(table, segment).cloned() else {
-                            continue;
-                        };
-                        let key = (shard.runtime_identity(table).to_string(), table.kind(), segment);
                         if inner.warm.stopped.load(Ordering::Acquire) { break; }
                         match transparent_shared::runtime::prewarm::retry(
                             &inner.warm.cancelled,
                             std::time::Duration::from_secs(30),
-                            || inner.cache.get_background_from(key.clone(), shared.clone(), source.clone(), inner.shipped.clone()),
+                            || target.produce(),
                         ).await
                         {
                             Ok((handle, produced)) => {
@@ -461,7 +425,7 @@ impl ServiceState {
         let produced = &self.inner.warm.produced;
         let get = |counter: &std::sync::atomic::AtomicU64| counter.load(Ordering::Relaxed);
         serde_json::json!({
-            "runtimes_offered": self.inner.shipped.is_some(),
+            "runtimes_offered": self.inner.serving.shipped().is_some(),
             "shipped": get(&produced.shipped),
             "shipped_fallbacks": get(&produced.shipped_fallbacks),
             "restored": get(&produced.restored),
@@ -482,66 +446,32 @@ impl ServiceState {
     /// residency obligations while it stays active, so preparing a candidate
     /// beside it never turns its in-flight and next queries into cold builds.
     pub fn evict_unpinned_except_current(&self) {
-        let current: std::collections::HashSet<String> = self
-            .inner
-            .set
-            .current()
-            .flat_map(|shard| shard.runtime_identities())
-            .collect();
-        self.inner
-            .cache
-            .evict_unpinned_except(|(identity, _, _)| current.contains(identity));
+        self.inner.serving.evict_unpinned_except_current();
     }
 
     pub(crate) fn prune_disk(
         &self,
         keep: &std::collections::HashSet<String>,
     ) -> Result<Option<u64>, String> {
-        self.inner.cache.prune_disk(keep)
+        self.inner.serving.cache().prune_disk(keep)
     }
 
     pub(crate) fn required_material(&self) -> bool {
-        self.inner.shipped.as_ref().is_some_and(|s| s.is_required())
+        self.inner
+            .serving
+            .shipped()
+            .is_some_and(|s| s.is_required())
     }
     /// Check required files without loading runtimes or scanning their contents.
     pub fn check_required_material(&self) -> Result<usize, String> {
-        let shipped = self
-            .inner
-            .shipped
-            .as_ref()
-            .ok_or("provider requires prepared runtimes")?;
-        let mut checked = 0;
-        for shard in self.inner.set.current() {
-            for table in shard.tables() {
-                let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
-                for segment in 0..shard.segments(table) {
-                    let source = shard
-                        .segment(table, segment)
-                        .ok_or("missing runtime source")?;
-                    let key = (
-                        shard.runtime_identity(table).to_string(),
-                        table.kind(),
-                        segment,
-                    );
-                    shipped
-                        .check_size(&key, shared, source.sha256())
-                        .map_err(|e| {
-                            format!(
-                                "required prepared runtime for shard {} segment {segment}: {e}",
-                                shard.manifest.shard_id
-                            )
-                        })?;
-                    checked += 1;
-                }
-            }
-        }
-        Ok(checked)
+        self.inner.serving.check_required_material()
     }
 
     pub(crate) fn release_invalidated(&self, digests: &std::collections::BTreeSet<String>) {
         if self
             .inner
-            .set
+            .serving
+            .set()
             .current()
             .any(|s| digests.contains(&s.digest))
         {
@@ -562,47 +492,25 @@ impl ServiceState {
     fn validation(&self) -> &crate::transparent::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::transparent::validation::Scope::default();
-            for shard in self.inner.set.current() {
+            for shard in self.inner.serving.set().current() {
                 scope.current(shard.manifest.shard_id, &shard.digest);
             }
             // A wallet can still request a retained predecessor by its digest.
-            for shard in self.inner.set.revisions() {
-                for table in shard.tables() {
-                    let shared = &self.inner.params[&(shard.geometry.name, table.kind())];
-                    for segment in 0..shard.segments(table) {
-                        let Some(source) = shard.segment(table, segment) else {
-                            continue;
-                        };
-                        let key = (
-                            shard.runtime_identity(table).to_string(),
-                            table.kind(),
-                            segment,
-                        );
-                        scope.add(
-                            &shard.digest,
-                            shard.manifest.shard_id,
-                            source.path(),
-                            &self.inner.cache,
-                            &key,
-                        );
-                        if let Some(shipped) = &self.inner.shipped {
-                            scope.add(
-                                &shard.digest,
-                                shard.manifest.shard_id,
-                                &shipped.path(&key, shared, source.sha256()),
-                                &self.inner.cache,
-                                &key,
-                            );
-                        }
-                    }
-                }
+            for artifact in self.inner.serving.artifacts() {
+                scope.add(
+                    &artifact.digest,
+                    artifact.shard_id,
+                    &artifact.path,
+                    self.inner.serving.cache(),
+                    &artifact.key,
+                );
             }
             scope
         })
     }
 
     pub(crate) fn set(&self) -> &ShardSet {
-        &self.inner.set
+        self.inner.serving.set()
     }
 
     /// Waits until local and forwarded requests admitted by any snapshot
@@ -627,7 +535,7 @@ impl ServiceState {
     }
 
     fn identity(&self) -> serde_json::Value {
-        match self.inner.set.scope() {
+        match self.inner.serving.set().scope() {
             Some(scope) => serde_json::json!({
                 "worker_id": scope.worker_id,
                 "role": scope.role.as_str(),
@@ -647,8 +555,11 @@ impl ServiceState {
 
     fn snapshot(&self) -> Snapshot {
         let inner = &self.inner;
-        let mut labels = vec![("map_sha256".to_string(), inner.set.map_digest.clone())];
-        if let Some(scope) = inner.set.scope() {
+        let mut labels = vec![(
+            "map_sha256".to_string(),
+            inner.serving.set().map_digest.clone(),
+        )];
+        if let Some(scope) = inner.serving.set().scope() {
             labels.push(("worker_id".to_string(), scope.worker_id.clone()));
             labels.push(("role".to_string(), scope.role.as_str().to_string()));
             labels.push((
@@ -658,13 +569,13 @@ impl ServiceState {
         }
         Snapshot {
             labels,
-            shards: inner.set.len() as u64,
-            assigned_shards: inner.set.assigned_len() as u64,
-            revisions: inner.set.revisions().len() as u64,
-            prunable_revisions: inner.set.prunable().len() as u64,
-            cache_budget_bytes: inner.cache.budget(),
+            shards: inner.serving.set().len() as u64,
+            assigned_shards: inner.serving.set().assigned_len() as u64,
+            revisions: inner.serving.set().revisions().len() as u64,
+            prunable_revisions: inner.serving.set().prunable().len() as u64,
+            cache_budget_bytes: inner.serving.cache().budget(),
             warm_runtimes: inner.warm.count.load(Ordering::Acquire),
-            work_memory_reserved_bytes: inner.cache.work_memory().reserved_bytes(),
+            work_memory_reserved_bytes: inner.serving.cache().work_memory().reserved_bytes(),
             process_rss_bytes: transparent_shared::runtime::procmem::process_rss_bytes(),
             process_cpu: transparent_shared::runtime::procmem::process_cpu(),
             cgroup_memory_bytes: transparent_shared::runtime::procmem::cgroup_memory_bytes(),
@@ -676,17 +587,17 @@ impl ServiceState {
     /// The request body limit. A mixed set is bounded by its widest geometry,
     /// so a narrower one is not rejected for being under it.
     pub fn max_query_bytes(&self) -> usize {
-        self.inner.max_query_bytes
+        self.inner.serving.max_query_bytes()
     }
 
     /// The parts of this worker a request passes through.
     pub(crate) fn worker(&self) -> Worker<'_> {
         Worker {
             admission: &self.inner.admission,
-            work_memory: self.inner.cache.work_memory(),
+            work_memory: self.inner.serving.cache().work_memory(),
             metrics: &self.inner.metrics,
             max_query_bytes: self.max_query_bytes(),
-            map_digest: &self.inner.set.map_digest,
+            map_digest: &self.inner.serving.set().map_digest,
         }
     }
 
@@ -705,92 +616,12 @@ impl ServiceState {
     pub async fn hold_query_slot(&self) -> crate::transparent::admission::HeldSlot {
         self.inner.admission.hold_slot().await
     }
-
-    fn shared(&self, shard: &LoadedShard, table: Table) -> Arc<SharedParams> {
-        self.inner
-            .params
-            .get(&(shard.geometry.name, table))
-            .expect("every held geometry has parameters")
-            .clone()
-    }
-
-    /// Resolves a revision the request named.
-    ///
-    /// A digest this worker does not hold is not a malformed request: it is a
-    /// wallet holding a revision that has since been superseded and pruned.
-    /// Distinguishing the two is what lets the client refresh its map and
-    /// re-derive, instead of treating a routine tail republication as a bug.
-    fn revision(&self, shard_id: u64, digest: &str) -> Result<&LoadedShard, RequestError> {
-        match self.inner.set.revision(digest) {
-            Some(shard) if shard.manifest.shard_id == shard_id => Ok(shard),
-            // A digest that exists but belongs to another shard is a routing
-            // error, not a stale client.
-            Some(_) => Err(RequestError::Bad(format!(
-                "revision {digest} is not a revision of shard {shard_id}"
-            ))),
-            None => {
-                // A shard the map names but this worker is not assigned is a
-                // routing fault, and is said so: the wallet's map is not
-                // stale, and refreshing it would not help.
-                if self.inner.set.names(shard_id) && !self.inner.set.is_assigned(shard_id) {
-                    Metrics::incr(&self.inner.metrics.unassigned_refusals);
-                    let worker_id = self
-                        .inner
-                        .set
-                        .scope()
-                        .map(|scope| scope.worker_id.clone())
-                        .unwrap_or_default();
-                    return Err(RequestError::Misdirected(format!(
-                        "shard {shard_id} is not assigned to worker {worker_id}"
-                    )));
-                }
-                Metrics::incr(&self.inner.metrics.stale_revisions);
-                Err(stale(shard_id, digest))
-            }
-        }
-    }
-
-    async fn runtime(
-        &self,
-        shard: &LoadedShard,
-        table: TableRef,
-        segment: u32,
-    ) -> Result<RuntimeHandle, RequestError> {
-        let source = shard.segment(table, segment).cloned().ok_or_else(|| {
-            RequestError::Bad(format!(
-                "shard {} has no {} segment {segment}",
-                shard.manifest.shard_id,
-                table.name()
-            ))
-        })?;
-        // A page shard's runtime is keyed by its own identity, so a sealed
-        // one is shared by every revision of its directory shard.
-        let key = (
-            shard.runtime_identity(table).to_string(),
-            table.kind(),
-            segment,
-        );
-        self.inner
-            .cache
-            .get_from(
-                key,
-                self.shared(shard, table.kind()),
-                source,
-                self.inner.shipped.clone(),
-            )
-            .await
-            .map(|(handle, _)| handle)
-            .map_err(RequestError::from)
-    }
 }
 
 /// The revision named is no longer served: the wallet refreshes its map and
 /// re-derives the shard's coverage.
 fn stale(shard_id: u64, digest: &str) -> RequestError {
-    RequestError::Stale {
-        message: format!("revision {digest} of shard {shard_id} is no longer served"),
-        retry: "refresh the shard map and re-derive coverage for this shard",
-    }
+    transparent_shared::history::serving::stale(shard_id, digest).into()
 }
 
 pub fn router(state: ServiceState) -> Router {
@@ -874,19 +705,19 @@ async fn health(State(state): State<ServiceState>) -> Response {
     let mut body = serde_json::json!({
         "artifact_validation": state.validation().status(),
         "phase": "serving",
-        "shards": inner.set.len(),
-        "assigned_shards": inner.set.assigned_len(),
-        "revisions_held": inner.set.revisions().len(),
-        "prunable_revisions": inner.set.prunable().len(),
-        "geometries": inner.set.geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
-        "map_sha256": inner.set.map_digest,
-        "cache_budget_bytes": inner.cache.budget(),
-        "cache_resident_bytes": inner.cache.resident_bytes(),
-        "runtimes_built": inner.cache.entries(),
+        "shards": inner.serving.set().len(),
+        "assigned_shards": inner.serving.set().assigned_len(),
+        "revisions_held": inner.serving.set().revisions().len(),
+        "prunable_revisions": inner.serving.set().prunable().len(),
+        "geometries": inner.serving.set().geometries().iter().map(|g| g.name).collect::<Vec<_>>(),
+        "map_sha256": inner.serving.set().map_digest,
+        "cache_budget_bytes": inner.serving.cache().budget(),
+        "cache_resident_bytes": inner.serving.cache().resident_bytes(),
+        "runtimes_built": inner.serving.cache().entries(),
         "readiness_mode": "loaded-only",
         "warm_runtimes": inner.warm.count.load(Ordering::Acquire),
         "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
-        "work_memory_reserved_bytes": inner.cache.work_memory().reserved_bytes(),
+        "work_memory_reserved_bytes": inner.serving.cache().work_memory().reserved_bytes(),
         "target_runtimes": inner.warm.target,
         "binary_sha256": pir_control::binary_sha256(),
         "incarnation": pir_control::Identity::process().incarnation,
@@ -913,7 +744,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         let state = state.clone();
         match tokio::time::timeout(
             std::time::Duration::from_millis(500),
-            tokio::task::spawn_blocking(move || state.inner.cache.disk_status()),
+            tokio::task::spawn_blocking(move || state.inner.serving.cache().disk_status()),
         )
         .await
         {
@@ -926,9 +757,9 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "artifact_validation": state.validation().status(),
         "archive_forwarding": inner.archive.is_some(),
         "mode": "loaded-only",
-        "map_sha256": inner.set.map_digest,
-        "shards": inner.set.len(),
-        "assigned_shards": inner.set.assigned_len(),
+        "map_sha256": inner.serving.set().map_digest,
+        "shards": inner.serving.set().len(),
+        "assigned_shards": inner.serving.set().assigned_len(),
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
         "binary_sha256": pir_control::binary_sha256(),
@@ -953,7 +784,7 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         );
         return json(StatusCode::SERVICE_UNAVAILABLE, body);
     }
-    if inner.set.is_empty() {
+    if inner.serving.set().is_empty() {
         object.insert("ready".into(), serde_json::json!(false));
         object.insert("reason".into(), serde_json::json!("no shards loaded"));
         return json(StatusCode::SERVICE_UNAVAILABLE, body);
@@ -982,10 +813,13 @@ async fn shard_map(State(state): State<ServiceState>) -> Response {
         StatusCode::OK,
         [
             ("content-type", "application/json"),
-            ("x-shard-map-sha256", state.inner.set.map_digest.as_str()),
+            (
+                "x-shard-map-sha256",
+                state.inner.serving.set().map_digest.as_str(),
+            ),
             ("cache-control", "no-cache"),
         ],
-        state.inner.set.map_json.clone(),
+        state.inner.serving.set().map_json.clone(),
     )
         .into_response()
 }
@@ -1001,7 +835,7 @@ async fn shard_filter(
 ) -> Response {
     // From the set-wide metadata, so a worker answers for every shard the
     // map names whether or not it holds that shard's tables.
-    let Some(meta) = state.inner.set.meta(shard_id) else {
+    let Some(meta) = state.inner.serving.set().meta(shard_id) else {
         return json(
             StatusCode::NOT_FOUND,
             serde_json::json!({ "error": format!("no shard {shard_id}") }),
@@ -1020,19 +854,26 @@ async fn shard_filter(
 
 async fn init(State(state): State<ServiceState>) -> Response {
     let inner = &state.inner;
-    let Some(last) = inner.set.map.shards.last() else {
+    let Some(last) = inner.serving.set().map.shards.last() else {
         return json(
             StatusCode::SERVICE_UNAVAILABLE,
             serde_json::json!({"error": "no shards"}),
         );
     };
     let geometries = inner
-        .set
+        .serving
+        .set()
         .geometries()
         .into_iter()
         .map(|geometry| {
-            let directory = &inner.params[&(geometry.name, Table::Directory)];
-            let pages = &inner.params[&(geometry.name, Table::Pages)];
+            let params = |table| {
+                inner
+                    .serving
+                    .params(geometry.name, table)
+                    .expect("every named geometry has parameters")
+            };
+            let directory = params(Table::Directory);
+            let pages = params(Table::Pages);
             GeometryInit {
                 name: geometry.name.to_string(),
                 directory_rows: geometry.directory_rows,
@@ -1050,22 +891,28 @@ async fn init(State(state): State<ServiceState>) -> Response {
         .collect();
     let body = InitResponse {
         schema: transparent_shard::manifest::SCHEMA.to_string(),
-        profile: inner.set.map.profile.clone(),
-        network: inner.set.map.network.clone(),
-        genesis_hash: inner.set.map.genesis_hash.clone(),
-        shards: inner.set.len(),
-        start_height: inner.set.map.start_height,
+        profile: inner.serving.set().map.profile.clone(),
+        network: inner.serving.set().map.network.clone(),
+        genesis_hash: inner.serving.set().map.genesis_hash.clone(),
+        shards: inner.serving.set().len(),
+        start_height: inner.serving.set().map.start_height,
         covered_through: last.end_height,
-        map_sha256: inner.set.map_digest.clone(),
+        map_sha256: inner.serving.set().map_digest.clone(),
         geometries,
-        assigned_shards: inner.set.assigned_len(),
-        worker_id: inner.set.scope().map(|scope| scope.worker_id.clone()),
+        assigned_shards: inner.serving.set().assigned_len(),
+        worker_id: inner
+            .serving
+            .set()
+            .scope()
+            .map(|scope| scope.worker_id.clone()),
         role: inner
-            .set
+            .serving
+            .set()
             .scope()
             .map(|scope| scope.role.as_str().to_string()),
         assignment_sha256: inner
-            .set
+            .serving
+            .set()
             .scope()
             .map(|scope| scope.assignment_sha256.clone()),
     };
@@ -1091,11 +938,11 @@ async fn manifest(
     State(state): State<ServiceState>,
     AxumPath((shard_id, digest)): AxumPath<(u64, String)>,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
+    let map_digest = state.inner.serving.set().map_digest.clone();
     // The current revision of any shard the map names, or a superseded
     // revision this worker still holds. Every worker holds every current
     // manifest, so the route needs no routing by owner.
-    let Some((manifest, canonical, _)) = state.inner.set.meta_by_digest(&digest) else {
+    let Some((manifest, canonical, _)) = state.inner.serving.set().meta_by_digest(&digest) else {
         Metrics::incr(&state.inner.metrics.stale_revisions);
         return stale(shard_id, &digest).into_response(&map_digest);
     };
@@ -1122,7 +969,7 @@ async fn setup(
     State(state): State<ServiceState>,
     AxumPath((shard_id, digest, table, segment)): AxumPath<(u64, String, String, u32)>,
 ) -> Response {
-    let map_digest = state.inner.set.map_digest.clone();
+    let map_digest = state.inner.serving.set().map_digest.clone();
     let Some(table) = TableRef::parse(&table) else {
         return RequestError::Bad("unknown table".into()).into_response(&map_digest);
     };
@@ -1145,28 +992,31 @@ async fn setup(
         Ok(pending) => pending,
         Err(error) => return RequestError::from(error).into_response(&map_digest),
     };
-    let (segments, geometry, handle) = {
-        let shard = match state.revision(shard_id, &digest) {
-            Ok(shard) => shard,
-            Err(error) => return error.into_response(&map_digest),
-        };
-        let segments = shard.segments(table);
-        let geometry = shard.geometry.name.to_string();
-        let runtime = state.runtime(shard, table, segment);
-        match within(pending.remaining(), &state.inner.metrics, runtime).await {
-            Ok(handle) => (segments, geometry, handle),
-            Err(error) => return error.into_response(&map_digest),
+    let prepared = state
+        .inner
+        .serving
+        .prepare_setup(shard_id, &digest, table, segment)
+        .map_err(RequestError::from);
+    let setup = match prepared {
+        Ok(prepared) => {
+            let load = async { prepared.load().await.map_err(RequestError::from) };
+            within(pending.remaining(), &state.inner.metrics, load).await
         }
+        Err(error) => Err(error),
+    };
+    let setup = match setup {
+        Ok(setup) => setup,
+        Err(error) => return error.into_response(&map_digest),
     };
     pending.complete();
-    let runtime = handle.get();
+    let runtime = setup.runtime.get();
     let body = SetupResponse {
         shard_id,
         manifest_digest: digest,
-        geometry,
-        table: table.name(),
-        segment,
-        segments,
+        geometry: setup.geometry.to_string(),
+        table: setup.table,
+        segment: setup.segment,
+        segments: setup.segments,
         public_params: BASE64_STANDARD.encode(&runtime.public_params),
         public_params_sha256: runtime.public_params_sha256.clone(),
         public_params_epoch: hex::encode(runtime.public_params_epoch),
@@ -1218,53 +1068,16 @@ async fn query_inner(
             .refuse_unread(request, stale(shard_id, &digest).into_response(map_digest))
             .await;
     }
-    let (segments, shared, query_rows) = {
-        let shard = match state.revision(shard_id, &digest) {
-            Ok(shard) => shard,
-            Err(error) => {
-                let refused = error.into_response(map_digest);
-                return worker.refuse_unread(request, refused).await;
-            }
-        };
-        if shard.segments(table) == 0 {
-            let refused =
-                RequestError::Bad("table capability unavailable".into()).into_response(map_digest);
-            return worker.refuse_unread(request, refused).await;
-        }
-        let shared = state.shared(shard, table.kind());
-        // A page shard's queries may select over only the rows its manifest
-        // entry says can hold data; the directory selects every row.
-        let query_rows = shard.query_rows(table, shared.profile.rows);
-        (shard.segments(table), shared, query_rows)
-    };
-    let query = Query {
-        shared,
-        query_rows,
-        table: table.name(),
-        revision: digest.clone(),
-        binding: query_binding(&digest, &table.name()),
-    };
-
     // Every segment answers the same query, and the results come back in
     // segment order. The client keeps the row whose contents it can identify
     // and discards the rest; asking only the segment that holds the script
     // would disclose the script's placement, which is a function of the script.
-    let acquire = async |admitted: &Admitted| {
-        let mut handles = Vec::with_capacity(segments as usize);
-        for segment in 0..segments {
-            let shard = state
-                .revision(shard_id, &digest)
-                .map_err(|error| error.into_response(map_digest))?;
-            let runtime = state.runtime(shard, table, segment);
-            match within(admitted.remaining(), metrics, runtime).await {
-                Ok(handle) => handles.push(handle),
-                Err(error) => {
-                    Metrics::incr(&metrics.query_errors);
-                    return Err(error.into_response(map_digest));
-                }
-            }
+    let query = match state.inner.serving.prepare_query(shard_id, &digest, table) {
+        Ok(query) => query,
+        Err(error) => {
+            let refused = RequestError::from(error).into_response(map_digest);
+            return worker.refuse_unread(request, refused).await;
         }
-        Ok(handles)
     };
-    answer_query(worker, request, query, acquire).await
+    answer_query(worker, request, query).await
 }
