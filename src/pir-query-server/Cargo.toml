@@ -183,6 +183,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+# Paused clocks drive the synchronization cadence regressions.
+tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"
 # Injected kernel faults and synthetic records drive the Enhance role regressions.
 enhance-shared = { path = "../enhance/enhance-shared", features = ["test-support", "client"] }

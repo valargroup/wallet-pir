@@ -7,6 +7,7 @@ pub mod enhance;
 mod host;
 #[cfg(feature = "status")]
 pub mod status;
+pub mod synchronization;
 #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
 pub mod transparent;
 pub use host::{run, verify};

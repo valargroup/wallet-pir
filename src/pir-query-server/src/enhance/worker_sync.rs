@@ -1,5 +1,6 @@
 //! Autonomous workers load published rows; they never prepare public hints.
 use crate::enhance::synchronization::{Client, Config as SourceConfig, Error, Lease, Safety};
+use crate::synchronization::SyncTask;
 use axum::{
     extract::{Request, State},
     http::StatusCode,
@@ -19,7 +20,6 @@ use enhance_shared::{
     runtime::{rlwe, DomainPlan},
 };
 use pir_runtime::evaluation::{add_intermediate_assign_mod, PreparedDatabase};
-use pir_sync_manager::SyncTask;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},

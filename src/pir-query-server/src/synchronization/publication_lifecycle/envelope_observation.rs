@@ -1,7 +1,7 @@
 //! Observe the publication envelope and advance the durable floor.
 use super::{Envelope, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError};
-use crate::Error;
 use pir_publication::{conditional_token, CURRENT_PATH};
+use pir_sync_manager::Error;
 
 /// Bound on an envelope body; envelopes name objects, never contain material.
 pub(super) const ENVELOPE_LIMIT: usize = 64 << 10;

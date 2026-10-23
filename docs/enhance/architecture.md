@@ -73,7 +73,8 @@ budgets are explicit disk/transport limits, separate from resident admission.
 
 ### Publication and serving authority
 
-`pir-sync-manager` serializes successful polls and bounded error backoff. Product
+The query server's `synchronization` module serializes successful polls and
+bounded error backoff over `pir-sync-manager` HTTPS transport. Product
 adapters own schema, identity, recovery, loading, activation and refusal policy.
 Waiting for a peer to load is deferred coordination; it does not start an
 independent retry timer. Router and ingress maintenance renew peer promises
@@ -179,9 +180,10 @@ work by the number of queried domains. See [wallet integration](integration.md).
 `enhance-publisher` owns chain reading, ingestion, journals, local preparation,
 publication and recovery. `pir-query-server` owns synchronization and all
 Enhance serving roles in its `enhance` module; `enhance-query-server` keeps the
-private evaluation messages and public route mounts. Neither has a publisher or
+private evaluation messages; the root mounts the public routes. Neither has a publisher or
 chain-reader dependency. Shared transport
-and scheduling live in `pir-sync-manager`; Enhance policy stays in Enhance.
+lives in `pir-sync-manager` and scheduling in `pir_query_server::synchronization`;
+Enhance policy stays in Enhance.
 The root hosts are `pir-publisher` and `pir-query-server`; product crates are
 libraries. Test/workload composition belongs under `tools/`.
 

@@ -35,7 +35,7 @@ impl Service {
             .merge(telemetry::routes())
     }
     pub fn query_routes(&self) -> Router {
-        status_query_server::PUBLIC_ROUTES
+        crate::status::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [

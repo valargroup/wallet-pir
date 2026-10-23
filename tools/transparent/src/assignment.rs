@@ -1,5 +1,6 @@
-//! Planning an assignment over a roster of workers, and rendering the edge
-//! that routes to it.
+//! Planning an assignment over a roster of workers, listing the files each
+//! worker is sent, and rendering the edge that routes to it. Deployment
+//! tooling only: a query server never plans a fleet.
 //!
 //! Routing is public data only. A request names a shard id, a revision digest
 //! and a table in its path; the edge maps the shard id to the workers that
@@ -17,10 +18,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use transparent_filter::{ShardMap, ShardMapEntry};
 use transparent_shared::history::assignment::{
-    Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
+    self, Assignment, GeneratedBy, SetIdentity, WorkerAssignment, WorkerRole, ASSIGNMENT_SCHEMA,
 };
-use transparent_shared::history::shardset::Table;
-use transparent_shared::runtime::reserved_bytes;
 
 /// One worker as the operator describes it, before shards are assigned.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,21 +51,7 @@ pub enum PlanError {
 
 /// Bytes every runtime of `entry` reserves: both tables, every segment.
 pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
-    let geometry = transparent_shard::layout::by_name(&entry.geometry).ok_or_else(|| {
-        PlanError::Invalid(format!(
-            "shard {} names geometry {}, which this build does not know",
-            entry.shard_id, entry.geometry
-        ))
-    })?;
-    let mut total = 0u64;
-    for (table, segments) in [
-        (Table::Directory, entry.directory_segments),
-        (Table::Pages, entry.page_segments),
-    ] {
-        total += reserved_bytes(table, table.rows(geometry), table.row_bytes(geometry))
-            * u64::from(segments);
-    }
-    Ok(total)
+    assignment::shard_reserved_bytes(entry).map_err(|error| PlanError::Invalid(error.to_string()))
 }
 
 /// Plans an assignment: every recent shard on every replica, the archive
@@ -292,16 +277,7 @@ pub fn plan(
 
     let assignment = Assignment {
         schema: ASSIGNMENT_SCHEMA.to_string(),
-        set: SetIdentity {
-            shard_schema: transparent_shard::manifest::SCHEMA.to_string(),
-            map_sha256: map_sha256.to_string(),
-            network: map.network.clone(),
-            genesis_hash: map.genesis_hash.clone(),
-            shards,
-            start_height: map.start_height,
-            covered_through: map.shards.last().map(|e| e.end_height).unwrap_or(0),
-            recent_from_shard,
-        },
+        set: SetIdentity::of(map, map_sha256, recent_from_shard),
         generated_by,
         workers,
         unassigned: Vec::new(),

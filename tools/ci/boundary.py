@@ -145,9 +145,10 @@ SHARED_SCOPES = {
 # Lifecycle code has no product, chain, wallet or PIR-engine dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
 # graph. Every kind of edge counts, including optional and target-specific edges.
-# Synchronization is transport and scheduling, never a product or PIR engine.
+# Synchronization transport is HTTPS transfer and discovery, never a product or PIR
+# engine; polling and publication sequencing belong to the query-server host.
 SYNC_MANAGER = 'pir-sync-manager'
-SYNC_DIRECT = {'bytes', 'pir-pipeline', 'pir-publication', 'reqwest', 'serde', 'serde_json',
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'serde', 'serde_json',
                'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
@@ -188,7 +189,7 @@ HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
     'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-shared',
     'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
-    'transparent-publisher', 'transparent-shared',
+    'status-query-server', 'transparent-publisher', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.

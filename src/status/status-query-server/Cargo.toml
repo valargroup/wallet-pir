@@ -2,7 +2,7 @@
 name = "status-query-server"
 version = "0.0.1"
 edition = "2021"
-description = "Status PIR query serving: private peer messages and public route mounts"
+description = "Status PIR query serving: private peer messages"
 publish = false
 
 # These existing wire-contract regressions exercise the native protocol only.
@@ -20,7 +20,6 @@ native-reinspiring = ["status-shared/native-reinspiring"]
 
 client = ["status-shared/client"]
 [dependencies]
-pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 pir-publication = { path = "../../shared/pir-publication" }
 status-shared = { path = "../status-shared" }
 serde = { version = "1", features = ["derive"] }

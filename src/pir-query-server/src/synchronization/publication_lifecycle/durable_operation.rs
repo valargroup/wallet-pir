@@ -9,8 +9,8 @@
 //! operation, so a collection with an older keep set always finishes before a
 //! later pass fetches anything.
 use super::retention::RetainedViews;
-use crate::Error;
 use pir_publication::WrittenFloor;
+use pir_sync_manager::Error;
 use std::{fmt, future::Future, io, pin::Pin, sync::Arc};
 use tokio::task::JoinHandle;
 

@@ -3,6 +3,7 @@ use crate::enhance::{
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
+use crate::synchronization::SyncTask;
 use axum::{
     extract::{ConnectInfo, Path as UrlPath, Request, State},
     http::StatusCode,
@@ -15,7 +16,6 @@ use enhance_shared::{
     publication::METADATA_LIMIT,
 };
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots};
-use pir_sync_manager::SyncTask;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -184,7 +184,7 @@ impl QueryIngress {
         })
     }
     pub fn public_router(&self) -> Router {
-        enhance_query_server::PUBLIC_ROUTES
+        crate::enhance::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [

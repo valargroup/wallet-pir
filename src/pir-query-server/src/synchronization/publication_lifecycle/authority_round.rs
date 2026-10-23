@@ -3,10 +3,10 @@ use super::{
     envelope_observation::ENVELOPE_LIMIT, AuthorityAdvanced, Envelope, PublicationAdapter,
     PublicationLifecycle, PublicationLifecycleError,
 };
-use crate::Error;
 use pir_publication::{
     AuthorityCheckRequest, AuthorityCheckResponse, ViewIdentity, AUTHORITY_CHECK_PATH,
 };
+use pir_sync_manager::Error;
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
     /// Ask whether `subjects` are still authoritative under exactly the

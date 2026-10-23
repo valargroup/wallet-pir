@@ -11,7 +11,7 @@ pub(crate) use crate::transparent::source::sync_tree;
 pub use crate::transparent::source::Config;
 use crate::transparent::{
     history::service::{ServiceConfig, ServiceState},
-    routing::router::{plan, RosterEntry},
+    routing::holdings,
     source::Source,
 };
 use serde::Serialize;
@@ -19,7 +19,7 @@ use std::{path::PathBuf, sync::Arc};
 use transparent_shared::publication::{self, Current, Error, Inventory};
 use transparent_shared::{
     history::{
-        assignment::{GeneratedBy, WorkerRole},
+        assignment::GeneratedBy,
         shardset::{LoadOptions, LoadScope, ShardSet},
     },
     runtime::disk::ShippedRuntimes,
@@ -258,8 +258,8 @@ pub(crate) async fn stage_holdings(
     result
 }
 
-/// Holdings selected for this provider by the production assignment planner,
-/// with an explicitly inert archive row for cost/accounting only. Nothing here
+/// Holdings selected for this provider from its own cache budget, with an
+/// explicitly inert archive row for cost/accounting only. Nothing here
 /// qualifies routes. Deterministic for one map, inventory and configuration.
 pub(crate) fn holdings(
     config: &Config,
@@ -270,31 +270,11 @@ pub(crate) fn holdings(
     Ok(if full {
         LoadOptions::whole(0)
     } else {
-        let mut roster = vec![RosterEntry {
-            id: "provider".into(),
-            role: WorkerRole::RecentReplica,
-            replica_group: Some("recent".into()),
-            ssh_host: String::new(),
-            upstream: "127.0.0.1:0".into(),
-            cache_bytes: config.cache_bytes,
-            archive_range: None,
-        }];
-        if inventory.recent_from_shard > 0 {
-            roster.push(RosterEntry {
-                id: "archive-metadata-only".into(),
-                role: WorkerRole::ArchiveOwner,
-                replica_group: None,
-                ssh_host: String::new(),
-                upstream: "unconfigured.invalid:0".into(),
-                cache_bytes: u64::MAX,
-                archive_range: None,
-            });
-        }
-        let assignment = plan(
+        let assignment = holdings::local(
             map,
             &inventory.map_sha256,
-            &roster,
             inventory.recent_from_shard,
+            config.cache_bytes,
             0.15,
             GeneratedBy {
                 tool: "HTTPS bootstrap verifier".into(),
@@ -305,7 +285,7 @@ pub(crate) fn holdings(
         LoadOptions {
             scope: LoadScope::Assigned {
                 assignment: Arc::new(assignment),
-                worker_id: "provider".into(),
+                worker_id: holdings::PROVIDER.into(),
             },
             ..LoadOptions::whole(0)
         }

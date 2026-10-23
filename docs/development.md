@@ -274,11 +274,12 @@ Cargo package names and standalone commands are preserved. See the
 
 ## Shared HTTPS synchronization
 
-`pir-sync-manager` is the internal transport and polling library under
-`src/shared/`. Transparent history, transaction-detail and Status consumers supply its
-product adapters. The library accounts all consumed response bytes against one
-attempt budget and schedules complete passes sequentially with bounded backoff.
-It does not grant serving authority by itself. Its `publication_lifecycle`
+`pir-sync-manager` is the internal HTTPS transport and discovery library under
+`src/shared/`; it accounts all consumed response bytes against one attempt
+budget. The query server's `synchronization` module (`pir_query_server::synchronization`)
+schedules complete passes sequentially with bounded backoff; Enhance,
+Transparent history, transaction-detail and Status supply its product tasks.
+Neither grants serving authority by itself. Its `publication_lifecycle`
 module runs the shared publication lifecycle over the transport-free
 `pir-publication` contract (object references, pointer succession, durable
 floors, object cache and publisher object store); Status is its first adopter,

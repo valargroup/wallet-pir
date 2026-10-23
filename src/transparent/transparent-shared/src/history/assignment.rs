@@ -17,11 +17,12 @@
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
+use crate::history::shardset::Table;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use transparent_filter::ShardMap;
+use transparent_filter::{ShardMap, ShardMapEntry};
 
 pub const ASSIGNMENT_SCHEMA: &str = "transparent-assignment-v1";
 
@@ -57,6 +58,43 @@ pub struct SetIdentity {
     pub covered_through: u64,
     /// First shard id of the recent tier; every id from here is replicated.
     pub recent_from_shard: u64,
+}
+
+impl SetIdentity {
+    /// The identity of `map`, published as `map_sha256`, with its recent
+    /// tier starting at `recent_from_shard`.
+    pub fn of(map: &ShardMap, map_sha256: &str, recent_from_shard: u64) -> Self {
+        Self {
+            shard_schema: transparent_shard::manifest::SCHEMA.to_string(),
+            map_sha256: map_sha256.to_string(),
+            network: map.network.clone(),
+            genesis_hash: map.genesis_hash.clone(),
+            shards: map.shards.len() as u64,
+            start_height: map.start_height,
+            covered_through: map.shards.last().map(|e| e.end_height).unwrap_or(0),
+            recent_from_shard,
+        }
+    }
+}
+
+/// Bytes every runtime of `entry` reserves: both tables, every segment.
+pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, AssignmentError> {
+    let geometry = transparent_shard::layout::by_name(&entry.geometry).ok_or_else(|| {
+        AssignmentError::Invalid(format!(
+            "shard {} names geometry {}, which this build does not know",
+            entry.shard_id, entry.geometry
+        ))
+    })?;
+    let mut total = 0u64;
+    for (table, segments) in [
+        (Table::Directory, entry.directory_segments),
+        (Table::Pages, entry.page_segments),
+    ] {
+        total +=
+            crate::runtime::reserved_bytes(table, table.rows(geometry), table.row_bytes(geometry))
+                * u64::from(segments);
+    }
+    Ok(total)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

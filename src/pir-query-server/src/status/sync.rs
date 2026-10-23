@@ -1,6 +1,6 @@
 //! Status material hooks for the shared publication lifecycle.
 //!
-//! [`pir_sync_manager::publication_lifecycle`] owns envelope succession, the
+//! [`crate::synchronization::publication_lifecycle`] owns envelope succession, the
 //! durable floor, object transfer, authority checks and commit ordering. This
 //! adapter chooses the Status inventory (from the envelope, or from the worker
 //! for a router), loads generations, pins the worker during router handover
@@ -8,14 +8,12 @@
 mod worker_handover;
 
 use super::{config::RoleConfig, Controller, Service};
-use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
-use pir_sync_manager::{
-    publication_lifecycle::{
-        ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
-        PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
-    },
-    Error,
+use crate::synchronization::publication_lifecycle::{
+    ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
+    PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
 };
+use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
+use pir_sync_manager::Error;
 use status_query_server::distributed::Role;
 use status_shared::{
     now_ms,

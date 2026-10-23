@@ -26,7 +26,6 @@ mod history_set;
 mod revision;
 use history_set::*;
 use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
-use pir_query_server::transparent::routing::router::{files_for, plan, render_caddyfile};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard::manifest::{ShardManifest, SCHEMA};
 use transparent_shared::history::assignment::{
@@ -135,7 +134,7 @@ fn publish(dir: &Path) -> ShardMap {
 }
 
 fn planned(map: &ShardMap) -> Assignment {
-    plan(map, &map_sha256(map), &roster(), ARCHIVE, 0.1, generated()).unwrap()
+    fleet(map, ARCHIVE)
 }
 
 fn load_as(dir: &Path, assignment: &Assignment, worker_id: &str, options: LoadOptions) -> ShardSet {
@@ -169,69 +168,6 @@ fn warm_config() -> ServiceConfig {
     ServiceConfig {
         cache_bytes: 4 << 30,
         ..ServiceConfig::default()
-    }
-}
-
-#[test]
-fn a_subset_loads_only_assigned_tables_and_keeps_global_ids() {
-    let dir = tempfile::tempdir().unwrap();
-    let map = publish(dir.path());
-    let assignment = planned(&map);
-    let owner = load_as(dir.path(), &assignment, "archive-01", LoadOptions::whole(3));
-    assert_eq!(owner.len(), 6, "the map is global");
-    assert_eq!(owner.assigned_len(), 2);
-    assert!(owner.is_assigned(0) && owner.is_assigned(1));
-    assert!(!owner.is_assigned(2) && !owner.is_assigned(4));
-    // Every shard's manifest and filter are held; only assigned tables are.
-    for shard_id in 0..6 {
-        let meta = owner.meta(shard_id).expect("metadata for every shard");
-        assert_eq!(meta.manifest.shard_id, shard_id);
-        assert_eq!(
-            meta.filter,
-            std::fs::read(dir.path().join(&meta.digest).join("filter.bin")).unwrap()
-        );
-    }
-    assert!(owner.get(0).is_some());
-    assert!(owner.get(3).is_none());
-    assert_eq!(owner.scope().unwrap().worker_id, "archive-01");
-    assert_eq!(
-        owner.scope().unwrap().assignment_sha256,
-        assignment.digest()
-    );
-    // The tables of an unassigned shard need not even exist on this worker.
-    let replica_dir = tempfile::tempdir().unwrap();
-    let files = files_for(dir.path(), &map, &assignment, "recent-01").unwrap();
-    for file in &files {
-        let from = dir.path().join(file.trim_end_matches('/'));
-        let to = replica_dir.path().join(file.trim_end_matches('/'));
-        if from.is_dir() {
-            copy_dir(&from, &to);
-        } else {
-            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-            std::fs::copy(&from, &to).unwrap();
-        }
-    }
-    let replica = load_as(
-        replica_dir.path(),
-        &assignment,
-        "recent-01",
-        LoadOptions::whole(3),
-    );
-    assert_eq!(replica.assigned_len(), 2);
-    assert!(replica.is_assigned(4) && replica.is_assigned(5));
-    assert!(replica.meta(0).is_some(), "archive metadata was copied too");
-    assert!(!replica_dir
-        .path()
-        .join(&map.shards[0].manifest_digest)
-        .join("directory.0.bin")
-        .exists());
-}
-
-fn copy_dir(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).unwrap();
-    for entry in std::fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
     }
 }
 
@@ -401,63 +337,6 @@ async fn an_assignment_larger_than_the_cache_is_accepted_and_ready() {
     .unwrap();
     let (status, body) = get(&state, "/v1/ready").await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-}
-
-#[test]
-fn the_plan_balances_owners_and_the_router_matches_the_golden_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let map = publish(dir.path());
-    let assignment = planned(&map);
-    let owners: Vec<&WorkerAssignment> = assignment
-        .workers
-        .iter()
-        .filter(|w| w.role == WorkerRole::ArchiveOwner)
-        .collect();
-    assert_eq!(owners[0].shards, vec![0, 1]);
-    assert_eq!(owners[1].shards, vec![2, 3]);
-    assert_eq!(
-        owners[0].estimated_resident_bytes,
-        owners[1].estimated_resident_bytes
-    );
-    for replica in assignment
-        .workers
-        .iter()
-        .filter(|w| w.role == WorkerRole::RecentReplica)
-    {
-        assert_eq!(replica.shards, vec![4, 5]);
-    }
-    // The router is rendered from the assignment alone, so it can be pinned
-    // against a digest-free golden file: the digest line is the only thing
-    // that varies with the map's content.
-    let rendered = render_caddyfile(&assignment, "transparent.example");
-    let stable: String = rendered
-        .lines()
-        .filter(|line| !line.starts_with("# Rendered by shard-assign"))
-        .map(|line| format!("{line}\n"))
-        .collect();
-    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tools/transparent/fixtures/transparent-shard/Caddyfile.router");
-    if std::env::var_os("UPDATE_OPS_FIXTURES").is_some() {
-        std::fs::write(&golden, &stable).unwrap();
-    }
-    let expected = std::fs::read_to_string(&golden).unwrap_or_else(|error| {
-        panic!(
-            "{}: {error}; run with UPDATE_OPS_FIXTURES=1",
-            golden.display()
-        )
-    });
-    assert_eq!(
-        stable,
-        expected,
-        "{} is stale; run with UPDATE_OPS_FIXTURES=1",
-        golden.display()
-    );
-    // Over-budget rosters are refused rather than planned.
-    let mut small = roster();
-    for entry in &mut small {
-        entry.cache_bytes = 64 << 20;
-    }
-    assert!(plan(&map, &map_sha256(&map), &small, ARCHIVE, 0.1, generated()).is_err());
 }
 
 #[test]
@@ -777,95 +656,5 @@ async fn expected_query_length(app: &axum::Router, path: &str) -> usize {
 /// With prepared runtimes beside a publication, each worker's transfer
 /// inventory lists exactly the runtimes of its own shards, and a worker
 /// staged from it loads every assigned runtime from them without building.
-#[tokio::test(flavor = "multi_thread")]
-async fn each_worker_receives_only_the_prepared_runtimes_of_its_shards() {
-    use pir_query_server::transparent::routing::router::files_with_runtimes;
-    use std::sync::atomic::Ordering;
-    use transparent_shared::runtime::disk::ShippedRuntimes;
-    use transparent_shared::runtime::prebuild::prepare_publication;
-    let dir = tempfile::tempdir().unwrap();
-    let map = publish(dir.path());
-    let assignment = planned(&map);
-    let set = ShardSet::open(dir.path(), 3).unwrap();
-    let prepared = prepare_publication(&set, dir.path(), &[], &|| false).unwrap();
-    assert!(prepared.failures.is_empty());
-    let runtimes = |files: &[String]| -> std::collections::BTreeSet<String> {
-        files
-            .iter()
-            .filter(|f| f.ends_with(".runtime"))
-            .cloned()
-            .collect()
-    };
-    // Without the flag nothing changes.
-    let plain = files_for(dir.path(), &map, &assignment, "recent-01").unwrap();
-    assert!(runtimes(&plain).is_empty());
-    assert_eq!(
-        plain,
-        files_with_runtimes(dir.path(), &map, &assignment, "recent-01", false).unwrap()
-    );
-    let mut every = std::collections::BTreeSet::new();
-    for worker in ["archive-01", "archive-02", "recent-01", "recent-02"] {
-        let files = files_with_runtimes(dir.path(), &map, &assignment, worker, true).unwrap();
-        let mine = runtimes(&files);
-        let scope = assignment.scope_for(worker).unwrap();
-        // Exactly the files of this worker's shards' runtimes.
-        let expected: std::collections::BTreeSet<String> = set
-            .revisions()
-            .iter()
-            .filter(|shard| scope.assigned.contains(&shard.manifest.shard_id))
-            .flat_map(|shard| shard.runtime_identities())
-            .flat_map(|identity| {
-                let prefix =
-                    hex::encode(<sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes()));
-                prepared
-                    .files
-                    .iter()
-                    .filter(move |file| file.name.starts_with(&format!("{prefix}-")))
-                    .map(|file| file.name.clone())
-            })
-            .collect();
-        assert_eq!(mine, expected, "{worker}");
-        assert!(!mine.is_empty(), "{worker}");
-        every.extend(mine.iter().cloned());
-        // Staged from its inventory, it loads every assigned runtime from them.
-        let staged = tempfile::tempdir().unwrap();
-        for file in &files {
-            let from = dir.path().join(file.trim_end_matches('/'));
-            let to = staged.path().join(file.trim_end_matches('/'));
-            if from.is_dir() {
-                copy_dir(&from, &to);
-            } else {
-                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-                std::fs::copy(&from, &to).unwrap();
-            }
-        }
-        let loaded = load_as(staged.path(), &assignment, worker, LoadOptions::whole(3));
-        let state = ServiceState::build_with_runtimes(
-            loaded,
-            warm_config(),
-            None,
-            Some(ShippedRuntimes::new(staged.path().to_path_buf())),
-        )
-        .unwrap();
-        state.spawn_prewarm().await.unwrap();
-        let metrics = state.metrics();
-        assert_eq!(metrics.builds.load(Ordering::Relaxed), 0, "{worker}");
-        assert_eq!(
-            metrics.shipped_fallbacks.load(Ordering::Relaxed),
-            0,
-            "{worker}"
-        );
-        assert!(
-            metrics.shipped_loads.load(Ordering::Relaxed) > 0,
-            "{worker}"
-        );
-    }
-    assert_eq!(
-        every.len(),
-        prepared.files.len(),
-        "every runtime has an owner"
-    );
-}
-
 #[path = "support/provider.rs"]
 mod provider;

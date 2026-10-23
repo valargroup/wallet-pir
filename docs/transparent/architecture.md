@@ -46,10 +46,12 @@ flowchart TD
   A --> L
 ```
 
-The assignment pools and the router are implemented: `shard-assign` plans a
-`transparent-assignment-v1` from a roster, a worker loads either a whole published set or
+The assignment pools and the router are implemented: `shard-assign`
+(`transparent_tools::assignment`) plans a `transparent-assignment-v1` from a roster, a worker loads either a whole published set or
 only its assignment's shards, and the router's configuration is rendered from the
-assignment alone and routes on the shard id in the path. The separate artifact origin is a
+assignment alone and routes on the shard id in the path. A provider that bootstraps over
+HTTPS never plans a fleet: it selects its own holdings, the whole recent tier within its
+cache budget, with the archive as an inert accounting row. The separate artifact origin is a
 target; the publisher's own origins serve the public map, filters and setup today.
 
 ## Private transparent display capability

@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 rust-version = "1.97"
 license = "MIT"
-description = "Enhance PIR private evaluation messages and public route mounts; no publication, chain reading or ingestion"
+description = "Enhance PIR private evaluation messages; no publication, chain reading or ingestion"
 publish = false
 
 # A serving library only: pir-query-server is the entrypoint.
@@ -20,5 +20,4 @@ client = ["enhance-shared/client"]
 [dependencies]
 # Features above forward to the shared material crate for existing selectors.
 enhance-shared = { path = "../enhance-shared" }
-pir-control = { path = "../../shared/pir-control", features = ["admission"] }
 serde = { version = "1", features = ["derive"] }

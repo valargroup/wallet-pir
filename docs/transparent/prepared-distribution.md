@@ -126,7 +126,8 @@ Do not delete/restore the revision file independently of its publication root.
 ## HTTPS consumer
 
 History and transaction-detail display use the shared `pir-sync-manager` Rust
-library for HTTPS transport and sequential polling. Their Transparent adapters
+library for HTTPS transport and the query server's `synchronization` module for
+sequential polling. Their Transparent adapters
 retain publication validation, replay and revocation records, recovery and
 activation. This extraction does not change their wire formats, stored records
 or serving authority, and does not migrate other PIR products.

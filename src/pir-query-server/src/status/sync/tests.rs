@@ -1,5 +1,6 @@
 use super::*;
 use crate::status::routes::{provider_commit, provider_pin};
+use crate::synchronization::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use axum::extract::{Path, State};
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -10,7 +11,6 @@ use axum::{
 use pir_publication::{
     conditional_token, SubjectAnswer, AUTHORITY_CHECK_PATH, CURRENT_PATH, OBJECTS_PATH,
 };
-use pir_sync_manager::{publication_lifecycle::PublicationLifecycleError, SyncTask};
 use status_shared::protocol::{MAX_AGE_MS, PROTOCOL};
 use std::fs;
 use std::sync::{
@@ -574,7 +574,7 @@ async fn incompatible_discovery_stops_polling_without_observing_product_state() 
     assert!(task.terminal(&error));
     assert!(task.floor().envelope().is_none());
     assert!(!service.state_dir.join(FLOOR_FILE).exists());
-    let returned = pir_sync_manager::SyncManager::new(task).run().await;
+    let returned = crate::synchronization::SyncManager::new(task).run().await;
     assert!(pir_sync_manager::is_incompatible(returned.as_ref()));
     server.abort();
 }

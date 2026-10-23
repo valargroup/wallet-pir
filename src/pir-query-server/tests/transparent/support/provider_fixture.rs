@@ -10,12 +10,11 @@ use zakura_pir_publisher::transparent as transparent_shard;
 use crate::{generated, genesis, hash_at, revision, script, FIRST};
 use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
 use pir_query_server::transparent::routing::archive::Archive;
-use pir_query_server::transparent::routing::router::{plan, RosterEntry};
+use pir_query_server::transparent::routing::holdings;
 use std::{collections::BTreeMap, sync::Arc};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{SealParameters, ShardMap};
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
-use transparent_shared::history::assignment::WorkerRole;
 use transparent_shared::history::shardset::{LoadOptions, LoadScope, ShardSet};
 
 pub(crate) fn fixture(dir: &std::path::Path, archive_geometry: &'static Geometry) -> ShardMap {
@@ -195,33 +194,14 @@ pub(crate) fn recent_with_config(
     archive: Arc<Archive>,
     config: ServiceConfig,
 ) -> ServiceState {
-    let roster = vec![
-        RosterEntry {
-            id: "archive".into(),
-            role: WorkerRole::ArchiveOwner,
-            replica_group: None,
-            ssh_host: "unused".into(),
-            upstream: "unused:1".into(),
-            cache_bytes: 8 << 30,
-            archive_range: None,
-        },
-        RosterEntry {
-            id: "provider".into(),
-            role: WorkerRole::RecentReplica,
-            replica_group: Some("recent".into()),
-            ssh_host: "unused".into(),
-            upstream: "unused:2".into(),
-            cache_bytes: 8 << 30,
-            archive_range: None,
-        },
-    ];
-    let assignment = plan(map, &crate::map_sha256(map), &roster, 1, 0.1, generated()).unwrap();
+    let assignment =
+        holdings::local(map, &crate::map_sha256(map), 1, 8 << 30, 0.1, generated()).unwrap();
     let set = ShardSet::open_with(
         dir,
         &LoadOptions {
             scope: LoadScope::Assigned {
                 assignment: Arc::new(assignment),
-                worker_id: "provider".into(),
+                worker_id: holdings::PROVIDER.into(),
             },
             ..LoadOptions::whole(0)
         },
@@ -269,15 +249,7 @@ pub(crate) fn terminal_prepared(
     map: &ShardMap,
     shipped: Option<transparent_shared::runtime::disk::ShippedRuntimes>,
 ) -> ServiceState {
-    let assignment = plan(
-        map,
-        &crate::map_sha256(map),
-        &crate::roster(),
-        1,
-        0.1,
-        generated(),
-    )
-    .unwrap();
+    let assignment = crate::fleet(map, 1);
     let options = LoadOptions {
         scope: LoadScope::Assigned {
             assignment: Arc::new(assignment),

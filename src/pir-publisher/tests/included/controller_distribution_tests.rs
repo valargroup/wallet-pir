@@ -136,34 +136,14 @@ fn publication_fixture(root: &Path, through: u64, bounded: bool) -> (PathBuf, Sh
     (output, set)
 }
 fn recent_options(set: &ShardSet) -> transparent_shared::history::shardset::LoadOptions {
-    use pir_query_server::transparent::routing::router::{plan, RosterEntry};
-    use transparent_shared::history::assignment::{GeneratedBy, WorkerRole};
+    use pir_query_server::transparent::routing::holdings;
+    use transparent_shared::history::assignment::GeneratedBy;
     use transparent_shared::history::shardset::{LoadOptions, LoadScope};
-    let roster = [
-        RosterEntry {
-            id: "recent".into(),
-            role: WorkerRole::RecentReplica,
-            replica_group: Some("recent".into()),
-            ssh_host: String::new(),
-            upstream: "127.0.0.1:0".into(),
-            cache_bytes: 4 << 30,
-            archive_range: None,
-        },
-        RosterEntry {
-            id: "archive".into(),
-            role: WorkerRole::ArchiveOwner,
-            replica_group: None,
-            ssh_host: String::new(),
-            upstream: "127.0.0.1:0".into(),
-            cache_bytes: u64::MAX,
-            archive_range: None,
-        },
-    ];
-    let assignment = plan(
+    let assignment = holdings::local(
         &set.map,
         &set.map_digest,
-        &roster,
         1,
+        4 << 30,
         0.15,
         GeneratedBy {
             tool: "fixture".into(),
@@ -175,7 +155,7 @@ fn recent_options(set: &ShardSet) -> transparent_shared::history::shardset::Load
     LoadOptions {
         scope: LoadScope::Assigned {
             assignment: Arc::new(assignment),
-            worker_id: "recent".into(),
+            worker_id: holdings::PROVIDER.into(),
         },
         ..LoadOptions::whole(0)
     }

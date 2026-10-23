@@ -16,6 +16,13 @@ mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]
 mod wallet_tests;
 
+/// Where the wallet-facing Status operations (`/init`, `/session/:id`,
+/// `/query`) are served: the canonical `/status/v1` namespace and the deployed
+/// `/v1/status` alias reach the same router handlers. Control, provider and
+/// worker routes are never mounted under either.
+pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
+    pir_control::public_routes::PublicMount::new("/status/v1", "/v1/status");
+
 pub use config::RoleConfig;
 pub use controller::Controller;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
@@ -57,7 +64,7 @@ pub async fn serve_role_on(
     let task = sync::synchronization(service.clone(), &config)?;
     // The worker and router each poll the publisher. Their combined delay must
     // leave room for preparation inside Status's twenty-second freshness limit.
-    let mut manager = pir_sync_manager::SyncManager::new(task)
+    let mut manager = crate::synchronization::SyncManager::new(task)
         .with_success_interval(std::time::Duration::from_secs(1));
     if let Err(error) = manager.poll_once().await {
         if pir_sync_manager::is_incompatible(error.as_ref()) {

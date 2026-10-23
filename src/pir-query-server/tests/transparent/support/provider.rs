@@ -5,10 +5,9 @@ use zakura_pir_protocol::transparent::filter as transparent_filter;
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_query_server::transparent::native as transparent_native;
 
-use super::{generated, genesis, hash_at, revision, script, FIRST};
+use super::{genesis, hash_at, revision, script, FIRST};
 use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
 use pir_query_server::transparent::routing::archive::Archive;
-use pir_query_server::transparent::routing::router::plan;
 use std::sync::Arc;
 use transparent_filter::ShardMap;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, DECOUPLED_32K_32K};
@@ -584,15 +583,7 @@ async fn owner_qualifies_archive_and_retains_inflight_ownership_across_handover(
     let archive_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let archive = Archive::new(&format!("http://{address}"), vec![]).unwrap();
     fn options(dir: &std::path::Path, map: &ShardMap, first_recent: u64) -> LoadOptions {
-        let assignment = plan(
-            map,
-            &super::map_sha256(map),
-            &super::roster(),
-            first_recent,
-            0.1,
-            generated(),
-        )
-        .unwrap();
+        let assignment = super::fleet(map, first_recent);
         std::fs::write(
             dir.join("assignment.json"),
             serde_json::to_vec(&assignment).unwrap(),

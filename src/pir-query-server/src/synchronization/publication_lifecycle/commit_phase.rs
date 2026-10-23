@@ -4,8 +4,8 @@ use super::{
     durable_operation::{run_commit, CommitOutcome, DurableOutcome, OwnedCommit},
     PeerHandover, PublicationAdapter, PublicationLifecycle, PublicationLifecycleError,
 };
-use crate::Error;
 use pir_publication::ViewIdentity;
+use pir_sync_manager::Error;
 use std::{future::Future, io, time::SystemTime};
 
 /// A commit that installed and has not finished completing: the adapter

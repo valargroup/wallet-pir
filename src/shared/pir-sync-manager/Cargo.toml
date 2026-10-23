@@ -3,12 +3,11 @@ name = "pir-sync-manager"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "HTTPS transport, sequential synchronization and the shared publication lifecycle without product authority"
+description = "HTTPS transport, publisher discovery and transfer limits without product authority"
 publish = false
 
 [dependencies]
 bytes = "1"
-pir-publication = { path = "../pir-publication" }
 pir-service-discovery = { version = "1.0.0", path = "../pir-service-discovery" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = "1"

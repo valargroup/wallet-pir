@@ -1,6 +1,6 @@
 //! Bounded, verified transfer of publication objects into the role's cache.
-use crate::{Error, HttpsSource, Verification};
 use pir_publication::{ObjectCache, ObjectReference, OBJECTS_PATH};
+use pir_sync_manager::{Error, HttpsSource, Verification};
 use std::path::PathBuf;
 
 /// Fetches objects for one pass within the source's aggregate byte budget.

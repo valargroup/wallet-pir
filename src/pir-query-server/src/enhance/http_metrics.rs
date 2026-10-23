@@ -178,7 +178,7 @@ pub(crate) async fn measure(
     request: Request,
     next: Next,
 ) -> Response {
-    let operation = enhance_query_server::PUBLIC_ROUTES.operation(request.uri().path());
+    let operation = crate::enhance::PUBLIC_ROUTES.operation(request.uri().path());
     let endpoint = match (request.method().as_str(), operation) {
         ("GET", Some("/init")) => "init",
         ("POST", Some("/query")) => "query",
@@ -251,7 +251,7 @@ mod tests {
     fn app(metrics: &HttpMetrics) -> Router {
         metrics.endpoint("init");
         metrics.endpoint("query");
-        enhance_query_server::PUBLIC_ROUTES
+        crate::enhance::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [

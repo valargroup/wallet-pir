@@ -15,13 +15,13 @@
 use zakura_pir_protocol::transparent::filter as transparent_filter;
 
 use clap::{Parser, Subcommand};
-use pir_query_server::transparent::routing::router::{
-    files_with_runtimes, plan, render_caddyfile_with, RosterEntry,
-};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::ShardMap;
 use transparent_shared::history::assignment::{Assignment, GeneratedBy};
+use transparent_tools::assignment::{
+    files_with_runtimes, plan, render_caddyfile_with, RosterEntry,
+};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -3,6 +3,7 @@ use crate::enhance::{
     synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
+use crate::synchronization::SyncTask;
 use axum::{
     extract::{Path as UrlPath, Request, State},
     http::StatusCode,
@@ -17,7 +18,6 @@ use enhance_shared::{
     runtime::Packing,
 };
 use pir_control::admission::{read_body, BodyError, Queue, Refusal};
-use pir_sync_manager::SyncTask;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -205,7 +205,7 @@ impl PackingRouter {
         })
     }
     pub fn public_router(&self) -> Router {
-        enhance_query_server::PUBLIC_ROUTES
+        crate::enhance::PUBLIC_ROUTES
             .mount(
                 Router::new(),
                 [

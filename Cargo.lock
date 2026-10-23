@@ -897,7 +897,6 @@ name = "enhance-query-server"
 version = "0.0.1"
 dependencies = [
  "enhance-shared",
- "pir-control",
  "serde",
 ]
 
@@ -2360,7 +2359,6 @@ name = "pir-sync-manager"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "pir-publication",
  "pir-service-discovery",
  "reqwest",
  "rustls",
@@ -3318,7 +3316,6 @@ dependencies = [
 name = "status-query-server"
 version = "0.0.1"
 dependencies = [
- "pir-control",
  "pir-publication",
  "serde",
  "status-query-server",
@@ -3764,6 +3761,7 @@ dependencies = [
  "sha2 0.10.9",
  "sysinfo",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tower",

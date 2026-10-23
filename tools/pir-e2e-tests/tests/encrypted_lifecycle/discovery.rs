@@ -8,7 +8,8 @@ use pir_e2e_tests::enhance_fixture::tls;
 use pir_query_server::enhance::{
     ingress_sync, router_sync, service::ServingRole, synchronization, worker_sync,
 };
-use pir_sync_manager::{DiscoveryError, SyncTask};
+use pir_query_server::synchronization::SyncTask;
+use pir_sync_manager::DiscoveryError;
 use std::{
     path::Path,
     sync::{

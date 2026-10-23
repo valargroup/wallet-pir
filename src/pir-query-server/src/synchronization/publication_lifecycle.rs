@@ -38,7 +38,7 @@ mod envelope_observation;
 mod object_fetch;
 mod retention;
 
-use crate::{Error, HttpsSource, SyncTask};
+use crate::synchronization::SyncTask;
 use commit_phase::PendingCompletion;
 pub use durable_operation::PreparedCommit;
 use durable_operation::{CommitFence, DurableOutcome, OwnedOperationSlot};
@@ -46,6 +46,7 @@ pub use object_fetch::ObjectFetcher;
 use pir_publication::{
     AuthorityFloor, ObjectCache, ObjectReference, PublicationEnvelope, ViewIdentity,
 };
+use pir_sync_manager::{Error, HttpsSource};
 use retention::RetainedViews;
 pub use retention::ViewRequirement;
 use serde::{de::DeserializeOwned, Serialize};
@@ -413,6 +414,6 @@ impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
         result
     }
     fn terminal(&self, error: &Error) -> bool {
-        crate::is_incompatible(error.as_ref())
+        pir_sync_manager::is_incompatible(error.as_ref())
     }
 }

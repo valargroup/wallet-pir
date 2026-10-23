@@ -57,8 +57,9 @@ after referenced objects and authority state are durable. TLS authenticates the
 configured publisher; these hashes and attestations are not independent proofs
 of canonicality or index completeness.
 
-Consumers run the shared `pir-sync-manager` publication lifecycle (observe,
-fence, plan, fetch, load, revalidate, commit, retain) with HTTPS transport, byte
+Consumers run the query server's shared publication lifecycle
+(`pir_query_server::synchronization::publication_lifecycle`) (observe,
+fence, plan, fetch, load, revalidate, commit, retain) with `pir-sync-manager` HTTPS transport, byte
 accounting and sequential polling/backoff; Status hooks only choose, load and
 install material. They persist the publisher floor (newest pointer, publisher
 origin, product namespace, chain and observed invalidations) before allowing

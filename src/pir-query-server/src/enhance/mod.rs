@@ -3,8 +3,15 @@
 //! synchronization, admission and HTTP surfaces.
 //!
 //! Records, the wire protocol, the publication contract and prepared runtimes
-//! come from `enhance-shared`; the private evaluation messages and public
-//! route mounts come from `enhance-query-server`.
+//! come from `enhance-shared`; the private evaluation messages come from
+//! `enhance-query-server`.
+
+/// Where the wallet-facing Enhance operations (`/init`, `/session/:id`,
+/// `/sessions/:generation/:shard`, `/query`) are served: the canonical
+/// `/enhance/v1` namespace and the deployed `/v1/enhance` alias reach the same
+/// handlers. Control routes (`/internal/*`) are never mounted under either.
+pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
+    pir_control::public_routes::PublicMount::new("/enhance/v1", "/v1/enhance");
 pub mod internal_auth;
 pub mod telemetry;
 

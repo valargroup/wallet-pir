@@ -28,7 +28,7 @@ use transparent_shared::{
 
 /// Transparent publication policy hosted by the shared synchronization loop.
 pub struct Manager {
-    sync: pir_sync_manager::SyncManager<HistorySync>,
+    sync: crate::synchronization::SyncManager<HistorySync>,
 }
 impl Manager {
     /// Check publisher discovery, then open the provider root. An unreachable or
@@ -36,7 +36,7 @@ impl Manager {
     pub async fn new(config: Config, service: ServiceConfig) -> Result<Self, Error> {
         crate::transparent::source::discover(&config).await?;
         Ok(Self {
-            sync: pir_sync_manager::SyncManager::new(HistorySync::new(config, service)?),
+            sync: crate::synchronization::SyncManager::new(HistorySync::new(config, service)?),
         })
     }
     /// Hold and verify every shard locally, including archive runtimes.
@@ -287,7 +287,7 @@ impl HistorySync {
                 .ok_or("saved provider lacks assignment")?;
             LoadOptions {
                 scope: LoadScope::Assigned {
-                    worker_id: "provider".into(),
+                    worker_id: crate::transparent::routing::holdings::PROVIDER.into(),
                     assignment: std::sync::Arc::new(Assignment::load(assignment)?),
                 },
                 ..LoadOptions::whole(0)
@@ -437,7 +437,7 @@ impl HistorySync {
         })
     }
 }
-impl pir_sync_manager::SyncTask for HistorySync {
+impl crate::synchronization::SyncTask for HistorySync {
     type Report = Progress;
     type Error = Error;
     fn started(&mut self) {

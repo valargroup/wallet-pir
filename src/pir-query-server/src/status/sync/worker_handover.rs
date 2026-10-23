@@ -1,11 +1,9 @@
 //! A router's loopback coordination with its worker: which inventory the
 //! worker serves, pinning it during the authority check, and releasing the pin.
 use super::super::{serving, Service};
+use crate::synchronization::publication_lifecycle::{PeerHandover, PeerReservation};
 use pir_publication::ObjectReference;
-use pir_sync_manager::{
-    publication_lifecycle::{PeerHandover, PeerReservation},
-    Error,
-};
+use pir_sync_manager::Error;
 use status_query_server::distributed::ProviderStatus;
 use status_shared::{now_ms, protocol::Manifest, publication::METADATA_LIMIT};
 
