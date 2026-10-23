@@ -1,4 +1,11 @@
 {
+  "pir-apm-sidecar": {
+    "fast": [
+      "apm",
+      "tls"
+    ],
+    "full": []
+  },
   "pir-publication": {
     "fast": [
       "object_installation",
