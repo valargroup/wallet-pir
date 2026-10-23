@@ -240,3 +240,72 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
     }
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
 }
+
+/// The binary accepts a combined Status role without a worker or token,
+/// refuses one naming a peer, and stops before opening state or listeners when
+/// its publisher cannot be discovered.
+#[cfg(feature = "status")]
+#[test]
+fn combined_status_role_checks_and_refuses_an_undiscoverable_publisher() {
+    let temp = tempfile::tempdir().unwrap();
+    let port = |listener: std::net::TcpListener| listener.local_addr().unwrap().port();
+    let management = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let listen = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let query = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let publisher = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let state = temp.path().join("combined");
+    let settings = |worker_origin: &str| {
+        serde_json::json!({
+            "management_listen": format!("127.0.0.1:{management}"),
+            "status": {"enabled": true, "settings": {
+                "role": "combined", "network_hex": "01".repeat(32),
+                "state_dir": state, "listen": format!("127.0.0.1:{listen}"),
+                "query_listen": format!("127.0.0.1:{query}"),
+                "publisher": format!("https://localhost:{publisher}"),
+                "worker_origin": worker_origin,
+            }},
+        })
+    };
+    let configs = [
+        temp.path().join("combined-config"),
+        temp.path().join("peer-config"),
+    ];
+    configs
+        .iter()
+        .for_each(|dir| std::fs::create_dir(dir).unwrap());
+    let combined = write(&configs[0], settings(""));
+    let output = binary()
+        .arg("--config")
+        .arg(&combined)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let peer = write(&configs[1], settings("http://127.0.0.1:8381"));
+    let output = binary()
+        .arg("--config")
+        .arg(&peer)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("names no worker"));
+
+    let output = binary()
+        .arg("--config")
+        .arg(&combined)
+        .env("RUST_LOG", "off")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("discover"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!state.exists(), "state opened before discovery");
+}

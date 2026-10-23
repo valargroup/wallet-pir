@@ -9,6 +9,7 @@ use ipir_sp::{server::CrsBlock, IPIRServer, ProductionSimplePirParams, SimplePir
 use pir_runtime::evaluation::{build_from_le_u16, PreparedDatabase};
 #[cfg(not(feature = "native-reinspiring"))]
 use pir_runtime::packing::{PackingKeys, PackingSetup, PreparedPacking};
+pub use prepared::PreparedMaterial;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 #[cfg(not(feature = "native-reinspiring"))]

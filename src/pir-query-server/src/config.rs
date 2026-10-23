@@ -275,7 +275,9 @@ mod tests {
         .unwrap();
         let layout = config.validate().unwrap();
         assert_eq!(layout.probes.len(), 4);
-        assert_eq!(layout.listeners.len(), 5);
+        // Management, one Enhance worker, Status combined control and wallet
+        // listeners, and one listener per Transparent product.
+        assert_eq!(layout.listeners.len(), 6);
     }
 
     #[cfg(feature = "transparent-history")]

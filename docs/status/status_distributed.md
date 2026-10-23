@@ -124,6 +124,14 @@ installed additional trust root. The router's `worker_origin` remains a loopback
 HTTP evaluation address. The typed examples live beside `tools/status/deploy/`.
 Old push-mode settings are rejected rather than selecting a compatibility mode.
 
+A `combined` role is the same router with its worker in one process. It follows
+the publisher's latest inventory like a worker, loads both the evaluation units
+and the packing material, and evaluates each admitted wallet query in process
+under the router's admission permit. It names no `worker_origin`, serves no
+evaluation, pin or handover route, and answers wallets with the same paths,
+bytes and refusals as a distributed router. The separate roles remain
+supported.
+
 ## Operations and qualification
 
 Use the [fleet operator guide](../operations.md) for normal deployment, status

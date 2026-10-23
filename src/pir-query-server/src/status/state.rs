@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use pir_control::admission::ClientSlots;
 use pir_publication::ObjectReference;
 use status_query_server::distributed::{loopback_origin, Role};
-use status_shared::{protocol::Hash, publication::Failure, Generation};
+use status_shared::{protocol::Hash, publication::Failure, Generation, PreparedMaterial};
 use std::{fs::File, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -78,5 +78,13 @@ impl Service {
             return Err(StatusCode::GONE);
         }
         Ok(controller)
+    }
+    /// The prepared material this role loads from an inventory.
+    pub(super) fn material(&self) -> PreparedMaterial {
+        match self.role {
+            Role::Worker => PreparedMaterial::Evaluation,
+            Role::Router => PreparedMaterial::Packing,
+            Role::Combined => PreparedMaterial::Complete,
+        }
     }
 }

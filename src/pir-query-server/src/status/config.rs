@@ -17,6 +17,9 @@ pub struct RoleConfig {
     pub publisher: String,
     #[serde(default)]
     pub publisher_ca: Option<PathBuf>,
+    /// Router only: its worker's loopback origin. A combined role evaluates in
+    /// process and names no peer.
+    #[serde(default)]
     pub worker_origin: String,
 }
 
@@ -42,8 +45,12 @@ impl RoleConfig {
         {
             return Err("Status publisher must be an explicit HTTPS origin".into());
         }
-        if self.role == Role::Router {
-            loopback_origin(&self.worker_origin)?;
+        match self.role {
+            Role::Router => loopback_origin(&self.worker_origin)?,
+            Role::Combined if !self.worker_origin.is_empty() => {
+                return Err("a combined Status role evaluates locally and names no worker".into())
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -144,5 +151,23 @@ mod tests {
         let mut role = config();
         role.worker_origin = "http://external.example".into();
         assert!(role.validate().is_err());
+    }
+
+    #[test]
+    fn combined_role_needs_no_peer_and_refuses_one() {
+        let role: RoleConfig = serde_json::from_value(serde_json::json!({
+            "role": "combined",
+            "network_hex": "01".repeat(32),
+            "state_dir": "/tmp/status-combined",
+            "listen": "127.0.0.1:8380",
+            "query_listen": "127.0.0.1:8382",
+            "publisher": "https://publisher.example",
+        }))
+        .unwrap();
+        role.validate().unwrap();
+        assert_eq!(role.listens().len(), 2);
+        let mut peer = role;
+        peer.worker_origin = "http://127.0.0.1:8381".into();
+        assert!(peer.validate().is_err());
     }
 }

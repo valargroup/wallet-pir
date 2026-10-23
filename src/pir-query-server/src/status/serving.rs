@@ -21,11 +21,23 @@ pub fn serving_http_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()
 }
 
+/// Where a wallet query's database evaluation runs.
+#[derive(Clone)]
+pub enum Evaluator {
+    /// The router's worker, over its private loopback evaluation route.
+    Peer {
+        origin: String,
+        http: reqwest::Client,
+    },
+    /// This process's own serving units: the worker's evaluation route, and
+    /// a combined role answering wallets without a peer.
+    Local,
+}
+
 #[derive(Clone)]
 pub struct HttpState {
     pub controller: Controller,
-    pub origin: String,
-    pub http: reqwest::Client,
+    pub evaluator: Evaluator,
     pub permits: Arc<admission::Admission>,
 }
 #[cfg(test)]
@@ -33,8 +45,10 @@ impl HttpState {
     fn new(controller: Controller, origin: String) -> Self {
         Self {
             controller,
-            origin,
-            http: serving_http_client().expect("Status HTTP client"),
+            evaluator: Evaluator::Peer {
+                origin,
+                http: serving_http_client().expect("Status HTTP client"),
+            },
             permits: Arc::new(admission::Admission::production()),
         }
     }
@@ -122,29 +136,51 @@ async fn query_admitted(state: HttpState, body: Bytes) -> Result<Vec<u8>, Status
     let coefficients = generation
         .coefficients(&body)
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    let mut request = body[..HEADER_BYTES].to_vec();
-    for value in coefficients {
-        request.extend(value.to_le_bytes());
+    // A peer answers with its evaluation; a local evaluation runs below under
+    // this request's permit, beside packing.
+    enum Evaluation {
+        Answered(Vec<u8>),
+        Pending(Vec<u64>),
     }
-    let response = state
-        .http
-        .post(format!("{}/evaluate", state.origin))
-        .body(request)
-        .send()
-        .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
-    let response = bounded(response, HEADER_BYTES + profile().ypir().db_cols * 8).await?;
-    if response.len() != HEADER_BYTES + profile().ypir().db_cols * 8
-        || response[..HEADER_BYTES] != body[..HEADER_BYTES]
-    {
-        return Err(StatusCode::BAD_GATEWAY);
-    }
+    let evaluation = match &state.evaluator {
+        Evaluator::Peer { origin, http } => {
+            let mut request = body[..HEADER_BYTES].to_vec();
+            for value in coefficients {
+                request.extend(value.to_le_bytes());
+            }
+            let response = http
+                .post(format!("{origin}/evaluate"))
+                .body(request)
+                .send()
+                .await
+                .map_err(|_| StatusCode::BAD_GATEWAY)?;
+            let response = bounded(response, HEADER_BYTES + profile().ypir().db_cols * 8).await?;
+            if response.len() != HEADER_BYTES + profile().ypir().db_cols * 8
+                || response[..HEADER_BYTES] != body[..HEADER_BYTES]
+            {
+                return Err(StatusCode::BAD_GATEWAY);
+            }
+            Evaluation::Answered(response)
+        }
+        Evaluator::Local => Evaluation::Pending(coefficients),
+    };
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let values = response[HEADER_BYTES..]
-            .chunks_exact(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
-            .collect::<Vec<_>>();
+        let values = match evaluation {
+            Evaluation::Answered(response) => response[HEADER_BYTES..]
+                .chunks_exact(8)
+                .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+                .collect::<Vec<_>>(),
+            Evaluation::Pending(coefficients) => {
+                let started = Instant::now();
+                let values = generation.evaluate(&coefficients);
+                telemetry::stage("worker_evaluate", started.elapsed(), values.is_ok());
+                // A distributed router relays its worker's refusal status.
+                let values = values.map_err(|_| StatusCode::BAD_REQUEST)?;
+                state.controller.check(&generation)?;
+                values
+            }
+        };
         let pack_started = Instant::now();
         let packed = generation.pack(&body, &values);
         telemetry::stage("router_pack", pack_started.elapsed(), packed.is_ok());

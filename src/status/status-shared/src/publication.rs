@@ -292,7 +292,7 @@ mod tests {
             .is_err());
         let result = crate::Generation::load_prepared(
             &inventory,
-            true,
+            crate::PreparedMaterial::Evaluation,
             |_| panic!("malformed geometry must not reach the filesystem"),
             None,
         );

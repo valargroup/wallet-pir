@@ -20,6 +20,16 @@ pub struct ProviderStatus {
 pub enum Role {
     Worker,
     Router,
+    /// A router and its evaluator in one process over one inventory, joined
+    /// by direct calls instead of peer messages.
+    Combined,
+}
+
+impl Role {
+    /// Whether this role answers the wallet-facing operations.
+    pub fn answers_wallets(self) -> bool {
+        self != Self::Worker
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

@@ -139,19 +139,42 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     let _router = Abort(tokio::spawn(async move {
         serve_role_on(router, router_listener, None).await.unwrap()
     }));
+    // The same publication through one combined role: no peer, direct calls.
+    let combined_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let combined_origin = format!("http://{}", combined_listener.local_addr().unwrap());
+    let combined = RoleConfig {
+        worker_origin: String::new(),
+        ..config(
+            Role::Combined,
+            "combined",
+            combined_listener.local_addr().unwrap(),
+        )
+    };
+    combined.validate().unwrap();
+    let _combined = Abort(tokio::spawn(async move {
+        serve_role_on(combined, combined_listener, None)
+            .await
+            .unwrap()
+    }));
     let poll = reqwest::Client::builder()
         .timeout(Duration::from_secs(1))
         .build()
         .unwrap();
     let first = wait_manifest(&poll, &router_origin, None).await;
-    let transport = transport::Loopback {
-        origin: router_origin.clone(),
+    let combined_first = wait_manifest(&poll, &combined_origin, None).await;
+    assert_eq!(
+        (combined_first.rows_digest, combined_first.anchor_hash),
+        (first.rows_digest, first.anchor_hash)
+    );
+    let consumer = |origin: &String| transport::Loopback {
+        origin: origin.clone(),
         http: reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
             .unwrap(),
         corrupt_answer: AtomicBool::new(false),
     };
+    let transports = [consumer(&router_origin), consumer(&combined_origin)];
     let anchor = wallet::AcceptedAnchor {
         network: observed.snapshot.network,
         height: observed.snapshot.height,
@@ -161,30 +184,29 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         earliest_possible_inclusion: Some(observed.snapshot.start),
         required_through: Some(observed.snapshot.height),
     };
-    let client = wallet::transport::PendingClient::fetch(
-        &transport,
-        "https://status-wallet.invalid",
-        now_ms,
-    )
-    .await
-    .unwrap()
-    .accept(&transport, &anchor)
-    .await
-    .unwrap();
     // Expected answers come from the node's complete mempool, independently of
     // the publisher's inventory and the consumer's prepared material.
     let txid = rpc.status_mempool().await.unwrap()[0];
-    assert_eq!(
-        client.observe(&transport, &txid, local).await.unwrap(),
-        wallet::Observation::Mempool
-    );
-    assert_eq!(
-        client
-            .observe(&transport, &[0xfe; 32], local)
-            .await
-            .unwrap(),
-        wallet::Observation::NotFound
-    );
+    for transport in &transports {
+        let client = wallet::transport::PendingClient::fetch(
+            transport,
+            "https://status-wallet.invalid",
+            now_ms,
+        )
+        .await
+        .unwrap()
+        .accept(transport, &anchor)
+        .await
+        .unwrap();
+        assert_eq!(
+            client.observe(transport, &txid, local).await.unwrap(),
+            wallet::Observation::Mempool
+        );
+        assert_eq!(
+            client.observe(transport, &[0xfe; 32], local).await.unwrap(),
+            wallet::Observation::NotFound
+        );
+    }
     // A disconnected candidate withdraws the publication during preparation.
     // Even with its active manifest cleared, the next publication must reopen
     // authority so consumers can distinguish the recovery from ordinary updates.
@@ -194,27 +216,33 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     assert!(second.generation > first.generation);
     assert!(second.recovery_epoch > first.recovery_epoch);
     assert!(second.observed_ms > first.observed_ms);
-    let client = wallet::transport::PendingClient::fetch(
-        &transport,
-        "https://status-wallet.invalid",
-        now_ms,
-    )
-    .await
-    .unwrap()
-    .accept(&transport, &anchor)
-    .await
-    .unwrap();
-    assert_eq!(
-        client
-            .observe(&transport, &[0x88; 32], local)
-            .await
-            .unwrap(),
-        wallet::Observation::Mempool
-    );
-    assert_eq!(
-        client.observe(&transport, &txid, local).await.unwrap(),
-        wallet::Observation::NotFound
-    );
+    let combined_second = wait_manifest(&poll, &combined_origin, Some(first.rows_digest)).await;
+    assert_eq!(combined_second.rows_digest, second.rows_digest);
+    assert!(combined_second.recovery_epoch > first.recovery_epoch);
+    for transport in &transports {
+        let client = wallet::transport::PendingClient::fetch(
+            transport,
+            "https://status-wallet.invalid",
+            now_ms,
+        )
+        .await
+        .unwrap()
+        .accept(transport, &anchor)
+        .await
+        .unwrap();
+        assert_eq!(
+            client.observe(transport, &[0x88; 32], local).await.unwrap(),
+            wallet::Observation::Mempool
+        );
+        assert_eq!(
+            client.observe(transport, &txid, local).await.unwrap(),
+            wallet::Observation::NotFound
+        );
+    }
     assert!(root.path().join("worker/publication-floor.json").is_file());
     assert!(root.path().join("router/publication-floor.json").is_file());
+    assert!(root
+        .path()
+        .join("combined/publication-floor.json")
+        .is_file());
 }

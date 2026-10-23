@@ -1,6 +1,6 @@
 //! Role-specific HTTP routes, authority checks and router-worker handover.
 use super::{
-    serving::{evaluate, query, shared_bytes, HttpState},
+    serving::{evaluate, query, shared_bytes, Evaluator, HttpState},
     telemetry, Service,
 };
 use axum::{
@@ -189,8 +189,7 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
     controller.check(&generation)?;
     let http_state = HttpState {
         controller: controller.clone(),
-        origin: String::new(),
-        http: service.serving_http.clone(),
+        evaluator: Evaluator::Local,
         permits: service.permits.clone(),
     };
     let result = evaluate(State(http_state), body).await?;
@@ -199,7 +198,7 @@ async fn worker_query(State(service): State<Service>, body: Bytes) -> Result<Vec
     Ok(result)
 }
 async fn router_init(State(service): State<Service>) -> Result<Json<Manifest>, StatusCode> {
-    if service.role != Role::Router {
+    if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
     let controller = service.serving().await?;
@@ -211,7 +210,7 @@ async fn router_session(
     State(service): State<Service>,
     Path(id): Path<String>,
 ) -> Result<Bytes, StatusCode> {
-    if service.role != Role::Router {
+    if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
     let id: Hash = hex::decode(id)
@@ -228,7 +227,7 @@ async fn router_query(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Vec<u8>, StatusCode> {
-    if service.role != Role::Router {
+    if !service.role.answers_wallets() {
         return Err(StatusCode::NOT_FOUND);
     }
     let controller = service.available_controller().await?;
@@ -241,10 +240,17 @@ async fn router_query(
         counters::admission_rejected("router", "client_concurrency");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     };
+    let evaluator = if service.role == Role::Combined {
+        Evaluator::Local
+    } else {
+        Evaluator::Peer {
+            origin: service.worker_origin.clone(),
+            http: service.serving_http.clone(),
+        }
+    };
     let http_state = HttpState {
         controller: controller.clone(),
-        origin: service.worker_origin.clone(),
-        http: service.serving_http.clone(),
+        evaluator,
         permits: service.permits.clone(),
     };
     let result = query(State(http_state), body).await?;

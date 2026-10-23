@@ -224,13 +224,14 @@ impl PublicationAdapter for StatusPublication {
                 Vec::new(),
             )
         } else {
-            let role_objects = if self.service.role == Role::Worker {
-                &inventory.units
-            } else {
-                &inventory.packing
-            };
+            let material = self.service.material();
             let mut required = vec![inventory.public.clone()];
-            required.extend(role_objects.iter().cloned());
+            if material.evaluates() {
+                required.extend(inventory.units.iter().cloned());
+            }
+            if material.packs() {
+                required.extend(inventory.packing.iter().cloned());
+            }
             for object in &required {
                 object.validate(attempt_limit())?;
             }
@@ -270,11 +271,11 @@ impl PublicationAdapter for StatusPublication {
             CandidateMaterial::LoadFromCache => {
                 let cache = cache.clone();
                 let loading = inventory.clone();
-                let worker = self.service.role == Role::Worker;
+                let material = self.service.material();
                 tokio::task::spawn_blocking(move || {
                     Generation::load_prepared(
                         &loading,
-                        worker,
+                        material,
                         |object| cache.object_path(object),
                         previous.as_deref(),
                     )

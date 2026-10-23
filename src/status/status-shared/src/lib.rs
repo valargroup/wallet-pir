@@ -14,7 +14,7 @@ pub mod protocol;
 pub mod publication;
 pub mod telemetry;
 use crate::protocol::*;
-pub use generation::{Generation, Preparation};
+pub use generation::{Generation, Preparation, PreparedMaterial};
 use ipir_sp::ProductionSimplePirParams;
 use std::{
     sync::OnceLock,

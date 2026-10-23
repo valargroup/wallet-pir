@@ -116,12 +116,16 @@ and `cuda_device` only for CUDA). Query ingress needs `data_dir`, `listen`,
 `control_listen`, and optional `requests` (default 16) and `uploads` (default
 256). A packing router needs `data_dir`, `listen`, `control_listen`, and
 optional `max_objects` (default 6) and `requests` (default 4). Status settings
-name `worker` or `router`. Both require `publisher` (an HTTPS origin),
-`network_hex`, an exclusively owned `state_dir`, and loopback listeners.
+name `worker`, `router` or `combined`. Each requires `publisher` (an HTTPS
+origin), `network_hex`, an exclusively owned `state_dir`, and loopback listeners.
 `publisher_ca` optionally adds an installed PEM trust root. The router also
-requires its loopback `worker_origin`. Status evaluation is CPU-only and has no
-`cuda` setting. Those roles stay separate processes. The publisher prepares their
-material; neither query role computes hints or packing matrices. See
+requires its loopback `worker_origin`; a router may move its wallet routes to
+`query_listen`. A `combined` role loads the evaluation units and the packing
+material of the publisher's latest inventory and answers wallets by evaluating
+in process, so it names no `worker_origin` and has no private evaluation or
+handover routes. Status evaluation is CPU-only and has no `cuda` setting. The
+publisher prepares the material; no query role computes hints or packing
+matrices. See
 [Status distribution](status/status_distributed.md). History and
 transaction-detail settings are described under [Transparent](#transparent).
 
