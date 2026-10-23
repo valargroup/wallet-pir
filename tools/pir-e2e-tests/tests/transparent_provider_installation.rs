@@ -19,3 +19,8 @@ mod install;
 mod status_http;
 #[path = "support/status_publisher.rs"]
 mod status_publisher;
+// Transaction-detail publication and wallet behind the shared public listener case.
+#[path = "support/display_publisher.rs"]
+mod display_publisher;
+#[path = "../../../src/pir-query-server/tests/transparent/support/display_world.rs"]
+mod display_world;

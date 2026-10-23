@@ -252,13 +252,21 @@ async fn independent_processes_recover_during_peer_restart_and_outages() {
 /// to independent wallet clients through one `public_listen`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_public_listener_serves_history_and_status_wallets() {
-    installation_case(Case::SharedListener).await;
+    installation_case(Case::SharedListener { detail: false }).await;
+}
+/// The same host also serves transaction details from their own HTTPS
+/// publisher. Its two native display runtime builds exceed the ordinary
+/// per-case budget, so this runs with qualification.
+#[cfg(feature = "qualification-tests")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_public_listener_serves_history_detail_and_status_wallets() {
+    installation_case(Case::SharedListener { detail: true }).await;
 }
 enum Case {
     Restart,
     Invalid,
     Independent,
-    SharedListener,
+    SharedListener { detail: bool },
 }
 async fn installation_case(case: Case) {
     let root = tempfile::tempdir().unwrap();
@@ -595,9 +603,9 @@ async fn installation_case(case: Case) {
         return;
     }
     let args = &check[..check.len() - 1];
-    if matches!(case, Case::SharedListener) {
+    if let Case::SharedListener { detail } = &case {
         corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
-        shared_listener(root, &binary, &document, &origin, &set).await;
+        shared_listener(root, &binary, &document, &origin, &set, *detail).await;
         publisher_server.stop().await;
         archive_server.stop().await;
         return;
@@ -839,19 +847,27 @@ async fn independent_processes(
     other.wait().await.unwrap();
 }
 
-/// Status and Transparent history wallets share one spawned host's
-/// `public_listen`: real encrypted answers decode through canonical and
-/// deployed paths, while private, management and disabled product routes stay
-/// off that listener.
+/// Status and Transparent history wallets, and with `detail` transaction
+/// detail wallets, share one spawned host's `public_listen`: real encrypted
+/// answers decode through canonical and deployed paths, while private,
+/// management and disabled product routes stay off that listener.
 async fn shared_listener(
     root: &Path,
     binary: &Path,
     document: &serde_json::Value,
     origin: &str,
     set: &ShardSet,
+    detail: bool,
 ) {
     use super::status_publisher::StatusPublisher;
+    // Display runtimes take a while to build; publish them first so the
+    // Status publication is still within its freshness limit at startup.
+    let display = match detail {
+        true => Some(super::display_publisher::DisplayPublisher::start().await),
+        false => None,
+    };
     let publisher = StatusPublisher::start().await;
+    let display_listen = free_address();
     let public = free_address();
     let status_listen = free_address();
     let mut document = document.clone();
@@ -864,6 +880,17 @@ async fn shared_listener(
         "publisher": publisher.origin,
         "publisher_ca": publisher.certificate,
     }});
+    if let Some(display) = &display {
+        document["transaction_details"] = serde_json::json!({"enabled": true, "settings": {
+            "role": "combined",
+            "listen": display_listen,
+            "state_dir": root.join("detail-state"),
+            "publisher": display.origin,
+            "publisher_network": transparent_shared::tx_detail::synth::NETWORK,
+            "publisher_genesis": transparent_shared::tx_detail::synth::genesis_hash(),
+            "publisher_ca": display.certificate,
+        }});
+    }
     let config = write_config(root, "shared", &document);
     let mut child = start(binary, &config_args(&config, false), root, origin).await;
     let management = document["management_listen"].as_str().unwrap().to_string();
@@ -927,8 +954,20 @@ async fn shared_listener(
             .unwrap();
         assert_eq!(malformed.status(), 400, "{prefix}");
     }
+    // Transaction details: the independent wallet finds archive and recent
+    // entries exactly, through the deployed alias and the canonical prefix.
+    let detail_paths = ["/v2/txid/init", "/transparent/v1/txid/init"];
+    if let Some(display) = &display {
+        detail_wallet(&public_origin, display, &log);
+        for path in detail_paths {
+            let response = reqwest::get(format!("{public_origin}{path}"))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "{path}");
+        }
+    }
     // Private product, management and disabled-product routes are absent.
-    for path in [
+    let mut private = vec![
         "/v1/provider-status",
         "/v1/ready",
         "/v1/health",
@@ -937,10 +976,12 @@ async fn shared_listener(
         "/metrics",
         "/control/health",
         "/internal/health",
-        "/v2/txid/init",
-        "/transparent/v1/txid/init",
         "/enhance/v1/init",
-    ] {
+    ];
+    if display.is_none() {
+        private.extend(detail_paths);
+    }
+    for path in private {
         let response = reqwest::get(format!("{public_origin}{path}"))
             .await
             .unwrap();
@@ -955,8 +996,36 @@ async fn shared_listener(
         .await
         .unwrap();
     assert!(control.status().is_success());
+    if display.is_some() {
+        let provider = reqwest::get(format!("http://{display_listen}/v1/provider-status"))
+            .await
+            .unwrap();
+        assert!(provider.status().is_success());
+    }
     child.kill().await.unwrap();
     child.wait().await.unwrap();
+}
+
+/// The unchanged transaction-detail wallet finds one archive and one recent
+/// entry of every class, exactly as published, on the shared listener.
+fn detail_wallet(origin: &str, display: &super::display_publisher::DisplayPublisher, log: &Path) {
+    use super::display_world::{found, Wallet, CLASSES};
+    use zakura_pir_client::transparent::txid_client::Tier;
+    let mut wallet = Wallet::at(origin);
+    for (records, height, tier) in [
+        (&display.archive, 150, Tier::Archive),
+        (&display.recent, 230, Tier::Recent),
+    ] {
+        for record in &records[CLASSES..] {
+            let lookup = wallet.lookup(record.txid, height).unwrap_or_else(|error| {
+                panic!(
+                    "detail wallet lookup failed on a ready host: {error:?}\n{}",
+                    std::fs::read_to_string(log).unwrap_or_default()
+                )
+            });
+            assert_eq!(found(lookup, record).tier, tier);
+        }
+    }
 }
 
 async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot, log: &Path) {
