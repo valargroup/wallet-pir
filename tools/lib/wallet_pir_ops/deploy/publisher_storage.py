@@ -242,8 +242,17 @@ class Handoff:
         raw = self.owner.read(self.preparation.manifest_path)
         require(publisher.sha(raw) == self.reference['manifest_sha256'], 'reviewed storage manifest changed')
         manifest = json.loads(raw)
+        # Installed storage keeps its preparation provenance when a later
+        # executable repairs an interrupted cutover without changing its roots.
+        journal = self.owner.latest()
+        prepared_release = self.owner.request['release']
+        if (journal and journal['request'] == self.owner.request and 'release_repair' in journal
+                and 'storage_preparation_release' in journal):
+            prepared_release = journal['storage_preparation_release']
+            require(prepared_release == journal['release_repair']['previous_release'],
+                    'storage preparation provenance changed during release repair')
         require(manifest['schema'] == 'publisher-storage-preparation/1'
-                and manifest['release'] == self.owner.request['release'], 'prepared storage names another release')
+                and manifest['release'] == prepared_release, 'prepared storage names another release')
         require(publisher.sha(self.owner.read(self.preparation.config_path)) == manifest['configuration_sha256'],
                 'prepared configuration changed')
         return manifest
