@@ -414,7 +414,13 @@ metrics are read by the router's sidecar on loopback and written to
 `edge_output`. `tools/scripts/wallet-pir-monitoring.py` renders the observer
 inventory, reports coverage gaps against Terraform outputs, declared external
 hosts and the roster, issues monitoring certificates and installs credentials
-under the production lock. Each snapshot entry has `unit`, `host_id`, `size`,
+under the production lock as journaled transactions (`reconcile` finishes
+an interrupted one, `rollback` undoes the latest). Its `enroll` adds an
+observer for every provisioned inventory host from Terraform outputs and
+declared external hosts (dialed at their declared address with the same mTLS
+checks), and a completed `cache-data-activate` binds the new volume's path and
+filesystem UUID into that host's observer. The collector's install waits for
+`/observers/ready` to report the installed inventory `revision`. Each snapshot entry has `unit`, `host_id`, `size`,
 `swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
 `memory_current_bytes`, `memory_anon_bytes` (`anon` plus `shmem` from the
 cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
@@ -693,9 +699,12 @@ kill is critical for 5 minutes), `certificate` (serving certificate expires in
 < 30 days warns, < 7 critical), `hook:<name>` and `edge`. A check older than
 45 s, a missing configured check, an unreachable, unauthenticated, malformed,
 other-schema, other-host or other-configuration document is unknown and never
-recovers an incident; coverage warns after 45 s without a valid document,
-including hosts never observed. Recovery needs two distinct healthy
-observations. Enrollment persists until the host is retired in the deployment
+recovers an incident. Coverage (`host:<host>:coverage`) warns after 45 s
+without a new fresh document, including hosts never observed; a cached or
+frozen document served again does not renew it. Each configured check also
+has `host:<host>:coverage:<check>`, warning after 45 s without a fresh known
+status while the host itself still reports. Recovery needs two distinct
+healthy observations. Enrollment persists until the host is retired in the deployment
 inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
 
 ## Transparent RAM capacity
