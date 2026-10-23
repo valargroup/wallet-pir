@@ -145,8 +145,8 @@ impl Config {
             }
         }
 
-        let publisher_url = get("PIR_APM_PUBLISHER_URL")
-            .map(|url| url.trim_end_matches('/').to_string());
+        let publisher_url =
+            get("PIR_APM_PUBLISHER_URL").map(|url| url.trim_end_matches('/').to_string());
         if let Some(url) = &publisher_url {
             let parsed = reqwest::Url::parse(url).context("invalid publisher URL")?;
             if parsed.scheme() != "http"
@@ -248,10 +248,15 @@ mod tests {
 
     #[test]
     fn publisher_url_is_a_loopback_origin() {
-        let config =
-            Config::from_map(&vars(&[("PIR_APM_PUBLISHER_URL", "http://127.0.0.1:18080/")]))
-                .unwrap();
-        assert_eq!(config.publisher_url.as_deref(), Some("http://127.0.0.1:18080"));
+        let config = Config::from_map(&vars(&[(
+            "PIR_APM_PUBLISHER_URL",
+            "http://127.0.0.1:18080/",
+        )]))
+        .unwrap();
+        assert_eq!(
+            config.publisher_url.as_deref(),
+            Some("http://127.0.0.1:18080")
+        );
         for url in [
             "http://10.0.0.1:18080",
             "https://127.0.0.1:18080",

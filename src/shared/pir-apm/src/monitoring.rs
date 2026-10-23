@@ -1402,7 +1402,10 @@ mod tests {
             let key = format!("publisher_product_{product}");
             assert_eq!(check(&d, 1000, &key).firing, Some(false));
         }
-        assert_eq!(check(&d, 1000, "coverage_publisher_critical").firing, Some(false));
+        assert_eq!(
+            check(&d, 1000, "coverage_publisher_critical").firing,
+            Some(false)
+        );
 
         // The durable evaluator pages once the hold passes, even in a running host.
         let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
@@ -1422,7 +1425,10 @@ mod tests {
             check(&d, 1000, "publisher_product_transaction_details").firing,
             None
         );
-        assert_eq!(check(&d, 1000, "coverage_publisher_critical").firing, Some(true));
+        assert_eq!(
+            check(&d, 1000, "coverage_publisher_critical").firing,
+            Some(true)
+        );
         assert!(publisher_products("not json").is_none());
         assert!(publisher_products(r#"{"products":{"Bad Name":{"phase":"failed"}}}"#).is_none());
         // Without a configured publisher there is neither a rule nor coverage.
