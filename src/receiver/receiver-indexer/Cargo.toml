@@ -24,8 +24,6 @@ pir-pipeline = { path = "../../shared/pir-pipeline" }
 axum = "0.7"
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4"
-receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc2" }
-receiver-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc2", features = ["server"] }
 receiver-store = { path = "../receiver-store" }
 receiver-pir-server = { path = "../receiver-pir-server" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -37,10 +35,13 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Receiver address, record, recovery and proof checks from one exact
-# wallet-libraries revision; node reads and block interpretation from the shared
-# chain reader, which uses the same revision.
-zakura-receiver-crypto = { version = "=0.0.1-rc2", default-features = false, features = ["crypto"] }
+# Receiver formats, publication building, witness paths and address, record,
+# recovery and proof checks from one exact wallet-libraries revision; node reads
+# and block interpretation from the shared chain reader, which uses the same
+# revision. The evaluator prepares sessions, and the probe reads as a wallet.
+zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, features = ["receiver-crypto"] }
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
 zakura-server-chain = { path = "../../shared/pir-chain", default-features = false, features = ["receiver", "rpc"] }
 
 

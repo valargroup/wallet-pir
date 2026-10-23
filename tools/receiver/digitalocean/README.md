@@ -18,19 +18,15 @@ pins this edge, the unit and cloud-init. The public-chain index lives in
 
 `tools/infra/digitalocean/fleet/receiver.tf` manages the Droplet (`nyc3`,
 `s-4vcpu-8gb-amd`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
-membership, its firewall and the unproxied A record `receiver-pir.valargroup.dev`
+membership and the unproxied A record `receiver-pir.valargroup.dev`
 (TTL 300), behind `receiver_pir_enabled`. The Droplet has `prevent_destroy` and
-ignores `user_data` and `ssh_keys` changes. The firewall allows SSH from `allowed_ssh_cidrs`
-and from the coordinator's public address (`wallet_pir_coordinator_dns_ipv4`, as
-`monitor.tf` does), HTTP and HTTPS from anywhere, and port 18380 only from the PIR
-monitor Droplet; the host's `ufw` also limits 18380 to `10.70.0.0/16`. The
-coordinator, in `ams3`, is not on this Droplet's private network, so the locked
-operations below reach it only over that public SSH rule.
+ignores `user_data` and `ssh_keys` changes. This configuration creates no cloud
+firewall and bootstrap does not install or enable `ufw`. Keep the service bound
+to its private interface and expose wallet routes through Caddy.
 
 The Droplet (ID 604069093) and its DNS record already exist, as the
 [2026-10-08 deployment record](../../../evidence/receiver/deployment-2026-10-08/README.md)
-shows. No DigitalOcean firewall is attached to it yet; only the host's `ufw`
-limits port 18380. Import the Droplet and the record before the first plan that
+shows. Import the Droplet and the record before the first plan that
 enables the root's receiver resources, on the coordinator and under its lock like
 every production operation. Set `receiver_pir_enabled = true` in
 `/etc/enhance-pir/production.tfvars`, find the record ID, then import:
@@ -49,11 +45,8 @@ import 'cloudflare_dns_record.receiver_pir[0]' 'd3ac9657be6101818fed439c62fdcadf
 ```
 
 The saved plan that follows must show no Droplet replacement or resize (if the
-live size slug differs from `s-4vcpu-8gb-amd`, set it first). It creates the
-firewall, which closes every port it does not list, so confirm SSH from
-`allowed_ssh_cidrs` and from the coordinator's `/32`, without which every later
-locked operation loses the Droplet, and the monitor's 18380 rule. Do not apply a
-plan that destroys anything.
+live size slug differs from `s-4vcpu-8gb-amd`, set it first). Do not apply a
+plan that destroys a Droplet or storage.
 
 ## Release and deploy
 
@@ -214,9 +207,8 @@ public origin and both nodes.
 These steps prepare a new Droplet before it serves anything; no deploy reaches it
 before its baseline is captured.
 
-1. `cloud-init.yaml` installs Caddy and `ufw`, creates the `receiver-pir` user,
-   `/opt/receiver-pir/releases` and `/srv/receiver-pir`, and opens SSH, HTTP, HTTPS
-   and port 18380 from the private network.
+1. `cloud-init.yaml` installs Caddy, creates the `receiver-pir` user,
+   `/opt/receiver-pir/releases` and `/srv/receiver-pir`.
 2. Install the first `receiver-directory` from a verified bundle (`tools/ci/release.py
    extract`, as for [the monitor](#monitoring)) as
    `/opt/receiver-pir/releases/<sha256>/receiver-directory`, where `<sha256>` is

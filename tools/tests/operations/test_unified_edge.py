@@ -100,6 +100,9 @@ class Host:
             self.failure = None
             raise DeployError('injected reload failure')
 
+    def http_get(self, host, url):
+        return 200, '{"shards": []}'
+
 
 class UnifiedEdgeTransaction(unittest.TestCase):
     def setUp(self):
@@ -182,6 +185,22 @@ class UnifiedEdgeTransaction(unittest.TestCase):
         self.host.files[DNS_SOURCE] = b'# another operator\n'
         with self.assertRaisesRegex(DeployError, 'DNS source changed'):
             self.edge.dns_plan()
+
+    def test_history_relay_uses_the_current_public_listener_without_changing_tls(self):
+        original = ('transparent-pir-v12.valargroup.dev {\n\thandle /v2/* {\n'
+                    '\t\treverse_proxy 192.0.2.1:8093\n\t}\n}\n'
+                    'http://192.0.2.1:8080 {\n\thandle /v2/* {\n'
+                    '\t\treverse_proxy 192.0.2.1:8193\n\t}\n}\n')
+        self.host.files[CONFIG] = original.encode()
+        plan, _before, _after = self.edge.history_relay_plan()
+        result = self.edge.repair_history_relay(digest(json.dumps(plan, sort_keys=True)))
+        self.assertEqual(result['phase'], 'committed')
+        installed = self.host.read('coordinator', CONFIG)
+        public = 'transparent-pir-v12.valargroup.dev'
+        self.assertEqual(installed[slice(*coordinator_edge.site_span(installed, public))],
+                         original[slice(*coordinator_edge.site_span(original, public))])
+        self.assertNotIn(':8193', installed)
+        self.assertEqual(self.host.reloads, 1)
 
     def test_changed_plan_and_foreign_edits_refuse_without_overwriting_them(self):
         plan = self.plan()

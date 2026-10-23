@@ -2,9 +2,9 @@
 //! pass reads, whether an anchor is on its chain, and the revocation of served
 //! anchors that fall off it. Block and chain decoding stay in the
 //! server-only chain adapter.
-use receiver_directory::Hash;
 use receiver_pir_server::Publications;
 use tracing::warn;
+use zakura_pir_publisher::receiver::Hash;
 use zakura_server_chain::NodeClient as ZakuraClient;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -75,7 +75,7 @@ pub struct TreeAnchor {
 
 impl TreeAnchor {
     /// A payment table's end.
-    pub fn payments(m: &receiver_directory::snapshot::Manifest) -> Self {
+    pub fn payments(m: &zakura_pir_publisher::receiver::snapshot::Manifest) -> Self {
         Self {
             height: m.end_height,
             hash: m.end_hash,
@@ -84,7 +84,7 @@ impl TreeAnchor {
     }
 
     /// A companion witness table's construction block.
-    pub fn witnesses(m: &receiver_directory::witness::Manifest) -> Self {
+    pub fn witnesses(m: &zakura_pir_publisher::receiver::witness::Manifest) -> Self {
         Self {
             height: m.tree_height,
             hash: m.tree_hash,

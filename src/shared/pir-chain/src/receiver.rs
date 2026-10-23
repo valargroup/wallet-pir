@@ -3,7 +3,7 @@
 //! recoverable with the zero outgoing viewing key.
 use crate::NodeError;
 use crate::chain::Block;
-use zakura_receiver_crypto::recovery::Action;
+use zakura_pir_protocol::receiver::crypto::recovery::Action;
 
 /// Bounds retained block memory and the amount of work before an anchor check.
 pub const MAX_RECEIVER_BATCH_BLOCKS: u32 = 64;
@@ -22,7 +22,7 @@ pub struct Checkpoint {
 /// A payment's compact context and location, using the library-owned wire record.
 /// All hashes use protocol byte order. Recovery authenticates the receiver before
 /// the adapter returns this record; parsing wire bytes alone does not.
-pub use zakura_receiver_crypto::wire::Payment;
+pub use zakura_pir_protocol::receiver::wire::Payment;
 
 /// One block's Ironwood Actions: every commitment in position order, the count from
 /// coinbase transactions, whose recipients the directory excludes although their
@@ -65,30 +65,6 @@ mod rpc {
         size: u64,
     }
 
-    /// The block and Ironwood tree state from a `z_gettreestate` response.
-    #[derive(Deserialize)]
-    struct Treestate {
-        /// Displayed (reversed) hex, as `getblockhash` gives it.
-        hash: String,
-        height: u64,
-        /// Older nodes omit it.
-        #[serde(default)]
-        ironwood: Option<PoolTreestate>,
-    }
-
-    /// One pool's tree state.
-    #[derive(Deserialize)]
-    struct PoolTreestate {
-        commitments: Commitments,
-    }
-
-    /// A tree's root, absent when the node has no state for it.
-    #[derive(Deserialize)]
-    struct Commitments {
-        #[serde(rename = "finalRoot")]
-        final_root: Option<String>,
-    }
-
     impl NodeClient {
         /// A mainnet block at `height` and the Ironwood tree size after it, read by that block's
         /// hash so a height reorg cannot mix two block versions. Before mainnet Ironwood
@@ -116,35 +92,6 @@ mod rpc {
                 hash,
                 position,
             })
-        }
-
-        /// The Ironwood note commitment tree root after the block `hash` (protocol byte
-        /// order) at `height`, from `z_gettreestate` read by that hash. The answer must name
-        /// that block and height, and its root must be a canonical field element. The root
-        /// is in the encoding a receiver witness file uses: unlike Sapling's, the node does
-        /// not reverse it (`Root::bytes_in_display_order`).
-        pub async fn ironwood_root(
-            &self,
-            hash: [u8; 32],
-            height: u32,
-        ) -> Result<[u8; 32], NodeError> {
-            let displayed = crate::hash::display(&hash);
-            let state: Treestate = self.call("z_gettreestate", json!([displayed])).await?;
-            let named = crate::hash::parse_display(&state.hash)?;
-            if named != hash || state.height != u64::from(height) {
-                return Err(NodeError::Block("tree state is for another block".into()));
-            }
-            let root = state
-                .ironwood
-                .and_then(|pool| pool.commitments.final_root)
-                .ok_or(NodeError::MissingTreeRoot(u64::from(height)))?;
-            let root: [u8; 32] = hex::decode(root)?
-                .try_into()
-                .map_err(|_| NodeError::Block("Ironwood root is not 32 bytes".into()))?;
-            if !bool::from(orchard::Anchor::from_bytes(root).is_some()) {
-                return Err(NodeError::Block("non-canonical Ironwood root".into()));
-            }
-            Ok(root)
         }
 
         /// The root of completed Ironwood subtree `index`, the 2^16 leaves from position
@@ -411,13 +358,11 @@ mod tests {
     #[cfg(feature = "rpc")]
     mod node {
         use crate::NodeClient;
-        use crate::receiver::*;
         use axum::{Json, Router, routing::post};
         use serde_json::{Value, json};
-        use zakura_chain::serialization::ZcashDeserialize;
 
-        /// A node whose every `z_gettreestate` answer is `answer`. Returns a client.
-        async fn treestate_node(answer: Value) -> NodeClient {
+        /// A node that answers every call with `answer`. Returns a client.
+        async fn answering_node(answer: Value) -> NodeClient {
             let url = crate::rpc::tests::serve(Router::new().route(
                 "/",
                 post(move |Json(_): Json<Value>| {
@@ -438,7 +383,7 @@ mod tests {
                 .root()
                 .bytes_in_display_order();
             let read = |answer: Value| async move {
-                treestate_node(answer).await.ironwood_subtree(3).await
+                answering_node(answer).await.ironwood_subtree(3).await
             };
             let answer = |pool: &str, index: u16, subtrees: Value| json!({"pool": pool, "start_index": index, "subtrees": subtrees});
             let one = |root: [u8; 32]| json!([{"root": hex::encode(root), "end_height": 9}]);
@@ -453,66 +398,6 @@ mod tests {
                 answer("ironwood", 3, one([0xff; 32])),
             ] {
                 assert!(read(refused).await.is_err());
-            }
-        }
-
-        /// The root is the bytes the node gives, unreversed: the pinned node encodes its
-        /// tree's root with `Root::bytes_in_display_order`, which for Ironwood, unlike
-        /// Sapling, is the canonical encoding. An answer for another block or height, a
-        /// root that is not a canonical field element or no root at all is refused.
-        #[tokio::test]
-        async fn the_ironwood_root_is_read_as_the_node_encodes_it() {
-            let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
-            let refund =
-                zakura_chain::transaction::Transaction::zcash_deserialize(raw.unwrap().as_slice())
-                    .unwrap();
-            let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
-            tree.append(refund.ironwood_actions().next().unwrap().cm_x)
-                .unwrap();
-            let node_root = tree.root().bytes_in_display_order();
-            let mut reversed = node_root;
-            reversed.reverse();
-            assert_ne!(reversed, node_root);
-            let (height, hash) = (3_500_000, [3; 32]);
-            let displayed = crate::hash::display(&hash);
-            let answer = |hash: &str, height: u32, ironwood: Value| {
-                json!({"hash": hash, "height": height, "sapling": {"commitments": {}},
-                "orchard": {"commitments": {}}, "ironwood": ironwood})
-            };
-            let root = |bytes: [u8; 32]| json!({"commitments": {"finalRoot": hex::encode(bytes)}});
-            let read = |answer: Value| async move {
-                treestate_node(answer)
-                    .await
-                    .ironwood_root(hash, height)
-                    .await
-            };
-            assert_eq!(
-                read(answer(&displayed, height, root(node_root)))
-                    .await
-                    .unwrap(),
-                node_root
-            );
-            let other = crate::hash::display(&[4; 32]);
-            for refused in [
-                answer(&other, height, root(node_root)),
-                answer(&displayed, height + 1, root(node_root)),
-                answer(&displayed, height, root([0xff; 32])),
-                answer(
-                    &displayed,
-                    height,
-                    json!({"commitments": {"finalRoot": "00"}}),
-                ),
-            ] {
-                assert!(matches!(read(refused).await, Err(NodeError::Block(_))));
-            }
-            for missing in [
-                answer(&displayed, height, json!({"commitments": {}})),
-                json!({"hash": displayed, "height": height}),
-            ] {
-                assert!(matches!(
-                    read(missing).await,
-                    Err(NodeError::MissingTreeRoot(h)) if h == u64::from(height)
-                ));
             }
         }
     }

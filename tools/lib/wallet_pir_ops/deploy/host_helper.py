@@ -106,6 +106,18 @@ def free_bytes(path):
     return info.f_bavail * info.f_frsize
 
 
+def provider_collection(root, retained, expected=None):
+    try:
+        module = _PROVIDER_COLLECTION
+    except NameError:
+        import importlib.util
+        source = Path(__file__).resolve().parents[4] / 'tools/transparent/lib/provider_collection.py'
+        spec = importlib.util.spec_from_file_location('provider_collection', source)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module.run(root, retained, expected)
+
+
 def probe_unit(unit):
     """What systemd has loaded for `unit`, the files it loaded, and the running executable's digest.
 
@@ -597,6 +609,7 @@ OPERATIONS = {
     'remove': remove,
     'free_bytes': free_bytes,
     'probe_unit': probe_unit,
+    'provider_collection': provider_collection,
     'systemctl': systemctl,
     'http_get': http_get,
     'run': run,

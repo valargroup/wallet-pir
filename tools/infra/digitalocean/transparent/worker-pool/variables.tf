@@ -36,7 +36,7 @@ variable "ssh_key_ids" {
   }
 }
 
-# Referenced by name only. The production root owns this tag and the firewall
+# Referenced by name only. The production root owns this tag
 # that selects it, so an elastic member gets exactly the static workers' ingress
 # and this root can never change it.
 variable "worker_tag" {

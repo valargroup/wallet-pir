@@ -30,6 +30,8 @@ use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
 use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap};
 #[path = "support/artifact_validation.rs"]
 mod artifact_validation;
+#[path = "support/record_write.rs"]
+mod record_write;
 #[path = "support/revision.rs"]
 mod revision;
 use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
@@ -1044,11 +1046,8 @@ async fn blocked_collection_keeps_status_and_readiness_responsive() {
     assert_eq!(collected["disk_collection_deferred"], false);
 }
 
-/// A blocked publication write must not occupy the async executor. The FIFO
-/// exercises real file I/O without changing the production persistence path.
-/// Platforms differ on whether the later FIFO fsync succeeds; only the blocked
-/// interval is used to check serving behavior and cancellation ordering.
-#[cfg(unix)]
+/// A blocked publication write must not occupy the async executor. Hold the
+/// record-write boundary until serving and cancellation ordering are checked.
 async fn blocked_publication_write(invalidate: bool) {
     use std::time::{Duration, Instant};
     use transparent_query_server::history::live::{Command, LiveService, Publication};
@@ -1103,32 +1102,18 @@ async fn blocked_publication_write(invalidate: bool) {
             map_sha256,
         }
     };
-    let temporary = if invalidate {
-        record.with_extension("invalid.tmp")
+    let blocked_record = if invalidate {
+        record.with_extension("invalid.json")
     } else {
-        record.with_extension("tmp")
+        record.clone()
     };
-    assert!(std::process::Command::new("mkfifo")
-        .arg(&temporary)
-        .status()
-        .unwrap()
-        .success());
-    let (release, released) = std::sync::mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        // Independent of Tokio, so the regression terminates even if the
-        // only executor thread is blocked inside File::create.
-        let _ = released.recv_timeout(Duration::from_secs(3));
-        use std::io::Read;
-        let mut file = std::fs::File::open(temporary).unwrap();
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).unwrap();
-    });
+    let mut write = record_write::BlockedWrite::new(&blocked_record);
     let began = Instant::now();
     let mutation = tokio::spawn({
         let live = live.clone();
         async move { live.command(command).await }
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    write.entered().await;
     let pending = !mutation.is_finished();
     let status = live.command(Command::Status).await.unwrap();
     let response = live
@@ -1152,8 +1137,7 @@ async fn blocked_publication_write(invalidate: bool) {
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
     let serialized = invalidate || !next.is_finished();
-    let _ = release.send(());
-    reader.join().unwrap();
+    write.release();
     next.await.unwrap().unwrap();
     assert!(pending, "publication write did not remain blocked");
     assert!(responsive, "publication disk I/O blocked status/readiness");
@@ -1175,29 +1159,14 @@ async fn blocked_publication_write(invalidate: bool) {
     }
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn blocked_activation_keeps_executor_responsive() {
     blocked_publication_write(false).await;
 }
 
-#[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn blocked_invalidation_refuses_without_blocking_executor() {
     blocked_publication_write(true).await;
-}
-
-/// Makes `directory` writable and searchable but unreadable, so a durable
-/// record write inside it renames into place and then fails to sync the
-/// directory. Panics for a user whom permissions do not bind.
-#[cfg(unix)]
-fn fail_after_rename(directory: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o300)).unwrap();
-    assert!(
-        std::fs::File::open(directory).is_err(),
-        "a post-rename write failure needs an unprivileged test user"
-    );
 }
 
 /// A durable activation write that fails installs nothing in memory and
@@ -1205,10 +1174,8 @@ fn fail_after_rename(directory: &Path) {
 /// place and after. The candidate stays prepared, nothing retries on its own,
 /// and a later activation by the controller succeeds. A post-rename failure
 /// leaves the new record on disk, which a restart serves.
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_failed_activation_write_installs_nothing() {
-    use std::os::unix::fs::PermissionsExt;
     use transparent_query_server::history::live::{Command, LiveService, Publication};
     use transparent_shared::history::shardset::LoadOptions;
     let root = tempfile::tempdir().unwrap();
@@ -1281,19 +1248,19 @@ async fn a_failed_activation_write_installs_nothing() {
         assert_eq!(status["retired_snapshots"], 0);
     };
 
-    // Before the rename: the temporary record cannot be created.
-    std::fs::create_dir(record.with_extension("tmp")).unwrap();
+    // Refuse the write before replacing the record.
+    let refused = record_write::fail_before_replace(&record);
     assert!(live.command(activate()).await.is_err());
     unchanged(&live.command(Command::Status).await.unwrap());
     assert_eq!(served(&live).await, old_map);
     assert_eq!(saved(), None);
-    std::fs::remove_dir(record.with_extension("tmp")).unwrap();
+    drop(refused);
 
-    // After the rename: the record names the candidate, but the directory
-    // sync fails, so the activation is still refused and nothing swaps.
-    fail_after_rename(&records);
+    // Report uncertainty after replacement: disk names the candidate, but
+    // activation must still refuse without changing the serving snapshot.
+    let uncertain = record_write::fail_after_replace(&record);
     let refused = live.command(activate()).await;
-    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o700)).unwrap();
+    drop(uncertain);
     assert!(refused.is_err());
     unchanged(&live.command(Command::Status).await.unwrap());
     assert_eq!(served(&live).await, old_map);

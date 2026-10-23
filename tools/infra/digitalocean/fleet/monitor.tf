@@ -33,41 +33,6 @@ resource "digitalocean_project_resources" "pir_monitor" {
   resources = [digitalocean_droplet.pir_monitor[0].urn]
 }
 
-resource "digitalocean_firewall" "pir_monitor" {
-  count       = var.pir_monitor_enabled ? 1 : 0
-  name        = "wallet-pir-monitor"
-  droplet_ids = [digitalocean_droplet.pir_monitor[0].id]
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "22"
-    source_addresses = concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
 resource "cloudflare_dns_record" "pir_monitor" {
   count   = var.pir_monitor_enabled ? 1 : 0
   zone_id = var.cloudflare_zone_id

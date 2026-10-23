@@ -7,20 +7,21 @@ outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
 outputs.
 
-The canonical fixed record codec is `zakura-receiver-crypto::wire` in
-wallet-libraries. `zakura-receiver-directory` (crate `receiver_directory`) uses it
-with cryptography disabled to hold records, publications and rolling block
-filters; it parses structure only. The indexer's SQLite chain index and optional
-payout audit store are this repository's `receiver-store` package. The same
-library's `crypto` feature checks receivers,
-unified addresses and record fields, recovers receivers with the zero OVK, and
-builds lower inclusion paths for companion witness tables. The indexer enables these checks before storing
-a payment and before serving a publication, and a wallet checks a retrieved
-payment before crediting it. Dependencies run one way from wallet-pir to
-wallet-libraries; wallet-libraries never consumes wallet-pir packages.
-`receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
-the evaluator with the `server` feature. `receiver-pir-server` serves
-publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
+Receiver is a product of wallet-libraries' PIR role packages, each with a
+`receiver` module and feature. `zakura-pir-protocol` owns the canonical fixed
+record codec (`receiver::wire`), records, publications, inventories and rolling
+block filters; it parses structure only. Its `receiver-crypto` feature checks
+receivers, unified addresses and record fields and recovers receivers with the
+zero OVK. `zakura-pir-publisher` builds payment and companion witness tables, and
+its `receiver-crypto` feature builds their lower inclusion paths.
+`zakura-pir-query-server` holds the evaluator and `zakura-pir-client` the PIR
+client and the wallet `Transport` interface. The indexer's SQLite chain index and
+optional payout audit store are this repository's `receiver-store` package. The
+indexer enables the checks before storing a payment and before serving a
+publication, and a wallet checks a retrieved payment before crediting it.
+Dependencies run one way from wallet-pir to wallet-libraries; wallet-libraries
+never consumes wallet-pir packages. `receiver-pir-server` serves publications
+over HTTP using only the query server's module. `receiver-indexer` builds them from a Zakura node; its
 binary is `receiver-directory`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 (`pir-native`) with the other services, and reads the node through
@@ -101,7 +102,7 @@ The rolling window spans seven days of target time: 8,064 blocks of 75 seconds b
 
 Increase `--history-revision` after an indexing correction on an unchanged chain. The store refuses a lower revision after restart, and the same revision is bound into PIR publication identity. Advancing it immediately revokes older sessions before replacement preparation, including direct-PIR sessions. Reorgs use block hashes. A wallet must not settle a queued hit with an older history revision or a PIR frontier below the hit. Filters and PIR may become available at different times. Measure both availability lag and time to credit. Hints never delay ordinary wallet sync.
 
-A publication is an inventory of Receiver shards, each with its payment tables, their companion witness tables and, once sealed, a shard filter (see [Sealed shards](#sealed-shards)). The global NEAR recent/seen sets, the aggregate snapshot envelope with its `.filters` file and the aggregate HTTP filter route are gone. Rolling block hints are the only filters, and nothing published is an issuance input.
+A publication is an inventory of Receiver shards, each with its payment tables, their companion witness tables and, once sealed, a shard filter (see [Sealed shards](#sealed-shards)). Nothing published is an issuance input.
 
 ## Witnesses
 
@@ -255,8 +256,8 @@ PIR hides which receivers a wallet looks up. It does not authenticate the chain.
 A wallet accepts a publication only at a block of its own chain, as
 `AcceptedCoverage` (genesis, required history start, terminal height and hash),
 and revalidates that anchor if its chain changes during a lookup. It trial
-decrypts each payment with its own key and checks witness paths against its own
-tree root, never only the file's root. A directory match proves neither
+decrypts each payment with its own key and checks witness payloads against its own
+tree. A directory match proves neither
 ownership nor spendability. An indexer can still omit payments, so an empty page
 zero means no indexed payment in that publication, not an unused address. Missing
 or inconsistent pages and transport failures are errors, never absence or a
@@ -307,7 +308,7 @@ payment table's `<revision>.json` and `.rows`, each companion's own
 `<digest>.filter`, then point the record at the layout's identity, the SHA-256 of
 its bytes, atomically (write beside it, rename over it). It is a private local control input; there is no update route.
 
-Staged serving publishes the immutable PIR directory and proofs only. Rolling hint routes return unavailable, so wallets use direct PIR. Run its probe with `--without-block-filters`. Indexing deployments retain the default probe, which requires live hints. No aggregate `.filters` file is produced or loaded.
+Staged serving publishes the staged inventory only. Rolling hint routes return unavailable, so wallets use direct PIR. Run its probe with `--without-block-filters`. Indexing deployments retain the default probe, which requires live hints.
 
 Each record is verified in full before it can serve: the layout must digest to the
 recorded identity and be for mainnet, every manifest must hold its listed revision

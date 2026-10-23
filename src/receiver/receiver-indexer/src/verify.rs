@@ -1,25 +1,25 @@
 //! The cryptographic checks the receiver protocol crates leave to their caller: every
 //! payment's receiver and Action fields before it is stored, and every record and its
 //! companion witness payload before a publication is served. The checks are
-//! `zakura-receiver-crypto`'s; this module maps the local protocol types onto its
-//! types and its canonical record bytes.
-use receiver_directory::{
+//! `zakura-pir-protocol`'s `receiver::crypto`; this module maps the local protocol
+//! types onto its types and its canonical record bytes.
+use receiver_pir_server::publication::Segment;
+use receiver_store::{Error, IndexedBlock, Store, SHARD_LEAVES};
+use std::collections::BTreeMap;
+use zakura_pir_publisher::receiver::crypto::Record;
+use zakura_pir_publisher::receiver::{
     snapshot::{Snapshot, ROW_BYTES, SLOTS},
     witness::{self, PAYLOAD_BYTES},
     Hash, Payment, RawRecord, ReceiverBytes, RECORD_BYTES,
 };
-use receiver_pir::server::{Server, WitnessServer};
-use receiver_pir_server::publication::Segment;
-use receiver_store::{Error, IndexedBlock, Store, SHARD_LEAVES};
-use std::collections::BTreeMap;
-use zakura_receiver_crypto::Record;
+use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
 
 /// The library's refusal, as the directory error a caller already handles.
-pub fn directory_error(error: zakura_receiver_crypto::Error) -> Error {
+pub fn directory_error(error: zakura_pir_publisher::receiver::crypto::Error) -> Error {
     match error {
-        zakura_receiver_crypto::Error::Malformed => Error::Malformed,
-        zakura_receiver_crypto::Error::Coverage => Error::Coverage,
-        zakura_receiver_crypto::Error::Capacity => Error::Capacity,
+        zakura_pir_publisher::receiver::crypto::Error::Malformed => Error::Malformed,
+        zakura_pir_publisher::receiver::crypto::Error::Coverage => Error::Coverage,
+        zakura_pir_publisher::receiver::crypto::Error::Capacity => Error::Capacity,
     }
 }
 
@@ -125,18 +125,19 @@ pub fn check_witnesses(
 pub fn check_publication_for_serving(
     snapshot: &Snapshot,
     witnesses: &witness::Table,
-) -> Result<(), receiver_pir::Error> {
+) -> Result<(), zakura_pir_publisher::receiver::session::Error> {
     check_publication(snapshot, witnesses)
         .map(|_| ())
         .map_err(|error| {
-            receiver_pir::Error::Directory(match error {
-                Error::Malformed => receiver_directory::Error::Malformed,
-                Error::Coverage => receiver_directory::Error::Coverage,
-                Error::Capacity => receiver_directory::Error::Capacity,
-                Error::MissingPage => receiver_directory::Error::MissingPage,
-                Error::Json(error) => receiver_directory::Error::Json(error),
+            zakura_pir_publisher::receiver::session::Error::Directory(match error {
+                Error::Malformed => zakura_pir_publisher::receiver::Error::Malformed,
+                Error::Coverage => zakura_pir_publisher::receiver::Error::Coverage,
+                Error::Capacity => zakura_pir_publisher::receiver::Error::Capacity,
+                Error::MissingPage => zakura_pir_publisher::receiver::Error::MissingPage,
+                Error::Unsupported => zakura_pir_publisher::receiver::Error::Unsupported,
+                Error::Json(error) => zakura_pir_publisher::receiver::Error::Json(error),
                 // A publication check reads no database or file.
-                Error::Sql(_) | Error::Io(_) => receiver_directory::Error::Malformed,
+                Error::Sql(_) | Error::Io(_) => zakura_pir_publisher::receiver::Error::Malformed,
             })
         })
 }
@@ -146,7 +147,7 @@ pub fn check_publication_for_serving(
 pub fn prepare(
     snapshot: Snapshot,
     witnesses: witness::Table,
-) -> Result<Segment, receiver_pir::Error> {
+) -> Result<Segment, zakura_pir_publisher::receiver::session::Error> {
     let (server, witnesses) = prepare_servers(snapshot, witnesses)?;
     Ok(Segment::resident(server, witnesses))
 }
@@ -155,7 +156,7 @@ pub fn prepare(
 pub fn prepare_servers(
     snapshot: Snapshot,
     witnesses: witness::Table,
-) -> Result<(Server, WitnessServer), receiver_pir::Error> {
+) -> Result<(Server, WitnessServer), zakura_pir_publisher::receiver::session::Error> {
     check_publication_for_serving(&snapshot, &witnesses)?;
     #[cfg(test)]
     {
@@ -176,7 +177,12 @@ mod tests {
     use super::*;
     use crate::probe::common;
     use receiver_store::{Config, IndexedBlock};
-    use zakura_receiver_crypto::witness::{combine, empty_root, payloads};
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+    use zakura_pir_publisher::receiver::witness::TablePublisherExt as _;
+    use zakura_pir_publisher::receiver::{
+        crypto::witness::{combine, empty_root},
+        witness::payloads,
+    };
 
     /// A provisional companion table for `snapshot`: zero payloads built at its end, whose
     /// positions lie in a filling shard well past the records' supplied siblings.
@@ -193,7 +199,7 @@ mod tests {
     /// A publication over `tree` with records at positions 0 and 5, and its companion
     /// table built at its end from `served`.
     fn witnessed(tree: &[Hash], served: &[Hash]) -> (Snapshot, witness::Table) {
-        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest = common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.start_position = 0;
         manifest.end_position = tree.len() as u64;
         let mut records: Vec<_> = [0u64, 5]
@@ -206,7 +212,7 @@ mod tests {
                 record
             })
             .collect();
-        receiver_directory::snapshot::assign_ordinals(&mut records);
+        zakura_pir_publisher::receiver::snapshot::assign_ordinals(&mut records);
         let snapshot = Snapshot::build(manifest, &records).unwrap();
         let table = crate::witness::table(&snapshot, &payloads(served, &[0, 5]).unwrap()).unwrap();
         (snapshot, table)
@@ -217,8 +223,8 @@ mod tests {
     /// refused before serving.
     #[test]
     fn companion_tables_must_serve_their_payment_table() {
-        use receiver_directory::Error::{Coverage, Malformed};
-        use receiver_pir::Error::Directory;
+        use zakura_pir_publisher::receiver::session::Error::Directory;
+        use zakura_pir_publisher::receiver::Error::{Coverage, Malformed};
         let (snapshot, table) = witnessed(&tree(), &tree());
         prepare(snapshot.clone(), table.clone()).unwrap();
         let mut other = snapshot.clone();
@@ -253,7 +259,7 @@ mod tests {
     /// such a payment is refused before it is stored.
     #[test]
     fn cryptographically_invalid_records_are_never_stored_or_served() {
-        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest = common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.end_position = 300;
         let valid = Snapshot::build(manifest.clone(), &[common::record(0, 1)]).unwrap();
         let table = placeholder(&valid);
@@ -308,11 +314,9 @@ mod tests {
     /// computation gives, which another commitment at the position does not reach.
     #[tokio::test]
     async fn served_witnesses_verify_through_the_wallet_transport() {
-        use receiver_pir::{
-            transport::{Inventories, InventoryClient, Transport},
-            Error as PirError,
-        };
-        use zakura_receiver_crypto::wire::decode_payload;
+        use zakura_pir_client::receiver::transport::{Inventories, InventoryClient, Transport};
+        use zakura_pir_publisher::receiver::session::Error as PirError;
+        use zakura_pir_publisher::receiver::wire::decode_payload;
         struct Http(reqwest::Client);
         /// Reads one response within `limit`.
         async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, PirError> {

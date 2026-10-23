@@ -112,7 +112,7 @@ These source policies do not identify the release currently deployed.
 | V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
 | V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
 | Page-row target:capacity | `7936:8192` | `63488:65536` |
-| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 1 static owner holding every archive shard (0–76) |
+| Workers | 2 full recent replicas | 1 static owner holding every archive shard (0–76) |
 | Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized (`m-8vcpu-64gb`) |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
@@ -123,15 +123,22 @@ These source policies do not identify the release currently deployed.
 | Disk restore slots | 4 | 4 |
 | Revision retention | 3 superseded plus current, bounded disk policy | Same where revisions apply |
 | Local SSD target | Included disk (160 GiB price baseline) | 200 GiB each |
-| Warm state | All assigned tables and advertised tail; budget retained tail runtimes | Entire current assignment before fleet readiness |
+| Warm state | All held tables and advertised tail; budget retained tail runtimes | Every archive shard before readiness |
 
 These are proposed operating budgets within the accepted architecture, not target-host RSS measurements. Cache reservations omit overhead. Verify full-process and cgroup memory during cold builds, queued HTTP traffic, revision overlap and restart. Do not raise limits automatically to fit a failed census.
 
-Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's memory budget and run `pir-query-server --config /etc/transparent-pir/shard-server.json`; the generated `transparent_history` settings carry the roster's cache budget and `assignment`, `worker_id` and `prune_excess`. The service binds only the configured private listener (`pir-query-server` refuses unspecified addresses): fleet workers use the roster's `upstream`, and a single-host pilot uses `TRANSPARENT_WORKER_LISTEN`, defaulting to `TRANSPARENT_WORKER_HOST:8093`, which must then be a private IPv4 address. The pilot's own Caddyfile proxies to that same listener, and worker-local probes read it from `/etc/transparent-pir/shard-server.json`.
+Each worker runs `pir-query-server --config /etc/transparent-pir/shard-server.json` as a canonical HTTPS consumer: its `transparent_history` section names the publisher's HTTPS origin (`publisher`, `publisher_network`, `publisher_genesis`, optional `publisher_ca`), its `shard_dir`, `cache_bytes` and `build_slots`, and either an `archive_upstream` (with `archive_ca`) or `full_holdings`. The worker downloads and verifies the publication itself; no roster, assignment, `worker_id` or push setting configures it, and every section rejects unknown fields. Field reference: [query server](../query-server.md#transparent) and [HTTPS consumer](prepared-distribution.md#https-consumer). The service binds only its configured private `listen` address (`pir-query-server` refuses unspecified addresses), and worker-local probes read it from `/etc/transparent-pir/shard-server.json`.
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
 
 ### Elastic recent replicas
+
+> **Historical, not a current deployment instruction.** This section and the
+> commands below describe the push-fleet elastic proof of concept, whose roster
+> (`TRANSPARENT_FLEET_JSON`), assignment and `worker_id` settings HTTPS-only
+> publication removed on 2026-10-22. They are retained as the record behind the
+> two-replica floor evidence and the retained source; do not use them to
+> configure an HTTPS consumer.
 
 The accepted recent tier is two full copies; four hosts was a load target, not a
 requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
@@ -2065,6 +2072,27 @@ executable per transaction through the shared engine: immutable `releases/<binar
 under the service root (for example `/opt/transparent-publisher`), the managed ExecStart drop-in,
 the production lock, the service's journal sequence and touched-target rollback.
 
+HTTPS History requests may set `selected_workers` to a nonempty list of distinct
+keys from `workers`. Keep the complete fleet and its worker pins in the request;
+only the selected workers are changed, while all workers and the publisher still
+pass the normal checks. Omitting this field selects every worker.
+Full warming is a release gate for selected workers. An unselected provider must
+remain ready with valid ownership, runtime counts and no preparation failures;
+its ongoing background warming does not block another provider's repair.
+The optional `publication.publication_root` pins a reviewed prepared-storage
+directory from the already pinned publisher configuration, instead of the
+original publication directory. A mismatch or a relative directory refuses.
+
+For a recent worker already refusing history after a reorganization,
+`unready_predecessors` may map a selected worker key to
+`{binary_sha256, invocation_id}`. Both pins must match its running predecessor,
+and `/v2/shards/init` must return 503 with `publication invalidated by reorg`.
+When a restarted owner has not opened that listener yet, a nonempty valid
+`active.invalid.json` in its pinned provider root supplies the revocation evidence.
+This exception admits only that predecessor; its replacement must meet the
+current-publication and warm-readiness requirements. It cannot combine with
+`repair`, which remains specific to a recorded failed rollback.
+
 - **Unified owner.** New transactions run only when the inventory's `publisher.managed_products`
   names the product: the one `pir-publisher.service` server on `controller.host` is the controller
   authority; pass `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins
@@ -2134,6 +2162,46 @@ the production lock, the service's journal sequence and touched-target rollback.
   beyond the binary refuses.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
+
+## Recent provider containment and offline collection
+
+`transparent-provider-maintenance-{plan,preflight,deploy,status}` operates only on
+the installed `transparent-v12-recent.service`. Requests use schema
+`transparent-provider-maintenance/1` and name `git_sha`, `worker` (the qualified
+inventory key), `action`, `expected`, and `retained_publications` (absolute rollback
+publication paths, or an empty list). `expected` pins `unit_sha256` (the normalized
+effective unit digest), `config_sha256`, `binary_sha256` and `invocation_id` (null
+only when systemd reports no invocation). The operations release must match
+`git_sha`. Pass `--request` and `--request-sha256` to every command; deploy also
+requires `--expect-plan-sha256`.
+
+- `action: quiesce` stops only the exact pinned invocation already returning the
+  reorganization refusal above. Archive must remain ready. This contains growth
+  while the replacement is validated; it does not establish recovery.
+- `action: collect` requires the recent worker stopped, no unfinished History
+  upgrade, and exclusive bootstrap and source-catalog locks. Plan/preflight with
+  `--output FILE` saves the complete private deletion manifest. Retain the saved
+  active publication and its inputs, explicit rollback publications, and three
+  newest unused trees. Collection removes older trees, then unreferenced catalog
+  revisions, then unlinked objects. It preserves safety records and foreign files,
+  refuses malformed metadata, and never follows publication symlinks. Changed
+  manifest identities refuse before deletion. Deleted cache bytes have no rollback.
+- `action: resume` starts the unchanged pinned predecessor after collection. It
+  does not assert readiness. Capture its new invocation and use a recent-only
+  binary-upgrade request to install the validated fix; do not leave the old retry
+  loop running unattended.
+
+Each action is a separate approved, journaled transaction under the production
+lock. Recheck the unit and configuration pins between actions. On interruption,
+inspect `status` and actual process state before continuing. An unknown stop or
+partial collection must not trigger an automatic restart. Neither archive nor
+publisher is restarted; no incident latch or safety floor is reset.
+
+The autonomous worker also collects failed publication attempts before allocating
+another tree and after a refused pass. It protects active, retained, held and
+candidate trees plus three unused trees. A blocked collector refuses further
+staging; successful activation is not required to reclaim abandoned versions.
+Check filesystem free space rather than summing hard-linked directory sizes.
 
 ## Continuous load repair
 

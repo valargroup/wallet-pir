@@ -105,6 +105,25 @@ class CacheStorageTests(unittest.TestCase):
         self.assertEqual(result['phase'], 'complete')
         self.assertEqual(json.loads((receipts / 'test/state.json').read_text())['phase'], 'complete')
 
+    def test_retired_object_references_are_unlinked_without_deleting_their_targets(self):
+        external = self.active / 'external-object'
+        external.write_bytes(b'active object')
+        (self.old / 'reference').symlink_to(external)
+        (self.old / 'directory-reference').symlink_to(self.active, target_is_directory=True)
+        before = host.tree_identity(self.old)
+        self.assertEqual(before['reclaimable_bytes'], (self.old / 'object').stat().st_blocks * 512)
+        (self.old / 'reference').unlink()
+        (self.old / 'reference').symlink_to(self.active / 'different-object')
+        self.assertNotEqual(host.tree_identity(self.old)['tree_sha256'], before['tree_sha256'])
+        (self.old / 'reference').unlink()
+        (self.old / 'reference').symlink_to(external)
+        request = {'path': str(self.old)}
+        reviewed = {'request': request, 'cache': host.tree_identity(self.old)}
+        with mock.patch.object(host, 'plan', return_value=reviewed):
+            host.prune(request, durable.digest(reviewed), 'links', self.root / 'receipts')
+        self.assertFalse(self.old.exists())
+        self.assertEqual(external.read_bytes(), b'active object')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -6,7 +6,6 @@ use crate::{
     verify,
 };
 use pir_pipeline::{FailurePolicy, Input};
-use receiver_directory::{shards::ShardFilter, witness};
 #[cfg(test)]
 use receiver_pir_server::publication::DEFAULT_RETENTION;
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication, Publications};
@@ -18,6 +17,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tracing::{info, warn};
+use zakura_pir_publisher::receiver::{shards::ShardFilter, witness};
 #[cfg(test)]
 use zakura_server_chain::Network;
 use zakura_server_chain::NodeClient;
@@ -793,7 +793,7 @@ type PreparedShard = (
 fn prepare_plan(
     durable: &mut crate::durable::Durable,
     plan: Plan,
-) -> std::result::Result<PreparedShard, receiver_pir::Error> {
+) -> std::result::Result<PreparedShard, zakura_pir_publisher::receiver::session::Error> {
     let segments = plan
         .parts
         .into_iter()
@@ -813,7 +813,7 @@ fn prepare_plan(
                 built.frozen,
             )),
         })
-        .collect::<std::result::Result<_, receiver_pir::Error>>()?;
+        .collect::<std::result::Result<_, zakura_pir_publisher::receiver::session::Error>>()?;
     let filter = match plan.filter {
         Some(PlanFilter::Built(filter)) => Some(durable.filter(&filter)?),
         Some(PlanFilter::Stored(source)) => Some(source),
@@ -942,7 +942,7 @@ fn log_stage(stage: &str, started: std::time::Instant) {
 /// Durably writes every segment's rows and manifest with its companion witness table
 /// and manifest, every sealed shard's filter, then the [`Layout`] naming them, which
 /// staged serving loads. Returns the layout's identity. Invalid records or witnesses,
-/// or a session manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], write nothing for
+/// or a session manifest over [`zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES`], write nothing for
 /// their shard.
 #[cfg(test)]
 fn write_publication(
@@ -978,7 +978,9 @@ fn write_plan(root: &Path, plan: Plan) -> Result<LayoutShard> {
         verify::check_publication(&snapshot, &witnesses)?;
         let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
         let witness_manifest = serde_json::to_vec_pretty(&witnesses.manifest)?;
-        if manifest.len() + witness_manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
+        if manifest.len() + witness_manifest.len()
+            > zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES
+        {
             return Err("publication manifest exceeds its size bound; nothing written".into());
         }
         // A sealed payment table keeps its revision while its provisional companion
@@ -1106,7 +1108,6 @@ use crate::probe::common;
 mod tests {
     use super::*;
     use axum::{extract::State as HttpState, routing::post, Json, Router};
-    use receiver_directory::snapshot::Snapshot;
     #[cfg(feature = "qualification-tests")]
     use receiver_pir_server::Publication;
     use serde_json::{json, Value};
@@ -1115,6 +1116,8 @@ mod tests {
         sync::{Arc, Mutex},
     };
     use tokio::sync::{Notify, Semaphore};
+    use zakura_pir_publisher::receiver::snapshot::Snapshot;
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
 
     /// A node's tip, block hashes by height and the time in every block header. Each
     /// block hash request runs `hook` if there is one, signals `asked`, then waits for a
@@ -1184,7 +1187,8 @@ mod tests {
     /// An empty one-shard inventory ending at block `[hash; 32]`, height 101.
     #[cfg(feature = "qualification-tests")]
     fn publication(hash: u8) -> Publication {
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest =
+            super::common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.end_hash = [hash; 32];
         let snapshot = Snapshot::build(manifest, &[]).unwrap();
         let table = crate::witness::table(&snapshot, &[]).unwrap();
@@ -1309,7 +1313,7 @@ mod tests {
                 .unwrap();
             let args = Config {
                 data_dir: dir.path().to_owned(),
-                min_rows: receiver_pir::MIN_ROWS,
+                min_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
                 start_height: height as u32,
                 end_height: None,
                 depth: 0,
@@ -1318,7 +1322,7 @@ mod tests {
                 audit_enabled: true,
                 filter_blocks: None,
                 history_revision: 0,
-                shard_rows: receiver_pir::MIN_ROWS,
+                shard_rows: zakura_pir_publisher::receiver::session::MIN_ROWS,
                 shard_target: None,
             };
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1369,13 +1373,14 @@ mod tests {
 
         /// The current inventory's last shard's first segment, from its first chunk.
         #[cfg(feature = "qualification-tests")]
-        async fn segment(&self) -> receiver_pir::Publication {
-            let head: receiver_pir::inventory::Head =
+        async fn segment(&self) -> zakura_pir_publisher::receiver::session::Publication {
+            let head: zakura_pir_publisher::receiver::inventory::Head =
                 serde_json::from_value(self.get("inventory").await).unwrap();
             let chunk = self
                 .get(&format!("inventory/{}/0", hex::encode(head.inventory)))
                 .await;
-            let chunk: receiver_pir::inventory::Chunk = serde_json::from_value(chunk).unwrap();
+            let chunk: zakura_pir_publisher::receiver::inventory::Chunk =
+                serde_json::from_value(chunk).unwrap();
             chunk.shards.last().unwrap().segments[0].clone()
         }
 
@@ -1406,12 +1411,12 @@ mod tests {
         queries: Arc<std::sync::atomic::AtomicUsize>,
     }
 
-    impl receiver_pir::transport::Transport for Wallet {
+    impl zakura_pir_client::receiver::transport::Transport for Wallet {
         async fn get(
             &self,
             url: &str,
             limit: usize,
-        ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
+        ) -> std::result::Result<Vec<u8>, zakura_pir_publisher::receiver::session::Error> {
             wallet_read(self.http.get(url), limit).await
         }
         async fn post(
@@ -1419,7 +1424,7 @@ mod tests {
             url: &str,
             body: Vec<u8>,
             limit: usize,
-        ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
+        ) -> std::result::Result<Vec<u8>, zakura_pir_publisher::receiver::session::Error> {
             self.queries
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             wallet_read(self.http.post(url).body(body), limit).await
@@ -1430,16 +1435,18 @@ mod tests {
     async fn wallet_read(
         request: reqwest::RequestBuilder,
         limit: usize,
-    ) -> std::result::Result<Vec<u8>, receiver_pir::Error> {
-        let failed = |e: reqwest::Error| receiver_pir::Error::Transport(e.to_string());
+    ) -> std::result::Result<Vec<u8>, zakura_pir_publisher::receiver::session::Error> {
+        let failed = |e: reqwest::Error| {
+            zakura_pir_publisher::receiver::session::Error::Transport(e.to_string())
+        };
         let response = request.send().await.map_err(failed)?;
         if response.status() == reqwest::StatusCode::GONE {
-            return Err(receiver_pir::Error::Revision);
+            return Err(zakura_pir_publisher::receiver::session::Error::Revision);
         }
         let response = response.error_for_status().map_err(failed)?;
         crate::read_limited(response, limit)
             .await
-            .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+            .map_err(|e| zakura_pir_publisher::receiver::session::Error::Transport(e.to_string()))
     }
 
     impl Paused {
@@ -1502,10 +1509,10 @@ mod tests {
             &self,
             filters: bool,
         ) -> (
-            receiver_pir::transport::InventoryClient<Wallet>,
+            zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
             Arc<std::sync::atomic::AtomicUsize>,
         ) {
-            use receiver_pir::transport::{Inventories, InventoryClient};
+            use zakura_pir_client::receiver::transport::{Inventories, InventoryClient};
             let wallet = Wallet::default();
             let queries = wallet.queries.clone();
             let genesis = Network::Mainnet.genesis_hash();
@@ -1530,9 +1537,9 @@ mod tests {
     /// Every record of `receiver` in the captured inventory, with the shard and segment
     /// holding it, skipping sealed shards whose filter excludes it as a wallet may.
     async fn lookup(
-        client: &receiver_pir::transport::InventoryClient<Wallet>,
+        client: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
         receiver: [u8; 43],
-    ) -> Vec<(u32, u32, receiver_directory::RawRecord)> {
+    ) -> Vec<(u32, u32, zakura_pir_publisher::receiver::RawRecord)> {
         let mut found = Vec::new();
         for shard in client.inventory().shards() {
             if client.uses_filters() && shard.filter.is_some() {
@@ -1560,22 +1567,30 @@ mod tests {
     /// One segment of a layout a one-shot pass wrote: its payment manifest and records,
     /// and its companion's manifest and payload rows.
     struct Written {
-        payments: receiver_directory::snapshot::Manifest,
+        payments: zakura_pir_publisher::receiver::snapshot::Manifest,
         rows: Vec<u8>,
-        witnesses: receiver_directory::witness::Manifest,
+        witnesses: zakura_pir_publisher::receiver::witness::Manifest,
         payloads: Vec<u8>,
     }
 
     impl Written {
         /// The payment of `receiver`, which must be the segment's only one for it, with
         /// its companion payload.
-        fn payment(&self, receiver: [u8; 43]) -> (zakura_receiver_crypto::Payment, [u8; 512]) {
+        fn payment(
+            &self,
+            receiver: [u8; 43],
+        ) -> (zakura_pir_publisher::receiver::crypto::Payment, [u8; 512]) {
             let mut found = Vec::new();
-            for row in self.rows.chunks(receiver_directory::snapshot::ROW_BYTES) {
-                let slots =
-                    &row[..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES];
-                for slot in slots.chunks(receiver_directory::RECORD_BYTES) {
-                    if let Some(r) = zakura_receiver_crypto::Record::decode(slot).unwrap() {
+            for row in self
+                .rows
+                .chunks(zakura_pir_publisher::receiver::snapshot::ROW_BYTES)
+            {
+                let slots = &row[..zakura_pir_publisher::receiver::snapshot::SLOTS
+                    * zakura_pir_publisher::receiver::RECORD_BYTES];
+                for slot in slots.chunks(zakura_pir_publisher::receiver::RECORD_BYTES) {
+                    if let Some(r) =
+                        zakura_pir_publisher::receiver::crypto::Record::decode(slot).unwrap()
+                    {
                         if *r.receiver.as_bytes() == receiver {
                             found.push(r);
                         }
@@ -1584,22 +1599,24 @@ mod tests {
             }
             assert_eq!(found.len(), 1);
             let r = found.remove(0);
-            let at = r.ordinal as usize * receiver_directory::witness::PAYLOAD_BYTES;
+            let at = r.ordinal as usize * zakura_pir_publisher::receiver::witness::PAYLOAD_BYTES;
             (r.payment, self.payloads[at..at + 512].try_into().unwrap())
         }
 
         /// Whether this segment wrote a payment to `receiver`.
         fn contains(&self, receiver: [u8; 43]) -> bool {
             self.rows
-                .chunks(receiver_directory::snapshot::ROW_BYTES)
+                .chunks(zakura_pir_publisher::receiver::snapshot::ROW_BYTES)
                 .any(|row| {
-                    let slots = &row
-                        [..receiver_directory::snapshot::SLOTS * receiver_directory::RECORD_BYTES];
-                    slots.chunks(receiver_directory::RECORD_BYTES).any(|slot| {
-                        zakura_receiver_crypto::Record::decode(slot)
-                            .unwrap()
-                            .is_some_and(|record| *record.receiver.as_bytes() == receiver)
-                    })
+                    let slots = &row[..zakura_pir_publisher::receiver::snapshot::SLOTS
+                        * zakura_pir_publisher::receiver::RECORD_BYTES];
+                    slots
+                        .chunks(zakura_pir_publisher::receiver::RECORD_BYTES)
+                        .any(|slot| {
+                            zakura_pir_publisher::receiver::crypto::Record::decode(slot)
+                                .unwrap()
+                                .is_some_and(|record| *record.receiver.as_bytes() == receiver)
+                        })
                 })
         }
     }
@@ -1657,7 +1674,7 @@ mod tests {
         let tree: Vec<_> = (0..size.div_ceil(1 << 16))
             .flat_map(|s| store.commitments(s << 16, size.min((s + 1) << 16)).unwrap())
             .collect();
-        zakura_receiver_crypto::witness::payloads(&tree, positions).unwrap()
+        zakura_pir_publisher::receiver::witness::payloads(&tree, positions).unwrap()
     }
 
     /// Shards sealed under fewer rows than a restart's raised `min_rows` refuse the
@@ -1673,10 +1690,12 @@ mod tests {
         paused.refresh().await.unwrap();
         let sealed = paused.store().sealed_shards().unwrap();
         assert!(!sealed.is_empty());
-        assert!(sealed.iter().all(|s| s.rows == receiver_pir::MIN_ROWS));
+        assert!(sealed
+            .iter()
+            .all(|s| s.rows == zakura_pir_publisher::receiver::session::MIN_ROWS));
         paused.restart().await;
-        paused.args.min_rows = 2 * receiver_pir::MIN_ROWS;
-        paused.args.shard_rows = 2 * receiver_pir::MIN_ROWS;
+        paused.args.min_rows = 2 * zakura_pir_publisher::receiver::session::MIN_ROWS;
+        paused.args.shard_rows = 2 * zakura_pir_publisher::receiver::session::MIN_ROWS;
         let refused = paused.refresh().await.unwrap_err().to_string();
         assert!(refused.contains("fewer than min_rows 16384"), "{refused}");
         assert!(paused.publications.ready_at().is_none());
@@ -1750,7 +1769,8 @@ mod tests {
         paused.refresh().await.unwrap();
         let (next, _) = paused.capture(true).await;
         assert_ne!(next.inventory().head().inventory, head.inventory);
-        let sessions = |c: &receiver_pir::transport::InventoryClient<Wallet>, i: usize| {
+        let sessions = |c: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
+                        i: usize| {
             c.inventory().shards()[i].segments[0].payments.id().unwrap()
         };
         assert_eq!(sessions(&next, 0), sessions(&client, 0));
@@ -1837,7 +1857,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn sealed_tables_beyond_the_budget_load_on_demand() {
         use super::common::receiver;
-        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(
+            zakura_pir_publisher::receiver::session::MIN_ROWS,
+        );
         let publications = Publications::new(std::time::Duration::from_secs(600), budget);
         let mut paused = Paused::serving(|_| {}, publications.clone()).await;
         paused.args.shard_target = Some(1);
@@ -1932,7 +1954,9 @@ mod tests {
             ],
             [seeded_receiver(4); 4],
         ];
-        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(
+            zakura_pir_publisher::receiver::session::MIN_ROWS,
+        );
         let publications = Publications::new(DEFAULT_RETENTION, budget);
         let mut paused = Paused::serving(|_| {}, publications).await;
         paused.args.shard_target = Some(1);
@@ -2037,7 +2061,9 @@ mod tests {
         assert_eq!(shards.iter().filter(|s| s.filter.is_some()).count(), 1);
         assert_eq!(checked.publication().segments().len(), 2);
         assert_eq!(checked.publication().held_bytes(), 0);
-        let budget = 2 * receiver_pir_server::tables::resident_bytes(receiver_pir::MIN_ROWS);
+        let budget = 2 * receiver_pir_server::tables::resident_bytes(
+            zakura_pir_publisher::receiver::session::MIN_ROWS,
+        );
         let publications = Publications::new(DEFAULT_RETENTION, budget);
         let served = load(&record, &config, Some(&publications)).unwrap();
         assert_eq!(served.publication().held_bytes(), 0);
@@ -2078,7 +2104,10 @@ mod tests {
             })
             .unwrap();
         let mut bytes = std::fs::read(&manifest).unwrap();
-        bytes.resize(receiver_pir::MAX_MANIFEST_BYTES + 1, b' ');
+        bytes.resize(
+            zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES + 1,
+            b' ',
+        );
         std::fs::write(&manifest, bytes).unwrap();
         paused.restart().await;
         paused.refresh().await.unwrap();
@@ -2204,7 +2233,7 @@ mod tests {
                 .join(name)
         };
         let rows = std::fs::read(file("rows")).unwrap();
-        let mut manifest: receiver_pir::Manifest =
+        let mut manifest: zakura_pir_publisher::receiver::session::Manifest =
             serde_json::from_slice(&std::fs::read(file("json")).unwrap()).unwrap();
         manifest.directory.rows *= 2;
         std::fs::write(file("json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
@@ -2223,7 +2252,7 @@ mod tests {
     /// a fresh rebuild from `store`.
     #[cfg(feature = "qualification-tests")]
     async fn served_payload(
-        client: &receiver_pir::transport::InventoryClient<Wallet>,
+        client: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
         store: &Store,
         receiver: [u8; 43],
     ) -> [u8; 512] {
@@ -2237,7 +2266,7 @@ mod tests {
     /// The first shard's payment and witness session IDs and witness tree height.
     #[cfg(feature = "qualification-tests")]
     fn first_shard(
-        client: &receiver_pir::transport::InventoryClient<Wallet>,
+        client: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>,
     ) -> ([u8; 32], [u8; 32], u32) {
         let segment = &client.inventory().shards()[0].segments[0];
         (
@@ -2316,7 +2345,9 @@ mod tests {
 
     /// The first sealed shard's payment table revision and companion manifest in
     /// `shards`, as a one-shot pass wrote them.
-    fn first_written(shards: &[Vec<Written>]) -> ([u8; 32], receiver_directory::witness::Manifest) {
+    fn first_written(
+        shards: &[Vec<Written>],
+    ) -> ([u8; 32], zakura_pir_publisher::receiver::witness::Manifest) {
         let segment = &shards[0][0];
         (
             segment.payments.revision().unwrap(),
@@ -2433,7 +2464,9 @@ mod tests {
         let sealed = |l: &Layout| l.shards.iter().map(|s| s.sealed).collect::<Vec<_>>();
         assert_eq!(sealed(&layout), sealed(&old));
         let (payment, payload) = shards[0][0].payment(three);
-        let fields = |p: &zakura_receiver_crypto::Payment| (p.position, p.cmx, p.tx_index, p.txid);
+        let fields = |p: &zakura_pir_publisher::receiver::crypto::Payment| {
+            (p.position, p.cmx, p.tx_index, p.txid)
+        };
         assert_eq!(
             fields(&payment),
             (
@@ -2543,7 +2576,7 @@ mod tests {
         paused.extend(&[], 1, 0);
         paused.refresh().await.unwrap();
         let (old, _) = paused.capture(true).await;
-        let bounds = |c: &receiver_pir::transport::InventoryClient<Wallet>| {
+        let bounds = |c: &zakura_pir_client::receiver::transport::InventoryClient<Wallet>| {
             let shards = c.inventory().shards();
             shards
                 .iter()
@@ -2982,7 +3015,8 @@ mod tests {
         .bytes()
         .await
         .unwrap();
-        let client = receiver_pir::Client::new(old_manifest.clone(), &public).unwrap();
+        let client =
+            zakura_pir_client::receiver::Client::new(old_manifest.clone(), &public).unwrap();
         let query = client.prepare(super::common::receiver(), 0).unwrap();
         let response = reqwest::Client::new()
             .post(format!("{}/v1/receiver/query", paused.origin))
@@ -3029,10 +3063,13 @@ mod tests {
         let bytes = response.bytes().await.unwrap();
         // The old empty index has an independently known all-zero row oracle.
         let mut zero_rows = Sha256::new();
-        for _ in 0..receiver_pir::MIN_ROWS {
-            zero_rows.update([0; receiver_directory::snapshot::ROW_BYTES]);
+        for _ in 0..zakura_pir_publisher::receiver::session::MIN_ROWS {
+            zero_rows.update([0; zakura_pir_publisher::receiver::snapshot::ROW_BYTES]);
         }
-        assert_eq!(old_manifest.directory.rows, receiver_pir::MIN_ROWS);
+        assert_eq!(
+            old_manifest.directory.rows,
+            zakura_pir_publisher::receiver::session::MIN_ROWS
+        );
         assert_eq!(
             <[u8; 32]>::from(zero_rows.finalize()),
             old_manifest.directory.data_sha256
@@ -3052,7 +3089,7 @@ mod tests {
         .bytes()
         .await
         .unwrap();
-        let client = receiver_pir::Client::new(next, &public).unwrap();
+        let client = zakura_pir_client::receiver::Client::new(next, &public).unwrap();
         let query = client.prepare(expected.receiver, 0).unwrap();
         let response = reqwest::Client::new()
             .post(format!("{}/v1/receiver/query", paused.origin))
@@ -3226,9 +3263,10 @@ mod tests {
 
     #[test]
     fn fixture_preparation_returns_protocol_errors_before_reusing_a_server() {
-        use receiver_directory::Error::Malformed;
-        use receiver_pir::Error::Directory;
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        use zakura_pir_publisher::receiver::session::Error::Directory;
+        use zakura_pir_publisher::receiver::Error::Malformed;
+        let mut manifest =
+            super::common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.end_position = 300;
         let valid = super::common::record(0, 1);
         let mut malformed = valid.clone();
@@ -3264,7 +3302,8 @@ mod tests {
     /// One-shot output validates persisted records and proofs before creating files.
     #[test]
     fn one_shot_output_refuses_invalid_records_and_proofs_before_writing() {
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest =
+            super::common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.end_position = 300;
         let valid = Snapshot::build(manifest.clone(), &[super::common::record(0, 1)]).unwrap();
         let dir = tempfile::tempdir().unwrap();

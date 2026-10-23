@@ -1,14 +1,15 @@
 """Compile the selected CPU fast tests, then run their reported binaries.
 
-Cargo unifies features for every package named in one command. Shared crates
-and product libraries stay on one command with a fixed feature set, so a warm
-cache still hits. Transparent publication tests live in those libraries.
-Enabling history and detail on the host binary links the publisher again and
-is not part of this command. The in-process Enhance hint graph stays on a
-second command. Chain-node fixtures stay in qualification: they pull the
-wallet client and node stack into every crate on their command. Campaign
-targets are never selected. Test programs
-retain their package directory and Cargo environment.
+Cargo unifies features for every package named in one command. Shared crates,
+product libraries, and the publisher and query hosts stay on one command with
+a fixed feature set, so a warm cache still hits. Transparent publication tests
+live in those libraries. Enabling history and detail on the host binary links
+the publisher again and is not part of this command. Moving the hosts onto
+another command changes that unification and rebuilds the closure. The
+in-process Enhance hint graph stays on a second command and never joins the
+first. Chain-node fixtures stay in qualification: they pull the wallet client
+and node stack into every crate on their command. Campaign targets are never
+selected. Test programs retain their package directory and Cargo environment.
 Enhance publication fixtures run alone, as does the filter library on fewer than
 eight cores. The remaining programs share a pool of at most three processes.
 """
@@ -84,6 +85,10 @@ HOST_PACKAGES = frozenset({'pir-publisher', 'pir-query-server', 'pir-e2e-tests'}
 # Fixture features pull one product's wallet client and chain test node into
 # every crate on their command. Fast leaves the chain node in qualification.
 # The second command is only the in-process Enhance hint graph.
+# Query-host roles the stable command reaches through publisher dev-dependencies.
+HINT_HOST_ROLES = ('pir-query-server/status', 'pir-query-server/transparent-detail',
+                   'pir-query-server/transparent-history')
+
 PRODUCT_HOST_FEATURES = {
     'enhance': 'pir-e2e-tests/enhance-fast',
     'transparent': 'pir-e2e-tests/transparent-tests',
@@ -140,7 +145,7 @@ def feature_serves(feature, products):
 
 
 def host_features_for(products, package_names):
-    """Fixture features that must stay off the stable command.
+    """Fixture features for the hint command. They must stay off the stable command.
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
@@ -328,8 +333,19 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     compile_integrations = {(name, target) for name in compile_packages
                             for target in registry.get(name, {}).get('fast', [])
                             if integration_allowed(name, target)}
+    # ci_hint enables enhance-fast. That feature stays on its own command.
+    # Putting it on the stable command, or taking the hosts off that command
+    # when the diff is Enhance, rebuilds every root in the closure.
+    hint_identity = ('pir-e2e-tests', 'ci_hint')
+    compile_hint = hint_identity in compile_integrations
+    if compile_hint:
+        compile_integrations.remove(hint_identity)
     expected_integrations = {item for item in compile_integrations if item[0] in run_packages}
+    if compile_hint and hint_identity[0] in run_packages:
+        expected_integrations.add(hint_identity)
     integration_names = {target for _, target in compile_integrations}
+    if compile_hint:
+        integration_names.add(hint_identity[1])
     # Name collisions are checked for every compiled root. Campaign targets of
     # an anchor must not be pulled in by another package's fast name.
     collisions = {(name, target) for name in compile_packages
@@ -337,21 +353,15 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                   if target in integration_names}
     if collisions:
         raise ValueError(f'fast target names also select campaign targets: {sorted(collisions)}')
-    groups = {
-        'stable': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
-        'hosts': dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set()),
-    }
-    # A second command exists only for fixture features. Otherwise the hosts
-    # join the stable command and reuse its rlibs.
-    separate_hosts = bool(host_features_for(products, HOST_PACKAGES & compile_packages))
+    stable = dict(features=set(), kinds=set(), bins=[], integrations=set(), names=set())
     expected_units = set()
     for package in packages.values():
         name = package['name']
-        group = groups['hosts' if name in HOST_PACKAGES and separate_hosts else 'stable']
+        group = stable
         group['names'].add(name)
-        # Product gates stay on the host command. The stable command's features
-        # do not change when the diff moves from one product to another.
-        allowed = products if name in HOST_PACKAGES else frozenset()
+        # No product fixture feature is legal on this command. An Enhance diff
+        # and a Transparent diff must compile the same roots and features.
+        allowed = frozenset()
         classified = {f for entry in slow.get(name, {}).values() if isinstance(entry, dict)
                       for f in entry.get('features', [])}
         units = [t for t in package['targets'] if t.get('test', True)
@@ -379,17 +389,33 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                 included_bins.append(target['name'])
         group['bins'].append((skipped_bin, included_bins))
         group['integrations'].update(target for pkg, target in compile_integrations if pkg == name)
-    groups['hosts']['features'].update(host_features_for(products, groups['hosts']['names']))
     for feature in additional_features:
-        if feature_serves(feature, products):
-            groups['hosts']['features'].add(feature)
-        if feature_serves(feature, frozenset()):
-            groups['stable']['features'].add(feature)
+        if feature.rsplit('/', 1)[-1] == 'enhance-fast':
+            continue
+        if feature_serves(feature, frozenset()) or feature_serves(feature, products):
+            stable['features'].add(feature)
     commands = []
-    for group in (groups['stable'], groups['hosts']):
-        command = _compile_command(group, options)
-        if command:
-            commands.append(command)
+    command = _compile_command(stable, options)
+    if command:
+        commands.append(command)
+    if compile_hint:
+        # Ungated extra features (the native correctness profile) stay visible
+        # to this target. Fast feedback passes none, so the oracle stays on the
+        # reference profile.
+        features = set(host_features_for(frozenset({'enhance'}), {'pir-e2e-tests'}))
+        features.update(feature for feature in additional_features
+                        if feature_serves(feature, frozenset()))
+        # The same feature also enables the query host's Enhance role. Its
+        # library and operator tests that are compiled only in that role stay
+        # here, so the stable command can keep building the host without it.
+        # Both commands write one host binary, and operator tests from both
+        # run it. Building it here with the roles the stable command unifies
+        # in as well keeps it a superset of every compiled operator test.
+        features.update(HINT_HOST_ROLES)
+        commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
+                         '-p', 'pir-e2e-tests', '-p', 'pir-query-server', '--lib',
+                         '--test', 'ci_hint', '--test', 'operator',
+                         '--features', ','.join(sorted(features))])
     if not commands:
         return
     # Qualification controls cannot expand a routine correctness fixture.

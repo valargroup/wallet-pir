@@ -12,13 +12,13 @@ use crate::{
     verify,
     witness::{self as witnesses, Witnesses},
 };
-use receiver_directory::{
+use receiver_store::{Checkpoint, Error, SealedShard, Store, SALT_ATTEMPTS, SHARD_LEAVES};
+use zakura_pir_publisher::receiver::wire::is_final;
+use zakura_pir_publisher::receiver::{
     shards::{Coverage, ShardFilter},
     snapshot::{Manifest, Snapshot, MAX_ROWS, PROFILE},
     witness, Hash,
 };
-use receiver_store::{Checkpoint, Error, SealedShard, Store, SALT_ATTEMPTS, SHARD_LEAVES};
-use zakura_receiver_crypto::wire::is_final;
 
 /// One segment's freshly built tables, its checked records, and the block its companion
 /// is frozen at, or `None` while it is provisional at the publication's tip.

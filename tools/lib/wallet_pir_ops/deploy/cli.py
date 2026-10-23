@@ -266,12 +266,13 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage',
+                      'history-relay-plan', 'history-relay-repair'):
         command = commands.add_parser('coordinator-edge-' + operation,
                                       help='add or update only the unified wallet site on the coordinator Caddy')
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation in ('deploy', 'dns-stage'):
+        if operation in ('deploy', 'dns-stage', 'history-relay-repair'):
             command.add_argument('--expect-plan-sha256', required=True)
         if operation == 'deploy':
             command.add_argument('--preserve-on-failure', action='store_true',
@@ -417,7 +418,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
     try:
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
-                                                   'transparent-load-repair-',
+                                                   'transparent-load-repair-', 'transparent-provider-maintenance-',
                                                    'ops-package-', 'publisher-cutover-', 'publisher-storage-', 'status-routing-',
                                                    'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
@@ -459,7 +460,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             out(json.dumps(result, sort_keys=True))
             return 0
         if args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
-                                     'transparent-load-repair-')):
+                                     'transparent-load-repair-', 'transparent-provider-maintenance-')):
             if args.json:
                 raise DeployError('product recipes already provide their own JSON receipts; omit --json')
             return transparent_cli().dispatch(args, executor=executor, out=out, **options)
@@ -497,7 +498,13 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             edge = UnifiedEdge(inventory, executor or SSHExecutor(inventory), args.state_dir, request,
                                lock=options.get('lock'))
             operation = args.command.removeprefix('coordinator-edge-')
-            if operation == 'dns-plan':
+            if operation == 'history-relay-plan':
+                mutation_fence(inventory, edge.ex)
+                plan, _before, _after = edge.history_relay_plan()
+                result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
+            elif operation == 'history-relay-repair':
+                result = edge.repair_history_relay(args.expect_plan_sha256)
+            elif operation == 'dns-plan':
                 mutation_fence(inventory, edge.ex)
                 plan, _after = edge.dns_plan()
                 result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}

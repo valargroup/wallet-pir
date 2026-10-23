@@ -109,14 +109,11 @@ pub(crate) fn open(path: &Path) -> io::Result<File> {
 }
 
 fn persist(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "receipt has no parent"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|e| e.error)?;
-    File::open(parent)?.sync_all()
+    use std::os::unix::fs::PermissionsExt;
+    pir_control::durable::replace_durable(path, |file| {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        file.write_all(bytes)
+    })
 }
 
 /// Called only by the receiving/staging code, after the network hash succeeds

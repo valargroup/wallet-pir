@@ -14,11 +14,6 @@ moved {
 }
 
 moved {
-  from = digitalocean_firewall.enhance_worker
-  to   = module.enhance.digitalocean_firewall.enhance_worker
-}
-
-moved {
   from = cloudflare_dns_record.enhance
   to   = module.enhance.cloudflare_dns_record.enhance
 }
@@ -34,11 +29,6 @@ moved {
 }
 
 moved {
-  from = digitalocean_firewall.enhance_packing_router
-  to   = module.enhance.digitalocean_firewall.enhance_packing_router
-}
-
-moved {
   from = digitalocean_droplet.enhance_pool_worker
   to   = module.enhance.digitalocean_droplet.enhance_pool_worker
 }
@@ -51,11 +41,6 @@ moved {
 moved {
   from = digitalocean_droplet.status_host
   to   = module.status.digitalocean_droplet.status_host
-}
-
-moved {
-  from = digitalocean_firewall.status_host
-  to   = module.status.digitalocean_firewall.status_host
 }
 
 moved {
@@ -94,21 +79,6 @@ moved {
 }
 
 moved {
-  from = digitalocean_firewall.transparent_worker
-  to   = module.transparent.digitalocean_firewall.transparent_worker
-}
-
-moved {
-  from = digitalocean_firewall.transparent_router
-  to   = module.transparent.digitalocean_firewall.transparent_router
-}
-
-moved {
-  from = digitalocean_firewall.transparent_loadgen
-  to   = module.transparent.digitalocean_firewall.transparent_loadgen
-}
-
-moved {
   from = cloudflare_dns_record.transparent
   to   = module.transparent.cloudflare_dns_record.transparent
 }
@@ -121,11 +91,6 @@ moved {
 moved {
   from = digitalocean_tag.transparent_v12
   to   = module.transparent.digitalocean_tag.transparent_v12
-}
-
-moved {
-  from = digitalocean_firewall.transparent_v12
-  to   = module.transparent.digitalocean_firewall.transparent_v12
 }
 
 moved {
@@ -156,11 +121,6 @@ moved {
 moved {
   from = digitalocean_tag.transparent_txid_display_site
   to   = module.transparent_tx_detail.digitalocean_tag.transparent_txid_display_site
-}
-
-moved {
-  from = digitalocean_firewall.transparent_txid_display_site
-  to   = module.transparent_tx_detail.digitalocean_firewall.transparent_txid_display_site
 }
 
 moved {

@@ -7,7 +7,10 @@
 //! evaluation is memory-bandwidth-bound, scale horizontally across workers with
 //! independent memory bandwidth" — but nothing here had measured it.
 //!
-//! What it measures is the first-dimension multiply, `try_multiply_power_of_two`
+//! Historical P16 baseline: current Transparent tables use the P8 byte kernel.
+//! The geometry sweep reports current P8 projections.
+//!
+//! What the scan measures is the first-dimension multiply, `try_multiply_power_of_two`
 //! modulo the native q = 2^54, which is
 //! the part that streams a shard's whole 32 MiB encoded database per query.
 //! That is where the bandwidth goes; the packing that follows works on a much
@@ -25,10 +28,19 @@ use zakura_pir_query_server::transparent::native as transparent_native;
 
 use clap::Parser;
 use ipir_sp::server::IPIRServer;
+use ipir_sp::YpirSchemeParams;
 use std::time::{Duration, Instant};
 use transparent_shard::layout::{by_name as geometry_by_name, DECOUPLED_2K_8K};
 use transparent_shared::history::shardset::Table;
-use transparent_shared::runtime::{reserved_bytes, transport_params};
+use transparent_shared::runtime::reserved_bytes;
+fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
+    let mut params = pir_runtime::params::p16q48(rows, row_bytes as u64 * 8)?
+        .ypir()
+        .clone();
+    params.query_bits = transparent_native::QUERY_BITS;
+    params.q_prime_1 = 1 << transparent_native::RESPONSE_BITS;
+    Ok(params)
+}
 
 #[derive(Parser)]
 #[command(
@@ -95,6 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
+    println!("historical P16 scan baseline; current serving uses the P8 byte kernel");
     let geometry = geometry_by_name(&cli.geometry)
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
     let table = Table::parse(&cli.table).ok_or_else(|| format!("unknown table {:?}", cli.table))?;

@@ -492,6 +492,119 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     running = HistoryUpgrade.running
     FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
 
+    def select_recent(self, unready=False):
+        key = 'worker@v12:transparent-v12-recent.service'
+        state = self.fake.probe_unit('v12', 'transparent-v12-recent.service')
+        self.write_request(lambda r: r.update(selected_workers=[key], **({
+            'unready_predecessors': {key: {'binary_sha256': state['exe_sha256'],
+                                          'invocation_id': state['invocation_id']}}} if unready else {})))
+
+    def test_recent_only_upgrade_and_rollback_leave_archive_invocation_untouched(self):
+        self.select_recent()
+        archive = self.fake.probe_unit('v12', 'transparent-v12-archive.service')
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-recent.service'], sha256(NEW))
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.probe_unit('v12', 'transparent-v12-archive.service'), archive)
+        self.publisher_untouched()
+
+    def test_recent_only_upgrade_keeps_serving_archive_background_warmup_out_of_the_release_gate(self):
+        self.select_recent()
+        archive = self.fake.probe_unit('v12', 'transparent-v12-archive.service')
+        self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = lambda ready_, exe: {
+            **self.provider_ready('transparent-v12-archive.service', self.map[0]), 'warm_runtimes': 1}
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('v12', 'transparent-v12-archive.service'), archive)
+
+    def test_recent_only_upgrade_still_refuses_failed_archive_preparation(self):
+        self.select_recent()
+        self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = lambda ready_, exe: {
+            **self.provider_ready('transparent-v12-archive.service', self.map[0]), 'prewarm_failed': 1}
+        code, lines = self.run_cli('plan')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('prewarm_failed' in line for line in lines), lines)
+
+    def test_exact_invalidated_predecessor_can_be_replaced_but_archive_must_be_healthy(self):
+        self.select_recent(unready=True)
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (503, json.dumps({'error': 'publication invalidated by reorg'}))
+            if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
+    def test_unready_permission_refuses_a_restarted_or_differently_failed_predecessor(self):
+        self.select_recent(unready=True)
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.fake.systemctl('v12', 'restart', 'transparent-v12-recent.service')
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (503, json.dumps({'error': 'another failure'}))
+            if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        before = len(self.fake.log)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+        self.assertTrue(any('pinned running invocation' in line for line in lines), lines)
+
+    def test_pinned_restarted_provider_can_recover_before_its_listener_opens(self):
+        self.select_recent(unready=True)
+        self.place('v12', provider_shard_dir('transparent-v12-recent.service') + '/active.invalid.json', ['ab' * 32])
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (0, 'connection refused') if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
+    def test_a_closed_listener_without_saved_revocations_is_not_a_recovery_predecessor(self):
+        self.select_recent(unready=True)
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (0, 'connection refused') if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        for revoked in [None, [], ['not-a-digest']]:
+            self.place('v12', provider_shard_dir('transparent-v12-recent.service') + '/active.invalid.json', revoked)
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+            self.assertTrue(any('not refusing reorganized history' in line for line in lines), lines)
+
+    def test_worker_selection_refuses_unknown_duplicate_and_empty_targets(self):
+        for selected in [[], ['unknown'], ['worker@v12:transparent-v12-recent.service'] * 2]:
+            self.write_request(lambda r: r.update(selected_workers=selected))
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+            self.assertTrue(any('selected_workers' in line for line in lines), lines)
+
+    def test_reviewed_publisher_storage_directory_can_be_pinned_without_changing_it(self):
+        config = json.loads(self.fake.read('coordinator', binary_upgrade.PUBLISHER_CONFIG))
+        root = '/srv/transparent-activity/full-v12/publications.prepared-storage'
+        config['transparent_history']['settings']['publication_root'] = root
+        self.place('coordinator', binary_upgrade.PUBLISHER_CONFIG, config)
+        self.write_request()
+        code, lines = self.run_cli('plan')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('publication_root' in line for line in lines), lines)
+        self.write_request(lambda r: r['publication'].update(publication_root=root))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(json.loads(self.fake.read('coordinator', binary_upgrade.PUBLISHER_CONFIG)), config)
+        self.publisher_untouched()
+
+    def test_relative_or_mismatched_publisher_directory_refuses(self):
+        for root in ['relative', '/srv/../another', '/different']:
+            self.write_request(lambda r: r['publication'].update(publication_root=root))
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+
     def failed_archive_rollback(self):
         self.run_cli('baseline')
         unit = 'transparent-v12-archive.service'
@@ -950,6 +1063,48 @@ class UnifiedDisplayUpgrade(DisplayWorkerChecks, UnifiedOwner, Harness):
         self.fake.put('coordinator', DISPLAY_ROOT + '/display-root.json', '{"geometry":"txid-2k8"}')
         self.write_request()
         self.refuses(message='txid-4k8')
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
+
+
+    def lagging_display(self, stays_old=False):
+        self.map[0] = NEXT_MAP
+        def health(ready_, exe):
+            digest = MAP if exe == sha256(OLD) or stays_old else NEXT_MAP
+            return {'ready': ready_, 'warm': True, 'role': 'combined',
+                    'map_sha256': digest, 'covered_through': 3100000}
+        self.fake.health_shapes[('gpu', DISPLAY_WORKER)] = health
+
+    def pin_previous_display(self, digest=MAP):
+        self.write_request(lambda request: request.update(previous_maps={'worker@gpu': digest}))
+
+    def test_reviewed_older_display_can_upgrade_to_the_current_publication(self):
+        self.lagging_display()
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.pin_previous_display()
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+        self.publisher_untouched()
+
+    def test_a_display_replacement_cannot_use_the_predecessors_older_map(self):
+        self.lagging_display(stays_old=True)
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.pin_previous_display()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
+
+    def test_an_unreviewed_older_display_map_refuses_before_change(self):
+        self.lagging_display()
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.pin_previous_display('f' * 64)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
         self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
         self.publisher_untouched()
 

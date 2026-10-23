@@ -39,10 +39,12 @@ def tree_identity(root):
     for directory, folders, files in os.walk(root, followlinks=False):
         for path in [Path(directory), *[Path(directory) / name for name in folders + files]]:
             info = path.lstat()
-            require(not stat.S_ISLNK(info.st_mode), 'retired cache contains a symbolic link')
-            require(stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode), 'retired cache contains a special file')
+            link = stat.S_ISLNK(info.st_mode)
+            require(stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode) or link,
+                    'retired cache contains a special file')
             entries.append([str(path.relative_to(root)), info.st_dev, info.st_ino, info.st_mode,
-                            info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_nlink])
+                            info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_nlink,
+                            os.readlink(path) if link else None])
             if stat.S_ISREG(info.st_mode):
                 unique[info.st_dev, info.st_ino] = info
     return {'tree_sha256': digest(sorted(entries)), 'entries': len(entries),
@@ -139,6 +141,7 @@ def plan(request):
 
 def prune(request, expected, transaction, receipt_root=Path('/opt/transparent-txid-display/maintenance'),
           intent_recorded=False):
+    require(shutil.rmtree.avoids_symlink_attacks, 'cache cleanup requires directory-descriptor deletion')
     reviewed = plan(request)
     require(digest(reviewed) == expected, 'cache cleanup plan is stale')
     root = Path(request['path'])

@@ -1,7 +1,7 @@
 # Enhance v4 replica infrastructure
 
 This Terraform root owns the v4 worker fleet: zero to four pairs of dedicated
-four-vCPU, 8 GiB (`c-4`) workers, an isolated firewall/tag, and additive membership
+four-vCPU, 8 GiB (`c-4`) workers, a dedicated tag, and additive membership
 in the existing Valargroup wallet-pir project. Stable resource addresses and
 Droplet IDs let the infrastructure controller reconcile interrupted operations.
 Deletion/replacement is prohibited by lifecycle guards. Increasing `group_count`
@@ -13,11 +13,10 @@ runtime environment inputs; do not put them in tfvars, backend files, or plans
 that leave the protected operation directory. Use the verified Valargroup account
 and include Roman's registered `~/.ssh/id_ed25519.pub` in `ssh_key_ids`.
 
-Required nonsecret inputs are the existing wallet-pir project and VPC UUIDs, the
-v4 coordinator's private IPv4, registered SSH key IDs, and operator SSH CIDRs.
-The region defaults to `ams3`. Worker RPC on port 8291 is accessible only from the
-coordinator address; SSH is accessible from that address and the explicit
-operator CIDRs. Cloud-init prepares the host and bounded swap, but does not start
+Required nonsecret inputs are the existing wallet-pir project and VPC UUIDs and
+registered SSH key IDs. The region defaults to `ams3`. This root creates no
+cloud firewall. Bind private worker RPC listeners to the VPC interface.
+Cloud-init prepares the host and bounded swap, but does not start
 a PIR service. Bootstrap and hardware qualification must complete before inventory
 registration. No private SSH key is copied onto workers.
 

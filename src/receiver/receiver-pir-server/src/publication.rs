@@ -1,16 +1,14 @@
 //! Immutable prepared inventories and atomic, reorg-fenced serving state.
 use crate::tables::{FilterSource, Loaded, Source, Tables};
 use axum::http::StatusCode;
-use receiver_directory::Hash;
-use receiver_pir::{
-    inventory::{FilterRef, Head, Inventory, Shard},
-    server::{Server, WitnessServer},
-};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock, Weak},
     time::{Duration, Instant},
 };
+use zakura_pir_query_server::receiver::inventory::{FilterRef, Head, Inventory, Shard};
+use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
+use zakura_pir_query_server::receiver::Hash;
 
 /// One segment for serving: the sources of its payment session and of the companion
 /// witness session bound to it.
@@ -30,8 +28,8 @@ impl Segment {
     }
 
     /// The payment and witness session manifests an inventory lists.
-    pub fn publication(&self) -> receiver_pir::Publication {
-        receiver_pir::Publication {
+    pub fn publication(&self) -> zakura_pir_query_server::receiver::session::Publication {
+        zakura_pir_query_server::receiver::session::Publication {
             payments: self
                 .payments
                 .payment_manifest()
@@ -71,8 +69,8 @@ impl Publication {
         inventory: Inventory,
         segments: Vec<Segment>,
         filters: Vec<Arc<FilterSource>>,
-    ) -> Result<Self, receiver_pir::Error> {
-        use receiver_pir::Error::Malformed;
+    ) -> Result<Self, zakura_pir_query_server::receiver::session::Error> {
+        use zakura_pir_query_server::receiver::session::Error::Malformed;
         let listed = inventory.shards().iter().flat_map(|s| &s.segments);
         if listed.clone().count() != segments.len() {
             return Err(Malformed);
@@ -129,13 +127,13 @@ impl Publication {
         genesis: Hash,
         history_revision: u64,
         shards: Vec<(bool, Vec<Segment>, Option<Arc<FilterSource>>)>,
-    ) -> Result<Self, receiver_pir::Error> {
+    ) -> Result<Self, zakura_pir_query_server::receiver::session::Error> {
         let (mut listed, mut segments, mut filters) = (Vec::new(), Vec::new(), Vec::new());
         for (sealed, prepared, filter) in shards {
             let m = prepared
                 .first()
                 .and_then(|s| s.payments.payment_manifest())
-                .ok_or(receiver_pir::Error::Malformed)?
+                .ok_or(zakura_pir_query_server::receiver::session::Error::Malformed)?
                 .directory
                 .clone();
             listed.push(Shard {
@@ -671,6 +669,7 @@ impl Publications {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
 
     /// An empty prepared publication whose salt starts with `salt`.
     #[cfg(feature = "qualification-tests")]
@@ -684,10 +683,11 @@ mod tests {
         let snapshot = if salt == hash {
             crate::empty_snapshot(salt)
         } else {
-            let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+            let mut manifest =
+                crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
             manifest.salt[0] = salt;
             manifest.end_hash = [hash; 32];
-            receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap()
+            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap()
         };
         crate::prepared::prepare_payments(snapshot).unwrap()
     }
@@ -732,9 +732,11 @@ mod tests {
     fn an_overtaken_preparation_is_not_published() {
         let publications = Publications::default();
         assert!(publications.publish(publication_at(1, 1), 0));
-        let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
+        let mut newer =
+            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
         (newer.end_height, newer.end_hash) = (102, [2; 32]);
-        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[]).unwrap();
+        let snapshot =
+            zakura_pir_query_server::receiver::snapshot::Snapshot::build(newer, &[]).unwrap();
         let newer = crate::prepared::prepare_payments(snapshot).unwrap();
         assert!(publications.publish(newer, 0));
         let ended = Instant::now()
@@ -849,11 +851,14 @@ mod tests {
     #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_later_witness_context_is_a_served_anchor() {
-        let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
-        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
+        use zakura_pir_publisher::receiver::witness::TablePublisherExt as _;
+        let manifest =
+            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
+        let snapshot =
+            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap();
         let mut table = crate::prepared::placeholder(&snapshot).manifest;
         (table.tree_height, table.tree_hash) = (105, [5; 32]);
-        let table = receiver_directory::witness::Table::build(table, &[]).unwrap();
+        let table = zakura_pir_query_server::receiver::witness::Table::build(table, &[]).unwrap();
         let publication = crate::prepared::prepare(snapshot, table).unwrap();
         let publications = Publications::default();
         assert!(publications.publish(publication, 0));
@@ -868,10 +873,13 @@ mod tests {
     #[cfg(feature = "qualification-tests")]
     #[test]
     fn a_witness_only_replacement_keeps_the_displaced_companion() {
-        let manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
-        let snapshot =
-            receiver_directory::snapshot::Snapshot::build(manifest, &[crate::common::record(0, 1)])
-                .unwrap();
+        let manifest =
+            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
+        let snapshot = zakura_pir_query_server::receiver::snapshot::Snapshot::build(
+            manifest,
+            &[crate::common::record(0, 1)],
+        )
+        .unwrap();
         let first = crate::prepared::prepare(
             snapshot.clone(),
             crate::prepared::companion_table(&snapshot, &[[1; 512]]),
@@ -960,9 +968,11 @@ mod tests {
             .is_err());
         assert!(!publications.advance_history_revision(0));
         assert!(!publications.publish(publication(2), publications.epoch()));
-        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest =
+            crate::common::manifest(zakura_pir_query_server::receiver::session::MIN_ROWS);
         manifest.history_revision = 1;
-        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[]).unwrap();
+        let snapshot =
+            zakura_pir_query_server::receiver::snapshot::Snapshot::build(manifest, &[]).unwrap();
         let corrected = crate::prepared::prepare_payments(snapshot).unwrap();
         assert!(publications.publish(corrected, publications.epoch()));
         assert!(publications

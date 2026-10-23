@@ -1,7 +1,7 @@
 # The transparent v12 (decoupled pages) worker: one combined host serving both
 # v12 tiers, archive and recent, next to the v11 fleet until the switch. It is
-# absent from the v11 worker roster and shares the worker tag, so it gets the
-# worker firewall. It also fronts its own staging hostname with Caddy, rendered
+# absent from the v11 worker roster and shares the worker tag.
+# It also fronts its own staging hostname with Caddy, rendered
 # by the v12 controller exactly as the router's site is: the v11 controller
 # rewrites the router's whole Caddyfile, so a second site there would be lost
 # on its next reconcile. At the switch the router serves the v12 rendering.

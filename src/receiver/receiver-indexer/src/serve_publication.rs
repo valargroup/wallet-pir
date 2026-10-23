@@ -11,9 +11,9 @@
 //! opens no index database, ingests no blocks and reads no partner key.
 //!
 //! Each record is loaded and verified in full before it can be served: the layout must
-//! digest to the expected identity and be for mainnet, every manifest must hold its
-//! listed revision and commit to the row and companion witness files beside it, which
-//! the Receiver server library re-validates record by record while preparing PIR,
+//! digest to the expected identity and be for mainnet, every payment and witness
+//! manifest must hold its listed revision and commit to its `.rows` or `.witness` file
+//! beside it, which the Receiver server library re-validates while preparing PIR,
 //! every filter must hold its digest, and the shards must form one contiguous
 //! inventory from Ironwood activation. Its anchor must then be canonical on the
 //! freshest node. Throughout, an independent guard checks every served anchor and
@@ -21,7 +21,7 @@
 //! owns epochs, monotonic coverage and retention of displaced inventories.
 //!
 //! Updates are serial. A newer record supersedes one still preparing; a record that
-//! does not verify is refused and the valid publication already served stays. A
+//! does not verify is refused and the valid publication already served stays.
 //! A validated higher history revision revokes old answers before loading its rows,
 //! even if replacement preparation fails, and is recorded in the state directory's
 //! [`HISTORY_FILE`] first, so a restart never serves older, uncorrected history again
@@ -35,12 +35,6 @@
 use crate::application::Layout;
 use crate::canonical::{freshest, tree_mismatch, TreeAnchor, TreeMismatch};
 use crate::revision::Refused;
-use receiver_directory::Hash;
-use receiver_directory::{
-    shards::{Coverage, ShardFilter, MAX_FILTER_BYTES, MAX_RECEIVERS},
-    snapshot::{Manifest, Snapshot, ROW_BYTES},
-    witness,
-};
 use receiver_pir_server::{
     tables::{FilterSource, Loaded},
     Publication, Publications,
@@ -55,6 +49,12 @@ use std::{
     time::Duration,
 };
 use tracing::{info, warn};
+use zakura_pir_publisher::receiver::Hash;
+use zakura_pir_publisher::receiver::{
+    shards::{Coverage, ShardFilter, MAX_FILTER_BYTES, MAX_RECEIVERS},
+    snapshot::{Manifest, Snapshot, ROW_BYTES},
+    witness,
+};
 use zakura_server_chain::Network;
 use zakura_server_chain::NodeClient as ZakuraClient;
 
@@ -117,7 +117,7 @@ fn default_poll_seconds() -> u64 {
 }
 
 fn default_min_rows() -> u32 {
-    receiver_pir::MIN_ROWS
+    zakura_pir_publisher::receiver::session::MIN_ROWS
 }
 
 impl Config {
@@ -157,7 +157,7 @@ impl Config {
         if self.poll_seconds == 0 {
             return Err("poll_seconds must be at least 1".into());
         }
-        receiver_pir::validate_rows(self.min_rows)?;
+        zakura_pir_publisher::receiver::session::validate_rows(self.min_rows)?;
         let private = match self.bind.ip() {
             IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
             IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
@@ -271,7 +271,7 @@ impl VerifiedPublication {
     }
 
     /// The head of the inventory it serves.
-    pub fn head(&self) -> &receiver_pir::inventory::Head {
+    pub fn head(&self) -> &zakura_pir_publisher::receiver::inventory::Head {
         self.publication.head()
     }
 
@@ -368,7 +368,7 @@ pub fn load(
             let companion = hex::encode(segment.witnesses);
             let raw = read_bounded(
                 &file(&format!("{name}.json")),
-                receiver_pir::MAX_MANIFEST_BYTES as u64,
+                zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
             )
             .map_err(|e| invalid(format!("manifest: {e}")))?;
             let manifest: Manifest =
@@ -394,7 +394,7 @@ pub fn load(
                 .map_err(|e| invalid(format!("rows: {e}")))?;
             let raw = read_bounded(
                 &file(&format!("{companion}.witness.json")),
-                receiver_pir::MAX_MANIFEST_BYTES as u64,
+                zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
             )
             .map_err(|e| invalid(format!("witness manifest: {e}")))?;
             let table: witness::Manifest = serde_json::from_slice(&raw)
@@ -503,7 +503,7 @@ fn staged_filter(
     bytes: Arc<[u8]>,
     digest: &Hash,
     shard: (Hash, u64, Coverage),
-    receivers: &[receiver_directory::ReceiverBytes],
+    receivers: &[zakura_pir_publisher::receiver::ReceiverBytes],
 ) -> std::result::Result<FilterSource, String> {
     let filter = ShardFilter::decode(&bytes).map_err(|e| e.to_string())?;
     if filter.digest() != *digest {
@@ -524,8 +524,9 @@ fn staged_filter(
         len as u32,
         filter.receivers(),
         move || {
-            read_exact_len(&path, len as u64)
-                .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+            read_exact_len(&path, len as u64).map_err(|e| {
+                zakura_pir_publisher::receiver::session::Error::Transport(e.to_string())
+            })
         },
     ))
 }
@@ -542,23 +543,27 @@ impl Staged {
     /// indexed history does, and a check retains none of it.
     fn sources(
         self,
-        server: &receiver_pir::server::Server,
-        witnesses: &receiver_pir::server::WitnessServer,
-    ) -> std::result::Result<receiver_pir_server::publication::Segment, receiver_pir::Error> {
+        server: &zakura_pir_query_server::receiver::server::Server,
+        witnesses: &zakura_pir_query_server::receiver::server::WitnessServer,
+    ) -> std::result::Result<
+        receiver_pir_server::publication::Segment,
+        zakura_pir_publisher::receiver::session::Error,
+    > {
         use receiver_pir_server::tables::Source;
         // A reload prepares the rows under the manifest verified here, never a restaged
         // one, and reads exactly the rows its geometry holds, so a replaced file cannot
         // change the geometry or grow the allocation.
         let read = |path: &Path, rows: u32| {
-            read_exact_len(path, u64::from(rows) * ROW_BYTES as u64)
-                .map_err(|e| receiver_pir::Error::Transport(e.to_string()))
+            read_exact_len(path, u64::from(rows) * ROW_BYTES as u64).map_err(|e| {
+                zakura_pir_publisher::receiver::session::Error::Transport(e.to_string())
+            })
         };
         let (manifest, path) = (server.manifest().directory.clone(), self.payments);
         let payments = Arc::new(Source::payments(
             server.manifest().clone(),
             server.public().to_vec(),
             move || {
-                receiver_pir::server::Server::new(Snapshot {
+                zakura_pir_query_server::receiver::server::Server::new(Snapshot {
                     manifest: manifest.clone(),
                     data: read(&path, manifest.rows)?,
                 })
@@ -1022,6 +1027,7 @@ use crate::probe::common;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
 
     fn config() -> Config {
         serde_json::from_value(serde_json::json!({
@@ -1064,11 +1070,12 @@ mod tests {
     #[test]
     fn staged_correction_fences_before_row_loading() {
         let dir = tempfile::tempdir().unwrap();
-        let mut manifest = common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest = common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.genesis = Network::Mainnet.genesis_hash();
         manifest.start_height = crate::blocks::ironwood_activation();
         manifest.end_height = manifest.start_height;
-        let old = receiver_directory::snapshot::Snapshot::build(manifest.clone(), &[]).unwrap();
+        let old = zakura_pir_publisher::receiver::snapshot::Snapshot::build(manifest.clone(), &[])
+            .unwrap();
         let table = crate::witness::table(&old, &[]).unwrap();
         let segment = crate::verify::prepare(old, table).unwrap();
         let old = Publication::assemble(manifest.genesis, 0, vec![(false, vec![segment], None)]);
@@ -1118,7 +1125,7 @@ mod tests {
     /// bytes, which would otherwise stay resident outside the table budget.
     #[test]
     fn a_staged_filter_keeps_no_verified_bytes() {
-        use receiver_directory::shards::Coverage;
+        use zakura_pir_publisher::receiver::shards::Coverage;
         let coverage = Coverage {
             start_height: 100,
             end_height: 101,

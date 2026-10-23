@@ -11,8 +11,8 @@ the `wallet-pir` DigitalOcean project:
   the `pir-apm` sidecar;
 - one logical shard group with two `c-4` private PIR replicas; and
 - the unproxied Cloudflare DNS record `enhance-pir.valargroup.dev`; and
-- a dedicated VPC and firewalls. Only the coordinator may reach worker port
-  8091. Worker SSH is restricted to `allowed_ssh_cidrs`; the coordinator has no firewall.
+- a dedicated VPC. Wallet PIR hosts have no cloud firewalls; bind private
+  service listeners to loopback or their VPC interface.
 
 Service resources live in the sibling `enhance/`, `status/`, `transparent/`
 and `transparent-tx-detail/` modules. This fleet root owns the backend,
@@ -22,7 +22,7 @@ project-membership resource sets. `services.tf` passes shared references and
 `shared.tf` retains the earlier rename and archive-key move chains.
 
 `receiver.tf` holds the opt-in receiver
-directory Droplet, firewall and DNS record; import the existing Droplet and record as the
+directory Droplet and DNS record; import the existing Droplet and record as the
 [receiver deployment](../../../receiver/digitalocean/README.md#infrastructure)
 describes before enabling it. Use the [transparent deployment target](../../../../docs/transparent/deployment.md)
 and [verified-status record](../../../../docs/transparent/status.md) before changing them.
@@ -82,15 +82,8 @@ exactly one destroy per removed name and one in-place project change. The
 [deployment target](../../../../docs/transparent/deployment.md) has the full
 procedure.
 
-`transparent_txid_display_port_enabled` (default false) opens port 8095 on the
-transparent worker firewall. The public router reaches the one-query txid site
-(`/v2/txid/`) through it, because the site's own firewall admits 8095 only from
-the coordinator. Production sets it in `txid-display.auto.tfvars` in the
-coordinator's root. Keep that file when the root is refreshed, or the next plan
-cuts the router off from `/v2/txid/`. No deploy phase writes it any more.
-
 `transparent_txid_display_site_enabled` (default false) creates the one-query
-txid display site: its host, firewall and DNS record
+txid display site: its host and DNS record
 (the `transparent-tx-detail` module). Set it in an `*.auto.tfvars` file in the
 coordinator's root, like the display archive count.
 
@@ -113,7 +106,6 @@ $168/month in worker compute at the verified list price.
 The public origin and dashboard are served at
 `https://enhance-pir.valargroup.dev`.
 
-The Enhance coordinator intentionally has no DigitalOcean cloud firewall, so SSH
-access does not depend on the operator or VPN source IP. Private coordinator
-services must bind to loopback. Worker and auxiliary-host firewalls remain managed
-here; `allowed_ssh_cidrs` applies to those hosts.
+Wallet PIR hosts intentionally have no DigitalOcean cloud firewalls. SSH access
+does not depend on operator or VPN source addresses. Bind private services to
+loopback or the VPC interface; public routing remains owned by Caddy.

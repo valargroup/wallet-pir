@@ -5,9 +5,7 @@
 #
 # The host runs one combined display worker and fronts the hostname with Caddy,
 # rendered by `wallet-pir-deploy.py txid-display-deploy --phase route` from a
-# site request. It shares the worker tag for the common worker firewall and has
-# its own firewall for public TLS and the coordinator's worker port, so it does
-# not depend on the router lineage's `transparent_txid_display_port_enabled`.
+# site request. It shares the worker tag with the other display hosts.
 #
 # Sizing (status.md, 2026-10-11): 191 runtimes of 80.04 MiB at the 3.51M-height
 # journal end, 15.2 GiB, plus about 2.4 GiB a year; display-01's memory and

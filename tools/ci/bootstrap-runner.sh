@@ -10,7 +10,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq build-essential ca-certificates curl git gh jq shellcheck \
   clang libclang-dev protobuf-compiler pkg-config libssl-dev python3 nodejs \
-  rsync unzip libicu74 ufw
+  rsync unzip libicu74
 
 # Different Unix identities and 0700 homes separate fast/PR state from trusted
 # main/release state on the same physical machine. Neither user gets sudo.
@@ -33,7 +33,7 @@ for lane in fast build; do
   fi
 done
 
-# Restrict login to public-key SSH. CI needs outbound access only.
+# Restrict login to public-key SSH.
 cat >/etc/ssh/sshd_config.d/10-wallet-pir-ci.conf <<'SSH'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -41,10 +41,6 @@ PermitRootLogin prohibit-password
 SSH
 sshd -t
 systemctl reload ssh
-ufw allow 22/tcp
-ufw default deny incoming
-ufw default allow outgoing
-ufw --force enable
 
 # Package upgrades must not restart runners in the middle of a job.
 mkdir -p /etc/needrestart/conf.d

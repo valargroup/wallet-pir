@@ -24,7 +24,8 @@ class RpcDependencyTests(unittest.TestCase):
         self.assertEqual(graph.rpc_dependency_problems(self.graph()), [])
 
     def test_runtime_or_build_node_or_database_dependency_is_rejected(self):
-        for name in ('zakura-chain', 'zakura-state', 'librocksdb-sys'):
+        for name in ('zakura-chain', 'zakura-state', 'librocksdb-sys', 'zakura-rocksdb',
+                     'zakura-librocksdb-sys'):
             for kind in (None, 'build'):
                 with self.subTest(name=name, kind=kind):
                     self.assertTrue(graph.rpc_dependency_problems(self.graph(True, kind, name)))
@@ -54,9 +55,11 @@ class RpcDependencyTests(unittest.TestCase):
 class ProductDependencyTests(unittest.TestCase):
     def graph(self, features, receiver=False):
         packages = [{'id': 'adapter', 'name': 'zakura-server-chain'}]
+        nodes = [{'id': 'adapter', 'features': features}]
         if receiver:
-            packages.append({'id': 'receiver', 'name': 'zakura-receiver-crypto'})
-        return {'packages': packages, 'resolve': {'nodes': [{'id': 'adapter', 'features': features}]}}
+            packages.append({'id': 'receiver', 'name': 'zakura-pir-protocol'})
+            nodes.append({'id': 'receiver', 'features': ['receiver', 'receiver-crypto']})
+        return {'packages': packages, 'resolve': {'nodes': nodes}}
 
     def test_each_product_is_isolated_and_receiver_recovery_is_optional(self):
         for product in graph.PRODUCTS:

@@ -129,6 +129,9 @@ fn changes_during_bounded_reads_and_cancellation_return_no_success() {
             if polls.get() == 2 {
                 match change {
                     "write" => {
+                        // Restoring mtime leaves ctime as the change signal. Cross
+                        // the supported one-second timestamp tick before writing.
+                        std::thread::sleep(Duration::from_millis(1100));
                         writer.write_all_at(&[9], 0).unwrap();
                         writer.set_modified(modified).unwrap();
                     }

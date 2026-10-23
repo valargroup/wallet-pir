@@ -1,18 +1,18 @@
 //! Process-local reuse of verified public fixtures, never wallets or service state.
 #![allow(dead_code)]
-use receiver_directory::{
-    shards::ShardFilter,
-    snapshot::{Snapshot, ROW_BYTES},
-    witness,
-};
-use receiver_pir::{
-    server::{Server, WitnessServer},
-    Error, MIN_ROWS,
-};
 use receiver_pir_server::{publication::Segment, tables::FilterSource, Publication};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex, OnceLock},
+};
+use zakura_pir_publisher::receiver::witness::TablePublisherExt as _;
+use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::MIN_ROWS;
+use zakura_pir_query_server::receiver::{
+    shards::ShardFilter,
+    snapshot::{Snapshot, ROW_BYTES},
+    witness,
 };
 
 // Only the fixed minimum geometry is retained. Larger geometry campaigns build

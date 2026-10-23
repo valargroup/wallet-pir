@@ -26,7 +26,7 @@ use zakura_pir_publisher::transparent::seal::DecoupledPolicy;
 
 pub(crate) use crate::history::distribution::advance_distribution_revision;
 #[cfg(all(test, feature = "fixtures"))]
-pub(crate) use crate::history::distribution::advance_distribution_revision_with_sync;
+pub(crate) use crate::history::distribution::advance_distribution_revision_with_write;
 use crate::history::publication::{self, PublishOptions};
 use crate::history::shard_filters::ShardFilters;
 use crate::ingest::blocks::build_fetched_block_events;

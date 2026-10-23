@@ -241,7 +241,9 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             {
                 for incident in &snapshot.monitoring.incidents {
                     if let Some(c) = &incident.condition {
-                        if (c.key.starts_with("domain_")
+                        if (c.key.starts_with("pending_commit_")
+                            || c.key.starts_with("pending_abort_")
+                            || c.key.starts_with("domain_")
                             || c.key.starts_with("coverage_worker_")
                             || c.key.starts_with("coverage_router_")
                             || c.key.starts_with("router_"))
@@ -711,8 +713,6 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 "enhance_publication_last_advancement_unix_seconds",
                 "enhance_publication_blocked",
                 "enhance_publication_consecutive_failures",
-                "enhance_pending_commit_oldest_seconds",
-                "enhance_pending_abort_oldest_seconds",
             ]
             .iter()
             .all(|name| {
@@ -803,26 +803,6 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             },
             coordinator_sample,
         );
-        for kind in ["commit", "abort"] {
-            let value = d
-                .snapshot_gauges
-                .get(&format!("enhance_pending_{kind}_oldest_seconds"))
-                .copied();
-            add(
-                format!("pending_{kind}_{severity}"),
-                format!("pending_{kind}"),
-                severity,
-                if coord {
-                    value.map(|v| v >= hold as f64)
-                } else {
-                    None
-                },
-                format!("oldest age {value:?}"),
-                format!(">= {hold}s"),
-                0,
-                coordinator_sample,
-            );
-        }
     }
     add(
         "chain_inactive".into(),
@@ -873,6 +853,17 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         );
     }
     for (source, ok) in sources {
+        // An unavailable source is observed on each evaluator tick. Recovery
+        // needs new source observations, not repeated ticks over one sample.
+        let sample = if ok {
+            match source.as_str() {
+                "placement" => epoch(d.placement_success).min(coordinator_sample),
+                "publication_metrics" => coordinator_sample,
+                _ => now,
+            }
+        } else {
+            now
+        };
         for (severity, hold) in [("warning", 45), ("critical", 120)] {
             add(
                 format!("coverage_{source}_{severity}"),
@@ -882,7 +873,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 if ok { "fresh" } else { "unavailable" }.into(),
                 format!("unavailable for {hold}s"),
                 hold,
-                now,
+                sample,
             );
         }
     }

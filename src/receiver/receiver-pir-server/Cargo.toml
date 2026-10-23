@@ -8,8 +8,8 @@ description = "Receiver PIR serving with immutable publications and atomic sessi
 # A serving library only: pir-query-server is the entrypoint.
 autobins = false
 [dependencies]
-receiver-pir = { package = "zakura-receiver-pir", version = "=0.0.1-rc2", features = ["server"] }
-receiver-directory = { package = "zakura-receiver-directory", version = "=0.0.1-rc2" }
+# Receiver formats, sessions and the evaluator; serving needs nothing from the publisher.
+zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
 axum = "0.7"
 hex = "0.4"
 pir-control = { path = "../../shared/pir-control", features = ["admission"] }
@@ -26,5 +26,8 @@ qualification-tests = []
 
 [dev-dependencies]
 tempfile = "3"
+# Tests build publications and query them as a wallet does.
+zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
+zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, features = ["receiver"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["io-util", "macros", "net"] }

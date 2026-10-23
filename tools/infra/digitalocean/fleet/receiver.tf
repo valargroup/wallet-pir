@@ -1,7 +1,6 @@
 # The receiver directory's single indexing and serving Droplet
 # (ops/receiver/digitalocean). Opt in to manage it; the existing Droplet and DNS
-# record are imported as its README describes, never recreated, and the firewall,
-# which does not exist yet, is created.
+# record are imported as its README describes, never recreated.
 variable "receiver_pir_enabled" {
   type    = bool
   default = false
@@ -28,53 +27,6 @@ resource "digitalocean_project_resources" "receiver_pir" {
   count     = var.receiver_pir_enabled ? 1 : 0
   project   = var.wallet_pir_project_id
   resources = [digitalocean_droplet.receiver_pir[0].urn]
-}
-
-# Public TLS for the wallet routes; the service port only from the PIR monitor,
-# whose probe reads health over the private network. SSH also admits the
-# coordinator's public /32: it is in another region's private network, and the
-# locked deploys and changes run from it.
-resource "digitalocean_firewall" "receiver_pir" {
-  count       = var.receiver_pir_enabled ? 1 : 0
-  name        = "receiver-pir"
-  droplet_ids = [digitalocean_droplet.receiver_pir[0].id]
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "22"
-    source_addresses = concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  dynamic "inbound_rule" {
-    for_each = var.pir_monitor_enabled ? [18380] : []
-    content {
-      protocol           = "tcp"
-      port_range         = tostring(inbound_rule.value)
-      source_droplet_ids = [digitalocean_droplet.pir_monitor[0].id]
-    }
-  }
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "icmp"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
 }
 
 resource "cloudflare_dns_record" "receiver_pir" {

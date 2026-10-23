@@ -76,6 +76,43 @@ pub fn write_atomic_with(
     result
 }
 
+/// Replace a small record durably, using a private temporary for each attempt.
+///
+/// The parent must exist and is opened before the destination changes. The
+/// complete temporary is synced before rename, then the directory is synced.
+/// A failure after rename returns an error even though the whole new record
+/// may already be visible; callers must reconcile that uncertain write. Failed
+/// attempts clean up only their own temporary, including when `write` fails.
+pub fn replace_durable(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    replace_durable_with(path, write, |parent| File::open(parent), File::sync_all)
+}
+
+fn replace_durable_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+    open_directory: impl FnOnce(&Path) -> io::Result<File>,
+    sync_directory: impl FnOnce(&File) -> io::Result<()>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let directory = open_directory(parent)?;
+    // Match ordinary file creation, including the caller's umask. Callers
+    // writing private receipts can restrict the temporary in `write`.
+    use std::os::unix::fs::PermissionsExt;
+    let mut temporary = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o666))
+        .tempfile_in(parent)?;
+    write(temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    sync_directory(&directory)
+}
+
 /// Syncs a directory, so renames into it survive a crash.
 pub fn sync_dir(directory: &Path) -> io::Result<()> {
     File::open(directory)?.sync_all()
@@ -98,6 +135,56 @@ pub fn sha256_file(path: &Path) -> io::Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durable_replacement_refuses_directory_open_before_changing_the_record() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("record.json");
+        fs::write(&path, b"old").unwrap();
+        let error = replace_durable_with(
+            &path,
+            |_| panic!("must not write"),
+            |_| Err(io::Error::other("open refused")),
+            |_| panic!("must not sync"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("open refused"));
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+    }
+
+    #[test]
+    fn durable_replacement_reports_uncertainty_after_rename() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("record.json");
+        let error = replace_durable_with(
+            &path,
+            |file| file.write_all(b"whole"),
+            |p| File::open(p),
+            |_| Err(io::Error::other("sync refused")),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("sync refused"));
+        assert_eq!(fs::read(&path).unwrap(), b"whole");
+        replace_durable(&path, |file| file.write_all(b"confirmed")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"confirmed");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn failed_attempt_cannot_remove_another_writers_temporary_or_record() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("record.json");
+        fs::write(&path, b"old").unwrap();
+        let error = replace_durable(&path, |file| {
+            file.write_all(b"unfinished")?;
+            replace_durable(&path, |other| other.write_all(b"complete"))?;
+            Err(io::Error::other("interrupted"))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("interrupted"));
+        assert_eq!(fs::read(&path).unwrap(), b"complete");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn sha256_matches_fixed_short_and_streamed_vectors() {

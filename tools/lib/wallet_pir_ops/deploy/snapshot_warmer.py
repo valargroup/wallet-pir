@@ -16,6 +16,30 @@ def sync_directory(path):
         os.close(descriptor)
 
 
+def regular_file(entry, source):
+    """Resolve only direct, relative aliases into this publication's object store.
+
+    The restore preparation still verifies artifact contents. Pinning holds the
+    actual regular-file inode so collection cannot invalidate that verification.
+    Directory links and aliases outside the sibling object store remain refused.
+    """
+    mode = entry.lstat().st_mode
+    if stat.S_ISREG(mode):
+        return entry
+    if not stat.S_ISLNK(mode):
+        raise ValueError('snapshot contains a non-regular file')
+    objects = source.parent / '.objects'
+    link = os.readlink(entry)
+    digest = Path(link).name
+    target = objects / digest
+    if (objects.is_symlink() or not objects.is_dir()
+            or not re.fullmatch(r'[0-9a-f]{64}', digest)
+            or link != os.path.relpath(target, entry.parent)
+            or not stat.S_ISREG(target.lstat().st_mode)):
+        raise ValueError('snapshot contains an unsupported object alias')
+    return target
+
+
 def pin(source, destination):
     source, destination = Path(source), Path(destination)
     if source.is_symlink() or not source.is_dir() or destination.exists():
@@ -33,10 +57,16 @@ def pin(source, destination):
             (destination / relative / name).mkdir(mode=0o700)
         for name in files:
             entry = Path(directory) / name
-            if not stat.S_ISREG(entry.lstat().st_mode):
-                raise ValueError('snapshot contains a non-regular file')
+            target = regular_file(entry, source)
             if not name.endswith('.partial'):
-                os.link(entry, destination / relative / name, follow_symlinks=False)
+                before = target.lstat()
+                pinned = destination / relative / name
+                os.link(target, pinned, follow_symlinks=False)
+                after = pinned.lstat()
+                if not stat.S_ISREG(after.st_mode) or (
+                        (before.st_dev, before.st_ino, before.st_size)
+                        != (after.st_dev, after.st_ino, after.st_size)):
+                    raise ValueError('snapshot file changed while it was pinned')
                 count += 1
     for directory, _, _ in os.walk(destination, topdown=False):
         sync_directory(directory)
@@ -56,8 +86,11 @@ def same(source, pinned):
             compared += 1
             expected = (Path(directory) / name).lstat()
             try:
-                observed = None if relative.parts and live.is_symlink() else (live / name).lstat()
-            except FileNotFoundError:
+                parents = [source.joinpath(*relative.parts[:index])
+                           for index in range(1, len(relative.parts) + 1)]
+                observed = (None if any(not stat.S_ISDIR(parent.lstat().st_mode) for parent in parents)
+                            else regular_file(live / name, source).lstat())
+            except (FileNotFoundError, ValueError, NotADirectoryError):
                 observed = None
             if observed is None or not stat.S_ISREG(observed.st_mode) or (
                     (observed.st_dev, observed.st_ino, observed.st_size)

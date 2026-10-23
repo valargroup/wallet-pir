@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Use wallet-libraries' functional-area PIR packages for Receiver: formats and
+  validation from `zakura-pir-protocol`, publication building from
+  `zakura-pir-publisher`, the evaluator from `zakura-pir-query-server` and the client
+  from `zakura-pir-client`, replacing `zakura-receiver-crypto`,
+  `zakura-receiver-directory` and `zakura-receiver-pir`. Serving no longer
+  depends on the PIR client.
 - Publish history as an inventory of sealed Receiver shards and a recent tier.
   Shards seal automatically on exact payment placement and companion witness
   capacity in the pinned `--shard-rows` geometry, or after `--shard-target`

@@ -41,10 +41,10 @@ It is a second site on the coordinator's Caddy
 rendered by `wallet_pir_ops.deploy.coordinator_edge`, DNS in
 `tools/infra/digitalocean/fleet/shared.tf`). Enhance, Status and Transparent
 compact-filter operations reach the coordinator's loopback services. History
-shard maps and shard filters reach the current publisher on its private listener;
-Transparent queries and Receiver cross to `transparent-pir` and
+shard maps, shard filters, Transparent queries and Receiver cross to `transparent-pir` and
 `receiver-pir` over verified HTTPS, naming each origin as Host and SNI. The edge
-translates canonical paths to existing backend aliases where needed. It
+translates canonical paths to existing backend aliases where needed. Recovery
+metadata and encrypted History queries share the query server's active publication. It
 serves no legacy alias and no operator path. The product hosts keep serving both
 forms for released wallets. Receiver's edge trusts only the coordinator's
 address to forward `X-Forwarded-For`, so its per-client admission still keys on
@@ -66,6 +66,8 @@ When the coordinator still has the older flat Terraform root, use
 unified DNS resource under the production lock. Review and apply its saved
 Terraform plan through the existing coordinator Terraform wrapper. This preserves
 the resource address used by the fleet root and does not update any service.
+Remove the staged `wallet-unified-dns.tf` when installing a fleet root whose
+`shared.tf` already declares that record, keeping its existing Terraform state address.
 
 ## Features
 

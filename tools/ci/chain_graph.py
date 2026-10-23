@@ -47,7 +47,8 @@ NODE = {
     'zakura-network', 'zakura-node-services', 'zakura-rpc', 'zakura-script',
     'zakura-state', 'zakura-test',
 }
-DATABASE = {'rocksdb', 'librocksdb-sys'}
+# RocksDB under its upstream names and the node's renamed fork.
+DATABASE = {'rocksdb', 'librocksdb-sys', 'zakura-rocksdb', 'zakura-librocksdb-sys'}
 # The typed transaction decoder and the shielded proving stacks behind it.
 SHIELDED = {
     'zakura-primitives', 'zakura-orchard', 'zakura-orchard-legacy', 'zakura-sapling-crypto',
@@ -107,7 +108,10 @@ def product_dependency_problems(graph, product):
     errors = []
     if active != ({product} if product else set()):
         errors.append(f'{product}: unexpected active adapters {sorted(active)}')
-    if product != 'receiver' and any(p['name'] == 'zakura-receiver-crypto' for p in graph['packages']):
+    recovery = any(p['name'] == 'zakura-pir-protocol'
+                   and 'receiver-crypto' in nodes.get(p['id'], {}).get('features', [])
+                   for p in graph['packages'])
+    if product != 'receiver' and recovery:
         errors.append(f'{product}: resolves receiver recovery')
     return errors
 

@@ -9,11 +9,6 @@
 //! Sealed shards' receiver filters are written here too, named by digest, and served
 //! from these files through the same cache, so inventories share one source per filter
 //! and hold none of its bytes.
-use receiver_directory::{shards::ShardFilter, snapshot::Snapshot, witness, Hash};
-use receiver_pir::{
-    server::{Server, WitnessServer},
-    Error, Manifest, WitnessManifest,
-};
 use receiver_pir_server::{
     publication::Segment,
     tables::{FilterSource, Loaded, Source, Tables},
@@ -24,6 +19,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use zakura_pir_publisher::receiver::session::Error;
+use zakura_pir_publisher::receiver::session::Manifest;
+use zakura_pir_publisher::receiver::session::WitnessManifest;
+use zakura_pir_publisher::receiver::{shards::ShardFilter, snapshot::Snapshot, witness, Hash};
+use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
 
 /// The data directory's subdirectory holding table files.
 pub const TABLES_DIR: &str = "tables";
@@ -124,7 +124,7 @@ impl Durable {
                 // table below as a leftover, and its revision is prepared afresh.
                 let Ok(bytes) = crate::serve_publication::read_bounded(
                     &path,
-                    receiver_pir::MAX_MANIFEST_BYTES as u64,
+                    zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
                 ) else {
                     continue;
                 };
@@ -398,7 +398,7 @@ impl Durable {
         let rows = manifest.directory.rows;
         let public = read(
             &self.path(name, "public"),
-            receiver_pir::public_bytes(rows)?,
+            zakura_pir_publisher::receiver::native::public_bytes(rows)?,
         )?;
         let (directory, path) = (manifest.directory.clone(), self.path(name, "rows"));
         let source = Source::payments(manifest, public, move || {
@@ -420,7 +420,7 @@ impl Durable {
         let rows = manifest.table.rows;
         let public = read(
             &self.path(name, "public"),
-            receiver_pir::public_bytes(rows)?,
+            zakura_pir_publisher::receiver::native::public_bytes(rows)?,
         )?;
         let (table, path) = (manifest.table.clone(), self.path(name, "rows"));
         let source = Source::witnesses(manifest, public, payments, move || {
@@ -454,8 +454,11 @@ impl Durable {
     /// A table's session manifest file, within the manifest size bound.
     fn manifest(&self, name: Name) -> Result<Vec<u8>, Error> {
         let path = self.path(name, "json");
-        crate::serve_publication::read_bounded(&path, receiver_pir::MAX_MANIFEST_BYTES as u64)
-            .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
+        crate::serve_publication::read_bounded(
+            &path,
+            zakura_pir_publisher::receiver::session::MAX_MANIFEST_BYTES as u64,
+        )
+        .map_err(|e| Error::Transport(format!("table file {}: {e}", path.display())))
     }
 }
 
@@ -468,7 +471,7 @@ fn read(path: &Path, len: usize) -> Result<Vec<u8>, Error> {
 
 /// The bytes of a `rows`-row table's rows.
 fn rows_bytes(rows: u32) -> usize {
-    rows as usize * receiver_directory::snapshot::ROW_BYTES
+    rows as usize * zakura_pir_publisher::receiver::snapshot::ROW_BYTES
 }
 
 /// Prepares a payment table, reusing identical fixtures in tests.

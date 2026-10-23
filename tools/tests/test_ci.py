@@ -130,8 +130,8 @@ class BoundaryTests(unittest.TestCase):
             self.assertEqual([p['manifest'] for p in packages], ['new/Cargo.toml'])
             self.assertTrue(boundary.violations(packages, set()))
 
-    def edge(self, name, kind='dependencies', git=''):
-        return {'name': name, 'kind': kind, 'git': git}
+    def edge(self, name, kind='dependencies', git='', features=()):
+        return {'name': name, 'kind': kind, 'git': git, 'features': list(features)}
 
 
     def test_every_dependency_kind_crosses_the_boundary(self):
@@ -252,7 +252,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_library_adapters_and_pir_cryptography_are_not_common(self):
         packages = [{'name': 'svc', 'manifest': 'svc/Cargo.toml', 'dependencies': [
-            self.edge('zakura-receiver-crypto', git='https://github.com/zakura-core/wallet-libraries.git'),
+            self.edge('zakura-pir-protocol', git='https://github.com/zakura-core/wallet-libraries.git'),
             self.edge('ipir-sp'), self.edge('reinspiring'), self.edge('valar-spiral-rs'),
             self.edge('sha2'), self.edge('rand')]}]
         self.assertEqual(boundary.violations(packages, []), [])
@@ -263,13 +263,16 @@ class BoundaryTests(unittest.TestCase):
                    'dependencies': [self.edge(name, git=library) for name in sorted(boundary.CANONICAL)]}
         self.assertEqual(boundary.violations([package], []), [])
         for name in [boundary.CODEC, 'zakura-wallet-lib', 'zakura-server-chain']:
-            changed = {**package, 'dependencies': [self.edge(name, git=library)]}
+            features = [boundary.CODEC_FEATURE] if name == boundary.CODEC else []
+            changed = {**package, 'dependencies': [self.edge(name, git=library, features=features)]}
             self.assertEqual(len(boundary.violations([changed], [])), 1, name)
         self.assertEqual(boundary.violations([{**changed, 'name': 'receiver-indexer'}], []), [])
 
     def test_workspace_crypto_unification_does_not_excuse_standalone_crypto_or_nodes(self):
         def node(name, deps=()):
-            return {'id': name, 'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
+            features = [boundary.CODEC_FEATURE] if name == 'codec' else []
+            return {'id': name, 'features': features,
+                    'deps': [{'pkg': d, 'dep_kinds': [{'kind': None}]} for d in deps]}
         metadata = {
             'packages': [
                 {'id': 'pir', 'name': 'receiver-pir-server', 'source': None},
@@ -321,16 +324,18 @@ class BoundaryTests(unittest.TestCase):
         def node(name, dependencies=()):
             return {'id': name, 'deps': [{'pkg': dep, 'dep_kinds': [{'kind': None}]}
                                         for dep in dependencies]}
-        metadata = {
-            'packages': [dict(id=name, name=name, source=None) for name in
-                         ('transparent-publisher', 'zakura-server-chain', 'rocksdb')],
-            'resolve': {'nodes': [node('transparent-publisher', ['zakura-server-chain']),
-                                  node('zakura-server-chain'), node('rocksdb')]},
-        }
-        self.assertEqual(boundary.database_reader_violations(metadata), [])
-        metadata['resolve']['nodes'][1] = node('zakura-server-chain', ['rocksdb'])
-        self.assertEqual(boundary.database_reader_violations(metadata),
-                         ['transparent-publisher: default build resolves rocksdb'])
+        for database in ('rocksdb', 'librocksdb-sys', 'zakura-rocksdb', 'zakura-librocksdb-sys'):
+            with self.subTest(database=database):
+                metadata = {
+                    'packages': [dict(id=name, name=name, source=None) for name in
+                                 ('transparent-publisher', 'zakura-server-chain', database)],
+                    'resolve': {'nodes': [node('transparent-publisher', ['zakura-server-chain']),
+                                          node('zakura-server-chain'), node(database)]},
+                }
+                self.assertEqual(boundary.database_reader_violations(metadata), [])
+                metadata['resolve']['nodes'][1] = node('zakura-server-chain', [database])
+                self.assertEqual(boundary.database_reader_violations(metadata),
+                                 [f'transparent-publisher: default build resolves {database}'])
 
     def test_standalone_consumer_keeps_the_workspace_dependency_sources(self):
         with tempfile.TemporaryDirectory() as directory:

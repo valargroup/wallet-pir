@@ -1,4 +1,59 @@
 use super::*;
+
+#[tokio::test]
+async fn publication_metrics_report_failures_without_claiming_advancement() {
+    use tower::ServiceExt;
+    let root = tempfile::tempdir().unwrap();
+    let publisher = EnhancePublisher::open(
+        &root.path().join("publisher"),
+        rpc(root.path(), "http://127.0.0.1:1"),
+    )
+    .unwrap();
+    async fn metrics(p: &EnhancePublisher) -> String {
+        let response = p
+            .router()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/metrics")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        String::from_utf8(
+            axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap()
+    }
+    let text = metrics(&publisher).await;
+    assert!(!text.contains("last_advancement"));
+    assert!(text.contains("enhance_publication_blocked 1\n"));
+    for _ in 0..3 {
+        publisher.publication_finished(Some("preparation failed".into()));
+    }
+    let text = metrics(&publisher).await;
+    assert!(text.contains("enhance_publication_consecutive_failures 3\n"));
+    assert!(!text.contains("last_advancement"));
+    publisher.state.lock().unwrap().last_advancement =
+        Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(100));
+    publisher.publication_finished(None);
+    let text = metrics(&publisher).await;
+    assert!(text.contains("enhance_publication_consecutive_failures 0\n"));
+    assert!(text.contains("enhance_publication_last_advancement_unix_seconds 100\n"));
+    // A successful completion does not authorize a withdrawn publication.
+    assert!(text.contains("enhance_publication_blocked 1\n"));
+    drop(publisher);
+    let reopened = EnhancePublisher::open(
+        &root.path().join("publisher"),
+        rpc(root.path(), "http://127.0.0.1:1"),
+    )
+    .unwrap();
+    assert!(!metrics(&reopened).await.contains("last_advancement"));
+}
 use enhance_shared::types::{DatabaseId, ENHANCE_LAYOUT};
 use std::fs;
 fn journal(root: &Path) -> RecordJournal {

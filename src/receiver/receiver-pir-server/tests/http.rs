@@ -9,18 +9,19 @@ mod prepared;
 mod router;
 use common::{manifest, receiver, record};
 use history::{history, Accepted, Session};
-use receiver_directory::snapshot::Snapshot;
-use receiver_pir::{
-    server::Server,
-    transport::{InventoryClient, Transport},
-    Client, Error, MIN_ROWS,
-};
 use receiver_pir_server::{Publication, Publications};
 use router::router_with_publications;
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
+use zakura_pir_client::receiver::transport::{InventoryClient, Transport};
+use zakura_pir_client::receiver::Client;
+use zakura_pir_publisher::receiver::snapshot::SnapshotPublisherExt as _;
+use zakura_pir_query_server::receiver::server::Server;
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::MIN_ROWS;
+use zakura_pir_query_server::receiver::snapshot::Snapshot;
 
 /// The chain anchor that [`manifest`] ends at.
 fn accepted() -> Accepted {
@@ -81,7 +82,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .send()
         .await
         .unwrap()
-        .json::<receiver_pir::inventory::Head>()
+        .json::<zakura_pir_query_server::receiver::inventory::Head>()
         .await
         .unwrap();
     let mut next = snapshot_rows(2, MIN_ROWS * 2);
@@ -509,8 +510,10 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .post(format!("{}/v1/receiver/query", server.origin))
         .body(vec![
             0;
-            receiver_pir::query_bytes(receiver_pir::MAX_ROWS)
-                .unwrap()
+            zakura_pir_query_server::receiver::native::query_bytes(
+                zakura_pir_query_server::receiver::session::MAX_ROWS
+            )
+            .unwrap()
                 + 1
         ])
         .send()
@@ -607,12 +610,12 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
     );
     assert_eq!(
         first.body().len(),
-        receiver_pir::query_bytes(MIN_ROWS).unwrap()
+        zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap()
     );
     let answer = server.respond(first.body()).unwrap();
     assert_eq!(
         answer.len(),
-        receiver_pir::response_bytes(MIN_ROWS).unwrap()
+        zakura_pir_query_server::receiver::native::response_bytes(MIN_ROWS).unwrap()
     );
     assert!(
         client.decode(second, &answer).is_err(),
@@ -647,8 +650,8 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
     println!(
         "public_bytes={} query_bytes={} response_bytes={}",
         server.public().len(),
-        receiver_pir::query_bytes(MIN_ROWS).unwrap(),
-        receiver_pir::response_bytes(MIN_ROWS).unwrap()
+        zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap(),
+        zakura_pir_query_server::receiver::native::response_bytes(MIN_ROWS).unwrap()
     );
 }
 
@@ -658,7 +661,9 @@ fn reject_corrupt_rows_before_preprocessing() {
     snapshot.data[0] ^= 1;
     assert!(matches!(
         Server::new(snapshot),
-        Err(Error::Directory(receiver_directory::Error::Malformed))
+        Err(Error::Directory(
+            zakura_pir_query_server::receiver::Error::Malformed
+        ))
     ));
     // No PIR profile serves a smaller table.
     let small = Snapshot::build(manifest(MIN_ROWS / 2), &[]).unwrap();
@@ -667,10 +672,15 @@ fn reject_corrupt_rows_before_preprocessing() {
 
 #[test]
 fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
-    for rows in [16_384, 32_768, receiver_pir::MAX_ROWS] {
+    for rows in [
+        16_384,
+        32_768,
+        zakura_pir_query_server::receiver::session::MAX_ROWS,
+    ] {
         let mut m = manifest(rows);
         // Select the upper half so truncating to the previous geometry cannot pass.
-        while receiver_directory::snapshot::row_for(&m, &receiver(), 0).unwrap() < rows as usize / 2
+        while zakura_pir_query_server::receiver::snapshot::row_for(&m, &receiver(), 0).unwrap()
+            < rows as usize / 2
         {
             m.salt[0] = m.salt[0].wrapping_add(1);
         }
@@ -679,17 +689,24 @@ fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
         let client = Client::new(server.manifest().clone(), server.public()).unwrap();
         assert_eq!(
             server.public().len(),
-            receiver_pir::public_bytes(rows).unwrap()
+            zakura_pir_query_server::receiver::native::public_bytes(rows).unwrap()
         );
         for record in records {
             let q = client.prepare(receiver(), record.page).unwrap();
-            assert_eq!(q.body().len(), receiver_pir::query_bytes(rows).unwrap());
+            assert_eq!(
+                q.body().len(),
+                zakura_pir_query_server::receiver::native::query_bytes(rows).unwrap()
+            );
             let answer = server.respond(q.body()).unwrap();
-            assert_eq!(answer.len(), receiver_pir::response_bytes(rows).unwrap());
+            assert_eq!(
+                answer.len(),
+                zakura_pir_query_server::receiver::native::response_bytes(rows).unwrap()
+            );
             assert_eq!(client.decode(q, &answer).unwrap(), Some(record));
         }
         let mut wrong_size = client.prepare(receiver(), 0).unwrap().body().to_vec();
-        wrong_size.truncate(receiver_pir::query_bytes(MIN_ROWS).unwrap());
+        wrong_size
+            .truncate(zakura_pir_query_server::receiver::native::query_bytes(MIN_ROWS).unwrap());
         assert!(matches!(server.respond(&wrong_size), Err(Error::Malformed)));
     }
 }
@@ -697,12 +714,17 @@ fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
 #[test]
 fn geometry_contract_accepts_only_supported_row_counts() {
     for rows in [0, 1, 4096, 8193, 131072, u32::MAX] {
-        assert!(receiver_pir::validate_rows(rows).is_err());
-        assert!(receiver_pir::query_bytes(rows).is_err());
+        assert!(zakura_pir_query_server::receiver::session::validate_rows(rows).is_err());
+        assert!(zakura_pir_query_server::receiver::native::query_bytes(rows).is_err());
     }
-    for rows in [MIN_ROWS, 16_384, 32_768, receiver_pir::MAX_ROWS] {
-        let m = receiver_pir::Manifest {
-            protocol: receiver_pir::PROTOCOL.into(),
+    for rows in [
+        MIN_ROWS,
+        16_384,
+        32_768,
+        zakura_pir_query_server::receiver::session::MAX_ROWS,
+    ] {
+        let m = zakura_pir_query_server::receiver::session::Manifest {
+            protocol: zakura_pir_query_server::receiver::session::PROTOCOL.into(),
             directory: manifest(rows),
             public_digest: [0; 32],
         };
@@ -716,7 +738,7 @@ fn geometry_contract_accepts_only_supported_row_counts() {
 /// inventory lacks is 404 and an inventory not served is 410.
 #[tokio::test]
 async fn a_multi_segment_shard_and_its_filter_serve_through_the_library_client() {
-    use receiver_directory::shards::{Coverage, ShardFilter};
+    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
     let other = common::seeded_receiver(1);
     let first = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)]).unwrap();
     let mut second_record = record(0, 1);
@@ -800,9 +822,9 @@ async fn a_multi_segment_shard_and_its_filter_serve_through_the_library_client()
 /// longer holds the digest is a server error rather than wrong bytes.
 #[tokio::test]
 async fn a_stored_shard_filter_is_read_into_the_table_budget() {
-    use receiver_directory::shards::{Coverage, ShardFilter};
     use receiver_pir_server::tables::FilterSource;
     use std::sync::Arc;
+    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
     let snapshot = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)]).unwrap();
     let coverage = Coverage {
         start_height: 100,
@@ -868,8 +890,8 @@ async fn a_stored_shard_filter_is_read_into_the_table_budget() {
 /// canonical namespace.
 #[tokio::test]
 async fn canonical_and_legacy_receiver_routes_answer_identically() {
-    use receiver_directory::blocks::{BlockFilter, BlockId};
-    use receiver_directory::shards::{Coverage, ShardFilter};
+    use zakura_pir_query_server::receiver::blocks::{BlockFilter, BlockId};
+    use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
     let snapshot = snapshot(2);
     let table = prepared::companion_table(&snapshot, &[[7; 512], [9; 512]]);
     let coverage = Coverage {
@@ -901,7 +923,7 @@ async fn canonical_and_legacy_receiver_routes_answer_identically() {
     .unwrap()
     .prepare(receiver(), 0)
     .unwrap();
-    let witness_query = receiver_pir::WitnessClient::new(
+    let witness_query = zakura_pir_client::receiver::WitnessClient::new(
         witnesses.witness_manifest().unwrap().clone(),
         witnesses.public(),
     )
