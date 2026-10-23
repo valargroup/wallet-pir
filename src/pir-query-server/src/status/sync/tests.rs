@@ -1548,9 +1548,30 @@ async fn an_authority_conflict_reuses_loaded_work_but_requires_a_new_live_answer
 
 /// A prepared candidate cannot carry authority across a withdrawal, recovery
 /// or negative answer, even when all of its bytes were already loaded.
+// One case per answer: each builds its own published candidate, so together
+// they would exceed the ordinary per-case budget.
 #[tokio::test(flavor = "multi_thread", worker_threads = 3)]
-async fn resumed_candidates_are_rejected_after_negative_authority() {
-    for mode in ["withdrawal", "recovery", "noncanonical", "replayed_answer"] {
+async fn resumed_candidates_are_rejected_after_withdrawal() {
+    resumed_candidate_is_rejected("withdrawal").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn resumed_candidates_are_rejected_after_recovery() {
+    resumed_candidate_is_rejected("recovery").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn resumed_candidates_are_rejected_after_a_noncanonical_anchor() {
+    resumed_candidate_is_rejected("noncanonical").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn resumed_candidates_are_rejected_after_a_replayed_answer() {
+    resumed_candidate_is_rejected("replayed_answer").await;
+}
+
+async fn resumed_candidate_is_rejected(mode: &str) {
+    {
         let (_root, worker, mut task, source, _tls, server) =
             worker_with_published_candidate().await;
         let original = source.current.read().unwrap().authority().unwrap();
