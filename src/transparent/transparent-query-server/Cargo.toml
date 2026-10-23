@@ -16,6 +16,8 @@ path = "src/lib.rs"
 default = []
 transparent-history = []
 transparent-detail = []
+# Scoped record-write injection for integration tests; absent in service builds.
+test-support = []
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
 portable-kernel = ["transparent-shared/portable-kernel"]
 
@@ -43,6 +45,7 @@ zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, featur
 zakura-pir-query-server = { version = "=0.0.1-rc2", default-features = false, features = ["transparent"] }
 
 [dev-dependencies]
+transparent-query-server = { path = ".", features = ["test-support"] }
 sysinfo = "0.36"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

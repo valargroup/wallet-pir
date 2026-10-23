@@ -3758,6 +3758,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
+ "transparent-query-server",
  "transparent-shared",
  "zakura-pir-client",
  "zakura-pir-protocol",
