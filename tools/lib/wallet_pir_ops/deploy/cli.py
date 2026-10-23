@@ -427,9 +427,12 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
             if not args.command.endswith(('-run', '-watchdog', '-prune-qualification')):
+                sandbox_repair = args.command.endswith(('-repair-sandbox-plan', '-repair-sandbox'))
                 request, _inventory = publisher.load_request(args.request, args.request_sha256,
-                    recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
-                check_installed(mutation=mutation, revision=request['release']['git_sha'])
+                    recovery=sandbox_repair or args.command.endswith(('-status', '-rollback', '-reconcile', '-restart', '-verify', '-continue')))
+                # Sandbox repair keeps the journal-pinned executable and only
+                # changes its unit; no new binary is installed by this recovery.
+                check_installed(mutation=mutation, revision=None if sandbox_repair else request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))
             return 0
