@@ -34,7 +34,12 @@ impl Controller {
     }
     pub fn can_prepare(&self) -> bool {
         let views = self.views.read().unwrap();
-        views.retained.iter().all(|g| Arc::strong_count(g) == 1)
+        // Metadata-only predecessors share the active allocations, so loading
+        // a successor still retains only two different prepared materials.
+        views
+            .retained
+            .iter()
+            .all(|g| Arc::strong_count(g) == 1 || g.shares_prepared_allocations(&views.active))
     }
     pub fn revoke(&self) {
         self.revoked.store(true, Ordering::SeqCst);
@@ -312,6 +317,37 @@ mod controller_tests {
         assert!(Arc::ptr_eq(next.public(), base.public()));
         // The source generation is left as it was.
         assert_eq!(base.manifest().generation, 1);
+    }
+
+    #[test]
+    fn metadata_pins_allow_one_new_material_but_prevent_a_third() {
+        let base = generation();
+        let controller = Controller::new(base.clone());
+        let pinned = controller.current();
+        controller
+            .activate(base.reidentified(2, 0, now_ms()))
+            .unwrap();
+        assert!(
+            controller.can_prepare(),
+            "the pin shares the active material"
+        );
+        let mut changed = base.manifest().clone();
+        changed.generation = 3;
+        let changed = Generation::public_only(changed, Arc::new(vec![1]));
+        controller.activate(changed.clone()).unwrap();
+        assert!(
+            !controller.can_prepare(),
+            "two different materials remain pinned"
+        );
+        controller
+            .activate(changed.reidentified(4, 0, now_ms()))
+            .unwrap();
+        assert!(
+            !controller.can_prepare(),
+            "refreshing metadata preserves older material pins"
+        );
+        drop(pinned);
+        assert!(controller.can_prepare());
     }
 
     #[test]

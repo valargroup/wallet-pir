@@ -33,6 +33,15 @@ remain unusable and their holds are released. A lost acknowledgment is retried o
 the normal shared polling schedule. No publisher heartbeat or new lease is added.
 Independent polling cannot combine material from different generations.
 
+A worker may finish a candidate selected from an eligible, live publisher
+envelope even if newer data appears while it loads. It keeps the original
+envelope as an in-memory proof of the exact inventory it selected. Before
+activation it observes current authority again, requires the same source and
+complete withdrawal/recovery fence, checks the candidate's original observation
+age, and obtains a live answer for its exact anchor under the current envelope.
+This is permission to finish still-fresh work, not to renew an old observation
+or to restore authority from cached files. The next pass advances again.
+
 ## HTTPS contract
 
 One explicitly configured TLS origin serves these routes:
@@ -98,6 +107,23 @@ Status configures the shared loop to wait one second after successful passes
 and back off after failures. The old five-second publisher-contact watchdog and
 push preparation/activation routes are removed. Retry timing is scheduling,
 never permission to answer queries.
+
+An ordinary authority conflict can retain one already-loaded candidate for the
+next pass; that pass repeats the authority and peer checks. Withdrawal, recovery,
+negative authority, expiry and changed worker pins prevent reuse. This avoids
+repeated loading while the publisher changes, without waiting for it to stop.
+After loading, a router can adopt fresher metadata already served by its worker
+when it names the same verified material; it still pins that exact worker view
+before activation. A worker sampled ahead of the router's publisher envelope
+causes another normal poll, rather than failure backoff.
+Retention blocks a third prepared material while an older one is pinned. Views
+that share every prepared allocation with the active view count as one material;
+their pins permit loading the next material, and metadata refreshes can advance.
+The private provider status distinguishes waiting for authority, worker data,
+worker recovery, retention, a worker pin, a worker commit, or a publication.
+Debug tracing in `status_query_server::service::sync` records the deferral reason
+and fetch, load, revalidation, authority-check and commit durations. Logs contain
+role and phase names, not wallet queries or session identifiers.
 
 The wallet protocol and its twenty-second observation-age limit are unchanged.
 That value remains the current product policy, not a cryptographic parameter.
