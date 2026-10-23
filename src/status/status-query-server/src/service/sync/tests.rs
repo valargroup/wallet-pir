@@ -1421,7 +1421,8 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
-        assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+        // Generation 6 reuses generation 5's database, so the load of the new
+        // material follows that already-published identity in the same pass.
         assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
     }
     assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
