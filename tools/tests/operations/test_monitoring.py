@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT / 'tools/tests/operations/deploy'))
 from fake_fleet import FakeFleet  # noqa: E402
-from wallet_pir_ops import monitoring, monitoring_certs  # noqa: E402
+from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install  # noqa: E402
 from wallet_pir_ops.deploy import units  # noqa: E402
 
 COORDINATOR = {'host_id': 'coordinator', 'address': '10.0.0.2', 'units': ['pir-apm.service'],
@@ -149,6 +149,78 @@ class Certificates(unittest.TestCase):
         with fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock'):
             with self.assertRaises(Exception):
                 monitoring_certs.install(fake, lock(), 'w1', newer)
+
+
+class HostTransport:
+    """A controller's host access over one fake host: files by path, and a sidecar that starts."""
+
+    def __init__(self, sidecar_digest):
+        self.files, self.commands, self.digest = {}, [], sidecar_digest
+        self.started = False
+
+    def run(self, host, command, data=None, timeout=120):
+        self.commands.append(command)
+        if data is not None:
+            self.files[command.split('cat > ')[1].split('.next')[0]] = data
+        if 'systemctl restart' in command:
+            self.started = True
+        if command.startswith('curl'):
+            config = json.loads(self.files[monitoring.CONFIG])
+            return json.dumps({'ready': self.started, 'binary_sha256': self.digest,
+                               'config_digest': monitoring.config_digest(config)})
+        return ''
+
+    def copy(self, host, sources, destination, **_):
+        self.files[destination] = Path(sources[0]).read_bytes()
+
+
+class ElasticEnrollment(unittest.TestCase):
+    def test_controller_install_issues_credentials_and_returns_the_enrollment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitoring_certs.issue_ca(root / 'ca')
+            environ = {monitoring_install.CA_PEM: (root / 'ca/ca.pem').read_text(),
+                       monitoring_install.CA_KEY: (root / 'ca/ca.key').read_text()}
+            credentials = monitoring_install.issue_from_environment('recent-09', environ)
+            self.assertIn(b'BEGIN CERTIFICATE', credentials['server.pem'])
+            with self.assertRaisesRegex(RuntimeError, 'runtime references'):
+                monitoring_install.issue_from_environment('recent-09', {})
+            binary = root / 'pir-apm-sidecar'
+            binary.write_bytes(b'sidecar')
+            import hashlib
+            transport = HostTransport(hashlib.sha256(b'sidecar').hexdigest())
+            settings = {'host_id': 'recent-09', 'address': '10.0.0.19'}
+            record = monitoring_install.install_and_enroll(transport, '10.0.0.19', settings, binary=binary,
+                                                           credentials=credentials, sleep=lambda _: None)
+            self.assertEqual(record, monitoring.enrollment_record(settings))
+            self.assertEqual(transport.files[monitoring_certs.SIDECAR_CREDENTIALS + '/server.key'],
+                             credentials['server.key'])
+            self.assertTrue(any('chmod 600' in c and 'server.key' in c for c in transport.commands))
+            self.assertFalse(any(b'PRIVATE KEY' in c.encode() for c in transport.commands),
+                             'key material travels on stdin, never in a command line')
+            self.assertIn('--config /etc/pir-apm-sidecar/sidecar.json', transport.files[monitoring_install.UNIT_PATH].decode())
+            transport.started = False
+            transport.run = (lambda original: lambda host, command, data=None, timeout=120: (
+                '{}' if command.startswith('curl') else original(host, command, data, timeout)))(transport.run)
+            with self.assertRaisesRegex(RuntimeError, 'not ready'):
+                monitoring_install.install_and_enroll(transport, '10.0.0.19', settings, binary=binary,
+                                                      credentials=credentials, ready_timeout=0,
+                                                      sleep=lambda _: None)
+
+    def test_inventory_monitoring_view_lists_enrollments_and_retirements(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            'fleet_inventory', ROOT / 'tools/transparent/scripts/transparent-fleet-inventory.py')
+        inventory = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(inventory)
+        record = {'address': '10.0.0.19:9443', 'config_digest': 'sha256:' + '0' * 64, 'checks': ['memory']}
+        view = inventory.monitoring_view({'members': [
+            {'id': 'recent-09', 'intent': 'enrolled', 'monitoring': record},
+            {'id': 'recent-10', 'intent': 'draining'},
+            {'id': 'recent-03', 'intent': 'retired', 'monitoring': record}]})
+        self.assertEqual(view, [{'id': 'recent-09', 'intent': 'enrolled', 'monitoring': record},
+                                {'id': 'recent-10', 'intent': 'draining'},
+                                {'id': 'recent-03', 'intent': 'retired'}])
 
 
 def binaries():
