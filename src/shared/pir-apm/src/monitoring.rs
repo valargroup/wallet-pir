@@ -139,8 +139,14 @@ fn fresh(t: u64, now: u64) -> bool {
 
 pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     let scaling = crate::scaling::Settings::from_env()?;
+    let observers = pir_apm::observers::from_env()?;
     let Some(path) = std::env::var_os("PIR_APM_STATE_PATH").map(PathBuf::from) else {
         anyhow::ensure!(!enabled(), "active alerting requires PIR_APM_STATE_PATH");
+        anyhow::ensure!(
+            observers.is_none(),
+            "{} requires PIR_APM_STATE_PATH",
+            pir_apm::observers::CONFIG_VAR
+        );
         anyhow::ensure!(
             scaling.is_none(),
             "{} requires PIR_APM_STATE_PATH",
@@ -203,6 +209,18 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             eprintln!("durable Slack worker stopped; check state directory");
         }
     });
+    // Sidecar host checks are their own family, in the inventory's mode.
+    if let Some(observers) = observers {
+        let (path, environment) = (path.clone(), config.environment.clone());
+        let host_url = format!("{}/", url.trim_end_matches('/'));
+        tokio::spawn(async move {
+            if let Err(error) =
+                pir_apm::observers::run(observers, path, environment, host_url).await
+            {
+                eprintln!("host observer collection stopped: {error:#}");
+            }
+        });
+    }
     let eval_dashboard = dashboard.clone();
     let state_path = path.clone();
     let mut service_stores: BTreeMap<String, Store> = BTreeMap::new();

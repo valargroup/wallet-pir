@@ -351,6 +351,13 @@ impl Store {
         })
     }
 
+    pub fn metadata_value(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT value FROM metadata WHERE key=?", [key], |r| r.get(0))
+            .optional()?)
+    }
+
     pub fn metadata(&self, key: &str, value: &str) -> Result<()> {
         self.db.execute("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key,value])?;
         Ok(())
