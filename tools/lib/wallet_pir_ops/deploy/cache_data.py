@@ -72,5 +72,10 @@ def dispatch(args, executor=None):
             result = cache_data_host.summary(recorded)
         if operation == 'plan':
             return {'plan': result, 'plan_sha256': durable.digest(result)}
-        durable.atomic_json(local, result, mode=0o600)
+        durable.atomic_json(local, {**result, 'request': request}, mode=0o600)
+        if operation == 'activate' and result.get('phase') == 'serving-started':
+            # The new volume becomes a required, identity-bound observer check.
+            from .. import monitoring
+            volume = {'path': result['active_cache'], 'uuid': result['device']['uuid']}
+            result['monitoring'] = monitoring.bind_volume(args.inventory, request['host'], volume)
         return result
