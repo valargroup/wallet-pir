@@ -114,10 +114,17 @@ impl Ingestion for DetailIngestion {
     fn start_height(&self, _tip: u64) -> u64 {
         self.store.start_height()
     }
-    /// Refuse another network, and note when each new height was first seen.
+    /// Halt on another network, and note when each new height was first seen.
     async fn observed(&mut self, observation: &ChainObservation) -> Result<(), IngestError> {
         if observation.genesis != self.store.genesis_hash() {
-            return Err(transient("the node's genesis differs from the journal's"));
+            // Another network shares no block with the journal: its fork
+            // ancestor lies below genesis, which the sealed floor always
+            // refuses, so the controller halts and the journal is untouched.
+            let (ancestor, floor) = self
+                .fence
+                .check(None)
+                .expect_err("no rollback below genesis passes the sealed floor");
+            return Err(IngestError::SealedReorg(ancestor, floor));
         }
         let tip = observation.tip.height;
         let next = self.store.covered_through().map_or(0, |h| h + 1);

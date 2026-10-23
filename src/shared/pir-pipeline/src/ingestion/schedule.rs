@@ -205,6 +205,9 @@ async fn live<I: Ingestion>(
     targets: Arc<watch::Sender<Option<ChainObservation>>>,
     shutdown: Shutdown,
 ) -> Result<(), I::Error> {
+    // The network of the first observation; committed state was checked
+    // against it when the product opened.
+    let mut network = None::<String>;
     loop {
         tokio::select! {
             biased;
@@ -220,6 +223,12 @@ async fn live<I: Ingestion>(
                 .observed(&observation)
                 .await
                 .map_err(Outcome::Writer)?;
+            if network.get_or_insert_with(|| observation.genesis.clone()) != &observation.genesis {
+                // Another network shares no blocks with committed state; the
+                // product's `observed` policy decides, never a rewind.
+                tracing::error!(genesis = %observation.genesis, "observation from another network not reconciled");
+                return Ok(());
+            }
             match reconcile(&mut *writer, &*feed.chain, &observation).await? {
                 Coverage::Current => writer
                     .caught_up(&observation)

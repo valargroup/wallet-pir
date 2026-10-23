@@ -65,10 +65,11 @@ pub trait Ingestion: Send {
     /// The first height an empty journal covers when the observed tip is
     /// `tip`; a rolling window starts below the tip, a journal at a fixed height.
     fn start_height(&self, tip: u64) -> u64;
-    /// Called with every live observation before reconciliation. Refuse a
-    /// different network than committed state records, before reconciliation
-    /// could treat it as a reorg, and withdraw dependents already known to be
-    /// orphaned before a deep ancestor search.
+    /// Called with every live observation before reconciliation, including one
+    /// from a different network than the first observation, which the
+    /// schedulers never reconcile: apply the product's network policy here,
+    /// and withdraw dependents already known to be orphaned before a deep
+    /// ancestor search.
     fn observed(
         &mut self,
         _observation: &ChainObservation,

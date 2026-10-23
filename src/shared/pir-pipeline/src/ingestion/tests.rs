@@ -1,6 +1,9 @@
 use super::schedule::{self, BACKFILL_BLOCKS, LIVE_BLOCKS};
 use crate::{
-    ingestion::{BlockId, CanonicalChain, ChainFeed, ChainFuture, ChainObservation, Ingestion},
+    ingestion::{
+        BlockId, CanonicalChain, ChainFeed, ChainFollower, ChainFuture, ChainObservation,
+        ChainSource, Ingestion,
+    },
     service::Shutdown,
     FailurePolicy,
 };
@@ -62,6 +65,13 @@ impl CanonicalChain for Chain {
     }
 }
 
+impl ChainSource for Chain {
+    fn tip_height(&self) -> ChainFuture<'_, u64> {
+        let height = self.hashes.lock().unwrap().len() as u64 - 1;
+        Box::pin(async move { Ok(height) })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Event {
     Withdraw(Option<u64>),
@@ -77,11 +87,19 @@ struct Journal {
     chain: Arc<Chain>,
     events: Arc<Mutex<Vec<Event>>>,
     fail_ingest: Arc<Mutex<bool>>,
+    networks: Arc<Mutex<Vec<String>>>,
 }
 impl Ingestion for Journal {
     type Error = String;
     fn start_height(&self, _tip: u64) -> u64 {
         self.start
+    }
+    async fn observed(&mut self, observation: &ChainObservation) -> Result<(), String> {
+        self.networks
+            .lock()
+            .unwrap()
+            .push(observation.genesis.clone());
+        Ok(())
     }
     fn committed(&self) -> Option<BlockId> {
         self.blocks.last().cloned()
@@ -143,6 +161,7 @@ struct Harness {
     chain: Arc<Chain>,
     events: Arc<Mutex<Vec<Event>>>,
     fail_ingest: Arc<Mutex<bool>>,
+    networks: Arc<Mutex<Vec<String>>>,
     observations: watch::Sender<Option<ChainObservation>>,
     shutdown: Shutdown,
     task: tokio::task::JoinHandle<Result<(), String>>,
@@ -164,6 +183,7 @@ impl Harness {
     fn with_blocks(chain: Arc<Chain>, start: u64, blocks: Vec<BlockId>) -> Self {
         let events = Arc::new(Mutex::new(vec![]));
         let fail_ingest = Arc::new(Mutex::new(false));
+        let networks = Arc::new(Mutex::new(vec![]));
         let (observations, receiver) = watch::channel(None);
         let shutdown = Shutdown::default();
         let journal = Journal {
@@ -172,6 +192,7 @@ impl Harness {
             chain: chain.clone(),
             events: events.clone(),
             fail_ingest: fail_ingest.clone(),
+            networks: networks.clone(),
         };
         let feed = ChainFeed {
             chain: chain.clone(),
@@ -182,6 +203,7 @@ impl Harness {
             chain,
             events,
             fail_ingest,
+            networks,
             observations,
             shutdown,
             task,
@@ -396,6 +418,55 @@ async fn shutdown_finishes_the_current_batch_and_drains() {
     harness.observe();
     harness.until(|e| !e.is_empty()).await;
     harness.stop().await;
+}
+
+#[tokio::test]
+async fn another_network_reaches_the_product_but_is_never_reconciled() {
+    let chain = Chain::new(40, "a");
+    let mut harness = Harness::start(chain.clone(), 0, Some(40));
+    harness.observe();
+    harness.until(|e| caught_up(e, 40)).await;
+    chain.reorg(0, 45, "z");
+    harness.observe();
+    let events = harness.settled().await;
+    assert_eq!(events, vec![Event::CaughtUp(40)]);
+    assert_eq!(*harness.networks.lock().unwrap(), ["a0", "z0"]);
+    harness.stop().await;
+}
+
+/// The next delivered observation satisfying `done`.
+async fn next(
+    observations: &mut watch::Receiver<Option<ChainObservation>>,
+    done: fn(&ChainObservation) -> bool,
+) -> ChainObservation {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            observations.changed().await.unwrap();
+            let seen = observations.borrow_and_update().clone().unwrap();
+            if done(&seen) {
+                return seen;
+            }
+        }
+    })
+    .await
+    .expect("the follower delivered the observation")
+}
+
+#[tokio::test]
+async fn the_follower_delivers_unchanged_tips_and_network_switches() {
+    let chain = Chain::new(5, "a");
+    let follower = ChainFollower::new(chain.clone(), Duration::from_millis(2));
+    let mut feed = follower.feed();
+    let shutdown = Shutdown::default();
+    let task = tokio::spawn(follower.run(shutdown.clone()));
+    let first = next(&mut feed.observations, |o| o.tip.height == 5).await;
+    let repeated = next(&mut feed.observations, |o| o.tip.height == 5).await;
+    assert!(repeated.pass > first.pass, "unchanged tips are delivered");
+    chain.reorg(0, 3, "z");
+    let switched = next(&mut feed.observations, |o| o.genesis == "z0").await;
+    assert_eq!(switched.tip.hash, "z3");
+    shutdown.request();
+    task.await.unwrap();
 }
 
 #[test]

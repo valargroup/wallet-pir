@@ -36,8 +36,9 @@ impl ChainFollower {
         }
     }
 
-    /// Follow until shutdown. A source outage publishes nothing; a different
-    /// genesis than the first pass observed is refused rather than delivered.
+    /// Follow until shutdown. A source outage publishes nothing. A different
+    /// genesis than the first pass observed is still delivered, so each
+    /// product applies its own network policy; schedulers never reconcile it.
     pub async fn run(self, shutdown: Shutdown) {
         let mut genesis = None::<String>;
         let mut pass = 0;
@@ -46,15 +47,14 @@ impl ChainFollower {
                 Ok((observed_genesis, tip)) => {
                     if genesis.get_or_insert_with(|| observed_genesis.clone()) != &observed_genesis
                     {
-                        tracing::error!(%observed_genesis, "chain source changed network; observation refused");
-                    } else {
-                        pass += 1;
-                        self.observations.send_replace(Some(ChainObservation {
-                            genesis: observed_genesis,
-                            tip,
-                            pass,
-                        }));
+                        tracing::error!(%observed_genesis, "chain source changed network");
                     }
+                    pass += 1;
+                    self.observations.send_replace(Some(ChainObservation {
+                        genesis: observed_genesis,
+                        tip,
+                        pass,
+                    }));
                 }
                 Err(error) => tracing::warn!(%error, "chain follower pass failed"),
             }
