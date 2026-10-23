@@ -489,3 +489,124 @@ mod history_projection_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod filters_only_resume_tests {
+    //! A filter store laid down byte by byte in the deployed version-1 layout
+    //! resumes under the root scheduler without a historical event journal.
+    use super::*;
+    use pir_pipeline::ingestion::{catch_up, CanonicalChain, ChainFuture};
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    const GENESIS: &str = "00000000000000000000000000000000000000000000000000000000000000bb";
+    const START: u64 = 500;
+    const TIP: u64 = 502;
+
+    fn hash(height: u64) -> BlockHash {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&height.to_le_bytes());
+        bytes[31] = 0xfb;
+        BlockHash::from_internal_bytes(bytes)
+    }
+
+    struct Canonical;
+    impl CanonicalChain for Canonical {
+        fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+            Box::pin(async move { Ok(hash(height).to_display_hex()) })
+        }
+    }
+
+    fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .map(|path| {
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                (name, std::fs::read(&path).unwrap())
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_hand_laid_filter_store_resumes_at_an_unchanged_tip_without_a_journal() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("filters");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (mut filters, mut index, mut chain) = (vec![], vec![], vec![]);
+        let mut expected = vec![];
+        for height in START..=TIP {
+            let script = ScriptBytes::new(vec![0x76, 0xa9, 0x14, height as u8, 0x88, 0xac]);
+            let filter = build_filter(hash(height), &[script]).unwrap();
+            index.extend_from_slice(hash(height).internal_bytes());
+            index.extend_from_slice(&(filters.len() as u64).to_le_bytes());
+            index.extend_from_slice(&(filter.as_slice().len() as u32).to_le_bytes());
+            index.extend_from_slice(&transparent_filter::filter_hash(filter.as_slice()).0);
+            filters.extend_from_slice(filter.as_slice());
+            chain.extend_from_slice(hash(height).internal_bytes());
+            expected.push(filter.as_slice().to_vec());
+        }
+        let meta = format!(
+            r#"{{"version":1,"profile":"{}","genesis_hash":"{GENESIS}","start_height":{START}}}"#,
+            transparent_filter::PROFILE
+        );
+        std::fs::write(dir.join("meta.json"), meta).unwrap();
+        std::fs::write(dir.join("filters.bin"), &filters).unwrap();
+        std::fs::write(dir.join("index.bin"), &index).unwrap();
+        std::fs::write(dir.join("chain.bin"), &chain).unwrap();
+        let checkpoint: Vec<u8> = [filters.len(), index.len(), chain.len()]
+            .into_iter()
+            .flat_map(|len| (len as u64).to_le_bytes())
+            .collect();
+        std::fs::write(dir.join("checkpoint.bin"), checkpoint).unwrap();
+        let before = files(&dir);
+
+        let store = FilterStore::open(&dir, transparent_filter::PROFILE, GENESIS, START).unwrap();
+        let state = ServiceState::new(store);
+        let cookie = temp.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        // Nothing here may reach the node: an unchanged tip extracts no block.
+        let zakura = crate::ingest::zakura::connect("http://127.0.0.1:9", &cookie).unwrap();
+        let mut writer = FilterIngestion::new(zakura, state.clone(), 16, 1).await;
+        assert_eq!(writer.start_height(TIP), START);
+        let tip = BlockId {
+            height: TIP,
+            hash: hash(TIP).to_display_hex(),
+        };
+        assert_eq!(writer.committed(), Some(tip.clone()));
+        for pass in 1..=2 {
+            let observation = ChainObservation {
+                genesis: GENESIS.into(),
+                tip: tip.clone(),
+                pass,
+            };
+            catch_up(&mut writer, &Canonical, &observation)
+                .await
+                .unwrap();
+        }
+        let other = ChainObservation {
+            genesis: "cc".repeat(32),
+            tip: tip.clone(),
+            pass: 3,
+        };
+        assert!(catch_up(&mut writer, &Canonical, &other).await.is_err());
+        {
+            let inner = state.inner().read().await;
+            for (offset, bytes) in expected.iter().enumerate() {
+                let stored = inner
+                    .store
+                    .filter_by_hash(hash(START + offset as u64))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(&stored.bytes, bytes);
+            }
+        }
+        drop((writer, state));
+        assert_eq!(files(&dir), before, "no committed byte was rewritten");
+        assert_eq!(
+            std::fs::read_dir(temp.path()).unwrap().count(),
+            2,
+            "no historical event journal was created"
+        );
+    }
+}
