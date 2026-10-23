@@ -3774,6 +3774,7 @@ dependencies = [
  "hex",
  "ipir-sp",
  "memmap2",
+ "pir-control",
  "pir-observability",
  "pir-publication",
  "pir-runtime",

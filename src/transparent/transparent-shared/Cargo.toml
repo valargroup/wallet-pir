@@ -15,6 +15,7 @@ portable-kernel = []
 test-support = ["dep:zakura-pir-publisher"]
 
 [dependencies]
+pir-control = { path = "../../shared/pir-control" }
 pir-publication = { path = "../../shared/pir-publication" }
 axum = "0.7"
 pir-observability = { version = "=0.1.0", path = "../../shared/pir-observability", features = ["http"] }

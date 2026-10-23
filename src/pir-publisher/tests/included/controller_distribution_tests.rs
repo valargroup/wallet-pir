@@ -897,7 +897,8 @@ fn distribution_revisions_survive_opens_and_refuse_corrupt_state() {
 fn distribution_revision_refuses_directory_sync_failure_before_acknowledgement() {
     let root = tempfile::tempdir().unwrap();
     let mut offered = advance_distribution_revision(root.path()).unwrap();
-    let attempted = advance_distribution_revision_with_sync(root.path(), |_| {
+    let attempted = advance_distribution_revision_with_write(root.path(), |path, bytes| {
+        std::fs::write(path, bytes)?;
         Err(std::io::Error::other("injected directory sync failure"))
     });
     // Same propagation/store order used at the controller's authority boundary:
@@ -2246,6 +2247,8 @@ impl Startup {
             _rpc: rpc,
         };
         startup.write_record(&serde_json::to_vec(&startup.record).unwrap());
+        crate::storage::layout::complete(&startup.config.publication_root, "transparent_history")
+            .unwrap();
         startup
     }
     fn write_record(&self, bytes: &[u8]) {
