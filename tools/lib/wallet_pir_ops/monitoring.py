@@ -79,13 +79,13 @@ def sidecar_document(settings):
     """The sidecar configuration for one host, validated, as the file will hold it."""
     config = settings_of(settings, ('host_id', 'address'),
                          ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port', 'health_port',
-                          'snapshot'))
+                          'snapshot', 'external', 'bind_address'))
     if not NAME.match(config['host_id']):
         raise ValueError('host_id must be a lowercase monitoring name')
-    address = ipaddress.ip_address(config['address'])
-    if not any(address in ipaddress.ip_network(n) for n in PRIVATE_NETWORKS if
-               ipaddress.ip_network(n).version == address.version):
-        raise ValueError('a sidecar listens on its private address only')
+    address = _address(config)
+    bind = ipaddress.ip_address(config.get('bind_address', str(address)))
+    if bind.is_unspecified or (bind != address and not config.get('external')):
+        raise ValueError('bind_address is a specific address, and differs from address only for external hosts')
     port, health_port = config.get('port', PORT), config.get('health_port', PORT + 1)
     if any(not isinstance(p, int) or not 1024 <= p <= 65535 for p in (port, health_port)):
         raise ValueError('port and health_port must be unprivileged TCP ports')
@@ -97,7 +97,7 @@ def sidecar_document(settings):
         raise ValueError('edge_metrics_url is a loopback HTTP URL')
     document = {
         'host_id': config['host_id'],
-        'listen': '%s:%d' % (address, port) if address.version == 4 else '[%s]:%d' % (address, port),
+        'listen': _endpoint(bind, port),
         'tls': {'cert': 'server.pem', 'key': 'server.key', 'client_ca': 'monitoring-ca.pem',
                 'collector_identity': COLLECTOR_IDENTITY},
         'required_volumes': _volumes(config.get('required_volumes', [])),
@@ -111,6 +111,34 @@ def sidecar_document(settings):
     if edge is not None:
         document['edge_metrics_url'] = edge
     return document
+
+
+def _private(address):
+    return any(address in ipaddress.ip_network(n) for n in PRIVATE_NETWORKS
+               if ipaddress.ip_network(n).version == address.version)
+
+
+def _address(config):
+    """The address the APM dials: private, or for `external: true` a reachable global one.
+
+    An external provider's host (an external GPU) has no VPC address; the APM
+    reaches it over the internet with the same CA, server-name and collector
+    authorization, so only the address rule differs.
+    """
+    address = ipaddress.ip_address(config['address'])
+    external = config.get('external', False)
+    if not isinstance(external, bool):
+        raise ValueError('external is true or false')
+    if external and (_private(address) or address.is_link_local or address.is_multicast
+                     or address.is_unspecified):
+        raise ValueError('an external sidecar is dialed at a global address')
+    if not external and not _private(address):
+        raise ValueError('a sidecar listens on its private address only, unless declared external')
+    return address
+
+
+def _endpoint(address, port):
+    return '%s:%d' % (address, port) if address.version == 4 else '[%s]:%d' % (address, port)
 
 
 def config_bytes(document):
@@ -169,7 +197,8 @@ def enrollment_record(settings):
     Dynamic workers carry this as `monitoring` in their roster entry.
     """
     document = sidecar_document(settings)
-    return {'address': document['listen'], 'config_digest': config_digest(document),
+    port = int(document['listen'].rsplit(':', 1)[1])
+    return {'address': _endpoint(_address(settings), port), 'config_digest': config_digest(document),
             'checks': expected_checks(document)}
 
 
@@ -207,7 +236,18 @@ def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=
         document['roster'] = roster
     if host_snapshot is not None:
         document['host_snapshot'] = host_snapshot
+    document['revision'] = observers_revision(document)
     return document
+
+
+def observers_revision(document):
+    """Digest of an observer inventory without its own `revision` field.
+
+    The APM reports the revision it loaded at `/observers/ready`, so an install
+    proves the running process read exactly the installed inventory.
+    """
+    content = {key: value for key, value in document.items() if key != 'revision'}
+    return 'sha256:' + hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
 
 
 def _addresses(record):
@@ -282,8 +322,9 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     entries = observer_entries(inventory)
     enrolled = {host: sidecar_document(settings) for host, settings in entries}
     covered = {}
+    dialed = {host: str(ipaddress.ip_address(settings['address'])) for host, settings in entries}
     for host, document in enrolled.items():
-        addresses = {document['listen'].rsplit(':', 1)[0].strip('[]')}
+        addresses = {document['listen'].rsplit(':', 1)[0].strip('[]'), dialed[host]}
         entry = inventory['hosts'].get(host) or {}
         if entry.get('address'):
             addresses.add(entry['address'])

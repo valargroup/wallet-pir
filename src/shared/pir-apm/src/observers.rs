@@ -55,6 +55,37 @@ pub struct Settings {
     /// `roster` block did: under their own id, with the unit of their role.
     #[serde(default)]
     pub roster_snapshot: Option<RosterSnapshot>,
+    /// Content digest the renderer stamps; readiness reports it so an install
+    /// proves this process loaded exactly the installed inventory.
+    #[serde(default)]
+    pub revision: Option<String>,
+}
+
+/// What `GET /observers/ready` reports: ready once a whole poll round ran
+/// with the collector identity loaded and the incidents evaluated.
+#[derive(Clone, Debug, Default, serde::Serialize)]
+pub struct Readiness {
+    pub configured: bool,
+    pub ready: bool,
+    pub revision: Option<String>,
+    pub rounds: u64,
+    pub expected_hosts: usize,
+    pub valid_hosts: usize,
+}
+
+static READINESS: std::sync::Mutex<Option<Readiness>> = std::sync::Mutex::new(None);
+
+pub fn readiness() -> Readiness {
+    READINESS
+        .lock()
+        .map(|r| r.clone().unwrap_or_default())
+        .unwrap_or_default()
+}
+
+fn set_readiness(r: Readiness) {
+    if let Ok(mut slot) = READINESS.lock() {
+        *slot = Some(r);
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -711,6 +742,12 @@ pub async fn run(
     let permits = Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut interval = tokio::time::interval(Duration::from_secs(POLL_SECONDS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut rounds = 0u64;
+    set_readiness(Readiness {
+        configured: true,
+        revision: settings.revision.clone(),
+        ..Readiness::default()
+    });
     loop {
         interval.tick().await;
         // An unreadable roster keeps the inventory's hosts and enrollment.
@@ -766,6 +803,19 @@ pub async fn run(
             &environment,
             &dashboard,
         )?;
+        rounds += 1;
+        set_readiness(Readiness {
+            configured: true,
+            ready: true,
+            revision: settings.revision.clone(),
+            rounds,
+            expected_hosts: expected.hosts.len(),
+            valid_hosts: expected
+                .hosts
+                .iter()
+                .filter(|h| tracker.current(&h.host_id).is_some())
+                .count(),
+        });
     }
 }
 
@@ -798,6 +848,7 @@ mod tests {
             roster: None,
             host_snapshot: None,
             roster_snapshot: None,
+            revision: None,
         }
     }
 

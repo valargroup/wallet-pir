@@ -9,16 +9,21 @@ material, and Terraform, cloud-init and configuration reports never carry it.
 
 `install` places one host's credential files as root-only files under the
 production lock, restarts the unit that loads them through systemd
-credentials, and waits for its readiness. A failed start restores the previous
-files and restarts again, so a rotation is all-or-nothing on each host. The
-central APM's observer inventory is installed the same way.
+credentials, and waits for that role's own readiness contract, as a journaled
+transaction with `reconcile` and `rollback`. A failed start restores the
+previous files and restarts again, so a rotation is all-or-nothing on each
+host. The central APM's observer inventory is installed the same way.
 """
 import datetime
+import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import time
+
+from .deploy import remote, transaction
 
 
 WARN_DAYS = 30
@@ -31,6 +36,8 @@ SIDECAR_HEALTH = 'http://127.0.0.1:9444/healthz'
 SIDECAR_FILES = ('server.pem', 'server.key', 'monitoring-ca.pem')
 COLLECTOR_CREDENTIALS = '/etc/pir-apm/credentials'
 COLLECTOR_FILES = ('collector.pem', 'collector.key', 'monitoring-ca.pem')
+COLLECTOR_UNIT = 'pir-apm.service'
+COLLECTOR_READY = 'http://127.0.0.1:3002/observers/ready'
 USAGES = {'server': 'serverAuth', 'client': 'clientAuth'}
 
 
@@ -101,51 +108,182 @@ def expiry_status(pem, now=None):
     return 'healthy'
 
 
-def _ready(executor, host, health, deadline):
-    import json
-    while time.monotonic() < deadline:
+def sidecar_ready(health=SIDECAR_HEALTH):
+    """The sidecar's readiness contract: its health JSON reports `ready: true`."""
+    def ready(executor, host):
         status, body = executor.http_get(host, health)
-        if status == 200:
-            try:
-                if json.loads(body).get('ready') is True:
-                    return True
-            except ValueError:
-                pass
-        time.sleep(1)
-    return False
+        return status == 200 and json.loads(body).get('ready') is True
+    return ready
 
 
-def install(executor, lock, host, files, *, directory=SIDECAR_CREDENTIALS, unit=SIDECAR_UNIT,
-            health=SIDECAR_HEALTH, ready_timeout=60, mode=0o600):
-    """Install files on one host and restart its unit, or restore and raise.
+def collector_ready(revision, url=COLLECTOR_READY):
+    """The central APM's: a completed poll round with the observer inventory `revision`.
 
-    `lock` is the production lock as a context manager (`remote.production_lock`).
-    `files` maps file names in `directory` to bytes. The previous contents are
-    read first; if the restarted unit is not ready in time they are put back
-    and the unit restarted again. Returns the names whose contents changed.
+    `/observers/ready` only answers 200 after the collector identity was loaded
+    and every enrolled sidecar polled once, so a bad credential or inventory
+    never passes. Plain `/healthz` would pass for any running APM.
     """
+    def ready(executor, host):
+        status, body = executor.http_get(host, url)
+        if status != 200:
+            return False
+        report = json.loads(body)
+        return report.get('ready') is True and report.get('revision') == revision
+    return ready
+
+
+def _wait(executor, host, ready, timeout, sleep, clock):
+    deadline = clock() + timeout
+    while True:
+        try:
+            if ready(executor, host):
+                return True
+        except (OSError, ValueError, RuntimeError, AttributeError):
+            pass  # an unreachable or malformed answer is "not ready yet"
+        if clock() >= deadline:
+            return False
+        sleep(1)
+
+
+def _digest(data):
+    return None if data is None else hashlib.sha256(data).hexdigest()
+
+
+def _service(host, directory):
+    """One journal sequence per host and file set, as the deploy engine keeps one per service."""
+    return 'monitoring-files-%s-%s' % (host, directory.strip('/').replace('/', '-'))
+
+
+def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENTIALS, unit=SIDECAR_UNIT,
+            ready=None, ready_timeout=60, mode=0o600, sleep=time.sleep, clock=time.monotonic):
+    """Replace files on one host and restart its unit as one journaled transaction.
+
+    `lock` is the production lock as a context manager (`remote.production_lock`)
+    and `files` maps names in `directory` to bytes. The runner journal under
+    `state_dir` (one per host, as the deploy engine keeps one per service) is
+    written before every effect and records only digests: previous contents
+    are backed up on the host itself, root-only, in `.previous-<transaction>`.
+    Each file is replaced atomically, never removed first. Any failure after
+    the first effect, an unready unit included, restores the backup and
+    restarts again; if that cannot finish (the lock was lost or the host is
+    unreachable), the journal stays open and the next `install` or `reconcile`
+    on the host completes the restoration before anything else.
+    Returns the names whose contents changed.
+    """
+    ready = ready or sidecar_ready()
     with lock as held:
+        _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock)
         previous = {name: executor.read(host, '%s/%s' % (directory, name)) for name in files}
         changed = sorted(name for name, data in files.items()
                          if previous[name] is None or previous[name].encode() != data)
         if not changed:
             return []
+        prior = transaction.Journal.load(state_dir, _service(host, directory))
+        record = {'key': '%s:%s' % (host, directory), 'host': host, 'unit': unit, 'directory': directory,
+                  'mode': mode, 'phase': 'pending', 'restart_issued': False,
+                  'changes': [{'name': name, 'previous_sha256': _digest(None if previous[name] is None
+                                                                        else previous[name].encode()),
+                               'new_sha256': _digest(files[name])} for name in changed]}
+        journal = transaction.Journal.create(state_dir, _service(host, directory), _digest(b''.join(
+            files[name] for name in changed)), None, [record], None)
+        backup = '%s/.previous-%s' % (directory, journal.id)
+        record['backup'] = backup
+        try:
+            held.verify()
+            journal.set_phase(0, 'backing-up')
+            executor.mkdir(host, directory, 0o700)
+            executor.mkdir(host, backup, 0o700)
+            for name in changed:
+                if previous[name] is not None:
+                    executor.write(host, '%s/%s' % (backup, name), previous[name].encode(), 0o600)
+                    if executor.sha256(host, '%s/%s' % (backup, name)) != _digest(previous[name].encode()):
+                        raise RuntimeError('backup of %s did not verify' % name)
+            journal.set_phase(0, 'installing')
+            for name in changed:
+                held.verify()
+                executor.write(host, '%s/%s' % (directory, name), files[name], mode)
+            held.verify()
+            record['restart_issued'] = True
+            journal.set_phase(0, 'restarting')
+            executor.systemctl(host, 'restart', unit)
+            journal.set_phase(0, 'verifying')
+            if not _wait(executor, host, ready, ready_timeout, sleep, clock):
+                raise RuntimeError('%s did not become ready' % unit)
+            held.verify()
+            journal.set_phase(0, 'verified')
+            journal.set_status('committed')
+        except remote.LockHeld:
+            journal.event('lock lost; restoration waits for reconcile')
+            raise
+        except Exception as error:  # noqa: BLE001 - every failure restores, then reports its kind
+            journal.event('failed', error=type(error).__name__)
+            _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+            raise RuntimeError('%s did not become ready after the change on %s; previous files restored'
+                               % (unit, host)) from None
+        if prior is not None and prior.hosts[0].get('backup'):
+            # Only the latest backup stays, for an explicit rollback.
+            executor.remove_tree(host, prior.hosts[0]['backup'], prior.hosts[0]['directory'])
+        return changed
+
+
+def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
+    """Put the backed-up files back and restart; finishes only with a ready unit."""
+    record = journal.hosts[0]
+    host, directory = record['host'], record['directory']
+    if record['phase'] in ('pending', 'backing-up'):
+        journal.set_status('rolled-back')  # no target file was touched
+        return
+    held.verify()
+    journal.set_phase(0, 'restoring')
+    for change in record['changes']:
         held.verify()
-        executor.mkdir(host, directory, 0o700)
-        for name in changed:
-            staged = '%s/.%s.next' % (directory, name)
-            executor.write(host, staged, files[name], mode)
-            if previous[name] is not None:
-                executor.remove(host, '%s/%s' % (directory, name))
-            executor.rename(host, staged, '%s/%s' % (directory, name))
-        executor.systemctl(host, 'restart', unit)
-        if _ready(executor, host, health, time.monotonic() + ready_timeout):
-            return changed
-        held.verify()
-        for name in changed:
-            executor.remove(host, '%s/%s' % (directory, name))
-            if previous[name] is not None:
-                executor.write(host, '%s/%s' % (directory, name), previous[name].encode(), mode)
-        executor.systemctl(host, 'restart', unit)
-        raise RuntimeError('%s did not become ready after the change on %s; previous files restored'
-                           % (unit, host))
+        target = '%s/%s' % (directory, change['name'])
+        if change['previous_sha256'] is None:
+            executor.remove(host, target)
+            continue
+        saved = executor.read(host, '%s/%s' % (record['backup'], change['name']))
+        if saved is None or _digest(saved.encode()) != change['previous_sha256']:
+            journal.set_phase(0, 'restore-failed')
+            journal.set_status('failed')
+            raise RuntimeError('backup of %s on %s is missing or altered' % (change['name'], host))
+        if executor.sha256(host, target) != change['previous_sha256']:
+            executor.write(host, target, saved.encode(), record['mode'])
+    held.verify()
+    executor.systemctl(host, 'restart', record['unit'])
+    if not _wait(executor, host, ready, ready_timeout, sleep, clock):
+        journal.set_phase(0, 'restore-failed')
+        journal.set_status('failed')
+        raise RuntimeError('%s is not ready after restoring the previous files on %s' % (record['unit'], host))
+    journal.set_phase(0, 'restored')
+    journal.set_status('rolled-back')
+
+
+def _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock):
+    journal = transaction.Journal.load(state_dir, _service(host, directory))
+    if journal is None or journal.status in transaction.FINAL:
+        return None
+    journal.event('reconciling an interrupted transaction')
+    _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+    return journal
+
+
+def reconcile(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, ready_timeout=60, sleep=time.sleep,
+              clock=time.monotonic):
+    """Finish restoring an interrupted transaction on `host`; returns its id or None."""
+    with lock as held:
+        journal = _reconcile(executor, held, host, directory, state_dir, ready or sidecar_ready(), ready_timeout,
+                             sleep, clock)
+        return journal and journal.id
+
+
+def rollback(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, ready_timeout=60, sleep=time.sleep,
+             clock=time.monotonic):
+    """Return the latest committed transaction on `host` to its previous files."""
+    with lock as held:
+        ready = ready or sidecar_ready()
+        _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock)
+        journal = transaction.Journal.load(state_dir, _service(host, directory))
+        if journal is None or journal.status != 'committed':
+            raise RuntimeError('no committed monitoring transaction to roll back on %s' % host)
+        _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+        return journal.id

@@ -90,6 +90,7 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         roster: None,
         host_snapshot: None,
         roster_snapshot: None,
+        revision: None,
     };
     let host = |id: &str, digest: &str, checks: &[&str]| Host {
         host_id: id.into(),

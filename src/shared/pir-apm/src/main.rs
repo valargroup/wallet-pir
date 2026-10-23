@@ -389,6 +389,7 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
             get(dashboard::packing_router_page),
         )
         .route("/healthz", get(dashboard::healthz))
+        .route("/observers/ready", get(monitoring::observers_ready))
         .route("/readyz", get(monitoring::readyz))
         .route("/apm/readyz", get(monitoring::readyz))
         .route("/monitor-status", get(monitoring::status))
