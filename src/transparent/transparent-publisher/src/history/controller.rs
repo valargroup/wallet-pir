@@ -397,6 +397,9 @@ mod tests {
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
     struct MockNode {
         chain: Chain,
+        /// `getblock` requests served: block extraction, never needed at an
+        /// unchanged tip.
+        blocks_served: AtomicU64,
         pause_ancestor: AtomicBool,
         ancestor_started: tokio::sync::Notify,
         resume: tokio::sync::Notify,
@@ -450,6 +453,9 @@ mod tests {
             node.ancestor_started.notify_one();
             node.resume.notified().await;
         }
+        if request["method"] == "getblock" {
+            node.blocks_served.fetch_add(1, Ordering::Relaxed);
+        }
         let chain = node.chain.read().unwrap();
         let result = match request["method"].as_str().unwrap() {
             "getblockcount" => serde_json::json!(chain.len() - 1),
@@ -467,6 +473,7 @@ mod tests {
         extend(&mut chain.write().unwrap(), 5, 1);
         let node = Arc::new(MockNode {
             chain: chain.clone(),
+            blocks_served: AtomicU64::new(0),
             pause_ancestor: AtomicBool::new(false),
             ancestor_started: tokio::sync::Notify::new(),
             resume: tokio::sync::Notify::new(),
@@ -808,6 +815,7 @@ mod tests {
         extend(&mut chain.write().unwrap(), 5, 1);
         let node = Arc::new(MockNode {
             chain: chain.clone(),
+            blocks_served: AtomicU64::new(0),
             pause_ancestor: AtomicBool::new(false),
             ancestor_started: tokio::sync::Notify::new(),
             resume: tokio::sync::Notify::new(),
@@ -1108,6 +1116,7 @@ mod tests {
         store: Arc<tokio::sync::Mutex<EventStore>>,
         /// The node's chain; a test extends it to advance the tip.
         chain: Chain,
+        node: Arc<MockNode>,
     }
     async fn follow_fixture() -> Follow {
         let root = tempfile::tempdir().unwrap();
@@ -1115,13 +1124,14 @@ mod tests {
         extend(&mut chain.write().unwrap(), 5, 1);
         let node = Arc::new(MockNode {
             chain: chain.clone(),
+            blocks_served: AtomicU64::new(0),
             pause_ancestor: AtomicBool::new(false),
             ancestor_started: tokio::sync::Notify::new(),
             resume: tokio::sync::Notify::new(),
         });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let app = Router::new().route("/", post(rpc)).with_state(node);
+        let app = Router::new().route("/", post(rpc)).with_state(node.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
@@ -1191,6 +1201,7 @@ mod tests {
             config,
             store,
             chain,
+            node,
         }
     }
     /// The seal policy [`publish_follow`] publishes under.
@@ -1327,6 +1338,7 @@ mod tests {
         follow.server.abort();
     }
 
+    mod hand_laid;
     mod store;
 }
 
