@@ -390,7 +390,8 @@ mod history_projection_tests {
 
     /// Filters projected from History's committed events equal filters built
     /// over independently listed script sets: empty blocks, receives, spends,
-    /// repeated and unusual scripts. Heights below the journal's start fall
+    /// repeated and unusual scripts, and a script held only in a display
+    /// sidecar. Heights below the journal's start fall
     /// back to extraction; heights above its coverage wait; a rollback the
     /// journal commits is visible to the next projection.
     #[test]
@@ -420,7 +421,30 @@ mod history_projection_tests {
             let height = 10 + offset as u64;
             writer.append_block(height, hash(height), events).unwrap();
         }
+        // A script above the journal's limit lives only in the block's display
+        // sidecar; a projection that skipped it would hide that activity.
+        let oversized = vec![0x51; 20_000];
+        let sidecar_height = 10 + blocks.len() as u64;
+        transparent_shared::journal::display_journal::write_envelope(
+            &transparent_shared::journal::display_journal::V1,
+            dir.path(),
+            hash(sidecar_height),
+            std::iter::empty(),
+            &[receive(&oversized, sidecar_height as u32, 6)],
+        )
+        .unwrap();
+        writer
+            .append_block(
+                sidecar_height,
+                hash(sidecar_height),
+                &[receive(&p2pkh, sidecar_height as u32, 7)],
+            )
+            .unwrap();
         writer.commit().unwrap();
+        let blocks: Vec<_> = blocks
+            .into_iter()
+            .chain([(vec![], vec![&oversized[..], &p2pkh[..]])])
+            .collect();
         let mut journal = HistoryJournal {
             dir: dir.path().to_path_buf(),
             reader: None,
@@ -445,7 +469,7 @@ mod history_projection_tests {
                 "height {height}"
             );
         }
-        assert!(journal.project(13).is_err(), "above committed coverage");
+        assert!(journal.project(14).is_err(), "above committed coverage");
         // History rolls back and commits a replacement block.
         writer.rollback_to(Some(11)).unwrap();
         let mut replaced = hash(12).internal_bytes().to_owned();
