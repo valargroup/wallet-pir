@@ -177,11 +177,16 @@ from the PIR service being tested. If the anchor becomes noncanonical, freeze
 correctness classification and regenerate/review the oracle from canonical
 source records.
 
-Both processes receive the existing production Slack webhook through encrypted
-systemd credentials and `credential-exec.py`/the existing APM wrapper. Do not put
-it in environment files, Terraform variables, logs, or checked-in artifacts.
-The node RPC cookie is loaded as a systemd credential; restart APM after cookie
-rotation so it receives the new value.
+Each process receives the Slack webhook as a systemd credential scoped to its
+own unit. The rendered roles ([Monitoring deployment and rebuild](#monitoring-deployment-and-rebuild))
+load `slack-webhook` with `LoadCredential=` and name it in
+`PIR_APM_SLACK_WEBHOOK_FILE` or `PIR_MONITOR_SLACK_WEBHOOK_FILE`; the process
+reads the file at start and refuses a value that is not a `https://hooks.slack.com/`
+URL, without printing it. A legacy unit still passes it through
+`credential-exec.py`, which sets `PIR_APM_SLACK_WEBHOOK_URL`; setting both is
+refused. Do not put it in environment files, Terraform variables, logs, or
+checked-in artifacts. The node RPC cookie is loaded as a systemd credential;
+restart APM after cookie rotation so it receives the new value.
 
 ## Delivery and response
 
@@ -232,8 +237,10 @@ Investigate by check family:
    Exercise monitoring-task failures without interrupting serving processes.
 6. Observe 24 additional hours of active alerting and record final acceptance.
 
-For rollback, restore the prior APM ExecStart/drop-ins and restart only APM;
-stop external checker sending or return it to shadow mode. Keep SQLite databases,
+For rollback, roll back the role's deploy transaction (see
+[Monitoring deployment and rebuild](#monitoring-deployment-and-rebuild)), which
+restores the prior APM unit, drop-ins and launcher and restarts only APM; stop
+external checker sending or return it to shadow mode. Keep SQLite databases,
 including WAL files, with their owning process stopped or use SQLite backup.
 Retain the monitor infrastructure unless separately approved for deletion.
 Additive server metrics and queue timestamps are backward-compatible and can
@@ -689,6 +696,106 @@ has `host:<host>:coverage:<check>`, warning after 45 s without a fresh known
 status while the host itself still reports. Recovery needs two distinct
 healthy observations. Enrollment persists until the host is retired in the deployment
 inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
+
+## Monitoring deployment and rebuild
+
+Every monitoring process is a role of the shared registry
+(`tools/deploy/monitoring/services.toml`), deployed with `wallet-pir-deploy.py`
+under the production lock (plan, preflight, deploy, status, rollback) from the
+`pir-monitoring` release artifact:
+
+| Role | Unit | Host | Rendered from |
+| --- | --- | --- | --- |
+| `apm-sidecar.observer` | `pir-apm-sidecar.service` | every managed host | observer settings |
+| `apm.central` | `pir-apm.service` | coordinator | `environment` (`PIR_APM_*` other than the rendered state, listener, observer, cookie and webhook settings), `slack`, `chain_cookie`, `writable`, `limits` |
+| `monitor.checker` | `pir-monitor.service` | independent monitor host | `environment` (`PIR_MONITOR_ORIGIN`, `PIR_MONITOR_APM_STATUS_URL`, `PIR_MONITOR_ORACLE`, `PIR_MONITOR_ORACLE_SHA256`, alert modes, public status URL), `slack`, `service_probes`, `chain_rpc_cookie`, `limits` |
+
+`tools/enhance/deploy/deploy-inventory.example.json` shows all three. The
+renderers are `wallet_pir_ops.monitoring` and `wallet_pir_ops.monitoring_roles`;
+an environment value that looks like a Slack webhook, or names a rendered
+setting, is refused. `apm.central` is ready when `/observers/ready` answers,
+that is after the collector identity and observer inventory loaded and every
+enrolled sidecar was polled once; `monitor.checker` when `/monitor-status`
+reports an evaluation. Changing role settings changes the unit, so its deploy
+needs `--allow-unit-drift` after reviewing the drift.
+
+Credentials come from Infisical through a private directory (a tmpfs) and
+`wallet-pir-monitoring.py install-credentials --role ROLE --source DIR`, each a
+journaled, lock-fenced transaction with `reconcile` and `rollback`:
+
+| `--role` | Files | Installed in | Loaded by |
+| --- | --- | --- | --- |
+| `sidecar` | `server.pem`, `server.key`, `monitoring-ca.pem` | `/etc/pir-apm-sidecar/credentials` | `pir-apm-sidecar.service` |
+| `collector` | `collector.pem`, `collector.key`, `monitoring-ca.pem` | `/etc/pir-apm/credentials` | `pir-apm.service` |
+| `apm-slack` | `slack-webhook` | `/etc/pir-apm/alerting` | `pir-apm.service` |
+| `monitor` | `slack-webhook`, optional `chain-rpc-cookie` | `/etc/pir-monitor/credentials` | `pir-monitor.service` |
+
+Where the unit is not installed yet, the install stages its files without a
+restart and the role's first deploy starts the unit with them.
+
+**New hosts.** With `apm_sidecar_boot = {url, sha256}` set in the fleet root,
+every droplet Terraform creates appends
+[`pir-apm-sidecar-boot.sh`](../../tools/deploy/monitoring/pir-apm-sidecar-boot.sh)
+to its user_data as a second MIME part. At first boot it downloads the pinned
+binary into its release directory, checks the sha256, writes the unit exactly as
+the observer renderer renders it for that release and a provisional
+configuration (droplet name, private address), and enables the unit without
+starting it. The URL serves a public binary; user_data, state and plans carry
+no key material, and no certificate is issued at boot. Every droplet ignores
+user_data changes, so setting the variable never touches an existing host.
+Elastic Transparent members get their sidecar from the fleet actuator instead
+(`monitoring_install`).
+
+**Fresh rebuild** of the APM and monitor hosts, after Terraform:
+
+1. Add the hosts to the deployment inventory and run `wallet-pir-monitoring.py
+   enroll --terraform-outputs ... --write`, then bind the coordinator's data
+   volume UUIDs.
+2. Issue host certificates (`issue-host`) and the collector certificate
+   (`issue-collector`) from the monitoring CA in Infisical, or reuse the stored
+   ones; store new ones in Infisical.
+3. On the coordinator: `install-observers --host coordinator --mode shadow`,
+   then `install-credentials --role collector` and `--role apm-slack`; on the
+   monitor host `install-credentials --role monitor`. With no unit yet these stage.
+4. `install-credentials --role sidecar` on every host; the boot-installed unit
+   starts with its certificate.
+5. Install the protected oracle at `PIR_MONITOR_ORACLE` on the monitor host.
+6. Capture baselines and deploy `apm-sidecar`, `apm` and `monitor`; the first
+   two update the boot configuration to the inventory's and install the APM.
+7. `coverage --terraform-outputs ... --roster ...` must report no gaps.
+
+`FreshRebuild` in `tools/tests/operations/test_monitoring.py` rehearses this
+with the real binaries, throwaway certificates and the rendered units on one
+machine; `test_monitoring_roles.py` covers install, update, status, rollback and
+adoption on fake hosts.
+
+**Existing hosts** adopt the rendered roles without a rebuild. Steps not yet
+done in production:
+
+1. Store the monitoring CA, host certificates, collector certificate and both
+   Slack webhooks in Infisical.
+2. Install `/etc/pir-apm/observers.json`, the collector and `apm-slack`
+   credentials on the coordinator, and the `monitor` credentials on the
+   monitor host (the legacy APM restarts and must stay ready).
+3. Deploy `apm-sidecar` to every host, after its `sidecar` credentials.
+4. Replace the coordinator's `apm.server` entry with `apm.central` and deploy
+   `apm` with `--retire-historical --allow-unit-drift`: the transaction moves
+   every `pir-apm.service.d/*.conf` drop-in into its rollback directory and
+   replaces the unit, after the plan's drift shows exactly the settings that
+   change (the `credential-exec.py` launcher and `/etc/default/pir-apm` go away;
+   every other setting must be carried by `environment`). The running unit must
+   use the launcher the legacy descriptor pins; otherwise the plan refuses.
+5. Do the same for the monitor with a `monitor.checker` entry. Its adoption pin
+   for `/opt/pir-monitor/credential-exec.py` and `/usr/bin/python3` is the APM's
+   bytes; read the live digests first and update `adopt_launcher` if they differ.
+6. Remove `/etc/default/pir-apm`'s webhook line only once both roles are
+   committed and no rollback to the legacy unit is wanted.
+
+The legacy rollback path stays: rolling back the adopting `apm` transaction
+restores the legacy unit, its drop-ins and launcher, and restarts the legacy
+release. Legacy deploys then resume with the inventory entry back under
+`server` and `--descriptors tools/enhance/deploy/apm.toml`, which shares the
+`apm` journal sequence. The monitor's adoption rolls back the same way.
 
 ## Transparent RAM capacity
 

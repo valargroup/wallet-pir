@@ -60,7 +60,10 @@ mod tests {
         let hook = "https://hooks.slack.com/services/T0/B0/rehearsal";
         std::fs::write(dir.path().join("slack-webhook"), format!("{hook}\n")).unwrap();
         let read = |url, file| slack_webhook(url, file, Some(dir.path()));
-        assert_eq!(read(None, Some("slack-webhook")).unwrap().as_deref(), Some(hook));
+        assert_eq!(
+            read(None, Some("slack-webhook")).unwrap().as_deref(),
+            Some(hook)
+        );
         assert_eq!(read(Some(hook), None).unwrap().as_deref(), Some(hook));
         assert_eq!(read(Some("  "), Some(" ")).unwrap(), None);
         assert!(read(Some(hook), Some("slack-webhook")).is_err());

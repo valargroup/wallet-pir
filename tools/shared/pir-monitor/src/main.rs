@@ -139,7 +139,9 @@ async fn main() -> Result<()> {
     // `credential-exec.py` sets the URL; a rendered unit names its credential file instead.
     let webhook = pir_apm::credentials::slack_webhook(
         std::env::var("PIR_APM_SLACK_WEBHOOK_URL").ok().as_deref(),
-        std::env::var("PIR_MONITOR_SLACK_WEBHOOK_FILE").ok().as_deref(),
+        std::env::var("PIR_MONITOR_SLACK_WEBHOOK_FILE")
+            .ok()
+            .as_deref(),
         pir_apm::credentials::directory().as_deref(),
     )?;
     let configured = webhook.is_some();
