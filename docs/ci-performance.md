@@ -356,10 +356,10 @@ caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 `Restart=always` clean up the entire service group and reconnect the runner after
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
-persistent target identity, so the fast compile step overrides it to two
-after setup. Four concurrent release-fast rustc processes exceed the fast
-6 GiB cap and the OOM kill drops the runner; two stays inside the cap and
-reuses the existing target. A build cannot occupy the fast service's queue, but both services
+persistent target identity, so the fast compile step overrides it to one
+after setup. Two concurrent release-fast rustc processes still exceed the
+fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
+and reuses the existing target. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial
