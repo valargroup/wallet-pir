@@ -15,10 +15,14 @@ once per minute from a separate region, and monitors APM task progress.
   Histogram buckets are merged before quantiles. Missing bandwidth does not
   disable error monitoring. Missing counters, failed scrapes, and incompatible
   histograms are unavailable, not zero.
-- Domain serving health combines published eligible replica counts with ready
-  routers that have an eligible worker for that domain. Worker metrics
-  reachability is a separate monitoring check. Standby workers do not count
-  toward domain redundancy.
+- Domain serving health reads each packing router's assignments and unexpired
+  worker promises from `/internal/health`, bound to its active publication.
+  Routers must match the publisher's exact manifest and generation, and their
+  combined assignments must cover every published domain.
+  APM resolves private worker origins to inventory names and counts each replica
+  once across routers. Unassigned workers do not count toward redundancy.
+  Missing, stale, inconsistent or unconfigured observations fail coverage.
+  Worker metrics reachability remains a separate monitoring check.
 - Publication lag compares the published anchor against a fresh direct Zakura
   RPC read. This bypasses the publisher observer but shares its node/host;
   it is not an independent second blockchain node. Tip inactivity is distinct
@@ -36,8 +40,20 @@ once per minute from a separate region, and monitors APM task progress.
   anchor rejection does not page. Publication metrics, blocked state and the
   last-advancement timestamp must be present and valid; otherwise checks become
   unknown and coverage alerts report the missing source.
-- Queue timestamps are operational metadata only. Existing persisted decisions
-  without timestamps begin age tracking when first loaded after upgrade.
+- `coordinator_ready` reads the Enhance listener's `/ready`, which stays 200 while
+  another product of the shared publisher has failed. With
+  `PIR_APM_PUBLISHER_URL` set to the publisher's loopback management origin, APM
+  reads its `/health` product report (which always returns 200) and raises
+  `publisher_product_<product>` (critical) when a product's phase is not
+  `running` for 60s. A missing or malformed report makes these unknown and
+  raises `coverage_publisher_*`; a product that leaves a fresh report retires.
+- Publication advancement time changes only after a durable publication commit;
+  failed preparation never resets it. Restart starts without an advancement
+  timestamp until the first successful commit. Failure counts reflect completed
+  failed publication attempts. The removed coordinator commit/abort handshake
+  has no pending-queue rules; its retained incidents retire after fresh placement
+  and inventory observations. Router memory and timing collection uses charged
+  packing bytes and does not require the removed resident-object counter.
 - Unknown data cannot recover an incident. Recovery requires two distinct fresh
   healthy samples. Valid inventory changes retire incidents for removed targets.
 - `/healthz` is HTTP liveness; `/readyz` is monitoring readiness. Public aggregate
@@ -182,7 +198,7 @@ Investigate by check family:
 | Check | First action |
 | --- | --- |
 | `query_5xx`, `init_5xx`, latency | Compare ingress outcomes with router outcomes; inspect admission and upstream service logs. |
-| `publication_*`, `pending_*` | Compare direct node tip and manifest; inspect publication attempts and oldest unacknowledged decision. |
+| `publication_*` | Compare direct node tip and manifest; inspect publication attempts and the last durable advancement. |
 | `domain_*` | Check published placement and eligible replicas, then router authority and generation-specific worker health. |
 | `coverage_*` | Restore the named scraper/source/inventory before trusting retained values. |
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |

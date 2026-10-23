@@ -191,6 +191,12 @@ impl pir_pipeline::publisher::Publication for EnhancePublication<'_> {
     }
     async fn commit(self, object: Object) -> Result<(), String> {
         self.distribution
-            .commit_candidate(&self.predecessor, self.manifest.clone(), object)
+            .commit_candidate(&self.predecessor, self.manifest.clone(), object)?;
+        // Only a durable successor counts as progress; retries and preparation
+        // cannot reset the alert's clock.
+        if let Some(owner) = self.owner {
+            owner.state.lock().unwrap().last_advancement = Some(std::time::SystemTime::now());
+        }
+        Ok(())
     }
 }

@@ -48,34 +48,47 @@ impl Publication for DisplayPreparation<'_> {
             candidate,
             sha,
             candidate_ms: ms(started),
-            prebuild: None,
+            runtime_preparation: None,
         })
     }
     async fn verify(
         &mut self,
         mut candidate: DisplayCandidate,
     ) -> Result<Self::Verified, BoxError> {
-        candidate.prebuild = self
-            .controller
-            .prebuild(&candidate.candidate, &candidate.material.recent.digest)
-            .await;
-        self.check()?;
+        let started = Instant::now();
         let finalized = if let Some(distribution) = &self.distribution {
             let stop = self.controller.shutdown.clone();
-            Some(
-                distribution
-                    .prepare(
-                        candidate.candidate.clone(),
-                        vec![self.controller.active.directory.clone()],
-                        self.controller.shutdown.clone(),
-                        move || stop.requested(),
-                    )
-                    .await
-                    .map_err(retry)?,
-            )
+            let (finalized, prepared) = distribution
+                .prepare_with(
+                    candidate.candidate.clone(),
+                    vec![self.controller.active.directory.clone()],
+                    self.controller.shutdown.clone(),
+                    move || stop.requested(),
+                    self.controller.settings.runtime_preparation.clone(),
+                )
+                .await
+                .map_err(retry)?;
+            candidate.runtime_preparation = Some((ms(started), prepared));
+            Some(finalized)
         } else {
+            // Finite fixture publishers exercise the same verified-source
+            // dependency without opening a node or granting HTTP authority.
+            let revision = candidate.candidate.join(&candidate.material.recent.digest);
+            let output = candidate.candidate.clone();
+            let preparation = self.controller.settings.runtime_preparation.clone();
+            let shutdown = self.controller.shutdown.clone();
+            let prepared = tokio::task::spawn_blocking(move || {
+                let revision =
+                    transparent_shared::tx_detail::set::DisplayRevision::read(&revision)?
+                        .verify_tables()?;
+                preparation.prepare(&revision, &output, &[], &|| shutdown.requested())
+            })
+            .await?
+            .map_err(retry)?;
+            candidate.runtime_preparation = Some((ms(started), prepared));
             None
         };
+        self.check()?;
         Ok((candidate, finalized))
     }
     async fn assemble(&mut self, verified: Self::Verified) -> Result<Self::Candidate, BoxError> {
@@ -109,5 +122,66 @@ impl Publication for DisplayPreparation<'_> {
             )
             .await
             .map_err(Into::into)
+    }
+}
+
+/// An ordered archive build has immutable cache handles and no publication
+/// authority. The root runs the same preparation phases as foreground work.
+pub(super) struct ArchivePreparation {
+    pub(super) root: PathBuf,
+    pub(super) layout: DisplayRoot,
+    pub(super) spec: ShardSpec,
+    pub(super) parts: Vec<Arc<[transparent_shard::txid::DisplayRecord]>>,
+    pub(super) shutdown: pir_pipeline::service::Shutdown,
+}
+impl Publication for ArchivePreparation {
+    type Error = BoxError;
+    type Material = PublishedShard;
+    type Stored = PublishedShard;
+    type Verified = PublishedShard;
+    type Candidate = PublishedShard;
+    type Report = PublishedShard;
+    fn check(&self) -> Result<(), BoxError> {
+        if self.shutdown.requested() {
+            return Err(transparent_shared::publication::Stopped.into());
+        }
+        Ok(())
+    }
+    async fn build(&mut self) -> Result<PublishedShard, BoxError> {
+        let (root, layout, spec, parts) = (
+            self.root.clone(),
+            self.layout.clone(),
+            self.spec.clone(),
+            self.parts.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            publish_parts(&root, &layout, &spec, &parts).map_err(BoxError::from)
+        })
+        .await?
+    }
+    async fn store(&mut self, shard: PublishedShard) -> Result<PublishedShard, BoxError> {
+        std::fs::File::open(shard.directory.join(MANIFEST_FILE))?.sync_all()?;
+        std::fs::File::open(&shard.directory)?.sync_all()?;
+        Ok(shard)
+    }
+    async fn verify(&mut self, shard: PublishedShard) -> Result<PublishedShard, BoxError> {
+        // The builder already checked decoded rows. The disk reader verifies
+        // the immutable references before this result can enter the seal queue.
+        let directory = shard.directory.clone();
+        tokio::task::spawn_blocking(move || {
+            transparent_shared::tx_detail::set::DisplayRevision::read(&directory)?.verify_tables()
+        })
+        .await??;
+        Ok(shard)
+    }
+    async fn assemble(&mut self, shard: PublishedShard) -> Result<PublishedShard, BoxError> {
+        Ok(shard)
+    }
+    async fn recheck(&mut self, _: &mut PublishedShard) -> Result<(), BoxError> {
+        self.check()
+    }
+    async fn commit(self, shard: PublishedShard) -> Result<PublishedShard, BoxError> {
+        self.check()?;
+        Ok(shard)
     }
 }

@@ -49,7 +49,17 @@ fn check_split_files(dir: &Path, split: &SplitMap) -> Result<(), LoadError> {
         ));
     }
     for chunk in &split.chunks {
-        if read(&dir.join(index_file(&chunk.sha256)))? != chunk.bytes {
+        let reference = pir_publication::ObjectReference::for_bytes(&chunk.bytes);
+        let (_, mut file) =
+            crate::publication::open_artifact(dir, &index_file(&chunk.sha256), Some(&reference))
+                .map_err(|error| invalid(error.to_string()))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| LoadError::Io {
+                path: dir.join(index_file(&chunk.sha256)),
+                source,
+            })?;
+        if bytes != chunk.bytes {
             return Err(invalid(format!(
                 "index chunk {} differs from the split of the display map",
                 chunk.sha256
@@ -60,10 +70,16 @@ fn check_split_files(dir: &Path, split: &SplitMap) -> Result<(), LoadError> {
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, LoadError> {
-    std::fs::read(path).map_err(|source| LoadError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    crate::verification::open(path)
+        .and_then(|mut file| {
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            Ok(bytes)
+        })
+        .map_err(|source| LoadError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 fn invalid(message: impl Into<String>) -> LoadError {

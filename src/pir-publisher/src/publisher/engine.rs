@@ -67,6 +67,7 @@ impl PublisherExecutor for PublisherEngine {
             let outcome = async {
                 while !shutdown.requested() {
                     let attempt = async {
+                        publisher.background(*self).await?;
                         match publisher.acquire().await? {
                             Input::Work(publication) => self.publish(publication).await.map(Some),
                             Input::Unchanged | Input::Deferred => Ok(None),

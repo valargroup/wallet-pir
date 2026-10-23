@@ -98,6 +98,36 @@ pub struct Peer {
 pub fn enabled() -> bool {
     std::env::var("PIR_APM_ALERT_MODE").as_deref() == Ok("active")
 }
+/// Product phases from a shared publisher's management `/health` report, or None
+/// when the report is malformed. Names become alert keys, so they stay simple.
+pub fn publisher_products(body: &str) -> Option<BTreeMap<String, String>> {
+    #[derive(Deserialize)]
+    struct Product {
+        phase: String,
+    }
+    #[derive(Deserialize)]
+    struct Report {
+        products: BTreeMap<String, Product>,
+    }
+    let report: Report = serde_json::from_str(body).ok()?;
+    let simple = |s: &str| {
+        (1..=64).contains(&s.len())
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    };
+    (report.products.len() <= 16
+        && report
+            .products
+            .iter()
+            .all(|(name, p)| simple(name) && simple(&p.phase)))
+    .then(|| {
+        report
+            .products
+            .into_iter()
+            .map(|(name, p)| (name, p.phase))
+            .collect()
+    })
+}
 fn epoch(t: Option<SystemTime>) -> u64 {
     t.and_then(|v| v.duration_since(UNIX_EPOCH).ok())
         .map(|v| v.as_secs())
@@ -211,7 +241,9 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             {
                 for incident in &snapshot.monitoring.incidents {
                     if let Some(c) = &incident.condition {
-                        if (c.key.starts_with("domain_")
+                        if (c.key.starts_with("pending_commit_")
+                            || c.key.starts_with("pending_abort_")
+                            || c.key.starts_with("domain_")
                             || c.key.starts_with("coverage_worker_")
                             || c.key.starts_with("coverage_router_")
                             || c.key.starts_with("router_"))
@@ -232,6 +264,21 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                             retired.retired = true;
                             retired.sample = now;
                             capacity_conditions.push(retired);
+                        }
+                    }
+                }
+            }
+            // A product removed from a freshly reported publisher ends its incident.
+            if snapshot.publisher_configured && fresh(epoch(snapshot.publisher_sample), now) {
+                for incident in &snapshot.monitoring.incidents {
+                    if let Some(c) = &incident.condition {
+                        if c.key.starts_with("publisher_product_")
+                            && !conditions.iter().any(|n| n.key == c.key)
+                        {
+                            let mut retired = c.clone();
+                            retired.retired = true;
+                            retired.sample = now;
+                            conditions.push(retired);
                         }
                     }
                 }
@@ -638,6 +685,25 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         300,
         coordinator_sample,
     );
+    // A shared publisher keeps serving the products that still run, so a failed
+    // product is visible only in its management report, not in Enhance readiness.
+    if d.publisher_configured {
+        let sample = epoch(d.publisher_sample);
+        let valid = fresh(sample, now);
+        sources.insert("publisher".into(), valid);
+        for (product, phase) in &d.publisher_products {
+            add(
+                format!("publisher_product_{product}"),
+                format!("publisher_{product}"),
+                "critical",
+                valid.then_some(phase != "running"),
+                format!("phase {phase}"),
+                "not running for 60s".into(),
+                60,
+                sample,
+            );
+        }
+    }
     let publication = publication(d, now);
     sources.insert(
         "publication_metrics".into(),
@@ -647,8 +713,6 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 "enhance_publication_last_advancement_unix_seconds",
                 "enhance_publication_blocked",
                 "enhance_publication_consecutive_failures",
-                "enhance_pending_commit_oldest_seconds",
-                "enhance_pending_abort_oldest_seconds",
             ]
             .iter()
             .all(|name| {
@@ -739,26 +803,6 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
             },
             coordinator_sample,
         );
-        for kind in ["commit", "abort"] {
-            let value = d
-                .snapshot_gauges
-                .get(&format!("enhance_pending_{kind}_oldest_seconds"))
-                .copied();
-            add(
-                format!("pending_{kind}_{severity}"),
-                format!("pending_{kind}"),
-                severity,
-                if coord {
-                    value.map(|v| v >= hold as f64)
-                } else {
-                    None
-                },
-                format!("oldest age {value:?}"),
-                format!(">= {hold}s"),
-                0,
-                coordinator_sample,
-            );
-        }
     }
     add(
         "chain_inactive".into(),
@@ -809,6 +853,17 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
         );
     }
     for (source, ok) in sources {
+        // An unavailable source is observed on each evaluator tick. Recovery
+        // needs new source observations, not repeated ticks over one sample.
+        let sample = if ok {
+            match source.as_str() {
+                "placement" => epoch(d.placement_success).min(coordinator_sample),
+                "publication_metrics" => coordinator_sample,
+                _ => now,
+            }
+        } else {
+            now
+        };
         for (severity, hold) in [("warning", 45), ("critical", 120)] {
             add(
                 format!("coverage_{source}_{severity}"),
@@ -818,7 +873,7 @@ pub fn conditions(d: &DashboardData, now: u64, p: &Policy) -> Vec<Condition> {
                 if ok { "fresh" } else { "unavailable" }.into(),
                 format!("unavailable for {hold}s"),
                 hold,
-                now,
+                sample,
             );
         }
     }
@@ -1311,6 +1366,67 @@ mod tests {
                 .unwrap();
         }
         assert!(store.incidents().unwrap()[0].active);
+    }
+    fn publisher_view(now: u64, sampled: u64, body: &str) -> DashboardData {
+        let mut d = view(now);
+        d.publisher_configured = true;
+        d.publisher_products = publisher_products(body).unwrap();
+        d.publisher_sample = Some(UNIX_EPOCH + Duration::from_secs(sampled));
+        d
+    }
+    #[test]
+    fn failed_product_in_running_shared_publisher_pages() {
+        // The 2026-10-23 report: Enhance kept /ready at 200 while txid failed.
+        let body = r#"{"ready":false,"products":{
+            "enhance":{"phase":"running","ready":true},
+            "status":{"phase":"running","ready":true},
+            "transaction_details":{"phase":"failed","ready":false},
+            "transparent_history":{"phase":"running","ready":true}}}"#;
+        let mut d = publisher_view(1000, 1000, body);
+        d.ready_status = Some(200);
+        assert_eq!(check(&d, 1000, "coordinator_ready").firing, Some(false));
+        let failed = check(&d, 1000, "publisher_product_transaction_details");
+        assert_eq!(failed.firing, Some(true));
+        assert_eq!(failed.severity, "critical");
+        assert_eq!(failed.observed, "phase failed");
+        for product in ["enhance", "status", "transparent_history"] {
+            let key = format!("publisher_product_{product}");
+            assert_eq!(check(&d, 1000, &key).firing, Some(false));
+        }
+        assert_eq!(
+            check(&d, 1000, "coverage_publisher_critical").firing,
+            Some(false)
+        );
+
+        // The durable evaluator pages once the hold passes, even in a running host.
+        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for t in (1000..=1060).step_by(15) {
+            let d = publisher_view(t, t, body);
+            let c = check(&d, t, "publisher_product_transaction_details");
+            store.evaluate(&[c], t, false, "test", "").unwrap();
+        }
+        let incidents = store.incidents().unwrap();
+        assert!(incidents[0].active && incidents[0].notified);
+    }
+    #[test]
+    fn stale_or_malformed_publisher_reports_are_unknown_with_coverage() {
+        let body = r#"{"products":{"transaction_details":{"phase":"failed","ready":false}}}"#;
+        let d = publisher_view(1000, 900, body);
+        assert_eq!(
+            check(&d, 1000, "publisher_product_transaction_details").firing,
+            None
+        );
+        assert_eq!(
+            check(&d, 1000, "coverage_publisher_critical").firing,
+            Some(true)
+        );
+        assert!(publisher_products("not json").is_none());
+        assert!(publisher_products(r#"{"products":{"Bad Name":{"phase":"failed"}}}"#).is_none());
+        // Without a configured publisher there is neither a rule nor coverage.
+        let d = view(1000);
+        assert!(!conditions(&d, 1000, &Policy::default())
+            .iter()
+            .any(|c| c.key.starts_with("publisher_") || c.key.contains("_publisher_")));
     }
     #[test]
     fn stale_replica_counts_never_recover_unavailability() {

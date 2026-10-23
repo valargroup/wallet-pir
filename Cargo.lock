@@ -3725,7 +3725,6 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
- "tracing-subscriber",
  "transparent-query-server",
  "transparent-shared",
  "zakura-pir-client",

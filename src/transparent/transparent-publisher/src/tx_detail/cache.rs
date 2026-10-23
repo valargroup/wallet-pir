@@ -11,7 +11,7 @@
 use zakura_pir_publisher::transparent as transparent_shard;
 use zakura_pir_publisher::transparent::filter as transparent_filter;
 
-use crate::history::publication::{BoxError, Journal};
+use crate::BoxError;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 use transparent_filter::BlockHash;
@@ -47,7 +47,7 @@ impl DisplayCache {
 
     /// Reads `[from, through]` from the journal; empty when `through < from`.
     pub fn load(
-        store: &impl Journal,
+        store: &impl crate::ingest::journal::DisplayJournal,
         params: DisplaySealParams,
         from: u64,
         through: u64,

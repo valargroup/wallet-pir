@@ -110,6 +110,31 @@ class ServingTests(PublisherFixture, unittest.TestCase):
             self.target.rollback()
         self.assertEqual(self.ex.effects, [])
 
+    def test_verification_keeps_a_separately_installed_unified_site(self):
+        from wallet_pir_ops.deploy.coordinator_edge import TEMPLATE, site_containing, sites
+        from wallet_pir_ops.deploy.unified_edge import candidate
+        self.ex.fail_probe = True
+        with self.assertRaises(DeployError):
+            self.deploy()
+        self.ex.fail_probe = False
+        journal = self.target.latest()
+        previous = journal['plan']['serving']['edge_after']
+        span = site_containing(previous, publisher_serving.WALLET)
+        host = next(host for host, value in sites(previous).items() if value == span)
+        installed = candidate(previous, TEMPLATE.read_text(), 'https://' + host)
+        self.ex.put('coordinator', publisher_serving.CADDY, installed + '# foreign edit\n')
+        self.ex.effects.clear()
+        with self.assertRaisesRegex(DeployError, 'outside the transaction'):
+            self.target.verify()
+        self.assertEqual(self.ex.effects, [])
+        self.ex.put('coordinator', publisher_serving.CADDY, installed)
+        invocation = self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id']
+        self.assertEqual(self.target.verify()['phase'], 'committed')
+        self.assertEqual(self.ex.read('coordinator', publisher_serving.CADDY), installed)
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['invocation_id'], invocation)
+        with self.assertRaisesRegex(DeployError, 'outside the transaction'):
+            self.target.rollback()
+
     def test_role_drift_invalidates_plan_before_stopping(self):
         plan = self.target.plan()
         self.ex.install('router-01', 'enhance-pir-packing-router.service', '[Service]\nExecStart=/bin/old-serving changed\n')

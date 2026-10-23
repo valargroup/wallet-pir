@@ -1,7 +1,8 @@
 //! Publisher-owned HTTP authority for independently synchronized display servers.
 mod restoration;
-use crate::history::publication::{write_durable, BoxError};
 use crate::ingest::zakura::NodeClient;
+use crate::storage::records::write_durable;
+use crate::BoxError;
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -24,22 +25,31 @@ pub struct Distribution(Arc<Inner>);
 struct Inner {
     root: PathBuf,
     rpc: NodeClient,
-    active: RwLock<Option<(Current, Arc<Finalized>)>>,
+    active: RwLock<Option<(Current, Arc<RetainedPublication>)>>,
     slots: Arc<tokio::sync::Semaphore>,
-    /// The last set an inventory was prepared from, as verified then: the
-    /// next one's unchanged revisions are its hard links and are not
-    /// verified again before the inventory rehashes them.
+    /// Source verification evidence for unchanged objects in the next set.
+    /// Reuse requires the same open-file identity and metadata.
     prepared_set: std::sync::Mutex<Option<DisplaySet>>,
     /// Shipped runtimes this process already loaded and self-checked; the
-    /// next inventory rehashes them but checks only changed bytes again.
+    /// next inventory reuses evidence only while their file stamps agree.
     checked_runtimes: std::sync::Mutex<CheckedRuntimes>,
+}
+struct RetainedPublication {
+    finalized: Finalized,
+    _lease: crate::storage::PublicationLease,
+}
+impl std::ops::Deref for RetainedPublication {
+    type Target = Finalized;
+    fn deref(&self) -> &Finalized {
+        &self.finalized
+    }
 }
 impl Distribution {
     pub fn new(root: &Path, rpc: NodeClient) -> Result<Self, BoxError> {
         // Reserve a durable process boundary before exposing any publication.
         crate::history::distribution::advance_distribution_revision(root)?;
         Ok(Self(Arc::new(Inner {
-            root: root.to_path_buf(),
+            root: std::fs::canonicalize(root)?,
             rpc,
             active: RwLock::new(None),
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
@@ -56,6 +66,30 @@ impl Distribution {
         expected: Option<u64>,
         shutdown: &pir_pipeline::service::Shutdown,
     ) -> Result<(), BoxError> {
+        let publication = super::publisher::ActiveRecord::load(&self.0.root)?;
+        self.commit_publication(finalized, expected, shutdown, &publication)
+    }
+    pub(super) fn commit_publication(
+        &self,
+        finalized: Finalized,
+        expected: Option<u64>,
+        shutdown: &pir_pipeline::service::Shutdown,
+        publication: &super::publisher::ActiveRecord,
+    ) -> Result<(), BoxError> {
+        let objects = self
+            .0
+            .root
+            .join(transparent_shared::publication::OBJECT_STORE);
+        if publication.directory.parent() != Some(self.0.root.as_path())
+            || publication.map_sha256 != finalized.inventory.map_sha256
+            || finalized.files.values().any(|(path, _)| {
+                !path.starts_with(&publication.directory)
+                    && path.parent() != Some(objects.as_path())
+            })
+        {
+            return Err("display prepared files and restart record have different owners".into());
+        }
+        let lease = crate::storage::PublicationLease::acquire(&publication.directory)?;
         let mut active = self.0.active.write().unwrap();
         if shutdown.requested() {
             return Err(Stopped.into());
@@ -75,11 +109,20 @@ impl Distribution {
             eligibility: Eligibility::Canonical,
             invalidated_from: None,
         };
-        write_durable(
-            &self.0.root.join("http-current.json"),
-            &serde_json::to_vec(&current)?,
-        )?;
-        *active = Some((current, Arc::new(finalized)));
+        if let Err(error) = super::activation::commit(&self.0.root, publication, &current) {
+            // Never expose a successor whose restart state did not commit.
+            if let Some((current, _)) = active.as_mut() {
+                current.eligibility = Eligibility::Withdrawn;
+            }
+            return Err(error);
+        }
+        *active = Some((
+            current,
+            Arc::new(RetainedPublication {
+                finalized,
+                _lease: lease,
+            }),
+        ));
         Ok(())
     }
     /// Withdraw before any journal rollback; a failed write still fences this process.
@@ -110,12 +153,38 @@ impl Distribution {
         if shutdown.requested() {
             return Err(Stopped.into());
         }
+        self.prepare_with(
+            directory,
+            retained,
+            shutdown,
+            stop,
+            Arc::new(super::runtime_preparation::RequiredRuntimes),
+        )
+        .await
+        .map(|(finalized, _)| finalized)
+    }
+    pub(super) async fn prepare_with(
+        &self,
+        directory: PathBuf,
+        retained: Vec<PathBuf>,
+        shutdown: pir_pipeline::service::Shutdown,
+        stop: impl Fn() -> bool + Send + Sync + 'static,
+        preparation: Arc<dyn super::runtime_preparation::RuntimePreparation>,
+    ) -> Result<
+        (
+            Finalized,
+            Vec<transparent_shared::tx_detail::prebuild::Shipped>,
+        ),
+        BoxError,
+    > {
         let work = directory;
         let previous = self.0.prepared_set.lock().unwrap().take();
         let mut checked = std::mem::take(&mut *self.0.checked_runtimes.lock().unwrap());
         let started = std::time::Instant::now();
         let (kept, checked, finalized) = tokio::task::spawn_blocking(move || {
-            let result = (|| -> Result<(DisplaySet, Finalized), BoxError> {
+            let result = (|| -> Result<(DisplaySet, Finalized, Vec<transparent_shared::tx_detail::prebuild::Shipped>), BoxError> {
+                crate::storage::adopt_segments(&work, &stop)?;
+                crate::storage::adopt_indexes(&work, &stop)?;
                 let set = DisplaySet::open_reusing_until(
                     &work,
                     0,
@@ -124,16 +193,16 @@ impl Distribution {
                     DisplayRole::Combined,
                     &stop,
                 )?;
+                let mut prepared = Vec::new();
                 for revision in set.current() {
-                    transparent_shared::tx_detail::prebuild::build_shipped_verified_until(
-                        revision, &work, &retained, &stop,
-                    )?;
+                    prepared.extend(preparation.prepare(revision, &work, &retained, &stop)?);
                 }
+                crate::storage::adopt_runtimes(&work, &stop)?;
                 let finalized = Finalized::prepare_reusing_until(&work, &set, &mut checked, &stop)?;
-                Ok((set, finalized))
+                Ok((set, finalized, prepared))
             })();
             match result {
-                Ok((set, finalized)) => (Some(set), checked, Ok(finalized)),
+                Ok((set, finalized, prepared)) => (Some(set), checked, Ok((finalized, prepared))),
                 // Earlier verification stays valid evidence for its own files.
                 Err(error) => (previous, checked, Err(error)),
             }

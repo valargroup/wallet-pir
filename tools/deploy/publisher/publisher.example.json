@@ -50,7 +50,6 @@
       "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
       "poll_ms": 1000,
       "status_listen": "127.0.0.1:8098",
-      "trust_sealed": false,
       "max_recent_records": null
     }
   },

@@ -14,9 +14,13 @@ pub struct PackingRouter {
     pub domains: std::collections::BTreeSet<u64>,
     pub sample: Worker,
     pub ready: Option<bool>,
+    pub placement: Option<crate::placement::Report>,
 }
 impl PackingRouter {
     pub fn serves(&self, domain: u64) -> bool {
+        if let Some(report) = &self.placement {
+            return report.domains.contains_key(&domain);
+        }
         self.domains.is_empty() || self.domains.contains(&domain)
     }
     pub fn status(&self) -> &'static str {
@@ -81,6 +85,7 @@ pub fn inventory(text: &str) -> Result<BTreeMap<String, PackingRouter>, String> 
                 ..Default::default()
             },
             ready: None,
+            placement: None,
         };
         if result.insert(name.into(), node).is_some() {
             return Err("Duplicate packing router name".into());
@@ -102,7 +107,7 @@ fn measurements(metrics: &str, health: &str) -> Result<(BTreeMap<String, f64>, b
             }
         }
     }
-    if !values.contains_key("resident_objects") {
+    if !values.contains_key("charged_bytes") {
         return Err("Packing router metrics unavailable".into());
     }
     let health: serde_json::Value =
@@ -110,11 +115,12 @@ fn measurements(metrics: &str, health: &str) -> Result<(BTreeMap<String, f64>, b
     let ready = health["ready"]
         .as_bool()
         .ok_or("Packing router readiness unavailable")?;
-    if let Some(domains) = health["domain_eligible_workers"].as_object() {
-        for (domain, count) in domains {
-            if let (Ok(id), Some(count)) = (domain.parse::<u64>(), count.as_u64()) {
-                values.insert(format!("domain_eligible_{id}"), count as f64);
-            }
+    if let Some(report) = crate::placement::Report::parse(&health.to_string()) {
+        for (domain, replicas) in report.domains {
+            values.insert(
+                format!("domain_eligible_{domain}"),
+                replicas.values().filter(|ready| **ready).count() as f64,
+            );
         }
     }
     for key in ["available_requests", "controller_epoch"] {
@@ -167,6 +173,7 @@ async fn monitor_with_timing(
                         {
                             router.sample = old.sample.clone();
                             router.ready = old.ready;
+                            router.placement = old.placement.clone();
                         }
                     }
                     view.packing_routers = routers;
@@ -205,6 +212,9 @@ async fn monitor_with_timing(
                     tokio::join!(fetch("/internal/metrics"), fetch("/internal/health"));
                 let result = match (metrics, health) {
                     (Ok(metrics), Ok(health)) => measurements(&metrics, &health)
+                        .map(|(values, ready)| {
+                            (values, ready, crate::placement::Report::parse(&health))
+                        })
                         .map_err(|_| "Packing router measurements unavailable"),
                     _ => Err("Packing router health or metrics request failed"),
                 };
@@ -216,15 +226,17 @@ async fn monitor_with_timing(
                 {
                     current.sample.attempted = Some(attempted);
                     match result {
-                        Ok((values, ready)) => {
+                        Ok((values, ready, placement)) => {
                             current.sample.values = values;
                             current.ready = Some(ready);
+                            current.placement = placement;
                             current.sample.success = Some(SystemTime::now());
                             current.sample.error = None;
                         }
                         Err(error) => current.sample.error = Some(error.into()),
                     }
                 }
+                crate::placement::update(&mut view, SystemTime::now());
             });
         }
         while tasks.join_next().await.is_some() {}
@@ -256,7 +268,7 @@ mod tests {
     }
     #[test]
     fn readiness_is_distinct_from_reachability_and_stale_values() {
-        let (values, ready) = measurements("enhance_packing_router_resident_objects 2\nenhance_packing_router_charged_bytes 123\n", r#"{"ready":false,"controller_epoch":3,"available_requests":4,"outstanding":{"http://private":1}}"#).unwrap();
+        let (values, ready) = measurements("enhance_packing_router_charged_bytes 123\n", r#"{"ready":false,"controller_epoch":3,"available_requests":4,"outstanding":{"http://private":1}}"#).unwrap();
         assert!(!ready);
         assert_eq!(values["charged_bytes"], 123.0);
         assert_eq!(values["available_requests"], 4.0);
@@ -269,6 +281,7 @@ mod tests {
                 ..Default::default()
             },
             ready: Some(ready),
+            placement: None,
         };
         assert_eq!(router.status(), "not ready");
         router.ready = Some(true);
@@ -278,7 +291,7 @@ mod tests {
         router.sample.success = Some(SystemTime::now() - Duration::from_secs(46));
         assert_eq!(router.status(), "stale");
         assert!(measurements("unrelated_metric 1", r#"{"ready":true}"#).is_err());
-        assert!(measurements("enhance_packing_router_resident_objects 2", "{}").is_err());
+        assert!(measurements("enhance_packing_router_charged_bytes 2", "{}").is_err());
     }
     #[tokio::test]
     async fn discovery_pages_and_failed_scrapes_preserve_last_valid_sample() {

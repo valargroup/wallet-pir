@@ -9,9 +9,9 @@ use crate::tx_detail::fixture::{block_hash, chain_sources};
 #[cfg(feature = "qualification-tests")]
 use crate::tx_detail::offline::{bench_recent, synthetic_records};
 use crate::tx_detail::offline::{plan_start, verify};
-#[cfg(feature = "qualification-tests")]
-use crate::tx_detail::publisher::CANDIDATE_PREFIX;
 use crate::tx_detail::publisher::{bootstrap, SEALED_DIR};
+#[cfg(feature = "qualification-tests")]
+use crate::tx_detail::publisher::{verify_dir, CANDIDATE_PREFIX};
 use crate::tx_detail::source::{open_writer, Script, ScriptStep};
 use crate::tx_detail::timeline::read_timeline;
 use std::collections::BTreeSet;
@@ -23,27 +23,34 @@ use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
 #[cfg(feature = "qualification-tests")]
 use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
-/// Leaves runtimes to finalization; only the tests that check runtimes
-/// build them.
-fn no_prebuild(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
+/// Fixture-only runtime dependency; tests that check runtimes build them.
+fn runtime_preparation(
+    build: fn(&Path, &Path) -> Result<Vec<Shipped>, String>,
+) -> Arc<dyn crate::tx_detail::runtime_preparation::RuntimePreparation> {
+    struct FixturePreparation(fn(&Path, &Path) -> Result<Vec<Shipped>, String>);
+    impl crate::tx_detail::runtime_preparation::RuntimePreparation for FixturePreparation {
+        fn prepare(
+            &self,
+            revision: &transparent_shared::tx_detail::set::DisplayRevision,
+            output: &Path,
+            _: &[PathBuf],
+            _: &(dyn Fn() -> bool + Sync),
+        ) -> Result<Vec<Shipped>, BoxError> {
+            (self.0)(&revision.dir, output).map_err(Into::into)
+        }
+    }
+    Arc::new(FixturePreparation(build))
+}
+fn skip_fixture_runtimes(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
     Ok(Vec::new())
 }
 
 fn settings() -> Settings {
     Settings {
         exit_when_idle: true,
-        trust_sealed: true,
         record_maps: true,
-        prebuild: no_prebuild,
+        runtime_preparation: runtime_preparation(skip_fixture_runtimes),
         ..Settings::default()
-    }
-}
-
-/// Settings that re-verify every sealed revision when a controller opens.
-fn verifying() -> Settings {
-    Settings {
-        trust_sealed: false,
-        ..settings()
     }
 }
 
@@ -460,11 +467,11 @@ async fn restart_resumes_without_touching_sealed_files() {
     let whole = bootstrap_at(&journal, &temp.path().join("whole"), &layout, through);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
-    let first = run_script(&root, &journal, advance(112, middle, 9), verifying()).await;
+    let first = run_script(&root, &journal, advance(112, middle, 9), settings()).await;
     assert_eq!(first.outcome, Outcome::Idle);
     let sealed_before = sealed_files(&root);
     // Recovery verifies sealed bytes and continues from the activated tip.
-    let second = run_script(&root, &journal, advance(middle, through, 9), verifying()).await;
+    let second = run_script(&root, &journal, advance(middle, through, 9), settings()).await;
     assert_eq!(second.outcome, Outcome::Idle);
     assert_eq!(identities(&second.active.seals), identities(&whole));
     let sealed_after = sealed_files(&root);
@@ -481,26 +488,30 @@ async fn restart_resumes_without_touching_sealed_files() {
         .collect();
     assert_eq!(decided.iter().collect::<BTreeSet<_>>().len(), decided.len());
 
-    // Damaged sealed bytes halt recovery, unless sealed revisions are trusted.
+    // Required preparation refuses damaged sealed bytes before HTTP authority.
     let victim = second.active.seals.last().unwrap().digest.clone();
     let segment = root
         .join(SEALED_DIR)
         .join(&victim)
         .join("directory-0.0.bin");
     let first_byte = std::fs::read(&segment).unwrap()[0];
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&segment, std::fs::Permissions::from_mode(0o644)).unwrap();
     std::fs::OpenOptions::new()
         .write(true)
         .open(&segment)
         .unwrap()
         .write_all_at(&[first_byte ^ 1], 0)
         .unwrap();
-    let run = run_script(&root, &journal, vec![], settings()).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    let run = run_script(&root, &journal, vec![], verifying()).await;
+    let active = ActiveRecord::load(&root).unwrap();
     assert!(
-        matches!(run.outcome, Outcome::Halted(ref r) if r.contains(&victim)),
-        "{:?}",
-        run.outcome
+        transparent_shared::tx_detail::set::DisplaySet::open(
+            &active.directory,
+            0,
+            transparent_shared::tx_detail::DisplayRole::Combined
+        )
+        .is_err(),
+        "required preparation must refuse damaged sealed bytes"
     );
 }
 
@@ -691,7 +702,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     assert_eq!(controller.queue.len(), before - started);
     // Every decided seal is built before the rollback arrives.
     while controller.queue.iter().any(|j| j.state != JobState::Built) {
-        controller.schedule();
+        controller.schedule(crate::host_engine::PublisherEngine);
         let event = controller.receiver.recv().await.unwrap();
         controller.background(event);
     }
@@ -1050,7 +1061,7 @@ mod live {
         drop(store);
 
         let settings = Settings {
-            prebuild: super::no_prebuild,
+            runtime_preparation: runtime_preparation(super::skip_fixture_runtimes),
             ..Settings::default()
         };
         let status = settings.status.clone();
@@ -1108,6 +1119,7 @@ mod live {
 }
 
 /// Shipped runtime files at the root of `candidate`, by name.
+#[cfg(feature = "qualification-tests")]
 fn shipped_files(candidate: &Path) -> BTreeSet<String> {
     listing(candidate)
         .into_iter()
@@ -1117,7 +1129,7 @@ fn shipped_files(candidate: &Path) -> BTreeSet<String> {
 
 /// Every candidate carries one runtime per table segment of its recent
 /// revision, as plain files at its root; the cycle
-/// records the prebuild; revision directories still hold exactly their
+/// records runtime preparation; revision directories still hold exactly their
 /// manifests' files; and collection removes a candidate with its files.
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
@@ -1136,7 +1148,7 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
     let settings = Settings {
-        prebuild: build_shipped,
+        runtime_preparation: runtime_preparation(build_shipped),
         retain_candidates: 1,
         ..settings()
     };
@@ -1163,8 +1175,7 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     assert_eq!(files.len(), targets.len());
     assert!(files.iter().all(|name| name.ends_with(".runtime")));
     for cycle in &cycles {
-        assert!(cycle["prebuild_ms"].is_u64(), "{cycle}");
-        assert_eq!(cycle["prebuild_failures"], 0);
+        assert!(cycle["preparation_ms"].is_u64(), "{cycle}");
         let shipped = cycle["shipped"].as_array().unwrap();
         assert_eq!(shipped.len(), targets.len());
         assert_eq!(
@@ -1197,15 +1208,11 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
     }
 }
 
-/// A prebuild failure is counted, leaves no file behind and never stops the
-/// cycle: the candidate is published, and finalization builds the runtimes.
+/// Required preparation failure leaves durable coverage at its predecessor.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_prebuild_still_publishes() {
-    fn fails(revision: &Path, candidate: &Path) -> Result<Vec<Shipped>, String> {
-        assert!(revision.starts_with(candidate));
-        std::fs::write(candidate.join("ab-cd.partial"), b"half").unwrap();
-        std::fs::write(candidate.join("ab-cd.runtime"), b"half").unwrap();
-        Err("no room to build".into())
+async fn required_runtime_preparation_failure_preserves_the_predecessor() {
+    fn fails(_: &Path, _: &Path) -> Result<Vec<Shipped>, String> {
+        Err("runtime construction failed".into())
     }
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
@@ -1213,31 +1220,32 @@ async fn a_failed_prebuild_still_publishes() {
     let layout = layout(&journal, 100);
     let root = temp.path().join("root");
     bootstrap_at(&journal, &root, &layout, 112);
-    let settings = Settings {
-        prebuild: fails,
-        ..settings()
-    };
-    let run = run_script(&root, &journal, advance(112, 118, 3), settings).await;
-    assert_eq!(run.outcome, Outcome::Idle);
-    assert_eq!(run.active.tip, 118);
-    let events = read_timeline(&root).unwrap();
-    let cycles: Vec<_> = events.iter().filter(|e| e["kind"] == "cycle").collect();
-    assert!(cycles.len() >= 2, "{} cycles", cycles.len());
-    for (index, cycle) in cycles.iter().enumerate() {
-        assert!(cycle["prebuild_ms"].is_null());
-        assert_eq!(cycle["prebuild_failures"], index as u64 + 1);
-    }
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e["kind"] == "error" && e["stage"] == "prebuild")
-            .count(),
-        cycles.len()
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(advance(112, 118, 6))),
+        Settings {
+            runtime_preparation: runtime_preparation(fails),
+            ..settings()
+        },
+    )
+    .unwrap();
+    let before = controller.active().clone();
+    controller.poll_source().await.unwrap();
+    let result = crate::host_engine::PublisherEngine
+        .prepare(preparation::DisplayPreparation::new(&mut controller))
+        .await;
+    assert!(
+        result.is_err(),
+        "required preparation must fail the attempt"
     );
-    assert!(shipped_files(&run.active.directory).is_empty());
+    assert_eq!(controller.active().map_sha256, before.map_sha256);
+    assert_eq!(
+        ActiveRecord::load(&root).unwrap().map_sha256,
+        before.map_sha256
+    );
 }
 
-/// The value of one series in a Prometheus text rendering.
 #[cfg(feature = "qualification-tests")]
 fn series(text: &str, name: &str) -> f64 {
     text.lines()
@@ -1397,21 +1405,28 @@ async fn a_stopped_candidate_is_not_activated_and_preparation_resumes() {
     );
 }
 
-/// A stop requested while a candidate's runtime prebuild runs is observed
+/// A stop requested while a candidate's runtime preparation runs is observed
 /// only after that blocking build returns: until then the controller still
 /// holds its root lock and journal, and `run_until` has not returned. The
 /// unactivated candidate is then abandoned.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
-    static ENTERED: std::sync::LazyLock<std::sync::Barrier> =
-        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
-    static RELEASE: std::sync::LazyLock<std::sync::Barrier> =
-        std::sync::LazyLock::new(|| std::sync::Barrier::new(2));
+async fn a_stop_keeps_the_root_owned_until_runtime_preparation_returns() {
+    static ENTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    struct Release;
+    impl Drop for Release {
+        fn drop(&mut self) {
+            RELEASE.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+    let _release = Release;
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     fn held(_revision: &Path, _candidate: &Path) -> Result<Vec<Shipped>, String> {
         if CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
-            ENTERED.wait();
-            RELEASE.wait();
+            ENTERED.store(true, std::sync::atomic::Ordering::Release);
+            while !RELEASE.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
         Ok(Vec::new())
     }
@@ -1426,7 +1441,7 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
         open_writer(&journal).unwrap(),
         Source::Script(Script::new(advance(112, 118, 6))),
         Settings {
-            prebuild: held,
+            runtime_preparation: runtime_preparation(held),
             ..settings()
         },
     )
@@ -1442,9 +1457,17 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
             (controller, outcome)
         }
     });
-    tokio::task::spawn_blocking(|| ENTERED.wait())
-        .await
-        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ENTERED.load(std::sync::atomic::Ordering::Acquire) && !running.is_finished() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("required preparation was never entered");
+    if running.is_finished() {
+        let (_, outcome) = running.await.unwrap();
+        panic!("publisher ended before required preparation: {outcome:?}");
+    }
     shutdown.request();
     let lock = std::fs::File::options()
         .read(true)
@@ -1453,10 +1476,11 @@ async fn a_stop_keeps_the_root_owned_until_a_running_prebuild_returns() {
         .unwrap();
     assert!(lock.try_lock().is_err(), "the root is still owned");
     assert!(open_writer(&journal).is_err(), "the journal is still owned");
-    assert!(!running.is_finished(), "run_until waits for the prebuild");
-    tokio::task::spawn_blocking(|| RELEASE.wait())
-        .await
-        .unwrap();
+    assert!(
+        !running.is_finished(),
+        "run_until waits for runtime preparation"
+    );
+    RELEASE.store(true, std::sync::atomic::Ordering::Release);
     let (controller, outcome) = running.await.unwrap();
     assert_eq!(outcome.unwrap(), Outcome::Idle);
     assert_eq!(CALLS.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -1554,4 +1578,36 @@ async fn a_stop_before_activation_keeps_the_rollback_record() {
     assert_eq!(run.outcome, Outcome::Idle);
     assert_eq!(run.active.tip, 122, "a later run activates");
     assert!(saved_rollback(&root).is_null());
+}
+
+/// The root may observe stop after a wait has already consumed completion.
+/// Draining must finish without waiting for a second completion message.
+#[tokio::test]
+async fn shutdown_drains_an_archive_completion_already_received_by_the_wait() {
+    use pir_pipeline::publisher::Publisher;
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 112, 0);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout(&journal, 100), 112);
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new([])),
+        settings(),
+    )
+    .unwrap();
+    controller.building = true;
+    let mut workflow = DetailPublication {
+        controller: &mut controller,
+        wake: Some(workflow::DetailWake::Background(Some(Background {
+            shard_id: 2,
+            result: Err(PublishError::Other("stopped during preparation".into())),
+        }))),
+    };
+    tokio::time::timeout(Duration::from_secs(1), workflow.finish())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!controller.building);
 }

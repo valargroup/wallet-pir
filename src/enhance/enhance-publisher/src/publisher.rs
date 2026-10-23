@@ -26,6 +26,8 @@ struct PublisherRuntimeState {
     poisoned: bool,
     preparing: Option<u64>,
     error: Option<String>,
+    last_advancement: Option<std::time::SystemTime>,
+    consecutive_failures: u64,
 }
 
 /// A bounded work token pins the committed journal prefix and the withdrawal
@@ -141,7 +143,13 @@ impl EnhancePublisher {
         result
     }
     pub(crate) fn publication_finished(&self, error: Option<String>) {
-        self.state.lock().unwrap().error = error;
+        let mut state = self.state.lock().unwrap();
+        state.consecutive_failures = if error.is_some() {
+            state.consecutive_failures.saturating_add(1)
+        } else {
+            0
+        };
+        state.error = error;
     }
     pub fn router(&self) -> axum::Router {
         axum::Router::new()
