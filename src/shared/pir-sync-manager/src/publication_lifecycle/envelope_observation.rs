@@ -35,6 +35,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         let checked = self.floor.classify(envelope.clone())?;
         // Negative evidence fences serving before anything fallible is persisted.
         let fenced = if !envelope.eligible || checked.succession().fences_earlier_views() {
+            self.pending_loaded = None;
             self.fence_serving().await
         } else {
             Vec::new()

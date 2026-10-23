@@ -32,7 +32,15 @@ struct Origin {
     requested_objects: RwLock<Vec<String>>,
     /// An envelope published once the named object is requested.
     publish_on_request: RwLock<Option<(String, Current)>>,
+    pause_download: Mutex<Option<DownloadPause>>,
 }
+struct DownloadPause {
+    object: String,
+    reached: Arc<tokio::sync::Notify>,
+    resume: Arc<tokio::sync::Notify>,
+}
+#[cfg(feature = "native-reinspiring")]
+use crate::service::status_http as http;
 #[path = "../../../tests/support/status_tls.rs"]
 mod tls;
 
@@ -118,6 +126,7 @@ async fn setup() -> (
         objects: RwLock::default(),
         requested_objects: RwLock::default(),
         publish_on_request: RwLock::default(),
+        pause_download: Mutex::default(),
     });
     let shared = current.clone();
     let anchors = current.clone();
@@ -190,9 +199,23 @@ async fn setup() -> (
             let objects = objects.clone();
             async move {
                 objects.requested_objects.write().unwrap().push(id.clone());
-                let mut publish = objects.publish_on_request.write().unwrap();
-                if publish.as_ref().is_some_and(|(object, _)| *object == id) {
-                    *objects.current.write().unwrap() = publish.take().unwrap().1;
+                {
+                    let mut publish = objects.publish_on_request.write().unwrap();
+                    if publish.as_ref().is_some_and(|(object, _)| *object == id) {
+                        *objects.current.write().unwrap() = publish.take().unwrap().1;
+                    }
+                }
+                let pause = {
+                    let mut pause = objects.pause_download.lock().unwrap();
+                    if pause.as_ref().is_some_and(|pause| pause.object == id) {
+                        pause.take()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(pause) = pause {
+                    pause.reached.notify_one();
+                    pause.resume.notified().await;
                 }
                 let served = objects.objects.read().unwrap().get(&id).cloned();
                 served.unwrap_or_else(|| b"not an inventory".to_vec())
@@ -241,7 +264,7 @@ async fn tls_withdrawal_fences_before_persisting_and_refuses_replay() {
     deferred(task.synchronize().await.unwrap());
     assert_eq!(
         service.state.lock().await.synchronization,
-        "waiting_for_peer"
+        "waiting_for_publication"
     );
     assert!(service.serving().await.is_err());
     assert_eq!(saved_floor(&service)["current"]["eligible"], false);
@@ -559,7 +582,7 @@ async fn loading_worker_keeps_normal_poll_cadence_without_serving() {
     assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
     assert_eq!(
         router.state.lock().await.synchronization,
-        "waiting_for_peer"
+        "waiting_for_worker"
     );
     assert!(router.serving().await.is_err());
     peer.abort();
@@ -626,7 +649,7 @@ async fn a_new_publication_during_authority_check_retries_without_renewing_the_o
     );
     assert_eq!(
         service.state.lock().await.synchronization,
-        "waiting_for_peer"
+        "waiting_for_authority"
     );
     assert_eq!(
         service
@@ -964,13 +987,64 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         .unwrap()
         .current();
     assert!(Arc::ptr_eq(current.public(), loaded.public()));
-    // Held generations would make the controller defer the next preparation.
-    drop((current, loaded));
+    drop(current);
+
+    // Keep the original view pinned, as the router does during a handover.
+    // Metadata may advance without allocating another material generation.
+    assert!(worker
+        .state
+        .lock()
+        .await
+        .controller
+        .as_ref()
+        .unwrap()
+        .can_prepare());
+    let mut newest = refreshed.clone();
+    newest.manifest.generation = 6;
+    let newest_object = publish(&mut newest, 9);
+    let requested = source.requested_objects.read().unwrap().len();
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
+    assert_eq!(
+        &source.requested_objects.read().unwrap()[requested..],
+        std::slice::from_ref(&newest_object.sha256)
+    );
+    assert!(Arc::ptr_eq(
+        worker
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .unwrap()
+            .current()
+            .public(),
+        loaded.public()
+    ));
+
+    // A pin sharing the active allocations permits the next different material.
+    let changed = cached_generation(
+        &fixture::snapshot(32, true).unwrap(),
+        7,
+        2,
+        now_ms(),
+        Some(&loaded),
+    );
+    let mut changed = export(&source, &changed);
+    publish(&mut changed, 10);
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 7);
+    let controller = worker.state.lock().await.controller.clone().unwrap();
+    assert!(
+        !controller.can_prepare(),
+        "the predecessor now pins different material"
+    );
+    assert!(controller.resolve(loaded.manifest().id()).is_ok());
+    drop(loaded);
+    assert!(controller.can_prepare());
 
     // Reusing material never skips the live authority check.
-    let mut withheld = refreshed.clone();
-    withheld.manifest.generation = 6;
-    publish(&mut withheld, 9);
+    let mut withheld = changed.clone();
+    withheld.manifest.generation = 8;
+    publish(&mut withheld, 11);
     source.canonical.store(false, Ordering::SeqCst);
     let error = task.synchronize().await.unwrap_err();
     assert_eq!(
@@ -1134,5 +1208,572 @@ async fn a_metadata_refresh_during_the_load_commits_the_loaded_material_as_lates
     assert!(source.publish_on_request.read().unwrap().is_none());
     assert_eq!(serving_manifest_id(&worker).await, refreshed.manifest.id());
     assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    server.abort();
+}
+
+/// New data published while a worker loads does not require a quiet publisher
+/// before the worker can activate its still-fresh, live-checked candidate.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn changed_material_during_loading_still_allows_forward_progress() {
+    use status_shared::fixture::{self, NETWORK, SALT};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let first = cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
+    let next = cached_generation(
+        &fixture::snapshot(32, true).unwrap(),
+        5,
+        2,
+        now_ms(),
+        Some(&first),
+    );
+    let (blocks, mut mempool, forks) = fixture::source(32, true);
+    mempool.push(fixture::txid(u64::MAX - 3));
+    let third_snapshot =
+        status_shared::index::Snapshot::build(NETWORK, SALT, &blocks, &mempool, &forks).unwrap();
+    let third = cached_generation(&third_snapshot, 6, 2, now_ms(), Some(&next));
+    // Fixture preparation can contend with other native tests. Start the
+    // observation window once all synthetic material is ready, before any
+    // publication or synchronization; loading must preserve this timestamp.
+    let observed_ms = now_ms();
+    let first = first.reobserved(observed_ms);
+    let next = next.reobserved(observed_ms);
+    let third = third.reobserved(observed_ms);
+    let mut inventory = export(&source, &first);
+    let object = publish_inventory(&source, &mut inventory);
+    let mut newer = export(&source, &next);
+    let newer_object = publish_inventory(&source, &mut newer);
+    let mut newest = export(&source, &third);
+    let newest_object = publish_inventory(&source, &mut newest);
+    assert_ne!(inventory.material_identity(), newer.material_identity());
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 7,
+        ..fixture::publishing(&inventory, &object)
+    };
+    *source.publish_on_request.write().unwrap() = Some((
+        inventory.public.sha256.clone(),
+        Current {
+            scope: scope(NETWORK, SALT),
+            sequence: 8,
+            ..fixture::publishing(&newer, &newer_object)
+        },
+    ));
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let mut task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 4);
+    assert_eq!(serving_manifest_id(&worker).await, inventory.manifest.id());
+    assert_eq!(task.floor().envelope().unwrap().sequence, 8);
+    assert_eq!(
+        worker
+            .state
+            .lock()
+            .await
+            .controller
+            .as_ref()
+            .unwrap()
+            .current()
+            .manifest()
+            .observed_ms,
+        inventory.manifest.observed_ms,
+        "loading and authority checks cannot renew observation age"
+    );
+    // Keep publishing during the next load too: no quiet pass is needed to
+    // activate either candidate, and the consumer then reaches the newest one.
+    let changed_unit = newer
+        .units
+        .iter()
+        .find(|unit| !inventory.units.contains(unit))
+        .unwrap();
+    *source.publish_on_request.write().unwrap() = Some((
+        changed_unit.sha256.clone(),
+        Current {
+            scope: scope(NETWORK, SALT),
+            sequence: 9,
+            ..fixture::publishing(&newest, &newest_object)
+        },
+    ));
+    #[cfg(feature = "native-reinspiring")]
+    {
+        let peer = http::serve(worker.control_routes()).await;
+        let router = Service::open(
+            Role::Router,
+            NETWORK,
+            root.path().join("router"),
+            peer.origin.clone(),
+        )
+        .unwrap();
+        let mut router_task = synchronization(
+            router.clone(),
+            &role_config(Role::Router, root.path().join("router"), &tls),
+        )
+        .unwrap();
+        assert_eq!(committed(router_task.synchronize().await.unwrap()).0, 4);
+        let public = http::serve(router.query_routes()).await;
+        let transport = http::Loopback {
+            origin: public.origin.clone(),
+            http: reqwest::Client::new(),
+            corrupt_answer: AtomicBool::new(false),
+        };
+        use zakura_pir_client::status as wallet;
+        for (step, mempool) in [false, true, true].into_iter().enumerate() {
+            if step > 0 {
+                // Wallet work on the preceding view can take seconds. Model
+                // the publisher's continuing observations of the next state,
+                // before loading it; never renew a candidate during its load.
+                let mut observed = if step == 1 {
+                    newer.clone()
+                } else {
+                    newest.clone()
+                };
+                observed.manifest.generation = 4 + 2 * step as u64;
+                let object = publish_inventory(&source, &mut observed);
+                *source.current.write().unwrap() = Current {
+                    scope: scope(NETWORK, SALT),
+                    sequence: 7 + 2 * step as u64,
+                    ..fixture::publishing(&observed, &object)
+                };
+                if step == 1 {
+                    // New material still appears during this load as well.
+                    let mut advancing = newest.clone();
+                    advancing.manifest.generation = 7;
+                    let object = publish_inventory(&source, &mut advancing);
+                    *source.publish_on_request.write().unwrap() = Some((
+                        changed_unit.sha256.clone(),
+                        Current {
+                            scope: scope(NETWORK, SALT),
+                            sequence: 10,
+                            ..fixture::publishing(&advancing, &object)
+                        },
+                    ));
+                } else {
+                    newest = observed;
+                }
+                assert_eq!(
+                    committed(task.synchronize().await.unwrap()).0,
+                    4 + 2 * step as u64
+                );
+                assert_eq!(
+                    committed(router_task.synchronize().await.unwrap()).0,
+                    4 + 2 * step as u64
+                );
+            }
+            let snapshot = fixture::snapshot(32, mempool).unwrap();
+            let anchor = wallet::AcceptedAnchor {
+                network: NETWORK,
+                height: snapshot.height,
+                hash: snapshot.anchor,
+            };
+            let coverage = wallet::LocalCoverageContext {
+                earliest_possible_inclusion: Some(snapshot.start),
+                required_through: Some(snapshot.height),
+            };
+            let client = wallet::transport::PendingClient::fetch(
+                &transport,
+                "https://status-wallet.invalid",
+                now_ms,
+            )
+            .await
+            .unwrap()
+            .accept(&transport, &anchor)
+            .await
+            .unwrap();
+            // One changing answer proves each handover uses the right data.
+            // The wallet suite covers all observation states separately; keep
+            // this live-clock regression inside its twenty-second window.
+            use status_shared::protocol::Observation;
+            let (txid, expected) = if step == 2 {
+                (fixture::txid(u64::MAX - 3), Observation::Mempool)
+            } else {
+                fixture::cases(32, mempool).swap_remove(1)
+            };
+            let expected = match expected {
+                Observation::Mined(height) => wallet::Observation::Mined(height),
+                Observation::Mempool => wallet::Observation::Mempool,
+                Observation::Forked => wallet::Observation::Forked,
+                Observation::NotFound => wallet::Observation::NotFound,
+            };
+            assert_eq!(
+                client.observe(&transport, &txid, coverage).await.unwrap(),
+                expected
+            );
+        }
+    }
+    #[cfg(not(feature = "native-reinspiring"))]
+    {
+        assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+        assert_eq!(committed(task.synchronize().await.unwrap()).0, 6);
+    }
+    assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
+    assert!(source.publish_on_request.read().unwrap().is_none());
+    assert_eq!(
+        task.floor().envelope().unwrap().sequence,
+        if cfg!(feature = "native-reinspiring") {
+            11
+        } else {
+            9
+        }
+    );
+    server.abort();
+}
+
+/// A new worker with one real, published candidate and no serving authority.
+async fn worker_with_published_candidate() -> (
+    tempfile::TempDir,
+    Service,
+    StatusSynchronization,
+    Arc<Origin>,
+    tls::Tls,
+    tokio::task::JoinHandle<()>,
+) {
+    use status_shared::fixture::{self, NETWORK, SALT};
+    let (root, _service, task, source, tls, server) = setup().await;
+    drop(task);
+    let generation =
+        cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None);
+    let mut inventory = export(&source, &generation);
+    let object = publish_inventory(&source, &mut inventory);
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 7,
+        ..fixture::publishing(&inventory, &object)
+    };
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    let task = synchronization(
+        worker.clone(),
+        &role_config(Role::Worker, root.path().join("peer"), &tls),
+    )
+    .unwrap();
+    (root, worker, task, source, tls, server)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn an_authority_conflict_reuses_loaded_work_but_requires_a_new_live_answer() {
+    let (_root, worker, mut task, source, _tls, server) = worker_with_published_candidate().await;
+    source.advance_during_check.store(true, Ordering::SeqCst);
+    assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
+    assert!(worker.state.lock().await.controller.is_none());
+    assert_eq!(
+        worker.state.lock().await.synchronization,
+        "waiting_for_authority"
+    );
+    // No cache or source bytes remain to load again. Only the in-memory
+    // candidate can finish, and it still needs a fresh authority response.
+    for file in fs::read_dir(worker.state_dir.join("objects")).unwrap() {
+        fs::remove_file(file.unwrap().path()).unwrap();
+    }
+    source.objects.write().unwrap().clear();
+    source.requested_objects.write().unwrap().clear();
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 4);
+    assert!(source.requested_objects.read().unwrap().is_empty());
+    assert!(worker.serving().await.is_ok());
+    server.abort();
+}
+
+/// A prepared candidate cannot carry authority across a withdrawal, recovery
+/// or negative answer, even when all of its bytes were already loaded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn resumed_candidates_are_rejected_after_negative_authority() {
+    for mode in ["withdrawal", "recovery", "noncanonical", "replayed_answer"] {
+        let (_root, worker, mut task, source, _tls, server) =
+            worker_with_published_candidate().await;
+        let original = source.current.read().unwrap().authority().unwrap();
+        source.advance_during_check.store(true, Ordering::SeqCst);
+        assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
+        match mode {
+            "withdrawal" => withdraw(&mut source.current.write().unwrap()),
+            "recovery" => {
+                let mut current = source.current.write().unwrap();
+                current.sequence += 1;
+                current.fence.recovery_epoch += 1;
+                current.eligible = false;
+            }
+            "noncanonical" => source.canonical.store(false, Ordering::SeqCst),
+            "replayed_answer" => {
+                *source.replayed_check.write().unwrap() = Some(
+                    serde_json::to_vec(&AnchorCheckResponse {
+                        authority: original,
+                        answers: vec![SubjectAnswer {
+                            subject: (1, [0; 32]),
+                            still_authoritative: true,
+                        }],
+                    })
+                    .unwrap(),
+                );
+            }
+            _ => unreachable!(),
+        }
+        let result = task.synchronize().await;
+        if matches!(mode, "withdrawal" | "recovery") {
+            assert_eq!(deferred(result.unwrap()), 0);
+        } else {
+            assert!(
+                result.is_err(),
+                "{mode} must not authorize a prepared candidate"
+            );
+        }
+        assert!(worker.state.lock().await.controller.is_none(), "{mode}");
+        server.abort();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn a_recovery_during_loading_discards_the_old_candidate_without_panicking() {
+    let (_root, worker, mut task, source, _tls, server) = worker_with_published_candidate().await;
+    let mut recovered = source.current.read().unwrap().clone();
+    let object = recovered.inventory().unwrap().clone();
+    let mut inventory: Inventory =
+        serde_json::from_slice(&source.objects.read().unwrap()[&object.sha256]).unwrap();
+    inventory.manifest.recovery_epoch += 1;
+    inventory.manifest.generation += 1;
+    let new_object = publish_inventory(&source, &mut inventory);
+    recovered.sequence += 1;
+    recovered.fence.recovery_epoch += 1;
+    recovered.publication = Some(inventory.publication_reference(&new_object));
+    *source.publish_on_request.write().unwrap() =
+        Some((inventory.public.sha256.clone(), recovered));
+    assert_eq!(deferred(task.synchronize().await.unwrap()), 0);
+    assert!(worker.state.lock().await.controller.is_none());
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn prepared_candidate_proof_binds_inventory_source_fence_and_original_age() {
+    use status_shared::fixture;
+    let (_root, worker, task, source, _tls, server) = worker_with_published_candidate().await;
+    let observed = source.current.read().unwrap().clone();
+    let inventory_object = observed.inventory().unwrap().clone();
+    let inventory: Inventory =
+        serde_json::from_slice(&source.objects.read().unwrap()[&inventory_object.sha256]).unwrap();
+    let generation = cached_generation(
+        &fixture::snapshot(32, false).unwrap(),
+        4,
+        2,
+        inventory.manifest.observed_ms,
+        None,
+    );
+    let mut loaded = StatusLoaded {
+        inventory,
+        inventory_object,
+        authorization: InventoryAuthorization::Latest,
+        generation,
+        observed: observed.clone(),
+    };
+    assert!(task.adapter().can_resume(&loaded, &observed));
+    for field in ["source", "withdrawal", "epoch", "sequence", "eligible"] {
+        let mut changed = observed.clone();
+        match field {
+            "source" => changed.scope.source[0] ^= 1,
+            "withdrawal" => changed.fence.latest_withdrawal += 1,
+            "epoch" => changed.fence.recovery_epoch += 1,
+            "sequence" => changed.sequence -= 1,
+            "eligible" => changed.eligible = false,
+            _ => unreachable!(),
+        }
+        assert!(!task.adapter().can_resume(&loaded, &changed), "{field}");
+    }
+    let valid = loaded.inventory_object.clone();
+    loaded.inventory_object = ObjectReference::for_bytes(b"another inventory");
+    assert!(!task.adapter().can_resume(&loaded, &observed));
+    loaded.inventory_object = valid;
+    // Give the expired inventory a matching original envelope as well: the
+    // freshness check must still refuse it rather than renewing its timestamp.
+    loaded.inventory.manifest.observed_ms = now_ms() - MAX_AGE_MS - 1000;
+    loaded.inventory_object =
+        ObjectReference::for_bytes(&serde_json::to_vec(&loaded.inventory).unwrap());
+    loaded.observed.publication = Some(
+        loaded
+            .inventory
+            .publication_reference(&loaded.inventory_object),
+    );
+    assert!(!task.adapter().can_resume(&loaded, &loaded.observed));
+    assert!(worker.state.lock().await.controller.is_none());
+    server.abort();
+}
+
+#[cfg(feature = "native-reinspiring")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn router_rebinds_loaded_material_to_its_workers_fresh_metadata() {
+    use status_shared::fixture::{self, NETWORK, SALT};
+    for same_material in [true, false] {
+        let (root, _service, initial_task, source, tls, server) = setup().await;
+        drop(initial_task);
+        let first = cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None)
+            .reobserved(now_ms() - 1000);
+        let next = if same_material {
+            first.reidentified(5, 2, now_ms())
+        } else {
+            cached_generation(
+                &fixture::snapshot(32, true).unwrap(),
+                5,
+                2,
+                now_ms(),
+                Some(&first),
+            )
+        };
+        let mut inventory = export(&source, &first);
+        let object = publish_inventory(&source, &mut inventory);
+        let mut refreshed = export(&source, &next);
+        let refreshed_object = publish_inventory(&source, &mut refreshed);
+        let first = first.reobserved(inventory.manifest.observed_ms);
+        let next = next.reobserved(refreshed.manifest.observed_ms);
+        *source.current.write().unwrap() = Current {
+            scope: scope(NETWORK, SALT),
+            sequence: 7,
+            ..fixture::publishing(&inventory, &object)
+        };
+        let worker = Service::open(
+            Role::Worker,
+            NETWORK,
+            root.path().join("peer"),
+            String::new(),
+        )
+        .unwrap();
+        {
+            let mut state = worker.state.lock().await;
+            state.controller = Some(Controller::new(first));
+            state.inventory = Some(object);
+        }
+        let peer = http::serve(worker.control_routes()).await;
+        let router = Service::open(
+            Role::Router,
+            NETWORK,
+            root.path().join("router"),
+            peer.origin.clone(),
+        )
+        .unwrap();
+        let mut task = synchronization(
+            router.clone(),
+            &role_config(Role::Router, root.path().join("router"), &tls),
+        )
+        .unwrap();
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        *source.pause_download.lock().unwrap() = Some(DownloadPause {
+            object: inventory.public.sha256.clone(),
+            reached: reached.clone(),
+            resume: resume.clone(),
+        });
+        let polling = tokio::spawn(async move { task.synchronize().await });
+        tokio::time::timeout(Duration::from_secs(10), reached.notified())
+            .await
+            .unwrap();
+        *source.current.write().unwrap() = Current {
+            scope: scope(NETWORK, SALT),
+            sequence: 8,
+            ..fixture::publishing(&refreshed, &refreshed_object)
+        };
+        {
+            let mut state = worker.state.lock().await;
+            state.controller.as_ref().unwrap().activate(next).unwrap();
+            state.inventory = Some(refreshed_object);
+        }
+        resume.notify_one();
+        let expected = if same_material {
+            &refreshed
+        } else {
+            &inventory
+        };
+        assert_eq!(
+            committed(polling.await.unwrap().unwrap()).0,
+            expected.manifest.generation
+        );
+        assert_eq!(serving_manifest_id(&router).await, expected.manifest.id());
+        assert_eq!(
+            router
+                .state
+                .lock()
+                .await
+                .controller
+                .as_ref()
+                .unwrap()
+                .current()
+                .manifest()
+                .observed_ms,
+            expected.manifest.observed_ms
+        );
+        assert_eq!(worker.state.lock().await.router_holds.len(), 1);
+        assert_eq!(
+            worker.state.lock().await.router_holds[0].manifest().id(),
+            expected.manifest.id()
+        );
+        server.abort();
+    }
+}
+
+#[cfg(feature = "native-reinspiring")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn router_defers_when_worker_advanced_past_the_observed_envelope() {
+    use status_shared::fixture::{self, NETWORK, SALT};
+    let (root, _service, initial_task, source, tls, server) = setup().await;
+    drop(initial_task);
+    let first = cached_generation(&fixture::snapshot(32, false).unwrap(), 4, 2, now_ms(), None)
+        .reobserved(now_ms());
+    let next = first.reidentified(5, 2, now_ms());
+    let mut inventory = export(&source, &first);
+    let object = publish_inventory(&source, &mut inventory);
+    let mut refreshed = export(&source, &next);
+    let refreshed_object = publish_inventory(&source, &mut refreshed);
+    let next = next.reobserved(refreshed.manifest.observed_ms);
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 7,
+        ..fixture::publishing(&inventory, &object)
+    };
+    let worker = Service::open(
+        Role::Worker,
+        NETWORK,
+        root.path().join("peer"),
+        String::new(),
+    )
+    .unwrap();
+    {
+        let mut state = worker.state.lock().await;
+        state.controller = Some(Controller::new(next));
+        state.inventory = Some(refreshed_object.clone());
+    }
+    let peer = http::serve(worker.control_routes()).await;
+    let router = Service::open(
+        Role::Router,
+        NETWORK,
+        root.path().join("router"),
+        peer.origin.clone(),
+    )
+    .unwrap();
+    let mut task = synchronization(
+        router.clone(),
+        &role_config(Role::Router, root.path().join("router"), &tls),
+    )
+    .unwrap();
+    let pass = task.synchronize().await;
+    assert!(
+        matches!(pass, Ok(PublicationPass::Deferred { .. })),
+        "{pass:?}"
+    );
+    assert!(router.serving().await.is_err());
+    *source.current.write().unwrap() = Current {
+        scope: scope(NETWORK, SALT),
+        sequence: 8,
+        ..fixture::publishing(&refreshed, &refreshed_object)
+    };
+    assert_eq!(committed(task.synchronize().await.unwrap()).0, 5);
+    assert_eq!(serving_manifest_id(&router).await, refreshed.manifest.id());
     server.abort();
 }

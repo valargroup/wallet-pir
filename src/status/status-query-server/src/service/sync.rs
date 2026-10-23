@@ -15,8 +15,9 @@ use crate::{
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
 use pir_sync_manager::{
     publication_lifecycle::{
-        ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit, PublicationAdapter,
-        PublicationLifecycle, PublicationPass, PublicationPlan, ViewRequirement,
+        DeferralReason, ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit,
+        PublicationAdapter, PublicationLifecycle, PublicationPass, PublicationPlan,
+        ViewRequirement,
     },
     Error,
 };
@@ -75,6 +76,7 @@ pub(super) struct StatusCandidate {
     authorization: InventoryAuthorization,
     previous: Option<Arc<Generation>>,
     material: CandidateMaterial,
+    observed: Current,
 }
 enum CandidateMaterial {
     /// The serving generation already is this inventory.
@@ -89,11 +91,18 @@ pub(super) struct StatusLoaded {
     inventory_object: ObjectReference,
     authorization: InventoryAuthorization,
     generation: Generation,
+    /// The live, floor-checked envelope that authorized this exact inventory.
+    /// Never restored from an active record or inferred from cached bytes.
+    observed: Current,
 }
 
 impl StatusPublication {
     async fn serving_controller(&self) -> Option<Controller> {
         self.service.state.lock().await.controller.clone()
+    }
+    async fn waiting(&self, reason: &'static str) {
+        self.service.state.lock().await.synchronization = reason.into();
+        tracing::debug!(role = ?self.service.role, reason, "Status synchronization deferred");
     }
 }
 
@@ -183,7 +192,10 @@ impl PublicationAdapter for StatusPublication {
         let (inventory_object, authorization) = if self.service.role == Role::Router {
             match worker_handover::serving_inventory(&self.service).await? {
                 Some(inventory) => (inventory, InventoryAuthorization::RetainedHandover),
-                None => return Ok(PublicationPlan::Deferred),
+                None => {
+                    self.waiting("waiting_for_worker").await;
+                    return Ok(PublicationPlan::Deferred);
+                }
             }
         } else {
             let latest = envelope
@@ -202,6 +214,23 @@ impl PublicationAdapter for StatusPublication {
         if authorization == InventoryAuthorization::RetainedHandover
             && inventory.manifest.recovery_epoch < envelope.fence.recovery_epoch
         {
+            self.waiting("waiting_for_worker_recovery").await;
+            return Ok(PublicationPlan::Deferred);
+        }
+        // The worker is sampled after the publisher envelope. It may already
+        // serve a later publication; observe that publication next pass rather
+        // than applying transport-failure backoff to an ordinary peer advance.
+        if authorization == InventoryAuthorization::RetainedHandover
+            && inventory.manifest.network == envelope.scope.chain
+            && inventory.manifest.salt == envelope.scope.source
+            && inventory.manifest.recovery_epoch == envelope.fence.recovery_epoch
+            && envelope
+                .publication
+                .as_ref()
+                .is_some_and(|latest| inventory.manifest.generation > latest.descriptor.generation)
+        {
+            inventory.validate_material()?;
+            self.waiting("waiting_for_publisher").await;
             return Ok(PublicationPlan::Deferred);
         }
         inventory.authorize(&inventory_object, envelope, authorization)?;
@@ -211,9 +240,6 @@ impl PublicationAdapter for StatusPublication {
         let already_serving = previous
             .as_ref()
             .is_some_and(|g| g.manifest().id() == inventory.manifest.id());
-        if !already_serving && controller.as_ref().is_some_and(|c| !c.can_prepare()) {
-            return Ok(PublicationPlan::Deferred);
-        }
         // Reuse only material this process already verified and loaded. The
         // new publication identity still passes live authority and freshness
         // checks.
@@ -221,6 +247,16 @@ impl PublicationAdapter for StatusPublication {
             .as_ref()
             .zip(self.loaded_inventory.as_ref())
             .and_then(|(serving, loaded)| reidentify(serving, loaded, &inventory));
+        // Pins bound the number of distinct loaded materials. Re-identifying
+        // the current material shares those same allocations and must still
+        // accept fresh publisher observations while the router holds an old view.
+        if !already_serving
+            && reidentified.is_none()
+            && controller.as_ref().is_some_and(|c| !c.can_prepare())
+        {
+            self.waiting("waiting_for_retention").await;
+            return Ok(PublicationPlan::Deferred);
+        }
         let (material, required_objects) = if already_serving {
             (CandidateMaterial::AlreadyServing, Vec::new())
         } else if let Some(generation) = reidentified {
@@ -249,6 +285,7 @@ impl PublicationAdapter for StatusPublication {
                 authorization,
                 previous,
                 material,
+                observed: envelope.clone(),
             },
             required_objects,
         })
@@ -265,6 +302,7 @@ impl PublicationAdapter for StatusPublication {
             authorization,
             previous,
             material,
+            observed,
         } = candidate;
         let generation = match material {
             CandidateMaterial::AlreadyServing => previous
@@ -292,12 +330,14 @@ impl PublicationAdapter for StatusPublication {
             inventory_object,
             authorization,
             generation,
+            observed,
         })
     }
 
     /// A worker's candidate whose latest publication re-identifies the same
     /// material, typically refreshed while it loaded, takes the latest
-    /// inventory's metadata. A router follows its worker's own inventory.
+    /// inventory's metadata. A router similarly follows refreshed metadata
+    /// already served by its worker, then pins that exact view before commit.
     async fn rebind(
         &mut self,
         envelope: &Current,
@@ -307,28 +347,44 @@ impl PublicationAdapter for StatusPublication {
         let Some(latest) = envelope.publication.as_ref().filter(|_| envelope.eligible) else {
             return Ok(loaded);
         };
-        if loaded.authorization != InventoryAuthorization::Latest
-            || latest.material != loaded.inventory.material_identity()
-            || *latest
-                == loaded
-                    .inventory
-                    .publication_reference(&loaded.inventory_object)
-        {
+        let inventory_object = match loaded.authorization {
+            InventoryAuthorization::Latest => {
+                if latest.material != loaded.inventory.material_identity() {
+                    return Ok(loaded);
+                }
+                latest.inventory.clone()
+            }
+            InventoryAuthorization::RetainedHandover => {
+                let Some(inventory) = worker_handover::serving_inventory(&self.service).await?
+                else {
+                    return Ok(loaded);
+                };
+                inventory
+            }
+        };
+        if inventory_object == loaded.inventory_object {
             return Ok(loaded);
         }
         let inventory: Inventory = serde_json::from_slice(
             &objects
-                .fetch_metadata(&latest.inventory, METADATA_LIMIT as u64)
+                .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
                 .await?,
         )?;
+        if inventory.manifest.generation <= loaded.inventory.manifest.generation
+            || inventory.manifest.generation > latest.descriptor.generation
+        {
+            return Ok(loaded);
+        }
         let Some(generation) = reidentify(&loaded.generation, &loaded.inventory, &inventory) else {
             return Ok(loaded);
         };
+        inventory.authorize(&inventory_object, envelope, loaded.authorization)?;
         Ok(StatusLoaded {
             inventory,
-            inventory_object: latest.inventory.clone(),
-            authorization: InventoryAuthorization::Latest,
+            inventory_object,
+            authorization: loaded.authorization,
             generation,
+            observed: envelope.clone(),
         })
     }
 
@@ -338,17 +394,50 @@ impl PublicationAdapter for StatusPublication {
         loaded: &StatusLoaded,
     ) -> Result<(ViewIdentity, AnchorSubject), Error> {
         let manifest = &loaded.inventory.manifest;
-        loaded
-            .inventory
-            .authorize(&loaded.inventory_object, envelope, loaded.authorization)?;
-        if manifest.recovery_epoch != envelope.fence.recovery_epoch {
-            return Err("Status candidate belongs to an earlier recovery epoch".into());
+        loaded.inventory.authorize(
+            &loaded.inventory_object,
+            &loaded.observed,
+            loaded.authorization,
+        )?;
+        // A normal newer publication does not withdraw a snapshot that was
+        // observed live. Keep its original timestamp and material, but require
+        // the same source and complete fence under the latest live check.
+        if !envelope.eligible
+            || envelope.scope != loaded.observed.scope
+            || envelope.fence != loaded.observed.fence
+            || envelope.sequence < loaded.observed.sequence
+            || envelope
+                .publication
+                .as_ref()
+                .is_none_or(|latest| latest.descriptor.generation < manifest.generation)
+        {
+            return Err("Status candidate source or authority fence changed".into());
         }
         manifest.fresh(now_ms())?;
         Ok((
             view(manifest),
             (manifest.anchor_height, manifest.anchor_hash),
         ))
+    }
+
+    fn can_resume(&self, loaded: &StatusLoaded, envelope: &Current) -> bool {
+        let valid = self.revalidate(envelope, loaded).is_ok();
+        if !valid && loaded.inventory.manifest.fresh(now_ms()).is_err() {
+            tracing::debug!(role = ?self.service.role, reason = "candidate_expired", "Status prepared candidate discarded");
+        }
+        valid
+    }
+
+    async fn deferred(&mut self, reason: DeferralReason) {
+        self.waiting(match reason {
+            DeferralReason::AuthorityAdvanced => "waiting_for_authority",
+            DeferralReason::PeerAdvanced => "waiting_for_worker_pin",
+        })
+        .await;
+    }
+
+    fn phase_finished(&mut self, phase: &'static str, elapsed: Duration) {
+        tracing::debug!(role = ?self.service.role, phase, elapsed_ms = elapsed.as_secs_f64() * 1000., "Status synchronization phase completed");
     }
 
     async fn reserve_peer(&mut self, loaded: &StatusLoaded) -> Result<PeerReservation, Error> {
@@ -480,7 +569,14 @@ impl PublicationAdapter for StatusPublication {
                 handover: PeerHandover::Complete,
                 ..
             }) => "synchronized",
-            Ok(_) => "waiting_for_peer",
+            Ok(PublicationPass::Committed { .. }) => "waiting_for_worker_commit",
+            Ok(_) => {
+                let mut state = self.service.state.lock().await;
+                if state.synchronization == "synchronizing" {
+                    state.synchronization = "waiting_for_publication".into();
+                }
+                return;
+            }
             Err(error) => {
                 tracing::warn!(%error, "Status synchronization refused");
                 "refused"
