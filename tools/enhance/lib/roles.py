@@ -25,6 +25,7 @@ QUERY_BINARY = 'pir-query-server'
 WORKER_TEMPLATE = ROOT / 'tools/enhance/deploy/enhance-pir-worker.role.service'
 INGRESS_TEMPLATE = ROOT / 'tools/enhance/deploy/enhance-pir-query-ingress.role.service'
 ROUTER_TEMPLATE = ROOT / 'tools/enhance/deploy/enhance-pir-packing-router.role.service'
+COMBINED_TEMPLATE = ROOT / 'tools/enhance/deploy/enhance-pir-combined.role.service'
 # Loopback only. Deploy health stays on the role's /internal/health; this port
 # is the process's own /health and /ready.
 MANAGEMENT = {
@@ -32,7 +33,10 @@ MANAGEMENT = {
     'external-worker': '127.0.0.1:18091',
     'query-ingress': '127.0.0.1:18083',
     'packing-router': '127.0.0.1:18093',
+    'combined': '127.0.0.1:18095',
 }
+# A combined process keeps `worker`, `router` and `ingress` apart under its
+# one writable `data_dir`, each with its own lock, replay floors and cache.
 
 
 def _matvec(settings):
@@ -57,6 +61,9 @@ def _origin(value, scheme):
 
 
 def _synchronization(value, role):
+    # A combined process follows the publisher for the worker's domains and
+    # reaches its router and ingress directly, so it names no peers.
+    role = 'worker' if role == 'combined' else role
     required = {'publisher_origin', 'download_budget_bytes', 'cache_limit_bytes',
                 {'worker': 'shards', 'packing-router': 'workers', 'query-ingress': 'routers'}[role]}
     optional = {'trusted_ca'} | ({'preferred'} if role == 'packing-router' else set())
@@ -209,3 +216,36 @@ def report(service, role, health, ready_status):
         'readiness': {'verified': bool(active), 'warm': bool(active),
                       'authorized': ready, 'ready': ready},
     }
+
+
+def combined(settings, *, release, template=None):
+    """Ingress, packing router and worker in one process for the worker's domains.
+
+    Wallets reach it on `listen`, rendered as the host's `public_listen`;
+    `control_listen` stays private. Limits keep the process defaults when
+    omitted and are refused here past the qualified bounds the process checks.
+    """
+    parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'),
+                         ('sealed_shards', 'matvec_backend', 'cuda_device', 'requests', 'uploads',
+                          'max_objects', 'packing_requests'))
+    data = directory(parsed['data_dir'])
+    public = address(parsed['listen'], 'listen')
+    control = address(parsed['control_listen'], 'control_listen')
+    if len({public, control, MANAGEMENT['combined']}) != 3:
+        raise ValueError('listen, control_listen and management %s must be distinct' % MANAGEMENT['combined'])
+    body = {'role': 'combined', 'data_dir': data, 'control_listen': control,
+            'sealed_shards': int(number(parsed.get('sealed_shards', 6), 'sealed_shards', 1)),
+            'matvec': _matvec(parsed), 'synchronization': _synchronization(parsed['synchronization'], 'combined')}
+    for name in ('requests', 'uploads', 'max_objects', 'packing_requests'):
+        if name in parsed:
+            body[name] = int(number(parsed[name], name, 1))
+    requests, uploads = body.get('requests', 16), body.get('uploads', 256)
+    if not 1 <= requests <= 64 or not requests <= uploads <= 4096:
+        raise ValueError('requests must be 1-64 and uploads between requests and 4096')
+    objects = body.get('max_objects', 6)
+    if not 1 <= objects <= 6 or not 1 <= body.get('packing_requests', 4) <= 4:
+        raise ValueError('max_objects must be 1-6 and packing_requests 1-4')
+    if len(body['synchronization']['shards']) > objects:
+        raise ValueError('a combined process holds no more domains than max_objects')
+    text = COMBINED_TEMPLATE.read_text() if template is None else template
+    return _render('combined', text, release, parsed, body, [data], public=public)

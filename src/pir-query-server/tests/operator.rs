@@ -314,3 +314,68 @@ fn combined_status_role_checks_and_refuses_an_undiscoverable_publisher() {
     );
     assert!(!state.exists(), "state opened before discovery");
 }
+
+/// What the deployment renderer writes for a combined Status or Enhance role
+/// is a configuration this binary accepts, without opening its state.
+#[cfg(any(feature = "enhance", feature = "status"))]
+#[test]
+fn rendered_combined_roles_pass_the_binary_check() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let mut roles = Vec::new();
+    #[cfg(feature = "status")]
+    roles.push((
+        "status",
+        "/etc/status-pir/combined.json",
+        serde_json::json!({"network_hex": "01".repeat(32), "state_dir": state,
+            "listen": "127.0.0.1:8481", "query_listen": "127.0.0.1:8090",
+            "publisher": "https://publisher.example"}),
+    ));
+    #[cfg(feature = "enhance")]
+    roles.push((
+        "enhance",
+        "/etc/enhance-pir/combined.json",
+        serde_json::json!({"listen": "127.0.0.1:8090", "control_listen": "127.0.0.1:8096",
+            "data_dir": state, "requests": 8, "uploads": 64, "max_objects": 2,
+            "synchronization": {"publisher_origin": "https://publisher.example",
+                "trusted_ca": temp.path().join("missing.pem"),
+                "download_budget_bytes": 8u64 << 30, "cache_limit_bytes": 8u64 << 30,
+                "shards": [0, 1]}}),
+    ));
+    for (service, path, settings) in roles {
+        let input = temp.path().join(format!("{service}-settings.json"));
+        std::fs::write(&input, serde_json::to_vec(&settings).unwrap()).unwrap();
+        let rendered = Command::new("python3")
+            .arg(root.join("tools/scripts/wallet-pir-roles.py"))
+            .args(["--service", service, "--role", "combined", "--settings"])
+            .arg(&input)
+            .args(["--release", "/opt/example/release"])
+            .output()
+            .unwrap();
+        assert!(
+            rendered.status.success(),
+            "{service}: {}",
+            String::from_utf8_lossy(&rendered.stderr)
+        );
+        let described: serde_json::Value = serde_json::from_slice(&rendered.stdout).unwrap();
+        assert_eq!(
+            described["check"],
+            serde_json::json!(["--config", path, "--check"])
+        );
+        let config = temp.path().join(format!("{service}.json"));
+        std::fs::write(&config, described["files"][path].as_str().unwrap()).unwrap();
+        let output = binary()
+            .arg("--config")
+            .arg(&config)
+            .arg("--check")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{service}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!state.exists(), "{service}: state opened by a check");
+    }
+}

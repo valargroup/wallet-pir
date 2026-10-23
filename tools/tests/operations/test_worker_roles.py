@@ -210,6 +210,63 @@ class StatusInstalledRoles(unittest.TestCase):
                     REGISTRY['status'].roles[role].render({**self.settings(role), **bad}, RELEASE)
 
 
+class CombinedRoles(unittest.TestCase):
+    """Combined Status and Enhance render the all-products example's sections."""
+    EXAMPLE = json.loads((ROOT / 'tools/deploy/query-server/query-server.example.json').read_text())
+
+    def render(self, service, **changes):
+        settings = {**SETTINGS[(service, 'combined')], **changes}
+        return REGISTRY[service].roles['combined'].render(settings, RELEASE)
+
+    def test_combined_roles_render_the_all_products_example(self):
+        for service, path, management in (('status', '/etc/status-pir/combined.json', '127.0.0.1:18486'),
+                                          ('enhance', '/etc/enhance-pir/combined.json', '127.0.0.1:18095')):
+            with self.subTest(service=service):
+                rendered = self.render(service)
+                document = json.loads(rendered.files[path])
+                self.assertEqual(set(document), {'management_listen', 'public_listen', service})
+                self.assertEqual(document['management_listen'], management)
+                # The wallet port is the host's shared listener.
+                self.assertEqual(document['public_listen'], self.EXAMPLE['public_listen'])
+                expected = self.EXAMPLE[service]['settings']
+                if service == 'enhance':
+                    expected = {**expected, 'matvec': {'matvec_backend': 'cpu', 'cuda_device': None}}
+                self.assertEqual(document[service], {'enabled': True, 'settings': expected})
+                self.assertEqual(rendered.check, ('--config', path, '--check'))
+                effective = units.effective([rendered.unit])['Service']
+                self.assertEqual(paths(effective['ReadWritePaths']), [expected.get('state_dir', expected.get('data_dir'))])
+                self.assertIn(path, paths(effective['ReadOnlyPaths']))
+
+    def test_combined_status_names_no_worker_and_keeps_listeners_apart(self):
+        for bad in ({'worker_origin': 'http://127.0.0.1:8481'}, {'worker_origin': ''},
+                    {'query_listen': '127.0.0.1:8481'}, {'listen': '127.0.0.1:18486'},
+                    {'query_listen': '0.0.0.0:8090'}, {'query_listen': None}, {'role': 'router'}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.render('status', **bad)
+        with self.assertRaisesRegex(ValueError, 'overlaps'):
+            self.render('status', publisher_ca='/srv/pir-query-server/status/ca.pem')
+
+    def test_combined_enhance_refuses_peers_collisions_and_unqualified_limits(self):
+        sync = SETTINGS[('enhance', 'combined')]['synchronization']
+        routers = {'0': [{'control_origin': 'http://127.0.0.1:8086', 'query_origin': 'http://127.0.0.1:8087'}]}
+        for bad in ({'control_listen': '127.0.0.1:8090'}, {'listen': '127.0.0.1:18095'},
+                    {'synchronization': {**sync, 'routers': routers}},
+                    {'synchronization': {**sync, 'shards': [0, 0]}}, {'role': 'worker'},
+                    {'requests': 65}, {'requests': 8, 'uploads': 4}, {'uploads': 4097},
+                    {'max_objects': 7}, {'packing_requests': 5}, {'cuda_device': 0},
+                    {'max_objects': 1, 'synchronization': {**sync, 'shards': [0, 1]}}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.render('enhance', **bad)
+        with self.assertRaisesRegex(ValueError, 'overlaps'):
+            self.render('enhance', synchronization={**sync, 'trusted_ca': '/srv/pir-query-server/enhance/ca.pem'})
+        limits = self.render('enhance', requests=8, uploads=64, max_objects=2, packing_requests=2,
+                             matvec_backend='cuda', cuda_device=1)
+        settings = json.loads(limits.files['/etc/enhance-pir/combined.json'])['enhance']['settings']
+        self.assertEqual({k: settings[k] for k in ('requests', 'uploads', 'max_objects', 'packing_requests')},
+                         {'requests': 8, 'uploads': 64, 'max_objects': 2, 'packing_requests': 2})
+        self.assertEqual(settings['matvec'], {'matvec_backend': 'cuda', 'cuda_device': 1})
+
+
 class RolesCommand(unittest.TestCase):
     def run_roles(self, *arguments):
         return subprocess.run([sys.executable, str(ROOT / 'tools/scripts/wallet-pir-roles.py'), *arguments],

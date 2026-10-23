@@ -173,6 +173,18 @@ Listeners need distinct fixed loopback or private addresses. State directories
 are absolute and must not overlap. `--check` validates the file and does not
 bind sockets or open stores.
 
+The deployment registry renders combined Status and Enhance roles as optional
+`combined` roles of the `status` and `enhance` services, which an inventory
+entry installs with `"install": true`; existing distributed roles are
+unchanged. The Status inventory names the wallet listener `query_listen`, as
+for a router, and refuses `worker_origin`. The Enhance inventory names it
+`listen`, as for query ingress, with the worker's `synchronization` (`shards`
+only), its private `control_listen` and the limits above, refused past the same
+bounds the process checks. Each renders `/etc/<product>-pir/combined.json` with
+its own loopback management listener, the state directory as the only writable
+path, `trusted_ca` or `publisher_ca` read-only and outside it, and the
+binary's `--check` as the preflight.
+
 ## Transparent
 
 A serving `transparent_history` or `transaction_details` section synchronizes
