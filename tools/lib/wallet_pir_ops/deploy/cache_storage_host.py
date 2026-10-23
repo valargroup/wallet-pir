@@ -137,7 +137,8 @@ def plan(request):
             'active_cache': str(active), 'installed': installed, 'cache': tree_identity(root)}
 
 
-def prune(request, expected, transaction, receipt_root=Path('/opt/transparent-txid-display/maintenance')):
+def prune(request, expected, transaction, receipt_root=Path('/opt/transparent-txid-display/maintenance'),
+          intent_recorded=False):
     reviewed = plan(request)
     require(digest(reviewed) == expected, 'cache cleanup plan is stale')
     root = Path(request['path'])
@@ -145,7 +146,10 @@ def prune(request, expected, transaction, receipt_root=Path('/opt/transparent-tx
     require(not receipt.exists(), 'cleanup receipt already exists')
     usage = os.statvfs(root)
     state = {'phase': 'deleting', 'plan': reviewed, 'available_before': usage.f_bavail * usage.f_frsize}
-    atomic_json(receipt, state)
+    # A completely full filesystem cannot record intent locally. The operator
+    # first records it durably on the coordinator and its own disk in that case.
+    if not intent_recorded:
+        atomic_json(receipt, state)
     shutil.rmtree(root)
     usage = os.statvfs(root.parent)
     state.update(phase='complete', available_after=usage.f_bavail * usage.f_frsize)
@@ -156,7 +160,8 @@ def prune(request, expected, transaction, receipt_root=Path('/opt/transparent-tx
 def main():
     operation, raw, expected, transaction = sys.argv[1:]
     request = json.loads(raw)
-    result = plan(request) if operation == 'plan' else prune(request, expected, transaction)
+    require(operation in ('plan', 'prune'), 'unknown cache operation')
+    result = plan(request) if operation == 'plan' else prune(request, expected, transaction, intent_recorded=True)
     print(json.dumps(result, sort_keys=True))
 
 

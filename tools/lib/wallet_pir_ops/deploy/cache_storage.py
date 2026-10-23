@@ -38,6 +38,14 @@ def dispatch(args, executor=None):
     with production_lock(inventory, executor) as lock:
         mutation_fence(inventory, executor, lock)
         lock.verify()
+        receipt = Path(args.state_dir) / (identifier + '.json')
+        remote_receipt = '/opt/wallet-pir/maintenance/' + identifier + '/state.json'
+        if operation == 'prune':
+            intent = {'transaction': identifier, 'phase': 'deleting', 'host': args.host,
+                      'request': request, 'expected_plan_sha256': args.expect_plan_sha256}
+            durable.atomic_json(receipt, intent, mode=0o600)
+            executor.mkdir(inventory.lock['host'], str(Path(remote_receipt).parent), 0o700)
+            executor.write(inventory.lock['host'], remote_receipt, durable.canonical(intent), 0o600)
         code, output = executor.run(args.host, ['python3', '-c', Path(cache_storage_host.__file__).read_text(),
                                                'plan' if operation == 'plan' else 'prune',
                                                json.dumps(request), getattr(args, 'expect_plan_sha256', ''), identifier], 180)
@@ -46,5 +54,6 @@ def dispatch(args, executor=None):
         result = json.loads(output)
         if operation == 'plan':
             return {'plan': result, 'plan_sha256': durable.digest(result)}
-        durable.atomic_json(Path(args.state_dir) / (identifier + '.json'), result, mode=0o600)
+        durable.atomic_json(receipt, result, mode=0o600)
+        executor.write(inventory.lock['host'], remote_receipt, durable.canonical(result), 0o600)
         return {'transaction': identifier, **result}
