@@ -1,0 +1,20 @@
+# Per-host APM observer on every managed Linux host. The inventory lists one
+# `observer` per host with `install: true`, so a fresh host and an existing one
+# get the same rendered unit and configuration under the production lock.
+[services.apm-sidecar]
+root = "/opt/pir-apm-sidecar"
+binary = "pir-apm-sidecar"
+artifact_kinds = ["pir-monitoring"]
+self_check = ["--help"]
+min_free_bytes = 268435456
+order = ["observer"]
+
+[services.apm-sidecar.roles.observer]
+unit = "pir-apm-sidecar.service"
+mode = "role"
+template = "../../shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in"
+renderer = "wallet_pir_ops.monitoring:sidecar"
+# Settings: host_id, address (private), port?, required_volumes?, units?, hooks?, edge_metrics_url?.
+health = "http://127.0.0.1:9444/healthz"
+ready = { field = "ready", equals = true }
+ready_timeout = 60

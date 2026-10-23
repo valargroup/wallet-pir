@@ -1,0 +1,37 @@
+# Per-host APM observer, rendered by tools/lib/wallet_pir_ops/monitoring.py.
+# ExecStart and the configuration path are rendered. Credentials are root-only
+# files installed by `wallet-pir-monitoring.py install-credentials`; the
+# service reads them through systemd credentials and holds no Slack secret.
+[Unit]
+Description=PIR APM host observer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/bin/false
+DynamicUser=yes
+StateDirectory=pir-apm-sidecar
+StateDirectoryMode=0700
+LoadCredential=server.pem:/etc/pir-apm-sidecar/credentials/server.pem
+LoadCredential=server.key:/etc/pir-apm-sidecar/credentials/server.key
+LoadCredential=monitoring-ca.pem:/etc/pir-apm-sidecar/credentials/monitoring-ca.pem
+Restart=on-failure
+RestartSec=5
+# Hardening without hiding host mounts: the sidecar reads superblock options,
+# so read-only namespace remounts are harmless, but nothing here may make a
+# host path inaccessible (InaccessiblePaths, TemporaryFileSystem, PrivateDevices).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+UMask=0077
+MemoryMax=256M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
