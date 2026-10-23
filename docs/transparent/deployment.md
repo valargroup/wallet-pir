@@ -2076,6 +2076,9 @@ HTTPS History requests may set `selected_workers` to a nonempty list of distinct
 keys from `workers`. Keep the complete fleet and its worker pins in the request;
 only the selected workers are changed, while all workers and the publisher still
 pass the normal checks. Omitting this field selects every worker.
+Full warming is a release gate for selected workers. An unselected provider must
+remain ready with valid ownership, runtime counts and no preparation failures;
+its ongoing background warming does not block another provider's repair.
 The optional `publication.publication_root` pins a reviewed prepared-storage
 directory from the already pinned publisher configuration, instead of the
 original publication directory. A mismatch or a relative directory refuses.

@@ -560,7 +560,9 @@ class Upgrade:
             problem_if(type(document.get('target_runtimes')) is not int or document.get('target_runtimes', 0) <= 0
                        or type(document.get('warm_runtimes')) is not int,
                        '%s runtime counts are missing or invalid' % key, problems)
-            problem_if(document.get('warm_runtimes') != document.get('target_runtimes'),
+            selected = self.request.get('selected_workers')
+            require_warm = not self.providers or selected is None or key in selected
+            problem_if(require_warm and document.get('warm_runtimes') != document.get('target_runtimes'),
                        '%s warm_runtimes %r of target %r' % (key, document.get('warm_runtimes'),
                                                              document.get('target_runtimes')), problems)
             problem_if(type(document.get('prewarm_failed')) is not int or document.get('prewarm_failed') != 0, '%s prewarm_failed %r' % (key, document.get('prewarm_failed')),

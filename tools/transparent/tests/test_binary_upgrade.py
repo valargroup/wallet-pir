@@ -511,6 +511,24 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
         self.assertEqual(self.fake.probe_unit('v12', 'transparent-v12-archive.service'), archive)
         self.publisher_untouched()
 
+    def test_recent_only_upgrade_keeps_serving_archive_background_warmup_out_of_the_release_gate(self):
+        self.select_recent()
+        archive = self.fake.probe_unit('v12', 'transparent-v12-archive.service')
+        self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = lambda ready_, exe: {
+            **self.provider_ready('transparent-v12-archive.service', self.map[0]), 'warm_runtimes': 1}
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('v12', 'transparent-v12-archive.service'), archive)
+
+    def test_recent_only_upgrade_still_refuses_failed_archive_preparation(self):
+        self.select_recent()
+        self.fake.health_shapes[('v12', 'transparent-v12-archive.service')] = lambda ready_, exe: {
+            **self.provider_ready('transparent-v12-archive.service', self.map[0]), 'prewarm_failed': 1}
+        code, lines = self.run_cli('plan')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('prewarm_failed' in line for line in lines), lines)
+
     def test_exact_invalidated_predecessor_can_be_replaced_but_archive_must_be_healthy(self):
         self.select_recent(unready=True)
         old_http = self.fake.http_get
