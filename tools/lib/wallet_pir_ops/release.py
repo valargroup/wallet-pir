@@ -75,7 +75,7 @@ FILES = {
                      'tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
                      'tools/receiver/digitalocean/cloud-init.yaml'],
     'pir-monitoring': ['tools/shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in',
-                       'tools/shared/pir-apm-sidecar/deploy/monitoring-inventory.example.json',
+                       'tools/deploy/monitoring/monitoring-inventory.example.json',
                        'tools/enhance/deploy/pir-apm.service', 'tools/enhance/deploy/pir-apm-observability.conf',
                        'tools/enhance/deploy/pir-monitor.service'],
 }

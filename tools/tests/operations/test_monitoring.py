@@ -71,6 +71,13 @@ class ObserverInventory(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'private address'):
             monitoring.sidecar_document(dict(WORKER, address='203.0.113.9'))
 
+    def test_the_example_inventory_renders(self):
+        example = json.loads((ROOT / 'tools/deploy/monitoring/monitoring-inventory.example.json').read_text())
+        example['hosts'] = {entry['host']: {} for entry in example['services']['apm-sidecar']['roles']['observer']}
+        rendered = monitoring.observers(example, mode='shadow')
+        self.assertEqual([h['host_id'] for h in rendered['hosts']], ['coordinator', 'transparent-pir-recent-01'])
+        self.assertIn('edge', rendered['hosts'][0]['checks'])
+
     def test_coverage_lists_missing_hosts_volumes_and_dynamic_workers(self):
         outputs = {
             'wallet_pir_coordinator_public_ipv4': {'value': '203.0.113.2'},
