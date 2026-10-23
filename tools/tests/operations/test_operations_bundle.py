@@ -74,7 +74,7 @@ class OperationsBundleTests(unittest.TestCase):
             self.assertIn('/opt/example/releases/x/', json.loads(result.stdout)['unit'])
         registry = descriptors.load_descriptors(destination / 'tools/deploy/services.toml')
         self.assertEqual(set(registry), {'publisher', 'query-server', 'enhance', 'status', 'receiver', 'transparent-history', 'transparent-display',
-                                         'apm-sidecar'})
+                                         'apm-sidecar', 'apm', 'monitor'})
         self.assertTrue(all(r.template is None or r.template.is_relative_to(destination.resolve())
                             for s in registry.values() for r in s.roles.values()))
         probe = ("from wallet_pir_ops import release; "

@@ -1,0 +1,13 @@
+%{ if script == "" }${cloud_config}%{ else }Content-Type: multipart/mixed; boundary="==pir-apm-sidecar-boot=="
+MIME-Version: 1.0
+
+--==pir-apm-sidecar-boot==
+Content-Type: text/cloud-config; charset="utf-8"
+
+${cloud_config}
+--==pir-apm-sidecar-boot==
+Content-Type: text/x-shellscript; charset="utf-8"
+
+${script}
+--==pir-apm-sidecar-boot==--
+%{ endif ~}

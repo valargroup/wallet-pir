@@ -83,6 +83,8 @@ class TargetPlan:
     # A role-mode target's writable directories and product check arguments.
     directories: tuple = ()
     check: tuple = ()
+    # Launcher pins the current unit runs through; a rollback needs them intact.
+    launcher: tuple = None
 
 
 class Deployer:
@@ -163,7 +165,16 @@ class Deployer:
         try:
             current = units.effective(text for _, text in unit_files(state))
             plan.exec_start = units.exec_start(current)
-            prefix, plan.exec_binary, tail = units.split_exec(plan.exec_start, launcher)
+            current_launcher = launcher
+            legacy = tuple(path for path, _ in role.adopt_launcher)
+            if role.mode == 'role' and units.uses_launcher(plan.exec_start, legacy):
+                # Adopting a legacy unit that execs the service through its
+                # credential loader: what runs is the executable after it.
+                current_launcher, plan.launcher = legacy, role.adopt_launcher
+                for path, digest in role.adopt_launcher:
+                    if self.ex.sha256(target.host, path) != digest:
+                        plan.refusals.append('credential launcher changed: ' + path)
+            prefix, plan.exec_binary, tail = units.split_exec(plan.exec_start, current_launcher)
         except units.UnitError as error:
             plan.refusals.append(str(error))
             return plan
@@ -177,6 +188,10 @@ class Deployer:
             name = os.path.basename(path)
             if role.mode == 'exec-drop-in' and path == managed:
                 disposition = 'managed'
+            elif role.adopt_drop_ins and retire_historical and units.adoptable(path, role.adoptable_drop_ins):
+                # The rendered role carries what the legacy drop-in configured;
+                # the drift below shows every setting that changes.
+                disposition = 'retire'
             elif (role.owns_unit and role.adopt_command_write_paths and retire_historical
                   and units.adoptable(path, role.adoptable_drop_ins)
                   and units.command_and_write_paths_only(text)):
@@ -185,7 +200,9 @@ class Deployer:
                 disposition = 'retire'
             elif not units.sets_exec_start(text) and role.owns_unit:
                 disposition = 'refuse'
-                plan.refusals.append('role %s owns its whole unit; remove or fold in %s' % (role.name, path))
+                hint = ('; pass --retire-historical to adopt it' if role.adopt_drop_ins
+                        and units.adoptable(path, role.adoptable_drop_ins) else '')
+                plan.refusals.append('role %s owns its whole unit; remove or fold in %s%s' % (role.name, path, hint))
             elif not units.sets_exec_start(text):
                 disposition = 'keep'
             elif units.adoptable(path, role.adoptable_drop_ins) or name == units.MANAGED_DROP_IN:
@@ -237,7 +254,8 @@ class Deployer:
             desired = units.effective([fragment] + [kept[name] for name in sorted(kept)])
             if units.split_exec(units.exec_start(desired), launcher)[1] != release:
                 plan.refusals.append('the new unit would not run %s' % release)
-            plan.drift = units.differences(units.normalized(current, launcher), units.normalized(desired, launcher))
+            plan.drift = units.differences(units.normalized(current, current_launcher),
+                                           units.normalized(desired, launcher))
         except (units.UnitError, descriptors.DescriptorError, ValueError) as error:
             plan.refusals.append(str(error))
             return plan
@@ -471,7 +489,8 @@ class Deployer:
                        'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
                        'health_equals': target.health_equals},
             'directories': list(plan.directories), 'check': list(plan.check),
-            'launcher': [{'path': path, 'sha256': digest} for path, digest in target.role.launcher],
+            'launcher': [{'path': path, 'sha256': digest}
+                         for path, digest in (target.role.launcher if plan.launcher is None else plan.launcher)],
         }
 
     def stage(self, hosts, sha, binary, journal=None):
