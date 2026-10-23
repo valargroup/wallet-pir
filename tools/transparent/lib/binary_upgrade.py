@@ -184,7 +184,13 @@ def validate(request):
     require(bool(GIT.match(release['git_sha'])), 'release.git_sha is a full 40-digit revision')
     require(bool(SHA256.match(release['binary_sha256'])), 'release.binary_sha256 is 64 lowercase hex digits')
     publication = request['publication']
-    require(isinstance(publication, dict) and set(publication) == set(product['publication_keys'])
+    publication_keys = set(product['publication_keys'])
+    if providers and isinstance(publication, dict) and 'publication_root' in publication:
+        publication_keys.add('publication_root')
+        require(isinstance(publication['publication_root'], str) and publication['publication_root'].startswith('/')
+                and os.path.normpath(publication['publication_root']) == publication['publication_root'],
+                'publication_root pins an absolute normalized publisher directory')
+    require(isinstance(publication, dict) and set(publication) == publication_keys
             and all(isinstance(v, str) and v for v in publication.values()),
             'publication names exactly %s' % list(product['publication_keys']))
     controller = request['controller']
@@ -386,6 +392,8 @@ class Upgrade:
             return problems + ['controller settings: %s' % error]
         if 'config' in self.product:
             for key, value in self.product['config_equals'].items():
+                if key == 'publication_root' and self.providers:
+                    value = self.request['publication'].get('publication_root', value)
                 problem_if(config.get(key) != value, 'controller %s is %r, expected %r' % (key, config.get(key), value), problems)
             for key, value in self.request['publication'].items():
                 problem_if(config.get(key) != value, 'publication %s is %r, request pins %r' % (key, config.get(key), value), problems)

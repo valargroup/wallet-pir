@@ -565,6 +565,28 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
             self.assertEqual(code, 1, lines)
             self.assertTrue(any('selected_workers' in line for line in lines), lines)
 
+    def test_reviewed_publisher_storage_directory_can_be_pinned_without_changing_it(self):
+        config = json.loads(self.fake.read('coordinator', binary_upgrade.PUBLISHER_CONFIG))
+        root = '/srv/transparent-activity/full-v12/publications.prepared-storage'
+        config['transparent_history']['settings']['publication_root'] = root
+        self.place('coordinator', binary_upgrade.PUBLISHER_CONFIG, config)
+        self.write_request()
+        code, lines = self.run_cli('plan')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('publication_root' in line for line in lines), lines)
+        self.write_request(lambda r: r['publication'].update(publication_root=root))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(json.loads(self.fake.read('coordinator', binary_upgrade.PUBLISHER_CONFIG)), config)
+        self.publisher_untouched()
+
+    def test_relative_or_mismatched_publisher_directory_refuses(self):
+        for root in ['relative', '/srv/../another', '/different']:
+            self.write_request(lambda r: r['publication'].update(publication_root=root))
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+
     def failed_archive_rollback(self):
         self.run_cli('baseline')
         unit = 'transparent-v12-archive.service'
