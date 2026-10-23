@@ -3,7 +3,7 @@ use transparent_shared::publication::Eligibility;
 
 fn live(root: &Path) -> DisplayLive {
     DisplayLive::new(
-        DisplayRuntime::new_required(crate::config::ServiceConfig::default()),
+        DisplayRuntime::new_required(crate::transparent::config::ServiceConfig::default()),
         DisplayRole::Combined,
         3,
         root.join("active.json"),
