@@ -1,6 +1,7 @@
 //! The independent wallet library (zakura-pir-enhance, native feature) must
 //! decode real answers through publisher HTTPS, autonomous workers, packing
-//! routers and ingress.
+//! routers and ingress: opened in this process, as a spawned host's combined
+//! role, and as three spawned hosts running the distributed roles.
 #![cfg(feature = "native-reinspiring")]
 use axum::{
     extract::Request,
@@ -8,7 +9,7 @@ use axum::{
     Router,
 };
 use enhance_shared::RECORD_BYTES;
-use pir_e2e_tests::enhance_fixture::System;
+use pir_e2e_tests::enhance_fixture::{Publication, System};
 use tokio_stream::StreamExt;
 use wallet::transport::{Method, Request as WalletRequest, ResponseBody, Transport};
 use zakura_pir_client::enhance as wallet;
@@ -117,16 +118,26 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
         }));
     let (public, task) = serve(proxy).await;
     tasks.push(task);
+    wallet_decodes(&public, records, &anchor_hash).await;
+    for task in tasks {
+        task.abort();
+    }
+}
+
+/// The unchanged wallet accepts the served generation at its own anchor,
+/// decodes every queried record exactly and refuses a wrong anchor before
+/// fetching any session material.
+async fn wallet_decodes(public: &str, records: u64, anchor_hash: &str) {
     // Wallet side: independent implementation, wallet-owned anchor acceptance.
     let transport = PlainHttp(reqwest::Client::new());
-    let pending = wallet::transport::PendingClient::fetch(&transport, &public)
+    let pending = wallet::transport::PendingClient::fetch(&transport, public)
         .await
         .unwrap();
     assert_eq!(
         pending.manifest().protocol_revision,
         wallet::PROTOCOL_REVISION
     );
-    let hash: [u8; 32] = hex::decode(&anchor_hash).unwrap().try_into().unwrap();
+    let hash: [u8; 32] = hex::decode(anchor_hash).unwrap().try_into().unwrap();
     let acceptance = wallet::GenerationAcceptance::new(
         "main",
         0,
@@ -150,7 +161,7 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
     }
     assert_eq!(answered, positions.len());
     // A wrong wallet anchor is refused before any session material is fetched.
-    let pending = wallet::transport::PendingClient::fetch(&transport, &public)
+    let pending = wallet::transport::PendingClient::fetch(&transport, public)
         .await
         .unwrap();
     let wrong = wallet::GenerationAcceptance::new(
@@ -160,7 +171,225 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
         wallet::ClientResourceLimits::new(32768),
     );
     assert!(pending.accept(&wrong).is_err());
-    for task in tasks {
-        task.abort();
+}
+
+fn free() -> String {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .to_string()
+}
+
+/// One spawned `pir-query-server`, logging both streams to a file.
+struct Host {
+    child: tokio::process::Child,
+    log: std::path::PathBuf,
+    management: String,
+}
+impl Host {
+    async fn start(dir: &std::path::Path, name: &str, document: serde_json::Value) -> Self {
+        let config = dir.join(format!("{name}.json"));
+        std::fs::write(&config, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+        let log = dir.join(format!("{name}.log"));
+        let file = std::fs::File::create(&log).unwrap();
+        let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pir-query-server-test"))
+            .arg("--config")
+            .arg(&config)
+            .env("RUST_LOG", "info")
+            .kill_on_drop(true)
+            .stdout(file.try_clone().unwrap())
+            .stderr(file)
+            .spawn()
+            .unwrap();
+        Self {
+            child,
+            log,
+            management: document["management_listen"].as_str().unwrap().into(),
+        }
+    }
+    fn log(&self) -> String {
+        std::fs::read_to_string(&self.log).unwrap_or_default()
+    }
+    /// Waits for the host's typed readiness; a host that exits fails at once
+    /// with its own output.
+    async fn ready(&mut self) {
+        let mut report = String::new();
+        for _ in 0..1200 {
+            if let Ok(response) = reqwest::get(format!("http://{}/ready", self.management)).await {
+                let ready = response.status().is_success();
+                report = response.text().await.unwrap_or_default();
+                if ready {
+                    return;
+                }
+            }
+            if let Some(status) = self.child.try_wait().unwrap() {
+                panic!("host exited with {status}: {}", self.log());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("host never became ready: {report}\n{}", self.log());
+    }
+    async fn stop(mut self) {
+        self.child.kill().await.unwrap();
+        self.child.wait().await.unwrap();
+    }
+}
+
+fn source(publication: &Publication) -> serde_json::Value {
+    serde_json::to_value(&publication.source).unwrap()
+}
+
+async fn status(url: String) -> u16 {
+    reqwest::get(url).await.unwrap().status().as_u16()
+}
+
+/// Enhance namespaces on the root wallet listener: both prefixes serve the
+/// same manifest; private, management and disabled product routes are absent.
+async fn public_surface(public: &str) {
+    let canonical = reqwest::get(format!("{public}/enhance/v1/init"))
+        .await
+        .unwrap();
+    assert_eq!(canonical.status(), 200);
+    let canonical = canonical.bytes().await.unwrap();
+    let deployed = reqwest::get(format!("{public}/v1/enhance/init"))
+        .await
+        .unwrap();
+    assert_eq!(deployed.status(), 200);
+    assert_eq!(deployed.bytes().await.unwrap(), canonical);
+    for path in [
+        "/internal/health",
+        "/internal/metrics",
+        "/internal/readiness",
+        "/internal/evaluate",
+        "/health",
+        "/ready",
+        "/metrics",
+        "/v1/status/init",
+        "/v2/shards",
+        "/v2/txid/init",
+    ] {
+        assert_eq!(status(format!("{public}{path}")).await, 404, "{path}");
+    }
+}
+
+/// A spawned host runs the combined Enhance role behind its root
+/// `public_listen`; ingress, packing and evaluation call each other directly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wallet_decodes_native_answers_from_a_spawned_combined_host() {
+    let records: u64 = 67;
+    let anchor_hash = "01".repeat(32);
+    let publication = Publication::start(
+        (0..records).map(record).collect(),
+        enhance_shared::ACTIVATION_HEIGHT,
+        anchor_hash.clone(),
+    )
+    .await;
+    let dir = publication.root.path();
+    let public = free();
+    let control = free();
+    let mut synchronization = source(&publication);
+    synchronization["shards"] = serde_json::json!([0]);
+    let mut host = Host::start(
+        dir,
+        "combined",
+        serde_json::json!({
+            "management_listen": free(),
+            "public_listen": public,
+            "enhance": {"enabled": true, "settings": {
+                "role": "combined",
+                "data_dir": dir.join("combined"),
+                "control_listen": control,
+                "synchronization": synchronization,
+            }},
+        }),
+    )
+    .await;
+    host.ready().await;
+    let public = format!("http://{public}");
+    wallet_decodes(&public, records, &anchor_hash).await;
+    public_surface(&public).await;
+    // The private control listener keeps the role's health and metrics.
+    assert_eq!(
+        status(format!("http://{control}/internal/health")).await,
+        200
+    );
+    assert_eq!(
+        status(format!("http://{control}/internal/metrics")).await,
+        200
+    );
+    host.stop().await;
+}
+
+/// Worker, packing router and query ingress each run in their own spawned
+/// host and reach each other over their configured private listeners; only
+/// the ingress host has a wallet listener.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wallet_decodes_native_answers_from_spawned_distributed_hosts() {
+    let records: u64 = 67;
+    let anchor_hash = "01".repeat(32);
+    let publication = Publication::start(
+        (0..records).map(record).collect(),
+        enhance_shared::ACTIVATION_HEIGHT,
+        anchor_hash.clone(),
+    )
+    .await;
+    let dir = publication.root.path();
+    let (worker, router, router_control, ingress_control, public) =
+        (free(), free(), free(), free(), free());
+    let mut worker_sync = source(&publication);
+    worker_sync["shards"] = serde_json::json!([0]);
+    let mut router_sync = source(&publication);
+    router_sync["workers"] = serde_json::json!({"0": [format!("http://{worker}")]});
+    let mut ingress_sync = source(&publication);
+    ingress_sync["routers"] = serde_json::json!({"0": [{
+        "control_origin": format!("http://{router_control}"),
+        "query_origin": format!("http://{router}"),
+    }]});
+    let mut hosts = Vec::new();
+    for (name, extra, settings) in [
+        (
+            "worker",
+            serde_json::json!({}),
+            serde_json::json!({"role": "worker", "listen": worker, "synchronization": worker_sync}),
+        ),
+        (
+            "router",
+            serde_json::json!({}),
+            serde_json::json!({"role": "packing-router", "listen": router,
+                "control_listen": router_control, "synchronization": router_sync}),
+        ),
+        (
+            "ingress",
+            serde_json::json!({"public_listen": public}),
+            serde_json::json!({"role": "query-ingress", "control_listen": ingress_control,
+                "synchronization": ingress_sync}),
+        ),
+    ] {
+        let mut settings = settings;
+        settings["data_dir"] = dir.join(name).to_str().unwrap().into();
+        let mut document = serde_json::json!({
+            "management_listen": free(),
+            "enhance": {"enabled": true, "settings": settings},
+        });
+        if let Some(public) = extra.get("public_listen") {
+            document["public_listen"] = public.clone();
+        }
+        hosts.push(Host::start(dir, name, document).await);
+    }
+    for host in &mut hosts {
+        host.ready().await;
+    }
+    let public = format!("http://{public}");
+    wallet_decodes(&public, records, &anchor_hash).await;
+    public_surface(&public).await;
+    // The packing router's query listener is private to ingress: it never
+    // carries the wallet's manifest route.
+    assert_eq!(
+        status(format!("http://{router}/v1/enhance/init")).await,
+        404
+    );
+    for host in hosts {
+        host.stop().await;
     }
 }

@@ -165,6 +165,96 @@ pub async fn tls_with_discovery(root: &Path, upstream: &str, discovery: Option<&
     }
 }
 
+/// A published fixture generation behind real HTTPS, with no consumers:
+/// serving roles are opened by the caller, in this process or another.
+pub struct Publication {
+    pub root: tempfile::TempDir,
+    pub publisher: EnhancePublisher,
+    pub journal: RecordJournal,
+    pub manifest: Manifest,
+    pub source: SourceConfig,
+    canonical: Arc<Mutex<std::collections::BTreeMap<u64, String>>>,
+    pub transport: Tls,
+    listeners: Vec<Listening>,
+}
+impl Publication {
+    pub async fn start(records: Vec<Vec<u8>>, height: u64, hash: String) -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let canonical = Arc::new(Mutex::new(
+            [(height, hash.clone())]
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>(),
+        ));
+        let node_state = canonical.clone();
+        let node = serve(axum::Router::new().route(
+            "/",
+            axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
+                let state = node_state.clone();
+                async move {
+                    assert_eq!(request["method"], "getblockhash");
+                    let height = request["params"][0].as_u64().unwrap();
+                    let result = state.lock().unwrap().get(&height).cloned().unwrap();
+                    axum::Json(
+                        serde_json::json!({"id": request["id"], "error": null, "result": result}),
+                    )
+                }
+            }),
+        ))
+        .await;
+        let cookie = root.path().join("cookie");
+        std::fs::write(&cookie, "fixture:fixture").unwrap();
+        let publisher = EnhancePublisher::open(
+            &root.path().join("publisher"),
+            ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
+        )
+        .unwrap();
+        let mut journal = RecordJournal::open(
+            root.path().join("journal"),
+            DatabaseId::Enhance,
+            ENHANCE_LAYOUT,
+        )
+        .unwrap();
+        journal.append_block(height, hash, &records).unwrap();
+        publisher
+            .publish(
+                publisher.work(&journal).unwrap().unwrap(),
+                pir_publisher::publisher::PublisherEngine,
+            )
+            .await
+            .unwrap();
+        let publisher_http = serve(distribution_router(publisher.distribution())).await;
+        let transport = tls(root.path(), &publisher_http.url).await;
+        let source = SourceConfig {
+            publisher_origin: transport.origin.clone(),
+            trusted_ca: Some(root.path().join("ca.pem")),
+            download_budget_bytes: 64 * 1024 * 1024 * 1024,
+            cache_limit_bytes: 64 * 1024 * 1024 * 1024,
+        };
+        let response: AuthorityResponse = transport
+            .client
+            .get(format!("{}{PREFIX}current", transport.origin))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let manifest = response.current.manifest.unwrap();
+        Self {
+            root,
+            publisher,
+            journal,
+            manifest,
+            source,
+            canonical,
+            transport,
+            listeners: vec![node, publisher_http],
+        }
+    }
+}
+
 pub struct System {
     pub root: tempfile::TempDir,
     pub publisher: EnhancePublisher,
@@ -248,70 +338,17 @@ impl System {
     ) -> Self {
         assert!((1..=enhance_shared::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
         assert!((1..=2).contains(&replicas));
-        let root = tempfile::tempdir().unwrap();
-        let canonical = Arc::new(Mutex::new(
-            [(height, hash.clone())]
-                .into_iter()
-                .collect::<std::collections::BTreeMap<_, _>>(),
-        ));
-        let node_state = canonical.clone();
-        let node = serve(axum::Router::new().route(
-            "/",
-            axum::routing::post(move |axum::Json(request): axum::Json<serde_json::Value>| {
-                let state = node_state.clone();
-                async move {
-                    assert_eq!(request["method"], "getblockhash");
-                    let height = request["params"][0].as_u64().unwrap();
-                    let result = state.lock().unwrap().get(&height).cloned().unwrap();
-                    axum::Json(
-                        serde_json::json!({"id": request["id"], "error": null, "result": result}),
-                    )
-                }
-            }),
-        ))
-        .await;
-        let cookie = root.path().join("cookie");
-        std::fs::write(&cookie, "fixture:fixture").unwrap();
-        let publisher = EnhancePublisher::open(
-            &root.path().join("publisher"),
-            ZakuraClient::from_cookie_file(&node.url, cookie).unwrap(),
-        )
-        .unwrap();
-        let mut journal = RecordJournal::open(
-            root.path().join("journal"),
-            DatabaseId::Enhance,
-            ENHANCE_LAYOUT,
-        )
-        .unwrap();
-        journal.append_block(height, hash, &records).unwrap();
-        publisher
-            .publish(
-                publisher.work(&journal).unwrap().unwrap(),
-                pir_publisher::publisher::PublisherEngine,
-            )
-            .await
-            .unwrap();
-        let publisher_http = serve(distribution_router(publisher.distribution())).await;
-        let transport = tls(root.path(), &publisher_http.url).await;
-        let source = SourceConfig {
-            publisher_origin: transport.origin.clone(),
-            trusted_ca: Some(root.path().join("ca.pem")),
-            download_budget_bytes: 64 * 1024 * 1024 * 1024,
-            cache_limit_bytes: 64 * 1024 * 1024 * 1024,
-        };
-        let response: AuthorityResponse = transport
-            .client
-            .get(format!("{}{PREFIX}current", transport.origin))
-            .send()
-            .await
-            .unwrap()
-            .error_for_status()
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let manifest = response.current.manifest.unwrap();
-        let mut listeners = vec![node, publisher_http];
+        let Publication {
+            root,
+            publisher,
+            journal,
+            manifest,
+            source,
+            canonical,
+            transport,
+            listeners: publication_listeners,
+        } = Publication::start(records, height, hash).await;
+        let mut listeners = publication_listeners;
         if combined {
             let role = pir_query_server::enhance::combined::Combined::open(
                 &root.path().join("combined"),
