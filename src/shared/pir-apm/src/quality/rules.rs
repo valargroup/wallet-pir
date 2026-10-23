@@ -266,8 +266,12 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Families {
 
 /// Per-unit OOM kill gauges a source carries from the host snapshot.
 pub const UNIT_OOM: &str = "pir_host_unit_oom_kills|unit=";
+/// Host rules the per-host sidecars now own in the `host` family. Incidents
+/// these left behind are retired rather than duplicated.
+const SIDECAR_RULES: [&str; 4] = ["host_coverage_", "memory_", "disk_", "oom_"];
 
-/// Coverage, host resources and OOM kills: every source, whatever its service.
+/// Coverage of every source, whatever its service. Host memory, disk and OOM
+/// rules belong to the sidecar `host` family.
 fn source_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
     let fresh = s.fresh(now);
     a.add(
@@ -280,93 +284,6 @@ fn source_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
         if fresh { "fresh" } else { "unavailable" },
         "source unavailable for 45s",
     );
-    let gauge = |key: &str| s.current.gauges.get(key).copied().filter(|_| fresh);
-    if s.current
-        .gauges
-        .contains_key("pir_host_observation_available")
-    {
-        a.add(
-            format!("host_coverage_{name}"),
-            name,
-            Some(gauge("pir_host_observation_available") != Some(1.)),
-            "warning",
-            45,
-            now,
-            "Host resource observation coverage",
-            "host observation unavailable for 45s",
-        );
-    }
-    for (kind, available, total, limit) in [
-        (
-            "memory",
-            "pir_host_memory_available_bytes",
-            "pir_host_memory_total_bytes",
-            0.15,
-        ),
-        (
-            "disk",
-            "pir_host_disk_available_bytes",
-            "pir_host_disk_total_bytes",
-            0.10,
-        ),
-    ] {
-        let ratio = gauge(available)
-            .zip(gauge(total))
-            .filter(|(_, t)| *t > 0.)
-            .map(|(a, t)| a / t);
-        a.add(
-            format!("{kind}_{name}"),
-            name,
-            ratio.map(|r| r < limit),
-            "warning",
-            120,
-            s.sampled_at,
-            ratio
-                .map(|r| format!("{:.1}% available", r * 100.))
-                .unwrap_or_else(|| "unavailable".into()),
-            "memory <15% or disk <10% available for 120s",
-        );
-    }
-    let oom = s
-        .recent
-        .front()
-        .and_then(|p| p.values.gauges.get("pir_host_oom_kills"))
-        .copied()
-        .zip(gauge("pir_host_oom_kills"))
-        .map(|(old, new)| new > old);
-    a.add(
-        format!("oom_{name}"),
-        name,
-        oom,
-        "critical",
-        0,
-        s.sampled_at,
-        "OOM kill counter change",
-        "new OOM kills in the observation window",
-    );
-    // Every other unit the host sampler reports beside the main one.
-    for (key, new) in &s.current.gauges {
-        let Some(unit) = key.strip_prefix(UNIT_OOM) else {
-            continue;
-        };
-        let oom = s
-            .recent
-            .front()
-            .and_then(|p| p.values.gauges.get(key))
-            .copied()
-            .zip(fresh.then_some(*new))
-            .map(|(old, new)| new > old);
-        a.add(
-            format!("oom_{name}_{unit}"),
-            name,
-            oom,
-            "critical",
-            0,
-            s.sampled_at,
-            format!("OOM kill counter change of {unit}"),
-            "new OOM kills in the observation window",
-        );
-    }
 }
 
 /// Share of a fifteen-minute window's samples that may lie above a limit.
@@ -803,6 +720,22 @@ pub fn retire(view: &View, incidents: &[Incident], now: u64, f: &mut Families) {
         let mut retired = c.clone();
         retired.retired = true;
         retired.sample = now;
+        let moved = |rest: &str| SIDECAR_RULES.iter().any(|r| rest.starts_with(r));
+        if c.key.strip_prefix("quality_").is_some_and(moved) {
+            if !f.shared.iter().any(|n| n.key == c.key) {
+                f.shared.push(retired);
+            }
+            continue;
+        }
+        if let Some(svc) = c.key.strip_prefix("quality.").and_then(|r| r.split_once('.')) {
+            if moved(svc.1) {
+                let out = f.services.entry(svc.0.to_string()).or_default();
+                if !out.iter().any(|n| n.key == c.key) {
+                    out.push(retired);
+                }
+                continue;
+            }
+        }
         if let Some(svc) = view
             .services
             .iter()
@@ -1198,38 +1131,49 @@ mod tests {
     }
 
     #[test]
-    fn every_reported_unit_has_its_own_oom_rule() {
+    fn host_rules_moved_to_sidecars_are_retired_not_duplicated() {
         let key = format!("{UNIT_OOM}pir-apm.service");
-        let mut s = source("transparent", "publisher", 100, &[(&key, 2.)]);
-        let mut old = Point {
-            at: 50,
-            ..Default::default()
-        };
-        old.values.gauges.insert(key.clone(), 1.);
-        s.recent.push_back(old);
-        let v = view(
+        let s = source("transparent", "publisher", 100, &[(&key, 2.)]);
+        let mut v = view(
             vec![service("transparent", Kind::History)],
             vec![("transparent-publisher", s)],
         );
-        let f = conditions(&v, 105, &Policy::default());
-        assert_eq!(
-            firing(
-                &f,
-                "transparent",
-                "oom_transparent-publisher_pir-apm.service"
-            ),
-            Some(true)
+        v.collected_at = 100;
+        let mut f = conditions(&v, 105, &Policy::default());
+        let keys = |f: &Families| -> Vec<String> {
+            f.services["transparent"].iter().map(|c| c.key.clone()).collect()
+        };
+        assert!(keys(&f)
+            .iter()
+            .all(|k| !SIDECAR_RULES.iter().any(|r| k.contains(r))));
+        let left = |key: &str| Incident {
+            active: true,
+            condition: Some(Condition {
+                retired: false,
+                key: key.into(),
+                resource: "transparent-publisher".into(),
+                severity: "critical".into(),
+                firing: Some(true),
+                observed: String::new(),
+                threshold: String::new(),
+                hold_seconds: 0,
+                sample: 1,
+            }),
+            ..Default::default()
+        };
+        retire(
+            &v,
+            &[
+                left("quality.transparent.oom_transparent-publisher_pir-apm.service"),
+                left("quality_disk_transparent-coordinator"),
+            ],
+            105,
+            &mut f,
         );
-        // Stale: unknown.
-        let f = conditions(&v, 200, &Policy::default());
-        assert_eq!(
-            firing(
-                &f,
-                "transparent",
-                "oom_transparent-publisher_pir-apm.service"
-            ),
-            None
-        );
+        assert!(f.services["transparent"]
+            .iter()
+            .any(|c| c.retired && c.key.ends_with("oom_transparent-publisher_pir-apm.service")));
+        assert!(f.shared.iter().any(|c| c.retired && c.key == "quality_disk_transparent-coordinator"));
     }
 
     /// The deployed bucket edges: coordinator cycles use the shared
