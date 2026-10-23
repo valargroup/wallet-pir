@@ -53,6 +53,9 @@ transparent-tests = [
     "query-host",
     "pir-query-server/transparent-history",
     "pir-query-server/transparent-detail",
+    # The shared public listener case runs a combined Status role beside history.
+    "pir-query-server/status",
+    "zakura-pir-client/status",
     # The copied shard-assign administration tool.
     "dep:hex",
     "dep:sha2",
@@ -158,6 +161,9 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 libc = "0.2"
+# Status publication fixture behind the shared public listener case.
+status-shared = { path = "../../src/status/status-shared" }
+pir-publication = { path = "../../src/shared/pir-publication" }
 tokio-stream = "0.1"
 
 [[test]]

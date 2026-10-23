@@ -13,3 +13,9 @@ use provider_fixture::*;
 
 #[path = "../../../src/pir-query-server/tests/transparent/support/provider_install.rs"]
 mod install;
+
+#[allow(dead_code)] // Only the wallet transport is used here.
+#[path = "../../../src/pir-query-server/tests/support/status_http.rs"]
+mod status_http;
+#[path = "support/status_publisher.rs"]
+mod status_publisher;

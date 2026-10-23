@@ -248,10 +248,17 @@ async fn checkout_free_artifacts_refuse_missing_and_incompatible_runtimes() {
 async fn independent_processes_recover_during_peer_restart_and_outages() {
     installation_case(Case::Independent).await;
 }
+/// One spawned host serves Transparent history and a combined Status role
+/// to independent wallet clients through one `public_listen`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_public_listener_serves_history_and_status_wallets() {
+    installation_case(Case::SharedListener).await;
+}
 enum Case {
     Restart,
     Invalid,
     Independent,
+    SharedListener,
 }
 async fn installation_case(case: Case) {
     let root = tempfile::tempdir().unwrap();
@@ -588,6 +595,13 @@ async fn installation_case(case: Case) {
         return;
     }
     let args = &check[..check.len() - 1];
+    if matches!(case, Case::SharedListener) {
+        corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
+        shared_listener(root, &binary, &document, &origin, &set).await;
+        publisher_server.stop().await;
+        archive_server.stop().await;
+        return;
+    }
     if matches!(case, Case::Independent) {
         // Startup performs strict verification itself. The separate installation
         // cases above/below own negative and positive verify-only coverage.
@@ -823,4 +837,155 @@ async fn independent_processes(
     first.wait().await.unwrap();
     other.kill().await.unwrap();
     other.wait().await.unwrap();
+}
+
+/// Status and Transparent history wallets share one spawned host's
+/// `public_listen`: real encrypted answers decode through canonical and
+/// deployed paths, while private, management and disabled product routes stay
+/// off that listener.
+async fn shared_listener(
+    root: &Path,
+    binary: &Path,
+    document: &serde_json::Value,
+    origin: &str,
+    set: &ShardSet,
+) {
+    use super::status_publisher::StatusPublisher;
+    let publisher = StatusPublisher::start().await;
+    let public = free_address();
+    let status_listen = free_address();
+    let mut document = document.clone();
+    document["public_listen"] = public.clone().into();
+    document["status"] = serde_json::json!({"enabled": true, "settings": {
+        "role": "combined",
+        "network_hex": hex::encode(status_shared::fixture::NETWORK),
+        "state_dir": root.join("status-state"),
+        "listen": status_listen,
+        "publisher": publisher.origin,
+        "publisher_ca": publisher.certificate,
+    }});
+    let config = write_config(root, "shared", &document);
+    let mut child = start(binary, &config_args(&config, false), root, origin).await;
+    let management = document["management_listen"].as_str().unwrap().to_string();
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        loop {
+            if let Ok(response) = reqwest::get(format!("http://{management}/ready")).await {
+                if response.status().is_success() {
+                    break;
+                }
+            }
+            assert!(child.try_wait().unwrap().is_none(), "host exited");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("both products become ready on the shared host");
+    let public_origin = format!("http://{public}");
+    // Transparent history: exact producer rows decode through the shared
+    // listener's deployed alias, and the canonical namespace is served too.
+    row_query(&public_origin, set, 0).await;
+    row_query(&public_origin, set, 1).await;
+    for path in ["/v2/shards", "/transparent/v1/shards"] {
+        let response = reqwest::get(format!("{public_origin}{path}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+    }
+    // Status: the independent wallet accepts the served anchor and decrypts
+    // every fixture case from the combined role through the same listener.
+    status_wallet(&public_origin, &publisher.snapshot).await;
+    let http = reqwest::Client::new();
+    for prefix in ["/v1/status", "/status/v1"] {
+        let malformed = http
+            .post(format!("{public_origin}{prefix}/query"))
+            .body(vec![0; 8])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(malformed.status(), 400, "{prefix}");
+    }
+    // Private product, management and disabled-product routes are absent.
+    for path in [
+        "/v1/provider-status",
+        "/v1/ready",
+        "/v1/health",
+        "/health",
+        "/ready",
+        "/metrics",
+        "/control/health",
+        "/internal/health",
+        "/v2/txid/init",
+        "/transparent/v1/txid/init",
+        "/enhance/v1/init",
+    ] {
+        let response = reqwest::get(format!("{public_origin}{path}"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404, "{path}");
+    }
+    // The products' private listeners keep their own routes.
+    assert_eq!(
+        status(origin).await["verified_publication"]["map_sha256"],
+        set.map_digest
+    );
+    let control = reqwest::get(format!("http://{status_listen}/control/health"))
+        .await
+        .unwrap();
+    assert!(control.status().is_success());
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+}
+
+async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot) {
+    use super::status_http::Loopback;
+    use status_shared::protocol::Observation;
+    use zakura_pir_client::status as wallet;
+    let transport = Loopback {
+        origin: origin.into(),
+        http: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap(),
+        corrupt_answer: Default::default(),
+    };
+    let anchor = wallet::AcceptedAnchor {
+        network: snapshot.network,
+        height: snapshot.height,
+        hash: snapshot.anchor,
+    };
+    // Host readiness probes the Status control listener; its wallet routes
+    // answer once the combined role has committed the publication.
+    let pending = tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        loop {
+            match wallet::transport::PendingClient::fetch(
+                &transport,
+                "https://status-wallet.invalid",
+                status_shared::now_ms as fn() -> u64,
+            )
+            .await
+            {
+                Ok(pending) => break pending,
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+            }
+        }
+    })
+    .await
+    .expect("Status wallet routes serve the publication");
+    let client = pending.accept(&transport, &anchor).await.unwrap();
+    let coverage = wallet::LocalCoverageContext {
+        earliest_possible_inclusion: Some(snapshot.start),
+        required_through: Some(snapshot.height),
+    };
+    for (txid, expected) in status_shared::fixture::cases(super::status_publisher::ENTRIES, false) {
+        let expected = match expected {
+            Observation::Mined(height) => wallet::Observation::Mined(height),
+            Observation::Mempool => wallet::Observation::Mempool,
+            Observation::Forked => wallet::Observation::Forked,
+            Observation::NotFound => wallet::Observation::NotFound,
+        };
+        assert_eq!(
+            client.observe(&transport, &txid, coverage).await.unwrap(),
+            expected
+        );
+    }
 }
