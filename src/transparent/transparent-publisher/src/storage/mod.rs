@@ -17,6 +17,7 @@ pub mod layout;
 pub mod preparation;
 pub mod records;
 mod retention;
+mod writes;
 pub(crate) use retention::collecting;
 pub use retention::PublicationLease;
 
@@ -186,6 +187,7 @@ fn segments(dir: &Path) -> Result<Vec<(String, String)>, BoxError> {
 /// objects are verified by the caller's subsequent preparation, never trusted
 /// from their name. Reference changes do not change an object's inode metadata.
 pub fn write_object(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
+    let _writes = writes::shared(root)?;
     let reference = pir_publication::ObjectReference::for_bytes(bytes);
     let installer = ObjectInstaller::open(root.join(OBJECT_STORE))?;
     if let Ok(metadata) = std::fs::symlink_metadata(path) {
@@ -231,7 +233,8 @@ pub fn write_object(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), BoxErr
 
 /// Create an exact relative reference, rejecting a conflicting named entry.
 /// The shared artifact resolver checks it again when reading or serving.
-pub fn reference_object(
+/// The caller retains the shared object-write lock until this is complete.
+fn reference_object(
     root: &Path,
     path: &Path,
     reference: &pir_publication::ObjectReference,
@@ -276,6 +279,7 @@ pub fn reference_object(
 /// The later publisher preparation must reuse or establish their verification
 /// evidence before succeeding. Existing links stay exact. Metadata stays local.
 pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
+    let _writes = writes::shared(output.parent().ok_or("publication has no parent")?)?;
     let objects = store(output, OBJECT_STORE)?;
     let installer = ObjectInstaller::open(objects)?;
     let mut adopted = Adopted::default();
@@ -327,6 +331,7 @@ pub fn adopt_segments(output: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted,
 /// hashed and installed; one whose object is installed is linked to it, and
 /// the inventory hashes or vouches for that object like any other.
 pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
+    let _writes = writes::shared(directory.parent().ok_or("publication has no parent")?)?;
     let objects = store(directory, OBJECT_STORE)?;
     let installer = ObjectInstaller::open(objects)?;
     let mut adopted = Adopted::default();
@@ -373,6 +378,7 @@ pub fn adopt_runtimes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopt
 /// Import split-index chunks using their declared content names. Interrupted
 /// imports are resumable: completed references are checked and left untouched.
 pub fn adopt_indexes(directory: &Path, stop: &dyn Fn() -> bool) -> Result<Adopted, BoxError> {
+    let _writes = writes::shared(directory.parent().ok_or("publication has no parent")?)?;
     let objects = store(directory, OBJECT_STORE)?;
     let installer = ObjectInstaller::open(objects)?;
     let mut report = Adopted::default();
@@ -420,7 +426,13 @@ pub struct Collected {
 /// candidate, activation intent, held by validation), so the caller removes
 /// unreferenced publications first. A file being read keeps its bytes until
 /// it is closed. Any unreadable publication stops the collection.
+/// Object writers are excluded across this entire scan-and-delete interval.
 pub fn collect(root: &Path) -> Result<Collected, BoxError> {
+    collect_with(root, || {})
+}
+
+fn collect_with(root: &Path, scanned: impl FnOnce()) -> Result<Collected, BoxError> {
+    let _writes = writes::exclusive(root)?;
     let mut objects = BTreeSet::new();
     let name_of = |link: &Path| -> Result<String, BoxError> {
         Ok(std::fs::read_link(link)?
@@ -451,6 +463,7 @@ pub fn collect(root: &Path) -> Result<Collected, BoxError> {
             }
         }
     }
+    scanned();
     let mut collected = Collected::default();
     let store = root.join(OBJECT_STORE);
     match std::fs::symlink_metadata(&store) {
