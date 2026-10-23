@@ -1029,6 +1029,18 @@ pub async fn status(State(d): State<SharedDashboard>) -> Json<serde_json::Value>
         serde_json::json!({"progress_ok":progress,"evaluated_at":d.monitoring.evaluated_at,"shadow":d.monitoring.shadow,"delivery":d.monitoring.delivery,"incidents":d.monitoring.incidents,"chain":d.monitoring.chain,"peer":d.monitoring.peer,"publication":d.monitoring.publication,"quality":{"enabled":d.quality.enabled,"collected_at":d.quality.collected_at,"persisted_at":d.quality.persisted_at,"storage_error":d.quality.storage_error,"dropped_batches":d.quality.dropped_batches,"inventory_error":d.quality.inventory_error}}),
     )
 }
+/// Observer collection readiness: 200 once a poll round completed with the
+/// inventory whose `revision` it reports; the deployment checks both.
+pub async fn observers_ready() -> (StatusCode, Json<pir_apm::observers::Readiness>) {
+    let r = pir_apm::observers::readiness();
+    let code = if r.ready {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (code, Json(r))
+}
+
 pub async fn readyz(State(d): State<SharedDashboard>) -> (StatusCode, Json<serde_json::Value>) {
     let d = d.read().await;
     let now = incidents::unix_time();
