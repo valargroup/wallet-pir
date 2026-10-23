@@ -25,7 +25,9 @@ def plan(owner, journal):
     before = saved['before'] if saved else journal['plan']['desired'][UNIT_PATH]
     state = owner.ex.probe_unit(owner.host, UNIT)
     drop_ins = state['drop_ins']
-    require(drop_ins == journal['plan']['units'][UNIT]['drop_ins'], 'publisher drop-ins changed before sandbox repair')
+    expected_drop_ins = [dict(entry, text=journal['plan']['desired'].get(entry['path'], entry['text']))
+                         for entry in journal['plan']['units'][UNIT]['drop_ins']]
+    require(drop_ins == expected_drop_ins, 'publisher drop-ins changed before sandbox repair')
     after = storage_sandbox(before, owner.request['configuration'], [d['text'] for d in drop_ins])
     require(before != after, 'publisher already has the required storage write permissions')
     repair = {'before': before, 'after': after, 'drop_ins': drop_ins,
