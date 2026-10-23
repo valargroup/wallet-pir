@@ -305,6 +305,13 @@ impl DisplayLive {
             })
             .collect()
     }
+    /// Whether every named revision is still fenced. The synchronization owner
+    /// uses this before revocation to distinguish repeated evidence from a new
+    /// invalidation, including one after a successful recovery.
+    pub(crate) fn revocations_cover(&self, digests: &BTreeSet<String>) -> bool {
+        digests.is_subset(&self.0.invalid.read().unwrap())
+    }
+
     /// Fence memory before durable writes so a storage failure cannot release an orphaned answer.
     pub(crate) fn revoke(&self, digests: &BTreeSet<String>) -> Result<(), String> {
         let _gate = self.0.publication_gate.lock().unwrap();

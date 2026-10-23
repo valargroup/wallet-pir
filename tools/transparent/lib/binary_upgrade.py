@@ -148,9 +148,10 @@ def validate(request):
                 'load is {host, pins_sha256, resume_after_upgrade}')
     if 'previous_maps' in request:
         previous = request['previous_maps']
-        require(providers and isinstance(previous, dict) and previous and set(previous) <= set(workers)
+        worker_repair = providers or (request['service'] == 'transparent-display' and request['component'] == 'workers')
+        require(worker_repair and isinstance(previous, dict) and previous and set(previous) <= set(workers)
                 and all(isinstance(value, str) and SHA256.fullmatch(value) for value in previous.values()),
-                'previous_maps pins older publication hashes for existing HTTPS provider workers only')
+                'previous_maps pins older publication hashes for existing HTTPS provider or display workers only')
     if 'repair' in request:
         repair = request['repair']
         require(providers and isinstance(repair, dict) and set(repair) == {'transaction', 'predecessors'}
