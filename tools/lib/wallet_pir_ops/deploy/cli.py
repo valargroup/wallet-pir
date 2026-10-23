@@ -266,14 +266,17 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage'):
         command = commands.add_parser('coordinator-edge-' + operation,
                                       help='add or update only the unified wallet site on the coordinator Caddy')
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
+        if operation in ('deploy', 'dns-stage'):
             command.add_argument('--expect-plan-sha256', required=True)
-        if operation in ('status', 'rollback'):
+        if operation == 'deploy':
+            command.add_argument('--preserve-on-failure', action='store_true',
+                                 help='retain the installed candidate on failure; finish with coordinator-edge-verify')
+        if operation in ('status', 'rollback', 'verify'):
             command.add_argument('--transaction')
     command = commands.add_parser('ancillary-status', help='read-only state of ancillary units')
     command.add_argument('name', nargs='?', help='one ancillary unit (default: all)')
@@ -494,12 +497,20 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             edge = UnifiedEdge(inventory, executor or SSHExecutor(inventory), args.state_dir, request,
                                lock=options.get('lock'))
             operation = args.command.removeprefix('coordinator-edge-')
-            if operation in ('plan', 'preflight'):
+            if operation == 'dns-plan':
+                mutation_fence(inventory, edge.ex)
+                plan, _after = edge.dns_plan()
+                result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
+            elif operation == 'dns-stage':
+                result = edge.stage_dns(args.expect_plan_sha256)
+            elif operation in ('plan', 'preflight'):
                 mutation_fence(inventory, edge.ex)
                 plan, _before, _after = edge.plan()
                 result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
             elif operation == 'deploy':
-                result = edge.deploy(args.expect_plan_sha256)
+                result = edge.deploy(args.expect_plan_sha256, preserve_on_failure=args.preserve_on_failure)
+            elif operation == 'verify':
+                result = edge.verify(args.transaction)
             elif operation == 'rollback':
                 result = edge.rollback(args.transaction)
             else:

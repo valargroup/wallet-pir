@@ -17,7 +17,7 @@ from tools.status.lib.routing import candidate as status_candidate
 from wallet_pir_ops.deploy import coordinator_edge, descriptors
 from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.transaction import Journal
-from wallet_pir_ops.deploy.unified_edge import CONFIG, HOST, REFUSED, SERVED, UnifiedEdge, candidate, digest
+from wallet_pir_ops.deploy.unified_edge import CONFIG, DNS_SOURCE, HOST, REFUSED, SERVED, UnifiedEdge, candidate, digest
 
 ENHANCE_URL = 'https://enhance-pir.valargroup.dev'
 TEMPLATE = coordinator_edge.TEMPLATE.read_text()
@@ -106,7 +106,7 @@ class UnifiedEdgeTransaction(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         path = Path(self.temp.name) / 'inventory.json'
-        path.write_text(json.dumps(dict(hosts={'coordinator': {}}, ssh={'mode': 'config'},
+        path.write_text(json.dumps(dict(hosts={'coordinator': {'address': '192.0.2.1'}}, ssh={'mode': 'config'},
                                         lock={'type': 'remote', 'host': 'coordinator'}, services={})))
         self.inventory = descriptors.load_inventory(path)
         self.host = Host()
@@ -155,6 +155,33 @@ class UnifiedEdgeTransaction(unittest.TestCase):
                 with self.assertRaises(DeployError):
                     edge.deploy(plan)
                 self.assertEqual(host.read('coordinator', CONFIG), LIVE)
+
+    def test_forward_only_failure_keeps_routes_and_verifies_without_reloading(self):
+        plan = self.plan()
+        self.host.codes['/metrics'] = '200'
+        with self.assertRaises(DeployError):
+            self.edge.deploy(plan, preserve_on_failure=True)
+        journal = Journal.load(self.temp.name, 'coordinator-edge')
+        self.assertEqual(journal.status, 'verification-failed')
+        self.assertIn(HOST, coordinator_edge.sites(self.host.read('coordinator', CONFIG)))
+        self.assertEqual(self.host.reloads, 1)
+        self.host.codes['/metrics'] = '404'
+        self.assertEqual(self.edge.verify(journal.id)['phase'], 'committed')
+        self.assertEqual(self.host.reloads, 1)
+        self.host.files[CONFIG] += b'# foreign change\n'
+        with self.assertRaisesRegex(DeployError, 'Caddyfile differs'):
+            self.edge.verify(journal.id)
+
+    def test_dns_source_staging_keeps_serving_and_foreign_source_unchanged(self):
+        plan, source = self.edge.dns_plan()
+        self.edge.stage_dns(digest(json.dumps(plan, sort_keys=True)))
+        self.assertEqual(self.host.read('coordinator', DNS_SOURCE), source)
+        self.assertIn('content = "192.0.2.1"', source)
+        self.assertEqual(self.host.read('coordinator', CONFIG), LIVE)
+        self.assertEqual(self.host.reloads, 0)
+        self.host.files[DNS_SOURCE] = b'# another operator\n'
+        with self.assertRaisesRegex(DeployError, 'DNS source changed'):
+            self.edge.dns_plan()
 
     def test_changed_plan_and_foreign_edits_refuse_without_overwriting_them(self):
         plan = self.plan()

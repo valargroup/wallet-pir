@@ -99,20 +99,17 @@ wallet-pir.valargroup.dev {
 		header Cache-Control "public, max-age=300"
 		file_server
 	}
-	# History filter shards are a Transparent router operation; every other
-	# canonical filter operation is the coordinator's filter service.
-	handle /transparent/v1/filters/shards* {
-		reverse_proxy https://transparent-pir.valargroup.dev {
-			header_up Host transparent-pir.valargroup.dev
-			transport http {
-				tls_server_name transparent-pir.valargroup.dev
-			}
-		}
+	# The current publisher owns the public shard map and filter bytes.
+	@history_metadata path /transparent/v1/shards /transparent/v1/filters/shards /transparent/v1/filters/shards/*
+	handle @history_metadata {
+		reverse_proxy 10.142.0.3:8096
 	}
 	handle /transparent/v1/filters/* {
+		uri replace /transparent/v1 /v1 1
 		reverse_proxy 127.0.0.1:8090
 	}
 	handle /transparent/v1/* {
+		uri replace /transparent/v1 /v2 1
 		reverse_proxy https://transparent-pir.valargroup.dev {
 			header_up Host transparent-pir.valargroup.dev
 			transport http {
@@ -124,6 +121,7 @@ wallet-pir.valargroup.dev {
 		reverse_proxy 127.0.0.1:8492
 	}
 	handle /enhance/v1/query {
+		uri replace /enhance/v1 /v1/enhance 1
 		reverse_proxy 127.0.0.1:8082 {
 			transport http {
 				keepalive off
@@ -131,9 +129,11 @@ wallet-pir.valargroup.dev {
 		}
 	}
 	handle /enhance/v1/* {
+		uri replace /enhance/v1 /v1/enhance 1
 		reverse_proxy 127.0.0.1:8082
 	}
 	handle /receiver/v1/* {
+		uri replace /receiver/v1 /v1/receiver 1
 		reverse_proxy https://receiver-pir.valargroup.dev {
 			header_up Host receiver-pir.valargroup.dev
 			transport http {
