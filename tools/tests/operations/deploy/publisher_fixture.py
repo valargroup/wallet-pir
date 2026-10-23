@@ -138,8 +138,9 @@ class PublisherFixture:
                                                     'unit': publisher.UNIT}}]}))
         inventory = json.loads((ROOT / 'tools/enhance/deploy/deploy-inventory.example.json').read_text())
         inventory['services'].pop('receiver', None)
-        # The cutover registry covers serving products, not host observers.
-        inventory['services'].pop('apm-sidecar', None)
+        # The cutover registry covers serving products, not monitoring.
+        for name in ('apm-sidecar', 'apm', 'monitor'):
+            inventory['services'].pop(name, None)
         inventory['ancillary'] = {k: v for k, v in inventory['ancillary'].items()
                                   if set(v['consumers']) <= set(inventory['services'])}
         # Start with the supported ownership graph, never replay retired deployments.

@@ -1,0 +1,41 @@
+# Central APM, rendered by tools/lib/wallet_pir_ops/monitoring_roles.py as the
+# `apm.central` role. ExecStart, Environment and LoadCredential are rendered
+# from the inventory settings: the observer inventory, the collector client
+# identity and the Slack webhook are root-only files installed by
+# `wallet-pir-monitoring.py` and reach only this unit as systemd credentials.
+# The legacy `apm.server` role (tools/enhance/deploy/apm.toml) stays the
+# rollback target of the adopting transaction.
+[Unit]
+Description=Enhance PIR APM dashboard and alerting sidecar
+After=network-online.target pir-publisher.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/bin/false
+StateDirectory=pir-apm
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+
+# Keep local /proc, filesystem-stat, and outbound-network access available for
+# sysinfo, coordinator scraping, sidecar polling and Slack while removing
+# unnecessary privileges.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

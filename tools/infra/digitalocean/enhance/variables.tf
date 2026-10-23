@@ -91,3 +91,9 @@ variable "wallet_pir_coordinator_dns_ipv4" {
   type        = string
   default     = "167.99.42.60"
 }
+
+variable "apm_sidecar_boot_script" {
+  description = "First-boot pir-apm-sidecar install appended to new droplets' user_data by the fleet root (empty leaves user_data unchanged). Public binary reference only; never key material."
+  type        = string
+  default     = ""
+}

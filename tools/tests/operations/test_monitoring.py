@@ -1,13 +1,17 @@
 """Observer inventory, coverage, monitoring certificates and a fresh monitoring rebuild.
 
-The rebuild rehearsal runs the real `pir-apm-sidecar` and `pir-apm` binaries
-when `PIR_MONITORING_BIN` (or the release-fast target) holds them, with
-ephemeral test certificates, rendered configuration and no SSH.
+The rebuild rehearsal runs the real `pir-apm-sidecar`, `pir-apm` and
+`pir-monitor` binaries when `PIR_MONITORING_BIN` (or the release-fast target)
+holds them, with ephemeral test certificates, rendered configuration and
+units, and no SSH.
 """
+import base64
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import sqlite3
 import subprocess
@@ -20,8 +24,10 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT / 'tools/tests/operations/deploy'))
 from fake_fleet import FakeFleet  # noqa: E402
-from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install  # noqa: E402
-from wallet_pir_ops.deploy import remote, units  # noqa: E402
+from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install, monitoring_roles  # noqa: E402
+from wallet_pir_ops.deploy import descriptors, remote, units  # noqa: E402
+
+SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 
 COORDINATOR = {'host_id': 'coordinator', 'address': '10.0.0.2', 'units': ['pir-apm.service'],
                'required_volumes': [{'path': p, 'uuid': '0000-000%d' % i}
@@ -182,7 +188,9 @@ class Certificates(unittest.TestCase):
         fake = FakeFleet()
         fake.host('w1')
         fake.endpoints[('w1', monitoring_certs.SIDECAR_HEALTH)] = monitoring_certs.SIDECAR_UNIT
-        fake.host('w1').units[monitoring_certs.SIDECAR_UNIT] = {}
+        fake.host('w1').units[monitoring_certs.SIDECAR_UNIT] = {
+            'loaded': [('/etc/systemd/system/' + monitoring_certs.SIDECAR_UNIT, '')], 'active': 'inactive',
+            'pid': 0, 'exe': None}
         fake._reload = lambda host: None
         # The unit runs whatever server.key holds; health follows that process.
         fake._start = lambda host, unit: fake.host(host).units[unit].update(
@@ -213,6 +221,24 @@ class Certificates(unittest.TestCase):
         monitoring_certs.rollback(fake, lock, 'w1', state_dir=self.root / 'journal', sleep=lambda _: None)
         self.assertEqual(self.installed(fake), {k: v.decode() for k, v in self.OLD.items()})
         self.assertEqual(fake.host('w1').units[monitoring_certs.SIDECAR_UNIT]['active'], 'active')
+
+    def test_files_for_a_unit_not_yet_installed_are_staged_without_a_restart(self):
+        fake = FakeFleet()
+        fake.host('c1')
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        files = {'slack-webhook': b'https://hooks.slack.com/services/T0/B0/test\n'}
+        options = dict(state_dir=self.root / 'journal', directory='/etc/pir-apm/alerting',
+                       unit=monitoring_certs.COLLECTOR_UNIT, sleep=lambda _: None)
+        self.assertEqual(monitoring_certs.install(fake, lock, 'c1', files, **options), ['slack-webhook'])
+        self.assertFalse([entry for entry in fake.log if entry[1] == 'systemctl'], 'no unit to restart')
+        self.assertEqual(fake.read('c1', '/etc/pir-apm/alerting/slack-webhook'), files['slack-webhook'].decode())
+        journal = json.loads(next((self.root / 'journal').glob('monitoring-files-c1-*.json')).read_text())
+        self.assertTrue(journal['hosts'][0]['staged'])
+        self.assertNotIn('hooks.slack.com', json.dumps(journal), 'journals hold digests only')
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'c1', state_dir=self.root / 'journal',
+                                  directory='/etc/pir-apm/alerting', sleep=lambda _: None)
+        self.assertIsNone(fake.read('c1', '/etc/pir-apm/alerting/slack-webhook'))
 
     def test_every_failing_effect_restores_the_previous_set(self):
         old = {k: v.decode() for k, v in self.OLD.items()}
@@ -351,6 +377,82 @@ class VolumeBinding(unittest.TestCase):
                 monitoring.bind_volume(path, 'txid-01', {'path': '/srv/txid-cache', 'uuid': 'ffff'})
 
 
+BOOT = ROOT / 'tools/deploy/monitoring/pir-apm-sidecar-boot.sh'
+CURL = """#!/bin/bash
+# curl for the boot script: files from $FAKE_FILES, DigitalOcean metadata from fixed answers.
+output=; url=
+while [ $# -gt 0 ]; do
+  case "$1" in -o) output="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+done
+case "$url" in
+  */hostname) printf transparent-pir-recent-09 ;;
+  */interfaces/private/0/ipv4/address) printf 10.10.0.31 ;;
+  *) cp "$FAKE_FILES/$(basename "$url")" "$output" ;;
+esac
+"""
+
+
+class BootInstall(unittest.TestCase):
+    """A new droplet's first-boot sidecar install, run for real against a scratch root."""
+
+    def boot(self, binary, sha):
+        directory = Path(self.dir.name)
+        tools, files, root = directory / 'bin', directory / 'files', directory / 'root'
+        for path in (tools, files, root):
+            path.mkdir(exist_ok=True)
+        (tools / 'curl').write_text(CURL)
+        (tools / 'systemctl').write_text('#!/bin/bash\necho "$@" >>"$FAKE_FILES/systemctl.log"\n')
+        for stub in ('curl', 'systemctl'):
+            (tools / stub).chmod(0o755)
+        (files / 'pir-apm-sidecar').write_bytes(binary)
+        environment = {'PATH': '%s:%s' % (tools, os.environ['PATH']), 'FAKE_FILES': str(files),
+                       'PIR_APM_SIDECAR_ROOT': str(root), 'PIR_APM_SIDECAR_SHA256': sha,
+                       'PIR_APM_SIDECAR_URL': 'https://releases.example/pir-apm-sidecar',
+                       'PIR_APM_SIDECAR_UNIT_TEMPLATE': base64.b64encode(monitoring.TEMPLATE.read_bytes()).decode()}
+        result = subprocess.run(['bash', str(BOOT)], env=environment, capture_output=True, text=True, timeout=30)
+        return result, root, files
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+
+    def test_boot_installs_what_the_renderer_renders_and_enables_without_starting(self):
+        binary = b'pinned sidecar'
+        sha = hashlib.sha256(binary).hexdigest()
+        result, root, files = self.boot(binary, sha)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        release = '/opt/pir-apm-sidecar/releases/' + sha
+        self.assertEqual((root / release.lstrip('/') / 'pir-apm-sidecar').read_bytes(), binary)
+        settings = {'host_id': 'transparent-pir-recent-09', 'address': '10.10.0.31'}
+        rendered = monitoring.sidecar(settings, release=release)
+        self.assertEqual((root / monitoring.CONFIG.lstrip('/')).read_bytes(),
+                         monitoring.config_bytes(monitoring.sidecar_document(settings)))
+        self.assertEqual((root / 'etc/systemd/system/pir-apm-sidecar.service').read_text(), rendered.unit,
+                         'the first deploy sees no unit drift')
+        self.assertEqual((files / 'systemctl.log').read_text().split('\n')[:2],
+                         ['daemon-reload', 'enable pir-apm-sidecar.service'])
+        self.assertEqual(os.listdir(root / 'etc/pir-apm-sidecar/credentials'), [], 'no key material at boot')
+
+    def test_a_binary_other_than_the_pinned_one_is_not_installed(self):
+        result, root, files = self.boot(b'other bytes', hashlib.sha256(b'pinned').hexdigest())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(list(root.glob('opt/pir-apm-sidecar/releases/*/pir-apm-sidecar')))
+        self.assertFalse((files / 'systemctl.log').exists())
+
+    def test_terraform_appends_this_script_and_template_to_every_managed_droplet(self):
+        infra = ROOT / 'tools/infra/digitalocean'
+        wiring = (infra / 'fleet/apm-sidecar.tf').read_text()
+        self.assertIn('deploy/monitoring/pir-apm-sidecar-boot.sh', wiring)
+        self.assertIn('deploy/monitoring/pir-apm-sidecar.service.in', wiring)
+        for module in ('fleet/shared.tf', 'fleet/monitor.tf', 'fleet/receiver.tf', 'enhance/main.tf',
+                       'status/main.tf', 'transparent/main.tf', 'transparent-tx-detail/main.tf'):
+            text = (infra / module).read_text()
+            with self.subTest(module=module):
+                self.assertEqual(text.count('user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl"'),
+                                 len(re.findall(r'(?m)^\s*user_data\s*=', text)),
+                                 'every droplet user_data is wrapped once')
+
+
 class HostTransport:
     """A controller's host access over one fake host: files by path, and a sidecar that starts."""
 
@@ -454,69 +556,195 @@ def free_port():
         return s.getsockname()[1]
 
 
+class RenderedProcess:
+    """Start a release binary as its rendered unit would, on this machine and without systemd.
+
+    `Environment=` comes from the unit; path settings the unit fixes to host
+    locations are remapped into the rehearsal root, and each `LoadCredential=`
+    source is read from the files the credential installs place below that
+    root, as systemd copies them into `$CREDENTIALS_DIRECTORY`.
+    """
+
+    def __init__(self, root, unit, remap):
+        self.root, self.remap = Path(root), remap
+        self.service = units.effective([unit])['Service']
+        self.executable = units.split_exec(units.exec_start(units.effective([unit])))[1]
+
+    def environment(self, name):
+        credentials = self.root / ('credentials-' + name)
+        credentials.mkdir()
+        for entry in self.service.get('LoadCredential', []):
+            credential, source = entry.split(':', 1)
+            (credentials / credential).write_bytes((self.root / source.lstrip('/')).read_bytes())
+        environment = dict(self.service.get('Environment', {}), **self.remap)
+        return dict(environment, PATH=os.environ['PATH'], CREDENTIALS_DIRECTORY=str(credentials))
+
+    def run(self, name, *arguments):
+        return subprocess.run([self.executable, *arguments], env=self.environment(name), capture_output=True,
+                              text=True, timeout=30)
+
+    def start(self, name):
+        return subprocess.Popen([self.executable], env=self.environment(name),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def install_file(root, path, data):
+    """Where `wallet-pir-monitoring.py install-credentials` or `install-observers` puts a file."""
+    target = Path(root) / path.lstrip('/')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+
+
+def wait_for(condition, timeout=20):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = condition()
+        if value:
+            return value
+        time.sleep(0.5)
+    return condition()
+
+
 @unittest.skipIf(binaries() is None, 'pir-apm and pir-apm-sidecar are not built')
 class FreshRebuild(unittest.TestCase):
-    """A complete monitoring rebuild from the repository alone, in a temporary root."""
+    """A complete monitoring rebuild from the repository alone, in a temporary root.
 
-    def test_rendered_sidecar_and_apm_converge_on_healthy_host_incidents(self):
-        bin_dir = binaries()
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            monitoring_certs.issue_ca(root / 'ca')
-            monitoring_certs.issue_leaf(root / 'ca', root / 'sidecar', 'rehearsal.pir-monitoring', 'server')
-            monitoring_certs.issue_leaf(root / 'ca', root / 'collector', monitoring.COLLECTOR_IDENTITY, 'client')
-            port, health = free_port(), free_port()
-            settings = {'host_id': 'rehearsal', 'address': '127.0.0.1', 'port': port, 'health_port': health}
-            rendered = monitoring.sidecar(settings, release=str(bin_dir))
-            config = root / 'sidecar.json'
-            config.write_text(rendered.files[monitoring.CONFIG])
-            check = json.loads(subprocess.run([str(bin_dir / 'pir-apm-sidecar'), '--config', str(config), '--check'],
-                                              capture_output=True, check=True, timeout=10).stdout)
-            document = monitoring.sidecar_document(settings)
-            self.assertEqual(check['config_digest'], monitoring.config_digest(document))
-            self.assertEqual(check['checks'], monitoring.expected_checks(document))
-            inventory_doc = {'hosts': {'rehearsal': {}}, 'services': {'apm-sidecar': {'roles': {'observer': [
-                {'host': 'rehearsal', 'install': True, 'settings': settings}]}}}}
-            (root / 'observers.json').write_text(json.dumps(monitoring.observers(inventory_doc, mode='shadow')))
-            env = {'PATH': os.environ['PATH']}
-            sidecar = subprocess.Popen([str(bin_dir / 'pir-apm-sidecar'), '--config', str(config)],
-                                       env=dict(env, CREDENTIALS_DIRECTORY=str(root / 'sidecar')),
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            state = root / 'incidents.sqlite'
-            apm_port = free_port()
-            apm = subprocess.Popen([str(bin_dir / 'pir-apm')], env=dict(
-                env, CREDENTIALS_DIRECTORY=str(root / 'collector'), PIR_APM_OBSERVERS=str(root / 'observers.json'),
-                PIR_APM_STATE_PATH=str(state), PIR_APM_LISTEN='127.0.0.1:%d' % apm_port,
-                PIR_APM_SCRAPE_URL='http://127.0.0.1:9'), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    Every process starts from its rendered role: the sidecar from its
+    configuration, the central APM and the independent monitor from their
+    rendered units, with credentials at the paths their installs use.
+    Nothing reaches Slack: each rendered webhook is checked by a process that
+    exits before any delivery.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.root = Path(self.dir.name)
+        self.bin = binaries()
+        self.processes = []
+        self.addCleanup(self.stop)
+
+    def stop(self):
+        for process in self.processes:
+            process.terminate()
+            process.wait(timeout=10)
+
+    def apm_unit(self, **settings):
+        role = SERVICES['apm'].roles['central']
+        rendered = monitoring_roles.apm(dict({'environment': {'PIR_APM_ALERT_MODE': 'shadow',
+                                                              'PIR_APM_SCRAPE_URL': 'http://127.0.0.1:9'},
+                                              'chain_cookie': None}, **settings),
+                                        release=str(self.bin), template=role.template.read_text())
+        return rendered.unit
+
+    def test_rendered_sidecar_apm_and_monitor_converge_on_healthy_host_incidents(self):
+        root = self.root
+        monitoring_certs.issue_ca(root / 'ca')
+        monitoring_certs.issue_leaf(root / 'ca', root / 'sidecar', 'rehearsal.pir-monitoring', 'server')
+        monitoring_certs.issue_leaf(root / 'ca', root / 'collector', monitoring.COLLECTOR_IDENTITY, 'client')
+        port, health = free_port(), free_port()
+        settings = {'host_id': 'rehearsal', 'address': '127.0.0.1', 'port': port, 'health_port': health}
+        rendered = monitoring.sidecar(settings, release=str(self.bin))
+        config = root / 'sidecar.json'
+        config.write_text(rendered.files[monitoring.CONFIG])
+        check = json.loads(subprocess.run([str(self.bin / 'pir-apm-sidecar'), '--config', str(config), '--check'],
+                                          capture_output=True, check=True, timeout=10).stdout)
+        document = monitoring.sidecar_document(settings)
+        self.assertEqual(check['config_digest'], monitoring.config_digest(document))
+        self.assertEqual(check['checks'], monitoring.expected_checks(document))
+        inventory_doc = {'hosts': {'rehearsal': {}}, 'services': {'apm-sidecar': {'roles': {'observer': [
+            {'host': 'rehearsal', 'install': True, 'settings': settings}]}}}}
+        observers = monitoring.observers(inventory_doc, mode='shadow')
+        self.processes.append(subprocess.Popen(
+            [str(self.bin / 'pir-apm-sidecar'), '--config', str(config)],
+            env={'PATH': os.environ['PATH'], 'CREDENTIALS_DIRECTORY': str(root / 'sidecar')},
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+
+        # The central APM host: observer inventory, collector identity and Slack webhook installed first.
+        install_file(root, monitoring_roles.APM_OBSERVERS, json.dumps(observers).encode())
+        for name in monitoring_certs.COLLECTOR_FILES:
+            install_file(root, '%s/%s' % (monitoring_certs.COLLECTOR_CREDENTIALS, name), (root / 'collector' / name).read_bytes())
+        install_file(root, '%s/%s' % (monitoring_roles.APM_ALERTING, monitoring_roles.SLACK),
+                     b'https://hooks.slack.com/services/T0/B0/rehearsal\n')
+        state, apm_port = root / 'incidents.sqlite', free_port()
+        remap = {'PIR_APM_STATE_PATH': str(state), 'PIR_APM_LISTEN': '127.0.0.1:%d' % apm_port,
+                 'PIR_APM_OBSERVERS': str(root / monitoring_roles.APM_OBSERVERS.lstrip('/'))}
+        # The rendered webhook credential loads: queueing a test alert reads it and exits without sending.
+        loaded = RenderedProcess(root, self.apm_unit(), dict(remap, PIR_APM_STATE_PATH=str(root / 'queue.sqlite')))
+        result = loaded.run('queue', '--enqueue-test-alert')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        install_file(root, '%s/%s' % (monitoring_roles.APM_ALERTING, monitoring_roles.SLACK), b'https://example.test/\n')
+        refused = loaded.run('refused', '--enqueue-test-alert')
+        self.assertNotEqual(refused.returncode, 0, 'a credential that is not a Slack webhook stops the APM')
+        self.assertNotIn('example.test', refused.stdout + refused.stderr)
+        # The serving APM runs without a webhook, so the rehearsal sends nothing.
+        self.processes.append(RenderedProcess(root, self.apm_unit(slack=False), remap).start('apm'))
+        keys = {}
+
+        def converged():
+            nonlocal keys
+            if state.exists():
+                with sqlite3.connect(state) as db:
+                    keys = {k: json.loads(v) for k, v in db.execute(
+                        "SELECT key, value FROM incidents WHERE key LIKE 'host:rehearsal:%'")}
+            return keys.get('host:rehearsal:coverage', {}).get('condition', {}).get('firing') is False
+        wait_for(converged)
+        self.assertEqual(keys['host:rehearsal:coverage']['condition']['firing'], False)
+        self.assertIn('host:rehearsal:check:certificate', keys)
+        self.assertFalse(keys['host:rehearsal:check:certificate']['condition']['firing'])
+        # This machine's own filesystems decide the rest; they need only be reported.
+        self.assertIn('host:rehearsal:check:memory', keys)
+        self.assertIn('host:rehearsal:check:filesystems', keys)
+        # The deployment's readiness contracts against the real APM: the install's and the role's.
+        url = 'http://127.0.0.1:%d/observers/ready' % apm_port
+        self.assertTrue(monitoring_certs.collector_ready(observers['revision'], url)(LocalHTTP(), 'rehearsal'))
+        self.assertFalse(monitoring_certs.collector_ready('sha256:other', url)(LocalHTTP(), 'rehearsal'))
+        with self.assertRaises(ValueError):
+            monitoring_certs.collector_ready(
+                observers['revision'], 'http://127.0.0.1:%d/healthz' % apm_port)(LocalHTTP(), 'rehearsal')
+        role = SERVICES['apm'].roles['central']
+        for descriptor_url in (role.health, role.ready_url):
+            status, _ = LocalHTTP().http_get('rehearsal', descriptor_url.replace('3002', str(apm_port)))
+            self.assertEqual(status, 200, descriptor_url)
+
+        # The independent monitor host, reading the rehearsal APM's status.
+        if not (self.bin / 'pir-monitor').is_file():
+            self.skipTest('pir-monitor is not built')
+        oracle = json.dumps({'anchor_height': 1, 'anchor_hash': '00' * 32,
+                             'records': [{'position': 0, 'record_hex': '00' * 653}]}).encode()
+        install_file(root, '/etc/pir-monitor/oracle.json', oracle)
+        role = SERVICES['monitor'].roles['checker']
+        unit = monitoring_roles.monitor({'environment': {
+            'PIR_MONITOR_ORIGIN': 'http://127.0.0.1:9',
+            'PIR_MONITOR_APM_STATUS_URL': 'http://127.0.0.1:%d/monitor-status' % apm_port,
+            'PIR_MONITOR_ORACLE': '/etc/pir-monitor/oracle.json',
+            'PIR_MONITOR_ORACLE_SHA256': hashlib.sha256(oracle).hexdigest()}, 'slack': False},
+            release=str(self.bin), template=role.template.read_text()).unit
+        monitor_port = free_port()
+        remap = {'PIR_MONITOR_STATE_PATH': str(root / 'monitor.sqlite'),
+                 'PIR_MONITOR_LISTEN': '127.0.0.1:%d' % monitor_port,
+                 'PIR_MONITOR_ORACLE': str(root / 'etc/pir-monitor/oracle.json')}
+        self.processes.append(RenderedProcess(root, unit, remap).start('monitor'))
+        health = role.health.replace('3003', str(monitor_port))
+
+        def ready():
             try:
-                deadline = time.monotonic() + 20
-                keys = {}
-                while time.monotonic() < deadline:
-                    time.sleep(1)
-                    if state.exists():
-                        with sqlite3.connect(state) as db:
-                            keys = {k: json.loads(v) for k, v in db.execute(
-                                "SELECT key, value FROM incidents WHERE key LIKE 'host:rehearsal:%'")}
-                    if keys.get('host:rehearsal:coverage', {}).get('condition', {}).get('firing') is False:
-                        break
-                self.assertEqual(keys['host:rehearsal:coverage']['condition']['firing'], False)
-                self.assertIn('host:rehearsal:check:certificate', keys)
-                self.assertFalse(keys['host:rehearsal:check:certificate']['condition']['firing'])
-                # This machine's own filesystems decide the rest; they need only be reported.
-                self.assertIn('host:rehearsal:check:memory', keys)
-                self.assertIn('host:rehearsal:check:filesystems', keys)
-                # The deployment's readiness contract against the real APM.
-                revision = json.loads((root / 'observers.json').read_text())['revision']
-                url = 'http://127.0.0.1:%d/observers/ready' % apm_port
-                self.assertTrue(monitoring_certs.collector_ready(revision, url)(LocalHTTP(), 'rehearsal'))
-                self.assertFalse(monitoring_certs.collector_ready('sha256:other', url)(LocalHTTP(), 'rehearsal'))
-                with self.assertRaises(ValueError):
-                    monitoring_certs.collector_ready(
-                        revision, 'http://127.0.0.1:%d/healthz' % apm_port)(LocalHTTP(), 'rehearsal')
-            finally:
-                for process in (apm, sidecar):
-                    process.terminate()
-                    process.wait(timeout=10)
+                status, body = LocalHTTP().http_get('monitor', health)
+            except OSError:
+                return False
+            return status == 200 and bool(json.loads(body).get(role.ready['field']))
+        self.assertTrue(wait_for(ready), 'the monitor meets its descriptor readiness contract')
+        # Its webhook credential is read at start: a value that is not a Slack webhook stops it.
+        install_file(root, '%s/%s' % (monitoring_roles.MONITOR_CREDENTIALS, monitoring_roles.SLACK), b'not a webhook')
+        unit = monitoring_roles.monitor({'environment': {
+            'PIR_MONITOR_ORIGIN': 'http://127.0.0.1:9', 'PIR_MONITOR_APM_STATUS_URL': 'http://127.0.0.1:9/x',
+            'PIR_MONITOR_ORACLE': '/etc/pir-monitor/oracle.json',
+            'PIR_MONITOR_ORACLE_SHA256': hashlib.sha256(oracle).hexdigest()}},
+            release=str(self.bin), template=role.template.read_text()).unit
+        refused = RenderedProcess(root, unit, dict(remap, PIR_MONITOR_LISTEN='127.0.0.1:%d' % free_port())).run(
+            'monitor-refused')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertNotIn('not a webhook', refused.stdout + refused.stderr)
 
 
 if __name__ == '__main__':
