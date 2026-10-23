@@ -28,6 +28,7 @@ members = [
     # Services and operational dashboard.
     "src/enhance/enhance-publisher",
     "src/shared/pir-apm",
+    "src/shared/pir-host-observations",
     "src/transparent/transparent-publisher",
     "src/transparent/transparent-query-server",
     # Development and validation tools; package/binary names stay stable.
@@ -35,6 +36,7 @@ members = [
     "tools/enhance/native-certificate",
     "tools/enhance/loadtest",
     "tools/shared/pir-monitor",
+    "tools/shared/pir-apm-sidecar",
     "tools/transparent",
 ]
 
