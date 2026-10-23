@@ -3,7 +3,7 @@
 
 `apm`, on the coordinator, rewrites only `roster` (and, with --load-status,
 `synthetic_status`) of one history service in the APM Transparent config and
-`roster.path` in the host sampler config, after checking that the new roster
+`roster` in the APM observer inventory, after checking that the new roster
 parses and the load status is current.
 `monitor`, on the monitor host, rewrites only the Transparent probe's canary
 binary, fixture and pins (from transparent-canary-pins.py) in the service-probe
@@ -38,7 +38,7 @@ def check_roster(path):
     if not (isinstance(roster, list) and 1 <= len(roster) <= 32 and all(
             isinstance(w, dict) and isinstance(w.get('id'), str) and w.get('role') in ROLES
             and isinstance(w.get('upstream'), str) and isinstance(w.get('ssh_host'), str) for w in roster)):
-        raise ValueError(f'{path} is not a worker roster APM and the host sampler can read')
+        raise ValueError(f'{path} is not a worker roster the APM can read')
     return sorted(w['id'] for w in roster)
 
 
@@ -50,7 +50,7 @@ def check_status(path, now, max_age):
     return status.get('mode')
 
 
-def apm_changes(apm, hosts, roster, status, service='transparent'):
+def apm_changes(apm, observers, roster, status, service='transparent'):
     changes = {}
     config = load(apm)
     if set(config) - {'host_snapshot', 'capacity_alert_mode', 'services'} \
@@ -65,11 +65,12 @@ def apm_changes(apm, hosts, roster, status, service='transparent'):
     updated = {**config, 'services': [moved if s is entries[0] else s for s in config['services']]}
     if updated != config:
         changes[Path(apm)] = (config, updated)
-    sampler = load(hosts)
-    if sampler.get('roster') is not None:
-        moved = {**sampler, 'roster': {**sampler['roster'], 'path': str(roster)}}
-        if moved != sampler:
-            changes[Path(hosts)] = (sampler, moved)
+    # Dynamic workers' sidecars are expected from the same roster.
+    current = load(observers)
+    if current.get('roster') is not None:
+        moved = {**current, 'roster': str(roster)}
+        if moved != current:
+            changes[Path(observers)] = (current, moved)
     return changes
 
 
@@ -118,7 +119,7 @@ def main(argv=None, now=time.time, run=subprocess.run):
     sub = parser.add_subparsers(dest='role', required=True)
     apm = sub.add_parser('apm')
     apm.add_argument('--apm-config', type=Path, required=True)
-    apm.add_argument('--hosts-config', type=Path, default=Path('/etc/pir-quality/hosts.json'))
+    apm.add_argument('--observers-config', type=Path, default=Path('/etc/pir-apm/observers.json'))
     apm.add_argument('--service', default='transparent', help='history service to move')
     apm.add_argument('--roster', type=Path, default=Path('/opt/transparent-publisher/v12/roster.json'))
     apm.add_argument('--load-status', type=Path,
@@ -140,12 +141,12 @@ def main(argv=None, now=time.time, run=subprocess.run):
         workers = check_roster(args.roster)
         mode = None if args.load_status is None else check_status(args.load_status, now(),
                                                                   args.max_status_age)
-        changes = apm_changes(args.apm_config, args.hosts_config, args.roster, args.load_status,
+        changes = apm_changes(args.apm_config, args.observers_config, args.roster, args.load_status,
                               args.service)
         print(json.dumps({'roster_workers': workers, 'load_mode': mode,
-                          'sampler_follows_roster': load(args.hosts_config).get('roster') is not None}))
+                          'observers_follow_roster': load(args.observers_config).get('roster') is not None}))
         show(changes)
-        restart = 'pir-apm' if Path(args.apm_config) in changes else None
+        restart = 'pir-apm' if changes else None
     else:
         pins = load(args.pins)
         if sha256(args.canary) != args.canary_sha256 or sha256(args.fixture) != pins['fixture_sha256']:

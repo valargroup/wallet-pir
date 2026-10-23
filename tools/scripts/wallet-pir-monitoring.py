@@ -24,10 +24,14 @@ def _json(path):
     return json.loads(Path(path).read_text()) if path else None
 
 
+def _observers(args):
+    return monitoring.observers(_json(args.inventory), mode=args.mode,
+                                edge_outputs=dict(item.split('=', 1) for item in args.edge_output),
+                                roster=args.roster, host_snapshot=args.host_snapshot)
+
+
 def render_observers(args):
-    edge = dict(item.split('=', 1) for item in args.edge_output)
-    document = monitoring.observers(_json(args.inventory), mode=args.mode, edge_outputs=edge)
-    print(json.dumps(document, indent=2, sort_keys=True))
+    print(json.dumps(_observers(args), indent=2, sort_keys=True))
 
 
 def coverage(args):
@@ -77,8 +81,7 @@ def install_credentials(args):
 
 
 def install_observers(args):
-    document = monitoring.observers(_json(args.inventory), mode=args.mode,
-                                    edge_outputs=dict(item.split('=', 1) for item in args.edge_output))
+    document = _observers(args)
     executor, lock = _executor(args)
     changed = monitoring_certs.install(
         executor, lock, args.host, {os.path.basename(OBSERVERS): (json.dumps(document, indent=2, sort_keys=True)
@@ -96,6 +99,8 @@ def main(argv=None):
         child.add_argument('--inventory', required=True)
         child.add_argument('--mode', choices=('shadow', 'active'), required=True)
         child.add_argument('--edge-output', action='append', default=[], metavar='HOST=PATH')
+        child.add_argument('--roster', help='Transparent roster whose members are expected hosts')
+        child.add_argument('--host-snapshot', help='where the APM writes the capacity host snapshot')
         if name == 'install-observers':
             child.add_argument('--host', required=True, help='the inventory host running pir-apm')
         child.set_defaults(handler=handler)

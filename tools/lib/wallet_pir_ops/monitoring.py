@@ -78,7 +78,8 @@ def _hooks(value):
 def sidecar_document(settings):
     """The sidecar configuration for one host, validated, as the file will hold it."""
     config = settings_of(settings, ('host_id', 'address'),
-                         ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port', 'health_port'))
+                         ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port', 'health_port',
+                          'snapshot'))
     if not NAME.match(config['host_id']):
         raise ValueError('host_id must be a lowercase monitoring name')
     address = ipaddress.ip_address(config['address'])
@@ -162,23 +163,51 @@ def observer_entries(inventory):
     return entries
 
 
-def observers(inventory, *, mode, edge_outputs=None):
-    """The central APM's observer inventory (`PIR_APM_OBSERVERS`)."""
+def enrollment_record(settings):
+    """What the APM expects of one sidecar: its endpoint, configuration digest and checks.
+
+    Dynamic workers carry this as `monitoring` in their roster entry.
+    """
+    document = sidecar_document(settings)
+    return {'address': document['listen'], 'config_digest': config_digest(document),
+            'checks': expected_checks(document)}
+
+
+SNAPSHOT_KEYS = {'sources', 'unit', 'data_path', 'size'}
+
+
+def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=None):
+    """The central APM's observer inventory (`PIR_APM_OBSERVERS`).
+
+    `snapshot` in an observer's settings names the sources and main unit the
+    Transparent capacity views know the host by; with `host_snapshot` the APM
+    writes their former `hosts.json` from sidecar observations. `roster` makes
+    each enrolled roster member an expected host.
+    """
     if mode not in ('shadow', 'active'):
         raise ValueError('mode is shadow or active')
     edge_outputs = edge_outputs or {}
     hosts = []
     for host, settings in observer_entries(inventory):
-        document = sidecar_document(settings)
-        entry = {'host_id': host, 'address': document['listen'], 'tls_name': tls_name(host),
-                 'config_digest': config_digest(document), 'checks': expected_checks(document)}
+        entry = {'host_id': host, 'tls_name': tls_name(host), **enrollment_record(settings)}
         if host in edge_outputs:
             entry['edge_output'] = edge_outputs[host]
+        snapshot = settings.get('snapshot')
+        if snapshot is not None:
+            if (not isinstance(snapshot, dict) or not {'sources', 'unit'} <= set(snapshot) <= SNAPSHOT_KEYS
+                    or not snapshot['sources'] or not all(isinstance(n, str) for n in snapshot['sources'])):
+                raise ValueError('observer on %s: snapshot is {"sources", "unit", "data_path"?, "size"?}' % host)
+            entry['snapshot'] = snapshot
         hosts.append(entry)
-    return {'mode': mode,
-            'collector': {'cert': 'collector.pem', 'key': 'collector.key', 'ca': 'monitoring-ca.pem'},
-            'hosts': hosts,
-            'decommissioned': sorted(inventory.get('retired_hosts', {}))}
+    document = {'mode': mode,
+                'collector': {'cert': 'collector.pem', 'key': 'collector.key', 'ca': 'monitoring-ca.pem'},
+                'hosts': hosts,
+                'decommissioned': sorted(inventory.get('retired_hosts', {}))}
+    if roster is not None:
+        document['roster'] = roster
+    if host_snapshot is not None:
+        document['host_snapshot'] = host_snapshot
+    return document
 
 
 def _addresses(record):
