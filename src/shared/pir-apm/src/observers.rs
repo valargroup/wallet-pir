@@ -61,8 +61,11 @@ pub struct Settings {
     pub revision: Option<String>,
 }
 
-/// What `GET /observers/ready` reports: ready once a whole poll round ran
-/// with the collector identity loaded and the incidents evaluated.
+/// What `GET /observers/ready` reports. Ready means collection works: the
+/// latest poll round, finished within the last 45 seconds, holds a fresh,
+/// authenticated document from every expected host. A host reporting warning
+/// or critical checks still counts; an unreachable, rejected or frozen host
+/// does not, and a collector that stops completing rounds stops being ready.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Readiness {
     pub configured: bool,
@@ -71,18 +74,51 @@ pub struct Readiness {
     pub rounds: u64,
     pub expected_hosts: usize,
     pub valid_hosts: usize,
+    /// Unix time the latest poll round finished.
+    pub evaluated_at: u64,
 }
 
 static READINESS: std::sync::Mutex<Option<Readiness>> = std::sync::Mutex::new(None);
 
 pub fn readiness() -> Readiness {
-    READINESS
+    let r = READINESS
         .lock()
         .map(|r| r.clone().unwrap_or_default())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    current_readiness(r, crate::incidents::unix_time())
 }
 
-fn set_readiness(r: Readiness) {
+/// `r` as seen at `now`: a stored readiness expires 45 seconds after its round.
+pub fn current_readiness(mut r: Readiness, now: u64) -> Readiness {
+    r.ready = r.ready && now.saturating_sub(r.evaluated_at) <= MAX_AGE_SECONDS;
+    r
+}
+
+/// Readiness after a poll round that finished at `now`.
+pub fn round_readiness(
+    settings: &Settings,
+    tracker: &Tracker,
+    expected: &Expected,
+    rounds: u64,
+    now: u64,
+) -> Readiness {
+    let valid_hosts = expected
+        .hosts
+        .iter()
+        .filter(|h| tracker.collecting(&h.host_id, now))
+        .count();
+    Readiness {
+        configured: true,
+        ready: !expected.hosts.is_empty() && valid_hosts == expected.hosts.len(),
+        revision: settings.revision.clone(),
+        rounds,
+        expected_hosts: expected.hosts.len(),
+        valid_hosts,
+        evaluated_at: now,
+    }
+}
+
+pub fn set_readiness(r: Readiness) {
     if let Ok(mut slot) = READINESS.lock() {
         *slot = Some(r);
     }
@@ -707,6 +743,19 @@ impl Tracker {
             .filter(|s| s.failure.is_none())
             .and_then(|s| s.latest.as_ref())
     }
+
+    /// Whether the latest poll of a host authenticated and returned a valid
+    /// document that is new and fresh: a frozen or replayed document stops
+    /// counting once 45 seconds pass after it was generated.
+    pub fn collecting(&self, host_id: &str, now: u64) -> bool {
+        self.hosts.get(host_id).is_some_and(|s| {
+            s.failure.is_none()
+                && s.latest.is_some()
+                && s.progress
+                    .as_ref()
+                    .is_some_and(|((_, at), _)| fresh(*at, now))
+        })
+    }
 }
 
 fn write_snapshot(path: &Path, tracker: &Tracker, hosts: &[Host], now: u64) -> Result<()> {
@@ -804,18 +853,7 @@ pub async fn run(
             &dashboard,
         )?;
         rounds += 1;
-        set_readiness(Readiness {
-            configured: true,
-            ready: true,
-            revision: settings.revision.clone(),
-            rounds,
-            expected_hosts: expected.hosts.len(),
-            valid_hosts: expected
-                .hosts
-                .iter()
-                .filter(|h| tracker.current(&h.host_id).is_some())
-                .count(),
-        });
+        set_readiness(round_readiness(&settings, &tracker, &expected, rounds, now));
     }
 }
 
@@ -955,6 +993,29 @@ mod tests {
         assert!(!h.active(DISK));
         assert!(h.outbox().last().unwrap().contains("RECOVERED"));
         assert!(!h.active(COVERAGE));
+    }
+
+    #[test]
+    fn readiness_counts_alerting_hosts_but_not_failed_stale_or_missing_ones() {
+        let s = settings(&["w1", "w2"], &["w3"]);
+        let expected = Expected::of(&s, None);
+        let mut t = Tracker::new(1000);
+        t.record("w1", doc("w1", 1000, Status::Critical), 1000);
+        let r = round_readiness(&s, &t, &expected, 1, 1000);
+        assert_eq!((r.ready, r.valid_hosts, r.expected_hosts), (false, 1, 2));
+        t.record("w2", doc("w2", 1000, Status::Warning), 1000);
+        assert!(round_readiness(&s, &t, &expected, 1, 1000).ready);
+        t.record("w2", Poll::Failed("sidecar unreachable or authentication failed"), 1005);
+        assert!(!round_readiness(&s, &t, &expected, 2, 1005).ready);
+        t.record("w2", doc("w2", 1005, Status::Healthy), 1010);
+        assert!(round_readiness(&s, &t, &expected, 3, 1010).ready);
+        // w1 keeps serving its first document: it stops counting after 45s.
+        t.record("w1", doc("w1", 1000, Status::Critical), 1046);
+        t.record("w2", doc("w2", 1046, Status::Healthy), 1046);
+        assert!(!round_readiness(&s, &t, &expected, 4, 1046).ready);
+        let empty = settings(&[], &[]);
+        let none = Expected::of(&empty, None);
+        assert!(!round_readiness(&empty, &t, &none, 1, 1046).ready);
     }
 
     #[test]

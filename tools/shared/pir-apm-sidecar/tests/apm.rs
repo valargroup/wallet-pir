@@ -138,6 +138,39 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         failed(poll(settings("peer"), good.clone()).await),
         "sidecar unreachable or authentication failed"
     );
+    // Readiness proves collection: it needs a fresh authenticated document
+    // from every expected host in the latest round, and it expires when
+    // rounds stop.
+    let now = pir_apm::incidents::unix_time();
+    let both = observers::Expected {
+        hosts: vec![good.clone(), host("w2", &loaded.digest, &[])],
+        unenrolled: vec![],
+        decommissioned: vec![],
+    };
+    let one = observers::Expected {
+        hosts: vec![good.clone()],
+        unenrolled: vec![],
+        decommissioned: vec![],
+    };
+    let mut tracker = observers::Tracker::new(now);
+    tracker.record("w1", poll(settings("peer"), good.clone()).await, now);
+    let r = observers::round_readiness(&settings("peer"), &tracker, &one, 1, now);
+    assert!(!r.ready, "a rejected collector credential is not ready");
+    assert_eq!(r.valid_hosts, 0);
+    tracker.record("w1", poll(settings("collector"), good.clone()).await, now);
+    let mut w2 = good.clone();
+    w2.host_id = "w2".into();
+    w2.tls_name = "w2.pir-monitoring".into();
+    tracker.record("w2", poll(settings("collector"), w2).await, now);
+    let r = observers::round_readiness(&settings("collector"), &tracker, &both, 2, now);
+    assert_eq!((r.ready, r.valid_hosts, r.expected_hosts), (false, 1, 2));
+    let r = observers::round_readiness(&settings("collector"), &tracker, &one, 2, now);
+    assert!(r.ready, "every expected host collected");
+    assert!(observers::current_readiness(r.clone(), now + 45).ready);
+    assert!(
+        !observers::current_readiness(r, now + 46).ready,
+        "a stalled collector stops being ready"
+    );
     let mut wrong_name = good.clone();
     wrong_name.tls_name = "w2.pir-monitoring".into();
     assert_eq!(
@@ -169,6 +202,10 @@ async fn apm_accepts_only_authenticated_matching_documents() {
     }
     assert_eq!(firing(&tracker, at + 46, "host:w1:coverage"), Some(true));
     assert_eq!(firing(&tracker, at + 46, "host:w1:check:certificate"), None);
+    let ready = |t: &observers::Tracker, now: u64| {
+        observers::round_readiness(&settings("collector"), t, &expected_hosts, 1, now)
+    };
+    assert!(!ready(&tracker, at + 46).ready, "frozen document is not ready");
     // Future-dated documents never renew coverage either.
     let mut future = doc.clone();
     future.generated_at = at + 300;
@@ -184,6 +221,7 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         tracker.record("w1", poll(settings("collector"), good.clone()).await, now);
     }
     assert_eq!(firing(&tracker, at + 46, "host:w1:coverage"), Some(true));
+    assert!(!ready(&tracker, at + 46).ready, "future document is not ready");
     // An incompatible schema and an empty cache are rejected too.
     let mut v2 = serde_json::to_value(&doc).unwrap();
     v2["schema_version"] = 2.into();
