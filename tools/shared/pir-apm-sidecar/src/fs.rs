@@ -78,7 +78,10 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
 
 fn is_local_block(m: &Mount) -> bool {
     m.source.starts_with("/dev/")
-        && !matches!(m.fstype.as_str(), "squashfs" | "iso9660" | "udf" | "overlay")
+        && !matches!(
+            m.fstype.as_str(),
+            "squashfs" | "iso9660" | "udf" | "overlay"
+        )
         && !m.source.starts_with("/dev/loop")
 }
 
@@ -361,7 +364,8 @@ mod tests {
     #[test]
     fn namespace_read_only_remounts_do_not_hide_writable_filesystems() {
         // As seen inside a unit with ProtectSystem=strict: per-mount `ro`.
-        let sandboxed = "22 1 252:1 / / ro,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro\n\
+        let sandboxed =
+            "22 1 252:1 / / ro,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro\n\
             24 22 8:16 / /srv/data ro,relatime - ext4 /dev/sdb rw\n";
         let mounts = parse_mountinfo(sandboxed);
         assert!(mounts.iter().all(|m| m.writable));

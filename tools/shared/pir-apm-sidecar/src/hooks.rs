@@ -157,8 +157,14 @@ mod tests {
     #[tokio::test]
     async fn failures_are_unknown_with_fixed_reasons() {
         for (script, reason) in [
-            ("echo secret-token >&2; exit 1", "hook exited unsuccessfully"),
-            ("echo not json secret-token", "hook output is not a valid check document"),
+            (
+                "echo secret-token >&2; exit 1",
+                "hook exited unsuccessfully",
+            ),
+            (
+                "echo not json secret-token",
+                "hook output is not a valid check document",
+            ),
             (
                 r#"echo '{"checks":[{"name":"Bad Name","status":"healthy","reason":""}]}'"#,
                 "hook reported invalid checks",
@@ -175,17 +181,17 @@ mod tests {
             argv: vec!["/nonexistent/hook".into()],
             timeout_seconds: 1,
         };
-        assert_eq!(run(&missing, 1).await[0].reason, "hook could not be started");
+        assert_eq!(
+            run(&missing, 1).await[0].reason,
+            "hook could not be started"
+        );
     }
 
     #[tokio::test]
     async fn timeout_kills_the_whole_process_group() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("survivor");
-        let script = format!(
-            "(sleep 3; touch {}) & sleep 30",
-            marker.display()
-        );
+        let script = format!("(sleep 3; touch {}) & sleep 30", marker.display());
         let started = Instant::now();
         let checks = run(&hook(&script, 1), 1).await;
         assert!(started.elapsed() < Duration::from_secs(3));
