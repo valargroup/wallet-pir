@@ -2072,6 +2072,27 @@ executable per transaction through the shared engine: immutable `releases/<binar
 under the service root (for example `/opt/transparent-publisher`), the managed ExecStart drop-in,
 the production lock, the service's journal sequence and touched-target rollback.
 
+HTTPS History requests may set `selected_workers` to a nonempty list of distinct
+keys from `workers`. Keep the complete fleet and its worker pins in the request;
+only the selected workers are changed, while all workers and the publisher still
+pass the normal checks. Omitting this field selects every worker.
+Full warming is a release gate for selected workers. An unselected provider must
+remain ready with valid ownership, runtime counts and no preparation failures;
+its ongoing background warming does not block another provider's repair.
+The optional `publication.publication_root` pins a reviewed prepared-storage
+directory from the already pinned publisher configuration, instead of the
+original publication directory. A mismatch or a relative directory refuses.
+
+For a recent worker already refusing history after a reorganization,
+`unready_predecessors` may map a selected worker key to
+`{binary_sha256, invocation_id}`. Both pins must match its running predecessor,
+and `/v2/shards/init` must return 503 with `publication invalidated by reorg`.
+When a restarted owner has not opened that listener yet, a nonempty valid
+`active.invalid.json` in its pinned provider root supplies the revocation evidence.
+This exception admits only that predecessor; its replacement must meet the
+current-publication and warm-readiness requirements. It cannot combine with
+`repair`, which remains specific to a recorded failed rollback.
+
 - **Unified owner.** New transactions run only when the inventory's `publisher.managed_products`
   names the product: the one `pir-publisher.service` server on `controller.host` is the controller
   authority; pass `--descriptors tools/deploy/publisher/transparent-services.toml`. The request pins
@@ -2141,6 +2162,46 @@ the production lock, the service's journal sequence and touched-target rollback.
   beyond the binary refuses.
 - Tests: `tools/transparent/tests/test_binary_upgrade.py`, run by `make check-ops-deploy` through
   `tools/tests/operations/deploy/test_transparent_binary_upgrade.py`.
+
+## Recent provider containment and offline collection
+
+`transparent-provider-maintenance-{plan,preflight,deploy,status}` operates only on
+the installed `transparent-v12-recent.service`. Requests use schema
+`transparent-provider-maintenance/1` and name `git_sha`, `worker` (the qualified
+inventory key), `action`, `expected`, and `retained_publications` (absolute rollback
+publication paths, or an empty list). `expected` pins `unit_sha256` (the normalized
+effective unit digest), `config_sha256`, `binary_sha256` and `invocation_id` (null
+only when systemd reports no invocation). The operations release must match
+`git_sha`. Pass `--request` and `--request-sha256` to every command; deploy also
+requires `--expect-plan-sha256`.
+
+- `action: quiesce` stops only the exact pinned invocation already returning the
+  reorganization refusal above. Archive must remain ready. This contains growth
+  while the replacement is validated; it does not establish recovery.
+- `action: collect` requires the recent worker stopped, no unfinished History
+  upgrade, and exclusive bootstrap and source-catalog locks. Plan/preflight with
+  `--output FILE` saves the complete private deletion manifest. Retain the saved
+  active publication and its inputs, explicit rollback publications, and three
+  newest unused trees. Collection removes older trees, then unreferenced catalog
+  revisions, then unlinked objects. It preserves safety records and foreign files,
+  refuses malformed metadata, and never follows publication symlinks. Changed
+  manifest identities refuse before deletion. Deleted cache bytes have no rollback.
+- `action: resume` starts the unchanged pinned predecessor after collection. It
+  does not assert readiness. Capture its new invocation and use a recent-only
+  binary-upgrade request to install the validated fix; do not leave the old retry
+  loop running unattended.
+
+Each action is a separate approved, journaled transaction under the production
+lock. Recheck the unit and configuration pins between actions. On interruption,
+inspect `status` and actual process state before continuing. An unknown stop or
+partial collection must not trigger an automatic restart. Neither archive nor
+publisher is restarted; no incident latch or safety floor is reset.
+
+The autonomous worker also collects failed publication attempts before allocating
+another tree and after a refused pass. It protects active, retained, held and
+candidate trees plus three unused trees. A blocked collector refuses further
+staging; successful activation is not required to reclaim abandoned versions.
+Check filesystem free space rather than summing hard-linked directory sizes.
 
 ## Continuous load repair
 

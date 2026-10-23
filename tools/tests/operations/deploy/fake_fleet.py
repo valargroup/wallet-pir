@@ -237,7 +237,7 @@ class FakeFleet(Executor):
         self._mutate(host, 'systemctl', args)
         if args[0] == 'daemon-reload':
             self._reload(host)
-        elif args[0] == 'restart':
+        elif args[0] in ('restart', 'start'):
             self._start(host, args[1])
         elif args[0] in ('enable', 'disable'):
             self.host(host).units[args[1]]['enabled'] = args[0] == 'enable'
