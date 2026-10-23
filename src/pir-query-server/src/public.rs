@@ -12,7 +12,6 @@ use axum::{
     extract::Request,
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::any,
     Router,
 };
 use std::sync::{Arc, RwLock};
@@ -115,11 +114,26 @@ pub fn transaction_details() -> Mount {
     }
 }
 
+/// Whether a mount path names `path`. A trailing `/*operation` matches every
+/// non-empty path below its prefix; any other mount path matches exactly.
+fn names(mount: &str, path: &str) -> bool {
+    match mount.strip_suffix("/*operation") {
+        Some(prefix) => path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/')),
+        None => path == mount,
+    }
+}
+
 /// The shared wallet-facing router. Mounts must name disjoint paths; a
 /// duplicate is refused instead of shadowing another product.
+///
+/// Dispatch matches paths itself rather than through routes, so a product
+/// router receives the wallet's request unchanged: no outer path parameters
+/// or matched-path label precede its own.
 pub fn router(mounts: &[Mount]) -> crate::Result<Router> {
     let mut seen = std::collections::BTreeSet::new();
-    let mut router = Router::new();
+    let mut table = Vec::new();
     for mount in mounts {
         for path in &mount.paths {
             if !seen.insert(path.clone()) {
@@ -127,11 +141,22 @@ pub fn router(mounts: &[Mount]) -> crate::Result<Router> {
                     format!("{} wallet path {path} is already served", mount.product).into(),
                 );
             }
-            let slot = mount.slot.clone();
-            router = router.route(path, any(move |request| slot.clone().forward(request)));
+            table.push((path.clone(), mount.slot.clone()));
         }
     }
-    Ok(router)
+    let table = Arc::new(table);
+    Ok(Router::new().fallback(move |request: Request| {
+        let slot = table
+            .iter()
+            .find(|(path, _)| names(path, request.uri().path()))
+            .map(|(_, slot)| slot.clone());
+        async move {
+            match slot {
+                Some(slot) => slot.forward(request).await,
+                None => StatusCode::NOT_FOUND.into_response(),
+            }
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -208,6 +233,57 @@ mod tests {
         assert_eq!(
             status_of(&shared, "/first/v1/init").await,
             StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    /// Product routers extract their own path parameters: the shared
+    /// listener forwards the request without parameters of its own.
+    #[tokio::test]
+    async fn product_path_parameters_reach_the_product_unchanged() {
+        use axum::extract::Path;
+        let mount = Mount {
+            product: "first",
+            paths: under(["/first/v1", "/v2"], &["/shards", "/shards/*operation"]),
+            slot: Slot::default(),
+        };
+        let slot = mount.slot.clone();
+        let shared = router(&[mount]).unwrap();
+        slot.install(
+            Router::new()
+                .route("/v2/shards", get(|| async { "map" }))
+                .route(
+                    "/v2/shards/:id/revisions/:digest",
+                    get(|Path((id, digest)): Path<(u64, String)>| async move {
+                        format!("{id}:{digest}")
+                    }),
+                ),
+        );
+        let response = shared
+            .clone()
+            .oneshot(
+                Request::get("/v2/shards/7/revisions/ab")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 64)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"7:ab");
+        assert_eq!(status_of(&shared, "/v2/shards").await, StatusCode::OK);
+        assert_eq!(
+            status_of(&shared, "/v2/shards/").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(&shared, "/v2/shardsx").await,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            status_of(&shared, "/first/v1/shards/unknown").await,
+            StatusCode::NOT_FOUND
         );
     }
 

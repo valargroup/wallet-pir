@@ -883,6 +883,16 @@ async fn shared_listener(
     let public_origin = format!("http://{public}");
     // Transparent history: exact producer rows decode through the shared
     // listener's deployed alias, and the canonical namespace is served too.
+    for id in [0, 1] {
+        let digest = &set.map.shards[id].manifest_digest;
+        let setup = reqwest::get(format!(
+            "{public_origin}/v2/shards/{id}/revisions/{digest}/setup/directory/0"
+        ))
+        .await
+        .unwrap();
+        let code = setup.status();
+        assert_eq!(code, 200, "shard {id}: {}", setup.text().await.unwrap());
+    }
     row_query(&public_origin, set, 0).await;
     row_query(&public_origin, set, 1).await;
     for path in ["/v2/shards", "/transparent/v1/shards"] {
@@ -893,7 +903,12 @@ async fn shared_listener(
     }
     // Status: the independent wallet accepts the served anchor and decrypts
     // every fixture case from the combined role through the same listener.
-    status_wallet(&public_origin, &publisher.snapshot).await;
+    status_wallet(
+        &public_origin,
+        &publisher.snapshot,
+        &root.join("provider.log"),
+    )
+    .await;
     let http = reqwest::Client::new();
     for prefix in ["/v1/status", "/status/v1"] {
         let malformed = http
@@ -936,7 +951,7 @@ async fn shared_listener(
     child.wait().await.unwrap();
 }
 
-async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot) {
+async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot, log: &Path) {
     use super::status_http::Loopback;
     use status_shared::protocol::Observation;
     use zakura_pir_client::status as wallet;
@@ -970,7 +985,12 @@ async fn status_wallet(origin: &str, snapshot: &status_shared::index::Snapshot) 
         }
     })
     .await
-    .expect("Status wallet routes serve the publication");
+    .unwrap_or_else(|_| {
+        panic!(
+            "Status wallet routes never served the publication: {}",
+            std::fs::read_to_string(log).unwrap_or_default()
+        )
+    });
     let client = pending.accept(&transport, &anchor).await.unwrap();
     let coverage = wallet::LocalCoverageContext {
         earliest_possible_inclusion: Some(snapshot.start),
