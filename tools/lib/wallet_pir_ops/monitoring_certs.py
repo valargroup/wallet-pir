@@ -13,6 +13,10 @@ credentials, and waits for that role's own readiness contract, as a journaled
 transaction with `reconcile` and `rollback`. A failed start restores the
 previous files and restarts again, so a rotation is all-or-nothing on each
 host. The central APM's observer inventory is installed the same way.
+
+On a host whose unit is not installed yet (a rebuild, before the role's first
+deploy), `install` stages the files under the same journal without a restart;
+the role's install then starts the unit with them.
 """
 import datetime
 import hashlib
@@ -168,6 +172,7 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
     restarts again; if that cannot finish (the lock was lost or the host is
     unreachable), the journal stays open and the next `install` or `reconcile`
     on the host completes the restoration before anything else.
+    Where `unit` is not installed, the files are staged without a restart.
     Returns the names whose contents changed.
     """
     ready = ready or sidecar_ready()
@@ -179,8 +184,9 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
         if not changed:
             return []
         prior = transaction.Journal.load(state_dir, _service(host, directory))
+        staged = executor.probe_unit(host, unit)['load_state'] == 'not-found'
         record = {'key': '%s:%s' % (host, directory), 'host': host, 'unit': unit, 'directory': directory,
-                  'mode': mode, 'phase': 'pending', 'restart_issued': False,
+                  'mode': mode, 'phase': 'pending', 'restart_issued': False, 'staged': staged,
                   'changes': [{'name': name, 'previous_sha256': _digest(None if previous[name] is None
                                                                         else previous[name].encode()),
                                'new_sha256': _digest(files[name])} for name in changed]}
@@ -203,12 +209,15 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
                 held.verify()
                 executor.write(host, '%s/%s' % (directory, name), files[name], mode)
             held.verify()
-            record['restart_issued'] = True
-            journal.set_phase(0, 'restarting')
-            executor.systemctl(host, 'restart', unit)
-            journal.set_phase(0, 'verifying')
-            if not _wait(executor, host, ready, ready_timeout, sleep, clock):
-                raise RuntimeError('%s did not become ready' % unit)
+            if not staged:
+                record['restart_issued'] = True
+                journal.set_phase(0, 'restarting')
+                executor.systemctl(host, 'restart', unit)
+                journal.set_phase(0, 'verifying')
+                if not _wait(executor, host, ready, ready_timeout, sleep, clock):
+                    raise RuntimeError('%s did not become ready' % unit)
+            elif executor.probe_unit(host, unit)['load_state'] != 'not-found':
+                raise RuntimeError('%s was installed while its files were staged' % unit)
             held.verify()
             journal.set_phase(0, 'verified')
             journal.set_status('committed')
@@ -249,6 +258,11 @@ def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
         if executor.sha256(host, target) != change['previous_sha256']:
             executor.write(host, target, saved.encode(), record['mode'])
     held.verify()
+    if record.get('staged') and executor.probe_unit(host, record['unit'])['load_state'] == 'not-found':
+        # Staged for a unit that still does not exist: nothing ran with the files.
+        journal.set_phase(0, 'restored')
+        journal.set_status('rolled-back')
+        return
     executor.systemctl(host, 'restart', record['unit'])
     if not _wait(executor, host, ready, ready_timeout, sleep, clock):
         journal.set_phase(0, 'restore-failed')

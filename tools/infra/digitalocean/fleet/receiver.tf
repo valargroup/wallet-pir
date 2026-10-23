@@ -15,7 +15,10 @@ resource "digitalocean_droplet" "receiver_pir" {
   ssh_keys   = var.ssh_key_ids
   monitoring = true
   ipv6       = true
-  user_data  = file("${path.module}/../../../receiver/digitalocean/cloud-init.yaml")
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script       = local.apm_sidecar_boot_script
+    cloud_config = file("${path.module}/../../../receiver/digitalocean/cloud-init.yaml")
+  })
   lifecycle {
     prevent_destroy = true
     # An imported Droplet has no keys in state, and a key change forces replacement.

@@ -1,5 +1,6 @@
 module "enhance" {
   source                           = "../enhance"
+  apm_sidecar_boot_script          = local.apm_sidecar_boot_script
   cloudflare_zone_id               = var.cloudflare_zone_id
   coordinator_tag                  = digitalocean_tag.coordinator.name
   enable_backups                   = var.enable_backups
@@ -18,6 +19,7 @@ module "enhance" {
 
 module "status" {
   source                           = "../status"
+  apm_sidecar_boot_script          = local.apm_sidecar_boot_script
   coordinator_tag                  = digitalocean_tag.coordinator.name
   enhance_worker_deploy_public_key = var.enhance_worker_deploy_public_key
   image                            = var.image
@@ -31,6 +33,7 @@ module "status" {
 
 module "transparent" {
   source                               = "../transparent"
+  apm_sidecar_boot_script              = local.apm_sidecar_boot_script
   cloudflare_zone_id                   = var.cloudflare_zone_id
   coordinator_id                       = digitalocean_droplet.coordinator.id
   coordinator_tag                      = digitalocean_tag.coordinator.name
@@ -54,6 +57,7 @@ module "transparent" {
 
 module "transparent_tx_detail" {
   source                                 = "../transparent-tx-detail"
+  apm_sidecar_boot_script                = local.apm_sidecar_boot_script
   cloudflare_zone_id                     = var.cloudflare_zone_id
   coordinator_id                         = digitalocean_droplet.coordinator.id
   coordinator_tag                        = digitalocean_tag.coordinator.name

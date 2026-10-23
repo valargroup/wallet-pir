@@ -13,14 +13,17 @@ resource "digitalocean_droplet" "pir_monitor" {
   ssh_keys   = var.ssh_key_ids
   monitoring = true
   ipv6       = true
-  user_data  = <<-YAML
-    #cloud-config
-    package_update: true
-    packages: [ca-certificates, curl, caddy]
-    runcmd:
-      - [useradd, --system, --home-dir, /var/lib/pir-monitor, --shell, /usr/sbin/nologin, pir-monitor]
-      - [install, -d, -m, '0755', /opt/pir-monitor/releases, /etc/pir-monitor]
-  YAML
+  user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    script       = local.apm_sidecar_boot_script
+    cloud_config = <<-YAML
+      #cloud-config
+      package_update: true
+      packages: [ca-certificates, curl, caddy]
+      runcmd:
+        - [useradd, --system, --home-dir, /var/lib/pir-monitor, --shell, /usr/sbin/nologin, pir-monitor]
+        - [install, -d, -m, '0755', /opt/pir-monitor/releases, /etc/pir-monitor]
+    YAML
+  })
   lifecycle {
     prevent_destroy = true
     ignore_changes  = [user_data]

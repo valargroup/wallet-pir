@@ -342,8 +342,7 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
     volumes = dict(expected_volumes or {})
     # The coordinator is where the central APM runs.
-    apm = inventory.get('services', {}).get('apm', {}).get('roles', {}).get('server', [])
-    for host in {entry['host'] for entry in apm}:
+    for host in apm_hosts(inventory):
         volumes.setdefault(host, list(COORDINATOR_VOLUMES))
     missing_volumes = {}
     for host, wanted in sorted(volumes.items()):
@@ -409,6 +408,12 @@ def bind_volume(inventory_path, host, volume):
     return 'bound'
 
 
+def apm_hosts(inventory):
+    """Hosts running the central APM, as the rendered `central` or the legacy `server` role."""
+    roles = inventory.get('services', {}).get('apm', {}).get('roles', {})
+    return {entry['host'] for role in ('central', 'server') for entry in roles.get(role, [])}
+
+
 def _host_units(inventory, host, role_units):
     """Units the deployment inventory runs on `host`, from its service role entries."""
     found = set()
@@ -464,7 +469,7 @@ def enroll(inventory, *, terraform_outputs, role_units, external_hosts=()):
         roles.append({'host': host, 'install': True, 'settings': settings})
         observed.add(host)
         added.append(host)
-    apm = {e['host'] for e in inventory['services'].get('apm', {}).get('roles', {}).get('server', [])}
+    apm = apm_hosts(inventory)
     unbound = {}
     for entry in roles:
         declared = {v['path'] for v in entry['settings'].get('required_volumes', [])}

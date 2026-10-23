@@ -1,0 +1,27 @@
+# Independent external monitor, rendered by
+# tools/lib/wallet_pir_ops/monitoring_roles.py as the `monitor.checker` role.
+# ExecStart, Environment and LoadCredential are rendered from the inventory
+# settings; the Slack webhook is a root-only file installed by
+# `wallet-pir-monitoring.py install-credentials --role monitor` and reaches
+# only this unit as a systemd credential.
+[Unit]
+Description=Independent public PIR correctness and monitoring checker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pir-monitor
+Group=pir-monitor
+ExecStart=/bin/false
+StateDirectory=pir-monitor
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

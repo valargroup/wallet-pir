@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """Per-host APM observer inventory, coverage and credentials; see `--help`.
 
-The sidecars themselves are installed, updated, checked and rolled back by
-`wallet-pir-deploy.py` as the `apm-sidecar.observer` role. This tool renders
-what the central APM needs from the same deployment inventory, reports
+The sidecars, the central APM and the independent monitor are installed,
+updated, checked and rolled back by `wallet-pir-deploy.py` as the
+`apm-sidecar.observer`, `apm.central` and `monitor.checker` roles. This tool
+renders what the central APM needs from the same deployment inventory, reports
 coverage gaps, issues monitoring certificates on an operator machine, and
 installs credential files or the observer inventory under the production lock.
+
+`install-credentials --role` takes a private directory (a tmpfs filled from
+Infisical) holding that role's files: `sidecar` server.pem, server.key and
+monitoring-ca.pem; `collector` collector.pem, collector.key and
+monitoring-ca.pem; `apm-slack` slack-webhook; `monitor` slack-webhook and,
+when its probes need it, chain-rpc-cookie. Each install is staged without a
+restart while its unit is not installed yet, as on a rebuilt host.
 """
 import argparse
 import json
@@ -15,7 +23,7 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
-from wallet_pir_ops import monitoring, monitoring_certs  # noqa: E402
+from wallet_pir_ops import monitoring, monitoring_certs, monitoring_roles  # noqa: E402
 
 OBSERVERS = '/etc/pir-apm/observers.json'
 
@@ -92,23 +100,55 @@ def _executor(args):
     return executor, remote.production_lock(inventory, executor)
 
 
+# Credential role: its directory, unit, required files and optional files.
+CREDENTIAL_ROLES = {
+    'sidecar': (monitoring_certs.SIDECAR_CREDENTIALS, monitoring_certs.SIDECAR_UNIT,
+                monitoring_certs.SIDECAR_FILES, ()),
+    'collector': (monitoring_certs.COLLECTOR_CREDENTIALS, monitoring_certs.COLLECTOR_UNIT,
+                  monitoring_certs.COLLECTOR_FILES, ()),
+    'apm-slack': (monitoring_roles.APM_ALERTING, monitoring_roles.APM_UNIT, (monitoring_roles.SLACK,), ()),
+    'monitor': (monitoring_roles.MONITOR_CREDENTIALS, monitoring_roles.MONITOR_UNIT, (monitoring_roles.SLACK,),
+                (monitoring_roles.CHAIN_RPC_COOKIE,)),
+}
+MONITOR_HEALTH = 'http://127.0.0.1:3003/monitor-status'
+
+
+def monitor_ready(executor, host):
+    """The monitor's deploy readiness: it has completed an evaluation."""
+    status, body = executor.http_get(host, MONITOR_HEALTH)
+    return status == 200 and bool(json.loads(body).get('evaluated_at'))
+
+
 def _role(args, executor):
     """Directory, unit and readiness contract of the credential `--role` on `--host`."""
+    directory, unit, _, _ = CREDENTIAL_ROLES[args.role]
     if args.role == 'sidecar':
-        return monitoring_certs.SIDECAR_CREDENTIALS, monitoring_certs.SIDECAR_UNIT, monitoring_certs.sidecar_ready()
+        return directory, unit, monitoring_certs.sidecar_ready()
+    if args.role == 'monitor':
+        return directory, unit, monitor_ready
     installed = executor.read(args.host, OBSERVERS)
     if installed is None:
-        raise SystemExit('install the observer inventory before the collector credentials')
-    revision = json.loads(installed).get('revision')
-    return (monitoring_certs.COLLECTOR_CREDENTIALS, monitoring_certs.COLLECTOR_UNIT,
-            monitoring_certs.collector_ready(revision))
+        raise SystemExit('install the observer inventory before the APM\'s credentials')
+    return directory, unit, monitoring_certs.collector_ready(json.loads(installed).get('revision'))
+
+
+def credential_files(role, source):
+    """The role's files from `source`; a webhook is checked for shape, never printed."""
+    _, _, required, optional = CREDENTIAL_ROLES[role]
+    source = Path(source)
+    files = {name: (source / name).read_bytes() for name in required}
+    files.update({name: (source / name).read_bytes() for name in optional if (source / name).is_file()})
+    webhook = files.get(monitoring_roles.SLACK)
+    if webhook is not None:
+        value = webhook.decode(errors='replace').strip()
+        if not value.startswith('https://hooks.slack.com/') or any(c.isspace() for c in value):
+            raise SystemExit('%s/%s is not a Slack webhook URL' % (source, monitoring_roles.SLACK))
+    return files
 
 
 def install_credentials(args):
     """Install from a private directory, e.g. a tmpfs filled from Infisical."""
-    source = Path(args.source)
-    names = monitoring_certs.COLLECTOR_FILES if args.role == 'collector' else monitoring_certs.SIDECAR_FILES
-    files = {name: (source / name).read_bytes() for name in names}
+    files = credential_files(args.role, args.source)
     executor, lock = _executor(args)
     directory, unit, ready = _role(args, executor)
     changed = monitoring_certs.install(executor, lock, args.host, files, state_dir=default_state_dir(),
@@ -185,14 +225,14 @@ def main(argv=None):
     child = sub.add_parser('install-credentials')
     child.add_argument('--inventory', required=True)
     child.add_argument('--host', required=True)
-    child.add_argument('--role', choices=('sidecar', 'collector'), default='sidecar')
+    child.add_argument('--role', choices=sorted(CREDENTIAL_ROLES), default='sidecar')
     child.add_argument('--source', required=True, help='private directory holding the credential files')
     child.set_defaults(handler=install_credentials)
     for name in ('reconcile', 'rollback'):
         child = sub.add_parser(name, help='%s the latest monitoring file transaction on a host' % name)
         child.add_argument('--inventory', required=True)
         child.add_argument('--host', required=True)
-        child.add_argument('--role', choices=('sidecar', 'collector', 'observers'), default='sidecar')
+        child.add_argument('--role', choices=sorted(CREDENTIAL_ROLES) + ['observers'], default='sidecar')
         child.set_defaults(handler=recover)
     args = parser.parse_args(argv)
     return args.handler(args) or 0

@@ -46,6 +46,9 @@
     },
     "transparent-txid-k8-01": {
       "address": "192.0.2.22"
+    },
+    "monitor-01": {
+      "address": "192.0.2.23"
     }
   },
   "services": {
@@ -411,6 +414,58 @@
         }
       }
     },
+    "apm": {
+      "roles": {
+        "central": [
+          {
+            "host": "coordinator",
+            "install": true,
+            "settings": {
+              "environment": {
+                "PIR_APM_ALERT_MODE": "shadow",
+                "PIR_APM_SCRAPE_URL": "http://127.0.0.1:8080",
+                "PIR_APM_PUBLISHER_URL": "http://127.0.0.1:18080",
+                "PIR_APM_CHAIN_RPC_URL": "http://127.0.0.1:8232",
+                "PIR_APM_PEER_STATUS_URL": "https://monitor-pir.valargroup.dev/monitor-status",
+                "PIR_APM_PUBLIC_URL": "https://enhance-pir.valargroup.dev/apm/"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "monitor": {
+      "roles": {
+        "checker": [
+          {
+            "host": "monitor-01",
+            "install": true,
+            "settings": {
+              "environment": {
+                "PIR_MONITOR_ORIGIN": "https://enhance-pir.valargroup.dev",
+                "PIR_MONITOR_APM_STATUS_URL": "https://enhance-pir.valargroup.dev/apm/monitor-status",
+                "PIR_MONITOR_ORACLE": "/etc/pir-monitor/oracle.json",
+                "PIR_MONITOR_ORACLE_SHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+                "PIR_MONITOR_ALERT_MODE": "shadow",
+                "PIR_MONITOR_SERVICE_ALERT_MODE": "shadow"
+              },
+              "chain_rpc_cookie": true,
+              "service_probes": [
+                {
+                  "service": "receiver",
+                  "command": [
+                    "/opt/pir-monitor/receiver-probe",
+                    "--origin",
+                    "https://receiver-pir.valargroup.dev"
+                  ],
+                  "timeout_seconds": 30
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
     "apm-sidecar": {
       "roles": {
         "observer": [
@@ -422,6 +477,7 @@
               "address": "10.10.0.10",
               "units": [
                 "pir-publisher.service",
+                "pir-apm.service",
                 "caddy.service"
               ],
               "required_volumes": [
@@ -511,6 +567,18 @@
             "settings": {
               "host_id": "transparent-txid-k8-01",
               "address": "10.10.0.19"
+            }
+          },
+          {
+            "host": "monitor-01",
+            "install": true,
+            "settings": {
+              "host_id": "monitor-01",
+              "address": "10.10.0.20",
+              "units": [
+                "pir-monitor.service",
+                "caddy.service"
+              ]
             }
           }
         ]
