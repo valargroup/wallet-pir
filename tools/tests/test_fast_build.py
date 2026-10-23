@@ -113,6 +113,12 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(len(shards), 2)
         actual = [case for shard in shards for case in shard['args'][1:]]
         self.assertCountEqual(actual, names)
+        hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
+        shards = fast_build.bounded_programs(status, hosted)
+        self.assertEqual(len(shards), 3)
+        self.assertFalse(any(case.startswith('status::') for case in shards[0]['args'][1:]))
+        self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], hosted)
+        self.assertCountEqual([case for shard in shards[1:] for case in shard['args'][1:]], names)
         other = dict(status, package='receiver-indexer')
         self.assertEqual(fast_build.bounded_programs(other, names), [other])
 

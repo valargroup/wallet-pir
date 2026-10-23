@@ -290,7 +290,14 @@ def bounded_programs(program, names):
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]
-    if program.get('package') == 'transparent-publisher' and distribution:
+    status = [name for name in ordered if name.startswith('status::')]
+    if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
+        # Every Status case prepares on every core, so never run more than the
+        # two Status groups at once; the host's other roles share one process.
+        status_lanes = min(2, (len(status) + group - 1) // group)
+        remaining = sorted(names - set(status))
+        partitions = [remaining, *[status[index::status_lanes] for index in range(status_lanes)]]
+    elif program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
         remaining = sorted(names - set(distribution))
