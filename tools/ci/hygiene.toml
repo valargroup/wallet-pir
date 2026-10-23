@@ -9,6 +9,10 @@ pattern = ".github/labels.json"
 reason = "Repository label definitions consumed by the PR labeling workflow."
 
 [[allow_data]]
+pattern = ".github/preflight.json"
+reason = "Pre-push check definition read by self-check and the hub preflight."
+
+[[allow_data]]
 pattern = "tools/ci/*.json"
 reason = "CI registries consumed by the affected/full check planners."
 

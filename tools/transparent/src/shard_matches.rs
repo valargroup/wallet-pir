@@ -89,6 +89,7 @@ impl MatchCounter {
     ///
     /// Scripts too long for a directory entry are dropped, because they are
     /// never placed and so never cost a directory query.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only tests call it"))]
     pub fn record(&mut self, script: &[u8], fragments: u32) -> Result<(), BoxError> {
         self.record_in_tier(script, fragments, 0)
     }
@@ -287,6 +288,7 @@ impl Distribution {
     }
 
     /// Scripts that appeared in exactly `g` shards, for tests and reporting.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only tests call it"))]
     pub fn scripts_matching(&self, g: u64) -> u64 {
         self.counts.get(&g).copied().unwrap_or(0)
     }
@@ -305,6 +307,7 @@ impl Distribution {
     /// is the cost of an *active* script rather than of a wallet — which is the
     /// comparison a geometry has to win, because the inactive ones cost the
     /// same under every geometry.
+    #[cfg_attr(not(test), expect(dead_code, reason = "only tests call it"))]
     pub fn cost_bytes(&self, directory_query: u64, page_query: u64) -> Vec<u64> {
         self.cost_bytes_by_tier([(directory_query, page_query); TIERS])
     }

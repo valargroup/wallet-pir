@@ -381,8 +381,8 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(transparent[0], stable)
 
     def test_each_product_compiles_only_its_own_host_features(self):
-        # History and detail reach the query host through the publisher
-        # library's dev-dependency. Enabling them on pir-publisher links that
+        # History and detail reach the query host through its own
+        # dev-dependency. Enabling them on pir-publisher links that
         # library again. The fixture feature would compile it a third time.
         # The host's own `ci_smoke` names the history role it already unifies.
         builds = self._cargo_tests(['transparent-publisher'])
@@ -396,6 +396,16 @@ class FastBuildTests(unittest.TestCase):
         self.assertNotIn('pir-publisher/transparent-history', features)
         self.assertNotIn('transparent-tools/query-host', features)
         self.assertIn('commands', tests)
+        publisher = tomllib.loads(
+            (ROOT / 'src/transparent/transparent-publisher/Cargo.toml').read_text())
+        query = tomllib.loads((ROOT / 'src/pir-query-server/Cargo.toml').read_text())
+        self.assertNotIn('pir-query-server', publisher.get('dev-dependencies', {}))
+        # Only the qualification-tests feature may link the host into the publisher.
+        self.assertTrue(publisher['dependencies']['pir-query-server']['optional'])
+        self.assertEqual(publisher['features']['qualification-tests'], ['dep:pir-query-server'])
+        self.assertEqual(
+            query['dev-dependencies']['pir-query-server']['features'],
+            ['test-support', 'transparent-history', 'transparent-detail'])
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])
         self.assertEqual(len(status_builds), 1)

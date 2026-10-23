@@ -14,8 +14,10 @@ path = "src/lib.rs"
 default = []
 # Direct node database access is needed only by the offline reader tools.
 rocksdb-reader = ["zakura-server-chain/rocksdb"]
-# Keep large test campaigns explicit; production behavior is unchanged.
-qualification-tests = []
+# Keep large test campaigns explicit; production behavior is unchanged. The
+# unified-host regression links the query host only here, so fast test builds
+# stay off that link.
+qualification-tests = ["dep:pir-query-server"]
 # Chain fixtures, the wallet client and the query server for host regressions.
 fixtures = [
     "zakura-server-chain/testing-node",
@@ -67,7 +69,3 @@ tower = { version = "0.5", features = ["util"], optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
 pir-query-server = { path = "../../pir-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
-
-[dev-dependencies]
-# The unified-host regression drives real history and display query roles.
-pir-query-server = { path = "../../pir-query-server", features = ["transparent-history", "transparent-detail"] }
