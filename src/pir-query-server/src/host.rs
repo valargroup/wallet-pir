@@ -5,10 +5,7 @@
     feature = "transparent-detail"
 ))]
 use crate::config::active;
-use crate::{
-    config::{Config, Probe},
-    Result,
-};
+use crate::{config::Config, readiness::Readiness, Result};
 use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde_json::{json, Value};
@@ -33,72 +30,22 @@ use tokio::{
 #[derive(Clone)]
 struct Management {
     phases: Arc<Mutex<BTreeMap<&'static str, &'static str>>>,
-    probes: Arc<BTreeMap<&'static str, Vec<Probe>>>,
-    client: reqwest::Client,
+    readiness: Arc<BTreeMap<&'static str, Readiness>>,
 }
 
 impl Management {
+    /// A product is ready only while it runs and its own typed check reports
+    /// an authorized, usable serving view; the host is ready when all are.
     async fn snapshot(&self) -> (bool, Value) {
         let phases = self.phases.lock().unwrap().clone();
         let mut products = BTreeMap::new();
         let mut all_ready = true;
         for (name, phase) in phases {
-            let mut ready = phase == "running";
-            if ready {
-                for probe in &self.probes[name] {
-                    ready &= self.probe(probe).await;
-                }
-            }
+            let ready = phase == "running" && self.readiness[name].ready().await;
             all_ready &= ready;
             products.insert(name, json!({"phase": phase, "ready": ready}));
         }
         (all_ready, json!({"ready": all_ready, "products": products}))
-    }
-
-    async fn probe(&self, probe: &Probe) -> bool {
-        let mut request = self
-            .client
-            .get(format!("http://{}{}", probe.address, probe.path));
-        if let Ok(token) = std::env::var(enhance_token()) {
-            if !token.is_empty() {
-                request = request.bearer_auth(token);
-            }
-        }
-        let Ok(response) = request.send().await else {
-            return false;
-        };
-        if !response.status().is_success() {
-            return false;
-        }
-        // Enhance and Status health answer HTTP 200 while they cannot serve;
-        // only their `ready` field reports serving eligibility.
-        let Ok(body) = response.bytes().await else {
-            return false;
-        };
-        eligible(&body)
-    }
-}
-
-/// Whether a successful product health body reports serving eligibility. A
-/// body with a `ready` field must set it to `true`; other bodies rely on the
-/// HTTP status alone.
-fn eligible(body: &[u8]) -> bool {
-    match serde_json::from_slice::<Value>(body) {
-        Ok(Value::Object(fields)) => fields
-            .get("ready")
-            .is_none_or(|ready| ready == &Value::Bool(true)),
-        _ => true,
-    }
-}
-
-fn enhance_token() -> &'static str {
-    #[cfg(feature = "enhance")]
-    {
-        crate::enhance::internal_auth::ENV
-    }
-    #[cfg(not(feature = "enhance"))]
-    {
-        "ENHANCE_INTERNAL_TOKEN"
     }
 }
 
@@ -278,13 +225,14 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         listeners.insert(*addr, TcpListener::bind(addr).await?);
     }
     let listeners = Arc::new(Mutex::new(listeners));
+    let readiness: BTreeMap<&'static str, Readiness> = layout
+        .products
+        .iter()
+        .map(|product| (*product, Readiness::default()))
+        .collect();
     let state = Management {
         phases: Arc::default(),
-        probes: Arc::new(layout.probes),
-        client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?,
+        readiness: Arc::new(readiness),
     };
     let routes = Router::new()
         .route(
@@ -360,6 +308,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                 role,
                 bound,
                 slots.get("enhance").cloned(),
+                state.readiness["enhance"].clone(),
                 stopped(stop.clone()),
             ),
             stop,
@@ -372,6 +321,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let role = role.clone();
         let listen = take(&listeners, role.listen)?;
         let query = slots.get("status").cloned();
+        let readiness = state.readiness["status"].clone();
         let stop = Shutdown::default();
         let local = stop.clone();
         state.phases.lock().unwrap().insert("status", "running");
@@ -379,7 +329,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "status",
             async move {
                 tokio::select! {
-                    result = crate::status::serve_role_on(role, listen, query) => result,
+                    result = crate::status::serve_role_on(role, listen, query, readiness) => result,
                     _ = stopped(local) => Ok(()),
                 }
             },
@@ -393,6 +343,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;
         let wallet = slots.get("transparent_history").cloned();
+        let readiness = state.readiness["transparent_history"].clone();
         let stop = Shutdown::default();
         let local = stop.clone();
         state
@@ -404,7 +355,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transparent_history",
             async move {
                 tokio::select! {
-                    result = crate::transparent::history::process::run_with(worker, Some(listen), wallet) => result,
+                    result = crate::transparent::history::process::run_with(worker, Some(listen), wallet, readiness) => result,
                     _ = stopped(local) => Ok(()),
                 }
             },
@@ -418,6 +369,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;
         let wallet = slots.get("transaction_details").cloned();
+        let readiness = state.readiness["transaction_details"].clone();
         let stop = Shutdown::default();
         let local = stop.clone();
         state
@@ -429,7 +381,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transaction_details",
             async move {
                 tokio::select! {
-                    result = crate::transparent::tx_detail::process::run_with(worker, Some(listen), wallet) => result,
+                    result = crate::transparent::tx_detail::process::run_with(worker, Some(listen), wallet, readiness) => result,
                     _ = stopped(local) => Ok(()),
                 }
             },
@@ -509,47 +461,41 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
 mod shutdown_tests {
     use super::*;
 
-    #[test]
-    fn health_that_reports_not_ready_is_not_eligible() {
-        assert!(!eligible(br#"{"role":"worker","ready":false}"#));
-        assert!(!eligible(br#"{"ready":null}"#));
-        assert!(eligible(br#"{"role":"router","ready":true}"#));
-        assert!(eligible(br#"{"status":"ok"}"#));
-        assert!(eligible(b"ok"));
-    }
-
-    /// Aggregate readiness reads a product's `ready` field, not its HTTP 200.
+    /// Aggregate readiness asks each product's typed check, and a product
+    /// that is not running is never ready.
     #[tokio::test]
     async fn aggregate_readiness_requires_product_eligibility() {
         let ready = Arc::new(Mutex::new(false));
         let flag = ready.clone();
-        let product = Router::new().route(
-            "/internal/health",
-            get(move || {
-                let ready = *flag.lock().unwrap();
-                async move { Json(json!({"ready": ready})) }
-            }),
-        );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, product).await });
+        let enhance = Readiness::default();
+        enhance.register(move || std::future::ready(*flag.lock().unwrap()));
         let management = Management {
-            phases: Arc::new(Mutex::new(BTreeMap::from([("enhance", "running")]))),
-            probes: Arc::new(BTreeMap::from([(
-                "enhance",
-                vec![Probe {
-                    address,
-                    path: "/internal/health",
-                }],
-            )])),
-            client: reqwest::Client::new(),
+            phases: Arc::new(Mutex::new(BTreeMap::from([
+                ("enhance", "running"),
+                ("status", "running"),
+            ]))),
+            readiness: Arc::new(BTreeMap::from([
+                ("enhance", enhance),
+                ("status", Readiness::default()),
+            ])),
         };
         let (aggregate, report) = management.snapshot().await;
         assert!(!aggregate, "{report}");
         assert_eq!(report["products"]["enhance"]["ready"], json!(false));
         *ready.lock().unwrap() = true;
+        let (aggregate, report) = management.snapshot().await;
+        assert!(!aggregate, "an unregistered product is not ready");
+        assert_eq!(report["products"]["enhance"]["ready"], json!(true));
+        management.readiness["status"].register(|| std::future::ready(true));
         assert!(management.snapshot().await.0);
-        server.abort();
+        management
+            .phases
+            .lock()
+            .unwrap()
+            .insert("status", "stopping");
+        let (aggregate, report) = management.snapshot().await;
+        assert!(!aggregate);
+        assert_eq!(report["products"]["status"]["ready"], json!(false));
     }
 
     /// Shutdown stops admission, then drains an accepted wallet request while

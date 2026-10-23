@@ -49,6 +49,10 @@ impl Manager {
     pub async fn ready(&self) -> bool {
         self.sync.task().ready().await
     }
+    /// The live provider whose router this manager serves.
+    pub fn live(&self) -> DisplayLive {
+        self.sync.task().live.clone()
+    }
     pub async fn poll_once(&mut self) -> Result<serde_json::Value, Error> {
         self.sync.poll_once().await
     }

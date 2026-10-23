@@ -791,6 +791,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
         process.clone(),
         Some(listener),
         None,
+        Default::default(),
     ));
     let status = format!("http://{serving}/v1/provider-status");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -818,9 +819,14 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     );
 
     // The recovered predecessor on disk cannot mask the mismatch at restart.
-    let error = pir_query_server::transparent::tx_detail::process::run_with(process, None, None)
-        .await
-        .unwrap_err();
+    let error = pir_query_server::transparent::tx_detail::process::run_with(
+        process,
+        None,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap_err();
     assert!(
         pir_query_server::transparent::is_incompatible(&error),
         "{error}"

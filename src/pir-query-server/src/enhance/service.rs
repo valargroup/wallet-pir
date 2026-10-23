@@ -181,25 +181,21 @@ impl ServingRole {
             Self::Combined(c) => &c.data_dir,
         }
     }
-    pub fn probe(&self) -> (SocketAddr, &'static str) {
-        (
-            match self {
-                Self::Worker(c) => c.listen,
-                Self::QueryIngress(c) => c.control_listen,
-                Self::PackingRouter(c) => c.control_listen,
-                Self::Combined(c) => c.control_listen,
-            },
-            "/internal/health",
-        )
-    }
 }
 pub async fn run_worker(config: WorkerConfig) -> Result<(), Error> {
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    run_worker_on(config, listener, crate::enhance::shutdown::signal()).await
+    run_worker_on(
+        config,
+        listener,
+        Default::default(),
+        crate::enhance::shutdown::signal(),
+    )
+    .await
 }
 pub async fn run_worker_on(
     config: WorkerConfig,
     listener: tokio::net::TcpListener,
+    readiness: crate::readiness::Readiness,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     let worker = crate::enhance::worker_sync::Worker::open(
@@ -211,6 +207,8 @@ pub async fn run_worker_on(
         config.matvec,
     )?;
     let manager = crate::synchronization::SyncManager::new(worker.synchronizer()?);
+    let ready = worker.clone();
+    readiness.register(move || std::future::ready(ready.ready()));
     tokio::select! {
         result = crate::enhance::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
         error = manager.run() => return Err(error),
@@ -221,6 +219,7 @@ pub async fn run_ingress_on(
     config: IngressConfig,
     public: crate::public::Slot,
     control: tokio::net::TcpListener,
+    readiness: crate::readiness::Readiness,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     let ingress = crate::enhance::ingress_sync::QueryIngress::open(
@@ -230,6 +229,8 @@ pub async fn run_ingress_on(
         config.uploads,
     )?;
     let manager = crate::synchronization::SyncManager::new(ingress.synchronizer()?);
+    let ready = ingress.clone();
+    readiness.register(move || std::future::ready(ready.ready()));
     public.install(ingress.public_router());
     let serving =
         crate::enhance::shutdown::serve_until(control, ingress.control_router(), shutdown);
@@ -239,12 +240,20 @@ pub async fn run_ingress_on(
 pub async fn run_router(config: RouterConfig) -> Result<(), Error> {
     let public = tokio::net::TcpListener::bind(config.listen).await?;
     let control = tokio::net::TcpListener::bind(config.control_listen).await?;
-    run_router_on(config, public, control, crate::enhance::shutdown::signal()).await
+    run_router_on(
+        config,
+        public,
+        control,
+        Default::default(),
+        crate::enhance::shutdown::signal(),
+    )
+    .await
 }
 pub async fn run_router_on(
     config: RouterConfig,
     public: tokio::net::TcpListener,
     control: tokio::net::TcpListener,
+    readiness: crate::readiness::Readiness,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     let router = crate::enhance::router_sync::PackingRouter::open(
@@ -254,6 +263,8 @@ pub async fn run_router_on(
         config.requests,
     )?;
     let manager = crate::synchronization::SyncManager::new(router.synchronizer()?);
+    let ready = router.clone();
+    readiness.register(move || std::future::ready(ready.ready()));
     let (notify, public_stop, control_stop) = stop_pair(shutdown);
     let _notify = notify;
     let serving = async move {
@@ -270,6 +281,7 @@ pub async fn run_combined_on(
     config: CombinedConfig,
     public: crate::public::Slot,
     control: tokio::net::TcpListener,
+    readiness: crate::readiness::Readiness,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     let combined = crate::enhance::combined::Combined::open(
@@ -282,6 +294,8 @@ pub async fn run_combined_on(
     let worker = crate::synchronization::SyncManager::new(synchronizers.worker);
     let router = crate::synchronization::SyncManager::new(synchronizers.router);
     let ingress = crate::synchronization::SyncManager::new(synchronizers.ingress);
+    let ready = combined.clone();
+    readiness.register(move || std::future::ready(ready.ready()));
     public.install(combined.public_router());
     let serving =
         crate::enhance::shutdown::serve_until(control, combined.control_router(), shutdown);
@@ -325,6 +339,7 @@ pub async fn run_serving(
     role: ServingRole,
     mut listeners: Vec<tokio::net::TcpListener>,
     public: Option<crate::public::Slot>,
+    readiness: crate::readiness::Readiness,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     role.validate()?;
@@ -335,21 +350,23 @@ pub async fn run_serving(
             .ok_or_else(|| "reserved listener is missing".to_string())
     };
     match role {
-        ServingRole::Worker(config) => run_worker_on(config, take(&mut listeners)?, shutdown).await,
+        ServingRole::Worker(config) => {
+            run_worker_on(config, take(&mut listeners)?, readiness, shutdown).await
+        }
         ServingRole::QueryIngress(config) => {
             let public = public.ok_or("query ingress needs the host's public listener")?;
             let control = take(&mut listeners)?;
-            run_ingress_on(config, public, control, shutdown).await
+            run_ingress_on(config, public, control, readiness, shutdown).await
         }
         ServingRole::PackingRouter(config) => {
             let public = take(&mut listeners)?;
             let control = take(&mut listeners)?;
-            run_router_on(config, public, control, shutdown).await
+            run_router_on(config, public, control, readiness, shutdown).await
         }
         ServingRole::Combined(config) => {
             let public = public.ok_or("combined Enhance needs the host's public listener")?;
             let control = take(&mut listeners)?;
-            run_combined_on(config, public, control, shutdown).await
+            run_combined_on(config, public, control, readiness, shutdown).await
         }
     }
 }

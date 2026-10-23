@@ -117,7 +117,7 @@ impl HistoryProcess {
 }
 
 pub async fn run(config: HistoryProcess) -> Result<(), Error> {
-    run_with(config, None, None).await
+    run_with(config, None, None, Default::default()).await
 }
 
 /// Serve on `reserved` (or a socket bound at `listen`), the provider listener
@@ -128,6 +128,7 @@ pub async fn run_with(
     config: HistoryProcess,
     mut reserved: Option<tokio::net::TcpListener>,
     public: Option<crate::public::Slot>,
+    readiness: crate::readiness::Readiness,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
         let provider = crate::transparent::routing::bootstrap::Config {
@@ -194,6 +195,8 @@ pub async fn run_with(
                 return Ok(());
             }
             let app = manager.router()?;
+            let live = manager.live().ok_or("provider did not activate")?;
+            readiness.register(move || std::future::ready(live.ready()));
             if let Some(public) = public {
                 public.install(app.clone());
             }

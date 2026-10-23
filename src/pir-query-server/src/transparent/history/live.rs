@@ -478,6 +478,22 @@ impl LiveService {
         self.0.active.read().unwrap().state.is_invalidated()
     }
 
+    /// Whether `/v1/ready` would report this provider ready: the active
+    /// publication is not invalidated, holds shards and none of its shards'
+    /// revisions is withdrawn. Reads only in-memory state.
+    pub fn ready(&self) -> bool {
+        let active = self.0.active.read().unwrap();
+        let set = active.state.set();
+        let invalid = self.0.invalid.read().unwrap();
+        active.state.is_ready()
+            && !set.is_empty()
+            && !set
+                .map
+                .shards
+                .iter()
+                .any(|s| invalid.contains(&s.manifest_digest))
+    }
+
     pub fn router(&self) -> Router {
         let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
         Router::new()

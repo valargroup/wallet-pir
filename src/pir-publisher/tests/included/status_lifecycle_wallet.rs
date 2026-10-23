@@ -134,10 +134,14 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
         router_listener.local_addr().unwrap(),
     );
     let _worker = Abort(tokio::spawn(async move {
-        serve_role_on(worker, worker_listener, None).await.unwrap()
+        serve_role_on(worker, worker_listener, None, Default::default())
+            .await
+            .unwrap()
     }));
     let _router = Abort(tokio::spawn(async move {
-        serve_role_on(router, router_listener, None).await.unwrap()
+        serve_role_on(router, router_listener, None, Default::default())
+            .await
+            .unwrap()
     }));
     // The same publication through one combined role: no peer, direct calls.
     let combined_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -152,7 +156,7 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     };
     combined.validate().unwrap();
     let _combined = Abort(tokio::spawn(async move {
-        serve_role_on(combined, combined_listener, None)
+        serve_role_on(combined, combined_listener, None, Default::default())
             .await
             .unwrap()
     }));

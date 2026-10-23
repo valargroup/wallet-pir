@@ -63,11 +63,6 @@ impl RoleConfig {
     pub fn state_dir(&self) -> &std::path::Path {
         &self.state_dir
     }
-
-    /// Existing control endpoint used by the host's readiness check.
-    pub fn probe(&self) -> (SocketAddr, &'static str) {
-        (self.listen, "/control/health")
-    }
 }
 
 #[cfg(test)]
@@ -110,7 +105,6 @@ mod tests {
         assert_eq!(role.listens(), vec![role.listen]);
         assert!(role.serves_wallets());
         assert_eq!(role.state_dir(), std::path::Path::new("/tmp/status-router"));
-        assert_eq!(role.probe(), (role.listen, "/control/health"));
         let mut worker = role;
         worker.role = Role::Worker;
         worker.worker_origin.clear();

@@ -53,6 +53,7 @@ pub async fn serve_role_on(
     config: RoleConfig,
     listen: tokio::net::TcpListener,
     public: Option<crate::public::Slot>,
+    readiness: crate::readiness::Readiness,
 ) -> Result<(), Failure> {
     discover(&config).await?;
     let network = hex::decode(&config.network_hex)?
@@ -64,6 +65,11 @@ pub async fn serve_role_on(
         config.state_dir.clone(),
         config.worker_origin.clone(),
     )?;
+    let ready = service.clone();
+    readiness.register(move || {
+        let service = ready.clone();
+        async move { service.ready().await }
+    });
     let task = sync::synchronization(service.clone(), &config)?;
     // The worker and router each poll the publisher. Their combined delay must
     // leave room for preparation inside Status's twenty-second freshness limit.

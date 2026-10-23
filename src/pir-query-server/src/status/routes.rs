@@ -60,17 +60,27 @@ async fn identity(State(service): State<Service>) -> Json<serde_json::Value> {
         serde_json::json!({"binary_sha256":pir_control::Identity::process().binary_sha256,"incarnation":service.incarnation}),
     )
 }
+/// Whether this role serves an unpoisoned generation its controller still
+/// authorizes.
+fn ready(state: &super::state::ServiceState) -> bool {
+    !state.poisoned
+        && state
+            .controller
+            .as_ref()
+            .is_some_and(|controller| controller.check(&controller.current()).is_ok())
+}
+impl Service {
+    pub(crate) async fn ready(&self) -> bool {
+        ready(&*self.state.lock().await)
+    }
+}
 async fn health(State(service): State<Service>) -> Json<Health> {
     let state = service.state.lock().await;
     let manifest = state
         .controller
         .as_ref()
         .map(|controller| controller.current().manifest().clone());
-    let ready = !state.poisoned
-        && state
-            .controller
-            .as_ref()
-            .is_some_and(|controller| controller.check(&controller.current()).is_ok());
+    let ready = ready(&state);
     Json(Health {
         role: service.role,
         binding: Binding {

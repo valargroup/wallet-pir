@@ -67,13 +67,8 @@ pub struct Layout {
     /// Products whose wallet routes are served on `public_listen`.
     pub public: Vec<&'static str>,
     pub roots: Vec<(&'static str, PathBuf)>,
-    pub probes: BTreeMap<&'static str, Vec<Probe>>,
-}
-
-#[derive(Clone)]
-pub struct Probe {
-    pub address: SocketAddr,
-    pub path: &'static str,
+    /// Enabled products, each reporting its own typed readiness to the host.
+    pub products: Vec<&'static str>,
 }
 
 pub fn active<T>(product: &Option<Product<T>>) -> Result<Option<&T>> {
@@ -162,11 +157,8 @@ impl Layout {
         feature = "transparent-history",
         feature = "transparent-detail"
     ))]
-    fn probe(&mut self, name: &'static str, address: SocketAddr, path: &'static str) {
-        self.probes
-            .entry(name)
-            .or_default()
-            .push(Probe { address, path });
+    fn product(&mut self, name: &'static str) {
+        self.products.push(name);
     }
 }
 
@@ -249,8 +241,7 @@ impl Config {
                 layout.listener("enhance", addr)?;
             }
             layout.root("enhance", role.state_dir())?;
-            let (address, path) = role.probe();
-            layout.probe("enhance", address, path);
+            layout.product("enhance");
         }
         #[cfg(feature = "status")]
         if let Some(role) = active(&self.status)? {
@@ -262,8 +253,7 @@ impl Config {
                 layout.listener("status", address)?;
             }
             layout.root("status", role.state_dir())?;
-            let (address, path) = role.probe();
-            layout.probe("status", address, path);
+            layout.product("status");
         }
         #[cfg(feature = "transparent-history")]
         if let Some(worker) = active(&self.transparent_history)? {
@@ -276,7 +266,7 @@ impl Config {
             layout.listener("transparent_history", worker.listen)?;
             layout.wallets("transparent_history", self.public_listen, false)?;
             layout.root("transparent_history", &worker.shard_dir)?;
-            layout.probe("transparent_history", worker.listen, "/v1/ready");
+            layout.product("transparent_history");
         }
         #[cfg(feature = "transparent-detail")]
         if let Some(worker) = active(&self.transaction_details)? {
@@ -294,7 +284,7 @@ impl Config {
             if let Some(path) = &worker.publication_dir {
                 layout.root("transaction_details", path)?;
             }
-            layout.probe("transaction_details", worker.listen, "/v1/ready");
+            layout.product("transaction_details");
         }
         if self.public_listen.is_some() && layout.public.is_empty() {
             return Err("public_listen is set but no enabled role answers wallets".into());
@@ -320,7 +310,7 @@ mod tests {
         ))
         .unwrap();
         let layout = config.validate().unwrap();
-        assert_eq!(layout.probes.len(), 4);
+        assert_eq!(layout.products.len(), 4);
         // Management, the one shared wallet listener, Enhance and Status
         // private control listeners, and one provider listener per
         // Transparent product.
@@ -393,7 +383,7 @@ mod tests {
         .unwrap();
         let layout = config.validate().unwrap();
         assert_eq!(layout.listeners.len(), 1);
-        assert!(layout.roots.is_empty() && layout.probes.is_empty());
+        assert!(layout.roots.is_empty() && layout.products.is_empty());
         assert!(config.verification().is_err());
     }
 

@@ -419,6 +419,23 @@ impl DisplayLive {
         }
     }
 
+    /// Whether a checked publication is active, not invalidated, and none of
+    /// its current revisions is withdrawn. Reads only in-memory state.
+    pub fn ready(&self) -> bool {
+        self.ready_in(&self.0.active.read().unwrap())
+    }
+
+    fn ready_in(&self, active: &Option<Active>) -> bool {
+        active.as_ref().is_some_and(|a| {
+            a.state.is_ready()
+                && a.state
+                    .set()
+                    .current()
+                    .iter()
+                    .all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))
+        })
+    }
+
     fn status(&self) -> Reply {
         let candidate = self.0.candidate.try_lock().ok().and_then(|c| {
             c.as_ref().map(|c| {
@@ -443,7 +460,7 @@ impl DisplayLive {
             "artifact_validation": active.as_ref().map(|a| a.state.artifact_validation()),
             "active": active.as_ref().map(|a| &a.publication),
             "staged": staged,
-            "ready": active.as_ref().is_some_and(|a| a.state.is_ready() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),
+            "ready": self.ready_in(&active),
             "warm": active.as_ref().is_some_and(|a| a.state.is_warm() && a.state.set().current().iter().all(|r| !self.0.invalid.read().unwrap().contains(&r.digest))),
             "binary_sha256": pir_control::binary_sha256(),
             "candidate": candidate,
