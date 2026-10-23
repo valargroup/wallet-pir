@@ -64,6 +64,11 @@ pub struct DashboardData {
     pub health_status: Option<u16>,
     pub health_body: Option<String>,
     pub ready_status: Option<u16>,
+    /// Whether a shared publisher management origin is monitored.
+    pub publisher_configured: bool,
+    /// Product name to lifecycle phase from the last parsed publisher report.
+    pub publisher_products: BTreeMap<String, String>,
+    pub publisher_sample: Option<SystemTime>,
     pub endpoints: BTreeMap<String, EndpointWindow>,
     pub snapshot_gauges: BTreeMap<String, f64>,
     pub workers: BTreeMap<String, BTreeMap<String, f64>>,
@@ -110,6 +115,9 @@ impl DashboardData {
             health_status: None,
             health_body: None,
             ready_status: None,
+            publisher_configured: false,
+            publisher_products: BTreeMap::new(),
+            publisher_sample: None,
             endpoints: BTreeMap::new(),
             snapshot_gauges: BTreeMap::new(),
             workers: BTreeMap::new(),

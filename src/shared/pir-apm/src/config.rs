@@ -20,6 +20,8 @@ pub struct Config {
     pub status_router_url: Option<String>,
     pub status_worker_url: Option<String>,
     pub status_topology: String,
+    /// Shared publisher management origin; its `/health` reports every product's phase.
+    pub publisher_url: Option<String>,
     pub metrics_path: String,
     pub health_path: String,
     pub ready_path: String,
@@ -143,6 +145,22 @@ impl Config {
             }
         }
 
+        let publisher_url = get("PIR_APM_PUBLISHER_URL")
+            .map(|url| url.trim_end_matches('/').to_string());
+        if let Some(url) = &publisher_url {
+            let parsed = reqwest::Url::parse(url).context("invalid publisher URL")?;
+            if parsed.scheme() != "http"
+                || parsed.host_str() != Some("127.0.0.1")
+                || parsed.username() != ""
+                || parsed.password().is_some()
+                || parsed.fragment().is_some()
+                || parsed.query().is_some()
+                || parsed.path() != "/"
+            {
+                anyhow::bail!("publisher URL must be a credential-free loopback HTTP origin");
+            }
+        }
+
         Ok(Self {
             worker_config: get("PIR_APM_WORKER_CONFIG").map(PathBuf::from),
             packing_router_config: get("PIR_APM_PACKING_ROUTER_CONFIG").map(PathBuf::from),
@@ -155,6 +173,7 @@ impl Config {
                 "PIR_APM_STATUS_TOPOLOGY",
                 "Enhance host → CPU router + worker",
             ),
+            publisher_url,
             metrics_path: path_value(&get_or("PIR_APM_METRICS_PATH", "/metrics"))?,
             health_path: path_value(&get_or("PIR_APM_HEALTH_PATH", "/v1/health"))?,
             ready_path: path_value(&get_or("PIR_APM_READY_PATH", "/ready"))?,
@@ -224,6 +243,23 @@ mod tests {
         assert_eq!(config.title, "PIR APM");
         assert!(config.slack_webhook_url.is_none());
         assert_eq!(config.interval, Duration::from_secs(15));
+        assert!(config.publisher_url.is_none());
+    }
+
+    #[test]
+    fn publisher_url_is_a_loopback_origin() {
+        let config =
+            Config::from_map(&vars(&[("PIR_APM_PUBLISHER_URL", "http://127.0.0.1:18080/")]))
+                .unwrap();
+        assert_eq!(config.publisher_url.as_deref(), Some("http://127.0.0.1:18080"));
+        for url in [
+            "http://10.0.0.1:18080",
+            "https://127.0.0.1:18080",
+            "http://127.0.0.1:18080/health",
+            "http://user@127.0.0.1:18080",
+        ] {
+            assert!(Config::from_map(&vars(&[("PIR_APM_PUBLISHER_URL", url)])).is_err());
+        }
     }
 
     #[test]

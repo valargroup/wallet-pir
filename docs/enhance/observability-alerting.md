@@ -36,6 +36,13 @@ once per minute from a separate region, and monitors APM task progress.
   anchor rejection does not page. Publication metrics, blocked state and the
   last-advancement timestamp must be present and valid; otherwise checks become
   unknown and coverage alerts report the missing source.
+- `coordinator_ready` reads the Enhance listener's `/ready`, which stays 200 while
+  another product of the shared publisher has failed. With
+  `PIR_APM_PUBLISHER_URL` set to the publisher's loopback management origin, APM
+  reads its `/health` product report (which always returns 200) and raises
+  `publisher_product_<product>` (critical) when a product's phase is not
+  `running` for 60s. A missing or malformed report makes these unknown and
+  raises `coverage_publisher_*`; a product that leaves a fresh report retires.
 - Queue timestamps are operational metadata only. Existing persisted decisions
   without timestamps begin age tracking when first loaded after upgrade.
 - Unknown data cannot recover an incident. Recovery requires two distinct fresh

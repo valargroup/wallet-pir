@@ -147,11 +147,20 @@ async fn scrape_loop(
     loop {
         interval.tick().await;
         let now = Instant::now();
-        let (metrics_result, health_result, ready_result) = tokio::join!(
+        let (metrics_result, health_result, ready_result, publisher_result) = tokio::join!(
             fetch(&client, &config.scrape_url, &config.metrics_path, true),
             fetch(&client, &config.scrape_url, &config.health_path, false),
             fetch(&client, &config.scrape_url, &config.ready_path, false),
+            async {
+                match &config.publisher_url {
+                    Some(url) => fetch(&client, url, "/health", true).await.ok(),
+                    None => None,
+                }
+            },
         );
+        let publisher_products = publisher_result
+            .as_ref()
+            .and_then(|r| monitoring::publisher_products(&r.body));
         let health_status = health_result.as_ref().ok().map(|response| response.status);
         let ready_status = ready_result.as_ref().ok().map(|response| response.status);
         let ready_ok = ready_status.is_some_and(|status| (200..300).contains(&status));
@@ -257,6 +266,11 @@ async fn scrape_loop(
                 .ok()
                 .map(|response| response.body.clone());
             view.ready_status = ready_status;
+            view.publisher_configured = config.publisher_url.is_some();
+            if let Some(products) = publisher_products {
+                view.publisher_products = products;
+                view.publisher_sample = Some(SystemTime::now());
+            }
             view.endpoints = windows;
             view.snapshot_gauges = latest
                 .map(|snapshot| snapshot.snapshot_gauges.clone())
