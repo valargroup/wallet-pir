@@ -467,9 +467,12 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
+                             # Status generation prepare is one 96 MiB database;
+                             # keep it off the publisher's cores.
                              exclusive=publisher_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
-                             or (name == 'enhance-publisher' and 'lib' in target['kind']),
+                             or (name == 'enhance-publisher' and 'lib' in target['kind'])
+                             or (name == 'status-query-server' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         programs.extend(bounded_programs(program, names))
