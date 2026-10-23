@@ -1202,11 +1202,13 @@ mod observation_tests {
         let peers = vec![
             Peer {
                 url: workers[0].clone(),
+                endpoint: WorkerEndpoint::Http(workers[0].clone()),
                 incarnation: "a".into(),
                 deadline: now + Duration::from_secs(1),
             },
             Peer {
                 url: workers[1].clone(),
+                endpoint: WorkerEndpoint::Http(workers[1].clone()),
                 incarnation: "b".into(),
                 deadline: now,
             },

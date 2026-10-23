@@ -1317,9 +1317,14 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         r#"discovery-body:{"service":"pir-publisher","version":"2.0.0"}"#,
     )
     .unwrap();
-    let error = run_with(history_process(&history_consumer, false), None)
-        .await
-        .unwrap_err();
+    let error = run_with(
+        history_process(&history_consumer, false),
+        None,
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap_err();
     assert!(
         pir_query_server::transparent::is_incompatible(&error),
         "{error}"
