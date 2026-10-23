@@ -167,11 +167,22 @@ class Serving:
         owner.effect(parent, 'reload Enhance wallet edge', lambda: owner.ex.systemctl(owner.host, 'reload', 'caddy.service'))
         require(owner.read(CADDY) == edge['edge_after'], 'installed wallet edge differs')
 
-    def restore_guard(self, parent):
+    def restore_guard(self, parent, *, allow_unified_site=False):
         owner = self.cutover
         mutation_fence(owner.inventory, owner.ex, owner.lock)
         edge = parent['plan']['serving']
-        require(owner.read(CADDY) in (edge['edge_before'], edge['edge_after']), 'wallet edge changed outside the transaction')
+        allowed = [edge['edge_before'], edge['edge_after']]
+        if allow_unified_site:
+            # A later, separately deployed unified site may coexist with this
+            # publisher. Accept only the exact current template appended to its
+            # saved edge; existing site bytes must still match. Rollback never
+            # gets this exception, because it would delete the newer site.
+            from .coordinator_edge import TEMPLATE, sites
+            from .unified_edge import candidate as unified_candidate
+            span = site_containing(edge['edge_after'], WALLET)
+            host = next(host for host, value in sites(edge['edge_after']).items() if value == span)
+            allowed.append(unified_candidate(edge['edge_after'], TEMPLATE.read_text(), 'https://' + host))
+        require(owner.read(CADDY) in allowed, 'wallet edge changed outside the transaction')
         self.validate_edge(edge['edge_before'])
         if 'serving_journal' in parent:
             for record in self.journal(parent).hosts:

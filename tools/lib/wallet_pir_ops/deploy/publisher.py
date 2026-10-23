@@ -611,7 +611,7 @@ class Cutover:
             if not self.resume_load:
                 self.require_stopped_load()
             if self.serving:
-                self.serving.restore_guard(journal)
+                self.serving.restore_guard(journal, allow_unified_site=True)
             self.ready(True)
             if self.serving:
                 self.serving.verify(journal)

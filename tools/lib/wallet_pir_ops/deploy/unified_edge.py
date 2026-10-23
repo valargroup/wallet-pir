@@ -167,6 +167,50 @@ class UnifiedEdge:
             self.persist(journal)
             return {'phase': journal.status, 'transaction': journal.id, 'plan': plan}
 
+    def history_relay_plan(self):
+        """Point the private History relay at the listener its public site uses."""
+        self.ex.check_identity(self.host)
+        require(self.run(['cat', '/etc/machine-id']) == self.request['machine_id'], 'History host identity changed')
+        address = str(ipaddress.IPv4Address(self.inventory.hosts[self.host]['address']))
+        before = self.ex.read(self.host, CONFIG)
+        require(before is not None, 'History Caddyfile is absent')
+        public = coordinator_edge.site_span(before, 'transparent-pir-v12.valargroup.dev')
+        active = 'reverse_proxy ' + address + ':8093'
+        require(active in before[slice(*public)], 'public History listener differs')
+        private = coordinator_edge.site_span(before, 'http://' + address + ':8080')
+        block = before[slice(*private)]
+        stale = 'reverse_proxy ' + address + ':8193'
+        require(block.count(stale) == 1 and active not in block, 'private History relay differs')
+        after = coordinator_edge.replace_in_site(before, private, lambda value: value.replace(stale, active))
+        self.validate(after)
+        code, body = self.ex.http_get(self.host, 'http://' + address + ':8093/v2/filters/shards')
+        require(code == 200 and isinstance(json.loads(body).get('shards'), list), 'current History listener is not serving')
+        plan = {'request': self.request, 'before_sha256': digest(before), 'after_sha256': digest(after),
+                'listener': address + ':8093'}
+        return plan, before, after
+
+    def repair_history_relay(self, expected):
+        """Reload only the checked relay; retain the candidate on any failure."""
+        with self.lock_factory() as lock:
+            self.lock = lock
+            mutation_fence(self.inventory, self.ex, lock)
+            plan, before, after = self.history_relay_plan()
+            require(digest(json.dumps(plan, sort_keys=True)) == expected, 'History relay plan changed since review')
+            journal = Journal.create(self.state_dir, 'transparent-history-relay', digest(after), plan, [], {})
+            journal.data.update(request=self.request, before=before, after=after)
+            journal.set_status('installing')
+            self.persist(journal)
+            require(self.ex.read(self.host, CONFIG) == before, 'History routes changed before installation')
+            self.write(CONFIG, after.encode(), 0o644)
+            self.reload()
+            require(self.ex.read(self.host, CONFIG) == after, 'installed History relay differs')
+            address = self.inventory.hosts[self.host]['address']
+            code, body = self.ex.http_get(self.host, 'http://' + address + ':8080/v2/filters/shards')
+            require(code == 200 and isinstance(json.loads(body).get('shards'), list), 'History relay is not serving')
+            journal.set_status('committed')
+            self.persist(journal)
+            return {'phase': journal.status, 'transaction': journal.id, 'plan': plan}
+
     def status_code(self, path):
         return self.run(['curl', '-sS', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '20',
                          '--resolve', HOST + ':443:127.0.0.1', 'https://' + HOST + path], 40)
