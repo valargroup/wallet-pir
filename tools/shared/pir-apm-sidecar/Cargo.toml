@@ -27,6 +27,7 @@ webpki = { package = "rustls-webpki", version = "0.103", default-features = fals
 x509-parser = "0.16"
 
 [dev-dependencies]
+pir-apm = { path = "../../../src/shared/pir-apm" }
 rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tempfile = "3"
