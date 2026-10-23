@@ -56,6 +56,17 @@ pub struct Mount {
     pub slot: Slot,
 }
 
+// Products and the routing tests name their namespaces with this.
+#[cfg_attr(
+    not(any(
+        test,
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent-history",
+        feature = "transparent-detail"
+    )),
+    allow(dead_code)
+)]
 fn under(prefixes: [&'static str; 2], suffixes: &[&str]) -> Vec<String> {
     prefixes
         .into_iter()
