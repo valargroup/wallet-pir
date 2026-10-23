@@ -40,8 +40,7 @@ def main():
             '[Service]\n'
             f'Environment=PATH=/home/{user}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
             'Environment=RUSTUP_TOOLCHAIN=1.97.1\n'
-            # Four release-fast rustc processes exceed the fast 6 GiB cap.
-            f'Environment=CARGO_BUILD_JOBS={2 if fast else 4}\n'
+            'Environment=CARGO_BUILD_JOBS=4\n'
             f'CPUWeight={1000 if fast else 100}\n'
             f'IOWeight={1000 if fast else 100}\n'
             f'Nice={0 if fast else 10}\n'
