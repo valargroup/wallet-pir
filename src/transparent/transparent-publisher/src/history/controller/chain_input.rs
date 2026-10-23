@@ -120,21 +120,28 @@ impl Ingestion for HistoryIngestion {
             self.current.store(true, Ordering::Release);
             return Ok(());
         }
-        let public = self.authority.0.active.read().unwrap().clone();
-        let public_changed = public.publication.height > tip.height
-            || (public.publication.height == tip.height && public.publication.hash != tip.hash)
-            || self
-                .rpc
-                .block_hash_display(public.publication.height)
-                .await?
-                != public.publication.hash;
-        if public_changed
-            && (!self.authority.0.withdrawn.load(Ordering::Acquire) || !self.acknowledged())
-        {
-            invalidate(&self.config, &self.authority, 0).await?;
-        }
+        let withdrawn = self.authority.0.withdrawn.load(Ordering::Acquire) && self.acknowledged();
         if observation.genesis != self.store.lock().await.genesis_hash() {
+            if !withdrawn {
+                invalidate(&self.config, &self.authority, 0).await?;
+            }
             return Err("node genesis changed; publication withdrawn and journal retained".into());
+        }
+        // A node behind the advertised endpoint proves no fork: reconciliation
+        // withdraws only for a committed block it reports differently.
+        let public = self.authority.0.active.read().unwrap().clone();
+        let public_changed = match public.publication.height.cmp(&tip.height) {
+            std::cmp::Ordering::Greater => false,
+            std::cmp::Ordering::Equal => public.publication.hash != tip.hash,
+            std::cmp::Ordering::Less => {
+                self.rpc
+                    .block_hash_display(public.publication.height)
+                    .await?
+                    != public.publication.hash
+            }
+        };
+        if public_changed && !withdrawn {
+            invalidate(&self.config, &self.authority, 0).await?;
         }
         Ok(())
     }

@@ -1339,6 +1339,7 @@ mod tests {
     }
 
     mod hand_laid;
+    mod lag;
     mod store;
 }
 
