@@ -159,10 +159,48 @@ fn spawn<F>(
     feature = "transparent-history",
     feature = "transparent-detail"
 ))]
-async fn stopped(local: Shutdown, process: Shutdown) {
-    tokio::select! {
-        _ = local.cancelled() => {}
-        _ = process.cancelled() => {}
+async fn stopped(local: Shutdown) {
+    local.cancelled().await
+}
+
+/// Upper bound on draining wallet requests the public listener already accepted.
+const PUBLIC_DRAIN: Duration = Duration::from_secs(60);
+
+/// Stop the host in admission order. Readiness first reports every running
+/// product as stopping and its wallet namespaces refuse new requests; the
+/// public listener then drains requests it already accepted while every
+/// product still owns its state, permits and durable transactions; only then
+/// does each product stop and release its listeners, locks and tasks.
+async fn drain(
+    phases: &Mutex<BTreeMap<&'static str, &'static str>>,
+    slots: &BTreeMap<&'static str, crate::public::Slot>,
+    public: Option<(Shutdown, tokio::task::JoinHandle<std::io::Result<()>>)>,
+    owners: &HashMap<Id, (&'static str, Shutdown)>,
+    group: &mut JoinSet<(&'static str, Result<()>)>,
+) {
+    for phase in phases.lock().unwrap().values_mut() {
+        if *phase == "running" {
+            *phase = "stopping";
+        }
+    }
+    for slot in slots.values() {
+        slot.withdraw();
+    }
+    if let Some((stop, mut task)) = public {
+        stop.request();
+        if tokio::time::timeout(PUBLIC_DRAIN, &mut task).await.is_err() {
+            tracing::warn!("wallet requests outlasted the shutdown drain; closing the listener");
+            task.abort();
+            let _ = task.await;
+        }
+    }
+    for (_, stop) in owners.values() {
+        stop.request();
+    }
+    while let Some(result) = group.join_next().await {
+        if let Ok((name, _)) = result {
+            phases.lock().unwrap().insert(name, "stopped");
+        }
     }
 }
 
@@ -268,8 +306,12 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             }),
         )
         .with_state(state.clone());
+    // The host stops each listener and product itself, in drain order, once
+    // `shutdown` is requested or a fatal failure ends the loop below.
+    let management_stop = Shutdown::default();
+    let public_stop = Shutdown::default();
     let mut management = tokio::spawn(
-        http(listeners.clone(), shutdown.clone()).serve(config.management_listen, routes),
+        http(listeners.clone(), management_stop.clone()).serve(config.management_listen, routes),
     );
     let mut tasks = Tasks::default();
     tasks.own(&management);
@@ -289,7 +331,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                 .unwrap()
                 .remove(&addr)
                 .ok_or("public listener was not reserved")?;
-            let stop = shutdown.clone();
+            let stop = public_stop.clone();
             let task = tokio::spawn(async move {
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move { stop.cancelled().await })
@@ -318,7 +360,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
                 role,
                 bound,
                 slots.get("enhance").cloned(),
-                stopped(stop.clone(), shutdown.clone()),
+                stopped(stop.clone()),
             ),
             stop,
             &mut group,
@@ -332,14 +374,13 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let query = slots.get("status").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
-        let process = shutdown.clone();
         state.phases.lock().unwrap().insert("status", "running");
         spawn(
             "status",
             async move {
                 tokio::select! {
                     result = crate::status::serve_role_on(role, listen, query) => result,
-                    _ = stopped(local, process) => Ok(()),
+                    _ = stopped(local) => Ok(()),
                 }
             },
             stop,
@@ -354,7 +395,6 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let wallet = slots.get("transparent_history").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
-        let process = shutdown.clone();
         state
             .phases
             .lock()
@@ -365,7 +405,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             async move {
                 tokio::select! {
                     result = crate::transparent::history::process::run_with(worker, Some(listen), wallet) => result,
-                    _ = stopped(local, process) => Ok(()),
+                    _ = stopped(local) => Ok(()),
                 }
             },
             stop,
@@ -380,7 +420,6 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         let wallet = slots.get("transaction_details").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
-        let process = shutdown.clone();
         state
             .phases
             .lock()
@@ -391,7 +430,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             async move {
                 tokio::select! {
                     result = crate::transparent::tx_detail::process::run_with(worker, Some(listen), wallet) => result,
-                    _ = stopped(local, process) => Ok(()),
+                    _ = stopped(local) => Ok(()),
                 }
             },
             stop,
@@ -444,22 +483,16 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             }
         }
     }
-    for (_, stop) in owners.values() {
-        stop.request();
-    }
-    while let Some(result) = group.join_next().await {
-        if let Ok((name, _)) = result {
-            state.phases.lock().unwrap().insert(name, "stopped");
-        }
-    }
+    drain(
+        &state.phases,
+        &slots,
+        public.map(|task| (public_stop, task)),
+        &owners,
+        &mut group,
+    )
+    .await;
     shutdown.request();
-    for slot in slots.values() {
-        slot.withdraw();
-    }
-    // The wallet listener drains requests it already accepted.
-    if let Some(task) = public {
-        let _ = task.await;
-    }
+    management_stop.request();
     // Cancellation alone can leave the management listener bound until the
     // task is polled again. Join it before reporting that the host stopped.
     if !management.is_finished() {
@@ -517,6 +550,102 @@ mod shutdown_tests {
         *ready.lock().unwrap() = true;
         assert!(management.snapshot().await.0);
         server.abort();
+    }
+
+    /// Shutdown stops admission, then drains an accepted wallet request while
+    /// its product still runs, and only then stops the product.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_drains_accepted_wallet_requests_before_stopping_products() {
+        use crate::public::{Mount, Slot};
+        use tokio::sync::oneshot;
+        use tower::ServiceExt;
+        let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let (entered, accepted) = oneshot::channel::<()>();
+        let (release, released) = oneshot::channel::<()>();
+        let gates = Arc::new(Mutex::new(Some((entered, released))));
+        let log = events.clone();
+        let slot = Slot::default();
+        slot.install(Router::new().route(
+            "/status/v1/query",
+            get(move || {
+                let (entered, released) = gates.lock().unwrap().take().unwrap();
+                let log = log.clone();
+                async move {
+                    entered.send(()).unwrap();
+                    released.await.unwrap();
+                    log.lock().unwrap().push("request answered");
+                    "answered"
+                }
+            }),
+        ));
+        let mount = || Mount {
+            product: "status",
+            paths: vec!["/status/v1/*operation".into()],
+            slot: slot.clone(),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let public_stop = Shutdown::default();
+        let stop = public_stop.clone();
+        let app = crate::public::router(&[mount()]).unwrap();
+        let public = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move { stop.cancelled().await })
+                .await
+        });
+        let mut group = JoinSet::new();
+        let mut owners = HashMap::new();
+        let product = Shutdown::default();
+        let (local, log) = (product.clone(), events.clone());
+        let id = group
+            .spawn(async move {
+                local.cancelled().await;
+                log.lock().unwrap().push("product stopped");
+                ("status", Ok(()))
+            })
+            .id();
+        owners.insert(id, ("status", product));
+        let phases = Mutex::new(BTreeMap::from([("status", "running")]));
+        let slots = BTreeMap::from([("status", slot.clone())]);
+        let request = tokio::spawn(reqwest::get(format!("http://{address}/status/v1/query")));
+        accepted.await.unwrap();
+
+        let drained = drain(
+            &phases,
+            &slots,
+            Some((public_stop, public)),
+            &owners,
+            &mut group,
+        );
+        tokio::pin!(drained);
+        tokio::select! {
+            _ = &mut drained => panic!("shutdown finished before the accepted request"),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+        assert_eq!(phases.lock().unwrap()["status"], "stopping");
+        let refused = crate::public::router(&[mount()])
+            .unwrap()
+            .oneshot(
+                axum::extract::Request::get("/status/v1/query")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            events.lock().unwrap().is_empty(),
+            "product stopped while a wallet request ran"
+        );
+        release.send(()).unwrap();
+        drained.await;
+        let response = request.await.unwrap().unwrap();
+        assert_eq!(response.text().await.unwrap(), "answered");
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["request answered", "product stopped"]
+        );
+        assert_eq!(phases.lock().unwrap()["status"], "stopped");
     }
 
     #[tokio::test]
