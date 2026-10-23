@@ -1,19 +1,17 @@
 //! Verified objects and stable revision directories shared by both HTTPS consumers.
 use crate::source::Source;
+use pir_publication::{ObjectCache, ObjectReference};
 use transparent_shared::publication::{self, Error};
 
+#[cfg(test)]
 pub(crate) const PARTIAL: &str = ".partial-";
 
 /// Create or open `<directory>/objects`, refuse anything but a real directory
 /// before enumerating it, and remove interrupted partials. This directory has
 /// one owner; an interrupted object is never reused.
-pub(crate) fn prepare_objects(directory: &std::path::Path) -> Result<std::path::PathBuf, Error> {
-    let objects = directory.join("objects");
-    std::fs::create_dir_all(&objects)?;
-    if !std::fs::symlink_metadata(&objects)?.is_dir() {
-        return Err("object cache must be a real directory".into());
-    }
-    remove_partials(&objects)?;
+pub(crate) fn prepare_objects(directory: &std::path::Path) -> Result<ObjectCache, Error> {
+    let objects = ObjectCache::open(directory.join("objects"))?;
+    remove_partials(objects.directory())?;
     Ok(objects)
 }
 
@@ -43,6 +41,7 @@ pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
 /// and runs this between stages; the catalog lock still defers it while a
 /// stage links sources. Returns the files and bytes freed, or `None` when
 /// deferred or skipped.
+#[cfg(any(test, feature = "transparent-history"))]
 pub(crate) fn collect_objects(
     root: &std::path::Path,
     linked: &std::path::Path,
@@ -135,14 +134,18 @@ fn collect_objects_inner(
 /// later loads check regular-file status and byte size, including after restart.
 pub(crate) async fn ensure_object(
     source: &mut Source,
-    objects: &std::path::Path,
+    objects: &ObjectCache,
     artifact: &publication::Artifact,
     transfer: &mut std::time::Duration,
 ) -> Result<bool, Error> {
-    if !std::fs::symlink_metadata(objects)?.is_dir() {
+    if !std::fs::symlink_metadata(objects.directory())?.is_dir() {
         return Err("object cache must be a real directory".into());
     }
-    let object = objects.join(&artifact.sha256);
+    let reference = ObjectReference {
+        sha256: artifact.sha256.clone(),
+        bytes: artifact.bytes,
+    };
+    let object = objects.object_path(&reference)?;
     match std::fs::symlink_metadata(&object) {
         Ok(metadata) => {
             if metadata.is_file() {
@@ -162,22 +165,11 @@ pub(crate) async fn ensure_object(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e.into()),
     }
-    let partial = objects.join(format!(
-        "{}{PARTIAL}{}-{}",
-        artifact.sha256,
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-    ));
+    let mut partial = objects.begin_partial(&reference)?;
     let check_metadata = artifact.kind == publication::Kind::Metadata;
     let fetching = std::time::Instant::now();
     let result = async {
-        let mut output = tokio::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&partial)
-            .await?;
+        let mut output = tokio::fs::File::from_std(partial.take_file()?);
         let response = source
             .get(&format!("artifacts/{}", artifact.sha256))
             .await?;
@@ -189,21 +181,13 @@ pub(crate) async fn ensure_object(
         response
             .copy_to(&mut output, artifact.bytes, verification)
             .await?;
-        let mut permissions = output.metadata().await?.permissions();
-        permissions.set_readonly(true);
-        output.set_permissions(permissions).await?;
-        output.sync_all().await?;
-        drop(output);
-        std::fs::rename(&partial, &object)?;
+        let written = output.into_std().await;
+        let object = tokio::task::spawn_blocking(move || partial.promote(written)).await??;
         publication::record_received_file(&object, artifact, &object)?;
-        std::fs::File::open(objects)?.sync_all()?;
         Ok(())
     }
     .await;
     *transfer += fetching.elapsed();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&partial);
-    }
     result.map(|()| true)
 }
 
@@ -418,7 +402,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let objects = prepare_objects(root.path()).unwrap();
         let object = |body: &[u8]| {
-            let path = objects.join(publication::digest(body));
+            let path = objects.directory().join(publication::digest(body));
             std::fs::write(&path, body).unwrap();
             path
         };
@@ -429,9 +413,11 @@ mod tests {
         let revision = root.path().join(".sources").join("a".repeat(64));
         std::fs::create_dir_all(&revision).unwrap();
         std::fs::hard_link(&rows, revision.join("rows.bin")).unwrap();
-        let partial = objects.join(format!("{}{PARTIAL}1-2", publication::digest(b"next")));
+        let partial = objects
+            .directory()
+            .join(format!("{}{PARTIAL}1-2", publication::digest(b"next")));
         std::fs::write(&partial, b"ne").unwrap();
-        let foreign = objects.join("notes");
+        let foreign = objects.directory().join("notes");
         std::fs::write(&foreign, b"operator").unwrap();
         let linked = stage.join("shards.json");
 
@@ -607,6 +593,7 @@ mod tests {
 fn collection_removes_only_orphaned_object_receipts_and_check_markers() {
     let root = tempfile::tempdir().unwrap();
     let objects = prepare_objects(root.path()).unwrap();
+    let objects = objects.directory();
     let old = "a".repeat(64);
     let kept = "b".repeat(64);
     std::fs::write(objects.join(&old), b"old").unwrap();

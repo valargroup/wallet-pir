@@ -29,6 +29,9 @@ impl ObjectCache {
     /// interrupted transfer. Completed objects are kept for re-verification.
     pub fn open(directory: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(&directory)?;
+        if !fs::symlink_metadata(&directory)?.is_dir() {
+            return Err(io::Error::other("object cache must be a real directory"));
+        }
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
             if entry.file_type()?.is_file()
@@ -127,20 +130,21 @@ pub struct PartialObject {
     file: Option<fs::File>,
 }
 impl PartialObject {
-    /// The open partial file. The caller writes the complete, verified body.
+    /// The open partial file. The caller checks the complete body according to its
+    /// product policy; promotion itself establishes no digest or authority.
     pub fn take_file(&mut self) -> io::Result<fs::File> {
         self.file
             .take()
             .ok_or_else(|| io::Error::other("partial object file already taken"))
     }
-    /// Make the verified partial immutable and durable under its digest name:
+    /// Make a completed partial immutable and durable under its expected digest name:
     /// sync file contents, mark it read-only, rename, then sync the directory.
     /// An error before the rename removes the partial and leaves no object; an
     /// error after it leaves a promoted file that the next use re-verifies.
     pub fn promote(mut self, written: fs::File) -> io::Result<PathBuf> {
+        written.set_permissions(fs::Permissions::from_mode(0o444))?;
         written.sync_all()?;
         drop(written);
-        fs::set_permissions(&self.partial_path, fs::Permissions::from_mode(0o444))?;
         fs::rename(&self.partial_path, &self.target_path)?;
         // Nothing is left to clean up once the rename succeeded.
         self.partial_path = PathBuf::new();
@@ -160,6 +164,19 @@ impl Drop for PartialObject {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn opening_a_symlink_does_not_clean_another_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let real = root.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let partial = real.join(format!("{PARTIAL_PREFIX}unfinished"));
+        fs::write(&partial, b"unfinished").unwrap();
+        let alias = root.path().join("objects");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        assert!(ObjectCache::open(alias).is_err());
+        assert!(partial.exists());
+    }
 
     #[test]
     fn interrupted_transfers_never_become_cached_objects() {

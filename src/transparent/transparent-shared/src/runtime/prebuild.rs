@@ -18,10 +18,10 @@
 //! open directory shard's digest changes at every block, so its files, and
 //! those of page shards whose rows changed, are built.
 
-use crate::history::shardset::{ShardSet, Table};
 use crate::runtime::disk::ShippedRuntimes;
 use crate::runtime::prepare::{prepare_segment, Prepared, SegmentError};
 use crate::runtime::SharedParams;
+use crate::{history::shardset::ShardSet, table::Table};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
