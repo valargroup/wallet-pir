@@ -37,9 +37,11 @@ only an enforced passing run establishes compliance with the selected budget.
 Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
-command. History and detail reach the query host through the publisher
-library's dev-dependency; the publisher host binary does not enable them,
-because that links the same library again. The in-process Enhance hint graph compiles on a
+command. History and detail reach the query host through its own
+dev-dependency. The publisher host does not enable them, and the publisher
+library does not depend on that host, because either edge links the same
+libraries again. Fast diagnostic binaries leave `transparent-tools/query-host`
+off for the same reason. The in-process Enhance hint graph compiles on a
 second command and does not take the hosts with it. Chain-node fixtures stay in qualification so they do not rebuild the shared graph.
 Executables
 then run with at most three programs active and one case per program. The fast

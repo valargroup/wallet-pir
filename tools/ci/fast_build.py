@@ -149,8 +149,9 @@ def host_features_for(products, package_names):
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
-    stay on the publisher library's dev-dependency edge. Turning them on for the
-    host binary links that library a second time. Status `status-tests` enables
+    stay on the query host's dev-dependency. Turning them on for the publisher
+    host, or depending on the query host from the publisher library, links those
+    libraries again. Status `status-tests` enables
     the chain node for fixture campaigns that fast does not run; qualification
     enables it. The Enhance hint target uses `enhance-fast`, not `enhance-tests`.
     """

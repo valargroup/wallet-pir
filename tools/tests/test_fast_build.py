@@ -2,6 +2,7 @@
 import copy
 import json
 import io
+import tomllib
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
@@ -321,9 +322,9 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(transparent[0], stable)
 
     def test_each_product_compiles_only_its_own_host_features(self):
-        # History and detail reach the query host through the publisher
-        # library's dev-dependency. Enabling them on pir-publisher links that
-        # library again. The fixture feature would compile it a third time.
+        # History and detail reach the query host through its dev-dependency.
+        # Enabling them on pir-publisher, or from the publisher library, links
+        # that library again. The fixture feature would compile it a third time.
         builds = self._cargo_tests(['transparent-publisher'])
         self.assertEqual(len(builds), 1)
         packages, _bins, tests, features = self._command_parts(builds[0])
@@ -332,7 +333,15 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(features, [])
         self.assertNotIn('pir-e2e-tests/transparent-tests', features)
         self.assertNotIn('pir-publisher/transparent-history', features)
+        self.assertNotIn('transparent-tools/query-host', features)
         self.assertIn('commands', tests)
+        publisher = tomllib.loads(
+            (ROOT / 'src/transparent/transparent-publisher/Cargo.toml').read_text())
+        query = tomllib.loads((ROOT / 'src/pir-query-server/Cargo.toml').read_text())
+        self.assertNotIn('pir-query-server', publisher.get('dev-dependencies', {}))
+        self.assertEqual(
+            query['dev-dependencies']['pir-query-server']['features'],
+            ['transparent-history', 'transparent-detail'])
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])
         self.assertEqual(len(status_builds), 1)

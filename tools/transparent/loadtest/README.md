@@ -204,7 +204,7 @@ visible in the report.
 ## Validation
 
 ```sh
-cargo test --release -p transparent-tools --features benchmarks
+cargo test --release -p transparent-tools --features benchmarks,query-host
 node --test tools/transparent/loadtest/tests/apm.test.cjs
 make check
 ```

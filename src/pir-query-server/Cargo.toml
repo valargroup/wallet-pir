@@ -47,3 +47,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+# One query-host build carries history and detail for this command. The
+# publisher library does not depend on this host; that edge would link the
+# same libraries into the publisher test binary as well.
+pir-query-server = { path = ".", features = ["transparent-history", "transparent-detail"] }

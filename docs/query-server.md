@@ -101,7 +101,7 @@ from a peer row archive while the worker is stopped. `status-pir` remains its
 own command. Transparent history and transaction details have no separate
 server executables; they run only as `pir-query-server --config FILE`. The
 Transparent administration tools `shard-assign` and `shard-prune` are built
-from `transparent-tools`.
+from `transparent-tools`. `shard-assign` needs the `query-host` feature.
 
 ## Configuration
 
