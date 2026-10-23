@@ -3,8 +3,11 @@ use super::*;
 
 impl Controller {
     pub(super) async fn poll_source(&mut self) -> Result<(), BoxError> {
-        let floor = self.sealed_floor();
         let fence = self.fence.clone();
+        // Refresh, apply and archive planning must see one journal state. A
+        // rollback either precedes this refresh or waits for its planned floor.
+        let _journal = fence.journal().await;
+        let floor = self.sealed_floor();
         let mut before_rollback =
             |ancestor: u64, hash: BlockHash| fence.before_rollback(ancestor, hash);
         let polled = pir_pipeline::acquire(

@@ -715,7 +715,9 @@ impl Controller {
                 Err(error) => return Err(error),
             }
         }
-        self.plan();
+        // The writer may have rolled back while HTTP restoration ran. Refresh
+        // the journal under the shared fence before planning any archives.
+        self.poll_source().await?;
         executor
             .run(
                 DetailPublication {

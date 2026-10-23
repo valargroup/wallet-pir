@@ -148,6 +148,7 @@ impl Ingestion for DetailIngestion {
         self.block(self.store.covered_through()?.min(height))
     }
     async fn withdraw_above(&mut self, keep: Option<&BlockId>) -> Result<(), IngestError> {
+        let _journal = self.fence.journal().await;
         self.fence
             .check(keep.map(|keep| keep.height))
             .map_err(|(ancestor, floor)| IngestError::SealedReorg(ancestor, floor))?;
@@ -162,7 +163,13 @@ impl Ingestion for DetailIngestion {
             .map_err(IngestError::Transient)
     }
     async fn rewind(&mut self, keep: Option<&BlockId>) -> Result<(), IngestError> {
+        let _journal = self.fence.journal().await;
         let keep = keep.map(|keep| keep.height);
+        // Archive planning may have raised the floor since withdrawal. Keep
+        // that floor fixed until the journal rollback has committed.
+        self.fence
+            .check(keep)
+            .map_err(|(ancestor, floor)| IngestError::SealedReorg(ancestor, floor))?;
         self.store.rollback_to(keep)?;
         self.outputs = OutputCache::new(DEFAULT_CACHE_OUTPUTS);
         // Replacement blocks are observed from the next pass, not when the

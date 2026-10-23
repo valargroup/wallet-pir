@@ -7,6 +7,13 @@ impl Controller {
         candidate: DisplayCandidate,
         finalized: Option<DisplayActivation>,
     ) -> Result<(), CycleError> {
+        let fence = self.fence.clone();
+        // Commit authority and the map named by later rollback records before
+        // another journal rollback can begin.
+        let _journal = fence.journal().await;
+        if let Some((ancestor, floor)) = fence.sealed() {
+            return Err(CycleError::Halt(Halt::SealedReorg { ancestor, floor }));
+        }
         let DisplayCandidate {
             material,
             candidate,
@@ -78,6 +85,7 @@ impl Controller {
         self.fence.activated(&self.active.map_sha256);
         self.fence.set_floor(self.sealed_floor());
         self.map = map;
+        drop(_journal);
         #[cfg(feature = "fixtures")]
         if self.settings.record_maps {
             self.maps.push(self.map.clone());
