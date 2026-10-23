@@ -60,7 +60,11 @@ async fn start(dir: &Path, monitoring: &Ca) -> std::net::SocketAddr {
     addr
 }
 
-fn client(trust: &Ca, identity: Option<(String, String)>, addr: std::net::SocketAddr) -> reqwest::Client {
+fn client(
+    trust: &Ca,
+    identity: Option<(String, String)>,
+    addr: std::net::SocketAddr,
+) -> reqwest::Client {
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .tls_built_in_root_certs(false)
@@ -68,14 +72,18 @@ fn client(trust: &Ca, identity: Option<(String, String)>, addr: std::net::Socket
         .resolve("coordinator-01.pir-monitoring", addr)
         .timeout(Duration::from_secs(5));
     if let Some((cert, key)) = identity {
-        builder = builder.identity(reqwest::Identity::from_pem(format!("{cert}{key}").as_bytes()).unwrap());
+        builder = builder
+            .identity(reqwest::Identity::from_pem(format!("{cert}{key}").as_bytes()).unwrap());
     }
     builder.build().unwrap()
 }
 
 async fn get(client: &reqwest::Client, addr: std::net::SocketAddr, path: &str) -> Result<u16, ()> {
     client
-        .get(format!("https://coordinator-01.pir-monitoring:{}{path}", addr.port()))
+        .get(format!(
+            "https://coordinator-01.pir-monitoring:{}{path}",
+            addr.port()
+        ))
         .send()
         .await
         .map(|r| r.status().as_u16())
@@ -88,7 +96,11 @@ async fn only_the_collector_identity_from_the_monitoring_ca_is_served() {
     let monitoring = ca();
     let other = ca();
     let addr = start(dir.path(), &monitoring).await;
-    let collector = leaf(&monitoring, "pir-apm-collector", ExtendedKeyUsagePurpose::ClientAuth);
+    let collector = leaf(
+        &monitoring,
+        "pir-apm-collector",
+        ExtendedKeyUsagePurpose::ClientAuth,
+    );
 
     let authorized = client(&monitoring, Some(collector.clone()), addr);
     assert_eq!(get(&authorized, addr, "/v1/observations").await, Ok(200));
@@ -96,13 +108,37 @@ async fn only_the_collector_identity_from_the_monitoring_ca_is_served() {
     assert_eq!(get(&authorized, addr, "/").await, Ok(404));
 
     // No client certificate: the handshake requires one.
-    assert!(get(&client(&monitoring, None, addr), addr, "/v1/observations").await.is_err());
+    assert!(
+        get(&client(&monitoring, None, addr), addr, "/v1/observations")
+            .await
+            .is_err()
+    );
     // Same CA, other identity: e.g. another host's server certificate used as a client.
-    let peer = leaf(&monitoring, "worker-01.pir-monitoring", ExtendedKeyUsagePurpose::ClientAuth);
-    assert!(get(&client(&monitoring, Some(peer), addr), addr, "/v1/observations").await.is_err());
+    let peer = leaf(
+        &monitoring,
+        "worker-01.pir-monitoring",
+        ExtendedKeyUsagePurpose::ClientAuth,
+    );
+    assert!(get(
+        &client(&monitoring, Some(peer), addr),
+        addr,
+        "/v1/observations"
+    )
+    .await
+    .is_err());
     // Collector name, foreign CA.
-    let forged = leaf(&other, "pir-apm-collector", ExtendedKeyUsagePurpose::ClientAuth);
-    assert!(get(&client(&monitoring, Some(forged), addr), addr, "/v1/observations").await.is_err());
+    let forged = leaf(
+        &other,
+        "pir-apm-collector",
+        ExtendedKeyUsagePurpose::ClientAuth,
+    );
+    assert!(get(
+        &client(&monitoring, Some(forged), addr),
+        addr,
+        "/v1/observations"
+    )
+    .await
+    .is_err());
     // The collector refuses a server outside the monitoring CA.
     let wrong_trust = client(&other, Some(collector), addr);
     assert!(get(&wrong_trust, addr, "/v1/observations").await.is_err());
@@ -113,7 +149,11 @@ fn check_mode_reports_the_file_digest_and_expected_checks() {
     use sha2::Digest;
     let dir = tempfile::tempdir().unwrap();
     let monitoring = ca();
-    let (cert, key) = leaf(&monitoring, "h.pir-monitoring", ExtendedKeyUsagePurpose::ServerAuth);
+    let (cert, key) = leaf(
+        &monitoring,
+        "h.pir-monitoring",
+        ExtendedKeyUsagePurpose::ServerAuth,
+    );
     write(dir.path(), "server.pem", &cert);
     write(dir.path(), "server.key", &key);
     write(dir.path(), "ca.pem", &monitoring.cert.pem());

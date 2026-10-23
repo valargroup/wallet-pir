@@ -375,7 +375,9 @@ impl Store {
     pub fn metadata_value(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .db
-            .query_row("SELECT value FROM metadata WHERE key=?", [key], |r| r.get(0))
+            .query_row("SELECT value FROM metadata WHERE key=?", [key], |r| {
+                r.get(0)
+            })
             .optional()?)
     }
 

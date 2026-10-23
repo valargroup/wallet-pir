@@ -168,10 +168,14 @@ impl Expected {
             decommissioned: settings.decommissioned.clone(),
         };
         if let Some(roster) = roster {
-            let known: BTreeSet<String> = expected.hosts.iter().map(|h| h.host_id.clone()).collect();
-            expected
-                .hosts
-                .extend(roster.hosts.into_iter().filter(|h| !known.contains(&h.host_id)));
+            let known: BTreeSet<String> =
+                expected.hosts.iter().map(|h| h.host_id.clone()).collect();
+            expected.hosts.extend(
+                roster
+                    .hosts
+                    .into_iter()
+                    .filter(|h| !known.contains(&h.host_id)),
+            );
             expected.unenrolled = roster.unenrolled;
             expected.decommissioned.extend(roster.retired);
         }
@@ -191,8 +195,8 @@ fn credential(path: &Path) -> PathBuf {
 
 impl Settings {
     pub fn load(path: &Path) -> Result<Self> {
-        let settings: Self = serde_json::from_slice(&std::fs::read(path)?)
-            .context("parsing observer inventory")?;
+        let settings: Self =
+            serde_json::from_slice(&std::fs::read(path)?).context("parsing observer inventory")?;
         anyhow::ensure!(
             matches!(settings.mode.as_str(), "shadow" | "active"),
             "observer mode must be shadow or active"
@@ -268,7 +272,12 @@ pub async fn poll(client: &reqwest::Client, host: &Host) -> Poll {
     };
     match Observations::parse(&body, &host.host_id, &host.config_digest) {
         Err(rejection) => Poll::Failed(rejection.reason()),
-        Ok(doc) if host.checks.iter().any(|c| !doc.checks.iter().any(|d| &d.name == c)) => {
+        Ok(doc)
+            if host
+                .checks
+                .iter()
+                .any(|c| !doc.checks.iter().any(|d| &d.name == c)) =>
+        {
             Poll::Failed("observation lacks configured checks")
         }
         Ok(doc) => Poll::Valid(doc),
@@ -282,7 +291,9 @@ pub async fn edge(client: &reqwest::Client, host: &Host) -> Result<()> {
     };
     let response = client.get(url(host, "/v1/edge-metrics")).send().await?;
     anyhow::ensure!(response.status().is_success(), "edge metrics unavailable");
-    let body = read_limited(response).await.context("edge metrics over limit")?;
+    let body = read_limited(response)
+        .await
+        .context("edge metrics over limit")?;
     let next = output.with_extension("next");
     std::fs::write(&next, body)?;
     std::fs::rename(next, output)?;
@@ -414,7 +425,10 @@ impl Tracker {
         for host_id in &expected.decommissioned {
             let prefix = format!("host:{host_id}:");
             for incident in existing {
-                if let Some(c) = incident.condition.as_ref().filter(|c| c.key.starts_with(&prefix))
+                if let Some(c) = incident
+                    .condition
+                    .as_ref()
+                    .filter(|c| c.key.starts_with(&prefix))
                 {
                     let mut retired = c.clone();
                     retired.retired = true;
@@ -451,7 +465,11 @@ pub fn from_env() -> Result<Option<Settings>> {
 
 /// One host's entry in the former sampler's `hosts.json` shape. Properties a
 /// check does not report are left out, never filled in.
-pub fn snapshot_entry(host: &Host, snapshot: &Snapshot, doc: Option<&Observations>) -> serde_json::Value {
+pub fn snapshot_entry(
+    host: &Host,
+    snapshot: &Snapshot,
+    doc: Option<&Observations>,
+) -> serde_json::Value {
     let mut entry = serde_json::Map::new();
     entry.insert("host_id".into(), host.host_id.clone().into());
     if let Some(size) = &snapshot.size {
@@ -479,15 +497,24 @@ pub fn snapshot_entry(host: &Host, snapshot: &Snapshot, doc: Option<&Observation
     put("memory_total_bytes", value("memory", "total_bytes"));
     put("swap_total_bytes", value("swap", "total_bytes"));
     put("swap_free_bytes", value("swap", "free_bytes"));
-    for disk in [format!("volume:{}", snapshot.data_path), format!("disk:{}", snapshot.data_path)] {
-        if let (Some(a), Some(t)) = (value(&disk, "available_bytes"), value(&disk, "usable_bytes")) {
+    for disk in [
+        format!("volume:{}", snapshot.data_path),
+        format!("disk:{}", snapshot.data_path),
+    ] {
+        if let (Some(a), Some(t)) = (
+            value(&disk, "available_bytes"),
+            value(&disk, "usable_bytes"),
+        ) {
             put("disk_available_bytes", Some(a));
             put("disk_total_bytes", Some(t));
             break;
         }
     }
     let main = snapshot.unit.to_lowercase();
-    put("restarts", value(&format!("unit:{main}:restarts"), "restarts"));
+    put(
+        "restarts",
+        value(&format!("unit:{main}:restarts"), "restarts"),
+    );
     put("oom_kills", value(&format!("unit:{main}:oom"), "oom_kills"));
     let mut units = serde_json::Map::new();
     for check in &doc.checks {
@@ -608,7 +635,13 @@ pub async fn run(
         }
         let enrolled = enrollment(&store, &expected)?;
         let conditions = tracker.conditions(&expected, &enrolled, &store.incidents()?, now);
-        store.evaluate(&conditions, now, settings.shadow(), &environment, &dashboard)?;
+        store.evaluate(
+            &conditions,
+            now,
+            settings.shadow(),
+            &environment,
+            &dashboard,
+        )?;
     }
 }
 
@@ -683,8 +716,12 @@ mod tests {
             let expected = Expected::of(s, None);
             let enrolled = enrollment(&self.store, &expected).unwrap();
             let existing = self.store.incidents().unwrap();
-            let c = self.tracker.conditions(&expected, &enrolled, &existing, now);
-            self.store.evaluate(&c, now, s.shadow(), "test", "").unwrap();
+            let c = self
+                .tracker
+                .conditions(&expected, &enrolled, &existing, now);
+            self.store
+                .evaluate(&c, now, s.shadow(), "test", "")
+                .unwrap();
         }
 
         fn active(&self, key: &str) -> bool {
@@ -712,23 +749,32 @@ mod tests {
     fn warning_propagates_and_two_distinct_healthy_samples_recover() {
         let s = settings(&["w1"], &[]);
         let mut h = Harness::new();
-        h.tracker.record("w1", doc("w1", 1000, Status::Warning), 1000);
+        h.tracker
+            .record("w1", doc("w1", 1000, Status::Warning), 1000);
         h.tick(&s, 1000);
         assert!(h.active(DISK));
         assert!(h.outbox()[0].contains("12.0% available"));
-        h.tracker.record("w1", doc("w1", 1015, Status::Healthy), 1015);
+        h.tracker
+            .record("w1", doc("w1", 1015, Status::Healthy), 1015);
         h.tick(&s, 1015);
         // The same document again, as a poll between collections returns it.
-        h.tracker.record("w1", doc("w1", 1015, Status::Healthy), 1020);
+        h.tracker
+            .record("w1", doc("w1", 1015, Status::Healthy), 1020);
         h.tick(&s, 1020);
         assert!(h.active(DISK), "a repeated snapshot is not a second sample");
         // Loss of the host between samples never recovers.
-        h.tracker.record("w1", Poll::Failed("sidecar unreachable or authentication failed"), 1025);
+        h.tracker.record(
+            "w1",
+            Poll::Failed("sidecar unreachable or authentication failed"),
+            1025,
+        );
         h.tick(&s, 1025);
         assert!(h.active(DISK));
-        h.tracker.record("w1", doc("w1", 1030, Status::Healthy), 1030);
+        h.tracker
+            .record("w1", doc("w1", 1030, Status::Healthy), 1030);
         h.tick(&s, 1030);
-        h.tracker.record("w1", doc("w1", 1045, Status::Healthy), 1045);
+        h.tracker
+            .record("w1", doc("w1", 1045, Status::Healthy), 1045);
         h.tick(&s, 1045);
         assert!(!h.active(DISK));
         assert!(h.outbox().last().unwrap().contains("RECOVERED"));
@@ -739,7 +785,8 @@ mod tests {
     fn rejected_and_stale_observations_are_unknown_and_coverage_warns_after_45s() {
         let s = settings(&["w1"], &[]);
         let mut h = Harness::new();
-        h.tracker.record("w1", doc("w1", 1000, Status::Warning), 1000);
+        h.tracker
+            .record("w1", doc("w1", 1000, Status::Warning), 1000);
         h.tick(&s, 1000);
         for reason in [
             pir_host_observations::Rejection::ConfigMismatch.reason(),
@@ -758,7 +805,8 @@ mod tests {
         assert!(h.outbox().last().unwrap().contains("authentication failed"));
         // A valid but stale document is unknown for its checks.
         let s2 = settings(&["w1"], &[]);
-        h.tracker.record("w1", doc("w1", 1000, Status::Healthy), 1050);
+        h.tracker
+            .record("w1", doc("w1", 1000, Status::Healthy), 1050);
         let e2 = Expected::of(&s2, None);
         let c = h
             .tracker
@@ -772,16 +820,19 @@ mod tests {
     fn missing_initial_hosts_alert_and_enrollment_outlives_the_inventory() {
         let mut h = Harness::new();
         let s = settings(&["w1", "w2"], &[]);
-        h.tracker.record("w2", doc("w2", 1000, Status::Healthy), 1000);
+        h.tracker
+            .record("w2", doc("w2", 1000, Status::Healthy), 1000);
         h.tick(&s, 1040);
         assert!(!h.active(COVERAGE));
-        h.tracker.record("w2", doc("w2", 1045, Status::Healthy), 1045);
+        h.tracker
+            .record("w2", doc("w2", 1045, Status::Healthy), 1045);
         h.tick(&s, 1046);
         assert!(h.active(COVERAGE), "a never-observed host is detected");
         assert!(!h.active("host:w2:coverage"));
         // w1 leaves the roster without decommissioning: still expected.
         let shrunk = settings(&["w2"], &[]);
-        h.tracker.record("w2", doc("w2", 1050, Status::Healthy), 1050);
+        h.tracker
+            .record("w2", doc("w2", 1050, Status::Healthy), 1050);
         h.tick(&shrunk, 1050);
         assert!(h.active(COVERAGE));
         assert!(h.outbox().last().unwrap().contains("coverage"));
@@ -801,7 +852,8 @@ mod tests {
     fn incidents_and_pending_delivery_survive_an_apm_restart() {
         let s = settings(&["w1"], &[]);
         let mut h = Harness::new();
-        h.tracker.record("w1", doc("w1", 1000, Status::Critical), 1000);
+        h.tracker
+            .record("w1", doc("w1", 1000, Status::Critical), 1000);
         h.tick(&s, 1000);
         let pending = h.outbox().len();
         // Restart: a new tracker and store on the same database.
@@ -810,7 +862,8 @@ mod tests {
         h.tick(&s, 1010);
         assert!(h.active(DISK), "unknown after restart keeps the incident");
         assert_eq!(h.outbox().len(), pending, "no duplicate FIRED");
-        h.tracker.record("w1", doc("w1", 1015, Status::Critical), 1015);
+        h.tracker
+            .record("w1", doc("w1", 1015, Status::Critical), 1015);
         h.tick(&s, 1015);
         assert_eq!(h.outbox().len(), pending);
         assert!(h.outbox()[0].contains("critical"));
@@ -844,7 +897,8 @@ mod tests {
         let w3 = c.iter().find(|c| c.key == "host:w3:coverage").unwrap();
         assert_eq!(w3.firing, Some(true));
         assert_eq!(w3.observed, "roster member has no sidecar enrollment");
-        h.tracker.record("w1", doc("w1", 1046, Status::Healthy), 1046);
+        h.tracker
+            .record("w1", doc("w1", 1046, Status::Healthy), 1046);
         assert!(roster_hosts(&dir.path().join("absent.json")).is_err());
     }
 
@@ -892,6 +946,9 @@ mod tests {
         assert!(unit["memory_max_bytes"].is_null());
         assert_eq!(unit["oom_kills"], 2);
         let gone = snapshot_entry(&host, &snapshot, None);
-        assert_eq!((gone["at"].as_u64(), gone["host_id"].as_str()), (Some(0), Some("w1")));
+        assert_eq!(
+            (gone["at"].as_u64(), gone["host_id"].as_str()),
+            (Some(0), Some("w1"))
+        );
     }
 }

@@ -147,7 +147,10 @@ pub async fn serve(
 /// Plain loopback readiness for the deploy engine; it reveals no observations.
 pub async fn serve_health(listener: TcpListener, body: watch::Receiver<Bytes>) -> Result<()> {
     loop {
-        let (stream, _) = listener.accept().await.context("accepting health connection")?;
+        let (stream, _) = listener
+            .accept()
+            .await
+            .context("accepting health connection")?;
         let body = body.clone();
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {

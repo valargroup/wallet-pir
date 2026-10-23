@@ -404,22 +404,47 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let mut state = State::default();
-        let c = unit_checks("Pir.service", Some(&sample(2, 0, "active")), &mut state, 100);
+        let c = unit_checks(
+            "Pir.service",
+            Some(&sample(2, 0, "active")),
+            &mut state,
+            100,
+        );
         assert_eq!(status(&c, "unit:pir.service:restarts"), Status::Healthy);
         let anon = &c[0].values.iter().find(|v| v.name == "memory_anon_bytes");
         assert_eq!(anon.unwrap().value, 42.);
-        let c = unit_checks("Pir.service", Some(&sample(3, 1, "active")), &mut state, 115);
+        let c = unit_checks(
+            "Pir.service",
+            Some(&sample(3, 1, "active")),
+            &mut state,
+            115,
+        );
         assert_eq!(status(&c, "unit:pir.service:restarts"), Status::Warning);
         assert_eq!(status(&c, "unit:pir.service:oom"), Status::Critical);
         // The sidecar restarts: the baseline and the growth time are retained.
         state.store(&path).unwrap();
         let mut state = State::load(&path);
-        let c = unit_checks("Pir.service", Some(&sample(3, 1, "active")), &mut state, 130);
+        let c = unit_checks(
+            "Pir.service",
+            Some(&sample(3, 1, "active")),
+            &mut state,
+            130,
+        );
         assert_eq!(status(&c, "unit:pir.service:oom"), Status::Critical);
-        let c = unit_checks("Pir.service", Some(&sample(3, 1, "active")), &mut state, 415);
+        let c = unit_checks(
+            "Pir.service",
+            Some(&sample(3, 1, "active")),
+            &mut state,
+            415,
+        );
         assert_eq!(status(&c, "unit:pir.service:oom"), Status::Healthy);
         // A new cgroup resets the counter to zero: no event.
-        let c = unit_checks("Pir.service", Some(&sample(0, 0, "failed")), &mut state, 430);
+        let c = unit_checks(
+            "Pir.service",
+            Some(&sample(0, 0, "failed")),
+            &mut state,
+            430,
+        );
         assert_eq!(status(&c, "unit:pir.service:oom"), Status::Healthy);
         assert_eq!(status(&c, "unit:pir.service:restarts"), Status::Healthy);
         assert_eq!(status(&c, "unit:pir.service:active"), Status::Critical);
@@ -430,7 +455,8 @@ mod tests {
     #[test]
     fn memory_keeps_its_dwell_and_certificate_its_thresholds() {
         let mut state = State::default();
-        let info = meminfo("MemTotal: 1000 kB\nMemAvailable: 100 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n");
+        let info =
+            meminfo("MemTotal: 1000 kB\nMemAvailable: 100 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n");
         assert_eq!(memory(&info, &mut state, 0)[0].status, Status::Healthy);
         assert_eq!(memory(&info, &mut state, 119)[0].status, Status::Healthy);
         assert_eq!(memory(&info, &mut state, 120)[0].status, Status::Warning);

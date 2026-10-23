@@ -116,10 +116,7 @@ impl Config {
                 "required volume path must be an absolute non-root mount path"
             );
             ensure!(
-                !v.uuid.is_empty()
-                    && v.uuid
-                        .bytes()
-                        .all(|b| b.is_ascii_hexdigit() || b == b'-'),
+                !v.uuid.is_empty() && v.uuid.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'),
                 "invalid volume uuid"
             );
         }

@@ -33,9 +33,27 @@ async fn apm_accepts_only_authenticated_matching_documents() {
     let d = dir.path();
     let monitoring = ca();
     std::fs::write(d.join("ca.pem"), monitoring.0.pem()).unwrap();
-    leaf(d, "server", &monitoring, "w1.pir-monitoring", ExtendedKeyUsagePurpose::ServerAuth);
-    leaf(d, "collector", &monitoring, "pir-apm-collector", ExtendedKeyUsagePurpose::ClientAuth);
-    leaf(d, "peer", &monitoring, "w2.pir-monitoring", ExtendedKeyUsagePurpose::ClientAuth);
+    leaf(
+        d,
+        "server",
+        &monitoring,
+        "w1.pir-monitoring",
+        ExtendedKeyUsagePurpose::ServerAuth,
+    );
+    leaf(
+        d,
+        "collector",
+        &monitoring,
+        "pir-apm-collector",
+        ExtendedKeyUsagePurpose::ClientAuth,
+    );
+    leaf(
+        d,
+        "peer",
+        &monitoring,
+        "w2.pir-monitoring",
+        ExtendedKeyUsagePurpose::ClientAuth,
+    );
 
     let file = serde_json::json!({
         "host_id": "w1",
@@ -105,7 +123,13 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         "reported host identity does not match enrollment"
     );
     assert_eq!(
-        failed(poll(settings("collector"), host("w1", &loaded.digest, &["volume:/srv/x"])).await),
+        failed(
+            poll(
+                settings("collector"),
+                host("w1", &loaded.digest, &["volume:/srv/x"])
+            )
+            .await
+        ),
         "observation lacks configured checks"
     );
     assert_eq!(

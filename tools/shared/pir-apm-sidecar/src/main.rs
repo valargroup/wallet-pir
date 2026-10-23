@@ -99,5 +99,11 @@ async fn main() -> Result<()> {
         pir_host_observations::PATH,
         config.listen
     );
-    server::serve(listener, tls_config, config.tls.collector_identity.clone(), rx).await
+    server::serve(
+        listener,
+        tls_config,
+        config.tls.collector_identity.clone(),
+        rx,
+    )
+    .await
 }
