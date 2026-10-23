@@ -536,6 +536,28 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
         self.assertEqual(len(self.fake.log), before)
         self.assertTrue(any('pinned running invocation' in line for line in lines), lines)
 
+    def test_pinned_restarted_provider_can_recover_before_its_listener_opens(self):
+        self.select_recent(unready=True)
+        self.place('v12', provider_shard_dir('transparent-v12-recent.service') + '/active.invalid.json', ['ab' * 32])
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (0, 'connection refused') if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
+    def test_a_closed_listener_without_saved_revocations_is_not_a_recovery_predecessor(self):
+        self.select_recent(unready=True)
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (0, 'connection refused') if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        for revoked in [None, [], ['not-a-digest']]:
+            self.place('v12', provider_shard_dir('transparent-v12-recent.service') + '/active.invalid.json', revoked)
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+            self.assertTrue(any('not refusing reorganized history' in line for line in lines), lines)
+
     def test_worker_selection_refuses_unknown_duplicate_and_empty_targets(self):
         for selected in [[], ['unknown'], ['worker@v12:transparent-v12-recent.service'] * 2]:
             self.write_request(lambda r: r.update(selected_workers=selected))

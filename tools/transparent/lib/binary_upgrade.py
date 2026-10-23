@@ -472,6 +472,17 @@ class Upgrade:
                 invalidated = status == 503 and json.loads(body).get('error') == 'publication invalidated by reorg'
             except (ValueError, AttributeError):
                 invalidated = False
+            if not invalidated and status == 0:
+                # A restarted, fenced owner cannot open its wallet listener
+                # before recovery. Its durable revocations still identify this
+                # exact pinned predecessor as the one requiring repair.
+                try:
+                    _, config = self.provider_config(ex, target)
+                    revoked = json.loads(ex.read(target.host, config['shard_dir'].rstrip('/') + '/active.invalid.json') or 'null')
+                    invalidated = isinstance(revoked, list) and bool(revoked) and all(
+                        isinstance(digest, str) and SHA256.fullmatch(digest) for digest in revoked)
+                except (KeyError, TypeError, ValueError):
+                    invalidated = False
             problem_if(not invalidated, '%s predecessor is not refusing reorganized history' % target.key, problems)
         elif repair and state['exe_sha256'] != self.request['release']['binary_sha256']:
             # Only the recorded failed rollback process may lack readiness.

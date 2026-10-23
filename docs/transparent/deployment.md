@@ -2081,6 +2081,8 @@ For a recent worker already refusing history after a reorganization,
 `unready_predecessors` may map a selected worker key to
 `{binary_sha256, invocation_id}`. Both pins must match its running predecessor,
 and `/v2/shards/init` must return 503 with `publication invalidated by reorg`.
+When a restarted owner has not opened that listener yet, a nonempty valid
+`active.invalid.json` in its pinned provider root supplies the revocation evidence.
 This exception admits only that predecessor; its replacement must meet the
 current-publication and warm-readiness requirements. It cannot combine with
 `repair`, which remains specific to a recorded failed rollback.
