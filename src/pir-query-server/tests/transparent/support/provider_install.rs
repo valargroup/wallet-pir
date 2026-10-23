@@ -153,13 +153,20 @@ fn free_address() -> String {
     let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     socket.local_addr().unwrap().to_string()
 }
-/// Starts the host on material its product must refuse; returns the product's
-/// logged refusal once management reports it failed and never ready.
-async fn refused_start(
+/// Fixture publisher mode serving the valid publication at the next revision.
+const REPLACEMENT: usize = 3;
+/// Starts the host on material its product must refuse. Ordinary startup
+/// keeps retrying with checked inputs: the product stays running but unready,
+/// never activates the material and logs why. Once the publisher offers valid
+/// material it recovers and the host becomes ready. Returns the log written
+/// while the material was refused.
+async fn refused_until_valid(
     binary: &Path,
     config: &Path,
     document: &serde_json::Value,
     cwd: &Path,
+    state: &Path,
+    fault: &std::sync::atomic::AtomicUsize,
 ) -> String {
     let log = cwd.join("refused-start.log");
     let file = std::fs::File::create(&log).unwrap();
@@ -174,31 +181,68 @@ async fn refused_start(
         .stdout(file)
         .spawn()
         .unwrap();
-    let management = format!(
-        "http://{}/health",
-        document["management_listen"].as_str().unwrap()
-    );
-    let mut failed = false;
+    let management = document["management_listen"].as_str().unwrap().to_string();
+    let health = async || -> Option<(u16, serde_json::Value)> {
+        let response = reqwest::get(format!("http://{management}/ready"))
+            .await
+            .ok()?;
+        Some((response.status().as_u16(), response.json().await.ok()?))
+    };
+    let mut refused = None;
     for _ in 0..3000 {
-        if let Ok(response) = reqwest::get(&management).await {
-            let health: serde_json::Value = response.json().await.unwrap();
-            if health["products"]["transparent_history"]["phase"] == "failed" {
-                assert_eq!(health["ready"], false);
-                failed = true;
-                break;
-            }
-        }
         assert!(
             child.try_wait().unwrap().is_none(),
             "host exited: {}",
             std::fs::read_to_string(&log).unwrap()
         );
+        if let Some((code, report)) = health().await {
+            let product = &report["products"]["transparent_history"];
+            assert_eq!(product["phase"], "running", "{report}");
+            assert_eq!(
+                product["ready"], false,
+                "refused material made the product ready"
+            );
+            assert_eq!(code, 503, "{report}");
+            let text = std::fs::read_to_string(&log).unwrap();
+            if text.contains("initial synchronization refused; retrying") {
+                refused = Some(text);
+                break;
+            }
+        }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    let refused = refused.expect("refused material was not reported as retried");
+    assert!(
+        !state.join("active.json").exists(),
+        "refused material became active"
+    );
+    fault.store(REPLACEMENT, std::sync::atomic::Ordering::Release);
+    let mut recovered = false;
+    for _ in 0..3000 {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "host exited: {}",
+            std::fs::read_to_string(&log).unwrap()
+        );
+        if let Some((200, report)) = health().await {
+            assert_eq!(report["products"]["transparent_history"]["ready"], true);
+            recovered = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(
+        recovered,
+        "valid material did not recover the product: {}",
+        std::fs::read_to_string(&log).unwrap()
+    );
+    assert!(
+        state.join("active.json").exists(),
+        "valid material is not active"
+    );
     child.kill().await.unwrap();
     child.wait().await.unwrap();
-    assert!(failed, "refused product was not reported failed");
-    std::fs::read_to_string(&log).unwrap()
+    refused
 }
 async fn status(origin: &str) -> serde_json::Value {
     reqwest::get(format!("{origin}/v1/provider-status"))
@@ -369,6 +413,11 @@ async fn installation_case(case: Case) {
         );
         alternate_current.push(serde_json::to_vec(&pointer).unwrap());
     }
+    // Replacement material arrives as the publisher's next pointer revision:
+    // a provider never accepts different contents under a revision it saw.
+    let mut replacement = current.clone();
+    replacement.revision += 1;
+    alternate_current.push(serde_json::to_vec(&replacement).unwrap());
     let alternate_current = Arc::new(alternate_current);
     let inventory_fault = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let fault = inventory_fault.clone();
@@ -570,14 +619,15 @@ async fn installation_case(case: Case) {
                 "{name} refused for another reason: {error}"
             );
             assert!(!state.join("active.json").exists(), "{name} became active");
-            // Ordinary startup refuses the same material: the product fails
-            // and is never ready, while the host reports it as failed.
-            let error = refused_start(&binary, &config, &variant, root).await;
+            // Ordinary startup refuses the same material without activating
+            // it and stays unready while it retries; valid material recovers it.
+            let error =
+                refused_until_valid(&binary, &config, &variant, root, &state, &inventory_fault)
+                    .await;
             assert!(
                 error.contains("runtime"),
                 "{name} start refused for another reason: {error}"
             );
-            assert!(!state.join("active.json").exists(), "{name} became active");
         }
         inventory_fault.store(0, std::sync::atomic::Ordering::Release);
         let control = tokio::process::Command::new(&binary)
