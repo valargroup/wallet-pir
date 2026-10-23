@@ -1328,13 +1328,44 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
         use zakura_pir_client::status as wallet;
         for (step, mempool) in [false, true, true].into_iter().enumerate() {
             if step > 0 {
+                // Wallet work on the preceding view can take seconds. Model
+                // the publisher's continuing observations of the next state,
+                // before loading it; never renew a candidate during its load.
+                let mut observed = if step == 1 {
+                    newer.clone()
+                } else {
+                    newest.clone()
+                };
+                observed.manifest.generation = 4 + 2 * step as u64;
+                let object = publish_inventory(&source, &mut observed);
+                *source.current.write().unwrap() = Current {
+                    scope: scope(NETWORK, SALT),
+                    sequence: 7 + 2 * step as u64,
+                    ..fixture::publishing(&observed, &object)
+                };
+                if step == 1 {
+                    // New material still appears during this load as well.
+                    let mut advancing = newest.clone();
+                    advancing.manifest.generation = 7;
+                    let object = publish_inventory(&source, &mut advancing);
+                    *source.publish_on_request.write().unwrap() = Some((
+                        changed_unit.sha256.clone(),
+                        Current {
+                            scope: scope(NETWORK, SALT),
+                            sequence: 10,
+                            ..fixture::publishing(&advancing, &object)
+                        },
+                    ));
+                } else {
+                    newest = observed;
+                }
                 assert_eq!(
                     committed(task.synchronize().await.unwrap()).0,
-                    4 + step as u64
+                    4 + 2 * step as u64
                 );
                 assert_eq!(
                     committed(router_task.synchronize().await.unwrap()).0,
-                    4 + step as u64
+                    4 + 2 * step as u64
                 );
             }
             let snapshot = fixture::snapshot(32, mempool).unwrap();
@@ -1385,7 +1416,14 @@ async fn changed_material_during_loading_still_allows_forward_progress() {
     }
     assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
     assert!(source.publish_on_request.read().unwrap().is_none());
-    assert_eq!(task.floor().envelope().unwrap().sequence, 9);
+    assert_eq!(
+        task.floor().envelope().unwrap().sequence,
+        if cfg!(feature = "native-reinspiring") {
+            11
+        } else {
+            9
+        }
+    );
     server.abort();
 }
 
