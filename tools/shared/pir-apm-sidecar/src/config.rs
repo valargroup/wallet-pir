@@ -16,6 +16,9 @@ pub struct Config {
     pub host_id: String,
     #[serde(default = "default_listen")]
     pub listen: SocketAddr,
+    /// Loopback-only deploy readiness: identity and whether a collection exists.
+    #[serde(default = "default_health")]
+    pub health_listen: SocketAddr,
     pub tls: Tls,
     #[serde(default)]
     pub required_volumes: Vec<Volume>,
@@ -62,6 +65,9 @@ pub struct Hook {
 fn default_listen() -> SocketAddr {
     SocketAddr::from(([0, 0, 0, 0], pir_host_observations::DEFAULT_PORT))
 }
+fn default_health() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], pir_host_observations::DEFAULT_PORT + 1))
+}
 fn default_hook_timeout() -> u64 {
     5
 }
@@ -89,6 +95,10 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         use pir_host_observations::valid_name;
         ensure!(valid_name(&self.host_id, 80), "invalid host_id");
+        ensure!(
+            self.health_listen.ip().is_loopback(),
+            "health_listen must be a loopback address"
+        );
         ensure!(
             !self.tls.collector_identity.is_empty(),
             "collector_identity required"

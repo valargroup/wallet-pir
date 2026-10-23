@@ -13,6 +13,10 @@ fn parse_args() -> Result<(PathBuf, bool)> {
         match arg.as_str() {
             "--config" => config = args.next().map(PathBuf::from),
             "--check" => check = true,
+            "--help" => {
+                println!("usage: pir-apm-sidecar --config FILE [--check]");
+                std::process::exit(0);
+            }
             _ => anyhow::bail!("usage: pir-apm-sidecar --config FILE [--check]"),
         }
     }
@@ -24,13 +28,7 @@ async fn main() -> Result<()> {
     let (path, check) = parse_args()?;
     let loaded = config::Config::load(&path)?;
     let config = loaded.config;
-    let tls = &config.tls;
-    let identity = server::load_identity(
-        &config::credential(&tls.cert),
-        &config::credential(&tls.key),
-    )?;
-    let not_after = server::not_after(&identity.chain[0]);
-    let tls_config = server::tls_config(identity, &config::credential(&tls.client_ca))?;
+    // Validates the configuration only: credentials are loaded by the unit at start.
     if check {
         println!(
             "{}",
@@ -39,9 +37,32 @@ async fn main() -> Result<()> {
         );
         return Ok(());
     }
+    let tls = &config.tls;
+    let identity = server::load_identity(
+        &config::credential(&tls.cert),
+        &config::credential(&tls.key),
+    )?;
+    let not_after = server::not_after(&identity.chain[0]);
+    let tls_config = server::tls_config(identity, &config::credential(&tls.client_ca))?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
         .with_context(|| format!("binding {}", config.listen))?;
+    let health_listener = tokio::net::TcpListener::bind(config.health_listen)
+        .await
+        .with_context(|| format!("binding {}", config.health_listen))?;
+    let binary_sha256 = std::fs::read("/proc/self/exe")
+        .map(|b| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b)))
+        .unwrap_or_default();
+    let health = |ready: bool| {
+        Bytes::from(
+            serde_json::json!({"host_id": config.host_id, "config_digest": loaded.digest,
+                "binary_sha256": binary_sha256, "ready": ready})
+            .to_string(),
+        )
+    };
+    let (health_tx, health_rx) = tokio::sync::watch::channel(health(false));
+    let ready_body = health(true);
+    tokio::spawn(server::serve_health(health_listener, health_rx));
     let (tx, rx) = tokio::sync::watch::channel(server::Cache::default());
     let state_path = PathBuf::from(&config.state_path);
     let incarnation = pir_apm_sidecar::incarnation();
@@ -69,6 +90,7 @@ async fn main() -> Result<()> {
                 observations: Bytes::from(serde_json::to_vec(&doc).expect("serializable")),
                 edge_metrics: edge.map(Bytes::from),
             });
+            health_tx.send_replace(ready_body.clone());
         }
     });
     eprintln!(

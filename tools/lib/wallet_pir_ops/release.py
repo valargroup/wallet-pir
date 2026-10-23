@@ -40,6 +40,9 @@ BINARIES = {
     # tools/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
     # exact check, and the standalone probe pir-monitor runs.
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
+    # Monitoring, deployable apart from any serving release: the central APM,
+    # the per-host sidecar and the independent public monitor.
+    'pir-monitoring': ['pir-apm', 'pir-apm-sidecar', 'pir-monitor'],
 }
 FILES = {
     'pir-publisher': ['tools/deploy/publisher/pir-publisher.service',
@@ -66,6 +69,10 @@ FILES = {
                    'tools/status/deploy/status-worker.example.json', 'tools/status/deploy/status-router.example.json'],
     'receiver-pir': ['tools/receiver/digitalocean/receiver-pir.service.in', 'tools/receiver/digitalocean/Caddyfile',
                      'tools/receiver/digitalocean/cloud-init.yaml'],
+    'pir-monitoring': ['tools/shared/pir-apm-sidecar/deploy/pir-apm-sidecar.service.in',
+                       'tools/shared/pir-apm-sidecar/deploy/monitoring-inventory.example.json',
+                       'tools/enhance/deploy/pir-apm.service', 'tools/enhance/deploy/pir-apm-observability.conf',
+                       'tools/enhance/deploy/pir-monitor.service'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['tools/enhance/deploy/native-tag-integration.md']
 # Kinds built with their own features and target directory, so only assembled
@@ -118,7 +125,8 @@ def service_family(kind):
         return 'receiver'
     if kind.startswith('transparent-'):
         return 'transparent'
-    if kind in ('enhance-pir', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'pir-publisher'):
+    if kind in ('enhance-pir', 'enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir', 'pir-publisher',
+                'pir-monitoring'):
         return 'enhance'
     raise ValueError('unknown release artifact kind')
 

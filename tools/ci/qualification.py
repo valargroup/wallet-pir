@@ -20,7 +20,7 @@ FAMILIES = {'ops': 'Operations', 'receiver': 'Receiver',
 KINDS = {'ops': ['wallet-pir-ops'], 'receiver': ['receiver-pir'],
          'transparent': ['transparent-filter', 'transparent-shard', 'transparent-publisher',
                          'transparent-txid-display'],
-         'enhance': ['enhance-pir', 'enhance-pir-native', 'status-pir', 'pir-publisher']}
+         'enhance': ['enhance-pir', 'pir-monitoring', 'enhance-pir-native', 'status-pir', 'pir-publisher']}
 
 
 def history(repo):
@@ -134,8 +134,9 @@ def build(family):
     else:
         # v7 bundle: the query server enables Enhance serving and not the native protocol.
         command += ['-p', 'pir-publisher', '-p', 'enhance-pir-client', '-p', 'enhance-pir-load-test',
-                    '-p', 'pir-apm', '-p', 'pir-query-server', '--features', 'pir-query-server/enhance,pir-publisher/enhance']
-        for name in release.BINARIES['enhance-pir']:
+                    '-p', 'pir-apm', '-p', 'pir-apm-sidecar', '-p', 'pir-monitor', '-p', 'pir-query-server',
+                    '--features', 'pir-query-server/enhance,pir-publisher/enhance']
+        for name in dict.fromkeys(release.BINARIES['enhance-pir'] + release.BINARIES['pir-monitoring']):
             command += ['--bin', name]
     run(command, stage=f'compile:release-{family}')
 
