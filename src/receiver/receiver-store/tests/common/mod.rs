@@ -1,6 +1,6 @@
 //! Fixtures shared by the receiver services' tests, included with `#[path]`.
 #![allow(dead_code)]
-use receiver_directory::{
+use zakura_pir_publisher::receiver::{
     snapshot::{Manifest, PROFILE},
     Payment, RawRecord, ReceiverBytes,
 };

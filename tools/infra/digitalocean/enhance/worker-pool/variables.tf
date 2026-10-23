@@ -30,17 +30,3 @@ variable "ssh_key_ids" {
     error_message = "Supply distinct registered SSH keys including Roman's key."
   }
 }
-variable "coordinator_private_ipv4" {
-  type = string
-  validation {
-    condition     = can(regex("^[0-9.]+$", var.coordinator_private_ipv4)) && can(cidrhost("${var.coordinator_private_ipv4}/32", 0))
-    error_message = "Supply the v4 coordinator's private IPv4 address."
-  }
-}
-variable "operator_ssh_cidrs" {
-  type = list(string)
-  validation {
-    condition     = length(var.operator_ssh_cidrs) > 0 && alltrue([for cidr in var.operator_ssh_cidrs : can(cidrhost(cidr, 0)) && try(tonumber(split("/", cidr)[1]) > 0, false)])
-    error_message = "Supply explicit operator SSH CIDRs, excluding all-address ranges."
-  }
-}

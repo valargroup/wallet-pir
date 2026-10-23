@@ -1,8 +1,3 @@
-variable "allowed_ssh_cidrs" {
-  description = "Operator CIDRs allowed to SSH to firewalled workers and auxiliary hosts; the coordinator has no cloud firewall."
-  type        = list(string)
-}
-
 variable "cloudflare_zone_id" {
   description = "Cloudflare zone ID for valargroup.dev."
   type        = string
@@ -65,12 +60,6 @@ variable "transparent_loadgen_count" {
   default     = 0
 }
 
-variable "transparent_loadgen_extra_ssh_cidrs" {
-  description = "Additional existing load-generator SSH sources, preserved during shared-state Enhance expansion."
-  type        = list(string)
-  default     = []
-}
-
 variable "transparent_loadgen_size" {
   description = "Load generator size: dedicated CPU, so the client's own PIR work does not bound what the fleet is measured at."
   type        = string
@@ -104,12 +93,6 @@ variable "transparent_router_size" {
   description = "Router size: a 4 GiB Basic host; it proxies and terminates TLS only."
   type        = string
   default     = "s-2vcpu-4gb"
-}
-
-variable "transparent_txid_display_port_enabled" {
-  description = "Open the txid display proof of concept's worker port 8095 to the coordinator and router tags. Set only through `wallet-pir-deploy.py txid-display-deploy --phase firewall`, which writes txid-display.auto.tfvars; retire removes it."
-  type        = bool
-  default     = false
 }
 
 variable "transparent_v12_enabled" {

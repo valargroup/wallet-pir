@@ -10,21 +10,21 @@
 //! A [`FilterSource`] does the same for a sealed shard's receiver filter: every inventory
 //! naming the filter shares one source, and its bytes are read from disk into the same
 //! budget only while a request serves them or the cache keeps them.
-use receiver_directory::{
-    shards::ShardFilter,
-    snapshot::{MAX_ROWS, ROW_BYTES},
-    Hash,
-};
-use receiver_pir::{
-    server::{Server, WitnessServer},
-    Error, Manifest, WitnessManifest,
-};
 use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
+};
+use zakura_pir_query_server::receiver::server::{Server, WitnessServer};
+use zakura_pir_query_server::receiver::session::Error;
+use zakura_pir_query_server::receiver::session::Manifest;
+use zakura_pir_query_server::receiver::session::WitnessManifest;
+use zakura_pir_query_server::receiver::{
+    shards::ShardFilter,
+    snapshot::{MAX_ROWS, ROW_BYTES},
+    Hash,
 };
 
 /// The smallest budget that can always load a table cold once queries in flight finish:
@@ -42,7 +42,7 @@ pub const fn resident_bytes(rows: u32) -> usize {
 /// the setup a session manifest binds.
 fn check_public(public: &[u8], digest: &Hash, rows: u32) -> Result<(), Error> {
     use sha2::Digest;
-    match public.len() == receiver_pir::public_bytes(rows)?
+    match public.len() == zakura_pir_query_server::receiver::native::public_bytes(rows)?
         && sha2::Sha256::digest(public)[..] == digest[..]
     {
         true => Ok(()),
@@ -117,7 +117,10 @@ impl Source {
         manifest: WitnessManifest,
         public: Vec<u8>,
         payments: Arc<Source>,
-        load: impl Fn() -> Result<receiver_directory::witness::Table, Error> + Send + Sync + 'static,
+        load: impl Fn() -> Result<zakura_pir_query_server::receiver::witness::Table, Error>
+            + Send
+            + Sync
+            + 'static,
     ) -> Result<Self, Error> {
         check_public(&public, &manifest.public_digest, manifest.table.rows)?;
         Ok(Self {
@@ -560,8 +563,8 @@ impl Tables {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use receiver_directory::snapshot::Snapshot;
-    use receiver_pir::MIN_ROWS;
+    use zakura_pir_query_server::receiver::session::MIN_ROWS;
+    use zakura_pir_query_server::receiver::snapshot::Snapshot;
 
     /// A minimum-geometry payment table shared with the empty publication fixtures.
     fn snapshot(salt: u8) -> Snapshot {
@@ -598,7 +601,7 @@ mod tests {
     /// Concurrent misses for one filter read it once and share the cached copy.
     #[test]
     fn concurrent_filter_misses_load_once() {
-        use receiver_directory::shards::{Coverage, ShardFilter};
+        use zakura_pir_query_server::receiver::shards::{Coverage, ShardFilter};
         let coverage = Coverage {
             start_height: 100,
             end_height: 101,

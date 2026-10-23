@@ -210,6 +210,9 @@ fn replacement_and_mutation_during_verification_or_before_installation_fail() {
                 if replace {
                     fs::rename(&replacement, &source).unwrap();
                 } else {
+                    // Restoring mtime leaves ctime as the change signal. Cross
+                    // the supported one-second timestamp tick before writing.
+                    std::thread::sleep(Duration::from_millis(1100));
                     writer.write_all_at(&[9], 0).unwrap();
                     writer.set_modified(modified).unwrap();
                 }

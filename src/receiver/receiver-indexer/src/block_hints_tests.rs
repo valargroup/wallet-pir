@@ -1,7 +1,7 @@
 //! Real producer/store/HTTP checks, with an independent list of expected recipients.
-use receiver_directory::blocks::{Batch, Head};
 use receiver_pir_server::{blocks::BlockWindow, Publications};
 use receiver_store::{Config, IndexedBlock, Store};
+use zakura_pir_publisher::receiver::blocks::{Batch, Head};
 
 /// An isolated chain whose first block contains one fixed authenticated-format record.
 fn index(path: &std::path::Path) -> Store {
@@ -221,7 +221,7 @@ fn the_byte_bound_still_limits_the_window() {
         append(&mut store, height, [height as u8; 32], true);
     }
     let all = store.block_filters(10, 0).unwrap();
-    let bytes = |filters: &[receiver_directory::blocks::BlockFilter]| -> usize {
+    let bytes = |filters: &[zakura_pir_publisher::receiver::blocks::BlockFilter]| -> usize {
         filters
             .iter()
             .map(|f| {

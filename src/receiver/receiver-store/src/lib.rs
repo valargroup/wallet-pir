@@ -2,18 +2,18 @@
 //! rewind (empty blocks are retained too), completed Ironwood shards with their final
 //! witness payloads, and the provider feeds' `PayoutStore`.
 //!
-//! Records, placement and publications are wallet-libraries'
-//! `zakura-receiver-directory`; this crate only persists them.
+//! Records, placement and publications are wallet-libraries' (`zakura-pir-publisher`'s
+//! `receiver` module); this crate only persists them.
 pub mod blocks;
 
-use receiver_directory::{
-    snapshot::{self, Manifest, Snapshot, PROFILE, TREE_SIZE},
-    Hash, Payment, RawRecord, ReceiverBytes,
-};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use zakura_pir_publisher::receiver::{
+    snapshot::{self, Manifest, Snapshot, SnapshotPublisherExt, PROFILE, TREE_SIZE},
+    Hash, Payment, RawRecord, ReceiverBytes,
+};
 
 /// Why directory data, coverage or the database was rejected: the directory's own
 /// errors, unchanged, and the database's.
@@ -27,6 +27,8 @@ pub enum Error {
     Capacity,
     #[error("missing continuation page")]
     MissingPage,
+    #[error("receiver directory format needs a newer client")]
+    Unsupported,
     #[error(transparent)]
     Sql(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -35,20 +37,21 @@ pub enum Error {
     Json(#[from] serde_json::Error),
 }
 
-impl From<receiver_directory::Error> for Error {
-    fn from(error: receiver_directory::Error) -> Self {
+impl From<zakura_pir_publisher::receiver::Error> for Error {
+    fn from(error: zakura_pir_publisher::receiver::Error) -> Self {
         match error {
-            receiver_directory::Error::Malformed => Error::Malformed,
-            receiver_directory::Error::Coverage => Error::Coverage,
-            receiver_directory::Error::Capacity => Error::Capacity,
-            receiver_directory::Error::MissingPage => Error::MissingPage,
-            receiver_directory::Error::Json(error) => Error::Json(error),
+            zakura_pir_publisher::receiver::Error::Malformed => Error::Malformed,
+            zakura_pir_publisher::receiver::Error::Coverage => Error::Coverage,
+            zakura_pir_publisher::receiver::Error::Capacity => Error::Capacity,
+            zakura_pir_publisher::receiver::Error::MissingPage => Error::MissingPage,
+            zakura_pir_publisher::receiver::Error::Unsupported => Error::Unsupported,
+            zakura_pir_publisher::receiver::Error::Json(error) => Error::Json(error),
         }
     }
 }
 
 /// Encodes `record` after checking its page bounds.
-fn encode(record: &RawRecord) -> Result<[u8; receiver_directory::RECORD_BYTES], Error> {
+fn encode(record: &RawRecord) -> Result<[u8; zakura_pir_publisher::receiver::RECORD_BYTES], Error> {
     record.encode().map_err(|_| Error::Malformed)
 }
 
@@ -150,7 +153,7 @@ impl Store {
             let legacy = tables
                 && tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM payments WHERE length(record)!=?1)",
-                    [receiver_directory::RECORD_BYTES],
+                    [zakura_pir_publisher::receiver::RECORD_BYTES],
                     |r| r.get::<_, bool>(0),
                 )?;
             if legacy {
@@ -686,14 +689,14 @@ pub fn upgrade(legacy: &Path, path: &Path) -> Result<bool, Error> {
             .collect::<Result<Vec<_>, _>>()?;
         for (position, mut record) in rows {
             if record.len() == LEGACY_RECORD_BYTES {
-                record.resize(receiver_directory::RECORD_BYTES, 0);
+                record.resize(zakura_pir_publisher::receiver::RECORD_BYTES, 0);
                 write.execute(params![position, record])?;
             }
         }
     }
     let malformed: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM payments WHERE length(record)!=?1)",
-        [receiver_directory::RECORD_BYTES],
+        [zakura_pir_publisher::receiver::RECORD_BYTES],
         |r| r.get(0),
     )?;
     if malformed {
@@ -902,7 +905,7 @@ pub fn table(
             ..template.clone()
         };
         match Snapshot::build(manifest, &records) {
-            Err(receiver_directory::Error::Capacity) => continue,
+            Err(zakura_pir_publisher::receiver::Error::Capacity) => continue,
             built => return Ok(built?),
         }
     }

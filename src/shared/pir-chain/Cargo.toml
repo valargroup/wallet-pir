@@ -17,7 +17,7 @@ transparent = []
 enhance = []
 status = []
 ## Receiver indexing; it checks Ironwood tree roots with Orchard's field encoding.
-receiver = ["dep:zakura-receiver-crypto", "dep:orchard"]
+receiver = ["dep:zakura-pir-protocol", "dep:orchard"]
 ## The node JSON-RPC client and its asynchronous reads, for service hosts and tools.
 rpc = ["dep:reqwest", "dep:tokio"]
 ## Synthetic chain fixtures for service tests: raw blocks and transactions built
@@ -50,7 +50,7 @@ zcash_protocol = { package = "zakura-protocol", version = "=4.0.0" }
 # https://github.com/zakura-core/wallet-libraries/pull/287. It depends only on
 # zakura-protocol and two hash crates, so reading transactions does not compile the
 # Sapling, Orchard or Halo2 stack. It checks framing, not curve points or proofs.
-zcash_transaction_wire = { package = "zakura-transaction-wire", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "9e25298198e9c8f3b35abe36f2f0d1873f10da8f" }
+zcash_transaction_wire = { package = "zakura-transaction-wire", git = "https://github.com/zakura-core/wallet-libraries.git", rev = "a7c842fd4f16790ed6739346f44557a97065d242" }
 orchard = { package = "zakura-orchard", version = "=4.0.0", default-features = false, features = ["std", "backend-halo2"], optional = true }
 # Pinned to the same revision as `zakura-chain`, and it must stay that way: the
 # `rocksdb` reader opens the node's database directly, so its format must match
@@ -58,7 +58,7 @@ orchard = { package = "zakura-orchard", version = "=4.0.0", default-features = f
 zakura-state = { git = "https://github.com/zakura-core/zakura.git", rev = "ae0f629bbee85cfe80d89e65d86fb2e931832efe", optional = true }
 # Receiver recovery is wallet-libraries' canonical codec, at the revision the
 # services pin. wallet-pir consumes wallet-libraries, never the reverse.
-zakura-receiver-crypto = { version = "=0.0.1-rc2", optional = true }
+zakura-pir-protocol = { version = "=0.0.1-rc2", default-features = false, features = ["receiver-crypto"], optional = true }
 
 [dev-dependencies]
 axum = "0.7"

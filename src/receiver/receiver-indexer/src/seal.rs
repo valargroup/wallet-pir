@@ -7,14 +7,14 @@
 //! would breach either seals the shard before it; reaching the target seals the shard
 //! after it. A block too large for one table becomes a shard of its own, split into
 //! several segments that each place. Publication never covers a block it cannot place.
-use receiver_directory::{
-    snapshot::{self, Manifest, PROFILE, SLOTS, TREE_SIZE},
-    witness, Hash, RawRecord, ReceiverBytes,
-};
-use receiver_pir::inventory::MAX_SEGMENTS;
 use receiver_store::{Checkpoint, Error, SealedShard, Store, SALT_ATTEMPTS};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use zakura_pir_publisher::receiver::inventory::MAX_SEGMENTS;
+use zakura_pir_publisher::receiver::{
+    snapshot::{self, Manifest, PROFILE, SLOTS, TREE_SIZE},
+    witness, Hash, RawRecord, ReceiverBytes,
+};
 
 /// What a sealed segment holds. These are schema: shards sealed under other limits
 /// are a different partition, so each shard records the rows it was sealed under.
@@ -34,7 +34,8 @@ impl Policy {
     /// capacity is kept for the block that crosses it; placement checks, not the
     /// target, keep every segment valid.
     pub fn new(rows: u32, target: Option<u64>) -> Result<Self, Error> {
-        receiver_pir::validate_rows(rows).map_err(|_| Error::Malformed)?;
+        zakura_pir_publisher::receiver::session::validate_rows(rows)
+            .map_err(|_| Error::Malformed)?;
         let payloads = witness::capacity(snapshot::MAX_ROWS)?;
         let capacity = snapshot::capacity(rows)?.min(payloads);
         let target = target.unwrap_or(capacity - capacity / 7);
@@ -451,12 +452,18 @@ mod tests {
         assert_eq!(counts, [14, 14, 2]);
         let holds = |s: &crate::shards::Built| {
             let row =
-                receiver_directory::snapshot::row_for(&s.snapshot.manifest, &last, 0).unwrap();
+                zakura_pir_publisher::receiver::snapshot::row_for(&s.snapshot.manifest, &last, 0)
+                    .unwrap();
             let bytes =
                 &s.snapshot.data[row * snapshot::ROW_BYTES..(row + 1) * snapshot::ROW_BYTES];
-            receiver_directory::snapshot::lookup_row(&s.snapshot.manifest, &last, 0, bytes)
-                .unwrap()
-                .is_some()
+            zakura_pir_publisher::receiver::snapshot::lookup_row(
+                &s.snapshot.manifest,
+                &last,
+                0,
+                bytes,
+            )
+            .unwrap()
+            .is_some()
         };
         let found: Vec<bool> = built.segments.iter().map(holds).collect();
         assert_eq!(found, [false, false, true]);

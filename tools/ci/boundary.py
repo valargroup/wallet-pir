@@ -200,13 +200,16 @@ RUNTIME_PENDING = {
 }
 
 RECEIVER = {'receiver-pir-server'}
-CODEC = 'zakura-receiver-crypto'
+# Receiver recovery: the protocol package with its `receiver-crypto` feature. The
+# publisher's feature of that name adds witness path construction over it.
+CODEC = 'zakura-pir-protocol'
+CODEC_FEATURE = 'receiver-crypto'
+CODEC_PACKAGES = {CODEC, 'zakura-pir-publisher'}
 # The canonical PIR primitive and protocol packages wallet-libraries owns. A pure
 # package may consume them; their own graphs are checked like the package's.
 CANONICAL = {
     'zakura-filters', 'zakura-pir-protocol', 'zakura-pir-client',
     'zakura-pir-publisher', 'zakura-pir-query-server', 'zakura-pir-server-core',
-    'zakura-receiver-directory', 'zakura-receiver-pir',
 }
 # Retained evidence outside the active product. It is still checked for direct
 # Common and node edges; only the pure-package rules skip it.
@@ -416,7 +419,8 @@ def violations(packages, allowed):
                                     f"{'Common' if name in COMMON else 'node'} package {name}")
             if (package['name'] in PURE and not package.get('preserved')
                     and WALLET_LIBRARIES in dependency['git']
-                    and name not in CANONICAL):
+                    and (name not in CANONICAL
+                         or (name == CODEC and CODEC_FEATURE in dependency.get('features', [])))):
                 problems.append(f"{package['manifest']}: pure PIR package has a "
                                 f"{dependency['kind']} on wallet-libraries package {name}")
             if package['name'] in PIPELINE_FOUNDATIONS and name == PIPELINE:
@@ -562,7 +566,12 @@ def resolved_violations(metadata, *, workspace_unified=False):
             seen.add((current, through_codec))
             target = packages[current]
             library = WALLET_LIBRARIES in (target['source'] or '')
-            codec = package['name'] in RECEIVER and library and target['name'] == CODEC
+            # The protocol and publisher packages carry receiver cryptography behind a
+            # feature, which workspace metadata unifies into every product that uses
+            # them. Standalone consumers below resolve without it and get no exemption.
+            codec = ((package['name'] in RECEIVER or workspace_unified) and library
+                     and target['name'] in CODEC_PACKAGES
+                     and CODEC_FEATURE in nodes[current].get('features', []))
             # Workspace dev-dependencies unify client fixture features into
             # every use of the client. Standalone serving consumers below
             # resolve without those features and receive no exemption.

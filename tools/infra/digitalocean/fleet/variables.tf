@@ -73,11 +73,6 @@ variable "ssh_key_ids" {
   type        = list(string)
 }
 
-variable "allowed_ssh_cidrs" {
-  description = "Operator CIDRs allowed to SSH to firewalled workers and auxiliary hosts; the coordinator has no cloud firewall."
-  type        = list(string)
-}
-
 variable "enable_backups" {
   type    = bool
   default = false
@@ -186,12 +181,6 @@ variable "transparent_loadgen_size" {
   default     = "c-16"
 }
 
-variable "transparent_txid_display_port_enabled" {
-  description = "Open the txid display proof of concept's worker port 8095 to the coordinator and router tags. Set only through `wallet-pir-deploy.py txid-display-deploy --phase firewall`, which writes txid-display.auto.tfvars; retire removes it."
-  type        = bool
-  default     = false
-}
-
 variable "enhance_group_count" {
   description = "Desired Enhance range count; use the autoscale state wrapper for every plan/apply."
   type        = number
@@ -210,12 +199,6 @@ variable "enhance_legacy_worker_count" {
     condition     = contains([0, 2], var.enhance_legacy_worker_count)
     error_message = "Retain either zero or both legacy workers."
   }
-}
-
-variable "transparent_loadgen_extra_ssh_cidrs" {
-  description = "Additional existing load-generator SSH sources, preserved during shared-state Enhance expansion."
-  type        = list(string)
-  default     = []
 }
 
 variable "enhance_worker_deploy_public_key" {

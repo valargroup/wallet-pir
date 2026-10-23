@@ -5,26 +5,26 @@ mock_provider "digitalocean" {
 }
 mock_provider "cloudflare" {}
 variables {
-  digitalocean_token        = "mock-provider-placeholder"
-  cloudflare_api_token      = "mock-provider-placeholder"
-  ssh_key_ids               = ["12345"]
-  allowed_ssh_cidrs         = ["192.0.2.20/32"]
+  digitalocean_token   = "mock-provider-placeholder"
+  cloudflare_api_token = "mock-provider-placeholder"
+  ssh_key_ids          = ["12345"]
+
   status_control_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixture"
 }
 run "all_services" {
   command = apply
   variables {
-    enhance_group_count                    = 2
-    enhance_legacy_worker_count            = 2
-    enhance_packing_router_count           = 1
-    enhance_pool_worker_count              = 1
-    status_host_count                      = 1
-    transparent_recent_count               = 2
-    transparent_archive_names              = ["transparent-pir-archive-01", "transparent-pir-archive-02"]
-    transparent_router_count               = 1
-    transparent_loadgen_count              = 1
-    transparent_v12_enabled                = true
-    transparent_txid_display_port_enabled  = true
+    enhance_group_count          = 2
+    enhance_legacy_worker_count  = 2
+    enhance_packing_router_count = 1
+    enhance_pool_worker_count    = 1
+    status_host_count            = 1
+    transparent_recent_count     = 2
+    transparent_archive_names    = ["transparent-pir-archive-01", "transparent-pir-archive-02"]
+    transparent_router_count     = 1
+    transparent_loadgen_count    = 1
+    transparent_v12_enabled      = true
+
     transparent_txid_display_archive_count = 1
     transparent_txid_display_site_enabled  = true
     receiver_pir_enabled                   = true

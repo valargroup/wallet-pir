@@ -34,34 +34,6 @@ resource "digitalocean_droplet" "status_host" {
 }
 
 
-resource "digitalocean_firewall" "status_host" {
-  name = "status-pir-host"
-  tags = [digitalocean_tag.status_host.name]
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "22"
-    source_tags = [var.coordinator_tag]
-  }
-  dynamic "inbound_rule" {
-    for_each = var.allowed_ssh_cidrs
-    content {
-      protocol         = "tcp"
-      port_range       = "22"
-      source_addresses = [inbound_rule.value]
-    }
-  }
-  outbound_rule {
-    protocol              = "tcp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-  outbound_rule {
-    protocol              = "udp"
-    port_range            = "1-65535"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-}
-
 locals {
   common_packages = ["ca-certificates", "curl", "jq", "htop"]
 }

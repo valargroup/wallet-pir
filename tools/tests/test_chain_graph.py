@@ -55,9 +55,11 @@ class RpcDependencyTests(unittest.TestCase):
 class ProductDependencyTests(unittest.TestCase):
     def graph(self, features, receiver=False):
         packages = [{'id': 'adapter', 'name': 'zakura-server-chain'}]
+        nodes = [{'id': 'adapter', 'features': features}]
         if receiver:
-            packages.append({'id': 'receiver', 'name': 'zakura-receiver-crypto'})
-        return {'packages': packages, 'resolve': {'nodes': [{'id': 'adapter', 'features': features}]}}
+            packages.append({'id': 'receiver', 'name': 'zakura-pir-protocol'})
+            nodes.append({'id': 'receiver', 'features': ['receiver', 'receiver-crypto']})
+        return {'packages': packages, 'resolve': {'nodes': nodes}}
 
     def test_each_product_is_isolated_and_receiver_recovery_is_optional(self):
         for product in graph.PRODUCTS:

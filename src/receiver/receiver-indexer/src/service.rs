@@ -23,7 +23,7 @@ pub struct Config {
     #[arg(long)]
     pub data_dir: PathBuf,
     /// Minimum served row count. Grows by powers of two up to 65536.
-    #[arg(long, default_value_t = receiver_pir::MIN_ROWS)]
+    #[arg(long, default_value_t = zakura_pir_publisher::receiver::session::MIN_ROWS)]
     pub min_rows: u32,
     /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the mainnet
     /// one with the highest tip (see [`NodeClient::ranked`]).
@@ -72,7 +72,7 @@ pub struct Config {
     pub filter_blocks: Option<u32>,
     /// Pinned payment table rows of every sealed Receiver shard segment. Sealing keeps
     /// each segment placeable at this geometry; changing it affects only later seals.
-    #[arg(long, default_value_t = receiver_pir::MAX_ROWS)]
+    #[arg(long, default_value_t = zakura_pir_publisher::receiver::session::MAX_ROWS)]
     #[serde(default = "default_shard_rows")]
     pub shard_rows: u32,
     /// Payments after which a Receiver shard seals at the next block. By default one
@@ -134,7 +134,7 @@ impl From<&Config> for application::Config {
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
-        receiver_pir::validate_rows(self.min_rows)?;
+        zakura_pir_publisher::receiver::session::validate_rows(self.min_rows)?;
         crate::seal::Policy::new(self.shard_rows, self.shard_target)
             .map_err(|_| "invalid shard rows or target")?;
         // Sealed segments are served at these rows; staged serving refuses fewer than
@@ -307,7 +307,7 @@ pub async fn run_isolated(
 
 /// Default sealed segment rows, shared by JSON configuration and command-line parsing.
 fn default_shard_rows() -> u32 {
-    receiver_pir::MAX_ROWS
+    zakura_pir_publisher::receiver::session::MAX_ROWS
 }
 
 /// Default prepared table budget in MiB, shared by JSON configuration and command-line

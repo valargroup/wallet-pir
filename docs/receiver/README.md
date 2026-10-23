@@ -7,20 +7,21 @@ outgoing viewing key (OVK). Coinbase recipients are excluded. Every Ironwood
 Action still counts toward note positions, including coinbase and unrecoverable
 outputs.
 
-The canonical fixed record codec is `zakura-receiver-crypto::wire` in
-wallet-libraries. `zakura-receiver-directory` (crate `receiver_directory`) uses it
-with cryptography disabled to hold records, publications and rolling block
-filters; it parses structure only. The indexer's SQLite chain index and optional
-payout audit store are this repository's `receiver-store` package. The same
-library's `crypto` feature checks receivers,
-unified addresses and record fields, recovers receivers with the zero OVK, and
-builds lower inclusion paths for companion witness tables. The indexer enables these checks before storing
-a payment and before serving a publication, and a wallet checks a retrieved
-payment before crediting it. Dependencies run one way from wallet-pir to
-wallet-libraries; wallet-libraries never consumes wallet-pir packages.
-`receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
-the evaluator with the `server` feature. `receiver-pir-server` serves
-publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
+Receiver is a product of wallet-libraries' PIR role packages, each with a
+`receiver` module and feature. `zakura-pir-protocol` owns the canonical fixed
+record codec (`receiver::wire`), records, publications, inventories and rolling
+block filters; it parses structure only. Its `receiver-crypto` feature checks
+receivers, unified addresses and record fields and recovers receivers with the
+zero OVK. `zakura-pir-publisher` builds payment and companion witness tables, and
+its `receiver-crypto` feature builds their lower inclusion paths.
+`zakura-pir-query-server` holds the evaluator and `zakura-pir-client` the PIR
+client and the wallet `Transport` interface. The indexer's SQLite chain index and
+optional payout audit store are this repository's `receiver-store` package. The
+indexer enables the checks before storing a payment and before serving a
+publication, and a wallet checks a retrieved payment before crediting it.
+Dependencies run one way from wallet-pir to wallet-libraries; wallet-libraries
+never consumes wallet-pir packages. `receiver-pir-server` serves publications
+over HTTP using only the query server's module. `receiver-indexer` builds them from a Zakura node; its
 binary is `receiver-directory`. The service shares process identity and
 admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
 (`pir-native`) with the other services, and reads the node through

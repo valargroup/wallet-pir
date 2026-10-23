@@ -61,31 +61,6 @@ resource "digitalocean_tag" "transparent_txid_display_site" {
 
 # Public TLS for the site, and the worker port for the coordinator's display
 # controller, which ships candidates and checks readiness.
-resource "digitalocean_firewall" "transparent_txid_display_site" {
-  count = var.transparent_txid_display_site_enabled ? 1 : 0
-  name  = "transparent-pir-txid-site"
-  tags  = [digitalocean_tag.transparent_txid_display_site[0].name]
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  inbound_rule {
-    protocol    = "tcp"
-    port_range  = "8095"
-    source_tags = [var.coordinator_tag]
-  }
-}
-
-
 resource "cloudflare_dns_record" "transparent_txid_display_site" {
   count   = var.transparent_txid_display_site_enabled ? 1 : 0
   zone_id = var.cloudflare_zone_id

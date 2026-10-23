@@ -1,6 +1,6 @@
 //! Bounded rolling hints, independent of PIR session preparation and retention.
 use axum::http::StatusCode;
-use receiver_directory::{
+use zakura_pir_query_server::receiver::{
     blocks::{Batch, BlockFilter, Head, MAX_BATCH_BYTES, MAX_BLOCKS},
     Hash,
 };
@@ -26,8 +26,8 @@ impl BlockWindow {
         genesis: Hash,
         revision: u64,
         filters: Vec<BlockFilter>,
-    ) -> Result<Self, receiver_directory::Error> {
-        use receiver_directory::Error;
+    ) -> Result<Self, zakura_pir_query_server::receiver::Error> {
+        use zakura_pir_query_server::receiver::Error;
         if filters.is_empty() || filters.len() > MAX_WINDOW_BLOCKS {
             return Err(Error::Capacity);
         }

@@ -1,5 +1,4 @@
 //! Optional NEAR payout audit. Provider data never governs issuance or publication.
-use receiver_directory::ReceiverBytes;
 use receiver_store::{PayoutStore, Store};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -11,7 +10,8 @@ use std::{
     },
     time::Duration,
 };
-use zakura_receiver_crypto::{Network, Receiver};
+use zakura_pir_publisher::receiver::crypto::{Network, Receiver};
+use zakura_pir_publisher::receiver::ReceiverBytes;
 
 const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
 /// The status of a completed swap, whose payout transactions the explorer reports.
@@ -41,7 +41,7 @@ const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 const UNCHECKABLE_ZEROS: usize = 16;
 
 /// Whether `txid` is the record of an uncheckable payout; see [`UNCHECKABLE_ZEROS`].
-fn uncheckable(txid: &receiver_directory::Hash) -> bool {
+fn uncheckable(txid: &zakura_pir_publisher::receiver::Hash) -> bool {
     txid[..UNCHECKABLE_ZEROS] == [0; UNCHECKABLE_ZEROS]
 }
 
@@ -62,7 +62,7 @@ pub struct Capture {
     feeds: serde_json::Map<String, serde_json::Value>,
     /// Checkable payouts first seen complete more than [`COMPLETION_GRACE_SECS`]
     /// before the terminal block's time.
-    payouts: Vec<(ReceiverBytes, receiver_directory::Hash)>,
+    payouts: Vec<(ReceiverBytes, zakura_pir_publisher::receiver::Hash)>,
     /// Uncheckable payouts first seen in that span but within [`AUDIT_LOOKBACK_SECS`].
     uncheckable: usize,
 }
@@ -379,7 +379,7 @@ fn orchard_receiver(address: &str) -> Option<ReceiverBytes> {
 fn completions(
     swap: &Swap,
     receiver: ReceiverBytes,
-    out: &mut Vec<(ReceiverBytes, receiver_directory::Hash)>,
+    out: &mut Vec<(ReceiverBytes, zakura_pir_publisher::receiver::Hash)>,
 ) {
     if swap.status.as_deref() != Some(SUCCESS) {
         return;
@@ -437,8 +437,8 @@ mod tests {
     /// An index from height 100 whose first block pays `receiver(1)` in transaction
     /// `[7; 32]`, and that block.
     fn paid_index(path: &std::path::Path) -> (Store, receiver_store::IndexedBlock) {
-        use receiver_directory::Payment;
         use receiver_store::{Config, IndexedBlock};
+        use zakura_pir_publisher::receiver::Payment;
         let index = Store::open(
             path,
             Config {

@@ -4,9 +4,8 @@ Caddy syntax validation accepts a catch-all proxy, which would put the
 operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
 checks pin the edge to the six wallet routes the server registers, the unit (the template
 `wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
-optional NEAR key file the inventory names, cloud-init to the matching account and
-firewall rule, the inventory's `exact_check` to the deployed binary's probe on
-the receiver's host, the Terraform firewall to admitting the coordinator's SSH,
+optional NEAR key file the inventory names, cloud-init to the matching account,
+the inventory's `exact_check` to the deployed binary's probe on the receiver's host,
 the runbook's provisioning unit to the template with a bootstrap Description,
 and its monitor probe config to the array `pir-monitor` reads. Each
 check takes the file's text, so the negative cases run it on mutated copies.
@@ -175,17 +174,14 @@ def runcmd(text):
 
 
 def check_cloud_init(text, bind):
-    """Check the service account, its directories and that only the private network reaches `bind`."""
+    """Check the service account and its directories without installing a host firewall."""
     packages = next(line for line in text.splitlines() if line.startswith('packages:'))
-    assert 'caddy' in packages and 'ufw' in packages, packages
+    assert 'caddy' in packages and 'ufw' not in packages, packages
     commands = runcmd(text)
     assert ['useradd', '--system', '--home-dir', STATE, '--shell', '/usr/sbin/nologin', USER] in commands
     assert ['install', '-d', '-o', USER, '-g', USER, '-m', '0750', STATE] in commands
     assert any(c[:2] == ['install', '-d'] and '/opt/receiver-pir/releases' in c for c in commands)
-    port = bind.rsplit(':', 1)[1]
-    rules = [c for c in commands if c[:2] == ['ufw', 'allow'] and any(port in word for word in c)]
-    assert rules == [['ufw', 'allow', 'from', str(PRIVATE_NETWORK), 'to', 'any', 'port', port, 'proto', 'tcp']], rules
-    assert ['ufw', '--force', 'enable'] in commands
+    assert not any(command[0] == 'ufw' for command in commands), commands
 
 
 def check_exact_check(service, unit, caddy):
@@ -212,24 +208,6 @@ def check_exact_check(service, unit, caddy):
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
     timeout = check.get('timeout')
     assert isinstance(timeout, int) and 120 <= timeout <= 600, timeout
-
-
-def ssh_sources(tf, firewall):
-    """The `source_addresses` expression of `firewall`'s port-22 inbound rule in Terraform `tf`."""
-    body = tf.split('resource "digitalocean_firewall" "%s" {' % firewall, 1)[1].split('\n}\n', 1)[0]
-    (sources,) = re.findall(r'port_range\s*=\s*"22"\s*\n\s*source_addresses\s*=\s*(.+)', body)
-    return sources.strip()
-
-
-def check_firewall(tf, monitor_tf):
-    """The receiver's SSH rule admits the coordinator's public /32, as the monitor's does.
-
-    The coordinator is in another region's private network, so only its public
-    address reaches the Droplet.
-    """
-    expected = 'concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])'
-    assert ssh_sources(monitor_tf, 'pir_monitor') == expected, ssh_sources(monitor_tf, 'pir_monitor')
-    assert ssh_sources(tf, 'receiver_pir') == expected, ssh_sources(tf, 'receiver_pir')
 
 
 def fenced(text, language):
@@ -382,15 +360,11 @@ class ReceiverOpsContract(unittest.TestCase):
         for bad in [others + others, others + entry * 2, others + [dict(entry[0], extra=1)], {'0': entry[0]}]:
             self.assertNotEqual(jq(check, bad, '-e').returncode, 0, bad)
 
-    def test_cloud_init_must_keep_the_port_private(self):
+    def test_cloud_init_does_not_enable_a_host_firewall(self):
         bind, _ = check_unit(self.unit)
-        for mutated in [
-            self.cloud.replace('from, 10.70.0.0/16, to, any, port', 'from, any, to, any, port'),
-            self.cloud.replace("  - [ufw, --force, enable]", "  - [ufw, allow, '18380/tcp']\n  - [ufw, --force, enable]"),
-        ]:
-            self.assertNotEqual(mutated, self.cloud)
-            with self.assertRaises(AssertionError):
-                check_cloud_init(mutated, bind)
+        mutated = self.cloud + "  - [ufw, --force, enable]\n"
+        with self.assertRaises(AssertionError):
+            check_cloud_init(mutated, bind)
 
 
 if __name__ == '__main__':
