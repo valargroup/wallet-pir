@@ -188,6 +188,13 @@ fn offline_publication_loads_and_answers_without_consumers() {
         "a reference is checked against its own length, not an earlier one"
     );
     let rows_path = domain.rows[0].path(root.path()).unwrap();
+    // Published objects are installed read-only; the tampering writer must
+    // lift that first, as only the file's owner or root could.
+    std::fs::set_permissions(
+        &rows_path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o644),
+    )
+    .unwrap();
     std::fs::OpenOptions::new()
         .write(true)
         .open(rows_path)
