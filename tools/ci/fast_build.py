@@ -12,9 +12,9 @@ in-process Enhance hint graph stays on a second command and never joins the
 first. Chain-node fixtures stay in qualification: they pull the wallet client
 and node stack into every crate on their command. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-Enhance publication fixtures run alone, as do the filter library and the query
-host's Status unit cases on fewer than eight cores, counting any cgroup CPU
-quota. The remaining programs share a pool of at most three processes.
+Enhance publication fixtures run alone, as do the filter library, the query
+host's Status unit cases and the Enhance and Receiver runtime libraries on fewer
+than eight cores, counting any cgroup CPU quota. The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -76,6 +76,19 @@ def status_runs_alone(name, kinds, names):
     """
     return (name == 'pir-query-server' and 'lib' in kinds and available_cpus() < 8
             and any(case.startswith('status::') for case in names))
+
+
+# Unit cases that build full runtimes on every core, each near the case budget.
+RUNTIME_LIBRARIES = frozenset({'enhance-shared', 'receiver-indexer'})
+
+
+def runtime_runs_alone(name, kinds):
+    """Runtime-building unit libraries keep their cores below eight CPUs.
+
+    With a three-CPU quota, overlapping these programs with each other and with
+    the Transparent lanes pushed single cases past the unchanged case budget.
+    """
+    return name in RUNTIME_LIBRARIES and 'lib' in kinds and available_cpus() < 8
 
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
@@ -525,6 +538,7 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              # must not compete with the runtime's matrix fixtures.
                              exclusive=publisher_runs_alone(name, target['kind'])
                              or status_runs_alone(name, target['kind'], names)
+                             or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),

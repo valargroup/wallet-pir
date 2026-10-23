@@ -149,6 +149,15 @@ class FastBuildTests(unittest.TestCase):
         with patch.object(fast_build, 'available_cpus', return_value=8):
             self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
 
+    def test_runtime_libraries_run_alone_only_on_small_hosts(self):
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertTrue(fast_build.runtime_runs_alone('enhance-shared', ['lib']))
+            self.assertTrue(fast_build.runtime_runs_alone('receiver-indexer', ['lib']))
+            self.assertFalse(fast_build.runtime_runs_alone('enhance-shared', ['test']))
+            self.assertFalse(fast_build.runtime_runs_alone('transparent-shared', ['lib']))
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertFalse(fast_build.runtime_runs_alone('enhance-shared', ['lib']))
+
     def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
         root = Path(self.directory.name) / 'sources'
         root.mkdir()
