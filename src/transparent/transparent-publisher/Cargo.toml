@@ -26,7 +26,6 @@ fixtures = [
     "dep:transparent-query-server",
     "dep:pir-service-discovery",
     "dep:base64",
-    "dep:libc",
     "dep:tower",
     "reqwest/blocking",
 ]
@@ -63,7 +62,7 @@ zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, featu
 # Query server, wallet client and small helpers for the host's Transparent
 # regressions. Production builds leave them off.
 base64 = { version = "0.22", optional = true }
-libc = { version = "0.2", optional = true }
+libc = "0.2"
 tower = { version = "0.5", features = ["util"], optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery", optional = true }
 transparent-query-server = { path = "../transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }

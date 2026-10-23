@@ -18,6 +18,69 @@ fn stamp(path: &Path) -> (u64, i64, i64, u64) {
 }
 
 #[test]
+fn archive_written_after_collection_scan_keeps_its_objects_and_can_be_retried() {
+    use std::{sync::mpsc, time::Duration};
+    let temp = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(temp.path()).unwrap();
+    std::fs::create_dir(root.join(publisher::SEALED_DIR)).unwrap();
+    let layout = DisplayRoot {
+        geometry: "txid-2k8".into(),
+        seal: fixture::params(),
+        max_archive_shards: 4,
+        network: zakura_pir_publisher::transparent::filter::NETWORK.into(),
+        genesis_hash: fixture::GENESIS.into(),
+        start_height: 101,
+        base_parent: "11".repeat(32),
+    };
+    let spec = ShardSpec {
+        shard_id: 0,
+        start: 101,
+        end: 102,
+        parent_block_hash: layout.base_parent.clone(),
+        terminal_block_hash: "22".repeat(32),
+        parent_manifest_digest: String::new(),
+        sealed: true,
+        previous: None,
+    };
+    let records = (1..=10)
+        .map(|id| fixture::record(id, 1))
+        .collect::<Vec<_>>();
+    let (attempted, blocked) = mpsc::channel();
+    let (finished, completion) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let mut writer = None;
+        collect_with(&root, || {
+            writer = Some(scope.spawn(|| {
+                // Observe the actual collector lock without a scheduling delay.
+                // Without that lock, finish the archive before the sweep, forcing
+                // the original scan -> new reference -> deletion interleaving.
+                let probe = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(root.join(writes::LOCK_FILE))
+                    .unwrap();
+                let waiting = probe.try_lock_shared().is_err();
+                drop(probe);
+                attempted.send(waiting).unwrap();
+                let result = publisher::publish_shard(&root, &layout, &spec, &records);
+                finished.send(()).unwrap();
+                result
+            }));
+            if !blocked.recv_timeout(Duration::from_secs(5)).unwrap() {
+                completion.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        })
+        .unwrap();
+        let archive = writer.take().unwrap().join().unwrap().unwrap();
+        publisher::verify_dir(&archive.directory, &archive.digest).unwrap();
+        let retried = publisher::publish_shard(&root, &layout, &spec, &records).unwrap();
+        assert_eq!(retried.digest, archive.digest);
+    });
+}
+
+#[test]
 fn display_advances_reuse_archive_objects_and_collection_respects_live_readers() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

@@ -7,6 +7,9 @@ pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
     http: pir_pipeline::service::Http<Router>,
     shutdown: pir_pipeline::service::Shutdown,
 ) -> Result<(), BoxError> {
+    if config.publication_root.join("active.json").exists() {
+        crate::storage::layout::require(&config.publication_root, "transparent_history")?;
+    }
     std::fs::create_dir_all(&config.publication_root)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
