@@ -2764,7 +2764,7 @@ async fn serve_delayed(dir: &Path, delay: std::time::Duration) -> String {
 /// delayed by 100 ms. Filters are local here, so this isolates the shard
 /// service requests. Not a measurement of any deployment.
 ///
-/// `cargo test --release -p transparent-query-server --test wallet_sync
+/// `cargo test --release -p pir-query-server --features transparent-history --test wallet_sync
 /// concurrency_under_emulated_delay -- --ignored --nocapture`
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "timing indication, about a minute"]
