@@ -173,7 +173,10 @@ class StatusInstalledRoles(unittest.TestCase):
                 document = json.loads(rendered.files[path])
                 effective = units.effective([rendered.unit])['Service']
                 self.assertEqual(spec.mode, 'role')
-                self.assertEqual(document['status']['settings'], {'role': role, **self.settings(role)})
+                expected = self.settings(role)
+                # The router's wallet listener is the host's shared listener.
+                self.assertEqual(document.get('public_listen'), expected.pop('query_listen', None))
+                self.assertEqual(document['status']['settings'], {'role': role, **expected})
                 self.assertEqual(rendered.check, ('--config', path, '--check'))
                 self.assertIn(path, paths(effective['ReadOnlyPaths']))
                 self.assertEqual(paths(effective['ReadWritePaths']), ['/var/lib/status-' + role])
@@ -191,8 +194,9 @@ class StatusInstalledRoles(unittest.TestCase):
                 self.assertNotIn('artifact_origin', actual)
                 self.assertEqual(actual['worker_origin'], 'http://127.0.0.1:8481')
                 self.assertEqual(actual['listen'], '127.0.0.1:' + ('8481' if role == 'worker' else '8482'))
+                self.assertNotIn('query_listen', actual)
                 if role == 'router':
-                    self.assertEqual(actual['query_listen'], '127.0.0.1:8484')
+                    self.assertEqual(document['public_listen'], '127.0.0.1:8484')
 
     def test_invalid_network_or_non_loopback_peers_refuse_before_deployment(self):
         for role in ('worker', 'router'):

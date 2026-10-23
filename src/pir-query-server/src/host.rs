@@ -166,6 +166,24 @@ async fn stopped(local: Shutdown, process: Shutdown) {
     }
 }
 
+/// The wallet namespaces of every product validated onto `public_listen`.
+fn public_mounts(products: &[&'static str]) -> Vec<crate::public::Mount> {
+    products
+        .iter()
+        .filter_map(|product| match *product {
+            #[cfg(feature = "enhance")]
+            "enhance" => Some(crate::public::enhance()),
+            #[cfg(feature = "status")]
+            "status" => Some(crate::public::status()),
+            #[cfg(feature = "transparent-history")]
+            "transparent_history" => Some(crate::public::transparent_history()),
+            #[cfg(feature = "transparent-detail")]
+            "transaction_details" => Some(crate::public::transaction_details()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Load and verify the one enabled Transparent section through its existing
 /// one-shot path, print its report and return. No management or wallet
 /// listener is bound.
@@ -255,6 +273,33 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     );
     let mut tasks = Tasks::default();
     tasks.own(&management);
+    // The one wallet-facing listener. Each product's namespaces answer 503
+    // until the product installs its wallet routes.
+    let mut slots: BTreeMap<&'static str, crate::public::Slot> = BTreeMap::new();
+    let mut public = match config.public_listen {
+        Some(addr) => {
+            let mounts = public_mounts(&layout.public);
+            for mount in &mounts {
+                slots.insert(mount.product, mount.slot.clone());
+            }
+            let app =
+                crate::public::router(&mounts)?.into_make_service_with_connect_info::<SocketAddr>();
+            let listener = listeners
+                .lock()
+                .unwrap()
+                .remove(&addr)
+                .ok_or("public listener was not reserved")?;
+            let stop = shutdown.clone();
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move { stop.cancelled().await })
+                    .await
+            });
+            tasks.own(&task);
+            Some(task)
+        }
+        None => None,
+    };
     let mut group: JoinSet<(&'static str, Result<()>)> = JoinSet::new();
     let mut owners: HashMap<Id, (&'static str, Shutdown)> = HashMap::new();
     #[cfg(feature = "enhance")]
@@ -272,6 +317,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             crate::enhance::service::run_serving(
                 role,
                 bound,
+                slots.get("enhance").cloned(),
                 stopped(stop.clone(), shutdown.clone()),
             ),
             stop,
@@ -283,10 +329,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     if let Some(role) = active(&config.status)? {
         let role = role.clone();
         let listen = take(&listeners, role.listen)?;
-        let query = match role.query_listen {
-            Some(addr) => Some(take(&listeners, addr)?),
-            None => None,
-        };
+        let query = slots.get("status").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
         let process = shutdown.clone();
@@ -308,6 +351,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     if let Some(worker) = active(&config.transparent_history)? {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;
+        let wallet = slots.get("transparent_history").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
         let process = shutdown.clone();
@@ -320,7 +364,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transparent_history",
             async move {
                 tokio::select! {
-                    result = crate::transparent::history::process::run_with(worker, Some(listen)) => result,
+                    result = crate::transparent::history::process::run_with(worker, Some(listen), wallet) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },
@@ -333,6 +377,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
     if let Some(worker) = active(&config.transaction_details)? {
         let worker = worker.clone();
         let listen = take(&listeners, worker.listen)?;
+        let wallet = slots.get("transaction_details").cloned();
         let stop = Shutdown::default();
         let local = stop.clone();
         let process = shutdown.clone();
@@ -345,7 +390,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             "transaction_details",
             async move {
                 tokio::select! {
-                    result = crate::transparent::tx_detail::process::run_with(worker, Some(listen)) => result,
+                    result = crate::transparent::tx_detail::process::run_with(worker, Some(listen), wallet) => result,
                     _ = stopped(local, process) => Ok(()),
                 }
             },
@@ -360,11 +405,20 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             biased;
             _ = shutdown.cancelled() => break,
             _ = &mut management => { fatal = Some("management HTTP service stopped".into()); break; },
+            _ = async { public.as_mut().unwrap().await }, if public.is_some() => {
+                public = None;
+                fatal = Some("public wallet HTTP service stopped".into());
+                break;
+            },
             result = group.join_next_with_id(), if !group.is_empty() => {
                 match result.unwrap() {
                     Ok((id, (name, result))) => {
                         let (_, stop) = owners.remove(&id).unwrap();
                         stop.request();
+                        // A stopped product no longer answers wallets.
+                        if let Some(slot) = slots.get(name) {
+                            slot.withdraw();
+                        }
                         state.phases.lock().unwrap().insert(name, "failed");
                         match result {
                             // Products retry ordinary discovery failures while
@@ -399,6 +453,13 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         }
     }
     shutdown.request();
+    for slot in slots.values() {
+        slot.withdraw();
+    }
+    // The wallet listener drains requests it already accepted.
+    if let Some(task) = public {
+        let _ = task.await;
+    }
     // Cancellation alone can leave the management listener bound until the
     // task is polled again. Join it before reporting that the host stopped.
     if !management.is_finished() {

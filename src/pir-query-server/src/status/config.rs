@@ -9,11 +9,9 @@ pub struct RoleConfig {
     pub role: Role,
     pub network_hex: String,
     pub state_dir: PathBuf,
+    /// Private control, provider, evaluation and telemetry routes. Router and
+    /// combined roles answer wallets on the host's `public_listen`.
     pub listen: SocketAddr,
-    /// Router only: the wallet-facing `/v1/status/*` routes listen here, apart
-    /// from control, artifacts, evaluation and telemetry.
-    #[serde(default)]
-    pub query_listen: Option<SocketAddr>,
     pub publisher: String,
     #[serde(default)]
     pub publisher_ca: Option<PathBuf>,
@@ -27,11 +25,7 @@ impl RoleConfig {
     /// Validate role listeners and publisher/worker origins without network or
     /// filesystem access. The host checks collisions with other products.
     pub fn validate(&self) -> Result<(), Failure> {
-        if !self.listen.ip().is_loopback()
-            || self
-                .query_listen
-                .is_some_and(|addr| !addr.ip().is_loopback())
-        {
+        if !self.listen.ip().is_loopback() {
             return Err("Status role listener must be loopback".into());
         }
         let url = url::Url::parse(&self.publisher)?;
@@ -57,9 +51,12 @@ impl RoleConfig {
 
     /// Addresses the host must reserve before any product starts.
     pub fn listens(&self) -> Vec<SocketAddr> {
-        std::iter::once(self.listen)
-            .chain(self.query_listen)
-            .collect()
+        vec![self.listen]
+    }
+
+    /// Whether this role answers wallets on the host's `public_listen`.
+    pub fn serves_wallets(&self) -> bool {
+        matches!(self.role, Role::Router | Role::Combined)
     }
 
     /// Directory exclusively owned by this role while it is running.
@@ -83,7 +80,6 @@ mod tests {
             network_hex: "01".repeat(32),
             state_dir: PathBuf::from("/tmp/status-router"),
             listen: "127.0.0.1:8380".parse().unwrap(),
-            query_listen: Some("127.0.0.1:8382".parse().unwrap()),
             publisher: "https://publisher.example".into(),
             publisher_ca: None,
             worker_origin: "http://127.0.0.1:8381".into(),
@@ -111,32 +107,31 @@ mod tests {
     fn role_configuration_reports_host_resources_without_opening_them() {
         let role = config();
         role.validate().unwrap();
-        assert_eq!(
-            role.listens(),
-            vec![role.listen, role.query_listen.unwrap()]
-        );
+        assert_eq!(role.listens(), vec![role.listen]);
+        assert!(role.serves_wallets());
         assert_eq!(role.state_dir(), std::path::Path::new("/tmp/status-router"));
         assert_eq!(role.probe(), (role.listen, "/control/health"));
         let mut worker = role;
         worker.role = Role::Worker;
-        worker.query_listen = None;
         worker.worker_origin.clear();
         worker.validate().unwrap();
         assert_eq!(worker.listens(), vec![worker.listen]);
+        assert!(!worker.serves_wallets());
     }
 
     #[test]
     fn role_configuration_rejects_public_listeners_and_invalid_origins() {
-        for query in [false, true] {
-            let mut role = config();
-            let public = "0.0.0.0:8380".parse().unwrap();
-            if query {
-                role.query_listen = Some(public);
-            } else {
-                role.listen = public;
-            }
-            assert!(role.validate().is_err());
-        }
+        let mut role = config();
+        role.listen = "0.0.0.0:8380".parse().unwrap();
+        assert!(role.validate().is_err());
+        // The wallet listener moved to the host's `public_listen`.
+        assert!(serde_json::from_value::<RoleConfig>(serde_json::json!({
+            "role": "router", "network_hex": "01".repeat(32),
+            "state_dir": "/tmp/status-router", "listen": "127.0.0.1:8380",
+            "query_listen": "127.0.0.1:8382", "publisher": "https://publisher.example",
+            "worker_origin": "http://127.0.0.1:8381",
+        }))
+        .is_err());
         for origin in [
             "http://publisher.example",
             "https://publisher.example/path",
@@ -160,12 +155,11 @@ mod tests {
             "network_hex": "01".repeat(32),
             "state_dir": "/tmp/status-combined",
             "listen": "127.0.0.1:8380",
-            "query_listen": "127.0.0.1:8382",
             "publisher": "https://publisher.example",
         }))
         .unwrap();
         role.validate().unwrap();
-        assert_eq!(role.listens().len(), 2);
+        assert_eq!(role.listens().len(), 1);
         let mut peer = role;
         peer.worker_origin = "http://127.0.0.1:8381".into();
         assert!(peer.validate().is_err());

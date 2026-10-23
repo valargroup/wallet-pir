@@ -1,10 +1,10 @@
 {
   "management_listen": "127.0.0.1:18081",
+  "public_listen": "127.0.0.1:8090",
   "enhance": {
     "enabled": true,
     "settings": {
       "role": "combined",
-      "listen": "127.0.0.1:8091",
       "control_listen": "127.0.0.1:8096",
       "data_dir": "/srv/pir-query-server/enhance",
       "sealed_shards": 6,
@@ -26,7 +26,6 @@
       "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
       "state_dir": "/srv/pir-query-server/status",
       "listen": "127.0.0.1:8481",
-      "query_listen": "127.0.0.1:8482",
       "publisher": "https://enhance-pir.valargroup.dev"
     }
   },

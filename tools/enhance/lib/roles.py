@@ -126,11 +126,14 @@ def _binding(role, unit, listen):
     return '%s/%s.json' % (CONFIG_ROOT, stem), management
 
 
-def _render(role, template, release, settings, body, writable, unit=None):
-    """One query-server process: config file, command, and the template's sandbox."""
-    path, management = _binding(role, unit, body.get('listen'))
-    document = {'management_listen': management,
-                'enhance': {'enabled': True, 'settings': body}}
+def _render(role, template, release, settings, body, writable, unit=None, public=None):
+    """One query-server process: config file, command, and the template's sandbox.
+    A wallet-facing role is reached on the host's `public_listen`."""
+    path, management = _binding(role, unit, body.get('listen', public))
+    document = {'management_listen': management}
+    if public is not None:
+        document['public_listen'] = public
+    document['enhance'] = {'enabled': True, 'settings': body}
     ca = body['synchronization'].get('trusted_ca')
     return render_worker(template, directory(release) + '/' + QUERY_BINARY, ['--config', path],
                          configurations={path: document}, writable=writable, readonly=[path, *([ca] if ca else [])], settings=settings,
@@ -162,7 +165,8 @@ def query_ingress(settings, *, release, template=None):
     """Public query ingress. `requests` and `uploads` keep the process defaults when omitted."""
     parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'), ('requests', 'uploads'))
     data = directory(parsed['data_dir'])
-    body = {'role': 'query-ingress', 'data_dir': data, 'listen': address(parsed['listen'], 'listen'),
+    public = address(parsed['listen'], 'listen')
+    body = {'role': 'query-ingress', 'data_dir': data,
             'control_listen': address(parsed['control_listen'], 'control_listen'),
             'synchronization': _synchronization(parsed['synchronization'], 'query-ingress')}
     if 'requests' in parsed:
@@ -170,7 +174,7 @@ def query_ingress(settings, *, release, template=None):
     if 'uploads' in parsed:
         body['uploads'] = int(number(parsed['uploads'], 'uploads', 1))
     text = INGRESS_TEMPLATE.read_text() if template is None else template
-    return _render('query-ingress', text, release, parsed, body, [data])
+    return _render('query-ingress', text, release, parsed, body, [data], public=public)
 
 
 def packing_router(settings, *, release, template=None):

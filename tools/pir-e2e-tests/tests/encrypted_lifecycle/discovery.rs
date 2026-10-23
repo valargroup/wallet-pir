@@ -74,14 +74,18 @@ fn host_json(root: &Path, origin: &str, role: &str) -> serde_json::Value {
     };
     synchronization.insert(assignment.0.into(), assignment.1);
     let mut settings = serde_json::json!({"role": role, "data_dir": root.join("state"),
-        "listen": free(), "synchronization": synchronization});
+        "synchronization": synchronization});
+    let mut host = serde_json::json!({"management_listen": free()});
+    if role == "query-ingress" {
+        host["public_listen"] = serde_json::to_value(free()).unwrap();
+    } else {
+        settings["listen"] = serde_json::to_value(free()).unwrap();
+    }
     if role != "worker" {
         settings["control_listen"] = serde_json::to_value(free()).unwrap();
     }
-    serde_json::json!({
-        "management_listen": free(),
-        "enhance": {"enabled": true, "settings": settings},
-    })
+    host["enhance"] = serde_json::json!({"enabled": true, "settings": settings});
+    host
 }
 
 fn host(root: &Path, origin: &str, role: &str) -> pir_query_server::config::Config {

@@ -34,7 +34,6 @@ pub struct WorkerConfig {
 #[serde(deny_unknown_fields)]
 pub struct IngressConfig {
     pub data_dir: PathBuf,
-    pub listen: SocketAddr,
     pub control_listen: SocketAddr,
     #[serde(default = "default_ingress_requests")]
     pub requests: usize,
@@ -55,12 +54,12 @@ pub struct RouterConfig {
     pub synchronization: crate::enhance::router_sync::Config,
 }
 /// Ingress, packing router and worker in one process for the worker's
-/// domains. `listen` serves wallets; `control_listen` is private.
+/// domains. Wallets reach it on the host's `public_listen`; `control_listen`
+/// is private.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CombinedConfig {
     pub data_dir: PathBuf,
-    pub listen: SocketAddr,
     pub control_listen: SocketAddr,
     #[serde(default = "default_sealed_shards")]
     pub sealed_shards: usize,
@@ -164,10 +163,15 @@ impl ServingRole {
     pub fn listens(&self) -> Vec<SocketAddr> {
         match self {
             Self::Worker(c) => vec![c.listen],
-            Self::QueryIngress(c) => vec![c.listen, c.control_listen],
+            Self::QueryIngress(c) => vec![c.control_listen],
             Self::PackingRouter(c) => vec![c.listen, c.control_listen],
-            Self::Combined(c) => vec![c.listen, c.control_listen],
+            Self::Combined(c) => vec![c.control_listen],
         }
+    }
+    /// Whether this role answers wallets on the host's `public_listen`. A
+    /// packing router's `listen` serves only its ingress.
+    pub fn serves_wallets(&self) -> bool {
+        matches!(self, Self::QueryIngress(_) | Self::Combined(_))
     }
     pub fn state_dir(&self) -> &std::path::Path {
         match self {
@@ -213,14 +217,9 @@ pub async fn run_worker_on(
     }
     Ok(())
 }
-pub async fn run_ingress(config: IngressConfig) -> Result<(), Error> {
-    let public = tokio::net::TcpListener::bind(config.listen).await?;
-    let control = tokio::net::TcpListener::bind(config.control_listen).await?;
-    run_ingress_on(config, public, control, crate::enhance::shutdown::signal()).await
-}
 pub async fn run_ingress_on(
     config: IngressConfig,
-    public: tokio::net::TcpListener,
+    public: crate::public::Slot,
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
@@ -231,23 +230,9 @@ pub async fn run_ingress_on(
         config.uploads,
     )?;
     let manager = crate::synchronization::SyncManager::new(ingress.synchronizer()?);
-    let public_app = ingress
-        .public_router()
-        .into_make_service_with_connect_info::<SocketAddr>();
-    let control_app = ingress.control_router();
-    let (notify, public_stop, control_stop) = stop_pair(shutdown);
-    let _notify = notify;
-    let serving = async move {
-        tokio::try_join!(
-            async move {
-                axum::serve(public, public_app)
-                    .with_graceful_shutdown(public_stop)
-                    .await
-            },
-            crate::enhance::shutdown::serve_until(control, control_app, control_stop)
-        )
-        .map(|_| ())
-    };
+    public.install(ingress.public_router());
+    let serving =
+        crate::enhance::shutdown::serve_until(control, ingress.control_router(), shutdown);
     tokio::select! { result = serving => result?, error = manager.run() => return Err(error), }
     Ok(())
 }
@@ -283,7 +268,7 @@ pub async fn run_router_on(
 }
 pub async fn run_combined_on(
     config: CombinedConfig,
-    public: tokio::net::TcpListener,
+    public: crate::public::Slot,
     control: tokio::net::TcpListener,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
@@ -297,23 +282,9 @@ pub async fn run_combined_on(
     let worker = crate::synchronization::SyncManager::new(synchronizers.worker);
     let router = crate::synchronization::SyncManager::new(synchronizers.router);
     let ingress = crate::synchronization::SyncManager::new(synchronizers.ingress);
-    let public_app = combined
-        .public_router()
-        .into_make_service_with_connect_info::<SocketAddr>();
-    let control_app = combined.control_router();
-    let (notify, public_stop, control_stop) = stop_pair(shutdown);
-    let _notify = notify;
-    let serving = async move {
-        tokio::try_join!(
-            async move {
-                axum::serve(public, public_app)
-                    .with_graceful_shutdown(public_stop)
-                    .await
-            },
-            crate::enhance::shutdown::serve_until(control, control_app, control_stop)
-        )
-        .map(|_| ())
-    };
+    public.install(combined.public_router());
+    let serving =
+        crate::enhance::shutdown::serve_until(control, combined.control_router(), shutdown);
     // Each component synchronizes independently; only a terminal error from
     // any of them (a confirmed publisher incompatibility) stops the process.
     tokio::select! {
@@ -348,9 +319,12 @@ fn stop_pair(
         },
     )
 }
+/// Run one role on listeners reserved by the host. Wallet-facing roles
+/// install their wallet router into `public`, the host's shared listener.
 pub async fn run_serving(
     role: ServingRole,
     mut listeners: Vec<tokio::net::TcpListener>,
+    public: Option<crate::public::Slot>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<(), Error> {
     role.validate()?;
@@ -363,7 +337,7 @@ pub async fn run_serving(
     match role {
         ServingRole::Worker(config) => run_worker_on(config, take(&mut listeners)?, shutdown).await,
         ServingRole::QueryIngress(config) => {
-            let public = take(&mut listeners)?;
+            let public = public.ok_or("query ingress needs the host's public listener")?;
             let control = take(&mut listeners)?;
             run_ingress_on(config, public, control, shutdown).await
         }
@@ -373,7 +347,7 @@ pub async fn run_serving(
             run_router_on(config, public, control, shutdown).await
         }
         ServingRole::Combined(config) => {
-            let public = take(&mut listeners)?;
+            let public = public.ok_or("combined Enhance needs the host's public listener")?;
             let control = take(&mut listeners)?;
             run_combined_on(config, public, control, shutdown).await
         }

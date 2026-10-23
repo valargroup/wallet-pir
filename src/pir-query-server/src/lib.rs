@@ -5,6 +5,7 @@ pub mod config;
 #[cfg(feature = "enhance")]
 pub mod enhance;
 mod host;
+pub mod public;
 #[cfg(feature = "status")]
 pub mod status;
 pub mod synchronization;

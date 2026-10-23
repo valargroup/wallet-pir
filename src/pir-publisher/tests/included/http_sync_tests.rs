@@ -790,6 +790,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     let running = tokio::spawn(pir_query_server::transparent::tx_detail::process::run_with(
         process.clone(),
         Some(listener),
+        None,
     ));
     let status = format!("http://{serving}/v1/provider-status");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -817,7 +818,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
     );
 
     // The recovered predecessor on disk cannot mask the mismatch at restart.
-    let error = pir_query_server::transparent::tx_detail::process::run_with(process, None)
+    let error = pir_query_server::transparent::tx_detail::process::run_with(process, None, None)
         .await
         .unwrap_err();
     assert!(

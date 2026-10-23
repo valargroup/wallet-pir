@@ -217,14 +217,19 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
             .as_object_mut()
             .unwrap()
             .extend(responsibility.as_object().unwrap().clone());
-        let mut settings = serde_json::json!({"role":role,"listen":"127.0.0.1:8091", "data_dir":temp.path().join(role), "synchronization":synchronization});
+        let mut settings = serde_json::json!({"role":role, "data_dir":temp.path().join(role), "synchronization":synchronization});
+        let mut host = serde_json::json!({"management_listen":"127.0.0.1:18081"});
+        if role == "query-ingress" {
+            // The ingress answers wallets on the host's shared listener.
+            host["public_listen"] = serde_json::json!("127.0.0.1:8091");
+        } else {
+            settings["listen"] = serde_json::json!("127.0.0.1:8091");
+        }
         if role != "worker" {
             settings["control_listen"] = serde_json::json!("127.0.0.1:8094");
         }
-        let path = write(
-            temp.path(),
-            serde_json::json!({"management_listen":"127.0.0.1:18081", "enhance":{"enabled":true,"settings":settings}}),
-        );
+        host["enhance"] = serde_json::json!({"enabled":true,"settings":settings});
+        let path = write(temp.path(), host);
         let output = binary()
             .arg("--config")
             .arg(path)
@@ -257,10 +262,10 @@ fn combined_status_role_checks_and_refuses_an_undiscoverable_publisher() {
     let settings = |worker_origin: &str| {
         serde_json::json!({
             "management_listen": format!("127.0.0.1:{management}"),
+            "public_listen": format!("127.0.0.1:{query}"),
             "status": {"enabled": true, "settings": {
                 "role": "combined", "network_hex": "01".repeat(32),
                 "state_dir": state, "listen": format!("127.0.0.1:{listen}"),
-                "query_listen": format!("127.0.0.1:{query}"),
                 "publisher": format!("https://localhost:{publisher}"),
                 "worker_origin": worker_origin,
             }},

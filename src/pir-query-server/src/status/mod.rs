@@ -44,12 +44,15 @@ pub async fn discover(config: &RoleConfig) -> Result<(), Failure> {
 }
 
 /// Run one independently synchronizing role on listeners reserved by the host.
-/// Publisher incompatibility is fatal; transient initial synchronization failure
-/// leaves serving unavailable until a later pass succeeds.
+/// With `public`, the wallet routes are installed on the host's shared
+/// listener and `listen` serves only private routes; without it, `listen`
+/// serves both. Publisher incompatibility is fatal; transient initial
+/// synchronization failure leaves serving unavailable until a later pass
+/// succeeds.
 pub async fn serve_role_on(
     config: RoleConfig,
     listen: tokio::net::TcpListener,
-    query_listen: Option<tokio::net::TcpListener>,
+    public: Option<crate::public::Slot>,
 ) -> Result<(), Failure> {
     discover(&config).await?;
     let network = hex::decode(&config.network_hex)?
@@ -75,11 +78,9 @@ pub async fn serve_role_on(
     let mut tasks = pir_pipeline::service::Tasks::default();
     let polling = tokio::spawn(manager.run());
     tasks.own(&polling);
-    if let Some(query_listener) = query_listen {
-        let app = service.query_routes();
-        let wallet = tokio::spawn(async move { axum::serve(query_listener, app).await });
-        tasks.own(&wallet);
-        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = wallet => { result??; }, result = polling => return Err(result?), }
+    if let Some(public) = public {
+        public.install(service.query_routes());
+        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = polling => return Err(result?), }
     } else {
         tokio::select! { result = axum::serve(listen, service.routes()) => result?, result = polling => return Err(result?), }
     }

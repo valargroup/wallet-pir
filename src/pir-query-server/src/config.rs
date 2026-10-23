@@ -30,6 +30,10 @@ impl<T> Product<T> {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub management_listen: SocketAddr,
+    /// The one wallet-facing listener for every enabled product, behind the
+    /// external HTTPS edge. Required when an enabled role answers wallets.
+    #[serde(default)]
+    pub public_listen: Option<SocketAddr>,
     #[cfg(feature = "enhance")]
     pub enhance: Option<Product<crate::enhance::service::ServingRole>>,
     #[cfg(feature = "status")]
@@ -60,6 +64,8 @@ pub enum Verification<'a> {
 #[derive(Default)]
 pub struct Layout {
     pub listeners: BTreeMap<SocketAddr, &'static str>,
+    /// Products whose wallet routes are served on `public_listen`.
+    pub public: Vec<&'static str>,
     pub roots: Vec<(&'static str, PathBuf)>,
     pub probes: BTreeMap<&'static str, Vec<Probe>>,
 }
@@ -98,6 +104,32 @@ impl Layout {
             return Err(format!("conflicting query server listeners at {addr}").into());
         }
         self.listeners.insert(addr, owner);
+        Ok(())
+    }
+
+    /// Record a product's wallet routes on `public_listen`. Enhance and
+    /// Status wallet roles have no other wallet listener and require it;
+    /// Transparent providers keep serving fleet routers on their own `listen`
+    /// and join the shared listener only when it is configured.
+    #[cfg(any(
+        feature = "enhance",
+        feature = "status",
+        feature = "transparent-history",
+        feature = "transparent-detail"
+    ))]
+    fn wallets(
+        &mut self,
+        owner: &'static str,
+        public: Option<SocketAddr>,
+        required: bool,
+    ) -> Result<()> {
+        match public {
+            Some(_) => self.public.push(owner),
+            None if required => {
+                return Err(format!("{owner} answers wallets on public_listen; set it").into())
+            }
+            None => {}
+        }
         Ok(())
     }
 
@@ -204,9 +236,15 @@ impl Config {
             return Err("management listener must be loopback".into());
         }
         layout.listener("management", self.management_listen)?;
+        if let Some(public) = self.public_listen {
+            layout.listener("public", public)?;
+        }
         #[cfg(feature = "enhance")]
         if let Some(role) = active(&self.enhance)? {
             role.validate()?;
+            if role.serves_wallets() {
+                layout.wallets("enhance", self.public_listen, true)?;
+            }
             for addr in role.listens() {
                 layout.listener("enhance", addr)?;
             }
@@ -217,6 +255,9 @@ impl Config {
         #[cfg(feature = "status")]
         if let Some(role) = active(&self.status)? {
             role.validate()?;
+            if role.serves_wallets() {
+                layout.wallets("status", self.public_listen, true)?;
+            }
             for address in role.listens() {
                 layout.listener("status", address)?;
             }
@@ -233,6 +274,7 @@ impl Config {
                 return Err(SERVING_PUBLISHER.into());
             }
             layout.listener("transparent_history", worker.listen)?;
+            layout.wallets("transparent_history", self.public_listen, false)?;
             layout.root("transparent_history", &worker.shard_dir)?;
             layout.probe("transparent_history", worker.listen, "/v1/ready");
         }
@@ -245,6 +287,7 @@ impl Config {
                 return Err(SERVING_PUBLISHER.into());
             }
             layout.listener("transaction_details", worker.listen)?;
+            layout.wallets("transaction_details", self.public_listen, false)?;
             if let Some(path) = &worker.state_dir {
                 layout.root("transaction_details", path)?;
             }
@@ -252,6 +295,9 @@ impl Config {
                 layout.root("transaction_details", path)?;
             }
             layout.probe("transaction_details", worker.listen, "/v1/ready");
+        }
+        if self.public_listen.is_some() && layout.public.is_empty() {
+            return Err("public_listen is set but no enabled role answers wallets".into());
         }
         Ok(layout)
     }
@@ -275,9 +321,11 @@ mod tests {
         .unwrap();
         let layout = config.validate().unwrap();
         assert_eq!(layout.probes.len(), 4);
-        // Management, Enhance and Status combined wallet and control
-        // listeners, and one listener per Transparent product.
-        assert_eq!(layout.listeners.len(), 7);
+        // Management, the one shared wallet listener, Enhance and Status
+        // private control listeners, and one provider listener per
+        // Transparent product.
+        assert_eq!(layout.listeners.len(), 6);
+        assert_eq!(layout.public.len(), 4);
     }
 
     #[cfg(feature = "transparent-history")]
@@ -473,5 +521,58 @@ mod tests {
         .unwrap();
         let error = config.verification().err().unwrap();
         assert!(error.to_string().contains(other), "{error}");
+    }
+
+    #[test]
+    fn public_listener_needs_a_wallet_role_and_its_own_port() {
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            "public_listen": "127.0.0.1:18081",
+        }))
+        .unwrap();
+        assert!(config.validate().is_err());
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            "public_listen": "127.0.0.1:18080",
+        }))
+        .unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[cfg(feature = "status")]
+    #[test]
+    fn status_wallet_roles_require_the_public_listener() {
+        let role = |role: &str| {
+            serde_json::json!({"enabled": true, "settings": {
+                "role": role, "network_hex": "01".repeat(32),
+                "state_dir": "/tmp/pir-query-server-public-status",
+                "listen": "127.0.0.1:18090", "publisher": "https://publisher.example",
+            }})
+        };
+        let without: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080", "status": role("combined"),
+        }))
+        .unwrap();
+        let error = without.validate().err().unwrap().to_string();
+        assert!(error.contains("public_listen"), "{error}");
+        let with: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080", "public_listen": "127.0.0.1:18081",
+            "status": role("combined"),
+        }))
+        .unwrap();
+        assert_eq!(with.validate().unwrap().public, vec!["status"]);
+        // A worker answers no wallet and leaves the public listener unused.
+        let worker: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080", "public_listen": "127.0.0.1:18081",
+            "status": role("worker"),
+        }))
+        .unwrap();
+        assert!(worker.validate().is_err());
+        let collision: Config = serde_json::from_value(serde_json::json!({
+            "management_listen": "127.0.0.1:18080", "public_listen": "127.0.0.1:18090",
+            "status": role("combined"),
+        }))
+        .unwrap();
+        assert!(collision.validate().is_err());
     }
 }

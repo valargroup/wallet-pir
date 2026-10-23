@@ -83,7 +83,6 @@ fn role_config(role: Role, state_dir: std::path::PathBuf, tls: &tls::Tls) -> Rol
         network_hex: hex::encode([1; 32]),
         state_dir,
         listen: "127.0.0.1:1".parse().unwrap(),
-        query_listen: None,
         publisher: tls.origin.clone(),
         publisher_ca: Some(tls.certificate.clone()),
         worker_origin: String::new(),

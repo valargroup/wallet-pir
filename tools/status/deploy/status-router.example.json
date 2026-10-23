@@ -1,5 +1,6 @@
 {
   "management_listen": "127.0.0.1:18482",
+  "public_listen": "127.0.0.1:8484",
   "status": {
     "enabled": true,
     "settings": {
@@ -7,7 +8,6 @@
       "network_hex": "<canonical network genesis hash, hex>",
       "state_dir": "/var/lib/status-pir-router-native-https",
       "listen": "127.0.0.1:8482",
-      "query_listen": "127.0.0.1:8484",
       "worker_origin": "http://127.0.0.1:8481",
       "publisher": "https://enhance-pir.valargroup.dev"
     }

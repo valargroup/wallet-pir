@@ -111,12 +111,17 @@ impl DetailProcess {
 }
 
 pub async fn run(config: DetailProcess) -> Result<(), Error> {
-    run_with(config, None).await
+    run_with(config, None, None).await
 }
 
+/// Serve on `reserved` (or a socket bound at `listen`), the provider listener
+/// fleet routers and private probes reach. With `public`, the wallet routes
+/// are also installed on the host's shared wallet listener once the first
+/// checked publication is active.
 pub async fn run_with(
     config: DetailProcess,
     mut reserved: Option<tokio::net::TcpListener>,
+    public: Option<crate::public::Slot>,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
         if config.role != DisplayRole::Combined {
@@ -170,6 +175,9 @@ pub async fn run_with(
             return Ok(());
         }
         let app = manager.router();
+        if let Some(public) = public {
+            public.install(app.clone());
+        }
         let mut synchronization = tokio::spawn(manager.run());
         let listener = match reserved.take() {
             Some(listener) => listener,

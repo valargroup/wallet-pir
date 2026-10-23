@@ -105,6 +105,20 @@ configuration, not a production inventory. Sections are `enhance`, `status`,
 `transparent_history`, and `transaction_details`. Each has `enabled` and
 `settings`. An omitted or disabled section starts nothing.
 
+Wallets reach every enabled product on one top-level `public_listen`, behind
+the external HTTPS edge that terminates TLS for each existing origin. It is
+required when an enabled role answers wallets (Enhance `query-ingress` or
+`combined`, Status `router` or `combined`) and refused when none does. Each
+product serves only its own wallet namespaces there, at both the canonical and
+the deployed prefixes: `/enhance/v1` and `/v1/enhance`, `/status/v1` and
+`/v1/status`, and below `/transparent/v1` and `/v2` the history `/shards` and
+`/filters` operations and the transaction-detail `/txid` operations. Health,
+readiness, metrics, control, provider and evaluation routes never appear on it;
+they stay on each product's private listener. A product's namespaces answer 503
+until it can serve and after it stops, while other products continue. The edge
+keeps each origin's existing route allowlist; the shared listener does not
+widen what an origin exposes.
+
 Enhance settings name one role: `worker`, `query-ingress`, `packing-router`
 or `combined`.
 Every role takes a `synchronization` object naming its HTTPS
@@ -113,9 +127,10 @@ Every role takes a `synchronization` object naming its HTTPS
 and packing routers their `workers` (and optional `preferred` workers) per
 domain. A worker also needs `listen`, an absolute `data_dir`, and optional
 `sealed_shards` (default 6) and `matvec` (`matvec_backend` `cpu` or `cuda`,
-and `cuda_device` only for CUDA). Query ingress needs `data_dir`, `listen`,
+and `cuda_device` only for CUDA). Query ingress needs `data_dir`,
 `control_listen`, and optional `requests` (default 16) and `uploads` (default
-256). A packing router needs `data_dir`, `listen`, `control_listen`, and
+256). A packing router needs `data_dir`, `listen` (where its ingress reaches it),
+`control_listen`, and
 optional `max_objects` (default 6) and `requests` (default 4). A `combined`
 Enhance role runs a query ingress, packing router and worker for the worker's
 `shards` in one process, calling each other directly instead of over private
@@ -123,15 +138,16 @@ HTTP, so it names no routers or workers and needs no bearer token between
 them. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
 ingress's `requests` and `uploads`, the router's `max_objects` and
 `packing_requests` (the router's `requests`), an absolute `data_dir` holding
-`worker`, `router` and `ingress` state directories, the wallet `listen` and the
-private `control_listen`. Wallets see a generation only after all three hold
+`worker`, `router` and `ingress` state directories and the private
+`control_listen`; wallets reach it on `public_listen`. Wallets see a generation only after all three hold
 fresh authority for it, and its health is ready only while all three are.
 Status settings
 name `worker`, `router` or `combined`. Each requires `publisher` (an HTTPS
 origin), `network_hex`, an exclusively owned `state_dir`, and loopback listeners.
 `publisher_ca` optionally adds an installed PEM trust root. The router also
-requires its loopback `worker_origin`; a router may move its wallet routes to
-`query_listen`. A `combined` role loads the evaluation units and the packing
+requires its loopback `worker_origin`. Router and combined roles answer wallets
+on `public_listen`; their own `listen` keeps control, provider and telemetry
+routes, and a worker's `listen` keeps evaluation. A `combined` role loads the evaluation units and the packing
 material of the publisher's latest inventory and answers wallets by evaluating
 in process, so it names no `worker_origin` and has no private evaluation or
 handover routes. Status evaluation is CPU-only and has no `cuda` setting. The
@@ -154,6 +170,9 @@ History keeps its downloaded state in `shard_dir` and may name an
 keep theirs in `state_dir` and serve only `role` `combined`. Numbers are
 integers and every object rejects unknown fields. A deployment renders one
 Transparent section per file, so history and detail stay separate processes.
+Their `listen` is the provider listener that fleet routers and private probes
+reach; when `public_listen` is also set, the same process additionally answers
+its wallet operations there.
 
 ```json
 {

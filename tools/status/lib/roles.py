@@ -42,8 +42,10 @@ def report(service, role, health, ready_status):
 def _local_role(settings, *, release, template, role, external=False):
     """Render a Status HTTPS consumer and its private evaluation listeners."""
     from urllib.parse import urlsplit
-    required = ('network_hex', 'state_dir', 'listen', 'publisher')
-    optional = ('worker_origin', 'publisher_ca') + (('query_listen',) if role == 'router' else ())
+    # A router answers wallets on the host's `public_listen`, rendered from
+    # the inventory's `query_listen`; its own `listen` stays private.
+    required = ('network_hex', 'state_dir', 'listen', 'publisher') + (('query_listen',) if role == 'router' else ())
+    optional = ('worker_origin', 'publisher_ca')
     config = settings_of(settings, required, optional)
     network = config['network_hex']
     if not isinstance(network, str) or len(network) != 64 or any(c not in '0123456789abcdef' for c in network):
@@ -74,7 +76,10 @@ def _local_role(settings, *, release, template, role, external=False):
             raise ValueError(name + ' must use a loopback address and a valid port')
     path = CONFIG if external else '/etc/status-pir/' + role + '.json'
     management = MANAGEMENT if external else '127.0.0.1:' + ('18481' if role == 'worker' else '18482')
-    document = {'management_listen': management, 'status': {'enabled': True, 'settings': body}}
+    document = {'management_listen': management}
+    if 'query_listen' in body:
+        document['public_listen'] = body.pop('query_listen')
+    document['status'] = {'enabled': True, 'settings': body}
     return render_worker(template, directory(release) + '/pir-query-server', ['--config', path],
                          configurations={path: document}, writable=[body['state_dir']],
                          readonly=[path, *readonly], settings=config, check=('--config', path, '--check'))
