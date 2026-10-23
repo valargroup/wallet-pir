@@ -20,8 +20,11 @@ the APM forgets an enrolled host.
 import hashlib
 import ipaddress
 import json
+import os
+from pathlib import Path
 import re
 
+from . import durable
 from .paths import ROOT
 from .role_config import RenderedRole, directory, render, settings_of
 
@@ -315,8 +318,9 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     `terraform_outputs` is `terraform output -json` of the fleet root,
     `external_hosts` maps declared non-Terraform hosts (an external GPU or a
     checker) to their addresses, and `roster` is the Transparent dynamic
-    roster. `expected_volumes` maps an enrolled host to mount paths it must
-    check; coordinators always need their three data volumes. Each missing
+    roster. `expected_volumes` maps an enrolled host to mount paths, or
+    `{"path", "uuid"}` identities such as `activated_volumes` returns, that it
+    must check; coordinators always need their three data volumes. Each missing
     source makes the report `partial`: it then proves nothing about the cloud.
     """
     entries = observer_entries(inventory)
@@ -342,9 +346,11 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     for host in {entry['host'] for entry in apm}:
         volumes.setdefault(host, list(COORDINATOR_VOLUMES))
     missing_volumes = {}
-    for host, paths in sorted(volumes.items()):
-        declared = {v['path'] for v in enrolled.get(host, {}).get('required_volumes', [])}
-        absent = sorted(set(paths) - declared)
+    for host, wanted in sorted(volumes.items()):
+        declared = {v['path']: v['uuid'].lower() for v in enrolled.get(host, {}).get('required_volumes', [])}
+        absent = sorted(v if isinstance(v, str) else v['path'] for v in wanted
+                        if (v if isinstance(v, str) else v['path']) not in declared
+                        or (not isinstance(v, str) and declared[v['path']] != v['uuid'].lower()))
         if absent:
             missing_volumes[host] = absent
     sources = {'terraform': terraform_outputs is not None, 'roster': roster is not None}
@@ -358,3 +364,46 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
         'partial': partial,
         'sources': sources,
     }
+
+
+def activated_volumes(state_dir):
+    """`{host: [{"path", "uuid"}]}` from completed cache-data activation receipts.
+
+    `cache-data-activate` keeps its result under the deploy state directory;
+    a started worker's receipt binds the cache path to the filesystem UUID it
+    formatted and mounted there.
+    """
+    volumes = {}
+    for receipt in sorted(Path(state_dir).glob('cache-data-*.json')):
+        result = json.loads(receipt.read_text())
+        uuid = (result.get('device') or {}).get('uuid')
+        host = (result.get('request') or {}).get('host')
+        if result.get('phase') == 'serving-started' and uuid and host and result.get('active_cache'):
+            volumes.setdefault(host, []).append({'path': result['active_cache'], 'uuid': uuid})
+    return volumes
+
+
+def bind_volume(inventory_path, host, volume):
+    """Add a receipt-bound required volume to `host`'s observer settings in the deployment inventory.
+
+    Returns `bound`, `unchanged` or `no-observer` (coverage then reports the
+    volume missing). The same path bound to another filesystem is refused: an
+    operator decides which identity is current. The next `apm-sidecar` deploy
+    renders the configuration, and `install-observers` the APM's expected digest.
+    """
+    path = Path(inventory_path)
+    document = json.loads(path.read_text())
+    roles = document.get('services', {}).get(SERVICE, {}).get('roles', {}).get(ROLE, [])
+    entry = next((e for e in roles if e.get('host') == host), None)
+    if entry is None:
+        return 'no-observer'
+    volumes = entry.setdefault('settings', {}).setdefault('required_volumes', [])
+    for existing in volumes:
+        if existing['path'] == volume['path']:
+            if existing['uuid'].lower() != volume['uuid'].lower():
+                raise ValueError('%s on %s is already bound to another filesystem' % (volume['path'], host))
+            return 'unchanged'
+    volumes.append({'path': volume['path'], 'uuid': volume['uuid']})
+    sidecar_document(entry['settings'])  # the bound volume must still render
+    durable.atomic_json(path, document, mode=os.stat(path).st_mode & 0o777)
+    return 'bound'

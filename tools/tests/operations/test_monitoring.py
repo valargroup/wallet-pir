@@ -267,6 +267,58 @@ class Certificates(unittest.TestCase):
         self.assertFalse(ready(fake, 'c'))
 
 
+class VolumeBinding(unittest.TestCase):
+    """A cache-volume activation binds its filesystem into the observer and coverage."""
+
+    def test_activation_receipt_binds_the_volume_identity_and_changes_the_digest(self):
+        import argparse
+        import hashlib
+        from wallet_pir_ops.deploy import cache_data
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / 'state'
+            state.mkdir()
+            worker = {'host_id': 'txid-01', 'address': '10.0.0.40'}
+            document = inventory(COORDINATOR, worker)
+            document.update(lock={'type': 'remote', 'host': 'coordinator'}, ssh={'mode': 'config'})
+            document['services']['transparent-display'] = {'roles': {'worker': [{'host': 'txid-01'}]}}
+            path = root / 'inventory.json'
+            path.write_text(json.dumps(document))
+            before = monitoring.enrollment_record(worker)['config_digest']
+            request = {'host': 'txid-01', 'unit': 'transparent-txid-display-worker.service',
+                       'configuration': '/etc/x.json', 'volume_id': 'v1', 'volume_name': 'txid-cache', 'size_gib': 50}
+            (state / 'volume-1.json').write_text(json.dumps({'phase': 'attached', 'volume_id': 'v1', 'plan': {
+                'request': {'host': 'txid-01', 'name': 'txid-cache', 'size_gib': 50}}}))
+            raw = json.dumps(request).encode()
+            (root / 'request.json').write_bytes(raw)
+            fake = FakeFleet()
+            fake.host('coordinator')
+            summary = {'transaction': 'cache-data-t1', 'phase': 'serving-started', 'active_cache': '/srv/txid-cache',
+                       'mount': '/mnt/txid-cache', 'destination': '/mnt/txid-cache/cache',
+                       'device': {'uuid': 'abcd-0001'}}
+            fake.run = lambda host, argv, timeout: (0, json.dumps(summary))
+            args = argparse.Namespace(request=root / 'request.json', request_sha256=hashlib.sha256(raw).hexdigest(),
+                                      inventory=str(path), state_dir=str(state), command='cache-data-activate',
+                                      transaction='cache-data-t1')
+            self.assertEqual(cache_data.dispatch(args, fake)['monitoring'], 'bound')
+            bound = json.loads(path.read_text())['services']['apm-sidecar']['roles']['observer'][1]['settings']
+            self.assertEqual(bound['required_volumes'], [{'path': '/srv/txid-cache', 'uuid': 'abcd-0001'}])
+            self.assertNotEqual(monitoring.enrollment_record(bound)['config_digest'], before)
+            observers = monitoring.observers(json.loads(path.read_text()), mode='shadow')
+            self.assertIn('volume:/srv/txid-cache', observers['hosts'][1]['checks'])
+            expected = monitoring.activated_volumes(state)
+            self.assertEqual(expected, {'txid-01': [{'path': '/srv/txid-cache', 'uuid': 'abcd-0001'}]})
+            report = monitoring.coverage(json.loads(path.read_text()), expected_volumes=expected)
+            self.assertEqual(report['missing_volumes'], {})
+            # Without the binding, coverage names the activated volume.
+            report = monitoring.coverage(document, expected_volumes=expected)
+            self.assertEqual(report['missing_volumes'], {'txid-01': ['/srv/txid-cache']})
+            # Repeating is unchanged; another identity at the same path is refused.
+            self.assertEqual(cache_data.dispatch(args, fake)['monitoring'], 'unchanged')
+            with self.assertRaisesRegex(ValueError, 'another filesystem'):
+                monitoring.bind_volume(path, 'txid-01', {'path': '/srv/txid-cache', 'uuid': 'ffff'})
+
+
 class HostTransport:
     """A controller's host access over one fake host: files by path, and a sidecar that starts."""
 
