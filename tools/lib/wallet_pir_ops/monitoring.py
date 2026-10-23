@@ -34,6 +34,8 @@ TLS_DOMAIN = 'pir-monitoring'
 PORT = 9443
 SERVICE = 'apm-sidecar'
 ROLE = 'observer'
+# VPC and loopback ranges only; documentation and public ranges are refused.
+PRIVATE_NETWORKS = ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', 'fc00::/7', '::1/128')
 NAME = re.compile(r'^[a-z0-9@._:/-]{1,80}$')
 UUID = re.compile(r'^[0-9A-Fa-f-]{1,64}$')
 UNIT = re.compile(r'^[A-Za-z0-9@._-]+\.(service|socket|timer)$')
@@ -76,15 +78,16 @@ def _hooks(value):
 def sidecar_document(settings):
     """The sidecar configuration for one host, validated, as the file will hold it."""
     config = settings_of(settings, ('host_id', 'address'),
-                         ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port'))
+                         ('required_volumes', 'units', 'hooks', 'edge_metrics_url', 'port', 'health_port'))
     if not NAME.match(config['host_id']):
         raise ValueError('host_id must be a lowercase monitoring name')
     address = ipaddress.ip_address(config['address'])
-    if not address.is_private:
+    if not any(address in ipaddress.ip_network(n) for n in PRIVATE_NETWORKS if
+               ipaddress.ip_network(n).version == address.version):
         raise ValueError('a sidecar listens on its private address only')
-    port = config.get('port', PORT)
-    if not isinstance(port, int) or not 1024 <= port <= 65535:
-        raise ValueError('port must be an unprivileged TCP port')
+    port, health_port = config.get('port', PORT), config.get('health_port', PORT + 1)
+    if any(not isinstance(p, int) or not 1024 <= p <= 65535 for p in (port, health_port)):
+        raise ValueError('port and health_port must be unprivileged TCP ports')
     units = config.get('units', [])
     if not isinstance(units, list) or not all(isinstance(u, str) and UNIT.match(u) for u in units):
         raise ValueError('units must be systemd unit names')
@@ -101,6 +104,9 @@ def sidecar_document(settings):
         'hooks': _hooks(config.get('hooks', [])),
         'state_path': STATE,
     }
+    if health_port != PORT + 1:
+        # Only for disposable rehearsals: the descriptor's readiness URL uses the default.
+        document['health_listen'] = '127.0.0.1:%d' % health_port
     if edge is not None:
         document['edge_metrics_url'] = edge
     return document
