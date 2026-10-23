@@ -65,7 +65,7 @@ def provision(plan, api, save):
     if matches:
         volume = matches[0]
         require(volume['description'] == marker and volume['size_gigabytes'] == request['size_gib']
-                and volume['filesystem_type'] == 'ext4', 'existing volume is not this approved candidate')
+                and volume['filesystem_type'] in ('', 'ext4'), 'existing volume is not this approved candidate')
     else:
         save({'phase': 'creating', 'plan': plan})
         volume = api.write('POST', '/v2/volumes', {'region': request['region'], 'name': request['name'],
@@ -90,6 +90,10 @@ def provision(plan, api, save):
             action = api.get('/v2/actions/' + str(action['id']))['action']
         require(action['status'] == 'completed', 'volume attachment did not complete; inspect the retained action receipt')
     volume = api.get('/v2/volumes/' + volume['id'])['volume']
+    deadline = time.monotonic() + 90
+    while not volume['droplet_ids'] and time.monotonic() < deadline:
+        time.sleep(3)
+        volume = api.get('/v2/volumes/' + volume['id'])['volume']
     require(volume['droplet_ids'] == [request['droplet_id']], 'volume attachment was not observed')
     state.update(phase='attached', volume=volume)
     save(state)
