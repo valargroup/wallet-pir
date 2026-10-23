@@ -238,10 +238,13 @@ class PlannerTests(unittest.TestCase):
 
         paths = ['tools/scripts/wallet-pir-deploy.py',
                  'src/transparent/transparent-publisher/src/lib.rs']
+        # Eight or more CPUs overlap the suites; smaller hosts are covered by
+        # test_rust_tests_wait_for_helpers_only_on_small_hosts.
         with patch.object(sys, 'argv', ['fast.py', '--base', 'HEAD', '--committed-only']), \
                 patch.object(fast, 'changed_paths', return_value=paths), \
                 patch('hygiene.check', return_value=0), \
                 patch.object(fast, 'local_target', return_value=nullcontext()), \
+                patch('fast_build.available_cpus', return_value=8), \
                 patch.object(fast, 'run', side_effect=run), \
                 patch.object(fast, 'rust_checks', side_effect=rust), redirect_stdout(io.StringIO()):
             fast.main()

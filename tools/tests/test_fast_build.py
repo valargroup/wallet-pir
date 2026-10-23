@@ -149,6 +149,19 @@ class FastBuildTests(unittest.TestCase):
         with patch.object(fast_build, 'available_cpus', return_value=8):
             self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
 
+    def test_rust_tests_wait_for_helpers_only_on_small_hosts(self):
+        from concurrent.futures import Future
+        import fast
+        helpers = Future()
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertIsNone(fast.tests_wait_for(helpers))
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertIsNone(fast.tests_wait_for(None))
+            waiter = fast.tests_wait_for(helpers)
+            # A failed helper stage is reported by its own future; tests still run.
+            helpers.set_exception(RuntimeError('helper failed'))
+            waiter()
+
     def test_runtime_libraries_run_alone_only_on_small_hosts(self):
         with patch.object(fast_build, 'available_cpus', return_value=3):
             self.assertTrue(fast_build.runtime_runs_alone('enhance-shared', ['lib']))

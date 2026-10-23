@@ -354,7 +354,7 @@ def _compile_command(group, options):
 
 def execute(selected, *, offline=False, compile_only=False, jobs=3,
             additional_features=(), environment=None, case_log=None, enforce_budget=True,
-            products=None):
+            products=None, before_tests=None):
     from integration_tests import inventory
     if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
         raise ValueError('ordinary CPU correctness cannot enable CUDA')
@@ -590,6 +590,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         cases = Path(case_log) if case_log is not None else root / 'cases.jsonl'
         env['WALLET_PIR_CASE_LOG'] = str(cases)
         try:
+            if before_tests is not None:
+                before_tests()
             run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
                 env=env, stage='tests:fast-programs')
         finally:
