@@ -915,6 +915,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
         Some(listener),
         None,
         Default::default(),
+        Default::default(),
     ));
     let status = format!("http://{serving}/v1/provider-status");
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -946,6 +947,7 @@ async fn display_consumers_check_publisher_discovery_at_startup_and_every_pass()
         process,
         None,
         None,
+        Default::default(),
         Default::default(),
     )
     .await

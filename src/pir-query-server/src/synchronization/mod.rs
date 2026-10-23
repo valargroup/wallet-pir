@@ -85,14 +85,29 @@ impl<T: SyncTask> SyncManager<T> {
     }
     /// Poll until a pass fails with an error the task marks terminal, and
     /// return that error unchanged. Every other failure is retried with backoff.
-    pub async fn run(mut self) -> T::Error {
+    pub async fn run(self) -> T::Error {
+        match self.run_until(std::future::pending()).await {
+            Some(error) => error,
+            None => unreachable!("a pending stop never completes"),
+        }
+    }
+    /// [`Self::run`] until `stop` completes, then `None`. `stop` ends only the
+    /// wait between passes: a pass already started finishes, with its final
+    /// authority checks and durable writes, before this returns.
+    pub async fn run_until(mut self, stop: impl Future<Output = ()>) -> Option<T::Error> {
+        tokio::pin!(stop);
         let mut failures = 0u32;
         loop {
+            tokio::select! {
+                biased;
+                _ = &mut stop => return None,
+                _ = std::future::ready(()) => {}
+            }
             let result = self.poll_once().await;
             self.task.report(&result);
             failures = match result {
                 Ok(_) => 0,
-                Err(error) if self.task.terminal(&error) => return error,
+                Err(error) if self.task.terminal(&error) => return Some(error),
                 Err(_) => failures.saturating_add(1),
             };
             let jitter = SystemTime::now()
@@ -102,9 +117,11 @@ impl<T: SyncTask> SyncManager<T> {
                 .success_interval
                 .filter(|_| failures == 0)
                 .unwrap_or_else(|| delay(failures, jitter));
-            self.task
-                .wait_until(tokio::time::Instant::now() + wait)
-                .await;
+            tokio::select! {
+                biased;
+                _ = &mut stop => return None,
+                _ = self.task.wait_until(tokio::time::Instant::now() + wait) => {}
+            }
         }
     }
 }

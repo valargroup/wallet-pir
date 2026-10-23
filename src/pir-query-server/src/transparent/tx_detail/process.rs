@@ -5,7 +5,6 @@
 use crate::transparent::config::ServiceConfig;
 use crate::transparent::tx_detail::service::{DisplayRuntime, DisplayState};
 use serde::Deserialize;
-use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use transparent_shared::history::shardset::DEFAULT_RETAIN_REVISIONS;
@@ -111,18 +110,20 @@ impl DetailProcess {
 }
 
 pub async fn run(config: DetailProcess) -> Result<(), Error> {
-    run_with(config, None, None, Default::default()).await
+    run_with(config, None, None, Default::default(), Default::default()).await
 }
 
 /// Serve on `reserved` (or a socket bound at `listen`), the provider listener
 /// fleet routers and private probes reach. With `public`, the wallet routes
 /// are also installed on the host's shared wallet listener once the first
-/// checked publication is active.
+/// checked publication is active. `stop` ends startup retries and serving
+/// cooperatively: accepted requests and a started publication pass finish.
 pub async fn run_with(
     config: DetailProcess,
     mut reserved: Option<tokio::net::TcpListener>,
     public: Option<crate::public::Slot>,
     readiness: crate::readiness::Readiness,
+    stop: pir_pipeline::service::Shutdown,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
         if config.role != DisplayRole::Combined {
@@ -168,7 +169,11 @@ pub async fn run_with(
                 Err(error) if config.verify_only => return Err(error),
                 Err(error) => {
                     tracing::warn!(%error, "initial display synchronization refused; retrying with checked inputs");
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    if !crate::supervision::retry_after(std::time::Duration::from_secs(1), &stop)
+                        .await
+                    {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -181,24 +186,19 @@ pub async fn run_with(
         if let Some(public) = public {
             public.install(app.clone());
         }
-        let mut synchronization = tokio::spawn(manager.run());
         let listener = match reserved.take() {
             Some(listener) => listener,
             None => tokio::net::TcpListener::bind(config.listen).await?,
         };
-        tokio::select! {
-            result = axum::serve(listener, app).into_future() => {
-                synchronization.abort();
-                result?;
-            }
-            result = &mut synchronization => {
-                return Err(match result {
-                    Ok(error) => error,
-                    Err(join) => format!("display synchronization stopped: {join}").into(),
-                });
-            }
-        }
-        return Ok(());
+        let stopped = stop.clone();
+        return crate::supervision::supervise(
+            "display",
+            listener,
+            app,
+            manager.run_until(async move { stopped.cancelled().await }),
+            stop,
+        )
+        .await;
     }
     // Serving always synchronizes from an HTTPS publisher; without one, only
     // a local publication is verified.

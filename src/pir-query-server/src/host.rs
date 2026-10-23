@@ -100,12 +100,7 @@ fn spawn<F>(
     owners.insert(id, (name, stop));
 }
 
-#[cfg(any(
-    feature = "enhance",
-    feature = "status",
-    feature = "transparent-history",
-    feature = "transparent-detail"
-))]
+#[cfg(feature = "enhance")]
 async fn stopped(local: Shutdown) {
     local.cancelled().await
 }
@@ -327,12 +322,7 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
         state.phases.lock().unwrap().insert("status", "running");
         spawn(
             "status",
-            async move {
-                tokio::select! {
-                    result = crate::status::serve_role_on(role, listen, query, readiness) => result,
-                    _ = stopped(local) => Ok(()),
-                }
-            },
+            crate::status::serve_role_on(role, listen, query, readiness, local),
             stop,
             &mut group,
             &mut owners,
@@ -353,12 +343,13 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             .insert("transparent_history", "running");
         spawn(
             "transparent_history",
-            async move {
-                tokio::select! {
-                    result = crate::transparent::history::process::run_with(worker, Some(listen), wallet, readiness) => result,
-                    _ = stopped(local) => Ok(()),
-                }
-            },
+            crate::transparent::history::process::run_with(
+                worker,
+                Some(listen),
+                wallet,
+                readiness,
+                local,
+            ),
             stop,
             &mut group,
             &mut owners,
@@ -379,12 +370,13 @@ pub async fn run(config: Config, shutdown: Shutdown) -> Result<()> {
             .insert("transaction_details", "running");
         spawn(
             "transaction_details",
-            async move {
-                tokio::select! {
-                    result = crate::transparent::tx_detail::process::run_with(worker, Some(listen), wallet, readiness) => result,
-                    _ = stopped(local) => Ok(()),
-                }
-            },
+            crate::transparent::tx_detail::process::run_with(
+                worker,
+                Some(listen),
+                wallet,
+                readiness,
+                local,
+            ),
             stop,
             &mut group,
             &mut owners,

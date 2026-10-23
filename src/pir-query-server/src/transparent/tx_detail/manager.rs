@@ -61,6 +61,10 @@ impl Manager {
     pub async fn run(self) -> Error {
         self.sync.run().await
     }
+    /// [`Self::run`] until `stop`; a pass in progress finishes first.
+    pub async fn run_until(self, stop: impl std::future::Future<Output = ()>) -> Option<Error> {
+        self.sync.run_until(stop).await
+    }
 }
 
 struct DisplaySync {

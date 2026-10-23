@@ -48,12 +48,14 @@ pub async fn discover(config: &RoleConfig) -> Result<(), Failure> {
 /// listener and `listen` serves only private routes; without it, `listen`
 /// serves both. Publisher incompatibility is fatal; transient initial
 /// synchronization failure leaves serving unavailable until a later pass
-/// succeeds.
+/// succeeds. `stop` ends serving cooperatively: accepted requests and a
+/// started publication pass finish first.
 pub async fn serve_role_on(
     config: RoleConfig,
     listen: tokio::net::TcpListener,
     public: Option<crate::public::Slot>,
     readiness: crate::readiness::Readiness,
+    stop: pir_pipeline::service::Shutdown,
 ) -> Result<(), Failure> {
     discover(&config).await?;
     let network = hex::decode(&config.network_hex)?
@@ -81,14 +83,20 @@ pub async fn serve_role_on(
         }
         tracing::warn!(%error, "Status initial synchronization deferred");
     }
-    let mut tasks = pir_pipeline::service::Tasks::default();
-    let polling = tokio::spawn(manager.run());
-    tasks.own(&polling);
-    if let Some(public) = public {
-        public.install(service.query_routes());
-        tokio::select! { result = axum::serve(listen, service.control_routes()) => result?, result = polling => return Err(result?), }
-    } else {
-        tokio::select! { result = axum::serve(listen, service.routes()) => result?, result = polling => return Err(result?), }
-    }
-    Ok(())
+    let routes = match public {
+        Some(public) => {
+            public.install(service.query_routes());
+            service.control_routes()
+        }
+        None => service.routes(),
+    };
+    let stopped = stop.clone();
+    crate::supervision::supervise(
+        "status",
+        listen,
+        routes,
+        manager.run_until(async move { stopped.cancelled().await }),
+        stop,
+    )
+    .await
 }

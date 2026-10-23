@@ -160,3 +160,47 @@ async fn continuous_sync_retries_ordinary_failures_and_returns_a_terminal_error(
     let manager = SyncManager::new(Terminal(0));
     assert_eq!(manager.run().await, "fatal");
 }
+
+/// A stop requested during a pass lets that pass, with its durable writes,
+/// finish; the manager then returns without starting another pass. A stop
+/// during the wait between passes returns at once.
+#[tokio::test(start_paused = true)]
+async fn a_stop_ends_only_the_wait_between_complete_passes() {
+    let probe = Arc::new(Mutex::new(Probe::default()));
+    let stop = Arc::new(tokio::sync::Notify::new());
+    let requested = stop.clone();
+    let running = tokio::spawn(
+        SyncManager::new(Task(probe.clone())).run_until(async move { requested.notified().await }),
+    );
+    // Mid-pass: the first pass sleeps two seconds inside `synchronize`.
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(probe.lock().unwrap().events, ["started", "work"]);
+    stop.notify_one();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(running.await.unwrap().is_none());
+    let p = probe.lock().unwrap();
+    assert_eq!(p.events, ["started", "work", "finished"]);
+    assert_eq!(p.calls, 1, "no pass starts after the stop");
+    drop(p);
+
+    let probe = Arc::new(Mutex::new(Probe::default()));
+    let stop = Arc::new(tokio::sync::Notify::new());
+    let requested = stop.clone();
+    let running = tokio::spawn(
+        SyncManager::new(Task(probe.clone())).run_until(async move { requested.notified().await }),
+    );
+    for _ in 0..3 {
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+    }
+    tokio::task::yield_now().await;
+    assert_eq!(
+        probe.lock().unwrap().events.len(),
+        3,
+        "waiting after one pass"
+    );
+    stop.notify_one();
+    assert!(running.await.unwrap().is_none());
+    assert_eq!(probe.lock().unwrap().calls, 1);
+}

@@ -9,6 +9,12 @@ pub mod public;
 pub mod readiness;
 #[cfg(feature = "status")]
 pub mod status;
+#[cfg(any(
+    feature = "status",
+    feature = "transparent-history",
+    feature = "transparent-detail"
+))]
+mod supervision;
 pub mod synchronization;
 #[cfg(any(feature = "transparent-history", feature = "transparent-detail"))]
 pub mod transparent;
