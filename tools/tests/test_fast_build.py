@@ -339,6 +339,9 @@ class FastBuildTests(unittest.TestCase):
             (ROOT / 'src/transparent/transparent-publisher/Cargo.toml').read_text())
         query = tomllib.loads((ROOT / 'src/pir-query-server/Cargo.toml').read_text())
         self.assertNotIn('pir-query-server', publisher.get('dev-dependencies', {}))
+        # Only the qualification-tests feature may link the host into the publisher.
+        self.assertTrue(publisher['dependencies']['pir-query-server']['optional'])
+        self.assertEqual(publisher['features']['qualification-tests'], ['dep:pir-query-server'])
         self.assertEqual(
             query['dev-dependencies']['pir-query-server']['features'],
             ['transparent-history', 'transparent-detail'])

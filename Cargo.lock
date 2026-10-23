@@ -3713,6 +3713,7 @@ dependencies = [
  "pir-observability",
  "pir-pipeline",
  "pir-publication",
+ "pir-query-server",
  "pir-service-discovery",
  "prometheus",
  "reqwest",
