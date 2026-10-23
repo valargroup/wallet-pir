@@ -1322,6 +1322,7 @@ async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
         None,
         None,
         Default::default(),
+        pir_pipeline::service::Shutdown::default(),
     )
     .await
     .unwrap_err();

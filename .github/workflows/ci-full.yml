@@ -584,6 +584,7 @@ jobs:
           cargo test --locked --profile release-fast -p pir-publisher --features enhance,native-reinspiring --test commands
           cargo test --locked --profile release-fast -p status-publisher --features cli,native-reinspiring --lib commands::tests
           cargo test --locked --profile release-fast -p status-publisher --features fixtures,native-reinspiring --lib shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
+          cargo test --locked --profile release-fast -p transparent-publisher --features fixtures --lib --no-run
           cargo test --locked --profile release-fast -p pir-publisher --features enhance,status,transparent-history,transparent-detail,native-reinspiring --test lifecycle
       - name: Package the exact source candidate
         run: |
