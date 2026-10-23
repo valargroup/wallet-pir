@@ -406,8 +406,8 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
                 .await
                 .is_err()
         );
-        assert!(!objects.join(&artifact.sha256).exists());
-        assert_eq!(std::fs::read_dir(&objects).unwrap().count(), 0);
+        assert!(!objects.directory().join(&artifact.sha256).exists());
+        assert_eq!(std::fs::read_dir(objects.directory()).unwrap().count(), 0);
     }
     let metadata = publication::Artifact {
         kind: publication::Kind::Metadata,
@@ -423,7 +423,7 @@ async fn real_https_defers_bulk_digest_checks_and_repairs_before_reenabling() {
             .await
             .unwrap()
     );
-    let object = objects.join(&artifact.sha256);
+    let object = objects.directory().join(&artifact.sha256);
     let alias = root.join("alias");
     crate::objects::link_object(&object, &alias, &artifact, |a, b| std::fs::hard_link(a, b))
         .unwrap();

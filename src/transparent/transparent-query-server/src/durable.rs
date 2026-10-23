@@ -11,13 +11,7 @@ use std::path::Path;
 pub(crate) fn persist(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let parent = path.parent().ok_or("record needs a parent directory")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let temp = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&temp).map_err(|e| e.to_string())?;
-    file.write_all(&serde_json::to_vec(value).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
-    file.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(temp, path).map_err(|e| e.to_string())?;
-    std::fs::File::open(parent)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| e.to_string())
+    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    pir_control::durable::replace_durable(path, |file| file.write_all(&bytes))
+        .map_err(|error| error.to_string())
 }
