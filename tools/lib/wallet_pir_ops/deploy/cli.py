@@ -304,8 +304,6 @@ def parser():
     transparent_cli().register(commands)
     from . import publisher
     publisher.register(commands)
-    from . import publisher_storage
-    publisher_storage.register(commands)
     from . import cache_storage
     cache_storage.register(commands)
     from . import cache_volume
@@ -419,7 +417,7 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
-                                                   'ops-package-', 'publisher-cutover-', 'publisher-storage-', 'status-routing-',
+                                                   'ops-package-', 'publisher-cutover-', 'status-routing-',
                                                    'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
@@ -439,23 +437,14 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             from . import cache_storage
             out(json.dumps(cache_storage.dispatch(args, executor), sort_keys=True))
             return 0
-        if args.command.startswith('publisher-storage-'):
-            from . import publisher, publisher_storage
-            request, _inventory = publisher.load_request(args.request, args.request_sha256)
-            check_installed(mutation=mutation, revision=request['release']['git_sha'])
-            result = publisher_storage.dispatch(args, executor=executor, **options)
-            out(json.dumps(result, sort_keys=True))
-            return 0
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
-            if not args.command.endswith(('-run', '-watchdog', '-prune-qualification')):
-                publisher_repair = args.command.endswith(('-repair-sandbox-plan', '-repair-sandbox',
-                                                         '-repair-release-plan', '-repair-release'))
-                request, _inventory = publisher.load_request(args.request, args.request_sha256,
-                    recovery=publisher_repair or args.command.endswith(('-status', '-rollback', '-reconcile', '-restart', '-verify', '-continue')))
-                # Sandbox repair keeps the journal-pinned executable and only
-                # changes its unit; no new binary is installed by this recovery.
-                check_installed(mutation=mutation, revision=None if publisher_repair else request['release']['git_sha'])
+            publisher_repair = args.command.endswith(('-repair-sandbox-plan', '-repair-sandbox',
+                                                     '-repair-release-plan', '-repair-release'))
+            request, _inventory = publisher.load_request(args.request, args.request_sha256)
+            # Forward repairs validate their release and existing transaction
+            # inside their own handlers before any service changes.
+            check_installed(mutation=mutation, revision=None if publisher_repair else request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))
             return 0
