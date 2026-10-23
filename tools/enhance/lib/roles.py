@@ -32,6 +32,7 @@ MANAGEMENT = {
     'external-worker': '127.0.0.1:18091',
     'query-ingress': '127.0.0.1:18083',
     'packing-router': '127.0.0.1:18093',
+    'combined': '127.0.0.1:18087',
 }
 
 
@@ -192,6 +193,32 @@ def packing_router(settings, *, release, template=None):
         body['requests'] = int(number(parsed['requests'], 'requests', 1))
     text = ROUTER_TEMPLATE.read_text() if template is None else template
     return _render('packing-router', text, release, parsed, body, [data])
+
+
+def combined(settings, *, release, template=None):
+    """Ingress, packing router and worker in one process for the worker's domains.
+
+    Wallets reach it on the host's `public_listen`, rendered from `listen`;
+    `control_listen` is private. Its three components call each other directly,
+    so it names no peers and needs no internal token between them. The process
+    keeps each component's state in its own subdirectory of `data_dir`.
+    """
+    parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'),
+                         ('sealed_shards', 'matvec_backend', 'cuda_device', 'requests', 'uploads',
+                          'max_objects', 'packing_requests'))
+    data = directory(parsed['data_dir'])
+    public = address(parsed['listen'], 'listen')
+    control = address(parsed['control_listen'], 'control_listen')
+    if public == control:
+        raise ValueError('listen and control_listen must differ')
+    body = {'role': 'combined', 'data_dir': data, 'control_listen': control,
+            'sealed_shards': int(number(parsed.get('sealed_shards', 6), 'sealed_shards', 1)),
+            'matvec': _matvec(parsed), 'synchronization': _synchronization(parsed['synchronization'], 'worker')}
+    for name in ('requests', 'uploads', 'max_objects', 'packing_requests'):
+        if name in parsed:
+            body[name] = int(number(parsed[name], name, 1))
+    text = WORKER_TEMPLATE.read_text() if template is None else template
+    return _render('combined', text, release, parsed, body, [data], public=public)
 
 
 def report(service, role, health, ready_status):

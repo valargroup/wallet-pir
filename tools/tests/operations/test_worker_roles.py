@@ -210,6 +210,90 @@ class StatusInstalledRoles(unittest.TestCase):
                     REGISTRY['status'].roles[role].render({**self.settings(role), **bad}, RELEASE)
 
 
+class CombinedRoles(unittest.TestCase):
+    """Combined Enhance and Status roles render the all-products example's sections."""
+    EXAMPLE = json.loads((ROOT / 'tools/deploy/query-server/query-server.example.json').read_text())
+
+    def enhance(self):
+        settings = dict(self.EXAMPLE['enhance']['settings'])
+        settings.pop('role')
+        matvec = settings.pop('matvec')
+        return {**settings, 'listen': self.EXAMPLE['public_listen'], **matvec}
+
+    def status(self):
+        settings = dict(self.EXAMPLE['status']['settings'])
+        settings.pop('role')
+        return {**settings, 'query_listen': self.EXAMPLE['public_listen']}
+
+    def test_rendered_sections_match_the_checked_all_products_example(self):
+        for service, section, settings in (('enhance', 'enhance', self.enhance()),
+                                           ('status', 'status', self.status())):
+            with self.subTest(service=service):
+                spec = REGISTRY[service].roles['combined']
+                rendered = spec.render(settings, RELEASE)
+                path = '/etc/%s-pir/combined.json' % service
+                document = json.loads(rendered.files[path])
+                self.assertEqual(document['public_listen'], self.EXAMPLE['public_listen'])
+                self.assertEqual(document[section], self.EXAMPLE[section])
+                self.assertEqual(set(document), {'management_listen', 'public_listen', section})
+                self.assertEqual(rendered.check, ('--config', path, '--check'))
+                command = shlex.split(units.exec_start(units.effective([rendered.unit])))
+                self.assertEqual(command, ['%s/pir-query-server' % RELEASE, '--config', path])
+                effective = units.effective([rendered.unit])['Service']
+                state = settings.get('data_dir', settings.get('state_dir'))
+                # The process owns its component subdirectories below this root.
+                self.assertEqual(paths(effective['ReadWritePaths']), [state])
+                self.assertIn(path, paths(effective['ReadOnlyPaths']))
+
+    def test_management_listeners_do_not_collide_with_other_roles_on_a_host(self):
+        from tools.enhance.lib import roles as enhance_roles
+        from tools.status.lib import roles as status_roles
+        enhance = json.loads(REGISTRY['enhance'].roles['combined'].render(self.enhance(), RELEASE)
+                             .files['/etc/enhance-pir/combined.json'])['management_listen']
+        status = json.loads(REGISTRY['status'].roles['combined'].render(self.status(), RELEASE)
+                            .files['/etc/status-pir/combined.json'])['management_listen']
+        others = set(enhance_roles.MANAGEMENT.values()) - {enhance} | {
+            status_roles.MANAGEMENT, '127.0.0.1:18481', '127.0.0.1:18482'}
+        self.assertNotIn(enhance, others)
+        self.assertNotIn(status, others)
+        self.assertNotEqual(enhance, status)
+
+    def test_combined_roles_refuse_peers_collisions_and_unknown_fields(self):
+        cases = {
+            'enhance': (self.enhance(), [
+                {'control_listen': self.EXAMPLE['public_listen']},
+                {'worker_origin': 'http://127.0.0.1:8091'},
+                {'synchronization': {**self.enhance()['synchronization'], 'shards': []}},
+                {'synchronization': {**self.enhance()['synchronization'], 'routers': {}}},
+                {'requests': 0},
+                {'cuda_device': 0},
+                {'role': 'worker'},
+                {'trusted_ca': '/srv/pir-query-server/enhance/ca.pem'},
+            ]),
+            'status': (self.status(), [
+                {'worker_origin': 'http://127.0.0.1:8481'},
+                {'query_listen': self.EXAMPLE['status']['settings']['listen']},
+                {'query_listen': '0.0.0.0:8090'},
+                {'listen': '0.0.0.0:8481'},
+                {'network_hex': 'AB' * 32},
+                {'publisher': 'http://publisher.example'},
+                {'publisher_ca': '/srv/pir-query-server/status/ca.pem'},
+            ]),
+        }
+        for service, (base, refusals) in cases.items():
+            role = REGISTRY[service].roles['combined']
+            for bad in refusals:
+                settings = {**base, **bad}
+                if 'trusted_ca' in bad:
+                    settings = {**base, 'synchronization': {**base['synchronization'], **bad}}
+                with self.subTest(service=service, bad=bad), self.assertRaises(ValueError):
+                    role.render(settings, RELEASE)
+            missing = dict(base)
+            missing.pop('query_listen' if service == 'status' else 'control_listen')
+            with self.subTest(service=service, missing=True), self.assertRaises(ValueError):
+                role.render(missing, RELEASE)
+
+
 class RolesCommand(unittest.TestCase):
     def run_roles(self, *arguments):
         return subprocess.run([sys.executable, str(ROOT / 'tools/scripts/wallet-pir-roles.py'), *arguments],

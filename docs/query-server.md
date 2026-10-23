@@ -173,6 +173,13 @@ Listeners need distinct fixed loopback or private addresses. State directories
 are absolute and must not overlap. `--check` validates the file and does not
 bind sockets or open stores.
 
+Deployment renders the optional `combined` roles of the `enhance` and `status`
+services (`enhance-pir-combined.service`, `status-combined.service`) from the
+inventory like the other role units, and checks each rendered file with
+`--check` before restarting. The Enhance role takes its wallet listener as
+`listen` and the Status role as `query_listen`; both become `public_listen`.
+Neither accepts a peer origin.
+
 ## Transparent
 
 A serving `transparent_history` or `transaction_details` section synchronizes
