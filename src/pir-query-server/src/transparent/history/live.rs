@@ -681,6 +681,13 @@ impl LiveService {
         .map_err(|e| format!("snapshot collection task failed: {e}"))
     }
 
+    /// Whether every digest is already fenced. Anchor rechecks use this to tell
+    /// repeated evidence from a new invalidation, including one after recovery
+    /// has cleared the fence.
+    pub(crate) fn revocations_cover(&self, digests: &BTreeSet<String>) -> bool {
+        digests.is_subset(&self.0.invalid.read().unwrap())
+    }
+
     /// A negative exact-anchor attestation revokes that revision, not a newer
     /// canonical replacement whose range overlaps it. Use the same owner fence,
     /// cancellation and durable digest set as range invalidation.
@@ -895,7 +902,7 @@ async fn dispatch(State(live): State<LiveService>, request: Request) -> Response
 /// references, including private HTTPS staging trees. Staging uses the same
 /// file lock while linking catalog sources. Defer
 /// rather than blocking control commands behind a slow transfer.
-fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
+pub(crate) fn collect_publications(root: &Path, keep: &BTreeSet<PathBuf>) -> std::io::Result<bool> {
     use std::fs::{self, OpenOptions, TryLockError};
     let lock = OpenOptions::new()
         .create(true)

@@ -17,6 +17,7 @@ import zlib
 
 from .. import hostlock, inherited_lock, pinned_ssh, ancillary_baseline
 from . import host_helper
+from ..paths import ROOT
 from .descriptors import LOCK_PATH
 
 # Probes every 15 s; a session silent for a minute is dropped. The probes also
@@ -28,7 +29,11 @@ PERSIST_SECONDS = 30
 # Keep the command small enough for SSH's local multiplexing socket, including
 # configuration-validation arguments. The helper still receives stdin intact
 # for uploads, and executes exactly the checked-in source on the remote host.
-_HELPER_SOURCE = "import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("+repr(Path(ancillary_baseline.__file__).read_text())+",_ANCILLARY.__dict__)\n"+Path(host_helper.__file__).read_text()
+_HELPER_SOURCE = ("import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("
+                  + repr(Path(ancillary_baseline.__file__).read_text()) + ",_ANCILLARY.__dict__)\n"
+                  + "_PROVIDER_COLLECTION=types.ModuleType('_PROVIDER_COLLECTION')\nexec("
+                  + repr((ROOT / 'tools/transparent/lib/provider_collection.py').read_text()) + ",_PROVIDER_COLLECTION.__dict__)\n"
+                  + Path(host_helper.__file__).read_text())
 _HELPER_PACKED = base64.b64encode(zlib.compress(_HELPER_SOURCE.encode())).decode('ascii')
 HELPER = 'import base64,zlib;exec(zlib.decompress(base64.b64decode(' + repr(_HELPER_PACKED) + ')))'
 
@@ -88,6 +93,10 @@ class Executor:
         raise NotImplementedError
 
     def free_bytes(self, host, path):
+        raise NotImplementedError
+
+    def provider_collection(self, host, root, retained, expected=None):
+        """Plan collection, or delete only an exact manifest, on a stopped provider."""
         raise NotImplementedError
 
     def systemctl(self, host, *args):
@@ -248,6 +257,9 @@ class SSHExecutor(Executor):
 
     def free_bytes(self, host, path):
         return self.call(host, 'free_bytes', path=path)
+
+    def provider_collection(self, host, root, retained, expected=None):
+        return self.call(host, 'provider_collection', deadline=300, root=root, retained=retained, expected=expected)
 
     def systemctl(self, host, *args):
         self.call(host, 'systemctl', deadline=600, args=list(args))

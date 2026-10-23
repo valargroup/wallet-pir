@@ -49,6 +49,21 @@ pub(crate) fn collect_objects(
     root: &std::path::Path,
     linked: &std::path::Path,
 ) -> Result<Option<(usize, u64)>, Error> {
+    collect_objects_inner(root, Some(linked))
+}
+
+/// With no remaining publication map, remove unlinked completed downloads from
+/// interrupted stages too. Catalog and tree links still protect their objects.
+pub(crate) fn collect_orphan_objects(
+    root: &std::path::Path,
+) -> Result<Option<(usize, u64)>, Error> {
+    collect_objects_inner(root, None)
+}
+
+fn collect_objects_inner(
+    root: &std::path::Path,
+    linked: Option<&std::path::Path>,
+) -> Result<Option<(usize, u64)>, Error> {
     use std::os::unix::fs::MetadataExt;
     let objects = root.join("objects");
     match std::fs::symlink_metadata(&objects) {
@@ -57,8 +72,10 @@ pub(crate) fn collect_objects(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.into()),
     }
-    if std::fs::symlink_metadata(linked)?.nlink() < 2 {
-        return Ok(None);
+    if let Some(path) = linked {
+        if std::fs::symlink_metadata(path)?.nlink() < 2 {
+            return Ok(None);
+        }
     }
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -87,6 +104,25 @@ pub(crate) fn collect_objects(
             std::fs::remove_file(entry.path())?;
             files += 1;
             bytes += metadata.len();
+        }
+    }
+    // Receipts and semantic-check markers belong to their object. Collect them
+    // after the bodies so directory iteration order cannot leave metadata behind.
+    for entry in std::fs::read_dir(&objects)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let object = name.strip_suffix(".received.json").or_else(|| {
+            let (object, check) = name.split_once(".checked-")?;
+            publication::is_digest(check).then_some(object)
+        });
+        if let Some(object) = object.filter(|digest| publication::is_digest(digest)) {
+            let metadata = entry.path().symlink_metadata()?;
+            if metadata.is_file() && !objects.join(object).try_exists()? {
+                std::fs::remove_file(entry.path())?;
+                files += 1;
+                bytes += metadata.len();
+            }
         }
     }
     if files > 0 {
@@ -568,4 +604,34 @@ mod tests {
         publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
         stage_object(root.path(), &stage, &object, &artifact).unwrap();
     }
+}
+#[test]
+fn collection_removes_only_orphaned_object_receipts_and_check_markers() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = prepare_objects(root.path()).unwrap();
+    let old = "a".repeat(64);
+    let kept = "b".repeat(64);
+    std::fs::write(objects.join(&old), b"old").unwrap();
+    std::fs::write(objects.join(&kept), b"kept").unwrap();
+    let map = root.path().join("shards.json");
+    std::fs::hard_link(objects.join(&kept), &map).unwrap();
+    for digest in [&old, &kept] {
+        std::fs::write(objects.join(format!("{digest}.received.json")), b"receipt").unwrap();
+        std::fs::write(
+            objects.join(format!("{digest}.checked-{}", "c".repeat(64))),
+            b"checked",
+        )
+        .unwrap();
+    }
+    std::fs::write(objects.join(format!("{old}.operator-note")), b"foreign").unwrap();
+    collect_objects(root.path(), &map).unwrap();
+    assert!(!objects.join(format!("{old}.received.json")).exists());
+    assert!(!objects
+        .join(format!("{old}.checked-{}", "c".repeat(64)))
+        .exists());
+    assert!(objects.join(format!("{kept}.received.json")).is_file());
+    assert!(objects
+        .join(format!("{kept}.checked-{}", "c".repeat(64)))
+        .is_file());
+    assert!(objects.join(format!("{old}.operator-note")).is_file());
 }
