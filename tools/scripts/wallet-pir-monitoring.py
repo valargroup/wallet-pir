@@ -35,9 +35,13 @@ def render_observers(args):
 
 
 def coverage(args):
+    # Volumes that cache-storage activations bound are always expected.
+    expected = monitoring.activated_volumes(args.state_dir or default_state_dir())
+    for host, volumes in (_json(args.expected_volumes) or {}).items():
+        expected.setdefault(host, []).extend(volumes)
     report = monitoring.coverage(_json(args.inventory), terraform_outputs=_json(args.terraform_outputs),
                                  external_hosts=_json(args.external_hosts) or {}, roster=_json(args.roster),
-                                 expected_volumes=_json(args.expected_volumes))
+                                 expected_volumes=expected)
     print(json.dumps(report, indent=2, sort_keys=True))
     gaps = report['missing_declarations'] or report['missing_volumes'] or report['not_provisioned']
     return 1 if gaps or report['partial'] else 0
@@ -139,6 +143,7 @@ def main(argv=None):
     child.add_argument('--external-hosts', help='JSON map of declared external hosts to their addresses')
     child.add_argument('--roster')
     child.add_argument('--expected-volumes')
+    child.add_argument('--state-dir', help='deploy state directory holding cache-data receipts')
     child.set_defaults(handler=coverage)
     child = sub.add_parser('issue-ca')
     child.add_argument('--output', required=True)
