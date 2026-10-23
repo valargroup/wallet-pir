@@ -727,7 +727,11 @@ pub fn retire(view: &View, incidents: &[Incident], now: u64, f: &mut Families) {
             }
             continue;
         }
-        if let Some(svc) = c.key.strip_prefix("quality.").and_then(|r| r.split_once('.')) {
+        if let Some(svc) = c
+            .key
+            .strip_prefix("quality.")
+            .and_then(|r| r.split_once('.'))
+        {
             if moved(svc.1) {
                 let out = f.services.entry(svc.0.to_string()).or_default();
                 if !out.iter().any(|n| n.key == c.key) {
@@ -1141,7 +1145,10 @@ mod tests {
         v.collected_at = 100;
         let mut f = conditions(&v, 105, &Policy::default());
         let keys = |f: &Families| -> Vec<String> {
-            f.services["transparent"].iter().map(|c| c.key.clone()).collect()
+            f.services["transparent"]
+                .iter()
+                .map(|c| c.key.clone())
+                .collect()
         };
         assert!(keys(&f)
             .iter()
@@ -1173,7 +1180,10 @@ mod tests {
         assert!(f.services["transparent"]
             .iter()
             .any(|c| c.retired && c.key.ends_with("oom_transparent-publisher_pir-apm.service")));
-        assert!(f.shared.iter().any(|c| c.retired && c.key == "quality_disk_transparent-coordinator"));
+        assert!(f
+            .shared
+            .iter()
+            .any(|c| c.retired && c.key == "quality_disk_transparent-coordinator"));
     }
 
     /// The deployed bucket edges: coordinator cycles use the shared
