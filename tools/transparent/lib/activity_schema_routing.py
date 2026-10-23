@@ -75,7 +75,7 @@ def guard_coordinator(text):
     # Enhance host's, so maintenance closes every public filter path at once.
     optional = ['handle_path /v1/filters/parents/* {', 'handle_path /transparent/v1/filters/parents/* {',
                 'handle @transparent_queries {', 'handle /transparent/v1/filters/parents/* {',
-                'handle /transparent/v1/filters/* {', 'handle @history_metadata {']
+                'handle /transparent/v1/filters/* {']
     for marker in required + optional:
         count = text.count(marker)
         if count == 0 and marker in optional:
