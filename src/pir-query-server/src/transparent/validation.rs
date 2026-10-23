@@ -406,6 +406,13 @@ impl Scope {
                 .get(revision)
                 .is_some_and(|(_, jobs)| jobs.iter().any(|j| j.withdrawn()))
     }
+    /// Whether some current revision still serves: false only when this
+    /// snapshot has current revisions and background validation withdrew
+    /// every one. Retained predecessors do not count. Provider `/v1/ready`
+    /// and the host's typed readiness both use this.
+    pub(crate) fn serves_current(&self) -> bool {
+        self.current.is_empty() || !self.current.values().all(|r| self.unavailable(r))
+    }
     pub(crate) fn status(&self) -> serde_json::Value {
         let mut jobs = BTreeMap::new();
         let mut failed = Vec::new();
@@ -462,11 +469,7 @@ impl Scope {
         // The router is now handling a request: never start validation from
         // construction/preparation, which can precede listener activation.
         self.activate();
-        if affected()
-            || (ready
-                && !self.current.is_empty()
-                && self.current.values().all(|r| self.unavailable(r)))
-        {
+        if affected() || (ready && !self.serves_current()) {
             return unavailable();
         }
         let response = next.run(request).await;

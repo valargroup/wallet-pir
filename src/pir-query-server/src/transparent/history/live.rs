@@ -479,13 +479,15 @@ impl LiveService {
     }
 
     /// Whether `/v1/ready` would report this provider ready: the active
-    /// publication is not invalidated, holds shards and none of its shards'
-    /// revisions is withdrawn. Reads only in-memory state.
+    /// publication is not invalidated, holds shards, none of its shards'
+    /// revisions is withdrawn and background validation has not failed every
+    /// current revision. Reads only in-memory state.
     pub fn ready(&self) -> bool {
         let active = self.0.active.read().unwrap();
         let set = active.state.set();
         let invalid = self.0.invalid.read().unwrap();
         active.state.is_ready()
+            && active.state.serves_current_artifacts()
             && !set.is_empty()
             && !set
                 .map

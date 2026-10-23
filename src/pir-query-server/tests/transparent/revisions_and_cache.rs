@@ -309,13 +309,38 @@ async fn retained_history_artifacts_are_checked_and_stay_withdrawn_after_reopeni
         let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
         let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
         artifact_validation::assert_withdrawn(
-            router(state),
+            router(state.clone()),
             &format!("/v2/shards/0/revisions/{old}/manifest"),
             &format!("/v2/shards/0/revisions/{new}/manifest"),
             pending,
         )
         .await;
+        assert!(
+            state.serves_current_artifacts(),
+            "a failed retained predecessor leaves the current revision ready"
+        );
     }
+}
+
+#[tokio::test]
+async fn a_failed_current_history_artifact_withdraws_typed_readiness() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, new) = two_revisions(dir.path());
+    let options = LoadOptions::whole(DEFAULT_RETAIN_REVISIONS);
+    let set = ShardSet::open_for_serving(dir.path(), &options).unwrap();
+    artifact_validation::damage_received(
+        set.revision(&new)
+            .unwrap()
+            .segment(TableRef::Directory, 0)
+            .unwrap(),
+    );
+    let state = ServiceState::build(set, ServiceConfig::default()).unwrap();
+    assert!(state.serves_current_artifacts(), "no check ran yet");
+    let typed = state.clone();
+    artifact_validation::assert_current_withdrawn(router(state), move || {
+        typed.serves_current_artifacts()
+    })
+    .await;
 }
 
 /// Retention is bounded. Keeping every revision a growing tail ever had would

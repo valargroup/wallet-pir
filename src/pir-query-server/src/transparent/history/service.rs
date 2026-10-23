@@ -553,6 +553,12 @@ impl ServiceState {
         self.validation().status()
     }
 
+    /// Whether background artifact validation left some current revision
+    /// serving, as provider `/v1/ready` reports it.
+    pub fn serves_current_artifacts(&self) -> bool {
+        self.validation().serves_current()
+    }
+
     fn validation(&self) -> &crate::transparent::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::transparent::validation::Scope::default();

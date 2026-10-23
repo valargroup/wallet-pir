@@ -419,8 +419,9 @@ impl DisplayLive {
         }
     }
 
-    /// Whether a checked publication is active, not invalidated, and none of
-    /// its current revisions is withdrawn. Reads only in-memory state.
+    /// Whether a checked publication is active, not invalidated, none of its
+    /// current revisions is withdrawn and background validation has not
+    /// failed every current revision. Reads only in-memory state.
     pub fn ready(&self) -> bool {
         self.ready_in(&self.0.active.read().unwrap())
     }
@@ -428,6 +429,7 @@ impl DisplayLive {
     fn ready_in(&self, active: &Option<Active>) -> bool {
         active.as_ref().is_some_and(|a| {
             a.state.is_ready()
+                && a.state.serves_current_artifacts()
                 && a.state
                     .set()
                     .current()

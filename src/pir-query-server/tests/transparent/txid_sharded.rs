@@ -68,13 +68,43 @@ async fn retained_detail_artifacts_are_checked_and_stay_withdrawn_after_reopenin
         let runtime = DisplayRuntime::new(config(), None);
         let state = DisplayState::build(set, &runtime).unwrap();
         artifact_validation::assert_withdrawn(
-            router(state),
+            router(state.clone()),
             &format!("/v2/txid/shards/0/revisions/{}/manifest", old.digest),
             &format!("/v2/txid/shards/0/revisions/{}/manifest", new.digest),
             pending,
         )
         .await;
+        assert!(
+            state.serves_current_artifacts(),
+            "a failed retained predecessor leaves the current revision ready"
+        );
     }
+}
+
+#[tokio::test]
+async fn a_failed_current_detail_artifact_withdraws_typed_readiness() {
+    let root = tempfile::tempdir().unwrap();
+    let records = synth::records(4, 7);
+    let shard = synth::write_shard(root.path(), &spec(0, 100, 110, false, ""), &records).unwrap();
+    let (dir, _) = synth::write_candidate(
+        root.path(),
+        &params(1),
+        std::slice::from_ref(&shard),
+        "current",
+    )
+    .unwrap();
+    let set = DisplaySet::open_for_serving(&dir, 3, DisplayRole::RecentReplica).unwrap();
+    let current = set.held(&shard.digest).unwrap();
+    let (table, segment) = current.targets()[0];
+    artifact_validation::damage_received(current.segment(table, segment).unwrap());
+    let runtime = DisplayRuntime::new(config(), None);
+    let state = DisplayState::build(set, &runtime).unwrap();
+    assert!(state.serves_current_artifacts(), "no check ran yet");
+    let typed = state.clone();
+    artifact_validation::assert_current_withdrawn(router(state), move || {
+        typed.serves_current_artifacts()
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
