@@ -136,10 +136,21 @@ fn clone_with(
     Ok(())
 }
 
-/// Copy a completed legacy tree. Its files are reflinked; symbolic links and
-/// special files are refused rather than followed into unrelated storage.
+/// Clone a publication's regular files and checked object references. Arbitrary
+/// links and special files are refused by the shared artifact resolver.
 impl Cloner {
     pub fn tree(&self, source: &Path, target: &Path, objects: &Path) -> Result<(), BoxError> {
+        self.tree_from(source, source, target, objects)
+    }
+
+    /// Clone a subtree using the publication root that owns its exact links.
+    pub(crate) fn tree_from(
+        &self,
+        publication: &Path,
+        source: &Path,
+        target: &Path,
+        objects: &Path,
+    ) -> Result<(), BoxError> {
         if !std::fs::symlink_metadata(source)?.is_dir() || target.is_symlink() {
             return Err("snapshot needs real directories".into());
         }
@@ -152,15 +163,25 @@ impl Cloner {
             }
             let destination = target.join(name);
             if entry.file_type()?.is_dir() {
-                self.tree(&entry.path(), &destination, objects)?;
-            } else if destination.is_symlink() {
+                self.tree_from(publication, &entry.path(), &destination, objects)?;
+                continue;
+            }
+            let logical = entry.path();
+            let relative = logical
+                .strip_prefix(publication)?
+                .to_str()
+                .ok_or("non-UTF8 source artifact")?;
+            let (physical_source, mut input) =
+                transparent_shared::publication::open_artifact(publication, relative, None)?;
+            if destination.is_symlink() {
                 let physical = std::fs::canonicalize(&destination)?;
                 if physical.parent() != Some(objects) {
                     return Err("resumed reference leaves the prepared object store".into());
                 }
-                let mut input = pir_publication::open_object_file(&entry.path(), None)?;
                 let (reference, _) =
-                    pir_publication::hash_object_file(&entry.path(), &mut input, None, &|| false)?;
+                    pir_publication::hash_object_file(&physical_source, &mut input, None, &|| {
+                        false
+                    })?;
                 if physical.file_name().and_then(|n| n.to_str()) != Some(reference.sha256.as_str())
                 {
                     return Err("resumed object differs from source material".into());
@@ -170,7 +191,7 @@ impl Cloner {
                     false
                 })?;
             } else {
-                self.file(&entry.path(), &destination)?;
+                self.file(&physical_source, &destination)?;
             }
         }
         File::open(target)?.sync_all()?;
@@ -256,6 +277,21 @@ mod tests {
     use super::*;
     fn copy(source: &File, target: &File) -> io::Result<()> {
         io::copy(&mut source.try_clone()?, &mut target.try_clone()?).map(|_| ())
+    }
+    #[test]
+    fn cloning_refuses_arbitrary_source_links_without_changing_their_targets() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        std::fs::create_dir(&source).unwrap();
+        let outside = temp.path().join("journal");
+        std::fs::write(&outside, b"committed bytes").unwrap();
+        std::os::unix::fs::symlink(&outside, source.join("shards.json")).unwrap();
+        let target = temp.path().join("target");
+        assert!(Cloner::for_test()
+            .tree(&source, &target, &temp.path().join(".objects"))
+            .is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"committed bytes");
+        assert!(!target.join("shards.json").exists());
     }
     #[test]
     fn cloning_is_independent_and_a_conflicting_resume_never_overwrites() {

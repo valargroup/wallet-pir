@@ -313,7 +313,12 @@ fn detail(
         let tier = if entry.sealed { "sealed" } else { "recent" };
         let destination = owner.target.join(tier).join(&entry.manifest_digest);
         let from = owner.source.join(tier).join(&entry.manifest_digest);
-        clone.tree(&from, &destination, &owner.target.join(".objects"))?;
+        clone.tree_from(
+            from.parent().ok_or("revision has no tier")?,
+            &from,
+            &destination,
+            &owner.target.join(".objects"),
+        )?;
     }
     for tier in ["sealed", "recent"] {
         std::fs::create_dir_all(owner.target.join(tier))?;
@@ -467,7 +472,7 @@ mod tests {
         assert_eq!(preparation::fingerprint(&source).unwrap(), advanced_source);
     }
     #[test]
-    fn prepared_history_has_restore_evidence_without_changing_legacy_files() {
+    fn prepared_history_clones_and_resumes_predecessor_table_and_runtime_references() {
         use crate::history::publication::{publish, DirectoryChoice, PublishOptions};
         use transparent_shared::{
             history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS},
@@ -504,6 +509,13 @@ mod tests {
         .unwrap();
         let set = ShardSet::open(&directory, DEFAULT_RETAIN_REVISIONS).unwrap();
         prepare_publication(&set, &directory, &[], &|| false).unwrap();
+        storage::adopt_segments(&directory, &|| false).unwrap();
+        storage::adopt_runtimes(&directory, &|| false).unwrap();
+        assert!(std::fs::read_dir(&directory).unwrap().any(|entry| {
+            let entry = entry.unwrap();
+            entry.path().extension().is_some_and(|ext| ext == "runtime")
+                && entry.file_type().unwrap().is_symlink()
+        }));
         let end = map.shards.last().unwrap();
         std::fs::write(source.join("active.json"), serde_json::to_vec(&serde_json::json!({
             "directory":directory, "map_sha256":set.map_digest, "height":end.end_height, "hash":end.terminal_block_hash,
@@ -524,6 +536,9 @@ mod tests {
             verify_only,
         };
         let clone = preparation::Cloner::for_test();
+        prepare_with(cli(false), &clone).unwrap();
+        // A crash can leave adopted references before the final receipt exists.
+        std::fs::remove_file(target.join(RECORD)).unwrap();
         prepare_with(cli(false), &clone).unwrap();
         prepare_with(cli(true), &clone).unwrap();
         assert_eq!(preparation::fingerprint(&source).unwrap(), before);

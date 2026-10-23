@@ -218,9 +218,15 @@ using Linux reflinks (independent files sharing unchanged data blocks), verifies
 the tables and runtimes, then installs references in those new roots. It refuses
 filesystems without reflink support, conflicting targets, changed source files
 and unresolved publication state. There is no hard-link or full-copy fallback.
+Existing checked table and runtime references are resolved through the artifact
+reader before cloning; arbitrary source links remain forbidden, including on resume.
 Active views,
 preparation and HTTP readers retain their publication directories while collection
 removes only unowned directories and objects with no remaining references.
+Object installation and reference creation hold a shared lock for that store;
+collection takes its exclusive lock for the complete reference scan and deletion.
+Background archive writes therefore cannot introduce a reference after collection
+has decided which objects to retain.
 
 The deployment CLI separates storage preparation from service activation:
 
