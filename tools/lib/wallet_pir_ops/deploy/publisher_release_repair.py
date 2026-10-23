@@ -71,8 +71,6 @@ def apply(owner, journal, repair, binary):
             'repair executable differs from request')
     mutation_fence(owner.inventory, owner.ex, owner.lock)
     journal['release_repair'] = repair
-    if 'prepared_storage' in owner.request:
-        journal.setdefault('storage_preparation_release', repair['previous_release'])
     journal['request'] = owner.request
     journal['plan']['request_sha256'] = durable.digest(owner.request)
     journal['plan']['desired'].update(repair['after'])

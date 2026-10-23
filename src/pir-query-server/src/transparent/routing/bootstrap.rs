@@ -186,7 +186,7 @@ pub(crate) async fn stage_holdings(
                 stage_object(
                     &config.directory,
                     &stage,
-                    &objects.join(&artifact.sha256),
+                    &objects.directory().join(&artifact.sha256),
                     artifact,
                 )?;
             } else {
@@ -391,14 +391,16 @@ mod object_tests {
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"outside");
         let real = tempfile::tempdir().unwrap();
         let objects = prepare_objects(real.path()).unwrap();
-        assert!(std::fs::symlink_metadata(objects).unwrap().is_dir());
+        assert!(std::fs::symlink_metadata(objects.directory())
+            .unwrap()
+            .is_dir());
     }
 
     #[tokio::test]
     async fn writable_cached_object_is_made_read_only_before_linking() {
         let root = tempfile::tempdir().unwrap();
         let objects = prepare_objects(root.path()).unwrap();
-        let (path, artifact) = object(&objects, b"legacy");
+        let (path, artifact) = object(objects.directory(), b"legacy");
         // An owner-writable object, as an older cache left it.
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();

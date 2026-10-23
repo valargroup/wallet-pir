@@ -28,7 +28,7 @@ pub fn complete(root: &Path, product: &str) -> Result<(), BoxError> {
 pub fn require(root: &Path, product: &str) -> Result<(), BoxError> {
     let raw = std::fs::read(root.join(FILE)).map_err(|error| {
         format!(
-            "{} needs explicit publisher-storage-prepare before startup: {error}",
+            "{} has no completed object-storage layout; use a current publication root: {error}",
             root.display()
         )
     })?;

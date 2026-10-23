@@ -11,6 +11,8 @@ use zakura_pir_publisher::transparent as transparent_shard;
 mod artifact_validation;
 #[path = "support/bytemeter.rs"]
 mod bytemeter;
+#[path = "support/record_write.rs"]
+mod record_write;
 
 use axum::body::Body;
 use axum::http::StatusCode;
@@ -491,13 +493,10 @@ async fn served_map(worker: &Worker) -> String {
 /// The staged seal the candidate names stays staged and the predecessor is
 /// not retired; only the controller's retry activates, and only then does
 /// staging hand the seal over.
-#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failed_display_activation_write_installs_nothing() {
-    use std::os::unix::fs::PermissionsExt;
     let world = World::start().await;
     let (owner, record) = recorded_owner(&world);
-    let records = record.parent().unwrap().to_path_buf();
     owner.publish(&world.p0.0, &world.p0.1).await;
     let Seal { a1, p1, .. } = Seal::write(&world);
     owner
@@ -527,24 +526,18 @@ async fn a_failed_display_activation_write_installs_nothing() {
         assert_eq!(status["retired_snapshots"], 0);
     };
 
-    // Before the rename: the temporary record cannot be created.
-    let temporary = record.with_extension("tmp");
-    std::fs::create_dir(&temporary).unwrap();
+    // Refuse the write before replacing the record.
+    let refused = record_write::fail_before_replace(&record);
     assert!(owner.command(activate()).await.is_err());
     unchanged(owner.command(DisplayCommand::Status).await.unwrap());
     assert_eq!(served_map(&owner).await, world.p0.1);
     assert_eq!(saved_map(&record), Some(world.p0.1.clone()));
-    std::fs::remove_dir(&temporary).unwrap();
+    drop(refused);
 
-    // After the rename: the directory is searchable but not readable, so the
-    // record is replaced and then its directory sync fails.
-    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o300)).unwrap();
-    assert!(
-        std::fs::File::open(&records).is_err(),
-        "a post-rename write failure needs an unprivileged test user"
-    );
+    // Report uncertainty after replacement without changing the live view.
+    let uncertain = record_write::fail_after_replace(&record);
     let refused = owner.command(activate()).await;
-    std::fs::set_permissions(&records, std::fs::Permissions::from_mode(0o700)).unwrap();
+    drop(uncertain);
     assert!(refused.is_err());
     unchanged(owner.command(DisplayCommand::Status).await.unwrap());
     assert_eq!(served_map(&owner).await, world.p0.1);
@@ -567,7 +560,6 @@ async fn a_failed_display_activation_write_installs_nothing() {
 /// A display activation blocked on its durable write keeps status and
 /// serving responsive, and a cancelled caller does not release command
 /// serialization while the write is still in flight.
-#[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
 async fn a_blocked_display_activation_write_keeps_serialization() {
     let world = World::start().await;
@@ -584,24 +576,7 @@ async fn a_blocked_display_activation_write_keeps_serialization() {
         })
         .await
         .unwrap();
-    // Creating the temporary record opens a FIFO, which blocks until a
-    // reader arrives; the reader is held back until the checks are done.
-    let temporary = record.with_extension("tmp");
-    assert!(std::process::Command::new("mkfifo")
-        .arg(&temporary)
-        .status()
-        .unwrap()
-        .success());
-    let (release, released) = std::sync::mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let _ = released.recv_timeout(Duration::from_secs(20));
-        use std::io::Read;
-        let mut bytes = Vec::new();
-        std::fs::File::open(temporary)
-            .unwrap()
-            .read_to_end(&mut bytes)
-            .unwrap();
-    });
+    let mut write = record_write::BlockedWrite::new(&record);
     let live = owner.live.clone();
     let mutation = tokio::spawn({
         let live = live.clone();
@@ -615,7 +590,7 @@ async fn a_blocked_display_activation_write_keeps_serialization() {
             .await
         }
     });
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    write.entered().await;
     let pending = !mutation.is_finished();
     let began = std::time::Instant::now();
     let status = live.command(DisplayCommand::Status).await.unwrap();
@@ -637,8 +612,7 @@ async fn a_blocked_display_activation_write_keeps_serialization() {
     });
     tokio::time::sleep(Duration::from_millis(150)).await;
     let serialized = !next.is_finished();
-    let _ = release.send(());
-    reader.join().unwrap();
+    write.release();
     next.await.unwrap().unwrap();
     assert!(pending, "the activation write did not remain blocked");
     assert!(

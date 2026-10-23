@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use zakura_pir_client::status as wallet;
 
-#[path = "../../tests/support/status_http.rs"]
-mod status_http;
-use status_http::{serve, Loopback};
+use super::status_http::{serve, Loopback};
 
 /// Install a verified fixture generation to exercise wallet request handling.
 async fn activated(role: Role, dir: &FsPath, worker_origin: String, g: Generation) -> Service {

@@ -176,6 +176,33 @@ impl Generation {
         &self.public
     }
 
+    /// Whether both views own exactly the same prepared allocations. This is
+    /// only a retention accounting check; it grants no serving authority.
+    pub fn shares_prepared_allocations(&self, other: &Self) -> bool {
+        #[cfg(feature = "native-reinspiring")]
+        let packing_shared = Arc::ptr_eq(&self.packing, &other.packing);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let packing_shared = {
+            fn same_optional<T>(left: &Option<Arc<T>>, right: &Option<Arc<T>>) -> bool {
+                match (left, right) {
+                    (None, None) => true,
+                    (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                    _ => false,
+                }
+            }
+            same_optional(&self.packing, &other.packing)
+                && same_optional(&self.mapped_packing, &other.mapped_packing)
+        };
+        Arc::ptr_eq(&self.public, &other.public)
+            && self.units.len() == other.units.len()
+            && self
+                .units
+                .iter()
+                .zip(&other.units)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+            && packing_shared
+    }
+
     /// The same prepared material under a new identity from the authority.
     ///
     /// Used when an observation matches the active content: the publication

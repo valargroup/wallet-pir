@@ -63,6 +63,22 @@ fn static_check_creates_no_state() {
 }
 
 #[test]
+fn retired_storage_conversion_is_rejected() {
+    let output = Command::new(env!("CARGO_BIN_EXE_pir-publisher"))
+        .arg("prepare-transparent-storage")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{error}");
+    assert!(
+        error.contains("prepare-transparent-storage")
+            && (error.contains("unrecognized subcommand") || error.contains("unexpected argument")),
+        "{error}"
+    );
+}
+
+#[test]
 fn maintenance_commands_require_the_compiled_product() {
     for (name, compiled) in [
         ("enhance", cfg!(feature = "enhance")),
@@ -71,13 +87,6 @@ fn maintenance_commands_require_the_compiled_product() {
         (
             "prepare-history-restore",
             cfg!(feature = "transparent-history"),
-        ),
-        (
-            "prepare-transparent-storage",
-            cfg!(all(
-                feature = "transparent-history",
-                feature = "transparent-detail"
-            )),
         ),
         ("verify-filters", cfg!(feature = "transparent-history")),
         ("detail", cfg!(feature = "transparent-detail")),

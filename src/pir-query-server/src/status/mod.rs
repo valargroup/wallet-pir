@@ -11,6 +11,9 @@ mod controller;
 mod routes;
 mod serving;
 mod state;
+#[cfg(all(test, feature = "native-reinspiring"))]
+#[path = "../../tests/support/status_http.rs"]
+mod status_http;
 mod sync;
 mod telemetry;
 #[cfg(all(test, feature = "native-reinspiring"))]

@@ -32,9 +32,6 @@ enum Command {
     #[cfg(feature = "transparent-history")]
     /// Verify a completed History publication and write its restore record.
     PrepareHistoryRestore(Maintenance),
-    #[cfg(all(feature = "transparent-history", feature = "transparent-detail"))]
-    /// Prepare independent Transparent object storage without ingest or activation.
-    PrepareTransparentStorage(Maintenance),
     #[cfg(feature = "transparent-history")]
     /// Verify a staged filter publication without opening node state.
     VerifyFilters(Maintenance),
@@ -48,14 +45,6 @@ enum Command {
 impl Command {
     async fn run(self) -> pir_publisher::Result<()> {
         match self {
-            #[cfg(all(feature = "transparent-history", feature = "transparent-detail"))]
-            Self::PrepareTransparentStorage(args) => {
-                transparent_publisher::commands::storage::run(arguments(
-                    "prepare-transparent-storage",
-                    args,
-                ))
-                .await
-            }
             #[cfg(feature = "enhance")]
             Self::Enhance(args) => {
                 enhance_publisher::commands::run(arguments("enhance", args)).await

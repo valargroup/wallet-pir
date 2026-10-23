@@ -24,47 +24,9 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
 /// bytes, but the caller has not been told they are durable. A failed attempt
 /// removes its temporary and leaves the final name as it was or whole.
 pub fn write_durable(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
-    write_durable_with(
-        path,
-        bytes,
-        |p| std::fs::File::open(p),
-        std::fs::File::sync_all,
-    )
-}
-
-pub(crate) fn write_durable_with(
-    path: &Path,
-    bytes: &[u8],
-    open_directory: impl FnOnce(&Path) -> std::io::Result<std::fs::File>,
-    sync_directory: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
-) -> Result<(), BoxError> {
     use std::io::Write;
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let directory = open_directory(parent)
-        .map_err(|error| format!("open {} to sync it: {error}", parent.display()))?;
-    let temp = path.with_extension("tmp");
-    let replaced = (|| {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    if let Err(error) = replaced {
-        let _ = std::fs::remove_file(&temp);
-        return Err(format!("write {}: {error}", path.display()).into());
-    }
-    sync_directory(&directory).map_err(|error| {
-        format!(
-            "sync {} after replacing {}: {error}",
-            parent.display(),
-            path.display()
-        )
-    })?;
-    Ok(())
+    pir_control::durable::replace_durable(path, |file| file.write_all(bytes))
+        .map_err(|error| format!("replace durable record {}: {error}", path.display()).into())
 }
 
 pub fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {

@@ -255,7 +255,7 @@ impl DisplaySync {
                 crate::transparent::objects::stage_object(
                     &self.config.directory,
                     &stage,
-                    &objects.join(&artifact.sha256),
+                    &objects.directory().join(&artifact.sha256),
                     artifact,
                 )?;
             }

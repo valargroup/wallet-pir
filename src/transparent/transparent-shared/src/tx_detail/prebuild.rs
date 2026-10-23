@@ -81,7 +81,7 @@ pub fn build_shipped_verified(
     out_dir: &Path,
     retained: &[std::path::PathBuf],
 ) -> Result<Vec<Shipped>, String> {
-    build_shipped_verified_until(revision, out_dir, retained, crate::history::shardset::NEVER)
+    build_shipped_verified_until(revision, out_dir, retained, crate::segment::NEVER)
 }
 
 /// [`build_shipped_verified`], asking `stop` before each runtime segment; a
@@ -90,7 +90,7 @@ pub fn build_shipped_verified_until(
     revision: &DisplayRevision,
     out_dir: &Path,
     retained: &[std::path::PathBuf],
-    stop: crate::history::shardset::Stop<'_>,
+    stop: crate::segment::Stop<'_>,
 ) -> Result<Vec<Shipped>, String> {
     if !revision.held() {
         return Err(format!(

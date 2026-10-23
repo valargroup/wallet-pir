@@ -12,5 +12,7 @@ pub mod http;
 pub mod journal;
 pub mod publication;
 pub mod runtime;
+mod segment;
+mod table;
 pub mod tx_detail;
 mod verification;

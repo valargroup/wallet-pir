@@ -79,8 +79,6 @@ pub enum DirectoryChoice {
     All,
 }
 
-#[cfg(test)]
-pub(crate) use crate::storage::records::write_durable_with;
 pub use crate::storage::records::{write_atomic, write_durable, write_immutable};
 
 pub fn publish(
@@ -1004,59 +1002,6 @@ mod tests {
     use super::*;
     use crate::ingest::snapshot::Snapshot;
 
-    #[test]
-    fn a_durable_record_refuses_an_unopenable_directory_before_replacing() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history-restore.json");
-        std::fs::write(&path, b"old").unwrap();
-        let error = write_durable_with(
-            &path,
-            b"new",
-            |_| Err(std::io::Error::other("open refused")),
-            |_| unreachable!("no directory to sync"),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("open refused"), "{error}");
-        assert_eq!(std::fs::read(&path).unwrap(), b"old");
-        assert!(!path.with_extension("tmp").exists());
-    }
-
-    #[test]
-    fn a_durable_record_reports_a_failed_directory_sync() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("integrity-failures.json");
-        let error = write_durable_with(
-            &path,
-            b"[]",
-            |p| std::fs::File::open(p),
-            |_| Err(std::io::Error::other("sync refused")),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("sync refused"), "{error}");
-        // The rename happened, so the name holds whole bytes, but the caller
-        // was not told they are durable.
-        assert_eq!(std::fs::read(&path).unwrap(), b"[]");
-        write_durable(&path, b"[1]").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"[1]");
-    }
-
-    #[test]
-    fn an_interrupted_durable_replacement_keeps_the_previous_record_whole() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history-restore.json");
-        std::fs::write(&path, b"old").unwrap();
-        // A crash before the rename leaves only a partial temporary, which the
-        // next write replaces without ever exposing it under the final name.
-        std::fs::write(path.with_extension("tmp"), b"ne").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"old");
-        write_durable(&path, b"new").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"new");
-        assert!(!path.with_extension("tmp").exists());
-        // A temporary that cannot be written fails without touching the name.
-        std::fs::create_dir(path.with_extension("tmp")).unwrap();
-        assert!(write_durable(&path, b"newer").is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), b"new");
-    }
     fn options(output: &Path, previous: Option<&Path>) -> PublishOptions {
         PublishOptions {
             data_dir: PathBuf::new(),

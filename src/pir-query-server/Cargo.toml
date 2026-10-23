@@ -74,6 +74,8 @@ required-features = ["transparent-detail"]
 
 [features]
 default = []
+# Scoped record-write injection for integration tests; absent in service builds.
+test-support = []
 enhance = [
     "dep:enhance-query-server",
     "dep:enhance-shared",
@@ -181,6 +183,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+pir-query-server = { path = ".", features = ["test-support"] }
 # Paused clocks drive the synchronization cadence regressions.
 tokio = { version = "1", features = ["full", "test-util"] }
 tempfile = "3"

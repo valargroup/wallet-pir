@@ -218,6 +218,7 @@ name = "shard-prune"
 path = "src/bin/shard-prune.rs"
 
 [dependencies]
+pir-runtime = { path = "../../src/shared/pir-runtime" }
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
 pir-query-server = { path = "../../src/pir-query-server", features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared" }

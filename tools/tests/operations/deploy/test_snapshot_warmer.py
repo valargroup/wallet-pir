@@ -1,15 +1,80 @@
 """Snapshot reuse preserves public inputs without loading another server."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import publisher_fixture  # Registers the operations package for direct discovery.
 from wallet_pir_ops.deploy import snapshot_warmer as warmer
 
 
 class SnapshotFilesTests(unittest.TestCase):
+    def test_object_aliases_pin_regular_files_and_detect_replaced_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, pinned, objects = root / 'candidate', root / 'pin', root / '.objects'
+            (source / 'segments').mkdir(parents=True)
+            objects.mkdir()
+            body = b'published immutable artifact'
+            target = objects / hashlib.sha256(body).hexdigest()
+            target.write_bytes(body)
+            for alias in (source / 'runtime', source / 'segments' / 'table.bin'):
+                alias.symlink_to(os.path.relpath(target, alias.parent))
+            self.assertEqual(warmer.pin(source, pinned), {'pinned_files': 2})
+            self.assertFalse((pinned / 'runtime').is_symlink())
+            self.assertTrue((pinned / 'runtime').samefile(target))
+            self.assertTrue(warmer.same(source, pinned)['same'])
+            replacement = root / 'replacement'
+            replacement.write_bytes(body)
+            os.replace(replacement, target)
+            self.assertFalse(warmer.same(source, pinned)['same'])
+            target.unlink()
+            self.assertEqual((pinned / 'runtime').read_bytes(), body)
+
+    def test_pin_refuses_escaping_and_indirect_object_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, objects = root / 'source', root / '.objects'
+            source.mkdir()
+            objects.mkdir()
+            target = objects / ('a' * 64)
+            target.write_bytes(b'body')
+            outside = root / ('b' * 64)
+            outside.write_bytes(b'outside')
+            alias = source / 'runtime'
+            for index, link in enumerate((str(target), '../' + outside.name, '../.objects/../' + outside.name)):
+                alias.symlink_to(link)
+                with self.assertRaisesRegex(ValueError, 'unsupported object alias'):
+                    warmer.pin(source, root / ('pin-' + str(index)))
+                alias.unlink()
+            target.unlink()
+            target.symlink_to(outside)
+            alias.symlink_to('../.objects/' + target.name)
+            with self.assertRaisesRegex(ValueError, 'unsupported object alias'):
+                warmer.pin(source, root / 'indirect-pin')
+
+    def test_replacement_during_linking_cannot_create_a_valid_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, objects = root / 'source', root / '.objects'
+            source.mkdir()
+            objects.mkdir()
+            target = objects / ('a' * 64)
+            target.write_bytes(b'first')
+            (source / 'runtime').symlink_to('../.objects/' + target.name)
+            replacement = root / 'replacement'
+            replacement.write_bytes(b'other')
+            link = os.link
+            def replace_then_link(*args, **kwargs):
+                os.replace(replacement, target)
+                link(*args, **kwargs)
+            with mock.patch.object(warmer.os, 'link', side_effect=replace_then_link):
+                with self.assertRaisesRegex(ValueError, 'changed while it was pinned'):
+                    warmer.pin(source, root / 'pin')
+
     def test_reusing_cache_files_preserves_the_fresh_snapshot_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

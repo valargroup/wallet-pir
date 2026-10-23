@@ -19,7 +19,7 @@
 
 use super::disk::ShippedRuntimes;
 use super::{build_pool, RuntimeKey, SharedParams, TableRuntime};
-use crate::history::shardset::SegmentSource;
+use crate::segment::SegmentSource;
 use serde::Serialize;
 use std::time::Instant;
 
@@ -153,7 +153,7 @@ fn link(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::history::shardset::Table;
+    use crate::table::Table;
     use sha2::{Digest, Sha256};
     use std::fs;
     use std::os::unix::fs::MetadataExt;

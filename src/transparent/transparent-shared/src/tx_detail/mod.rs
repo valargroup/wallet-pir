@@ -8,8 +8,8 @@ pub mod set;
 #[cfg(any(test, feature = "test-support"))]
 pub mod synth;
 
-use crate::history::shardset::Table;
 use crate::runtime::RuntimeKey;
+use crate::table::Table;
 use transparent_shard::display::{DisplayKind, DisplayTable};
 
 /// The history table kind whose row count and row width a display table

@@ -135,7 +135,7 @@ fn display_advances_reuse_archive_objects_and_collection_respects_live_readers()
                 .collect::<Vec<_>>(),
         )
         .unwrap();
-        let map = layout.map(&[archive.entry.clone()], recent.entry);
+        let map = layout.map(std::slice::from_ref(&archive.entry), recent.entry);
         let (directory, _) = publisher::write_candidate(root, &map).unwrap();
         let set = DisplaySet::open_reusing_until(
             &directory,

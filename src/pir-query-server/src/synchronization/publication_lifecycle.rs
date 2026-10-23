@@ -50,7 +50,19 @@ use pir_sync_manager::{Error, HttpsSource};
 use retention::RetainedViews;
 pub use retention::ViewRequirement;
 use serde::{de::DeserializeOwned, Serialize};
-use std::{collections::BTreeSet, fmt, future::Future};
+use std::{
+    collections::BTreeSet,
+    fmt,
+    future::Future,
+    time::{Duration, Instant},
+};
+
+/// Expected coordination outcomes, distinct from transport or validation errors.
+#[derive(Clone, Copy, Debug)]
+pub enum DeferralReason {
+    AuthorityAdvanced,
+    PeerAdvanced,
+}
 
 /// Product hooks for one query-server role.
 pub trait PublicationAdapter: Send {
@@ -127,6 +139,19 @@ pub trait PublicationAdapter: Send {
         envelope: &Envelope<Self>,
         loaded: &Self::Loaded,
     ) -> Result<(ViewIdentity, Self::AuthoritySubject), Error>;
+    /// Whether verified, loaded work may survive an authority conflict. This
+    /// grants no serving authority: every retry observes the floor and repeats
+    /// revalidation, the live authority check and peer reservation. Products
+    /// that require exactly the latest material keep the default.
+    fn can_resume(&self, _loaded: &Self::Loaded, _envelope: &Envelope<Self>) -> bool {
+        false
+    }
+    /// Report expected coordination without turning it into failure backoff.
+    fn deferred(&mut self, _reason: DeferralReason) -> impl Future<Output = ()> + Send {
+        async {}
+    }
+    /// Timing of a completed phase; phase names are fixed by the engine.
+    fn phase_finished(&mut self, _phase: &'static str, _elapsed: Duration) {}
     /// Reserve `loaded` with a dependent peer before committing (for a Status
     /// router, the worker's matching generation).
     fn reserve_peer(
@@ -289,6 +314,9 @@ pub struct PublicationLifecycle<A: PublicationAdapter> {
     pending_completion: Option<PendingCompletion<A::Report, A::InstalledView>>,
     /// The latest commit whose peer release answered pending.
     owed_peer_release: Option<A::Report>,
+    /// At most one loaded candidate, never serialized or authorized by cache
+    /// presence. Only an opted-in adapter can reuse it after a conflict.
+    pending_loaded: Option<A::Loaded>,
 }
 
 impl<A: PublicationAdapter> PublicationLifecycle<A> {
@@ -317,6 +345,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
             durable_operation: OwnedOperationSlot::new(),
             pending_completion: None,
             owed_peer_release: None,
+            pending_loaded: None,
         })
     }
     pub fn adapter(&self) -> &A {
@@ -332,6 +361,7 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         self.source.reset_budget();
         // Observe and fence.
         let envelope = self.observe_envelope().await?;
+        self.retain_resumable();
         if !envelope.eligible {
             return Ok(self.deferred().await);
         }
@@ -339,42 +369,65 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
         if !serving.is_empty() {
             self.check_authority(&envelope, serving).await?;
         }
-        // Plan and fetch.
-        let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
-        let (candidate, identity, required_objects) =
-            match self.adapter.plan(&envelope, &mut objects).await? {
-                PublicationPlan::Deferred => {
-                    return Ok(PublicationPass::Deferred {
-                        report: self.adapter.serving_report().await,
-                    })
-                }
-                PublicationPlan::Candidate {
-                    candidate,
-                    identity,
-                    required_objects,
-                } => (candidate, identity, required_objects),
-            };
-        if self.floor.is_invalidated(&identity) {
-            return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
+        // Finish existing prepared work before selecting a newer candidate.
+        if self.pending_loaded.is_none() {
+            let started = Instant::now();
+            let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
+            let (candidate, identity, required_objects) =
+                match self.adapter.plan(&envelope, &mut objects).await? {
+                    PublicationPlan::Deferred => {
+                        return Ok(PublicationPass::Deferred {
+                            report: self.adapter.serving_report().await,
+                        })
+                    }
+                    PublicationPlan::Candidate {
+                        candidate,
+                        identity,
+                        required_objects,
+                    } => (candidate, identity, required_objects),
+                };
+            if self.floor.is_invalidated(&identity) {
+                return Err(Box::new(PublicationLifecycleError::CandidateInvalidated));
+            }
+            for object in &required_objects {
+                objects.fetch(object).await?;
+            }
+            self.adapter.phase_finished("fetch", started.elapsed());
+            let started = Instant::now();
+            self.pending_loaded = Some(self.adapter.load(candidate, &self.cache).await?);
+            self.adapter.phase_finished("load", started.elapsed());
         }
-        for object in &required_objects {
-            objects.fetch(object).await?;
-        }
-        // Load, then revalidate against a freshly observed envelope.
-        let loaded = self.adapter.load(candidate, &self.cache).await?;
+        // Reusing work never reuses its authority answer.
+        let started = Instant::now();
         let latest = self.observe_envelope().await?;
         if !latest.eligible {
             return Err(Box::new(PublicationLifecycleError::WithdrawnBeforeCommit));
         }
         let mut objects = ObjectFetcher::new(&mut self.source, &self.cache);
+        let Some(loaded) = self.pending_loaded.take() else {
+            // Re-observation fenced the candidate while it was loading.
+            self.adapter
+                .deferred(DeferralReason::AuthorityAdvanced)
+                .await;
+            return Ok(self.deferred().await);
+        };
         let loaded = self.adapter.rebind(&latest, loaded, &mut objects).await?;
-        let (identity, subject) = match self.adapter.revalidate(&latest, &loaded) {
+        self.pending_loaded = Some(loaded);
+        let validation = {
+            let loaded = self
+                .pending_loaded
+                .as_ref()
+                .expect("a candidate was rebound");
+            self.adapter.revalidate(&latest, loaded)
+        };
+        let (identity, subject) = match validation {
             Ok(checked) => checked,
             // A newer envelope superseded the candidate; nothing was
             // activated, so retry at the normal cadence.
             Err(_) if latest != envelope => return Err(Box::new(AuthorityAdvanced)),
             Err(error) => return Err(error),
         };
+        self.adapter.phase_finished("revalidate", started.elapsed());
         let mut subjects = vec![(identity, subject)];
         subjects.extend(
             self.adapter
@@ -383,12 +436,45 @@ impl<A: PublicationAdapter> PublicationLifecycle<A> {
                 .into_iter()
                 .filter(|(serving, _)| *serving != identity),
         );
+        let started = Instant::now();
         self.check_authority(&latest, subjects).await?;
-        if self.adapter.reserve_peer(&loaded).await? == PeerReservation::PeerAdvanced {
-            return Err(Box::new(AuthorityAdvanced));
+        self.adapter.phase_finished("authority", started.elapsed());
+        let loaded = self
+            .pending_loaded
+            .as_ref()
+            .expect("the candidate is pending");
+        if self.adapter.reserve_peer(loaded).await? == PeerReservation::PeerAdvanced {
+            // The peer no longer promises these bytes. Follow its new view
+            // rather than repeatedly retrying an unavailable reservation.
+            self.pending_loaded = None;
+            self.adapter.deferred(DeferralReason::PeerAdvanced).await;
+            return Ok(self.deferred().await);
         }
+        let loaded = self
+            .pending_loaded
+            .take()
+            .expect("the candidate is reserved");
+        let started = Instant::now();
         let (report, handover) = self.commit(identity, loaded).await?;
+        self.adapter.phase_finished("commit", started.elapsed());
         Ok(PublicationPass::Committed { report, handover })
+    }
+
+    fn retain_resumable(&mut self) {
+        let keep = self
+            .pending_loaded
+            .as_ref()
+            .zip(self.floor.envelope())
+            .is_some_and(|(loaded, envelope)| {
+                self.adapter.can_resume(loaded, envelope)
+                    && self
+                        .adapter
+                        .revalidate(envelope, loaded)
+                        .is_ok_and(|(identity, _)| !self.floor.is_invalidated(&identity))
+            });
+        if !keep {
+            self.pending_loaded = None;
+        }
     }
 
     async fn deferred(&mut self) -> PublicationPass<A::Report> {
@@ -407,7 +493,17 @@ impl<A: PublicationAdapter> SyncTask for PublicationLifecycle<A> {
         let result = match self.run_pass().await {
             // A newer envelope won the authority check. Nothing was activated;
             // retry at the normal cadence instead of transport backoff.
-            Err(error) if error.is::<AuthorityAdvanced>() => Ok(self.deferred().await),
+            Err(error) if error.is::<AuthorityAdvanced>() => {
+                self.retain_resumable();
+                self.adapter
+                    .deferred(DeferralReason::AuthorityAdvanced)
+                    .await;
+                Ok(self.deferred().await)
+            }
+            Err(error) => {
+                self.pending_loaded = None;
+                Err(error)
+            }
             result => result,
         };
         self.adapter.pass_finished(&result).await;

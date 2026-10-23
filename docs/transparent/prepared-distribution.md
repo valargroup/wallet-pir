@@ -8,6 +8,19 @@ The [approved plan](recent-provider-plan.md) retains those outcomes and order.
 The fixed [Vizor baseline and API trace](wallet-adapter.md#fixed-vizor-provider-qualification-baseline)
 remain unchanged.
 
+Transparent's runtime and publication modules expose small facades over private
+modules for parameters, table execution, cache residency, inventory preparation,
+restoration and validation. Common table and segment types are owned below the
+history and transaction-detail loaders; their established public imports remain
+available through the history facade.
+
+Durable metadata replacement uses `pir-control::durable`: each attempt owns its
+temporary file, syncs its bytes, atomically replaces the record and syncs the
+parent directory. A failure after replacement reports uncertainty to the owner.
+Downloads use `pir-publication::ObjectCache` for partial-file ownership and
+promotion. Transparent retains its size-only local reuse, receipts, background
+hash validation and link-aware collection; storing an object grants no authority.
+
 ## Producer and inventory
 
 The history publication controller always prepares runtimes and finalizes a
