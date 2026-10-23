@@ -1129,7 +1129,8 @@ async fn full_history_http_holdings_include_archive_runtimes() {
 /// with the original typed error, when one publisher's contract major changes
 /// at runtime: management and every wallet listener close. A missing discovery
 /// document writes no consumer state, and a recovered active view cannot mask
-/// the mismatch.
+/// the mismatch. It links the unified query host, so it runs in qualification.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn unified_host_stops_every_product_when_a_publisher_major_changes() {
     use crate::tx_detail::{distribution::Distribution, fixture, publisher::bootstrap};

@@ -1,0 +1,7 @@
+{
+  "steps": [
+    {"name": "hygiene", "argv": ["python3", "tools/ci/preflight.py", "hygiene"]},
+    {"name": "fast", "argv": ["python3", "tools/ci/preflight.py", "fast"]},
+    {"name": "transparent-lint", "argv": ["python3", "tools/ci/preflight.py", "transparent-lint"]}
+  ]
+}
