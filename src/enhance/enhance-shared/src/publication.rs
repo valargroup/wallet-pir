@@ -87,6 +87,7 @@ pub struct AuthorityResponse {
     pub authorized_manifest_sha256: String,
     /// An actual successful node check, not an HTTP heartbeat; none when the
     /// response grants no authority.
+    #[serde(rename = "observed_unix_ms")]
     pub source: SourceObservation,
 }
 
@@ -263,4 +264,49 @@ pub struct Revocation {
     #[serde(with = "crate::protocol::decimal_u64")]
     pub recovery_epoch: u64,
     pub sessions: BTreeSet<String>,
+}
+
+#[cfg(test)]
+mod authority_wire_tests {
+    use super::*;
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct InstalledAuthorityResponse {
+        current: Current,
+        authorized_manifest_sha256: String,
+        observed_unix_ms: u64,
+    }
+
+    #[test]
+    fn source_observation_preserves_the_installed_authority_wire_contract() {
+        let response = AuthorityResponse {
+            current: Current {
+                version: VERSION,
+                revision: 1,
+                withdrawal_revision: 1,
+                recovery_epoch: 0,
+                revoked: BTreeSet::new(),
+                eligible: false,
+                manifest: None,
+                inventory: None,
+            },
+            authorized_manifest_sha256: String::new(),
+            source: SourceObservation {
+                observed_unix_ms: 1_234_567_890_123,
+            },
+        };
+        let wire = serde_json::to_value(&response).unwrap();
+        assert_eq!(wire["observed_unix_ms"], 1_234_567_890_123u64);
+        assert!(wire.get("source").is_none());
+        let installed: InstalledAuthorityResponse = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(installed.current, response.current);
+        assert_eq!(
+            installed.authorized_manifest_sha256,
+            response.authorized_manifest_sha256
+        );
+        assert_eq!(installed.observed_unix_ms, response.source.observed_unix_ms);
+        let decoded: AuthorityResponse = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.source, response.source);
+    }
 }

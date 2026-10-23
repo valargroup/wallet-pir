@@ -86,6 +86,7 @@ pub(super) async fn activate_history(
         if authority.0.epoch.load(Ordering::Acquire) != epoch {
             return Err("reorg raced the public pointer commit".into());
         }
+        crate::storage::layout::complete(&config.publication_root, "transparent_history")?;
         publication::write_durable(
             &config.publication_root.join("active.json"),
             &serde_json::to_vec(&candidate.publication)?,

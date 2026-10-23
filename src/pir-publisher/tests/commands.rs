@@ -72,6 +72,13 @@ fn maintenance_commands_require_the_compiled_product() {
             "prepare-history-restore",
             cfg!(feature = "transparent-history"),
         ),
+        (
+            "prepare-transparent-storage",
+            cfg!(all(
+                feature = "transparent-history",
+                feature = "transparent-detail"
+            )),
+        ),
         ("verify-filters", cfg!(feature = "transparent-history")),
         ("detail", cfg!(feature = "transparent-detail")),
         ("ingest-events", cfg!(feature = "rocksdb-reader")),

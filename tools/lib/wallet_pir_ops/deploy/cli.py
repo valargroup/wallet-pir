@@ -266,14 +266,17 @@ def parser():
             command.add_argument('--expect-plan-sha256', required=True)
         if operation in ('status', 'rollback'):
             command.add_argument('--transaction')
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'rollback', 'verify', 'dns-plan', 'dns-stage'):
         command = commands.add_parser('coordinator-edge-' + operation,
                                       help='add or update only the unified wallet site on the coordinator Caddy')
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
-        if operation == 'deploy':
+        if operation in ('deploy', 'dns-stage'):
             command.add_argument('--expect-plan-sha256', required=True)
-        if operation in ('status', 'rollback'):
+        if operation == 'deploy':
+            command.add_argument('--preserve-on-failure', action='store_true',
+                                 help='retain the installed candidate on failure; finish with coordinator-edge-verify')
+        if operation in ('status', 'rollback', 'verify'):
             command.add_argument('--transaction')
     command = commands.add_parser('ancillary-status', help='read-only state of ancillary units')
     command.add_argument('name', nargs='?', help='one ancillary unit (default: all)')
@@ -300,6 +303,14 @@ def parser():
     transparent_cli().register(commands)
     from . import publisher
     publisher.register(commands)
+    from . import publisher_storage
+    publisher_storage.register(commands)
+    from . import cache_storage
+    cache_storage.register(commands)
+    from . import cache_volume
+    cache_volume.register(commands)
+    from . import cache_data
+    cache_data.register(commands)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -407,20 +418,43 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
         from ..bundle import check_installed
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-',
-                                                   'ops-package-', 'publisher-cutover-', 'status-routing-',
-                                                   'coordinator-edge-'))
+                                                   'ops-package-', 'publisher-cutover-', 'publisher-storage-', 'status-routing-',
+                                                   'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
+        if args.command.startswith('cache-data-'):
+            from . import cache_data
+            out(json.dumps(cache_data.dispatch(args, executor), sort_keys=True))
+            return 0
+        if args.command.startswith('cache-volume-'):
+            from . import cache_volume
+            out(json.dumps(cache_volume.dispatch(args, executor), sort_keys=True))
+            return 0
+        if args.command.startswith('cache-storage-'):
+            from . import cache_storage
+            out(json.dumps(cache_storage.dispatch(args, executor), sort_keys=True))
+            return 0
+        if args.command.startswith('publisher-storage-'):
+            from . import publisher, publisher_storage
+            request, _inventory = publisher.load_request(args.request, args.request_sha256)
+            check_installed(mutation=mutation, revision=request['release']['git_sha'])
+            result = publisher_storage.dispatch(args, executor=executor, **options)
+            out(json.dumps(result, sort_keys=True))
+            return 0
         if args.command.startswith('publisher-cutover-'):
             from . import publisher
             if not args.command.endswith(('-run', '-watchdog', '-prune-qualification')):
+                publisher_repair = args.command.endswith(('-repair-sandbox-plan', '-repair-sandbox',
+                                                         '-repair-release-plan', '-repair-release'))
                 request, _inventory = publisher.load_request(args.request, args.request_sha256,
-                    recovery=args.command.endswith(('-status', '-rollback', '-reconcile', '-restart')))
-                check_installed(mutation=mutation, revision=request['release']['git_sha'])
+                    recovery=publisher_repair or args.command.endswith(('-status', '-rollback', '-reconcile', '-restart', '-verify', '-continue')))
+                # Sandbox repair keeps the journal-pinned executable and only
+                # changes its unit; no new binary is installed by this recovery.
+                check_installed(mutation=mutation, revision=None if publisher_repair else request['release']['git_sha'])
             result = publisher.dispatch(args, executor=executor, **options)
             out(json.dumps(result, sort_keys=True))
             return 0
@@ -463,12 +497,20 @@ def main(argv=None, executor=None, out=print, package_layout=None, package_githu
             edge = UnifiedEdge(inventory, executor or SSHExecutor(inventory), args.state_dir, request,
                                lock=options.get('lock'))
             operation = args.command.removeprefix('coordinator-edge-')
-            if operation in ('plan', 'preflight'):
+            if operation == 'dns-plan':
+                mutation_fence(inventory, edge.ex)
+                plan, _after = edge.dns_plan()
+                result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
+            elif operation == 'dns-stage':
+                result = edge.stage_dns(args.expect_plan_sha256)
+            elif operation in ('plan', 'preflight'):
                 mutation_fence(inventory, edge.ex)
                 plan, _before, _after = edge.plan()
                 result = {'plan': plan, 'plan_sha256': digest(json.dumps(plan, sort_keys=True))}
             elif operation == 'deploy':
-                result = edge.deploy(args.expect_plan_sha256)
+                result = edge.deploy(args.expect_plan_sha256, preserve_on_failure=args.preserve_on_failure)
+            elif operation == 'verify':
+                result = edge.verify(args.transaction)
             elif operation == 'rollback':
                 result = edge.rollback(args.transaction)
             else:

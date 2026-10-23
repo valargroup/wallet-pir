@@ -12,6 +12,9 @@ pub async fn run_managed<E>(
 where
     E: pir_pipeline::publisher::PublisherExecutor + pir_pipeline::ingestion::IngestionExecutor,
 {
+    if config.publication_root.join("active.json").exists() {
+        crate::storage::layout::require(&config.publication_root, "transparent_history")?;
+    }
     std::fs::create_dir_all(&config.publication_root)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)

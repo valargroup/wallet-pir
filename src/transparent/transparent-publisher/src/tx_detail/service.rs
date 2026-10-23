@@ -29,6 +29,7 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor + IngestionExecut
     http: Http<axum::Router>,
     stop: Shutdown,
 ) -> Result<(), BoxError> {
+    crate::storage::layout::require(&config.root, "transaction_details")?;
     // The writer recovers any uncommitted tail before the controller's
     // read-only view opens the same journal in place.
     let writer = open_writer(&config.journal)?;
