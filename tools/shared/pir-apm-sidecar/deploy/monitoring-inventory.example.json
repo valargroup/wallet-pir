@@ -1,0 +1,36 @@
+{
+  "comment": "Observer entries inside the deployment inventory (/etc/wallet-pir/fleet.json). Addresses and UUIDs are placeholders; adoption binds the real ones privately.",
+  "services": {
+    "apm-sidecar": {
+      "roles": {
+        "observer": [
+          {
+            "host": "coordinator",
+            "install": true,
+            "settings": {
+              "host_id": "coordinator",
+              "address": "10.0.0.2",
+              "required_volumes": [
+                {"path": "/srv/zakura", "uuid": "00000000-0000-0000-0000-000000000001"},
+                {"path": "/srv/transparent-activity", "uuid": "00000000-0000-0000-0000-000000000002"},
+                {"path": "/srv/txid-display-genesis", "uuid": "00000000-0000-0000-0000-000000000003"}
+              ],
+              "units": ["pir-publisher.service", "pir-apm.service", "caddy.service"],
+              "edge_metrics_url": "http://127.0.0.1:2019/metrics"
+            }
+          },
+          {
+            "host": "transparent-pir-recent-01",
+            "install": true,
+            "settings": {
+              "host_id": "transparent-pir-recent-01",
+              "address": "10.0.0.10",
+              "required_volumes": [{"path": "/srv/query-cache", "uuid": "00000000-0000-0000-0000-000000000004"}],
+              "units": ["transparent-history-worker.service"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

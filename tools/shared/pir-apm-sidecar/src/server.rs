@@ -143,3 +143,24 @@ pub async fn serve(
         });
     }
 }
+
+/// Plain loopback readiness for the deploy engine; it reveals no observations.
+pub async fn serve_health(listener: TcpListener, body: watch::Receiver<Bytes>) -> Result<()> {
+    loop {
+        let (stream, _) = listener.accept().await.context("accepting health connection")?;
+        let body = body.clone();
+        tokio::spawn(async move {
+            let service = hyper::service::service_fn(move |req: Request<hyper::body::Incoming>| {
+                let response = if req.uri().path() == "/healthz" {
+                    respond(StatusCode::OK, "application/json", body.borrow().clone())
+                } else {
+                    respond(StatusCode::NOT_FOUND, "text/plain", Bytes::new())
+                };
+                async move { Ok::<_, std::convert::Infallible>(response) }
+            });
+            let connection = hyper::server::conn::http1::Builder::new()
+                .serve_connection(hyper_util::rt::TokioIo::new(stream), service);
+            let _ = tokio::time::timeout(Duration::from_secs(10), connection).await;
+        });
+    }
+}

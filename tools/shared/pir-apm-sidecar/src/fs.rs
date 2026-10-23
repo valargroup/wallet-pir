@@ -61,7 +61,10 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
             let left: Vec<&str> = left.split(' ').collect();
             let right: Vec<&str> = right.split(' ').collect();
             let (major, minor) = left.get(2)?.split_once(':')?;
-            let options = left.get(5)?;
+            // Superblock options, not the per-mount ones: a sandbox that remounts
+            // paths read-only in this service's namespace (ProtectSystem=strict)
+            // must not hide whether the host filesystem itself is writable.
+            let options = right.get(2)?;
             Some(Mount {
                 device: (major.parse().ok()?, minor.parse().ok()?),
                 mount_point: unescape(left.get(4)?),
@@ -353,6 +356,17 @@ mod tests {
         // Device gone entirely.
         let checks = volumes(&required[..1], &mounts, &|_| None, &|_| None, 3);
         assert_eq!(checks[0].status, Status::Critical);
+    }
+
+    #[test]
+    fn namespace_read_only_remounts_do_not_hide_writable_filesystems() {
+        // As seen inside a unit with ProtectSystem=strict: per-mount `ro`.
+        let sandboxed = "22 1 252:1 / / ro,relatime shared:1 - ext4 /dev/vda1 rw,errors=remount-ro\n\
+            24 22 8:16 / /srv/data ro,relatime - ext4 /dev/sdb rw\n";
+        let mounts = parse_mountinfo(sandboxed);
+        assert!(mounts.iter().all(|m| m.writable));
+        let checks = filesystems(&mounts, &|_| Some(stat(10, 5, 5)), 1);
+        assert_eq!(checks.len(), 3);
     }
 
     #[test]
