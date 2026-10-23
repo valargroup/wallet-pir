@@ -4,7 +4,7 @@
 //! live beside it in this module.
 use crate::transparent::history::service::{ServiceConfig, ServiceState};
 use serde::Deserialize;
-use std::{future::IntoFuture, net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf};
 use transparent_shared::history::shardset::{
     LoadOptions, LoadScope, ShardSet, DEFAULT_RETAIN_REVISIONS,
 };
@@ -117,18 +117,20 @@ impl HistoryProcess {
 }
 
 pub async fn run(config: HistoryProcess) -> Result<(), Error> {
-    run_with(config, None, None, Default::default()).await
+    run_with(config, None, None, Default::default(), Default::default()).await
 }
 
 /// Serve on `reserved` (or a socket bound at `listen`), the provider listener
 /// fleet routers and private probes reach. With `public`, the wallet routes
 /// are also installed on the host's shared wallet listener once the first
-/// checked publication is active.
+/// checked publication is active. `stop` ends startup retries and serving
+/// cooperatively: accepted requests and a started publication pass finish.
 pub async fn run_with(
     config: HistoryProcess,
     mut reserved: Option<tokio::net::TcpListener>,
     public: Option<crate::public::Slot>,
     readiness: crate::readiness::Readiness,
+    stop: pir_pipeline::service::Shutdown,
 ) -> Result<(), Error> {
     if let Some(publisher) = config.publisher.clone() {
         let provider = crate::transparent::routing::bootstrap::Config {
@@ -178,7 +180,14 @@ pub async fn run_with(
                     Err(error) if config.verify_only => return Err(error),
                     Err(error) => {
                         tracing::warn!(%error, "initial synchronization refused; retrying with checked inputs");
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        if !crate::supervision::retry_after(
+                            std::time::Duration::from_secs(1),
+                            &stop,
+                        )
+                        .await
+                        {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -204,22 +213,15 @@ pub async fn run_with(
                 Some(listener) => listener,
                 None => tokio::net::TcpListener::bind(config.listen).await?,
             };
-            let mut polling = tokio::spawn(manager.run());
-            // Supervise synchronization: a terminal error stops wallet serving
-            // and is returned with its original type.
-            tokio::select! {
-                result = axum::serve(listener, app).into_future() => {
-                    polling.abort();
-                    result?;
-                }
-                result = &mut polling => {
-                    return Err(match result {
-                        Ok(error) => error,
-                        Err(join) => format!("history synchronization stopped: {join}").into(),
-                    });
-                }
-            }
-            return Ok(());
+            let stopped = stop.clone();
+            return crate::supervision::supervise(
+                "history",
+                listener,
+                app,
+                manager.run_until(async move { stopped.cancelled().await }),
+                stop,
+            )
+            .await;
         }
         let report = crate::transparent::routing::bootstrap::verify(provider).await?;
         println!("{}", serde_json::to_string(&report)?);
