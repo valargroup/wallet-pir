@@ -58,6 +58,11 @@ def check_expiry(args):
     return 0 if status == 'healthy' else 1
 
 
+def default_state_dir():
+    from wallet_pir_ops.deploy import transaction
+    return transaction.default_state_dir()
+
+
 def _executor(args):
     from wallet_pir_ops.deploy import descriptors, remote
     inventory = descriptors.load_inventory(args.inventory)
@@ -65,18 +70,27 @@ def _executor(args):
     return executor, remote.production_lock(inventory, executor)
 
 
+def _role(args, executor):
+    """Directory, unit and readiness contract of the credential `--role` on `--host`."""
+    if args.role == 'sidecar':
+        return monitoring_certs.SIDECAR_CREDENTIALS, monitoring_certs.SIDECAR_UNIT, monitoring_certs.sidecar_ready()
+    installed = executor.read(args.host, OBSERVERS)
+    if installed is None:
+        raise SystemExit('install the observer inventory before the collector credentials')
+    revision = json.loads(installed).get('revision')
+    return (monitoring_certs.COLLECTOR_CREDENTIALS, monitoring_certs.COLLECTOR_UNIT,
+            monitoring_certs.collector_ready(revision))
+
+
 def install_credentials(args):
     """Install from a private directory, e.g. a tmpfs filled from Infisical."""
     source = Path(args.source)
-    collector = args.role == 'collector'
-    names = monitoring_certs.COLLECTOR_FILES if collector else monitoring_certs.SIDECAR_FILES
+    names = monitoring_certs.COLLECTOR_FILES if args.role == 'collector' else monitoring_certs.SIDECAR_FILES
     files = {name: (source / name).read_bytes() for name in names}
     executor, lock = _executor(args)
-    changed = monitoring_certs.install(
-        executor, lock, args.host, files,
-        directory=monitoring_certs.COLLECTOR_CREDENTIALS if collector else monitoring_certs.SIDECAR_CREDENTIALS,
-        unit='pir-apm.service' if collector else monitoring_certs.SIDECAR_UNIT,
-        health='http://127.0.0.1:3002/healthz' if collector else monitoring_certs.SIDECAR_HEALTH)
+    directory, unit, ready = _role(args, executor)
+    changed = monitoring_certs.install(executor, lock, args.host, files, state_dir=default_state_dir(),
+                                       directory=directory, unit=unit, ready=ready)
     print(json.dumps({'host': args.host, 'changed': changed}))
 
 
@@ -86,9 +100,24 @@ def install_observers(args):
     changed = monitoring_certs.install(
         executor, lock, args.host, {os.path.basename(OBSERVERS): (json.dumps(document, indent=2, sort_keys=True)
                                                                   + '\n').encode()},
-        directory=os.path.dirname(OBSERVERS), unit='pir-apm.service', health='http://127.0.0.1:3002/healthz',
-        mode=0o644)
+        state_dir=default_state_dir(), directory=os.path.dirname(OBSERVERS), unit=monitoring_certs.COLLECTOR_UNIT,
+        ready=monitoring_certs.collector_ready(document['revision']), mode=0o644)
     print(json.dumps({'host': args.host, 'changed': changed}))
+
+
+def recover(args):
+    """`reconcile` finishes an interrupted install; `rollback` undoes the latest committed one."""
+    executor, lock = _executor(args)
+    if args.role == 'observers':
+        directory, unit = os.path.dirname(OBSERVERS), monitoring_certs.COLLECTOR_UNIT
+        installed = executor.read(args.host, OBSERVERS)
+        ready = monitoring_certs.collector_ready(json.loads(installed).get('revision') if installed else None)
+    else:
+        directory, unit, ready = _role(args, executor)
+    operation = monitoring_certs.reconcile if args.command == 'reconcile' else monitoring_certs.rollback
+    print(json.dumps({'host': args.host, 'unit': unit,
+                      'transaction': operation(executor, lock, args.host, state_dir=default_state_dir(),
+                                               directory=directory, ready=ready)}))
 
 
 def main(argv=None):
@@ -130,6 +159,12 @@ def main(argv=None):
     child.add_argument('--role', choices=('sidecar', 'collector'), default='sidecar')
     child.add_argument('--source', required=True, help='private directory holding the credential files')
     child.set_defaults(handler=install_credentials)
+    for name in ('reconcile', 'rollback'):
+        child = sub.add_parser(name, help='%s the latest monitoring file transaction on a host' % name)
+        child.add_argument('--inventory', required=True)
+        child.add_argument('--host', required=True)
+        child.add_argument('--role', choices=('sidecar', 'collector', 'observers'), default='sidecar')
+        child.set_defaults(handler=recover)
     args = parser.parse_args(argv)
     return args.handler(args) or 0
 

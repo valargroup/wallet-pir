@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT / 'tools/tests/operations/deploy'))
 from fake_fleet import FakeFleet  # noqa: E402
 from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install  # noqa: E402
-from wallet_pir_ops.deploy import units  # noqa: E402
+from wallet_pir_ops.deploy import remote, units  # noqa: E402
 
 COORDINATOR = {'host_id': 'coordinator', 'address': '10.0.0.2', 'units': ['pir-apm.service'],
                'required_volumes': [{'path': p, 'uuid': '0000-000%d' % i}
@@ -70,6 +70,26 @@ class ObserverInventory(unittest.TestCase):
             monitoring.observers(wrong, mode='shadow')
         with self.assertRaisesRegex(ValueError, 'private address'):
             monitoring.sidecar_document(dict(WORKER, address='203.0.113.9'))
+
+    def test_external_hosts_are_dialed_at_their_declared_global_address(self):
+        gpu = {'host_id': 'gpu-01', 'address': '198.51.100.7', 'external': True, 'bind_address': '10.8.0.4'}
+        document = monitoring.sidecar_document(gpu)
+        self.assertEqual(document['listen'], '10.8.0.4:9443', 'binds behind the provider NAT')
+        self.assertEqual(document['tls']['collector_identity'], monitoring.COLLECTOR_IDENTITY)
+        record = monitoring.enrollment_record(gpu)
+        self.assertEqual(record['address'], '198.51.100.7:9443')
+        self.assertEqual(record['config_digest'], monitoring.config_digest(document))
+        with self.assertRaisesRegex(ValueError, 'unless declared external'):
+            monitoring.sidecar_document(dict(gpu, external=False, bind_address='198.51.100.7'))
+        with self.assertRaisesRegex(ValueError, 'global address'):
+            monitoring.sidecar_document(dict(gpu, address='10.0.0.9'))
+        with self.assertRaisesRegex(ValueError, 'only for external hosts'):
+            monitoring.sidecar_document(dict(WORKER, bind_address='10.0.0.99'))
+        with self.assertRaisesRegex(ValueError, 'specific address'):
+            monitoring.sidecar_document(dict(gpu, bind_address='0.0.0.0'))
+        report = monitoring.coverage(inventory(COORDINATOR, gpu), terraform_outputs={}, roster=[],
+                                     external_hosts={'gpu-01': ['198.51.100.7']})
+        self.assertEqual(report['missing_declarations'], [])
 
     def test_the_example_inventory_renders(self):
         example = json.loads((ROOT / 'tools/deploy/monitoring/monitoring-inventory.example.json').read_text())
@@ -126,29 +146,125 @@ class Certificates(unittest.TestCase):
         self.assertNotEqual((self.root / '90' / 'server.key').read_bytes(),
                             (self.root / '20' / 'server.key').read_bytes())
 
-    def test_rotation_installs_under_the_lock_and_restores_on_failed_start(self):
+    def sidecar_host(self):
         fake = FakeFleet()
         fake.host('w1')
         fake.endpoints[('w1', monitoring_certs.SIDECAR_HEALTH)] = monitoring_certs.SIDECAR_UNIT
         fake.host('w1').units[monitoring_certs.SIDECAR_UNIT] = {}
         fake._reload = lambda host: None
-        fake._start = lambda host, unit: fake.host(host).units[unit].update(active='active', exe='new')
-        old = {name: b'old ' + name.encode() for name in monitoring_certs.SIDECAR_FILES}
-        for name, data in old.items():
-            fake.put('w1', '%s/%s' % (monitoring_certs.SIDECAR_CREDENTIALS, name), data)
-        new = dict(old, **{'server.pem': b'new cert', 'server.key': b'new key'})
-        lock = lambda: fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock')
-        self.assertEqual(monitoring_certs.install(fake, lock(), 'w1', new), ['server.key', 'server.pem'])
-        self.assertEqual(fake.read('w1', monitoring_certs.SIDECAR_CREDENTIALS + '/server.key'), 'new key')
-        self.assertEqual(monitoring_certs.install(fake, lock(), 'w1', new), [], 'idempotent')
-        fake.unhealthy.add(('w1', 'new'))
-        newer = dict(new, **{'server.key': b'newer key'})
+        # The unit runs whatever server.key holds; health follows that process.
+        fake._start = lambda host, unit: fake.host(host).units[unit].update(
+            active='active', exe=fake.read(host, monitoring_certs.SIDECAR_CREDENTIALS + '/server.key'))
+        return fake
+
+    def install(self, fake, files, **options):
+        lock = fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock')
+        return monitoring_certs.install(fake, lock, 'w1', files, state_dir=self.root / 'journal',
+                                        sleep=lambda _: None, **options)
+
+    def installed(self, fake):
+        return {name: fake.read('w1', '%s/%s' % (monitoring_certs.SIDECAR_CREDENTIALS, name))
+                for name in monitoring_certs.SIDECAR_FILES}
+
+    OLD = {name: ('old ' + name).encode() for name in monitoring_certs.SIDECAR_FILES}
+    NEW = dict(OLD, **{'server.pem': b'new cert', 'server.key': b'new key'})
+
+    def test_first_install_rotation_idempotency_and_explicit_rollback(self):
+        fake = self.sidecar_host()
+        self.assertEqual(self.install(fake, self.OLD), sorted(self.OLD))
+        self.assertEqual(self.install(fake, self.NEW), ['server.key', 'server.pem'])
+        self.assertEqual(self.installed(fake)['server.key'], 'new key')
+        self.assertEqual(self.install(fake, self.NEW), [], 'idempotent')
+        journals = list((self.root / 'journal').glob('monitoring-files-*.json'))
+        self.assertFalse([p for p in journals if b'new key' in p.read_bytes()], 'journals hold digests only')
+        lock = fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'w1', state_dir=self.root / 'journal', sleep=lambda _: None)
+        self.assertEqual(self.installed(fake), {k: v.decode() for k, v in self.OLD.items()})
+        self.assertEqual(fake.host('w1').units[monitoring_certs.SIDECAR_UNIT]['active'], 'active')
+
+    def test_every_failing_effect_restores_the_previous_set(self):
+        old = {k: v.decode() for k, v in self.OLD.items()}
+        effects = [('write', monitoring_certs.SIDECAR_CREDENTIALS + '/server.key'),
+                   ('write', monitoring_certs.SIDECAR_CREDENTIALS + '/server.pem'),
+                   ('systemctl', ('restart', monitoring_certs.SIDECAR_UNIT))]
+        for op, detail in effects:
+            with self.subTest(effect=(op, detail)):
+                fake = self.sidecar_host()
+                self.install(fake, self.OLD)
+                failed = []
+
+                def observe(host, kind, what, op=op, detail=detail):
+                    if (kind, what) == (op, detail) and not failed:
+                        failed.append(what)
+                        raise OSError('injected transport failure')
+                fake.observer = observe
+                with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+                    self.install(fake, self.NEW)
+                self.assertEqual(self.installed(fake), old)
+        # A readiness probe whose transport fails is "not ready", then restored.
+        fake = self.sidecar_host()
+        self.install(fake, self.OLD)
+
+        def broken(executor, host):
+            if fake.read(host, monitoring_certs.SIDECAR_CREDENTIALS + '/server.key') == 'new key':
+                raise OSError('connection reset')
+            return True
         with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
-            monitoring_certs.install(fake, lock(), 'w1', newer, ready_timeout=0)
-        self.assertEqual(fake.read('w1', monitoring_certs.SIDECAR_CREDENTIALS + '/server.key'), 'new key')
+            self.install(fake, self.NEW, ready=broken, ready_timeout=0)
+        self.assertEqual(self.installed(fake), old)
+        # An unready new process too.
+        fake.unhealthy.add(('w1', 'new key'))
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install(fake, self.NEW, ready_timeout=0)
+        self.assertEqual(self.installed(fake), old)
+
+    def test_an_applied_but_unacknowledged_write_is_restored(self):
+        fake = self.sidecar_host()
+        self.install(fake, self.OLD)
+        original = fake.write
+
+        def write(host, path, data, mode):
+            original(host, path, data, mode)
+            if path.endswith('/server.pem') and data == b'new cert':
+                raise TimeoutError('reply lost')
+        fake.write = write
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install(fake, self.NEW)
+        self.assertEqual(self.installed(fake)['server.pem'], 'old server.pem')
+
+    def test_lock_loss_leaves_the_journal_open_and_the_next_run_restores_first(self):
+        fake = self.sidecar_host()
+        self.install(fake, self.OLD)
+
+        def lose(host, kind, what):
+            if kind == 'systemctl':
+                fake.lock.lost = True
+        fake.observer = lose
+        with self.assertRaises(remote.LockHeld):
+            self.install(fake, self.NEW)
+        fake.observer = None
+        self.assertEqual(self.installed(fake)['server.key'], 'new key', 'nothing restored without the lock')
+        lock = fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock')
+        self.assertIsNotNone(monitoring_certs.reconcile(fake, lock, 'w1', state_dir=self.root / 'journal',
+                                                        sleep=lambda _: None))
+        self.assertEqual(self.installed(fake)['server.key'], 'old server.key')
         with fake.hold_lock('w1', '/run/lock/wallet-pir-production.lock'):
-            with self.assertRaises(Exception):
-                monitoring_certs.install(fake, lock(), 'w1', newer)
+            with self.assertRaises(remote.LockHeld):
+                self.install(fake, self.NEW)
+
+    def test_collector_readiness_needs_the_installed_revision_not_plain_ok(self):
+        fake = FakeFleet()
+        answers = {'body': 'ok', 'status': 200}
+        fake.http_get = lambda host, url, timeout=5: (answers['status'], answers['body'])
+        ready = monitoring_certs.collector_ready('sha256:abc')
+        with self.assertRaises(ValueError):
+            ready(fake, 'c')  # `/healthz`'s plain ok is not this contract
+        answers['body'] = json.dumps({'ready': True, 'revision': 'sha256:other'})
+        self.assertFalse(ready(fake, 'c'))
+        answers['body'] = json.dumps({'ready': True, 'revision': 'sha256:abc'})
+        self.assertTrue(ready(fake, 'c'))
+        answers['status'] = 503
+        self.assertFalse(ready(fake, 'c'))
 
 
 class HostTransport:
@@ -235,6 +351,19 @@ def binaries():
     return None
 
 
+class LocalHTTP:
+    """The executor's `http_get` for processes on this machine."""
+
+    def http_get(self, host, url, timeout=5):
+        import urllib.error
+        import urllib.request
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as error:
+            return error.code, error.read().decode()
+
+
 def free_port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -270,9 +399,10 @@ class FreshRebuild(unittest.TestCase):
                                        env=dict(env, CREDENTIALS_DIRECTORY=str(root / 'sidecar')),
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             state = root / 'incidents.sqlite'
+            apm_port = free_port()
             apm = subprocess.Popen([str(bin_dir / 'pir-apm')], env=dict(
                 env, CREDENTIALS_DIRECTORY=str(root / 'collector'), PIR_APM_OBSERVERS=str(root / 'observers.json'),
-                PIR_APM_STATE_PATH=str(state), PIR_APM_LISTEN='127.0.0.1:%d' % free_port(),
+                PIR_APM_STATE_PATH=str(state), PIR_APM_LISTEN='127.0.0.1:%d' % apm_port,
                 PIR_APM_SCRAPE_URL='http://127.0.0.1:9'), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 deadline = time.monotonic() + 20
@@ -291,6 +421,14 @@ class FreshRebuild(unittest.TestCase):
                 # This machine's own filesystems decide the rest; they need only be reported.
                 self.assertIn('host:rehearsal:check:memory', keys)
                 self.assertIn('host:rehearsal:check:filesystems', keys)
+                # The deployment's readiness contract against the real APM.
+                revision = json.loads((root / 'observers.json').read_text())['revision']
+                url = 'http://127.0.0.1:%d/observers/ready' % apm_port
+                self.assertTrue(monitoring_certs.collector_ready(revision, url)(LocalHTTP(), 'rehearsal'))
+                self.assertFalse(monitoring_certs.collector_ready('sha256:other', url)(LocalHTTP(), 'rehearsal'))
+                with self.assertRaises(ValueError):
+                    monitoring_certs.collector_ready(
+                        revision, 'http://127.0.0.1:%d/healthz' % apm_port)(LocalHTTP(), 'rehearsal')
             finally:
                 for process in (apm, sidecar):
                     process.terminate()
