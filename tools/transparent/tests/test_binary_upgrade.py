@@ -954,5 +954,47 @@ class UnifiedDisplayUpgrade(DisplayWorkerChecks, UnifiedOwner, Harness):
         self.publisher_untouched()
 
 
+    def lagging_display(self, stays_old=False):
+        self.map[0] = NEXT_MAP
+        def health(ready_, exe):
+            digest = MAP if exe == sha256(OLD) or stays_old else NEXT_MAP
+            return {'ready': ready_, 'warm': True, 'role': 'combined',
+                    'map_sha256': digest, 'covered_through': 3100000}
+        self.fake.health_shapes[('gpu', DISPLAY_WORKER)] = health
+
+    def pin_previous_display(self, digest=MAP):
+        self.write_request(lambda request: request.update(previous_maps={'worker@gpu': digest}))
+
+    def test_reviewed_older_display_can_upgrade_to_the_current_publication(self):
+        self.lagging_display()
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 1)
+        self.pin_previous_display()
+        self.assertEqual(self.run_cli('preflight', '--binary', str(self.binary))[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(NEW))
+        self.publisher_untouched()
+
+    def test_a_display_replacement_cannot_use_the_predecessors_older_map(self):
+        self.lagging_display(stays_old=True)
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.pin_previous_display()
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertTrue(any('controller current is' in line for line in lines), lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
+
+    def test_an_unreviewed_older_display_map_refuses_before_change(self):
+        self.lagging_display()
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.pin_previous_display('f' * 64)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(self.fake.probe_unit('gpu', DISPLAY_WORKER)['exe_sha256'], sha256(OLD))
+        self.publisher_untouched()
+
+
 if __name__ == '__main__':
     unittest.main()
