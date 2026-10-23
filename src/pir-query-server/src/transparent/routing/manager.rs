@@ -214,9 +214,12 @@ impl HistorySync {
             let active: Publication = serde_json::from_value(status["active"].clone())?;
             let root = self.config.directory.clone();
             tokio::task::spawn_blocking(move || {
-                crate::transparent::objects::collect_objects(&root, &active.directory.join("shards.json"))
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
+                crate::transparent::objects::collect_objects(
+                    &root,
+                    &active.directory.join("shards.json"),
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string())
             })
             .await??;
             return Ok(());

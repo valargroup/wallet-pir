@@ -122,8 +122,7 @@ pub struct PackingRouter {
     authority: Authority,
     inner: Arc<Mutex<Inner>>,
     http: reqwest::Client,
-    admission: Arc<Semaphore>,
-    waiters: Arc<Semaphore>,
+    admission: Arc<Queue>,
     synchronization: Arc<Semaphore>,
     budget: enhance_shared::PackingBudget,
     loader: std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>,
@@ -234,8 +233,7 @@ impl PackingRouter {
             http: crate::enhance::internal_auth::client_builder()
                 .timeout(Duration::from_secs(30))
                 .build()?,
-            admission: Arc::new(Semaphore::new(requests)),
-            waiters: Arc::new(Semaphore::new(16)),
+            admission: Arc::new(Queue::new(requests, 16, Duration::from_secs(2), false)),
             synchronization: Arc::new(Semaphore::new(1)),
             budget: enhance_shared::PackingBudget::router(),
             loader,
@@ -784,6 +782,12 @@ impl SyncTask for Synchronizer {
 }
 
 impl PackingRouter {
+    /// Waits until admitted packing has ended, including work and response
+    /// bodies whose wallet request was cancelled.
+    pub(crate) async fn drained(&self) {
+        self.admission.drained().await
+    }
+
     pub(crate) fn ready(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         inner
@@ -1074,19 +1078,15 @@ async fn serve(
     bytes: axum::body::Bytes,
     body_read: Duration,
 ) -> Result<Response, ApiError> {
-    let permit = Queue::with_permits(
-        router.admission.clone(),
-        router.waiters.clone(),
-        Duration::from_secs(2),
-        false,
-    )
-    .acquire(|| ())
-    .await
-    .map_err(|refusal| match refusal {
-        Refusal::Full => (StatusCode::TOO_MANY_REQUESTS, "query queue full".into()),
-        Refusal::Deadline => (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()),
-        Refusal::Closed => unavailable("admission closed"),
-    })?;
+    let permit = router
+        .admission
+        .acquire(|| ())
+        .await
+        .map_err(|refusal| match refusal {
+            Refusal::Full => (StatusCode::TOO_MANY_REQUESTS, "query queue full".into()),
+            Refusal::Deadline => (StatusCode::TOO_MANY_REQUESTS, "admission deadline".into()),
+            Refusal::Closed => unavailable("admission closed"),
+        })?;
     let binding = QueryBinding::decode(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     let (loaded, guard) = router.query_view(binding).await?;
     let packing = loaded

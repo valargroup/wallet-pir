@@ -34,6 +34,8 @@ use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 /// renews them while waiting, loading, and serving; a lost process cannot pin forever.
 pub const PIN_LIFETIME: Duration = Duration::from_secs(30);
 const MAX_PINS: usize = 64;
+/// Evaluations admitted at once.
+const EVALUATIONS: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -183,7 +185,7 @@ impl Worker {
             safety,
             inner: Arc::new(Mutex::new(Inner::default())),
             authority: Arc::new(AsyncMutex::new(authority)),
-            evaluation: Arc::new(Semaphore::new(2)),
+            evaluation: Arc::new(Semaphore::new(EVALUATIONS as usize)),
             synchronization: Arc::new(Semaphore::new(1)),
             incarnation: format!("{:032x}", rand::random::<u128>()),
             matvec_latency: Arc::new(prometheus::Histogram::with_opts(
@@ -556,7 +558,7 @@ impl Worker {
         );
         metrics.number(
             "enhance_worker_queries_in_flight",
-            (2 - self.evaluation.available_permits()) as u64,
+            (EVALUATIONS as usize - self.evaluation.available_permits()) as u64,
         );
         let plans = plans.iter().collect::<Vec<_>>();
         match self.reservation(&plans) {
@@ -697,6 +699,12 @@ impl Worker {
             return Err(unavailable("worker incarnation changed"));
         }
         Ok(())
+    }
+
+    /// Waits until admitted evaluation has ended, including work whose
+    /// request was cancelled. The role keeps its state until then.
+    pub(crate) async fn drained(&self) {
+        let _all = self.evaluation.acquire_many(EVALUATIONS).await;
     }
 
     fn evaluation_permit(&self) -> ApiResult<tokio::sync::OwnedSemaphorePermit> {

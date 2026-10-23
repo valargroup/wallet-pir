@@ -102,7 +102,9 @@ pub struct QueryIngress {
     inner: Arc<Mutex<Inner>>,
     http: reqwest::Client,
     admission: Arc<Semaphore>,
+    requests: u32,
     uploads: Arc<Semaphore>,
+    upload_capacity: u32,
     reads: Arc<Semaphore>,
     client_uploads: ClientSlots,
     synchronization: Arc<Semaphore>,
@@ -207,7 +209,9 @@ impl QueryIngress {
                 .timeout(Duration::from_secs(90))
                 .build()?,
             admission: Arc::new(Semaphore::new(requests)),
+            requests: u32::try_from(requests)?,
             uploads: Arc::new(Semaphore::new(uploads)),
+            upload_capacity: u32::try_from(uploads)?,
             reads: Arc::new(Semaphore::new(64)),
             client_uploads: ClientSlots::new(4),
             synchronization: Arc::new(Semaphore::new(1)),
@@ -503,6 +507,13 @@ impl SyncTask for Synchronizer {
     }
 }
 impl QueryIngress {
+    /// Waits until admitted uploads and forwarded queries have ended,
+    /// including work whose wallet request was cancelled.
+    pub(crate) async fn drained(&self) {
+        let _uploads = self.uploads.acquire_many(self.upload_capacity).await;
+        let _requests = self.admission.acquire_many(self.requests).await;
+    }
+
     pub(crate) fn ready(&self) -> bool {
         let inner = self.inner.lock().unwrap();
         inner
@@ -722,9 +733,8 @@ mod tests {
     use super::*;
     use enhance_shared::publication::METADATA_LIMIT;
     use tower::ServiceExt;
-    fn ingress() -> (tempfile::TempDir, QueryIngress) {
-        let root = tempfile::tempdir().unwrap();
-        let config = Config {
+    fn config() -> Config {
+        Config {
             source: SourceConfig {
                 publisher_origin: "https://publisher.example".into(),
                 trusted_ca: None,
@@ -739,8 +749,11 @@ mod tests {
                 }],
             )]
             .into(),
-        };
-        let ingress = QueryIngress::open(root.path(), config, 1, 4).unwrap();
+        }
+    }
+    fn ingress() -> (tempfile::TempDir, QueryIngress) {
+        let root = tempfile::tempdir().unwrap();
+        let ingress = QueryIngress::open(root.path(), config(), 1, 4).unwrap();
         (root, ingress)
     }
     #[tokio::test]
@@ -779,6 +792,30 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(ingress.admission.available_permits(), 1);
+    }
+    /// Shutdown waits for admitted work whose wallet request is gone, with
+    /// the directory still owned, rather than for currently free permits.
+    #[tokio::test]
+    async fn drain_waits_for_admitted_work_while_owning_the_directory() {
+        let (root, ingress) = ingress();
+        let admitted = ingress.admission.clone().acquire_owned().await.unwrap();
+        let upload = ingress.uploads.clone().acquire_owned().await.unwrap();
+        let drained = tokio::spawn({
+            let ingress = ingress.clone();
+            async move { ingress.drained().await }
+        });
+        drop(ingress);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished(), "drained before admitted work ended");
+        drop(upload);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished(), "drained before forwarding ended");
+        assert!(QueryIngress::open(root.path(), config(), 1, 4).is_err());
+        drop(admitted);
+        tokio::time::timeout(Duration::from_secs(5), drained)
+            .await
+            .unwrap()
+            .unwrap();
     }
     async fn answer(
         router: Router,

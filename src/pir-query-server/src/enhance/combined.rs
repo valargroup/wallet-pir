@@ -106,6 +106,13 @@ impl Combined {
 
     /// Serving eligibility: every component holds fresh authority for its
     /// active material. The ingress alone could still report an old promise.
+    /// Waits until every component's admitted work has ended.
+    pub(crate) async fn drained(&self) {
+        self.ingress.drained().await;
+        self.router.drained().await;
+        self.worker.drained().await;
+    }
+
     pub fn ready(&self) -> bool {
         self.ingress.ready() && self.router.ready() && self.worker.ready()
     }

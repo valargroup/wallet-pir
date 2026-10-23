@@ -41,28 +41,14 @@ pub struct Queue {
 
 impl Queue {
     /// A queue with its own `executing` permits and `waiting` slots.
+    /// The queue owns its semaphores, so `executing` is its exact capacity:
+    /// [`Queue::drained`] waits for every permit it can ever lend.
     pub fn new(executing: usize, waiting: usize, wait: Duration, fast_path: bool) -> Self {
-        Self::with_permits(
-            Arc::new(Semaphore::new(executing)),
-            Arc::new(Semaphore::new(waiting)),
-            wait,
-            fast_path,
-        )
-    }
-
-    /// A queue over existing semaphores, for callers that also report their
-    /// available permits. Permits free at construction are its capacity.
-    pub fn with_permits(
-        executing: Arc<Semaphore>,
-        waiting: Arc<Semaphore>,
-        wait: Duration,
-        fast_path: bool,
-    ) -> Self {
-        let capacity = u32::try_from(executing.available_permits()).unwrap_or(u32::MAX);
+        let capacity = u32::try_from(executing).expect("execution permits fit in u32");
         Self {
-            executing,
+            executing: Arc::new(Semaphore::new(executing)),
             capacity,
-            waiting,
+            waiting: Arc::new(Semaphore::new(waiting)),
             wait,
             fast_path,
         }

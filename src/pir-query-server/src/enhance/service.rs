@@ -209,11 +209,14 @@ pub async fn run_worker_on(
     let manager = crate::synchronization::SyncManager::new(worker.synchronizer()?);
     let ready = worker.clone();
     readiness.register(move || std::future::ready(ready.ready()));
-    tokio::select! {
-        result = crate::enhance::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
-        error = manager.run() => return Err(error),
-    }
-    Ok(())
+    let result = tokio::select! {
+        result = crate::enhance::shutdown::serve_until(listener, worker.clone().router(), shutdown) => result.map_err(Error::from),
+        error = manager.run() => Err(error),
+    };
+    // Admitted evaluation outlives a cancelled request; the role keeps its
+    // directory lock and loaded material until that work ends.
+    worker.drained().await;
+    result
 }
 pub async fn run_ingress_on(
     config: IngressConfig,
@@ -234,8 +237,12 @@ pub async fn run_ingress_on(
     public.install(ingress.public_router());
     let serving =
         crate::enhance::shutdown::serve_until(control, ingress.control_router(), shutdown);
-    tokio::select! { result = serving => result?, error = manager.run() => return Err(error), }
-    Ok(())
+    let result = tokio::select! {
+        result = serving => result.map_err(Error::from),
+        error = manager.run() => Err(error),
+    };
+    ingress.drained().await;
+    result
 }
 pub async fn run_router(config: RouterConfig) -> Result<(), Error> {
     let public = tokio::net::TcpListener::bind(config.listen).await?;
@@ -267,15 +274,20 @@ pub async fn run_router_on(
     readiness.register(move || std::future::ready(ready.ready()));
     let (notify, public_stop, control_stop) = stop_pair(shutdown);
     let _notify = notify;
+    let routes = (router.public_router(), router.control_router());
     let serving = async move {
         tokio::try_join!(
-            crate::enhance::shutdown::serve_until(public, router.public_router(), public_stop),
-            crate::enhance::shutdown::serve_until(control, router.control_router(), control_stop)
+            crate::enhance::shutdown::serve_until(public, routes.0, public_stop),
+            crate::enhance::shutdown::serve_until(control, routes.1, control_stop)
         )
         .map(|_| ())
     };
-    tokio::select! { result = serving => result?, error = manager.run() => return Err(error), }
-    Ok(())
+    let result = tokio::select! {
+        result = serving => result.map_err(Error::from),
+        error = manager.run() => Err(error),
+    };
+    router.drained().await;
+    result
 }
 pub async fn run_combined_on(
     config: CombinedConfig,
@@ -301,13 +313,14 @@ pub async fn run_combined_on(
         crate::enhance::shutdown::serve_until(control, combined.control_router(), shutdown);
     // Each component synchronizes independently; only a terminal error from
     // any of them (a confirmed publisher incompatibility) stops the process.
-    tokio::select! {
-        result = serving => result?,
-        error = worker.run() => return Err(error),
-        error = router.run() => return Err(error),
-        error = ingress.run() => return Err(error),
-    }
-    Ok(())
+    let result = tokio::select! {
+        result = serving => result.map_err(Error::from),
+        error = worker.run() => Err(error),
+        error = router.run() => Err(error),
+        error = ingress.run() => Err(error),
+    };
+    combined.drained().await;
+    result
 }
 fn stop_pair(
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
