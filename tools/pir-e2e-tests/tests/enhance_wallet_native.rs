@@ -145,6 +145,16 @@ impl Host {
         self.child.kill().await.unwrap();
         self.child.wait().await.unwrap();
     }
+    /// Requests the host's own shutdown, as systemd does, and waits for it to
+    /// drain and exit.
+    async fn terminate(mut self) -> std::process::ExitStatus {
+        let pid = self.child.id().unwrap() as libc::pid_t;
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+        tokio::time::timeout(std::time::Duration::from_secs(90), self.child.wait())
+            .await
+            .unwrap_or_else(|_| panic!("host did not stop: {}", self.log()))
+            .unwrap()
+    }
 }
 
 fn source(publication: &Publication) -> serde_json::Value {
@@ -303,4 +313,75 @@ async fn wallet_decodes_native_answers_from_spawned_distributed_hosts() {
     for host in hosts {
         host.stop().await;
     }
+}
+
+/// A host owns its state root until it has stopped: a second host configured
+/// with the same root cannot open it while the first serves and does not
+/// disturb it, and serves from it once the first has drained and exited.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_state_root_is_owned_until_its_host_has_stopped() {
+    let records: u64 = 67;
+    let anchor_hash = "01".repeat(32);
+    let publication = Publication::start(
+        (0..records).map(record).collect(),
+        enhance_shared::ACTIVATION_HEIGHT,
+        anchor_hash.clone(),
+    )
+    .await;
+    let dir = publication.root.path();
+    let state = dir.join("combined");
+    let document = |public: &str| {
+        let mut synchronization = source(&publication);
+        synchronization["shards"] = serde_json::json!([0]);
+        serde_json::json!({
+            "management_listen": free(),
+            "public_listen": public,
+            "enhance": {"enabled": true, "settings": {
+                "role": "combined",
+                "data_dir": state,
+                "control_listen": free(),
+                "synchronization": synchronization,
+            }},
+        })
+    };
+    let (first_public, second_public) = (free(), free());
+    let mut first = Host::start(dir, "first", document(&first_public)).await;
+    first.ready().await;
+    let first_origin = format!("http://{first_public}");
+    assert!(state.join("worker").exists());
+    wallet_decodes(&first_origin, records, &anchor_hash).await;
+
+    // The second host's Enhance product fails to open the owned root: it is
+    // isolated as failed, never ready, and serves no wallet generation.
+    let refused = Host::start(dir, "refused", document(&second_public)).await;
+    let management = refused.management.clone();
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if let Ok(response) = reqwest::get(format!("http://{management}/health")).await {
+                let report: serde_json::Value = response.json().await.unwrap_or_default();
+                if report["products"]["enhance"]["phase"] == "failed" {
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("second host took owned state: {}", refused.log()));
+    assert!(refused.log().contains("already owned"), "{}", refused.log());
+    assert_eq!(status(format!("http://{management}/ready")).await, 503);
+    assert_ne!(
+        status(format!("http://{second_public}/enhance/v1/init")).await,
+        200
+    );
+    refused.stop().await;
+    // The refused host left the serving host's view intact.
+    wallet_decodes(&first_origin, records, &anchor_hash).await;
+
+    let status = first.terminate().await;
+    assert!(status.success(), "{status}");
+    let mut second = Host::start(dir, "second", document(&second_public)).await;
+    second.ready().await;
+    wallet_decodes(&format!("http://{second_public}"), records, &anchor_hash).await;
+    second.stop().await;
 }
