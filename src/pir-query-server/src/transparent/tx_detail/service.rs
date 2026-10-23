@@ -125,8 +125,6 @@ struct Inner {
     runtime: Arc<DisplayRuntime>,
     warm: WarmState,
     prewarm_slots: usize,
-    /// Set once a successor is active; see [`DisplayState::retire`].
-    retired: AtomicBool,
 }
 
 /// One publication snapshot: a loaded set and the shared runtime.
@@ -224,7 +222,6 @@ impl DisplayState {
                     self_check_micros: AtomicU64::new(0),
                 },
                 prewarm_slots,
-                retired: AtomicBool::new(false),
             }),
         };
         state.validation();
@@ -417,12 +414,12 @@ impl DisplayState {
     /// map would take a build slot from the candidate the next activation
     /// waits for. Such a client is sent to refresh its map (409) instead.
     pub(crate) fn retire(&self) {
-        self.inner.retired.store(true, Ordering::Release);
+        self.inner.serving.retire();
         self.stop_warming(None);
     }
 
     pub fn is_retired(&self) -> bool {
-        self.inner.retired.load(Ordering::Acquire)
+        self.inner.serving.is_retired()
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -771,14 +768,7 @@ async fn setup(
     let prepared = state
         .inner
         .serving
-        .prepare_setup(
-            sealed,
-            shard_id,
-            &digest,
-            &label,
-            segment,
-            state.is_retired(),
-        )
+        .prepare_setup(sealed, shard_id, &digest, &label, segment)
         .map_err(RequestError::from);
     let setup = match prepared {
         Ok(prepared) => {
@@ -837,12 +827,13 @@ async fn query_inner(
     let map_digest = worker.map_digest;
     let metrics = worker.metrics;
     // A retired snapshot is refused before the body is queued if a segment
-    // has already gone; the check is repeated when the handles are taken.
-    let prepared =
-        state
-            .inner
-            .serving
-            .prepare_query(sealed, shard_id, &digest, &label, state.is_retired());
+    // has already gone; whether it is retired is read again when the handles
+    // are taken, after admission, so a request admitted after its snapshot
+    // retires never builds.
+    let prepared = state
+        .inner
+        .serving
+        .prepare_query(sealed, shard_id, &digest, &label);
     let query = match prepared {
         Ok(query) => query,
         Err(error) => {
@@ -852,4 +843,90 @@ async fn query_inner(
         }
     };
     answer_query(worker, request, query).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt as _;
+    use transparent_shared::tx_detail::synth::{self, ShardSpec};
+    use transparent_shared::tx_detail::DisplayRole;
+    use zakura_pir_protocol::transparent::shard::display::{DisplaySealParams, TXID_2K8};
+
+    fn spec(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardSpec {
+        ShardSpec {
+            shard_id,
+            start_height: start,
+            end_height: end,
+            sealed,
+            revision: 0,
+            supersedes: String::new(),
+            parent_manifest_digest: String::new(),
+            n_buckets: 1,
+            archive_target: 1,
+            geometry: &TXID_2K8,
+        }
+    }
+
+    /// A query admitted after its snapshot retired is answered only from
+    /// resident runtimes: it resolved while the snapshot served, waited for a
+    /// slot through the activation, and is then the same stale refusal a
+    /// wallet on the old map always gets, with nothing built for it.
+    #[tokio::test]
+    async fn retirement_during_the_admission_wait_never_builds() {
+        let root = tempfile::tempdir().unwrap();
+        let records = synth::records(40, 7);
+        let archive =
+            synth::write_shard(root.path(), &spec(0, 10, 19, true), &records[..20]).unwrap();
+        let mut recent = spec(1, 20, 29, false);
+        recent.parent_manifest_digest = archive.digest.clone();
+        let recent = synth::write_shard(root.path(), &recent, &records[20..]).unwrap();
+        let params = DisplaySealParams {
+            n_archive: 1,
+            n_recent: 1,
+            archive_target: 1,
+            recent_window: 1,
+            reorg_margin: 1,
+        };
+        let (dir, _) =
+            synth::write_candidate(root.path(), &params, &[archive, recent.clone()], "c0").unwrap();
+        let runtime = DisplayRuntime::new(
+            ServiceConfig {
+                query_slots: 1,
+                ..ServiceConfig::default()
+            },
+            None,
+        );
+        let set = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
+        let state = DisplayState::build(set, &runtime).unwrap();
+        let len = state
+            .inner
+            .serving
+            .params(TXID_2K8.name, Table::TxDirectory)
+            .unwrap()
+            .query_bytes();
+
+        let held = runtime.admission.hold_slot().await;
+        let uri = format!(
+            "{}/txid/recent/shards/1/revisions/{}/query/directory-0",
+            transparent_shared::http::CANONICAL_PREFIX,
+            recent.digest
+        );
+        let request = Request::post(uri)
+            .header(axum::http::header::CONTENT_LENGTH, len)
+            .body(axum::body::Body::from(vec![0u8; len]))
+            .unwrap();
+        let answer = tokio::spawn(router(state.clone()).oneshot(request));
+        while Metrics::get(&runtime.metrics.query_queue_depth) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        state.retire();
+        drop(held);
+
+        let response = answer.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(runtime.cache.entries(), 0);
+        assert_eq!(Metrics::get(&runtime.metrics.stale_revisions), 1);
+    }
 }
