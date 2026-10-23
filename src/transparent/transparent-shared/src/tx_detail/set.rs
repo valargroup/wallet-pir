@@ -16,10 +16,10 @@
 
 use zakura_pir_protocol::transparent::shard as transparent_shard;
 
-use crate::history::shardset::{
+use crate::runtime::disk::ShippedRuntimes;
+use crate::segment::{
     LoadError, SegmentSource, Stop, VerificationClock, VerificationReport, NEVER,
 };
-use crate::runtime::disk::ShippedRuntimes;
 use crate::tx_detail::{kind, runtime_key, serves, DisplayRole};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};

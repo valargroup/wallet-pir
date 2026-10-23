@@ -8,7 +8,7 @@
 //! - [`evaluation`]: opaque `PreparedDatabase` handles, loading their stored
 //!   coefficients and combining evaluation contributions. Enhance loads persisted
 //!   coefficients; Status prepares verified snapshot rows through the same loader.
-//!   Transparent retains a P16 adapter, while its current tables select P8;
+//!   Transparent uses the upstream P8 byte kernel directly;
 //! - [`packing`]: opaque `PackingSetup`, `PreparedPacking` and `PackingKeys`
 //!   handles; preparing hint blocks, validating query keys and packing an
 //!   intermediate into serialized response bodies. Products never borrow raw
