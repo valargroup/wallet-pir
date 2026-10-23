@@ -143,9 +143,9 @@ where
     let mut ingesting = std::pin::pin!(ingesting);
     let unexpected = tokio::select! {
         result = &mut ingesting => {
-            // Dropping ingestion closes the latest-work slot. A running publication
-            // finishes its current owner operation before observing shutdown or closure.
-            drop(ingesting);
+            // Finished ingestion has dropped its writer, closing the latest-work
+            // slot. A running publication finishes its current owner operation
+            // before observing shutdown or closure.
             publication.await??;
             return result;
         }

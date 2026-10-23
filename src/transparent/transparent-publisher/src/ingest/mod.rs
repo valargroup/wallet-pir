@@ -401,7 +401,8 @@ mod history_projection_tests {
         let bare = [0x51, 0x21, 3, 0x51, 0xae];
         let op_return = [0x6a, 0x04, 1, 2, 3, 4];
         let one_byte = [0x00];
-        let blocks: Vec<(Vec<(ScriptBytes, TransparentEvent)>, Vec<&[u8]>)> = vec![
+        type Block<'a> = (Vec<(ScriptBytes, TransparentEvent)>, Vec<&'a [u8]>);
+        let blocks: Vec<Block> = vec![
             (vec![], vec![]),
             (
                 vec![

@@ -532,7 +532,8 @@ async fn a_blocked_backfill_never_delays_another_products_observations_or_withdr
     };
     let scheduled = tokio::spawn(schedule::run(current, follower.feed(), shutdown.clone()));
     let following = tokio::spawn(follower.run(shutdown.clone()));
-    let wait = |done: Box<dyn Fn(&[Event]) -> bool + Send>| {
+    type Done = Box<dyn Fn(&[Event]) -> bool + Send>;
+    let wait = |done: Done| {
         let events = events.clone();
         async move {
             tokio::time::timeout(Duration::from_secs(10), async {
@@ -575,7 +576,4 @@ async fn a_blocked_backfill_never_delays_another_products_observations_or_withdr
     following.await.unwrap();
 }
 
-#[test]
-fn live_window_is_smaller_than_a_backfill_batch() {
-    assert!(LIVE_BLOCKS < BACKFILL_BLOCKS);
-}
+const _: () = assert!(LIVE_BLOCKS < BACKFILL_BLOCKS);
