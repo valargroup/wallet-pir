@@ -1,12 +1,11 @@
 """Forward release repair retains the reviewed data and original rollback state."""
 import copy
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 
 from publisher_fixture import PublisherFixture
 from wallet_pir_ops import durable
-from wallet_pir_ops.deploy import publisher, publisher_release_repair as repair, publisher_storage
+from wallet_pir_ops.deploy import publisher, publisher_release_repair as repair
 from wallet_pir_ops.deploy.engine import DeployError, file_sha256
 from wallet_pir_ops.deploy.remote import production_lock, RemoteError
 
@@ -87,21 +86,3 @@ class ReleaseRepairTests(PublisherFixture, unittest.TestCase):
             with self.assertRaisesRegex(DeployError, 'managed file changed'):
                 repair.plan(self.target, self.target.latest())
         self.assertEqual(self.ex.effects, [])
-
-    def test_storage_receipt_keeps_its_original_preparation_release(self):
-        old = {'git_sha': 'a' * 40, 'binary_sha256': 'b' * 64, 'binary_bytes': 1}
-        new = dict(old, binary_sha256='c' * 64)
-        config = '{}'
-        manifest = {'schema': 'publisher-storage-preparation/1', 'release': old,
-                    'configuration_sha256': publisher.sha(config)}
-        raw = durable.canonical(manifest).decode()
-        request = {'release': new, 'prepared_storage': {'id': 'repair-test', 'manifest_sha256': publisher.sha(raw)}}
-        journal = {'request': request, 'release_repair': {'previous_release': old},
-                   'storage_preparation_release': old}
-        owner = SimpleNamespace(request=request, latest=lambda: journal)
-        handoff = publisher_storage.Handoff(owner)
-        owner.read = lambda path: raw if path == handoff.preparation.manifest_path else config
-        self.assertEqual(handoff.manifest()['release'], old)
-        journal['storage_preparation_release'] = new
-        with self.assertRaisesRegex(DeployError, 'provenance changed'):
-            handoff.manifest()

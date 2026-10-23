@@ -93,7 +93,7 @@ class Coordinator(FakeFleet):
             return 0, '644:0:0\n'
         if '--check' in argv:
             configuration = json.loads(self.read(host, argv[argv.index('--config') + 1]))
-            expected = {'management_listen', *publisher.EXPANDED_PRODUCTS} if argv[0].endswith('/pir-publisher') else {'management_listen', 'enhance'}
+            expected = {'management_listen', *publisher.PRODUCTS} if argv[0].endswith('/pir-publisher') else {'management_listen', 'enhance'}
             if self.refuse_configuration or set(configuration) != expected:
                 return 1, 'unknown product configuration'
         elif self.fail_probe and argv[0].startswith('/bin/check-'):
@@ -145,9 +145,9 @@ class PublisherFixture:
             inventory['services'][name]['roles'].pop(role, None)
         inventory['services']['publisher'] = {
             'roles': {'server': [{'host': 'coordinator', 'vars': {'management_listen': '127.0.0.1:18080'}}]},
-            'managed_products': publisher.EXPANDED_PRODUCTS}
+            'managed_products': publisher.PRODUCTS}
         checks = {name: {'host': 'coordinator', 'argv': ['/bin/check-' + name], 'timeout': 20}
-                  for name in publisher.EXPANDED_PRODUCTS}
+                  for name in publisher.PRODUCTS}
         inventory['services']['publisher']['exact_check'] = {'products': checks}
         inventory['lock'] = {'type': 'remote', 'host': 'coordinator'}
         edge = 'example.test {\n' + publisher_serving.WALLET + '\thandle {\n\t\trespond 404\n\t}\n}\n'
@@ -173,10 +173,10 @@ class PublisherFixture:
             self.ex.endpoints[(target.host, target.url(target.role.health))] = target.unit
         self.ex.effects.clear()
 
-    def make_target(self, *, recovery=False):
+    def make_target(self):
         path = self.root / 'request.json'
         path.write_text(json.dumps(self.request))
-        request, inventory = publisher.load_request(path, publisher.sha(path.read_text()), recovery=recovery)
+        request, inventory = publisher.load_request(path, publisher.sha(path.read_text()))
         return publisher.Cutover(request, inventory, self.ex, self.root, clock=self.ex.clock, sleep=self.ex.sleep)
 
     def deploy(self):
