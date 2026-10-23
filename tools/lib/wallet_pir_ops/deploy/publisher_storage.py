@@ -181,10 +181,12 @@ class Preparation:
             if previous is not None:
                 recorded = json.loads(previous)
                 # A completed rollback may restart the exact same predecessor.
-                # Reverify its prepared bytes and canonical anchors below; only
-                # the process identity may differ from the original preparation.
+                # Reverify its prepared bytes, exact candidate configuration and
+                # canonical anchors below. A corrected release/request may use
+                # the same storage; source settings and roots must still match.
                 for field in ('main_pid', 'invocation_id'):
                     recorded['unit'][field] = plan['unit'][field]
+                recorded['request_sha256'] = plan['request_sha256']
                 require(recorded == plan, 'preparation id belongs to another request')
             o.ex.write(o.host, owner_path, ownership, 0o600)
             binary_path = publisher.ROOT_DIR + '/releases/' + o.request['release']['binary_sha256'] + '/pir-publisher'

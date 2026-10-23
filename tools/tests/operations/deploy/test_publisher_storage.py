@@ -123,6 +123,7 @@ class StorageTests(PublisherFixture, unittest.TestCase):
         unit = self.ex.host('coordinator').units[publisher.UNIT]
         unit['pid'] += 1000
         unit['invocation_id'] = 'f' * 32
+        self.preparation.owner.request['release']['git_sha'] = 'e' * 40
         plan = self.preparation.plan()
         self.preparation.prepare(self.binary, plan['plan_sha256'])
         manifest = json.loads(self.ex.read('coordinator', self.preparation.manifest_path))
