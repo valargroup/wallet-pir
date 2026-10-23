@@ -112,6 +112,10 @@ An ordinary authority conflict can retain one already-loaded candidate for the
 next pass; that pass repeats the authority and peer checks. Withdrawal, recovery,
 negative authority, expiry and changed worker pins prevent reuse. This avoids
 repeated loading while the publisher changes, without waiting for it to stop.
+After loading, a router can adopt fresher metadata already served by its worker
+when it names the same verified material; it still pins that exact worker view
+before activation. A worker sampled ahead of the router's publisher envelope
+causes another normal poll, rather than failure backoff.
 The private provider status distinguishes waiting for authority, worker data,
 worker recovery, retention, a worker pin, a worker commit, or a publication.
 Debug tracing in `status_query_server::service::sync` records the deferral reason

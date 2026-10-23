@@ -217,6 +217,22 @@ impl PublicationAdapter for StatusPublication {
             self.waiting("waiting_for_worker_recovery").await;
             return Ok(PublicationPlan::Deferred);
         }
+        // The worker is sampled after the publisher envelope. It may already
+        // serve a later publication; observe that publication next pass rather
+        // than applying transport-failure backoff to an ordinary peer advance.
+        if authorization == InventoryAuthorization::RetainedHandover
+            && inventory.manifest.network == envelope.scope.chain
+            && inventory.manifest.salt == envelope.scope.source
+            && inventory.manifest.recovery_epoch == envelope.fence.recovery_epoch
+            && envelope
+                .publication
+                .as_ref()
+                .is_some_and(|latest| inventory.manifest.generation > latest.descriptor.generation)
+        {
+            inventory.validate_material()?;
+            self.waiting("waiting_for_publisher").await;
+            return Ok(PublicationPlan::Deferred);
+        }
         inventory.authorize(&inventory_object, envelope, authorization)?;
         inventory.manifest.fresh(now_ms())?;
         let controller = self.serving_controller().await;
@@ -314,7 +330,8 @@ impl PublicationAdapter for StatusPublication {
 
     /// A worker's candidate whose latest publication re-identifies the same
     /// material, typically refreshed while it loaded, takes the latest
-    /// inventory's metadata. A router follows its worker's own inventory.
+    /// inventory's metadata. A router similarly follows refreshed metadata
+    /// already served by its worker, then pins that exact view before commit.
     async fn rebind(
         &mut self,
         envelope: &Current,
@@ -324,27 +341,42 @@ impl PublicationAdapter for StatusPublication {
         let Some(latest) = envelope.publication.as_ref().filter(|_| envelope.eligible) else {
             return Ok(loaded);
         };
-        if loaded.authorization != InventoryAuthorization::Latest
-            || latest.material != loaded.inventory.material_identity()
-            || *latest
-                == loaded
-                    .inventory
-                    .publication_reference(&loaded.inventory_object)
-        {
+        let inventory_object = match loaded.authorization {
+            InventoryAuthorization::Latest => {
+                if latest.material != loaded.inventory.material_identity() {
+                    return Ok(loaded);
+                }
+                latest.inventory.clone()
+            }
+            InventoryAuthorization::RetainedHandover => {
+                let Some(inventory) = worker_handover::serving_inventory(&self.service).await?
+                else {
+                    return Ok(loaded);
+                };
+                inventory
+            }
+        };
+        if inventory_object == loaded.inventory_object {
             return Ok(loaded);
         }
         let inventory: Inventory = serde_json::from_slice(
             &objects
-                .fetch_metadata(&latest.inventory, METADATA_LIMIT as u64)
+                .fetch_metadata(&inventory_object, METADATA_LIMIT as u64)
                 .await?,
         )?;
+        if inventory.manifest.generation <= loaded.inventory.manifest.generation
+            || inventory.manifest.generation > latest.descriptor.generation
+        {
+            return Ok(loaded);
+        }
         let Some(generation) = reidentify(&loaded.generation, &loaded.inventory, &inventory) else {
             return Ok(loaded);
         };
+        inventory.authorize(&inventory_object, envelope, loaded.authorization)?;
         Ok(StatusLoaded {
             inventory,
-            inventory_object: latest.inventory.clone(),
-            authorization: InventoryAuthorization::Latest,
+            inventory_object,
+            authorization: loaded.authorization,
             generation,
             observed: envelope.clone(),
         })
