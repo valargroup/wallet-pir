@@ -4,8 +4,8 @@ use zakura_pir_protocol::transparent::shard as transparent_shard;
 
 pub mod distribution;
 pub mod prebuild;
-pub mod set;
 pub mod serving;
+pub mod set;
 #[cfg(any(test, feature = "test-support"))]
 pub mod synth;
 
