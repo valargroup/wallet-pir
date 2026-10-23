@@ -991,7 +991,7 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
 
     // Keep the original view pinned, as the router does during a handover.
     // Metadata may advance without allocating another material generation.
-    assert!(!worker
+    assert!(worker
         .state
         .lock()
         .await
@@ -1021,7 +1021,7 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         loaded.public()
     ));
 
-    // Different material still waits for the old view's pin to drain.
+    // A pin sharing the active allocations permits the next different material.
     let changed = cached_generation(
         &fixture::snapshot(32, true).unwrap(),
         7,
@@ -1030,16 +1030,16 @@ async fn metadata_only_refresh_reuses_verified_material_under_live_authority() {
         Some(&loaded),
     );
     let mut changed = export(&source, &changed);
-    let changed_object = publish(&mut changed, 10);
-    let requested = source.requested_objects.read().unwrap().len();
-    deferred(task.synchronize().await.unwrap());
-    assert_eq!(serving_manifest_id(&worker).await, newest.manifest.id());
-    assert_eq!(
-        &source.requested_objects.read().unwrap()[requested..],
-        std::slice::from_ref(&changed_object.sha256)
-    );
-    drop(loaded);
+    publish(&mut changed, 10);
     assert_eq!(committed(task.synchronize().await.unwrap()).0, 7);
+    let controller = worker.state.lock().await.controller.clone().unwrap();
+    assert!(
+        !controller.can_prepare(),
+        "the predecessor now pins different material"
+    );
+    assert!(controller.resolve(loaded.manifest().id()).is_ok());
+    drop(loaded);
+    assert!(controller.can_prepare());
 
     // Reusing material never skips the live authority check.
     let mut withheld = changed.clone();
