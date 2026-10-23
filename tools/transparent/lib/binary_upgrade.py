@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 from wallet_pir_ops import durable
 from wallet_pir_ops.deploy import descriptors, units
@@ -126,8 +127,8 @@ def validate(request):
         if not condition:
             raise DeployError('invalid upgrade request: ' + message)
     require(isinstance(request, dict) and REQUEST_KEYS <= set(request)
-            and set(request) <= REQUEST_KEYS | {'previous_maps', 'repair'},
-            'keys must be %s with optional previous_maps and repair' % sorted(REQUEST_KEYS))
+            and set(request) <= REQUEST_KEYS | {'previous_maps', 'repair', 'selected_workers', 'unready_predecessors'},
+            'keys must be %s with optional previous_maps, repair, selected_workers and unready_predecessors' % sorted(REQUEST_KEYS))
     require(request['schema'] == SCHEMA, 'schema must be ' + SCHEMA)
     product = PRODUCTS.get(request['service'])
     require(product is not None, 'service must be one of %s' % sorted(PRODUCTS))
@@ -137,6 +138,22 @@ def validate(request):
     require(isinstance(workers, dict) and workers, 'workers maps target keys to pinned state')
     providers = request['service'] == 'transparent-history' and all(
         isinstance(p, dict) and set(p) == PROVIDER_PIN_KEYS for p in workers.values())
+    selected = request.get('selected_workers', list(workers))
+    if 'selected_workers' in request:
+        require(providers and request['component'] == 'workers' and isinstance(selected, list)
+                and selected and all(isinstance(key, str) for key in selected)
+                and len(set(selected)) == len(selected) and set(selected) <= set(workers),
+                'selected_workers names distinct pinned HTTPS History workers')
+    if 'unready_predecessors' in request:
+        unready = request['unready_predecessors']
+        require(providers and request['component'] == 'workers' and isinstance(unready, dict)
+                and unready and set(unready) <= set(selected)
+                and all(isinstance(pin, dict) and set(pin) == {'binary_sha256', 'invocation_id'}
+                        and isinstance(pin['binary_sha256'], str) and SHA256.fullmatch(pin['binary_sha256'])
+                        and pin['binary_sha256'] != request['release'].get('binary_sha256')
+                        and isinstance(pin['invocation_id'], str) and re.fullmatch('[0-9a-f]{32}', pin['invocation_id'])
+                        for pin in unready.values()) and 'repair' not in request,
+                'unready_predecessors pins selected running binaries and systemd invocations; cannot combine with repair')
     if providers:
         require(request['component'] == 'workers' and load is None,
                 'HTTPS providers have only worker transactions and no fleet load pins; load must be null')
@@ -300,7 +317,8 @@ class Upgrade:
         """The targets and service this transaction changes; the controller gets its own release root and name."""
         workers = self.worker_targets()
         if self.request['component'] == 'workers':
-            return workers, self.service
+            selected = self.request.get('selected_workers')
+            return [t for t in workers if selected is None or t.key in selected], self.service
         if self.unified:
             raise DeployError('%s owns the %s controller; change its executable with publisher-cutover-* '
                               '(docs/publisher.md), not transparent-binary-*' % (PUBLISHER_UNIT, self.request['service']))
@@ -442,7 +460,20 @@ class Upgrade:
         previous = (self.request.get('previous_maps', {}).get(target.key)
                     if state['exe_sha256'] != self.request['release']['binary_sha256'] else None)
         repair = self.request.get('repair', {}).get('predecessors', {}).get(target.key)
-        if repair and state['exe_sha256'] != self.request['release']['binary_sha256']:
+        unready = self.request.get('unready_predecessors', {}).get(target.key)
+        if unready and state['exe_sha256'] != self.request['release']['binary_sha256']:
+            problem_if(state['active_state'] != 'active' or not state['main_pid']
+                       or state['exe_sha256'] != unready['binary_sha256']
+                       or state.get('invocation_id') != unready['invocation_id'],
+                       '%s unready predecessor differs from the pinned running invocation' % target.key, problems)
+            address = urlsplit(target.url(target.role.ready_url or target.role.health))
+            status, body = ex.http_get(target.host, urlunsplit((address.scheme, address.netloc, '/v2/shards/init', '', '')))
+            try:
+                invalidated = status == 503 and json.loads(body).get('error') == 'publication invalidated by reorg'
+            except (ValueError, AttributeError):
+                invalidated = False
+            problem_if(not invalidated, '%s predecessor is not refusing reorganized history' % target.key, problems)
+        elif repair and state['exe_sha256'] != self.request['release']['binary_sha256']:
             # Only the recorded failed rollback process may lack readiness.
             # Configuration and ownership checks above still apply, and the
             # replacement follows the normal current-publication checks.
@@ -686,7 +717,8 @@ class UpgradeDeployer(Deployer):
                         or (self.upgrade.request['service'] == 'transparent-display'
                             and document.get('warm') is False)):
                     return False, 'background warming has not reached the acceptance target'
-            if self.upgrade.request.get('previous_maps') or self.upgrade.request.get('repair'):
+            if (self.upgrade.request.get('previous_maps') or self.upgrade.request.get('repair')
+                    or self.upgrade.request.get('unready_predecessors')):
                 problems = self.upgrade.ready_problems(
                     self.ex, record['key'], record['host'],
                     record['verify'].get('ready_url') or record['verify']['health'])

@@ -492,6 +492,57 @@ class ProviderHistoryUpgrade(UnifiedOwner, Harness):
     running = HistoryUpgrade.running
     FULL = {'transparent-v12-archive.service': True, 'transparent-v12-recent.service': False}
 
+    def select_recent(self, unready=False):
+        key = 'worker@v12:transparent-v12-recent.service'
+        state = self.fake.probe_unit('v12', 'transparent-v12-recent.service')
+        self.write_request(lambda r: r.update(selected_workers=[key], **({
+            'unready_predecessors': {key: {'binary_sha256': state['exe_sha256'],
+                                          'invocation_id': state['invocation_id']}}} if unready else {})))
+
+    def test_recent_only_upgrade_and_rollback_leave_archive_invocation_untouched(self):
+        self.select_recent()
+        archive = self.fake.probe_unit('v12', 'transparent-v12-archive.service')
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-recent.service'], sha256(NEW))
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+        self.assertEqual(self.run_cli('rollback')[0], 0)
+        self.assertEqual(self.fake.probe_unit('v12', 'transparent-v12-archive.service'), archive)
+        self.publisher_untouched()
+
+    def test_exact_invalidated_predecessor_can_be_replaced_but_archive_must_be_healthy(self):
+        self.select_recent(unready=True)
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (503, json.dumps({'error': 'publication invalidated by reorg'}))
+            if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        code, lines = self.run_cli('deploy', '--binary', str(self.binary), '--skip-exact-check')
+        self.assertEqual(code, 0, lines)
+        self.assertEqual(self.running()['transparent-v12-archive.service'], sha256(OLD))
+
+    def test_unready_permission_refuses_a_restarted_or_differently_failed_predecessor(self):
+        self.select_recent(unready=True)
+        self.assertEqual(self.run_cli('baseline')[0], 0)
+        self.fake.systemctl('v12', 'restart', 'transparent-v12-recent.service')
+        old_http = self.fake.http_get
+        self.fake.http_get = lambda host, url, timeout=5: (
+            (503, json.dumps({'error': 'another failure'}))
+            if url == 'http://10.142.0.9:8193/v2/shards/init' else old_http(host, url, timeout))
+        before = len(self.fake.log)
+        code, lines = self.run_cli('preflight', '--binary', str(self.binary))
+        self.assertEqual(code, 1, lines)
+        self.assertEqual(len(self.fake.log), before)
+        self.assertTrue(any('pinned running invocation' in line for line in lines), lines)
+
+    def test_worker_selection_refuses_unknown_duplicate_and_empty_targets(self):
+        for selected in [[], ['unknown'], ['worker@v12:transparent-v12-recent.service'] * 2]:
+            self.write_request(lambda r: r.update(selected_workers=selected))
+            code, lines = self.run_cli('plan')
+            self.assertEqual(code, 1, lines)
+            self.assertTrue(any('selected_workers' in line for line in lines), lines)
+
     def failed_archive_rollback(self):
         self.run_cli('baseline')
         unit = 'transparent-v12-archive.service'

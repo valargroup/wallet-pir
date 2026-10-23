@@ -22,9 +22,19 @@ TXID_DISPLAY_PHASES = ('stage', 'workers', 'route', 'controller')
 BINARY_UPGRADE = ('plan', 'preflight', 'baseline', 'deploy', 'status', 'rollback')
 ALERT_ACTIVATION = ('plan', 'preflight', 'deploy', 'status', 'rollback', 'test')
 LOAD_REPAIR = ('plan', 'preflight', 'deploy', 'status', 'rollback')
+PROVIDER_MAINTENANCE = ('plan', 'preflight', 'deploy', 'status')
 
 
 def register(commands):
+    for name in PROVIDER_MAINTENANCE:
+        command = commands.add_parser('transparent-provider-maintenance-' + name,
+                                      help='pinned recent-provider quiescence, offline collection and unchanged resume')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'deploy':
+            command.add_argument('--expect-plan-sha256', required=True)
+        if name in ('plan', 'preflight'):
+            command.add_argument('--output', help='private file containing the complete reviewable plan and deletion manifest')
     for kind in ('service', 'cutover'):
         for name in ('plan','preflight','stage','status','reconcile'):
             command = commands.add_parser('schema-input-'+kind+'-'+name, help='retain reviewed v11 inputs without installation')
@@ -175,6 +185,18 @@ def register(commands):
 
 
 def dispatch(args, executor=None, out=print, **options):
+    if args.command.startswith('transparent-provider-maintenance-'):
+        from wallet_pir_ops.bundle import check_installed
+        from wallet_pir_ops.deploy.remote import SSHExecutor
+        module = import_module('tools.transparent.lib.provider_maintenance')
+        if not args.inventory:
+            raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        request = module.load_request(args.request, args.request_sha256)
+        if args.command.endswith('-deploy'):
+            check_installed(mutation=True, revision=request['git_sha'])
+        inventory = descriptors.load_inventory(args.inventory)
+        services = descriptors.load_descriptors(args.descriptors)
+        return module.run(args, executor or SSHExecutor(inventory), out, inventory, services, **options)
     if args.command.startswith('transparent-binary-'):
         return binary_upgrade(args, executor, out, **options)
     if args.command.startswith('transparent-alerts-'):
