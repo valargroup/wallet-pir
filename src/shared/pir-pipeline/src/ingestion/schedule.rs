@@ -25,17 +25,25 @@ pub(crate) enum Coverage {
     Ahead,
     /// Blocks `from..=tip` are missing.
     Missing { from: u64 },
+    /// The source no longer reports the observed tip; nothing was reconciled.
+    Stale,
 }
 
 /// Walk durable checkpoints newest first until one matches the canonical chain,
-/// withdrawing then rewinding anything above it. A node behind the journal is
-/// not an invalidation: only blocks it reports differently are removed.
+/// withdrawing then rewinding anything above it. Every hash comes from the
+/// current source, never from the observation, so an observation the chain has
+/// since moved past (`Stale`) changes nothing. A node behind the journal or a
+/// source outage is not an invalidation: only blocks it reports differently
+/// are removed.
 pub(crate) async fn reconcile<I: Ingestion>(
     writer: &mut I,
     chain: &dyn CanonicalChain,
     observation: &ChainObservation,
 ) -> Result<Coverage, Outcome<I::Error>> {
     let tip = &observation.tip;
+    if chain.hash_at(tip.height).await.map_err(Outcome::Source)? != tip.hash {
+        return Ok(Coverage::Stale);
+    }
     let newest = writer.checkpoint_at_or_below(tip.height).await;
     let mut candidate = newest.clone();
     let keep = loop {
@@ -99,7 +107,9 @@ impl<E: std::fmt::Display> std::fmt::Display for Outcome<E> {
 /// For maintenance entrypoints and in-process tests; services use
 /// [`IngestionExecutor`](crate::ingestion::IngestionExecutor). Returns once
 /// coverage reaches the observed tip (calling [`Ingestion::caught_up`]) or the
-/// node is behind committed coverage.
+/// node is behind committed coverage. Fails with [`Outcome::Source`], changing
+/// nothing more, once the source no longer reports the observed tip or a batch
+/// it returned is no longer canonical; retry with a fresh observation.
 pub async fn catch_up<I: Ingestion>(
     writer: &mut I,
     chain: &dyn CanonicalChain,
@@ -115,14 +125,19 @@ pub async fn catch_up<I: Ingestion>(
                 return writer.caught_up(observation).await.map_err(Outcome::Writer);
             }
             Coverage::Ahead => return Ok(()),
+            Coverage::Stale => return Err(Outcome::Source(STALE.into())),
             Coverage::Missing { from } => {
                 let through = observation.tip.height.min(from + BACKFILL_BLOCKS - 1);
-                // A noncanonical batch is rewound by the next reconciliation.
-                anchored(writer, chain, from, through).await?;
+                if !anchored(writer, chain, from, through).await? {
+                    // A fresh observation reconciles the noncanonical batch.
+                    return Err(Outcome::Source(STALE.into()));
+                }
             }
         }
     }
 }
+
+const STALE: &str = "the chain moved past the observation";
 
 /// Accept a batch only when its newest committed block is canonical; otherwise
 /// the next reconciliation withdraws and rewinds it.
@@ -234,7 +249,7 @@ async fn live<I: Ingestion>(
                     .caught_up(&observation)
                     .await
                     .map_err(Outcome::Writer),
-                Coverage::Ahead => Ok(()),
+                Coverage::Ahead | Coverage::Stale => Ok(()),
                 Coverage::Missing { from } if observation.tip.height - from < LIVE_BLOCKS => {
                     let through = observation.tip.height;
                     if anchored(&mut *writer, &*feed.chain, from, through).await?
@@ -280,7 +295,10 @@ async fn backfill<I: Ingestion>(
             _ = shutdown.cancelled() => return Ok(()),
             changed = pending.changed() => if changed.is_err() { return Ok(()) },
         }
-        // A fixed target: the observation that found the gap.
+        // A fixed target: the observation that found the gap. Each batch first
+        // checks it is still canonical; a target the chain moved past, or a
+        // batch the source no longer reports, is retired for the live
+        // scheduler to replan from its latest observation.
         let Some(fixed) = pending.borrow_and_update().clone() else {
             continue;
         };
@@ -291,10 +309,9 @@ async fn backfill<I: Ingestion>(
                 match reconcile(&mut *writer, &*feed.chain, &fixed).await? {
                     Coverage::Missing { from } => {
                         let through = target.height.min(from + BACKFILL_BLOCKS - 1);
-                        anchored(&mut *writer, &*feed.chain, from, through).await?;
-                        Ok(false)
+                        Ok(!anchored(&mut *writer, &*feed.chain, from, through).await?)
                     }
-                    Coverage::Current | Coverage::Ahead => Ok(true),
+                    Coverage::Current | Coverage::Ahead | Coverage::Stale => Ok(true),
                 }
             }
             .await;
@@ -302,8 +319,7 @@ async fn backfill<I: Ingestion>(
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(outcome) => {
-                    // A target that is no longer canonical, or a failed batch,
-                    // returns control to the live scheduler's next observation.
+                    // A failed batch returns control to the live scheduler's next observation.
                     settle(&mut *writer, outcome)?;
                     break;
                 }

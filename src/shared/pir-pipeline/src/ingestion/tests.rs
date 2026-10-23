@@ -88,7 +88,27 @@ struct Journal {
     events: Arc<Mutex<Vec<Event>>>,
     fail_ingest: Arc<Mutex<bool>>,
     networks: Arc<Mutex<Vec<String>>>,
+    hold: Arc<Mutex<Option<Hold>>>,
 }
+
+/// Blocks the batch ending at `through` after it is recorded and before it
+/// reads the chain, until one permit is added to `gate`.
+#[derive(Clone)]
+struct Hold {
+    through: u64,
+    entered: Arc<tokio::sync::Notify>,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+impl Hold {
+    fn at(through: u64) -> Self {
+        Self {
+            through,
+            entered: Arc::default(),
+            gate: Arc::new(tokio::sync::Semaphore::new(0)),
+        }
+    }
+}
+
 impl Ingestion for Journal {
     type Error = String;
     fn start_height(&self, _tip: u64) -> u64 {
@@ -135,6 +155,11 @@ impl Ingestion for Journal {
             .lock()
             .unwrap()
             .push(Event::Ingest(from, through));
+        let hold = self.hold.lock().unwrap().clone();
+        if let Some(hold) = hold.filter(|hold| hold.through == through) {
+            hold.entered.notify_one();
+            hold.gate.acquire().await.unwrap().forget();
+        }
         for height in from..=through {
             let hash = self
                 .chain
@@ -162,6 +187,7 @@ struct Harness {
     events: Arc<Mutex<Vec<Event>>>,
     fail_ingest: Arc<Mutex<bool>>,
     networks: Arc<Mutex<Vec<String>>>,
+    hold: Arc<Mutex<Option<Hold>>>,
     observations: watch::Sender<Option<ChainObservation>>,
     shutdown: Shutdown,
     task: tokio::task::JoinHandle<Result<(), String>>,
@@ -184,6 +210,7 @@ impl Harness {
         let events = Arc::new(Mutex::new(vec![]));
         let fail_ingest = Arc::new(Mutex::new(false));
         let networks = Arc::new(Mutex::new(vec![]));
+        let hold = Arc::new(Mutex::new(None));
         let (observations, receiver) = watch::channel(None);
         let shutdown = Shutdown::default();
         let journal = Journal {
@@ -193,6 +220,7 @@ impl Harness {
             events: events.clone(),
             fail_ingest: fail_ingest.clone(),
             networks: networks.clone(),
+            hold: hold.clone(),
         };
         let feed = ChainFeed {
             chain: chain.clone(),
@@ -204,6 +232,7 @@ impl Harness {
             events,
             fail_ingest,
             networks,
+            hold,
             observations,
             shutdown,
             task,
@@ -412,6 +441,113 @@ async fn reorg_during_backfill_is_withdrawn_between_batches() {
 }
 
 #[tokio::test]
+async fn a_backfill_target_the_chain_moved_past_is_replanned_without_withdrawal() {
+    let tip = 10 + BACKFILL_BLOCKS * 2;
+    let chain = Chain::new(tip, "a");
+    let mut harness = Harness::start(chain.clone(), 0, Some(10));
+    let hold = Hold::at(tip);
+    *harness.hold.lock().unwrap() = Some(hold.clone());
+    harness.observe();
+    // The final batch toward fixed target a(tip) is in progress when the node
+    // replaces the tip at the same height; the batch then appends b(tip).
+    hold.entered.notified().await;
+    chain.reorg(tip, tip, "b");
+    hold.gate.add_permits(1);
+    harness.observe();
+    let events = harness.until(|e| caught_up(e, tip)).await;
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Withdraw(_) | Event::Rewind(_))),
+        "canonical b(tip) was never withdrawn: {events:?}"
+    );
+    assert_eq!(events.last(), Some(&Event::CaughtUp(tip)));
+    // Later passes stay current rather than looping on the retired target.
+    harness.observe();
+    let events = harness
+        .until(|e| e.iter().filter(|e| **e == Event::CaughtUp(tip)).count() == 2)
+        .await;
+    assert!(!events.iter().any(|e| matches!(e, Event::Withdraw(_))));
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn a_retired_backfill_target_is_replanned_from_the_latest_observation() {
+    let tip = 10 + BACKFILL_BLOCKS * 3;
+    let chain = Chain::new(tip, "a");
+    let mut harness = Harness::start(chain.clone(), 0, Some(10));
+    let hold = Hold::at(10 + BACKFILL_BLOCKS);
+    *harness.hold.lock().unwrap() = Some(hold.clone());
+    harness.observe();
+    hold.entered.notified().await;
+    // The first batch reads the chain after blocks inside and above it, and
+    // the fixed target, move to fork b; what it commits is canonical.
+    chain.reorg(20, tip, "b");
+    hold.gate.add_permits(1);
+    let events = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            harness.observe();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            let events = harness.events.lock().unwrap().clone();
+            if caught_up(&events, tip) {
+                return events;
+            }
+        }
+    })
+    .await
+    .expect("the replanned target was reached");
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Withdraw(_) | Event::Rewind(_))),
+        "canonical blocks were never withdrawn: {events:?}"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn one_shot_catch_up_refuses_an_observation_the_chain_moved_past() {
+    let tip = 10 + BACKFILL_BLOCKS * 2;
+    let chain = Chain::new(tip, "a");
+    let events = Arc::new(Mutex::new(vec![]));
+    let hold = Hold::at(tip);
+    let mut journal = Journal {
+        start: 0,
+        blocks: (0..=10)
+            .map(|height| BlockId {
+                height,
+                hash: format!("a{height}"),
+            })
+            .collect(),
+        chain: chain.clone(),
+        events: events.clone(),
+        fail_ingest: Arc::default(),
+        networks: Arc::default(),
+        hold: Arc::new(Mutex::new(Some(hold.clone()))),
+    };
+    let frozen = chain.tip(1);
+    let reorg = {
+        let chain = chain.clone();
+        async move {
+            hold.entered.notified().await;
+            chain.reorg(tip, tip, "b");
+            hold.gate.add_permits(1);
+        }
+    };
+    let (stale, ()) = tokio::join!(schedule::catch_up(&mut journal, &*chain, &frozen), reorg);
+    assert!(matches!(stale, Err(schedule::Outcome::Source(_))));
+    assert_eq!(journal.committed().unwrap().hash, format!("b{tip}"));
+    schedule::catch_up(&mut journal, &*chain, &chain.tip(2))
+        .await
+        .unwrap();
+    let events = events.lock().unwrap().clone();
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::Withdraw(_) | Event::Rewind(_))));
+    assert_eq!(events.last(), Some(&Event::CaughtUp(tip)));
+}
+
+#[tokio::test]
 async fn shutdown_finishes_the_current_batch_and_drains() {
     let chain = Chain::new(10 + BACKFILL_BLOCKS * 50, "a");
     let mut harness = Harness::start(chain, 0, Some(10));
@@ -529,6 +665,7 @@ async fn a_blocked_backfill_never_delays_another_products_observations_or_withdr
         events: events.clone(),
         fail_ingest: Arc::default(),
         networks: Arc::default(),
+        hold: Arc::default(),
     };
     let scheduled = tokio::spawn(schedule::run(current, follower.feed(), shutdown.clone()));
     let following = tokio::spawn(follower.run(shutdown.clone()));
