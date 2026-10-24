@@ -73,10 +73,11 @@ fn answer(state: &Rpc, request: &Value) -> Value {
     let (raw, hash) = &state.blocks[state.selected.load(Ordering::SeqCst)];
     let result = match request["method"].as_str().unwrap() {
         "getblockcount" => json!(ACTIVATION_HEIGHT),
-        "getblockhash" => {
-            assert_eq!(request["params"], json!([ACTIVATION_HEIGHT]));
-            json!(hash)
-        }
+        "getblockhash" => match request["params"][0].as_u64().unwrap() {
+            0 => json!("00".repeat(32)),
+            ACTIVATION_HEIGHT => json!(hash),
+            height => panic!("unexpected block height {height}"),
+        },
         "getblock" => match request["params"][1].as_u64().unwrap() {
             0 => {
                 assert_eq!(request["params"][0], ACTIVATION_HEIGHT.to_string());
@@ -331,11 +332,20 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consumers() {
     use enhance_publisher::{
-        application::{collect, CanonicalSource},
+        application::{CanonicalSource, EnhanceIngestion},
         chain_source::{Prevouts, ZakuraClient},
         ingest::EnhanceJournal,
         publisher::EnhancePublisher,
     };
+    use pir_pipeline::ingestion::{
+        catch_up, BlockId, CanonicalChain, ChainFuture, ChainObservation,
+    };
+    struct CanonicalRpc(ZakuraClient);
+    impl CanonicalChain for CanonicalRpc {
+        fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+            Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+        }
+    }
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
     let state = Rpc {
         blocks: Arc::new(vec![
@@ -356,60 +366,87 @@ async fn collection_commits_survive_withdrawal_restart_and_reorg_without_consume
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("cookie"), "test:test").unwrap();
     let rpc = ZakuraClient::from_cookie_file(&url, root.path().join("cookie")).unwrap();
-    let source = CanonicalSource {
-        rpc: rpc.clone(),
-        prevouts: Prevouts::new(100),
+    let chain = CanonicalRpc(rpc.clone());
+    let height = rpc.tip_height().await.unwrap();
+    let mut observation = ChainObservation {
+        genesis: rpc.block_hash_display(0).await.unwrap(),
+        tip: BlockId {
+            height,
+            hash: rpc.block_hash_display(height).await.unwrap(),
+        },
+        pass: 1,
     };
     let publisher_root = root.path().join("publication");
     let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
-    let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let work = collect(&mut journal, &publisher, &source)
+    let (mut ingestion, mut pending) = EnhanceIngestion::new(
+        EnhanceJournal::open(root.path()).unwrap(),
+        publisher.clone(),
+        CanonicalSource {
+            rpc: rpc.clone(),
+            prevouts: Prevouts::new(100),
+        },
+    );
+    catch_up(&mut ingestion, &chain, &observation)
         .await
-        .unwrap()
         .unwrap();
+    let work = pending.borrow_and_update().clone().unwrap();
     publisher.revoke_after(0).unwrap();
     assert!(publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .is_err());
     assert_eq!(
-        journal.tree_size(),
+        ingestion.journal.tree_size(),
         2,
         "publication refusal preserves acquisition"
     );
     let expected =
         hex::decode(include_str!("fixtures/ironwood-canonical-record-0.hex").trim()).unwrap();
     assert_eq!(
-        journal.records().read_records(0, 1).unwrap(),
+        ingestion.journal.records().read_records(0, 1).unwrap(),
         expected[84..]
     );
-    drop(journal);
+    drop(ingestion);
     drop(publisher);
-    let publisher = EnhancePublisher::open(&publisher_root, rpc).unwrap();
-    let mut journal = EnhanceJournal::open(root.path()).unwrap();
-    let work = collect(&mut journal, &publisher, &source)
+    let publisher = EnhancePublisher::open(&publisher_root, rpc.clone()).unwrap();
+    let (mut ingestion, mut pending) = EnhanceIngestion::new(
+        EnhanceJournal::open(root.path()).unwrap(),
+        publisher.clone(),
+        CanonicalSource {
+            rpc: rpc.clone(),
+            prevouts: Prevouts::new(100),
+        },
+    );
+    catch_up(&mut ingestion, &chain, &observation)
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(journal.tree_size(), 2);
+    let work = pending.borrow_and_update().clone().unwrap();
+    assert_eq!(ingestion.journal.tree_size(), 2);
     publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();
     state.selected.store(1, Ordering::SeqCst);
     state.tree_size.store(3, Ordering::SeqCst);
-    assert!(collect(&mut journal, &publisher, &source).await.is_err());
-    assert_eq!(journal.tree_size(), 0);
-    state.tree_size.store(2, Ordering::SeqCst);
-    let work = collect(&mut journal, &publisher, &source)
+    observation.tip.hash = rpc.block_hash_display(height).await.unwrap();
+    observation.pass += 1;
+    assert!(catch_up(&mut ingestion, &chain, &observation)
         .await
-        .unwrap()
+        .is_err());
+    assert_eq!(ingestion.journal.tree_size(), 0);
+    state.tree_size.store(2, Ordering::SeqCst);
+    catch_up(&mut ingestion, &chain, &observation)
+        .await
         .unwrap();
-    assert_eq!(journal.tree_size(), 2);
+    let work = pending.borrow_and_update().clone().unwrap();
+    assert_eq!(ingestion.journal.tree_size(), 2);
     publisher
         .publish(work, pir_publisher::publisher::PublisherEngine)
         .await
         .unwrap();
-    assert_eq!(journal.highest_committed().unwrap().1, state.blocks[1].1);
+    assert_eq!(
+        ingestion.journal.highest_committed().unwrap().1,
+        state.blocks[1].1
+    );
     node.abort();
 }
