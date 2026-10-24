@@ -142,17 +142,17 @@ def monitor(settings, *, release, template):
 
 
 def _probes(records):
-    """`[{service, command, timeout_seconds}]`, unique services, absolute commands (pir-monitor's own rules)."""
+    """Unique known services, absolute commands and 1–45 second timeouts, as pir-monitor requires."""
     if not isinstance(records, list) or not records:
         raise ValueError('service_probes is a non-empty list')
     names = set()
     for record in records:
         if (not isinstance(record, dict) or set(record) != {'service', 'command', 'timeout_seconds'}
-                or not isinstance(record['service'], str) or not re.fullmatch(r'[a-z0-9_-]{1,32}', record['service'])
+                or record['service'] not in ('status', 'transparent', 'receiver', 'txid')
                 or record['service'] in names or not isinstance(record['command'], list) or not record['command']
                 or not all(isinstance(a, str) and a and not any(ord(c) < 32 for c in a) for a in record['command'])
                 or not record['command'][0].startswith('/')
-                or type(record['timeout_seconds']) is not int or not 1 <= record['timeout_seconds'] <= 300):
+                or type(record['timeout_seconds']) is not int or not 1 <= record['timeout_seconds'] <= 45):
             raise ValueError('each service probe is {"service", "command": [absolute, ...], "timeout_seconds"}')
         names.add(record['service'])
     return json.dumps(records, indent=2) + '\n'

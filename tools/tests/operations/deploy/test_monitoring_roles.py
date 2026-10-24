@@ -141,6 +141,15 @@ class RoleCase:
 
 
 class RenderedRoles(unittest.TestCase):
+    def test_probe_settings_match_the_monitor_service_names_and_timeout_bounds(self):
+        for service in ('status', 'transparent', 'receiver', 'txid'):
+            for timeout in (1, 45):
+                self.assertEqual(json.loads(monitoring_roles._probes([
+                    {'service': service, 'command': ['/bin/true'], 'timeout_seconds': timeout}]))[0]['service'], service)
+        for service, timeout in (('custom', 30), ('receiver', 0), ('receiver', 46), ('receiver', 300)):
+            with self.subTest(service=service, timeout=timeout), self.assertRaises(ValueError):
+                monitoring_roles._probes([{'service': service, 'command': ['/bin/true'], 'timeout_seconds': timeout}])
+
     def test_units_reference_scoped_credentials_and_never_a_webhook(self):
         rendered = monitoring_roles.apm(APM_SETTINGS, release='/opt/pir-apm/releases/abc',
                                         template=SERVICES['apm'].roles['central'].template.read_text())
