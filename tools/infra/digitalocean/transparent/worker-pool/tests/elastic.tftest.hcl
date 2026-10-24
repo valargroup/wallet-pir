@@ -67,3 +67,15 @@ run "reject_host_key_without_member" {
   }
   expect_failures = [var.host_keys]
 }
+
+run "monitoring_boot_and_enrollment" {
+  command = plan
+  variables {
+    members          = { "transparent-pir-recent-05" = { size = "s-4vcpu-8gb", image = "ubuntu-24-04-x64" } }
+    apm_sidecar_boot = { url = "https://example.invalid/pir-apm-sidecar", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  }
+  assert {
+    condition     = strcontains(digitalocean_droplet.recent["transparent-pir-recent-05"].user_data, "PIR_APM_SIDECAR_SHA256=aaaaaaaa") && output.monitoring_enrollment_required["transparent-pir-recent-05"]
+    error_message = "Each new member installs the shared sidecar and requires explicit actuator enrollment."
+  }
+}

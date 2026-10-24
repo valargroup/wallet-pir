@@ -49,6 +49,13 @@ resource "digitalocean_droplet" "enhance_legacy_worker" {
   monitoring = true
   backups    = var.enable_backups
   ipv6       = true
+  user_data = var.apm_sidecar_boot_script == "" ? null : templatefile("${path.module}/../apm-sidecar/user-data.tftpl", {
+    cloud_config = templatefile("${path.module}/cloud-init-worker.yaml.tftpl", {
+      packages          = jsonencode(local.common_packages)
+      deploy_public_key = var.enhance_worker_deploy_public_key
+    })
+    script = var.apm_sidecar_boot_script
+  })
   lifecycle {
     ignore_changes = [user_data, image, ssh_keys, size]
   }

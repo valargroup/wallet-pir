@@ -41,3 +41,13 @@ An initialized copy with a real remote backend and runtime credentials is needed
 for live operation. Hardware qualification must measure host/cgroup limits and
 swap behavior; the machine profile and cloud-init settings do not constitute a
 passing receipt.
+## Per-host monitoring
+
+Set `apm_sidecar_boot = { url = "https://<public-artifact>", sha256 = "<digest>" }`
+to install the pinned sidecar through the shared first-boot installer on new
+workers. Existing hosts ignore user-data changes. The
+`monitoring_enrollment_required` output lists hosts still requiring the normal
+deploy-managed certificate installation and explicit observer enrollment.
+Pass the worker outputs to `wallet-pir-monitoring.py enroll --write`, then
+install credentials and deploy the observer role. Boot installation alone does
+not establish monitoring coverage; no private monitoring keys enter Terraform.

@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(ROOT / 'tools/tests/operations/deploy'))
 from fake_fleet import FakeFleet  # noqa: E402
 from wallet_pir_ops import monitoring, monitoring_certs, monitoring_install, monitoring_roles  # noqa: E402
-from wallet_pir_ops.deploy import descriptors, remote, units  # noqa: E402
+from wallet_pir_ops.deploy import descriptors, remote, transaction, units  # noqa: E402
 
 SERVICES = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
 
@@ -44,6 +44,27 @@ def inventory(*observers, retired=()):
 
 
 class ObserverInventory(unittest.TestCase):
+    def test_cli_renders_dynamic_capacity_mapping_and_binds_it_to_revision(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, mapping = root / 'inventory.json', root / 'mapping.json'
+            source.write_text(json.dumps(inventory(WORKER)))
+            value = {'unit': 'transparent-recent.service', 'role_units': {'recent': 'transparent-recent.service'},
+                     'data_path': '/srv/cache', 'size': 'm-4vcpu-32gb'}
+            mapping.write_text(json.dumps(value))
+            result = subprocess.run([sys.executable, str(ROOT / 'tools/scripts/wallet-pir-monitoring.py'),
+                                     'render-observers', '--inventory', str(source), '--mode', 'shadow',
+                                     '--roster', '/etc/pir/roster.json', '--host-snapshot', '/var/lib/pir/hosts.json',
+                                     '--roster-snapshot', str(mapping)], capture_output=True, text=True, check=True)
+            rendered = json.loads(result.stdout)
+            self.assertEqual(rendered['roster_snapshot'], value)
+            self.assertNotEqual(rendered['revision'], monitoring.observers(inventory(WORKER), mode='shadow',
+                                                                          roster='/etc/pir/roster.json')['revision'])
+            for invalid in (dict(value, unit='bad'), dict(value, data_path='../cache'),
+                            dict(value, role_units={'recent': 'bad'})):
+                with self.assertRaises(ValueError):
+                    monitoring.observers(inventory(WORKER), mode='shadow', roster='/r', roster_snapshot=invalid)
+
     def test_sidecar_unit_keeps_host_mounts_visible_and_holds_no_secret_bundle(self):
         rendered = monitoring.sidecar(COORDINATOR, release='/opt/pir-apm-sidecar/releases/x')
         service = units.effective([rendered.unit])['Service']
@@ -310,6 +331,93 @@ class Certificates(unittest.TestCase):
             with self.assertRaises(remote.LockHeld):
                 self.install(fake, self.NEW)
 
+    OBSERVERS = monitoring_roles.APM_OBSERVERS
+
+    def collector_host(self, active=True):
+        """An APM whose readiness reports the revision of the inventory it was started with."""
+        fake = FakeFleet()
+        fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT] = {
+            'loaded': [('/etc/systemd/system/' + monitoring_certs.COLLECTOR_UNIT, '')],
+            'active': 'active' if active else 'inactive', 'pid': 0, 'exe': None}
+        fake.endpoints[('c1', monitoring_certs.COLLECTOR_READY)] = monitoring_certs.COLLECTOR_UNIT
+        fake.health_shapes[('c1', monitoring_certs.COLLECTOR_UNIT)] = lambda ready, exe: {
+            'ready': ready, 'revision': exe and json.loads(exe)['revision'],
+            'expected_hosts': 1, 'valid_hosts': int(ready), 'evaluated_at': time.time()}
+        fake._reload = lambda host: None
+        fake._start = lambda host, unit: fake.host(host).units[unit].update(
+            active='active', exe=fake.read(host, self.OBSERVERS))
+        return fake
+
+    def install_observers(self, fake, revision, ready_timeout=0):
+        installed = fake.read('c1', self.OBSERVERS)
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        return monitoring_certs.install(
+            fake, lock, 'c1', {'observers.json': json.dumps({'revision': revision}).encode()},
+            state_dir=self.root / 'journal', directory='/etc/pir-apm', unit=monitoring_certs.COLLECTOR_UNIT,
+            ready=monitoring_certs.collector_ready(revision), restore_ready=monitoring_certs.collector_restore_ready,
+            identity={'previous_revision': installed and json.loads(installed)['revision'], 'revision': revision},
+            ready_timeout=ready_timeout, sleep=lambda _: None, mode=0o644)
+
+    def collector_journal(self):
+        return transaction.Journal.load(self.root / 'journal', 'monitoring-files-c1-etc-pir-apm')
+
+    def test_observer_rollback_verifies_the_previous_revision_not_the_new_one(self):
+        fake = self.collector_host()
+        self.install_observers(fake, 'sha256:a')
+        self.install_observers(fake, 'sha256:b')
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                  restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                  sleep=lambda _: None)
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        # A new inventory whose collection never succeeds is restored and verified on the old revision.
+        fake.unhealthy.add(('c1', json.dumps({'revision': 'sha256:c'})))
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install_observers(fake, 'sha256:c')
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+
+    def test_an_unverified_restoration_stays_open_and_reconcile_finishes_it(self):
+        fake = self.collector_host()
+        self.install_observers(fake, 'sha256:a')
+        fake.unhealthy.update({('c1', json.dumps({'revision': r})) for r in ('sha256:a', 'sha256:b')})
+        with self.assertRaisesRegex(RuntimeError, 'stays open for reconcile'):
+            self.install_observers(fake, 'sha256:b')
+        journal = self.collector_journal()
+        self.assertEqual((journal.status, journal.hosts[0]['phase']), ('restoring', 'restore-failed'))
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        with self.assertRaises(RuntimeError):
+            monitoring_certs.reconcile(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                       restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                       sleep=lambda _: None)
+        fake.unhealthy.clear()
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        self.assertEqual(monitoring_certs.reconcile(
+            fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+            restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0, sleep=lambda _: None),
+            journal.id)
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        self.assertEqual(json.loads(fake.read('c1', self.OBSERVERS))['revision'], 'sha256:a')
+
+    def test_a_failed_first_install_leaves_no_files_and_the_unit_stopped_as_before(self):
+        fake = self.collector_host(active=False)
+        fake.unhealthy.add(('c1', json.dumps({'revision': 'sha256:a'})))
+        with self.assertRaisesRegex(RuntimeError, 'previous files restored'):
+            self.install_observers(fake, 'sha256:a')
+        self.assertIsNone(fake.read('c1', self.OBSERVERS))
+        self.assertEqual(fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT]['active'], 'inactive')
+        self.assertEqual(self.collector_journal().status, 'rolled-back')
+        # Then a working first install commits, and its rollback stops the unit again.
+        fake.unhealthy.clear()
+        self.assertEqual(self.install_observers(fake, 'sha256:a'), ['observers.json'])
+        lock = fake.hold_lock('c1', '/run/lock/wallet-pir-production.lock')
+        monitoring_certs.rollback(fake, lock, 'c1', state_dir=self.root / 'journal', directory='/etc/pir-apm',
+                                  restore_ready=monitoring_certs.collector_restore_ready, ready_timeout=0,
+                                  sleep=lambda _: None)
+        self.assertIsNone(fake.read('c1', self.OBSERVERS))
+        self.assertEqual(fake.host('c1').units[monitoring_certs.COLLECTOR_UNIT]['active'], 'inactive')
+
     def test_collector_readiness_needs_the_installed_revision_not_plain_ok(self):
         fake = FakeFleet()
         answers = {'body': 'ok', 'status': 200}
@@ -319,16 +427,30 @@ class Certificates(unittest.TestCase):
             ready(fake, 'c')  # `/healthz`'s plain ok is not this contract
         answers['body'] = json.dumps({'ready': True, 'revision': 'sha256:other'})
         self.assertFalse(ready(fake, 'c'))
-        answers['body'] = json.dumps({'ready': True, 'revision': 'sha256:abc'})
+
+        valid = {'ready': True, 'revision': 'sha256:abc', 'expected_hosts': 2, 'valid_hosts': 2,
+                 'evaluated_at': time.time()}
+        answers['body'] = json.dumps(valid)
         self.assertTrue(ready(fake, 'c'))
+        for changes in ({'valid_hosts': 0}, {'valid_hosts': 1}, {'expected_hosts': 0, 'valid_hosts': 0},
+                        {'evaluated_at': time.time() - 46}, {'evaluated_at': time.time() + 300}):
+            answers['body'] = json.dumps(dict(valid, **changes))
+            self.assertFalse(ready(fake, 'c'), changes)
         answers['status'] = 503
         self.assertFalse(ready(fake, 'c'))
+
+    def test_an_unchanged_inventory_still_requires_live_authenticated_collection(self):
+        fake = self.collector_host()
+        self.install_observers(fake, 'sha256:a')
+        fake.unhealthy.add(('c1', json.dumps({'revision': 'sha256:a'})))
+        with self.assertRaisesRegex(RuntimeError, 'unchanged files but is not ready'):
+            self.install_observers(fake, 'sha256:a')
 
 
 class VolumeBinding(unittest.TestCase):
     """A cache-volume activation binds its filesystem into the observer and coverage."""
 
-    def test_activation_receipt_binds_the_volume_identity_and_changes_the_digest(self):
+    def test_uninstalled_monitoring_leaves_volume_pending_and_visible_to_coverage(self):
         import argparse
         import hashlib
         from wallet_pir_ops.deploy import cache_data
@@ -358,7 +480,11 @@ class VolumeBinding(unittest.TestCase):
             args = argparse.Namespace(request=root / 'request.json', request_sha256=hashlib.sha256(raw).hexdigest(),
                                       inventory=str(path), state_dir=str(state), command='cache-data-activate',
                                       transaction='cache-data-t1')
-            self.assertEqual(cache_data.dispatch(args, fake)['monitoring'], 'bound')
+            with self.assertRaisesRegex(cache_data.DeployError, 'monitoring adoption remains pending'):
+                cache_data.dispatch(args, fake)
+            receipt = json.loads((state / 'cache-data-t1.json').read_text())
+            self.assertEqual(receipt['phase'], 'monitoring-pending')
+            self.assertEqual(receipt['monitoring']['status'], 'pending')
             bound = json.loads(path.read_text())['services']['apm-sidecar']['roles']['observer'][1]['settings']
             self.assertEqual(bound['required_volumes'], [{'path': '/srv/txid-cache', 'uuid': 'abcd-0001'}])
             self.assertNotEqual(monitoring.enrollment_record(bound)['config_digest'], before)
@@ -371,8 +497,11 @@ class VolumeBinding(unittest.TestCase):
             # Without the binding, coverage names the activated volume.
             report = monitoring.coverage(document, expected_volumes=expected)
             self.assertEqual(report['missing_volumes'], {'txid-01': ['/srv/txid-cache']})
-            # Repeating is unchanged; another identity at the same path is refused.
-            self.assertEqual(cache_data.dispatch(args, fake)['monitoring'], 'unchanged')
+            # Reconciliation does not repeat storage activation while prerequisites are missing.
+            args.command = 'cache-data-reconcile'
+            fake.run = lambda *args, **kwargs: self.fail('monitoring reconciliation must not rerun storage')
+            with self.assertRaisesRegex(cache_data.DeployError, 'monitoring adoption remains pending'):
+                cache_data.dispatch(args, fake)
             with self.assertRaisesRegex(ValueError, 'another filesystem'):
                 monitoring.bind_volume(path, 'txid-01', {'path': '/srv/txid-cache', 'uuid': 'ffff'})
 
@@ -441,14 +570,15 @@ class BootInstall(unittest.TestCase):
 
     def test_terraform_appends_this_script_and_template_to_every_managed_droplet(self):
         infra = ROOT / 'tools/infra/digitalocean'
-        wiring = (infra / 'fleet/apm-sidecar.tf').read_text()
+        wiring = (infra / 'apm-sidecar/main.tf').read_text()
         self.assertIn('deploy/monitoring/pir-apm-sidecar-boot.sh', wiring)
         self.assertIn('deploy/monitoring/pir-apm-sidecar.service.in', wiring)
         for module in ('fleet/shared.tf', 'fleet/monitor.tf', 'fleet/receiver.tf', 'enhance/main.tf',
-                       'status/main.tf', 'transparent/main.tf', 'transparent-tx-detail/main.tf'):
+                       'status/main.tf', 'transparent/main.tf', 'transparent-tx-detail/main.tf',
+                       'enhance/worker-pool/main.tf', 'transparent/worker-pool/main.tf'):
             text = (infra / module).read_text()
             with self.subTest(module=module):
-                self.assertEqual(text.count('user_data = templatefile("${path.module}/../apm-sidecar/user-data.tftpl"'),
+                self.assertEqual(text.count('/apm-sidecar/user-data.tftpl"'),
                                  len(re.findall(r'(?m)^\s*user_data\s*=', text)),
                                  'every droplet user_data is wrapped once')
 
@@ -477,6 +607,15 @@ class HostTransport:
 
 
 class ElasticEnrollment(unittest.TestCase):
+    def test_actuator_does_not_accept_a_member_without_monitoring_configuration(self):
+        import importlib.util
+        from types import SimpleNamespace
+        spec = importlib.util.spec_from_file_location('apm_test_actuator',
+                                                     ROOT / 'tools/transparent/scripts/transparent-fleet-actuator.py')
+        actuator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(actuator)
+        self.assertFalse(actuator.install_monitoring(SimpleNamespace(c={}), 'recent-09', '10.0.0.19'))
+
     def test_controller_install_issues_credentials_and_returns_the_enrollment(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -636,6 +775,42 @@ class FreshRebuild(unittest.TestCase):
                                               'chain_cookie': None}, **settings),
                                         release=str(self.bin), template=role.template.read_text())
         return rendered.unit
+
+    def test_wrong_collector_identity_never_passes_the_real_http_readiness_contract(self):
+        monitoring_certs.issue_ca(self.root / 'ca')
+        monitoring_certs.issue_leaf(self.root / 'ca', self.root / 'sidecar', 'rehearsal.pir-monitoring', 'server')
+        monitoring_certs.issue_leaf(self.root / 'ca', self.root / 'wrong', 'another-host.pir-monitoring', 'client')
+        settings = {'host_id': 'rehearsal', 'address': '127.0.0.1', 'port': free_port(), 'health_port': free_port()}
+        config = self.root / 'sidecar.json'
+        config.write_bytes(monitoring.config_bytes(monitoring.sidecar_document(settings)))
+        self.processes.append(subprocess.Popen(
+            [str(self.bin / 'pir-apm-sidecar'), '--config', str(config)],
+            env={'PATH': os.environ['PATH'], 'CREDENTIALS_DIRECTORY': str(self.root / 'sidecar')},
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        observers = monitoring.observers(inventory(settings), mode='shadow')
+        install_file(self.root, monitoring_roles.APM_OBSERVERS, json.dumps(observers).encode())
+        for name in monitoring_certs.COLLECTOR_FILES:
+            install_file(self.root, '%s/%s' % (monitoring_certs.COLLECTOR_CREDENTIALS, name),
+                         (self.root / 'wrong' / name).read_bytes())
+        port = free_port()
+        remap = {'PIR_APM_STATE_PATH': str(self.root / 'incidents.sqlite'),
+                 'PIR_APM_LISTEN': '127.0.0.1:%d' % port,
+                 'PIR_APM_OBSERVERS': str(self.root / monitoring_roles.APM_OBSERVERS.lstrip('/'))}
+        self.processes.append(RenderedProcess(self.root, self.apm_unit(slack=False), remap).start('wrong-apm'))
+        url = 'http://127.0.0.1:%d/observers/ready' % port
+        answer = {}
+
+        def completed_round():
+            nonlocal answer
+            try:
+                status, body = LocalHTTP().http_get('rehearsal', url)
+                answer = json.loads(body)
+                return status == 503 and answer.get('rounds', 0) > 0
+            except OSError:
+                return False
+        self.assertTrue(wait_for(completed_round), 'the actual APM completes a failed authenticated poll')
+        self.assertEqual((answer['ready'], answer['valid_hosts'], answer['expected_hosts']), (False, 0, 1))
+        self.assertFalse(monitoring_certs.collector_ready(observers['revision'], url)(LocalHTTP(), 'rehearsal'))
 
     def test_rendered_sidecar_apm_and_monitor_converge_on_healthy_host_incidents(self):
         root = self.root

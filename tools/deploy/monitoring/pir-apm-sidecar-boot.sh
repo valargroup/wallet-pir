@@ -29,7 +29,7 @@ config=/etc/pir-apm-sidecar/sidecar.json
 install -d -m 755 "$root$release" "$root/etc/pir-apm-sidecar" "$root/etc/systemd/system"
 install -d -m 700 "$root/etc/pir-apm-sidecar/credentials"
 curl -fsSL --retry 10 --retry-all-errors --max-time 120 -o "$root$release/pir-apm-sidecar.next" "$PIR_APM_SIDECAR_URL"
-echo "$sha  $root$release/pir-apm-sidecar.next" | sha256sum -c --quiet
+echo "$sha  $root$release/pir-apm-sidecar.next" | sha256sum -c - >/dev/null
 chmod 755 "$root$release/pir-apm-sidecar.next"
 mv "$root$release/pir-apm-sidecar.next" "$root$release/pir-apm-sidecar"
 

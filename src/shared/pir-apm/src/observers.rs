@@ -25,7 +25,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub const CONFIG_VAR: &str = "PIR_APM_OBSERVERS";
@@ -76,21 +76,30 @@ pub struct Readiness {
     pub valid_hosts: usize,
     /// Unix time the latest poll round finished.
     pub evaluated_at: u64,
+    /// Earliest expiry among the documents accepted in the completed round.
+    pub valid_until: u64,
 }
 
-static READINESS: std::sync::Mutex<Option<Readiness>> = std::sync::Mutex::new(None);
+static READINESS: std::sync::Mutex<Option<(Readiness, Instant)>> = std::sync::Mutex::new(None);
 
 pub fn readiness() -> Readiness {
     let r = READINESS
         .lock()
-        .map(|r| r.clone().unwrap_or_default())
+        .map(|r| match r.as_ref() {
+            Some((report, at)) if at.elapsed().as_secs() <= MAX_AGE_SECONDS => report.clone(),
+            Some((report, _)) => Readiness {
+                ready: false,
+                ..report.clone()
+            },
+            None => Readiness::default(),
+        })
         .unwrap_or_default();
     current_readiness(r, crate::incidents::unix_time())
 }
 
 /// `r` as seen at `now`: a stored readiness expires 45 seconds after its round.
 pub fn current_readiness(mut r: Readiness, now: u64) -> Readiness {
-    r.ready = r.ready && now.saturating_sub(r.evaluated_at) <= MAX_AGE_SECONDS;
+    r.ready = r.ready && fresh(r.evaluated_at, now) && now <= r.valid_until;
     r
 }
 
@@ -109,18 +118,27 @@ pub fn round_readiness(
         .count();
     Readiness {
         configured: true,
-        ready: !expected.hosts.is_empty() && valid_hosts == expected.hosts.len(),
+        ready: !expected.hosts.is_empty()
+            && expected.unenrolled.is_empty()
+            && valid_hosts == expected.hosts.len(),
         revision: settings.revision.clone(),
         rounds,
         expected_hosts: expected.hosts.len(),
         valid_hosts,
         evaluated_at: now,
+        valid_until: expected
+            .hosts
+            .iter()
+            .filter_map(|h| tracker.current(&h.host_id))
+            .map(|d| d.generated_at.saturating_add(MAX_AGE_SECONDS))
+            .min()
+            .unwrap_or(now),
     }
 }
 
 pub fn set_readiness(r: Readiness) {
     if let Ok(mut slot) = READINESS.lock() {
-        *slot = Some(r);
+        *slot = Some((r, Instant::now()));
     }
 }
 
@@ -750,7 +768,9 @@ impl Tracker {
     pub fn collecting(&self, host_id: &str, now: u64) -> bool {
         self.hosts.get(host_id).is_some_and(|s| {
             s.failure.is_none()
-                && s.latest.is_some()
+                && s.latest
+                    .as_ref()
+                    .is_some_and(|d| fresh(d.generated_at, now))
                 && s.progress
                     .as_ref()
                     .is_some_and(|((_, at), _)| fresh(*at, now))
@@ -810,6 +830,7 @@ pub async fn run(
             },
             None => None,
         };
+        let roster_readable = settings.roster.is_none() || roster.is_some();
         let expected = Expected::of(&settings, roster);
         let mut set = tokio::task::JoinSet::new();
         for host in expected.hosts.iter().cloned() {
@@ -853,7 +874,19 @@ pub async fn run(
             &dashboard,
         )?;
         rounds += 1;
-        set_readiness(round_readiness(&settings, &tracker, &expected, rounds, now));
+        let mut report = round_readiness(&settings, &tracker, &expected, rounds, now);
+        // Persisted enrollment cannot disappear from readiness merely because a
+        // roster or inventory omitted the host. Explicit retirement is required.
+        let absent = enrolled
+            .iter()
+            .filter(|id| {
+                !expected.decommissioned.contains(id)
+                    && !expected.hosts.iter().any(|h| &h.host_id == *id)
+            })
+            .count();
+        report.expected_hosts += absent;
+        report.ready &= roster_readable && absent == 0;
+        set_readiness(report);
     }
 }
 
@@ -1005,10 +1038,25 @@ mod tests {
         assert_eq!((r.ready, r.valid_hosts, r.expected_hosts), (false, 1, 2));
         t.record("w2", doc("w2", 1000, Status::Warning), 1000);
         assert!(round_readiness(&s, &t, &expected, 1, 1000).ready);
-        t.record("w2", Poll::Failed("sidecar unreachable or authentication failed"), 1005);
+        t.record(
+            "w2",
+            Poll::Failed("sidecar unreachable or authentication failed"),
+            1005,
+        );
         assert!(!round_readiness(&s, &t, &expected, 2, 1005).ready);
         t.record("w2", doc("w2", 1005, Status::Healthy), 1010);
         assert!(round_readiness(&s, &t, &expected, 3, 1010).ready);
+        let r = round_readiness(&s, &t, &expected, 3, 1045);
+        assert!(r.ready);
+        assert!(
+            !current_readiness(r, 1046).ready,
+            "the oldest host expires before the next round"
+        );
+        t.record("w1", doc("w1", 2000, Status::Healthy), 1010);
+        assert!(
+            !round_readiness(&s, &t, &expected, 3, 1010).ready,
+            "a future document cannot reuse an earlier fresh observation"
+        );
         // w1 keeps serving its first document: it stops counting after 45s.
         t.record("w1", doc("w1", 1000, Status::Critical), 1046);
         t.record("w2", doc("w2", 1046, Status::Healthy), 1046);
@@ -1016,6 +1064,10 @@ mod tests {
         let empty = settings(&[], &[]);
         let none = Expected::of(&empty, None);
         assert!(!round_readiness(&empty, &t, &none, 1, 1046).ready);
+        t.record("w1", doc("w1", 1046, Status::Critical), 1046);
+        let mut missing = Expected::of(&s, None);
+        missing.unenrolled.push("w4".to_string());
+        assert!(!round_readiness(&s, &t, &missing, 5, 1046).ready);
     }
 
     #[test]

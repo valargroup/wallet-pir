@@ -121,19 +121,24 @@ def sidecar_ready(health=SIDECAR_HEALTH):
 
 
 def collector_ready(revision, url=COLLECTOR_READY):
-    """The central APM's: a completed poll round with the observer inventory `revision`.
-
-    `/observers/ready` only answers 200 after the collector identity was loaded
-    and every enrolled sidecar polled once, so a bad credential or inventory
-    never passes. Plain `/healthz` would pass for any running APM.
-    """
+    """Require the loaded revision and fresh authenticated collection from every host."""
     def ready(executor, host):
         status, body = executor.http_get(host, url)
         if status != 200:
             return False
         report = json.loads(body)
-        return report.get('ready') is True and report.get('revision') == revision
+        expected = report.get('expected_hosts', 0)
+        evaluated = report.get('evaluated_at', 0)
+        now = time.time()
+        return (report.get('ready') is True and report.get('revision') == revision
+                and type(expected) is int and expected > 0 and report.get('valid_hosts') == expected
+                and type(evaluated) in (int, float) and now - 45 <= evaluated <= now + 5)
     return ready
+
+
+def collector_restore_ready(executor, host, record):
+    """Check the previous inventory revision saved before the transaction touched files."""
+    return collector_ready(record['identity']['previous_revision'])(executor, host)
 
 
 def _wait(executor, host, ready, timeout, sleep, clock):
@@ -159,7 +164,8 @@ def _service(host, directory):
 
 
 def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENTIALS, unit=SIDECAR_UNIT,
-            ready=None, ready_timeout=60, mode=0o600, sleep=time.sleep, clock=time.monotonic):
+            ready=None, restore_ready=None, identity=None, ready_timeout=60, mode=0o600,
+            sleep=time.sleep, clock=time.monotonic):
     """Replace files on one host and restart its unit as one journaled transaction.
 
     `lock` is the production lock as a context manager (`remote.production_lock`)
@@ -177,16 +183,24 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
     """
     ready = ready or sidecar_ready()
     with lock as held:
-        _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock)
+        _reconcile(executor, held, host, directory, state_dir, ready, restore_ready, ready_timeout, sleep, clock)
         previous = {name: executor.read(host, '%s/%s' % (directory, name)) for name in files}
+        if identity is not None and 'observers.json' in previous:
+            old = previous['observers.json']
+            identity = dict(identity, previous_revision=json.loads(old)['revision'] if old else None)
         changed = sorted(name for name, data in files.items()
                          if previous[name] is None or previous[name].encode() != data)
+        previous_unit = executor.probe_unit(host, unit)
         if not changed:
+            if previous_unit['load_state'] != 'not-found' and not _wait(
+                    executor, host, ready, ready_timeout, sleep, clock):
+                raise RuntimeError('%s has unchanged files but is not ready' % unit)
             return []
         prior = transaction.Journal.load(state_dir, _service(host, directory))
-        staged = executor.probe_unit(host, unit)['load_state'] == 'not-found'
+        staged = previous_unit['load_state'] == 'not-found'
         record = {'key': '%s:%s' % (host, directory), 'host': host, 'unit': unit, 'directory': directory,
                   'mode': mode, 'phase': 'pending', 'restart_issued': False, 'staged': staged,
+                  'previous_active': previous_unit['active_state'], 'identity': identity,
                   'changes': [{'name': name, 'previous_sha256': _digest(None if previous[name] is None
                                                                         else previous[name].encode()),
                                'new_sha256': _digest(files[name])} for name in changed]}
@@ -226,7 +240,7 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
             raise
         except Exception as error:  # noqa: BLE001 - every failure restores, then reports its kind
             journal.event('failed', error=type(error).__name__)
-            _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+            _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep, clock)
             raise RuntimeError('%s did not become ready after the change on %s; previous files restored'
                                % (unit, host)) from None
         if prior is not None and prior.hosts[0].get('backup'):
@@ -235,7 +249,7 @@ def install(executor, lock, host, files, *, state_dir, directory=SIDECAR_CREDENT
         return changed
 
 
-def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
+def _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep, clock):
     """Put the backed-up files back and restart; finishes only with a ready unit."""
     record = journal.hosts[0]
     host, directory = record['host'], record['directory']
@@ -243,6 +257,7 @@ def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
         journal.set_status('rolled-back')  # no target file was touched
         return
     held.verify()
+    journal.set_status('restoring')
     journal.set_phase(0, 'restoring')
     for change in record['changes']:
         held.verify()
@@ -253,7 +268,6 @@ def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
         saved = executor.read(host, '%s/%s' % (record['backup'], change['name']))
         if saved is None or _digest(saved.encode()) != change['previous_sha256']:
             journal.set_phase(0, 'restore-failed')
-            journal.set_status('failed')
             raise RuntimeError('backup of %s on %s is missing or altered' % (change['name'], host))
         if executor.sha256(host, target) != change['previous_sha256']:
             executor.write(host, target, saved.encode(), record['mode'])
@@ -263,41 +277,52 @@ def _restore(executor, held, journal, ready, ready_timeout, sleep, clock):
         journal.set_phase(0, 'restored')
         journal.set_status('rolled-back')
         return
+    if record.get('previous_active') != 'active':
+        executor.systemctl(host, 'stop', record['unit'])
+        held.verify()
+        if executor.probe_unit(host, record['unit'])['active_state'] not in ('inactive', 'failed'):
+            journal.set_phase(0, 'restore-failed')
+            raise RuntimeError('previous stopped unit could not be restored; transaction stays open for reconcile')
+        journal.set_phase(0, 'restored')
+        journal.set_status('rolled-back')
+        return
     executor.systemctl(host, 'restart', record['unit'])
-    if not _wait(executor, host, ready, ready_timeout, sleep, clock):
+    previous_ready = ready if restore_ready is None else lambda ex, name: restore_ready(ex, name, record)
+    if not _wait(executor, host, previous_ready, ready_timeout, sleep, clock):
         journal.set_phase(0, 'restore-failed')
-        journal.set_status('failed')
-        raise RuntimeError('%s is not ready after restoring the previous files on %s' % (record['unit'], host))
+        raise RuntimeError('%s is not ready after restoring previous files on %s; transaction stays open for reconcile'
+                           % (record['unit'], host))
+    held.verify()
     journal.set_phase(0, 'restored')
     journal.set_status('rolled-back')
 
 
-def _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock):
+def _reconcile(executor, held, host, directory, state_dir, ready, restore_ready, ready_timeout, sleep, clock):
     journal = transaction.Journal.load(state_dir, _service(host, directory))
-    if journal is None or journal.status in transaction.FINAL:
+    if journal is None or journal.status in ('committed', 'rolled-back'):
         return None
     journal.event('reconciling an interrupted transaction')
-    _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+    _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep, clock)
     return journal
 
 
-def reconcile(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, ready_timeout=60, sleep=time.sleep,
-              clock=time.monotonic):
+def reconcile(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, restore_ready=None,
+              ready_timeout=60, sleep=time.sleep, clock=time.monotonic):
     """Finish restoring an interrupted transaction on `host`; returns its id or None."""
     with lock as held:
-        journal = _reconcile(executor, held, host, directory, state_dir, ready or sidecar_ready(), ready_timeout,
+        journal = _reconcile(executor, held, host, directory, state_dir, ready or sidecar_ready(), restore_ready, ready_timeout,
                              sleep, clock)
         return journal and journal.id
 
 
-def rollback(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, ready_timeout=60, sleep=time.sleep,
-             clock=time.monotonic):
+def rollback(executor, lock, host, *, state_dir, directory=SIDECAR_CREDENTIALS, ready=None, restore_ready=None,
+             ready_timeout=60, sleep=time.sleep, clock=time.monotonic):
     """Return the latest committed transaction on `host` to its previous files."""
     with lock as held:
         ready = ready or sidecar_ready()
-        _reconcile(executor, held, host, directory, state_dir, ready, ready_timeout, sleep, clock)
+        _reconcile(executor, held, host, directory, state_dir, ready, restore_ready, ready_timeout, sleep, clock)
         journal = transaction.Journal.load(state_dir, _service(host, directory))
         if journal is None or journal.status != 'committed':
             raise RuntimeError('no committed monitoring transaction to roll back on %s' % host)
-        _restore(executor, held, journal, ready, ready_timeout, sleep, clock)
+        _restore(executor, held, journal, ready, restore_ready, ready_timeout, sleep, clock)
         return journal.id

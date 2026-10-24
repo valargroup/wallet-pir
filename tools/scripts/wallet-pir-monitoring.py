@@ -35,7 +35,8 @@ def _json(path):
 def _observers(args):
     return monitoring.observers(_json(args.inventory), mode=args.mode,
                                 edge_outputs=dict(item.split('=', 1) for item in args.edge_output),
-                                roster=args.roster, host_snapshot=args.host_snapshot)
+                                roster=args.roster, host_snapshot=args.host_snapshot,
+                                roster_snapshot=_json(args.roster_snapshot))
 
 
 def render_observers(args):
@@ -163,7 +164,9 @@ def install_observers(args):
         executor, lock, args.host, {os.path.basename(OBSERVERS): (json.dumps(document, indent=2, sort_keys=True)
                                                                   + '\n').encode()},
         state_dir=default_state_dir(), directory=os.path.dirname(OBSERVERS), unit=monitoring_certs.COLLECTOR_UNIT,
-        ready=monitoring_certs.collector_ready(document['revision']), mode=0o644)
+        ready=monitoring_certs.collector_ready(document['revision']),
+        restore_ready=monitoring_certs.collector_restore_ready,
+        identity={'revision': document['revision']}, mode=0o644)
     print(json.dumps({'host': args.host, 'changed': changed}))
 
 
@@ -172,14 +175,15 @@ def recover(args):
     executor, lock = _executor(args)
     if args.role == 'observers':
         directory, unit = os.path.dirname(OBSERVERS), monitoring_certs.COLLECTOR_UNIT
-        installed = executor.read(args.host, OBSERVERS)
-        ready = monitoring_certs.collector_ready(json.loads(installed).get('revision') if installed else None)
+        ready = None
     else:
         directory, unit, ready = _role(args, executor)
     operation = monitoring_certs.reconcile if args.command == 'reconcile' else monitoring_certs.rollback
     print(json.dumps({'host': args.host, 'unit': unit,
                       'transaction': operation(executor, lock, args.host, state_dir=default_state_dir(),
-                                               directory=directory, ready=ready)}))
+                                               directory=directory, ready=ready,
+                                               restore_ready=(monitoring_certs.collector_restore_ready
+                                                              if args.role == 'observers' else None))}))
 
 
 def main(argv=None):
@@ -192,6 +196,7 @@ def main(argv=None):
         child.add_argument('--edge-output', action='append', default=[], metavar='HOST=PATH')
         child.add_argument('--roster', help='Transparent roster whose members are expected hosts')
         child.add_argument('--host-snapshot', help='where the APM writes the capacity host snapshot')
+        child.add_argument('--roster-snapshot', help='JSON capacity mapping: unit, role_units, data_path and size')
         if name == 'install-observers':
             child.add_argument('--host', required=True, help='the inventory host running pir-apm')
         child.set_defaults(handler=handler)
