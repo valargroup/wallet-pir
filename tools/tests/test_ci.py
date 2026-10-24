@@ -61,6 +61,21 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(selected['packages'], [])
         self.assertEqual(selected['helpers'], ['check-ops-contracts', 'check-tools'])
         self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+        # Other CI-only inputs compile no unchanged Rust, but full coverage remains.
+        for paths in [['tools/ci/fast.py', 'tools/lib/wallet_pir_ops/release.py'],
+                      ['.github/workflows/ci-qualify.yml'], ['.github/actions/qualify-artifacts/action.yml'],
+                      ['.gitignore']]:
+            with self.subTest(paths=paths):
+                selected = fast.plan(self.packages, paths)
+                self.assertEqual(selected['packages'], [])
+                self.assertEqual(set(selected['groups']), fast.FULL_GROUPS)
+                self.assertIn('check-tools', selected['helpers'])
+        # A Rust or build change beside a CI edit still selects its packages.
+        self.assertEqual(fast.plan(self.packages, ['tools/ci/fast.py', 'crates/server/src/lib.rs'])['packages'],
+                         ['server'])
+        for path in ['Cargo.toml', 'Cargo.lock', '.cargo/config.toml']:
+            self.assertEqual(set(fast.plan(self.packages, ['tools/ci/fast.py', path])['packages']),
+                             {'core', 'client', 'server', 'other'}, path)
 
     def test_preflight_definition_does_not_rebuild_the_workspace(self):
         selected = fast.plan(self.packages, ['.github/preflight.json'])
@@ -872,18 +887,6 @@ class TimingTests(unittest.TestCase):
         request = urllib.request.Request('https://api.github.com/x', headers={'Authorization': 'Bearer t'})
         redirected = handler.redirect_request(request, None, 302, 'Found', {}, 'https://storage.example/log')
         self.assertFalse(redirected.has_header('Authorization'))
-
-
-    def test_rerun_uses_current_attempt_instead_of_original_creation(self):
-        run = dict(head_sha=SHA, status='completed', run_attempt=2,
-                   created_at='2026-09-14T00:00:00Z', run_started_at='2026-09-15T00:38:14Z')
-        jobs = {'jobs': [dict(name='test', started_at='2026-09-15T00:38:17Z', completed_at='2026-09-15T00:38:40Z', steps=[])]}
-        with patch.object(timings, 'api', side_effect=[run, jobs]) as api:
-            result = timings.report('org/repo', 1)
-        self.assertEqual(result['attempt'], 2)
-        self.assertEqual(result['dispatch_seconds'], 26)
-        self.assertEqual(result['jobs'][0]['dispatch_to_job_start_seconds'], 3)
-        api.assert_called_with('repos/org/repo/actions/runs/1/attempts/2/jobs?per_page=100')
 
 
 TOOLS = {

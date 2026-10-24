@@ -222,10 +222,13 @@ fn round_trip_and_restart(backend: MatvecConfig) {
         .coverage(67, Geometry::default())
         .unwrap();
     let plan = plan(coverage.shards[0].clone(), records).unwrap();
+    // Start from the shared 67-record publication when CI provides one; cold
+    // builds from records are covered by the partial-failure retry.
+    seed_published_fixture(dir.path(), &plan);
     let mut engine = Engine::with_backend(dir.path(), backend);
     let (eval, outcome) = engine.prepare(plan.clone(), records).unwrap();
-    assert_eq!(outcome.built, eval.units.len());
-    assert_eq!((outcome.reused, outcome.restored), (0, 0));
+    assert_eq!(outcome.built + outcome.restored, eval.units.len());
+    assert_eq!(outcome.reused, 0);
     let pack = Packing::new(
         4096,
         &eval.hint().unwrap(),
@@ -408,18 +411,24 @@ fn backend_load_failure_does_not_rebuild_or_replace_published_units() {
     assert_eq!(published.evaluate(&query).unwrap(), before);
 }
 
+/// A candidate that fails on its second new unit leaves the published domain
+/// untouched, and the retry matches monolithic preprocessing. The composed
+/// tail exercises unequal units, A's suffix and a zero-filled gap.
 #[test]
 fn partial_preparation_failure_preserves_published_and_retries() {
-    partial_preparation_failure(MatvecConfig::default(), false);
+    partial_preparation_failure(MatvecConfig::default(), false, composed_tail());
 }
 
 // Fast checks cover partial cleanup on a cold candidate and refusal to
 // rebuild a cached unit after a backend error independently. Qualification
-// retains their combination at the second cached unit.
+// retains their combination at the second cached unit, and the original
+// ordinary 8K/2K domain.
 #[cfg(feature = "qualification-tests")]
 #[test]
 fn cached_partial_preparation_failure_preserves_published_and_retries() {
-    partial_preparation_failure(MatvecConfig::default(), true);
+    for cached in [false, true] {
+        partial_preparation_failure(MatvecConfig::default(), cached, ordinary_8k_2k());
+    }
 }
 
 #[cfg(feature = "cuda")]
@@ -433,11 +442,36 @@ fn cuda_partial_preparation_failure_preserves_published_and_retries() {
                 cuda_device: None,
             },
             cached,
+            ordinary_8k_2k(),
         );
     }
 }
 
-fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
+/// The composed tail domain with smaller 2K and 4K units.
+fn composed_tail() -> QueryShard {
+    let geometry = Geometry::default();
+    Lifecycle::default()
+        .coverage(
+            geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
+            geometry,
+        )
+        .unwrap()
+        .shards[1]
+        .clone()
+}
+
+/// An ordinary domain with one 8K unit and one 2K unit.
+#[cfg(any(feature = "qualification-tests", feature = "cuda"))]
+fn ordinary_8k_2k() -> QueryShard {
+    Lifecycle::default()
+        .coverage(8192 * 33 + 17, Geometry::default())
+        .unwrap()
+        .shards[0]
+        .clone()
+}
+
+/// Prepare two new units of `shard`, failing on the second, then retry.
+fn partial_preparation_failure(backend: MatvecConfig, cached: bool, shard: QueryShard) {
     use crate::matvec::testing::{scoped, Faults};
     use std::sync::atomic::Ordering::SeqCst;
     let root = tempfile::tempdir().unwrap();
@@ -450,28 +484,19 @@ fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
         records,
     )
     .unwrap();
-    // Both fixtures prepare two new units and fail on the second.
-    // The valid composed tail uses smaller 4K/2K units; qualification
-    // also exercises the original ordinary 8K/2K domain.
-    let geometry = Geometry::default();
-    let shard = if cfg!(feature = "qualification-tests") || cfg!(feature = "cuda") {
-        Lifecycle::default()
-            .coverage(8192 * 33 + 17, geometry)
-            .unwrap()
-            .shards[0]
-            .clone()
-    } else {
-        Lifecycle::default()
-            .coverage(
-                geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
-                geometry,
-            )
-            .unwrap()
-            .shards[1]
-            .clone()
-    };
     let candidate = plan(shard, records).unwrap();
     assert_eq!(candidate.units.len(), 2);
+    if candidate.shard.composed() {
+        // One composed tail exercises unequal units, A's suffix and a padded gap.
+        assert_eq!(
+            candidate
+                .units
+                .iter()
+                .map(|u| u.allocated_rows)
+                .collect::<Vec<_>>(),
+            [2048, 4096]
+        );
+    }
     assert!(candidate.units.iter().all(|u| !old_plan.units.contains(u)));
     seed_published_fixture(root.path(), &old_plan);
     let mut engine = Engine::with_backend(root.path(), backend);
@@ -543,6 +568,9 @@ fn partial_preparation_failure(backend: MatvecConfig, cached: bool) {
     }
     let candidate_query = vec![1; retry.plan.shard.logical_rows as usize];
     assert_eq!(retry.evaluate(&candidate_query).unwrap(), expected);
+    // The retried domain matches monolithic preprocessing of the same table.
+    assert!(retry.verified_hint_artifact().unwrap().is_none());
+    assert_matches_monolithic(&retry);
     assert_eq!(published.evaluate(&query).unwrap(), before);
     drop(retry);
     engine.collect_unused().unwrap();
@@ -603,37 +631,13 @@ impl Evaluation {
     }
 }
 
-// One supported 8K composed tail, including the zero-filled gap, against
-// monolithic preprocessing. Larger tail-growth campaigns stay in qualification.
-#[test]
-fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
-    let directory = tempfile::tempdir().unwrap();
+/// Check a prepared domain against monolithic preprocessing of the same table,
+/// assembled independently of `unit_rows`: the shard's own records start at
+/// local zero and a composed tail appends A's final 4K rows after a zero gap.
+fn assert_matches_monolithic(evaluation: &Evaluation) {
+    let shard = &evaluation.plan.shard;
     let geometry = Geometry::default();
-    let coverage = Lifecycle::default()
-        .coverage(
-            geometry.max_shard_rows * RECORDS_PER_ROW as u64 + 17,
-            geometry,
-        )
-        .unwrap();
-    // One composed tail exercises unequal units, A's suffix and a padded gap.
-    let shard = coverage.shards[1].clone();
-    let monolithic_rows = 8192;
-    let expected_units = [2048, 4096];
-    let targets = [0, 2047, 2048, 4095, 4096, 8191];
-    let domain = plan(shard.clone(), records).unwrap();
-    assert_eq!(
-        domain
-            .units
-            .iter()
-            .map(|u| u.allocated_rows)
-            .collect::<Vec<_>>(),
-        expected_units
-    );
-    let mut engine = Engine::new(directory.path());
-    let evaluation = engine.prepare(domain, records).unwrap().0;
-    assert!(evaluation.verified_hint_artifact().unwrap().is_none());
-    // Assemble the whole table independently of unit_rows: B's own records
-    // start at local zero, and a composed tail appends A's final 4K rows.
+    let monolithic_rows = shard.logical_rows as usize;
     let row_bytes = ENHANCE_LAYOUT.row_bytes();
     let mut rows = vec![0; monolithic_rows * row_bytes];
     let own = records(
@@ -682,12 +686,24 @@ fn unequal_units_match_monolithic_preprocessing_and_evaluation() {
     )
     .unwrap();
     assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks().to_vec());
+    // Both sides of every unit boundary, including the zero-filled gap.
+    let targets: std::collections::BTreeSet<usize> = shard
+        .units
+        .iter()
+        .flat_map(|unit| {
+            let start = unit.local_row_start as usize;
+            let end = start + unit.allocated_rows as usize;
+            [start.saturating_sub(1), start, end - 1, end]
+        })
+        .filter(|&row| row < monolithic_rows)
+        .collect();
     for target in targets {
         let mut query = vec![0; monolithic_rows];
         query[target] = modulus() - 1;
         assert_eq!(
             evaluation.evaluate(&query).unwrap(),
-            monolithic.runtime().evaluate(rlwe(), &query).unwrap()
+            monolithic.runtime().evaluate(rlwe(), &query).unwrap(),
+            "query row {target}"
         );
     }
 }

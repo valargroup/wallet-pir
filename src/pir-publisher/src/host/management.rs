@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, time::Duration};
 
 const MAX_PROBE_BYTES: usize = 65536;
+/// How long one product readiness probe may take, body included.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 struct Management {
@@ -65,10 +67,14 @@ impl Management {
 }
 
 pub(super) fn router(status: PublisherStatus) -> Result<Router> {
+    router_with_probe_timeout(status, PROBE_TIMEOUT)
+}
+
+fn router_with_probe_timeout(status: PublisherStatus, probe_timeout: Duration) -> Result<Router> {
     let state = Management {
         status,
         client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
+            .timeout(probe_timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()?,
     };

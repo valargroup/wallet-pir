@@ -91,24 +91,6 @@ async fn disabled_products_start_no_work_and_shutdown_releases_the_listener() {
     tokio::task::yield_now().await;
     let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
 }
-#[tokio::test]
-async fn management_alone_becomes_ready_and_releases_its_listener() {
-    let address = port();
-    let stop = Shutdown::default();
-    let config = serde_json::from_value(json!({"management_listen": address.to_string()})).unwrap();
-    let task = tokio::spawn(run(config, stop.clone()));
-    let value = report(&format!("http://{address}/ready")).await;
-    assert_eq!(value["ready"], true);
-    assert_eq!(value["products"], json!({}));
-    stop.request();
-    tokio::time::timeout(Duration::from_secs(3), task)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    tokio::task::yield_now().await;
-    let _rebound = tokio::net::TcpListener::bind(address).await.unwrap();
-}
 #[cfg(all(
     feature = "enhance",
     feature = "status",

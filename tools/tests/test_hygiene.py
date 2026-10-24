@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 import hashlib
 import io
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -13,15 +14,7 @@ sys.path.insert(0, str(ROOT / 'tools/ci'))
 import hygiene
 
 
-class HygieneTest(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
-        self.git('init', '-q')
-        self.git('config', 'user.name', 'Fixture')
-        self.git('config', 'user.email', 'fixture@example.invalid')
-        self.write('tools/ci/hygiene.toml', '''[warnings]
+POLICY = '''[warnings]
 added_lines = 1500
 files = 30
 large_bytes = 1048576
@@ -31,10 +24,36 @@ reason = "Consumed by the regression tests."
 [[allow_data]]
 pattern = "evidence/transparent/correctness/*.json"
 reason = "Essential correctness certificate."
-''')
-        self.write('README.md', '# Fixture\n')
-        self.commit()
-        self.base = self.git('rev-parse', 'HEAD').strip()
+'''
+
+
+class HygieneTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Build the committed base repository once; each case works on a copy.
+        template = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(template.cleanup)
+        cls.template = Path(template.name) / 'repo'
+        cls.template.mkdir()
+        for args in (('init', '-q'), ('config', 'user.name', 'Fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid')):
+            subprocess.check_output(['git', *args], cwd=cls.template, stderr=subprocess.PIPE)
+        (cls.template / 'tools/ci').mkdir(parents=True)
+        (cls.template / 'tools/ci/hygiene.toml').write_text(POLICY)
+        (cls.template / 'README.md').write_text('# Fixture\n')
+        subprocess.check_output(['git', 'add', '--', 'tools/ci/hygiene.toml', 'README.md'],
+                                cwd=cls.template, stderr=subprocess.PIPE)
+        subprocess.check_output(['git', 'commit', '-qm', 'Fixture snapshot'], cwd=cls.template,
+                                stderr=subprocess.PIPE)
+        cls.template_base = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=cls.template,
+                                                    text=True).strip()
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / 'repo'
+        shutil.copytree(self.template, self.root, symlinks=True)
+        self.base = self.template_base
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, text=True, stderr=subprocess.PIPE)
@@ -112,17 +131,17 @@ reason = "Essential correctness certificate."
         self.git('rm', 'old.log')
         self.assertEqual(self.inspect()[0:2], ([], []))
 
-    def test_large_source_change_warns_without_failing(self):
+    def test_large_source_change_and_large_allowed_data_warn_without_failing(self):
         self.write('feature.rs', 'fn example() {}\n' * 1600)
         errors, warnings, _ = self.inspect()
         self.assertEqual(errors, [])
         self.assertIn('1,600 added text lines', warnings[0])
         self.assertTrue(hygiene.size_warnings(12573, 100, [], hygiene.read_policy(self.root)['warnings']))
-
-    def test_large_allowed_data_warns_without_failing(self):
+        (self.root / 'feature.rs').unlink()
         self.write('product/tests/fixtures/large.json', ' ' * 1048577)
-        self.assertEqual(self.inspect()[0], [])
-        self.assertTrue(self.inspect()[1])
+        errors, warnings, _ = self.inspect()
+        self.assertEqual(errors, [])
+        self.assertTrue(warnings)
 
     def test_unusual_names_are_not_shell_commands(self):
         self.write('product/tests/fixtures/space\n$(false).json', '{}')
@@ -145,7 +164,8 @@ reason = "Essential correctness certificate."
             with self.assertRaises(ValueError):
                 hygiene.read_policy(self.root)
 
-    def test_pre_push_checks_feature_branches_and_skips_tags_and_deletions(self):
+    def test_pre_push_checks_feature_and_new_branches_and_skips_tags_and_deletions(self):
+        self.git('update-ref', 'refs/remotes/origin/main', self.base)
         self.write('dump.json', '{}')
         self.commit()
         head = self.git('rev-parse', 'HEAD').strip()
@@ -153,13 +173,7 @@ reason = "Essential correctness certificate."
             self.assertEqual(hygiene.pre_push(self.root, f'refs/heads/x {head} refs/heads/x {self.base}\n'), 1)
             self.assertEqual(hygiene.pre_push(self.root, f'refs/tags/x {head} refs/tags/x {self.base}\n'), 0)
             self.assertEqual(hygiene.pre_push(self.root, f'(delete) {"0" * 40} refs/heads/x {head}\n'), 0)
-
-    def test_new_branch_uses_its_main_ancestor(self):
-        self.git('update-ref', 'refs/remotes/origin/main', self.base)
-        self.write('dump.json', '{}')
-        self.commit()
-        head = self.git('rev-parse', 'HEAD').strip()
-        with redirect_stdout(io.StringIO()):
+            # A new branch is checked against its main ancestor.
             self.assertEqual(hygiene.pre_push(self.root, f'refs/heads/x {head} refs/heads/x {"0" * 40}\n'), 1)
 
     def test_symlink_outside_checkout_is_rejected(self):

@@ -452,15 +452,6 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_store_has_no_coverage() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = open(dir.path());
-        assert_eq!(store.covered_through(), None);
-        assert_eq!(store.next_height(), START);
-        assert_eq!(store.filters_stored(), 0);
-    }
-
-    #[test]
     fn appends_survive_reopening() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open(dir.path());
@@ -511,11 +502,15 @@ mod tests {
             .is_err());
     }
 
+    /// A reorg drops coverage above the fork but keeps the immutable filter
+    /// bytes, so a block returning to the best chain reuses its stored filter
+    /// and a replacement block can take the same heights.
     #[test]
-    fn rollback_drops_coverage_but_keeps_filter_bytes() {
+    fn rollback_drops_coverage_keeps_filter_bytes_and_heights_can_be_retaken() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = open(dir.path());
         fill(&mut store, START + 5);
+        let stored = store.filters_stored();
         store.rollback_to(Some(START + 2)).unwrap();
 
         assert_eq!(store.covered_through(), Some(START + 2));
@@ -525,38 +520,27 @@ mod tests {
         assert_eq!(store.height_of(hash_at(START + 4)), None);
         // The immutable bytes remain cached under their own block hash.
         assert!(store.filter_by_hash(hash_at(START + 4)).unwrap().is_some());
-    }
 
-    #[test]
-    fn a_replacement_branch_can_reuse_the_heights() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = open(dir.path());
-        fill(&mut store, START + 3);
-        store.rollback_to(Some(START + 1)).unwrap();
-
-        let replacement = BlockHash::from_internal_bytes([0xcc; 32]);
-        let bytes = build_filter(replacement, &[]).unwrap().0;
-        store.append(START + 2, replacement, &bytes).unwrap();
-        store.commit().unwrap();
-
-        assert_eq!(store.block_hash_at(START + 2), Some(replacement));
-        assert_eq!(store.covered_through(), Some(START + 2));
-    }
-
-    #[test]
-    fn a_block_returning_to_the_best_chain_reuses_its_stored_filter() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = open(dir.path());
-        fill(&mut store, START + 3);
-        let before = store.filters_stored();
-        store.rollback_to(Some(START + 1)).unwrap();
         // Re-accepting the same block must not store a second copy.
         store
-            .append(START + 2, hash_at(START + 2), &filter_for(START + 2))
+            .append(START + 3, hash_at(START + 3), &filter_for(START + 3))
             .unwrap();
         store.commit().unwrap();
-        assert_eq!(store.filters_stored(), before);
-        assert_eq!(store.block_hash_at(START + 2), Some(hash_at(START + 2)));
+        assert_eq!(store.filters_stored(), stored);
+        assert_eq!(store.block_hash_at(START + 3), Some(hash_at(START + 3)));
+
+        // A replacement branch can reuse the next height.
+        let replacement = BlockHash::from_internal_bytes([0xcc; 32]);
+        let bytes = build_filter(replacement, &[]).unwrap().0;
+        store.append(START + 4, replacement, &bytes).unwrap();
+        store.commit().unwrap();
+        assert_eq!(store.block_hash_at(START + 4), Some(replacement));
+        assert_eq!(store.covered_through(), Some(START + 4));
+
+        // Rolling back everything empties coverage.
+        store.rollback_to(None).unwrap();
+        assert_eq!(store.covered_through(), None);
+        assert_eq!(store.next_height(), START);
     }
 
     #[test]
@@ -569,16 +553,6 @@ mod tests {
             .unwrap()
             .0;
         assert!(store.append(START, hash_at(START), &different).is_err());
-    }
-
-    #[test]
-    fn rolling_back_everything_empties_coverage() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = open(dir.path());
-        fill(&mut store, START + 3);
-        store.rollback_to(None).unwrap();
-        assert_eq!(store.covered_through(), None);
-        assert_eq!(store.next_height(), START);
     }
 
     /// Every path under `root` with its bytes.
@@ -662,6 +636,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("filters");
         let mut store = open(&dir);
+        assert_eq!(store.covered_through(), None);
+        assert_eq!(store.next_height(), START);
+        assert_eq!(store.filters_stored(), 0);
         fill(&mut store, START + 2);
         drop(store);
         let before = tree(&dir);

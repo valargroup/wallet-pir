@@ -10,6 +10,8 @@ struct Tls {
     /// Discovery response selector: ok, missing, redirect, oversize, slow-body or
     /// `body:<raw body>`.
     discovery: Arc<Mutex<String>>,
+    /// Signalled once a slow-body response has sent its partial body.
+    stalled: Arc<tokio::sync::Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Tls {
@@ -28,7 +30,9 @@ impl Tls {
                 "req",
                 "-x509",
                 "-newkey",
-                "rsa:2048",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:prime256v1",
                 "-nodes",
                 "-days",
                 "1",
@@ -71,6 +75,8 @@ impl Tls {
         let seen = requests.clone();
         let discovery = Arc::new(Mutex::new("ok".to_string()));
         let mode = discovery.clone();
+        let stalled = Arc::new(tokio::sync::Notify::new());
+        let stall = stalled.clone();
         let task = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let Ok(mut socket) = acceptor.accept(socket).await else {
@@ -111,7 +117,8 @@ impl Tls {
                     );
                     socket.write_all(response.as_bytes()).await.unwrap();
                     socket.flush().await.unwrap();
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    stall.notify_one();
+                    std::future::pending::<()>().await;
                     continue;
                 }
                 let (status, headers, body) = if discovered {
@@ -148,6 +155,7 @@ impl Tls {
             cert: reqwest::Certificate::from_pem(&cert_bytes).unwrap(),
             requests,
             discovery,
+            stalled,
             task,
         }
     }
@@ -408,16 +416,22 @@ async fn discovery_has_a_whole_request_deadline() {
     let tls = Tls::new().await;
     *tls.discovery.lock().unwrap() = "slow-body".into();
     let source = tls.source(100);
-    // Real DNS/TCP/TLS setup must run with real time. A paused Tokio clock can
-    // expire the connection timeout before the server receives the request.
-    let started = std::time::Instant::now();
-    let error = tokio::time::timeout(
+    // Connection setup runs on the real clock: a paused clock could expire the
+    // connect timeout before the server sees the request. Once the server has
+    // sent a partial body and stalled, pause the clock so the deadline elapses
+    // without waiting for it in real time.
+    let started = tokio::time::Instant::now();
+    let discovery = tokio::time::timeout(
         DISCOVERY_DEADLINE + Duration::from_secs(5),
         source.discover(),
-    )
-    .await
-    .expect("discovery did not stop while the response body was stalled")
-    .unwrap_err();
+    );
+    let (result, ()) = tokio::join!(discovery, async {
+        tls.stalled.notified().await;
+        tokio::time::pause();
+    });
+    let error = result
+        .expect("discovery did not stop while the response body was stalled")
+        .unwrap_err();
     assert!(started.elapsed() >= DISCOVERY_DEADLINE);
     assert_eq!(tls.requests.lock().unwrap().len(), 1);
     assert!(error.to_string().contains("within 10s"), "{error}");

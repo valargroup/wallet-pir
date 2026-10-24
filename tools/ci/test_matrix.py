@@ -24,7 +24,7 @@ REGISTRY = ROOT / 'tools/ci/test-matrix.json'
 # oracles, its protocol contract tests, and the publisher's independent hint,
 # damaged-artifact and encrypted lifecycle checks.
 REFERENCE_LIB_FILTERS = ['ipir::tests', 'client::', 'protocol::', 'record::', 'record_types::',
-                         'runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation',
+                         'runtime::tests::partial_preparation_failure_preserves_published_and_retries',
                          'runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates']
 REFERENCE_TESTS = {('pir-e2e-tests', 'ci_hint'), ('pir-e2e-tests', 'encrypted_lifecycle'),
                    ('pir-e2e-tests', 'publication_renewal')}

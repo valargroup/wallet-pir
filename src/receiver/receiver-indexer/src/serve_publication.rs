@@ -1072,8 +1072,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut manifest = common::manifest(zakura_pir_publisher::receiver::session::MIN_ROWS);
         manifest.genesis = Network::Mainnet.genesis_hash();
+        // The probe tests' coverage fixture, so the process cache usually holds its
+        // prepared tables.
         manifest.start_height = crate::blocks::ironwood_activation();
-        manifest.end_height = manifest.start_height;
+        manifest.end_height = manifest.start_height + 2;
         let old = zakura_pir_publisher::receiver::snapshot::Snapshot::build(manifest.clone(), &[])
             .unwrap();
         let table = crate::witness::table(&old, &[]).unwrap();

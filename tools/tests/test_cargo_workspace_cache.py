@@ -213,7 +213,9 @@ class WorkspaceCacheOracle(WorkspaceCacheFixture):
                             self.assertEqual(os.readlink(path), link)
         self.root = original_root
 
-    def test_managed_external_target_still_prepares_restores_and_builds(self):
+    # Not discovered on its own: the output isolation test below runs it once in
+    # a child interpreter whose outer job files must stay untouched.
+    def managed_external_target_still_prepares_restores_and_builds(self):
         self.target = self.area / 'managed-external' / 'fast'
         self.env['CARGO_TARGET_DIR'] = str(self.target)
         env = dict(os.environ, RUNNER_TEMP=str(self.area / 'runner-external'))
@@ -224,49 +226,40 @@ class WorkspaceCacheOracle(WorkspaceCacheFixture):
             cargo_cache.restored(argparse.Namespace(lane='fast', cache_hit='false'), env)
         self.assertEqual(self.build()[1], 'rust-A|include-A|build-A')
 
-    def test_fresh_checkout_reuses_real_archived_outputs(self):
+    def test_fresh_checkout_reuses_real_archived_outputs_only_after_restore(self):
         self.baseline()
         # GNU tar's POSIX format is also used by actions/cache. Exercise its
         # timestamp fidelity, including Cargo fingerprint nanoseconds.
-        subprocess.run(['tar', '--posix', '-cf', str(self.area / 'cache.tar'), '-C', str(self.area), 'target'], check=True)
+        archive = self.area / 'cache.tar'
+        subprocess.run(['tar', '--posix', '-cf', str(archive), '-C', str(self.area), 'target'], check=True)
         self.target.rename(self.area / 'original-target')
-        subprocess.run(['tar', '-xf', str(self.area / 'cache.tar'), '-C', str(self.area)], check=True)
+        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
         self.checkout()
+        # Control: without the timestamp restore, Cargo recompiles the
+        # identical fresh checkout from the same archived outputs.
+        artifacts, behavior = self.build()
+        self.assertTrue(any(not entry['fresh'] for entry in artifacts))
+        self.assertEqual(behavior, 'rust-A|include-A|build-A')
+        self.target.rename(self.area / 'control-target')
+        subprocess.run(['tar', '-xf', str(archive), '-C', str(self.area)], check=True)
         self.restore()
         artifacts, behavior = self.build()
         self.assertTrue(artifacts and all(entry['fresh'] for entry in artifacts), artifacts)
         self.assertEqual(behavior, 'rust-A|include-A|build-A')
 
-    def test_without_timestamp_restore_identical_checkout_recompiles(self):
-        self.baseline()
-        self.checkout()
-        artifacts, behavior = self.build()
-        self.assertTrue(any(not entry['fresh'] for entry in artifacts))
-        self.assertEqual(behavior, 'rust-A|include-A|build-A')
-
-    def test_legacy_metadata_without_modes_is_a_safe_miss(self):
-        self.baseline()
-        metadata = self.target / workspace_cache.METADATA
-        envelope = json.loads(metadata.read_text())
-        envelope['record']['schema'] = 1
-        for entry in envelope['record']['files'].values():
-            entry.pop()
-        envelope['checksum'] = workspace_cache.digest(workspace_cache.encoded(envelope['record']))
-        metadata.write_text(json.dumps(envelope))
-        self.checkout()
-        for name in ('src/main.rs', 'src/included.txt', 'build.rs', 'build.txt'):
-            os.utime(self.root / name, ns=(1, 1))
-        self.restore()
-        artifacts, behavior = self.build()
-        self.assertTrue(any(not entry['fresh'] for entry in artifacts))
-        self.assertEqual(behavior, 'rust-A|include-A|build-A')
-
-    def test_missing_corrupt_wrong_identity_and_stale_metadata_are_safe_misses(self):
+    def test_missing_corrupt_legacy_wrong_identity_and_stale_metadata_are_safe_misses(self):
         self.baseline()
         metadata = self.target / workspace_cache.METADATA
         original = metadata.read_bytes()
+        # A record from before file modes were stored, with a valid checksum.
+        legacy = json.loads(original)
+        legacy['record']['schema'] = 1
+        for entry in legacy['record']['files'].values():
+            entry.pop()
+        legacy['checksum'] = workspace_cache.digest(workspace_cache.encoded(legacy['record']))
         for value, identity in [(b'', 'compatible'), (b'{broken', 'compatible'),
                                 (original.replace(b'checksum', b'invalid!'), 'compatible'),
+                                (json.dumps(legacy).encode(), 'compatible'),
                                 (original, 'other-compiler')]:
             with self.subTest(identity=identity, data=value[:15]):
                 if value:
@@ -294,7 +287,7 @@ class WorkspaceCacheOracle(WorkspaceCacheFixture):
 
 
 class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
-    def test_fixture_cannot_change_outer_github_environment_or_timing_files(self):
+    def test_managed_external_target_builds_without_changing_outer_github_or_timing_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             names = ['GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY',
@@ -309,9 +302,10 @@ class WorkspaceCacheOutputIsolationTests(unittest.TestCase):
             # times all of its real Cargo work, including setup and teardown.
             result = subprocess.run(
                 [sys.executable, '-S', '-m', 'unittest',
-                 'test_cargo_workspace_cache.WorkspaceCacheOracle.test_managed_external_target_still_prepares_restores_and_builds'],
+                 'test_cargo_workspace_cache.WorkspaceCacheOracle.managed_external_target_still_prepares_restores_and_builds'],
                 cwd=ROOT / 'tools/tests', env=env, capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Ran 1 test', result.stderr)
             for name in names:
                 self.assertEqual((root / name).read_text(), 'outer job\n', name)
 

@@ -1663,18 +1663,14 @@ mod tests {
     }
 
     #[test]
-    fn renders_a_complete_document() {
+    fn renders_a_complete_document_with_a_row_per_allowlisted_endpoint() {
         let html = render(&sample());
         assert!(html.starts_with("<!doctype html>"));
         assert!(html.ends_with("</html>"));
         assert!(html.contains("id=\"app\""));
         assert!(html.contains("<title>Enhance PIR APM</title>"));
         assert!(html.contains("<h1>Enhance PIR APM</h1>"));
-    }
-
-    #[test]
-    fn every_allowlisted_endpoint_gets_a_row_even_without_data() {
-        let html = render(&sample());
+        // Every allowlisted endpoint gets a row, even without data.
         for endpoint in &Schema::enhance_default().endpoints {
             assert!(
                 html.contains(&format!("<th>{endpoint}</th>")),
@@ -1695,17 +1691,13 @@ mod tests {
     }
 
     #[test]
-    fn latency_is_graded_against_the_alert_budget() {
-        let budget = latency_budget(&Schema::enhance_default(), "metadata");
+    fn latency_is_graded_against_the_budget_for_its_endpoint_kind() {
+        let schema = Schema::enhance_default();
+        let budget = latency_budget(&schema, "metadata");
         assert!(latency_cell(Some(0.01), budget).contains("class=\"\""));
         assert!(latency_cell(Some(0.7), budget).contains("warn"));
         assert!(latency_cell(Some(1.5), budget).contains("bad"));
         assert!(latency_cell(None, budget).contains("—"));
-    }
-
-    #[test]
-    fn latency_budgets_follow_endpoint_kind() {
-        let schema = Schema::enhance_default();
         // Discovered endpoints get the default budget; informational and
         // processing endpoints get none in the observed table.
         assert_eq!(latency_budget(&schema, "nope"), Some(1.0));
@@ -2046,7 +2038,7 @@ mod tests {
     }
 
     #[test]
-    fn gauge_names_become_readable_labels() {
+    fn gauge_names_become_readable_labels_and_keep_the_raw_name_as_a_tooltip() {
         let prefix = "enhance_snapshot_";
         assert_eq!(
             humanize_gauge("enhance_snapshot_anchor_height", prefix),
@@ -2070,10 +2062,7 @@ mod tests {
             humanize_gauge("enhance_snapshot_seconds", prefix),
             "Seconds"
         );
-    }
-
-    #[test]
-    fn the_raw_gauge_name_survives_as_a_tooltip() {
+        // On the page, the raw gauge name survives as a tooltip.
         let mut data = sample();
         data.snapshot_gauges
             .insert("enhance_snapshot_generation".into(), 42.0);

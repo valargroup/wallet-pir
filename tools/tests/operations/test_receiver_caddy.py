@@ -230,12 +230,6 @@ class ReceiverCaddy(StubDroplet):
         self.assertEqual((self.live.read_text(), self.reloads()), (LIVE, 0))
         self.assertEqual(sorted(p.name for p in self.caddy_dir.iterdir()), ['Caddyfile'])
 
-    def test_wrong_routing_is_restored(self):
-        run = self.apply(LIVE + '# stub: probe fails\n')
-        self.assertIn('lookup missed the pinned payment', run.stderr)
-        self.assert_restored(run)
-        self.assertEqual((self.reloads(), len(self.lines('probe'))), (2, 2))
-
     def test_an_exposed_metrics_route_is_restored(self):
         run = self.apply(LIVE + '# stub: expose /metrics\n')
         self.assertIn('https://receiver-pir.valargroup.dev/metrics answered 200, not 404', run.stderr)
@@ -252,13 +246,17 @@ class ReceiverCaddy(StubDroplet):
         self.assertIn(backup.name, run.stderr)
         self.assertEqual((backup.read_text(), self.live.read_text()), (original, original))
 
-    def test_each_replacement_is_durable_before_the_reload(self):
+    def test_wrong_routing_is_restored_and_each_replacement_is_durable_before_the_reload(self):
         hooks = self.dir / 'hooks'
         hooks.mkdir()
         (hooks / 'sitecustomize.py').write_text(textwrap.dedent(FS_HOOK))
         log = self.dir / 'fs.log'
         self.env.update(PYTHONPATH=str(hooks), STUB_FS_LOG=str(log))
-        self.assert_restored(self.apply(LIVE + '# stub: probe fails\n'))
+        run = self.apply(LIVE + '# stub: probe fails\n')
+        self.assertIn('lookup missed the pinned payment', run.stderr)
+        self.assert_restored(run)
+        # The candidate and the restored predecessor are each reloaded and probed once.
+        self.assertEqual((self.reloads(), len(self.lines('probe'))), (2, 2))
         events = [event for event in log.read_text().splitlines() if event and not event.startswith('systemctl show')]
         self.assertEqual(events, [
             # Apply: the candidate, then the backup link and the replacement in the directory.

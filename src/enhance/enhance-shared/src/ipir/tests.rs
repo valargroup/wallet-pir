@@ -12,8 +12,8 @@ fn shard_sum_wraps_without_u64_overflow() {
 fn unequal_shards_match_monolithic_hints_and_answers() {
     // One column block and three row blocks are sufficient to exercise
     // unequal shards, a nonzero setup offset, and zero-padded source rows.
-    // The deployed six-column Engine/composed-tail oracle runs separately
-    // with qualification-tests.
+    // The deployed six-column Engine/composed-tail oracle runs in
+    // runtime::tests::partial_preparation_failure_preserves_published_and_retries.
     let layout = DatabaseLayout {
         record_bytes: 4096,
         records_per_row: 1,

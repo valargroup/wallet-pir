@@ -1135,7 +1135,10 @@ mod tests {
         let mut previous: Option<(PathBuf, ShardSet, transparent_filter::ShardMap)> = None;
         // Each cycle's segment objects by digest, with their stamps.
         let mut history: Vec<std::collections::BTreeMap<String, Stored>> = Vec::new();
-        for cycle in 0..5u64 {
+        // Four cycles: reuse is checked across two generations, the second
+        // carrying evidence that was itself taken over rather than hashed.
+        let cycles = 4u64;
+        for cycle in 0..cycles {
             let output = base.join(format!("candidate-{cycle}"));
             let map = match &previous {
                 None => publish_with(&small(&output, None), &journal, zero, &seal).unwrap(),
@@ -1212,8 +1215,10 @@ mod tests {
             }
             history.push(objects);
             previous = Some((output, set, map));
-            // Let every object written this cycle settle before the next.
-            std::thread::sleep(std::time::Duration::from_millis(1100));
+            if cycle + 1 < cycles {
+                // Let every object written this cycle settle before the next.
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+            }
         }
         // A same-size change to a stable object, with its modification time
         // restored, is hashed again and refused.
