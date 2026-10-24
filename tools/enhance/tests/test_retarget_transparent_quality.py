@@ -69,7 +69,7 @@ class ApmTest(unittest.TestCase):
         self.status.write_text(json.dumps({'utc': utc, 'mode': 'running'}))
 
     def argv(self, *extra):
-        return ['apm', '--apm-config', str(self.apm), '--observers-config', str(self.hosts),
+        return ['apm', '--apm-config', str(self.apm),
                 '--roster', str(self.roster), '--load-status', str(self.status), *extra]
 
     def test_plan_changes_nothing(self):
@@ -81,8 +81,13 @@ class ApmTest(unittest.TestCase):
         self.assertEqual((self.apm.read_bytes(), self.hosts.read_bytes()), before)
         self.assertEqual(runs.calls, [])
 
-    def test_apply_moves_only_the_two_inputs_and_restarts_apm(self):
+    def test_apply_preserves_host_enrollment_when_the_serving_schema_changes(self):
         original = json.loads(self.apm.read_text())
+        enrollment = [{'id': 'recent-09', 'intent': 'enrolled', 'monitoring': {'host_id': 'recent-09'}}]
+        monitoring_roster = self.root / 'monitoring-roster.json'
+        monitoring_roster.write_text(json.dumps(enrollment))
+        observers = {'mode': 'shadow', 'roster': str(monitoring_roster), 'hosts': [], 'revision': 'unchanged'}
+        self.hosts.write_text(json.dumps(observers))
         runs = Runs()
         backups = self.root / 'backup'
         code, _ = run_main(self.argv('--apply', '--backup-dir', str(backups)), runs)
@@ -90,7 +95,9 @@ class ApmTest(unittest.TestCase):
         history = {**original['services'][0], 'roster': str(self.roster), 'synthetic_status': str(self.status)}
         self.assertEqual(json.loads(self.apm.read_text()), {**original, 'services': [history, self.txid]})
         self.assertEqual(self.apm.stat().st_mode & 0o777, 0o640)
-        self.assertEqual(json.loads(self.hosts.read_text())['roster'], str(self.roster))
+        self.assertEqual(json.loads(self.hosts.read_text()), observers,
+                         'serving-schema changes preserve the separate enrollment roster and revision')
+        self.assertEqual(json.loads(monitoring_roster.read_text()), enrollment)
         self.assertEqual(runs.calls, [['systemctl', 'restart', 'pir-apm']])
         restored = [json.loads(p.read_text()) for p in backups.iterdir()]
         self.assertIn(original, restored)
@@ -101,7 +108,7 @@ class ApmTest(unittest.TestCase):
 
     def test_without_load_status_only_the_roster_moves(self):
         original = json.loads(self.apm.read_text())
-        argv = ['apm', '--apm-config', str(self.apm), '--observers-config', str(self.hosts),
+        argv = ['apm', '--apm-config', str(self.apm),
                 '--roster', str(self.roster), '--apply', '--backup-dir', str(self.root / 'backup')]
         code, _ = run_main(argv, Runs())
         self.assertEqual(code, 0)
