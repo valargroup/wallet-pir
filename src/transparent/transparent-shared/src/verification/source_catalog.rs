@@ -26,10 +26,21 @@ pub(crate) fn revision_directory(publication: &Path, entry: &Path) -> io::Result
         .ok_or_else(refused)?;
     let catalog = publication.parent().ok_or_else(refused)?.join(".sources");
     let target = catalog.join(name);
+    let catalog_metadata = |path: &Path| {
+        fs::symlink_metadata(path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "invalid revision catalog link: {}: {error}",
+                    entry.display()
+                ),
+            )
+        })
+    };
     if !metadata.file_type().is_symlink()
         || fs::read_link(entry)? != Path::new("../.sources").join(name)
-        || !fs::symlink_metadata(&catalog)?.is_dir()
-        || !fs::symlink_metadata(&target)?.is_dir()
+        || !catalog_metadata(&catalog)?.is_dir()
+        || !catalog_metadata(&target)?.is_dir()
     {
         return Err(refused());
     }
