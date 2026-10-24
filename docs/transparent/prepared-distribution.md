@@ -139,7 +139,8 @@ Do not delete/restore the revision file independently of its publication root.
 ## HTTPS consumer
 
 History and transaction-detail display use the shared `pir-sync-manager` Rust
-library for HTTPS transport and sequential polling. Their Transparent adapters
+library for HTTPS transport and the query server's `synchronization` module for
+sequential polling. Their Transparent adapters
 retain publication validation, replay and revocation records, recovery and
 activation. This extraction does not change their wire formats, stored records
 or serving authority, and does not migrate other PIR products.
@@ -457,10 +458,10 @@ archive availability. Promoted local revisions remain available under the
 owner's existing retained-handle policy, with unchanged revocation fences.
 
 The fixed original released-client process is in
-`src/transparent/transparent-query-server/tests/frozen-client`. Its isolated lock and source verifier
+`src/pir-query-server/tests/transparent/frozen-client`. Its isolated lock and source verifier
 exclude the server's newer library pin; build and execute it through the required
 repository wrapper. From the repository root, run
-`python3 src/transparent/transparent-query-server/tests/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
+`python3 src/pir-query-server/tests/transparent/frozen-client/run-tests.py --output .local-pir/provider-qualification-<new-id>`
 inside that wrapper. It records resolved metadata, the isolated lock digest,
 crate/source-byte checks and build preparation times separately, then executes
 each HTTP case under the existing 30-second guard. The runner enforces that fixed

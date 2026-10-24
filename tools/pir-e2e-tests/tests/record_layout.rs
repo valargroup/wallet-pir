@@ -3,8 +3,8 @@
 //! pin that a record survives the journal and the padded shard read unchanged.
 
 use enhance_publisher::journal::RecordJournal;
-use enhance_query_server::types::{DatabaseId, ENHANCE_LAYOUT};
-use enhance_query_server::{
+use enhance_shared::types::{DatabaseId, ENHANCE_LAYOUT};
+use enhance_shared::{
     EnhanceRecord, EnhanceRecordParts, RECORDS_PER_ROW, RECORD_BYTES, ROW_BYTES, SHARD_ROWS,
 };
 
@@ -15,7 +15,7 @@ fn sample(seed: u8) -> EnhanceRecord {
         out_ciphertext: [seed.wrapping_add(4); 80],
         has_transparent_inputs: true,
         has_transparent_outputs: false,
-        metadata: enhance_query_server::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
+        metadata: enhance_shared::EnhanceTransactionMetadata::new(0, Some(0)).unwrap(),
     })
 }
 

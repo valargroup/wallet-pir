@@ -563,6 +563,11 @@ jobs:
         run: python3 -B tools/ci/python_tests.py tools/tests/operations/deploy --jobs 2 --split-module test_ops_package
       - name: Build the unified native publisher
         run: cargo build --locked --release -p pir-publisher --features enhance,status,transparent-history,transparent-detail,native-reinspiring
+      - name: Check each query product builds alone
+        run: |
+          for product in enhance status transparent-history transparent-detail; do
+            cargo check --locked -p pir-query-server --features "$product"
+          done
       - name: Build the matching native query server
         run: cargo build --locked --release -p pir-query-server --features enhance,status,transparent-history,transparent-detail,native-reinspiring
       - name: Check both compiled product configurations
@@ -584,6 +589,7 @@ jobs:
           cargo test --locked --profile release-fast -p pir-publisher --features enhance,native-reinspiring --test commands
           cargo test --locked --profile release-fast -p status-publisher --features cli,native-reinspiring --lib commands::tests
           cargo test --locked --profile release-fast -p status-publisher --features fixtures,native-reinspiring --lib shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
+          cargo test --locked --profile release-fast -p transparent-publisher --features fixtures --lib --no-run
           cargo test --locked --profile release-fast -p pir-publisher --features enhance,status,transparent-history,transparent-detail,native-reinspiring --test lifecycle
       - name: Package the exact source candidate
         run: |

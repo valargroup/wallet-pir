@@ -1,6 +1,6 @@
 //! Independent publication source shared by TLS regression targets.
 use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
-use enhance_query_server::{
+use enhance_shared::{
     protocol::{self, Geometry, Lifecycle, Manifest},
     publication::Inventory,
 };
@@ -95,8 +95,8 @@ impl Published {
             _publisher: publisher,
         }
     }
-    pub(crate) fn source(&self) -> enhance_query_server::synchronization::Config {
-        enhance_query_server::synchronization::Config {
+    pub(crate) fn source(&self) -> pir_query_server::enhance::synchronization::Config {
+        pir_query_server::enhance::synchronization::Config {
             publisher_origin: self.transport.origin.clone(),
             trusted_ca: Some(self.scratch.path().join("ca.pem")),
             download_budget_bytes: 2 * 1024 * 1024 * 1024,

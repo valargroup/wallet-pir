@@ -3,14 +3,14 @@
 use enhance_publisher::{
     chain_source::ZakuraClient, journal::RecordJournal, publisher::EnhancePublisher,
 };
-use enhance_query_server::{
-    ingress_sync,
+use enhance_shared::{
     protocol::Manifest,
     publication::{AuthorityResponse, PREFIX},
-    router_sync,
-    synchronization::Config as SourceConfig,
     types::{DatabaseId, ENHANCE_LAYOUT},
-    worker_sync, EnhanceRecord, EnhanceRecordParts,
+    EnhanceRecord, EnhanceRecordParts,
+};
+use pir_query_server::enhance::{
+    ingress_sync, router_sync, synchronization::Config as SourceConfig, worker_sync,
 };
 use std::{
     path::Path,
@@ -76,11 +76,8 @@ pub fn record(position: u64) -> Vec<u8> {
         out_ciphertext: [position.wrapping_add(2) as u8; 80],
         has_transparent_inputs: true,
         has_transparent_outputs: false,
-        metadata: enhance_query_server::EnhanceTransactionMetadata::new(
-            position as u32,
-            Some(position),
-        )
-        .unwrap(),
+        metadata: enhance_shared::EnhanceTransactionMetadata::new(position as u32, Some(position))
+            .unwrap(),
     })
     .as_bytes()
     .to_vec()
@@ -168,50 +165,20 @@ pub async fn tls_with_discovery(root: &Path, upstream: &str, discovery: Option<&
     }
 }
 
-pub struct System {
+/// A published fixture generation behind real HTTPS, with no consumers:
+/// serving roles are opened by the caller, in this process or another.
+pub struct Publication {
     pub root: tempfile::TempDir,
     pub publisher: EnhancePublisher,
     pub journal: RecordJournal,
     pub manifest: Manifest,
-    pub origin: String,
     pub source: SourceConfig,
-    pub workers: Vec<worker_sync::Synchronizer>,
-    pub routers: Vec<router_sync::Synchronizer>,
-    pub ingress: ingress_sync::Synchronizer,
     canonical: Arc<Mutex<std::collections::BTreeMap<u64, String>>>,
-    transport: Tls,
-    _listeners: Vec<Listening>,
+    pub transport: Tls,
+    listeners: Vec<Listening>,
 }
-impl System {
-    pub async fn start(records: Vec<Vec<u8>>) -> Self {
-        Self::with_backend(records, Default::default(), 1, 1).await
-    }
-    pub async fn with_backend(
-        records: Vec<Vec<u8>>,
-        backend: enhance_query_server::matvec::MatvecConfig,
-        maximum_domains: u64,
-        replicas: usize,
-    ) -> Self {
-        Self::at_anchor(
-            records,
-            backend,
-            maximum_domains,
-            replicas,
-            enhance_query_server::ACTIVATION_HEIGHT,
-            "01".repeat(32),
-        )
-        .await
-    }
-    pub async fn at_anchor(
-        records: Vec<Vec<u8>>,
-        backend: enhance_query_server::matvec::MatvecConfig,
-        maximum_domains: u64,
-        replicas: usize,
-        height: u64,
-        hash: String,
-    ) -> Self {
-        assert!((1..=enhance_query_server::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
-        assert!((1..=2).contains(&replicas));
+impl Publication {
+    pub async fn start(records: Vec<Vec<u8>>, height: u64, hash: String) -> Self {
         let root = tempfile::tempdir().unwrap();
         let canonical = Arc::new(Mutex::new(
             [(height, hash.clone())]
@@ -275,7 +242,152 @@ impl System {
             .await
             .unwrap();
         let manifest = response.current.manifest.unwrap();
-        let mut listeners = vec![node, publisher_http];
+        Self {
+            root,
+            publisher,
+            journal,
+            manifest,
+            source,
+            canonical,
+            transport,
+            listeners: vec![node, publisher_http],
+        }
+    }
+}
+
+pub struct System {
+    pub root: tempfile::TempDir,
+    pub publisher: EnhancePublisher,
+    pub journal: RecordJournal,
+    pub manifest: Manifest,
+    pub origin: String,
+    pub source: SourceConfig,
+    pub workers: Vec<worker_sync::Synchronizer>,
+    pub routers: Vec<router_sync::Synchronizer>,
+    pub ingress: ingress_sync::Synchronizer,
+    /// The one-process role, when the system serves through it.
+    pub combined: Option<pir_query_server::enhance::combined::Combined>,
+    canonical: Arc<Mutex<std::collections::BTreeMap<u64, String>>>,
+    transport: Tls,
+    _listeners: Vec<Listening>,
+}
+impl System {
+    pub async fn start(records: Vec<Vec<u8>>) -> Self {
+        Self::with_backend(records, Default::default(), 1, 1).await
+    }
+    pub async fn with_backend(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+        maximum_domains: u64,
+        replicas: usize,
+    ) -> Self {
+        Self::at_anchor(
+            records,
+            backend,
+            maximum_domains,
+            replicas,
+            enhance_shared::ACTIVATION_HEIGHT,
+            "01".repeat(32),
+        )
+        .await
+    }
+    pub async fn at_anchor(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+        maximum_domains: u64,
+        replicas: usize,
+        height: u64,
+        hash: String,
+    ) -> Self {
+        Self::build(
+            records,
+            backend,
+            maximum_domains,
+            replicas,
+            height,
+            hash,
+            false,
+        )
+        .await
+    }
+    /// The same publisher, served by one combined Enhance role whose ingress,
+    /// packing router and worker call each other directly.
+    pub async fn combined(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+    ) -> Self {
+        Self::build(
+            records,
+            backend,
+            1,
+            1,
+            enhance_shared::ACTIVATION_HEIGHT,
+            "01".repeat(32),
+            true,
+        )
+        .await
+    }
+    async fn build(
+        records: Vec<Vec<u8>>,
+        backend: enhance_shared::matvec::MatvecConfig,
+        maximum_domains: u64,
+        replicas: usize,
+        height: u64,
+        hash: String,
+        combined: bool,
+    ) -> Self {
+        assert!((1..=enhance_shared::protocol::MAX_QUERY_SHARDS).contains(&maximum_domains));
+        assert!((1..=2).contains(&replicas));
+        let Publication {
+            root,
+            publisher,
+            journal,
+            manifest,
+            source,
+            canonical,
+            transport,
+            listeners: publication_listeners,
+        } = Publication::start(records, height, hash).await;
+        let mut listeners = publication_listeners;
+        if combined {
+            let role = pir_query_server::enhance::combined::Combined::open(
+                &root.path().join("combined"),
+                worker_sync::Config {
+                    source: source.clone(),
+                    shards: (0..maximum_domains).collect(),
+                },
+                pir_query_server::enhance::combined::Limits {
+                    sealed_shards: 6,
+                    requests: 16,
+                    uploads: 256,
+                    max_objects: 6,
+                    packing_requests: 4,
+                },
+                backend,
+            )
+            .unwrap();
+            let synchronizers = role.synchronizers().unwrap();
+            let public = serve(role.public_router()).await;
+            let origin = public.url.clone();
+            listeners.push(public);
+            let mut system = Self {
+                root,
+                publisher,
+                journal,
+                manifest,
+                origin,
+                source,
+                workers: vec![synchronizers.worker],
+                routers: vec![synchronizers.router],
+                ingress: synchronizers.ingress,
+                combined: Some(role),
+                canonical,
+                transport,
+                _listeners: listeners,
+            };
+            system.synchronize().await;
+            return system;
+        }
         let mut workers = Vec::new();
         let mut worker_origins: std::collections::BTreeMap<u64, Vec<String>> = Default::default();
         for first in (0..maximum_domains).step_by(5) {
@@ -361,6 +473,7 @@ impl System {
             workers,
             routers,
             ingress: ingress_sync,
+            combined: None,
             canonical,
             transport,
             _listeners: listeners,

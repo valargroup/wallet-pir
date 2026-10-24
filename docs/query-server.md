@@ -3,11 +3,18 @@
 `pir-query-server` is one process that serves any compiled subset of Enhance,
 Status, Transparent history, and transaction details. The host crate is
 `src/pir-query-server`. Its management server
-reserves listeners and owns process shutdown. Product libraries continue to own
-evaluation, admission, and readiness. Status HTTP routes, synchronization,
-and role validation live in `status-query-server::service` and its product
-configuration; the host delegates to that crate, as it does for Enhance and
-Transparent.
+reserves listeners and owns process shutdown. The host owns Status roles
+directly: role configuration, HTTP routes, admission, telemetry, the generation
+controller and publisher synchronization live in `pir_query_server::status`.
+`status-shared` supplies generation material and the wire protocol. The
+private router-worker messages live in `pir_query_server::status`, and the
+root owns the public route mounts of every product. Enhance roles,
+synchronization, HTTP surfaces and private evaluation messages live in
+`pir_query_server::enhance`, over `enhance-shared` material. Transparent roles, publication managers, activation, validation,
+archive forwarding and HTTP surfaces live in `pir_query_server::transparent`
+over `transparent-shared` material. A Transparent provider selects its own
+holdings (the whole recent tier within its cache budget); fleet planning, file
+lists and edge rendering belong to `shard-assign` in `transparent-tools`.
 
 ## Public routes
 
@@ -110,29 +117,71 @@ configuration, not a production inventory. Sections are `enhance`, `status`,
 `transparent_history`, and `transaction_details`. Each has `enabled` and
 `settings`. An omitted or disabled section starts nothing.
 
-Enhance settings name one role: `worker`, `query-ingress`, or `packing-router`.
+Wallets reach every enabled product on one top-level `public_listen`, behind
+the external HTTPS edge that terminates TLS for each existing origin. It is
+required when an enabled role answers wallets (Enhance `query-ingress` or
+`combined`, Status `router` or `combined`) and refused when none does. Each
+product serves only its own wallet namespaces there, at both the canonical and
+the deployed prefixes: `/enhance/v1` and `/v1/enhance`, `/status/v1` and
+`/v1/status`, and below `/transparent/v1` and `/v2` the history `/shards` and
+`/filters` operations and the transaction-detail `/txid` operations. Health,
+readiness, metrics, control, provider and evaluation routes never appear on it;
+they stay on each product's private listener. A product's namespaces answer 503
+until it can serve and after it stops, while other products continue. The edge
+keeps each origin's existing route allowlist; the shared listener does not
+widen what an origin exposes.
+
+Enhance settings name one role: `worker`, `query-ingress`, `packing-router`
+or `combined`.
 Every role takes a `synchronization` object naming its HTTPS
 `publisher_origin`, optional `trusted_ca`, `download_budget_bytes` and
 `cache_limit_bytes`: workers add their `shards`, query ingress its `routers`
 and packing routers their `workers` (and optional `preferred` workers) per
 domain. A worker also needs `listen`, an absolute `data_dir`, and optional
 `sealed_shards` (default 6) and `matvec` (`matvec_backend` `cpu` or `cuda`,
-and `cuda_device` only for CUDA). Query ingress needs `data_dir`, `listen`,
+and `cuda_device` only for CUDA). Query ingress needs `data_dir`,
 `control_listen`, and optional `requests` (default 16) and `uploads` (default
-256). A packing router needs `data_dir`, `listen`, `control_listen`, and
-optional `max_objects` (default 6) and `requests` (default 4). Status settings
-name `worker` or `router`. Both require `publisher` (an HTTPS origin),
-`network_hex`, an exclusively owned `state_dir`, and loopback listeners.
+256). A packing router needs `data_dir`, `listen` (where its ingress reaches it),
+`control_listen`, and
+optional `max_objects` (default 6) and `requests` (default 4). A `combined`
+Enhance role runs a query ingress, packing router and worker for the worker's
+`shards` in one process, calling each other directly instead of over private
+HTTP, so it names no routers or workers and needs no bearer token between
+them. Its `shards` must name every shard the publication covers: wallets
+learn all of them from `init` and query them at this one origin, so a host
+owning fewer refuses the publication by name in its log and `/internal/health`
+(`ingress.blocked`), and stops before it has served any generation rather than
+idling unready. Hosts that split shards run the distributed roles. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
+ingress's `requests` and `uploads`, the router's `max_objects` and
+`packing_requests` (the router's `requests`), an absolute `data_dir` holding
+`worker`, `router` and `ingress` state directories and the private
+`control_listen`; wallets reach it on `public_listen`. Wallets see a generation only after all three hold
+fresh authority for it, and its health is ready only while all three are.
+Status settings
+name `worker`, `router` or `combined`. Each requires `publisher` (an HTTPS
+origin), `network_hex`, an exclusively owned `state_dir`, and loopback listeners.
 `publisher_ca` optionally adds an installed PEM trust root. The router also
-requires its loopback `worker_origin`. Status evaluation is CPU-only and has no
-`cuda` setting. Those roles stay separate processes. The publisher prepares their
-material; neither query role computes hints or packing matrices. See
+requires its loopback `worker_origin`. Router and combined roles answer wallets
+on `public_listen`; their own `listen` keeps control, provider and telemetry
+routes, and a worker's `listen` keeps evaluation. A `combined` role loads the evaluation units and the packing
+material of the publisher's latest inventory and answers wallets by evaluating
+in process, so it names no `worker_origin` and has no private evaluation or
+handover routes. Status evaluation is CPU-only and has no `cuda` setting. The
+publisher prepares the material; no query role computes hints or packing
+matrices. See
 [Status distribution](status/status_distributed.md). History and
 transaction-detail settings are described under [Transparent](#transparent).
 
 Listeners need distinct fixed loopback or private addresses. State directories
 are absolute and must not overlap. `--check` validates the file and does not
 bind sockets or open stores.
+
+Deployment renders the optional `combined` roles of the `enhance` and `status`
+services (`enhance-pir-combined.service`, `status-combined.service`) from the
+inventory like the other role units, and checks each rendered file with
+`--check` before restarting. The Enhance role takes its wallet listener as
+`listen` and the Status role as `query_listen`; both become `public_listen`.
+Neither accepts a peer origin.
 
 ## Transparent
 
@@ -144,6 +193,9 @@ History keeps its downloaded state in `shard_dir` and may name an
 keep theirs in `state_dir` and serve only `role` `combined`. Numbers are
 integers and every object rejects unknown fields. A deployment renders one
 Transparent section per file, so history and detail stay separate processes.
+Their `listen` is the provider listener that fleet routers and private probes
+reach; when `public_listen` is also set, the same process additionally answers
+its wallet operations there.
 
 ```json
 {
@@ -222,6 +274,12 @@ origin and are not checked.
 ## Readiness
 
 Management `/health` stays up while a product is failing. `/ready` answers 503
-until every enabled product returns success from its existing probe: Enhance
-`GET /internal/health`, Status `GET /control/health`, and Transparent
-`GET /v1/ready`.
+until every enabled product is running and its own in-process check reports an
+authorized, usable serving view; the host calls that check directly rather
+than probing the product's private routes over loopback HTTP. The response
+lists each product's phase and readiness. A product that stops with an
+ordinary error withdraws its wallet namespaces and stays not ready while the
+other products continue; a confirmed publisher incompatibility, or a panicked
+product task, stops the whole host. The products' private health routes
+(Enhance `GET /internal/health`, Status `GET /control/health`, Transparent
+`GET /v1/ready`) are unchanged for deployment checks.

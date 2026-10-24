@@ -15,7 +15,7 @@ make doctor
 make prepare-dev  # explicit, one-time fetch of pinned dependencies
 make check-fast BASE=origin/main OFFLINE=1
 make check-package PACKAGE=pir-apm TEST=dashboard FEATURES= OFFLINE=1
-make check-package PACKAGE=transparent-query-server FEATURES=transparent-history TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
+make check-package PACKAGE=pir-query-server FEATURES=transparent-history TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
@@ -62,9 +62,9 @@ Fast Rust checks run every library unit test, and every binary that declares one
 in `release-fast`, plus classified bounded integration targets. The compile names
 a stable dev-dependency closure so a smaller affected set reuses the warm
 dependency graph; only affected packages run. Transparent publication tests
-stay in that closure. The query host still receives history and detail through its own
-dev-dependency. The publisher host binary does not, and the publisher library
-does not depend on that host: either edge links the same libraries again.
+stay in that closure. The query host still receives history and detail through
+the publisher library's dev-dependency. The publisher host binary does not:
+those features link the same library again.
 Publisher fixtures stay off this
 command. The publisher and query hosts stay on that command for every diff. The
 in-process Enhance hint graph stays on a separate command and does not join
@@ -217,10 +217,10 @@ foreground polling and duplicate broad local/CI checks.
 
 For Transparent PIR runtime or artifact changes, start with
 `make check-package PACKAGE=transparent-shared`. For HTTP handling and
-worker control, use `make check-package PACKAGE=transparent-query-server
-FEATURES=transparent-history,transparent-detail`; the library's default features
-are empty. The host binary is `pir-query-server`, and the worker administration
-tools are in `transparent-tools`.
+worker control, use `make check-package PACKAGE=pir-query-server
+FEATURES=transparent-history,transparent-detail`; the query server's `transparent`
+module serves both roles, and its default features are empty. The host binary is
+`pir-query-server`, and the worker administration tools are in `transparent-tools`.
 These packages do not pull in the publisher's chain reader or RocksDB, including
 when compiling their tests. Publisher-to-worker shipping tests live in the
 tools package; select them with
@@ -284,11 +284,12 @@ Cargo package names and standalone commands are preserved. See the
 
 ## Shared HTTPS synchronization
 
-`pir-sync-manager` is the internal transport and polling library under
-`src/shared/`. Transparent history, transaction-detail and Status consumers supply its
-product adapters. The library accounts all consumed response bytes against one
-attempt budget and schedules complete passes sequentially with bounded backoff.
-It does not grant serving authority by itself. Its `publication_lifecycle`
+`pir-sync-manager` is the internal HTTPS transport and discovery library under
+`src/shared/`; it accounts all consumed response bytes against one attempt
+budget. The query server's `synchronization` module (`pir_query_server::synchronization`)
+schedules complete passes sequentially with bounded backoff; Enhance,
+Transparent history, transaction-detail and Status supply its product tasks.
+Neither grants serving authority by itself. Its `publication_lifecycle`
 module runs the shared publication lifecycle over the transport-free
 `pir-publication` contract (object references, pointer succession, durable
 floors, object cache and publisher object store); Status is its first adopter,

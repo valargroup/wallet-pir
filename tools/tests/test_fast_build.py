@@ -107,15 +107,70 @@ class FastBuildTests(unittest.TestCase):
         self.assertCountEqual(shard['args'][1:], only_distribution)
 
     def test_status_preparation_splits_once_and_other_suites_keep_larger_groups(self):
-        names = {f'service::sync::tests::case_{index:02d}' for index in range(37)}
-        status = dict(package='status-query-server', integration=False, exclusive=False,
+        names = {f'status::sync::tests::case_{index:02d}' for index in range(37)}
+        status = dict(package='pir-query-server', integration=False, exclusive=False,
                       args=[], case_count=len(names))
         shards = fast_build.bounded_programs(status, names)
         self.assertEqual(len(shards), 2)
         actual = [case for shard in shards for case in shard['args'][1:]]
         self.assertCountEqual(actual, names)
+        hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
+        shards = fast_build.bounded_programs(status, hosted)
+        self.assertEqual(len(shards), 3)
+        self.assertFalse(any(case.startswith('status::') for case in shards[0]['args'][1:]))
+        self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], hosted)
+        self.assertCountEqual([case for shard in shards[1:] for case in shard['args'][1:]], names)
         other = dict(status, package='receiver-indexer')
         self.assertEqual(fast_build.bounded_programs(other, names), [other])
+
+    def test_cgroup_quota_bounds_available_cpus(self):
+        root = Path(self.directory.name) / 'cgroup'
+        leaf = root / 'slice' / 'task.service'
+        leaf.mkdir(parents=True)
+        (root / 'cpu.max').write_text('max 100000\n')
+        (root / 'slice' / 'cpu.max').write_text('600000 100000\n')
+        (leaf / 'cpu.max').write_text('250000 100000\n')
+        membership = Path(self.directory.name) / 'membership'
+        membership.write_text('0::/slice/task.service\n')
+        self.assertEqual(fast_build.cgroup_cpus(root, membership), 3)
+        (leaf / 'cpu.max').write_text('max 100000\n')
+        self.assertEqual(fast_build.cgroup_cpus(root, membership), 6)
+        (root / 'slice' / 'cpu.max').write_text('max 100000\n')
+        self.assertIsNone(fast_build.cgroup_cpus(root, membership))
+        self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
+
+    def test_status_unit_program_runs_alone_on_every_host(self):
+        names = {'status::sync::tests::case', 'config::tests::case'}
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+            self.assertFalse(fast_build.status_runs_alone(
+                'pir-query-server', ['lib'], {'enhance::tests::case'}))
+            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['test'], names))
+            self.assertFalse(fast_build.status_runs_alone('receiver-indexer', ['lib'], names))
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+
+    def test_rust_tests_wait_for_helpers_only_on_small_hosts(self):
+        from concurrent.futures import Future
+        import fast
+        helpers = Future()
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertIsNone(fast.tests_wait_for(helpers))
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertIsNone(fast.tests_wait_for(None))
+            waiter = fast.tests_wait_for(helpers)
+            # A failed helper stage is reported by its own future; tests still run.
+            helpers.set_exception(RuntimeError('helper failed'))
+            waiter()
+
+    def test_runtime_libraries_run_alone_only_on_small_hosts(self):
+        with patch.object(fast_build, 'available_cpus', return_value=3):
+            self.assertTrue(fast_build.runtime_runs_alone('enhance-shared', ['lib']))
+            self.assertTrue(fast_build.runtime_runs_alone('receiver-indexer', ['lib']))
+            self.assertFalse(fast_build.runtime_runs_alone('enhance-shared', ['test']))
+            self.assertFalse(fast_build.runtime_runs_alone('transparent-shared', ['lib']))
+        with patch.object(fast_build, 'available_cpus', return_value=8):
+            self.assertFalse(fast_build.runtime_runs_alone('enhance-shared', ['lib']))
 
     def test_bins_without_unit_tests_are_omitted_from_the_fast_compile(self):
         root = Path(self.directory.name) / 'sources'
@@ -292,7 +347,7 @@ class FastBuildTests(unittest.TestCase):
         return values('-p'), values('--bin'), values('--test'), features
 
     def test_enhance_subset_compiles_the_warm_dev_dependency_closure(self):
-        builds = self._cargo_tests(['enhance-query-server'])
+        builds = self._cargo_tests(['enhance-shared'])
         self.assertEqual(len(builds), 2)
         stable, hint = builds
         stable_packages, bins, stable_tests, stable_features = self._command_parts(stable)
@@ -300,7 +355,10 @@ class FastBuildTests(unittest.TestCase):
         # Hosts stay named on the stable command. Taking them off for an Enhance
         # diff and putting them back afterwards rebuilds the closure.
         self.assertEqual(stable_packages, sorted(fast_build.FAST_FEATURE_ROOTS))
-        self.assertEqual(hint_packages, ['pir-e2e-tests', 'pir-query-server'])
+        # The hint command names the same roots so shared crates resolve with
+        # the stable features and are not compiled again.
+        self.assertEqual(hint_packages, stable_packages)
+        self.assertTrue(set(stable_features) <= set(hint_features))
         self.assertIn('--lib', stable)
         self.assertIn('--lib', hint)
         self.assertNotIn('--bins', stable)
@@ -313,12 +371,14 @@ class FastBuildTests(unittest.TestCase):
         # The reader targets stay on every compile so a smaller diff cannot drop
         # testing-node and rebuild the closure.
         self.assertEqual(stable_features, [
+            'pir-query-server/transparent-history',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
         ])
         self.assertFalse(set(stable_features) & set(fast_build.PRODUCT_HOST_FEATURES.values()))
-        self.assertEqual(hint_features, ['pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES])
+        self.assertEqual(sorted(set(hint_features) - set(stable_features)),
+                         sorted({'pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES} - set(stable_features)))
         # status-publisher stays in the stable closure, so its fast object-access
         # HTTP target is compiled for every subset. Host tests stay there too.
         self.assertEqual(stable_tests, [
@@ -330,23 +390,26 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(transparent[0], stable)
         # A status-only diff and a reader diff must name the same roots and
         # features. Dropping the reader on the smaller diff rebuilds the closure.
-        status = self._cargo_tests(['status-query-server'])
+        status = self._cargo_tests(['status-publisher'])
         reader = self._cargo_tests(['zakura-server-chain', 'pir-node-rpc', 'pir-pipeline'])
         self.assertEqual(len(status), 1)
         self.assertEqual(status, reader)
         self.assertEqual(status[0], stable)
 
     def test_each_product_compiles_only_its_own_host_features(self):
-        # History and detail reach the query host through its dev-dependency.
-        # Enabling them on pir-publisher, or from the publisher library, links
-        # that library again. The fixture feature would compile it a third time.
+        # History and detail reach the query host through its own
+        # dev-dependency. Enabling them on pir-publisher links that
+        # library again. The fixture feature would compile it a third time.
+        # The host's own `ci_smoke` names the history role it already unifies.
         builds = self._cargo_tests(['transparent-publisher'])
         self.assertEqual(len(builds), 1)
         packages, _bins, tests, features = self._command_parts(builds[0])
         self.assertIn('pir-publisher', packages)
         self.assertIn('pir-query-server', packages)
         self.assertIn('zakura-server-chain', packages)
+        self.assertIn('ci_smoke', tests)
         self.assertEqual(features, [
+            'pir-query-server/transparent-history',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
@@ -364,28 +427,33 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(publisher['features']['qualification-tests'], ['dep:pir-query-server'])
         self.assertEqual(
             query['dev-dependencies']['pir-query-server']['features'],
-            ['transparent-history', 'transparent-detail'])
+            ['test-support', 'transparent-history', 'transparent-detail'])
         self.assertIn('operator', tests)
         status_builds = self._cargo_tests(['status-publisher'])
         self.assertEqual(len(status_builds), 1)
         _packages, _bins, tests, features = self._command_parts(status_builds[0])
         self.assertNotIn('pir-publisher/status-tests', features)
         self.assertNotIn('ci_hint', tests)
-        builds = self._cargo_tests(['enhance-query-server', 'transparent-publisher'])
+        builds = self._cargo_tests(['enhance-shared', 'transparent-publisher'])
         self.assertEqual(self._command_parts(builds[0])[3], [
+            'pir-query-server/transparent-history',
             'zakura-server-chain/enhance',
             'zakura-server-chain/testing-node',
             'zakura-server-chain/transparent',
         ])
         _packages, _bins, tests, features = self._command_parts(builds[1])
         self.assertEqual(tests, ['ci_hint', 'operator'])
-        self.assertEqual(features, ['pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES])
+        self.assertEqual(features, sorted({
+            'pir-e2e-tests/enhance-fast', *fast_build.HINT_HOST_ROLES,
+            *self._command_parts(builds[0])[3],
+        }))
+        self.assertEqual(self._command_parts(builds[1])[0], self._command_parts(builds[0])[0])
         self.assertIn('--lib', builds[1])
 
     def test_a_shared_diff_leaves_host_product_features_off(self):
         # Dependents of a shared crate are selected, but the diff itself is not a product.
         builds = self._cargo_tests(
-            ['enhance-query-server', 'pir-publisher', 'pir-e2e-tests', 'transparent-publisher'],
+            ['enhance-shared', 'pir-publisher', 'pir-e2e-tests', 'transparent-publisher'],
             products=frozenset())
         features, tests = [], []
         for build in builds:

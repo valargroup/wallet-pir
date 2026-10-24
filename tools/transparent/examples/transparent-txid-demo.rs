@@ -18,6 +18,11 @@ use axum::{
     Router,
 };
 use clap::Parser;
+use pir_query_server::transparent::config::ServiceConfig;
+use pir_query_server::transparent::tx_detail::{
+    live::{DisplayCommand, DisplayLive, DisplayPublication},
+    service::DisplayRuntime,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,11 +43,6 @@ use transparent_publisher::ingest::extract::{
 };
 use transparent_publisher::tx_detail::publisher::{
     publish_shard, write_candidate, DisplayRoot, ShardSpec,
-};
-use transparent_query_server::config::ServiceConfig;
-use transparent_query_server::tx_detail::{
-    live::{DisplayCommand, DisplayLive, DisplayPublication},
-    service::DisplayRuntime,
 };
 use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
 use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};

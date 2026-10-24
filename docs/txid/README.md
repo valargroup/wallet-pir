@@ -1,7 +1,8 @@
 # Transaction-detail (txid) display
 
 Txid display PIR serves transaction details for history rows. Its serving code
-lives in `src/transparent/transparent-query-server`, and its publisher and
+lives in the query server's `transparent` module
+(`src/pir-query-server/src/transparent`), and its publisher and
 controller live in `src/transparent/transparent-publisher`, beside the extraction
 code both history and display use. The journal, shared display verification and
 runtime preparation live in `src/transparent/transparent-shared`, so the

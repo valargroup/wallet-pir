@@ -10,10 +10,10 @@ autobins = false
 [features]
 default = []
 # The copied query-host entrypoint selects its diagnostic subcommands with this feature.
-enhance = ["dep:enhance-publisher", "dep:enhance-query-server", "dep:pir-query-server", "pir-query-server/enhance"]
+enhance = ["dep:enhance-publisher", "dep:enhance-shared", "dep:pir-query-server", "pir-query-server/enhance"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring"]
 # The Enhance hint cache records whether this build includes CUDA.
-cuda = ["enhance-query-server?/cuda"]
+cuda = ["enhance-shared?/cuda"]
 # Larger hint oracles. Ordinary correctness leaves this off.
 qualification-tests = []
 # The copied query-host entrypoint the process tests start.
@@ -34,8 +34,7 @@ enhance-tests = [
     "pir-publisher/enhance",
     "query-host",
     "enhance-publisher/fault-injection",
-    "dep:enhance-query-server",
-    "enhance-query-server/client",
+    "enhance-shared/client",
     "dep:zakura-server-chain",
     "zakura-server-chain/enhance",
     "zakura-server-chain/testing-node",
@@ -53,12 +52,19 @@ transparent-tests = [
     "query-host",
     "pir-query-server/transparent-history",
     "pir-query-server/transparent-detail",
-    # The copied shard-assign administration tool.
+    # The shared public listener case runs a combined Status role beside history.
+    # The unchanged Status wallet speaks only the native protocol, so the host
+    # and its fixture publication use the deployed native backend.
+    "pir-query-server/status",
+    "pir-query-server/native-reinspiring",
+    "status-shared/native-reinspiring",
+    "zakura-pir-client/status",
+    # The copied shard-assign administration tool and its fleet planner.
+    "dep:transparent-tools",
     "dep:hex",
     "dep:sha2",
     "dep:transparent-publisher",
     "transparent-publisher/fixtures",
-    "dep:transparent-query-server",
     "dep:transparent-shared",
     "transparent-shared/test-support",
     "dep:zakura-server-chain",
@@ -77,7 +83,8 @@ transparent-tests = [
 wallet-recovery-tests = [
     "transparent-history",
     "dep:hex",
-    "dep:transparent-query-server",
+    "dep:pir-query-server",
+    "pir-query-server/transparent-history",
     "dep:transparent-shared",
     "transparent-shared/test-support",
     "dep:zakura-pir-client",
@@ -100,9 +107,9 @@ pir-publisher = { path = "../../src/pir-publisher", optional = true }
 status-publisher = { path = "../../src/status/status-publisher", optional = true }
 enhance-publisher = { path = "../../src/enhance/enhance-publisher", optional = true }
 transparent-publisher = { path = "../../src/transparent/transparent-publisher", optional = true }
-enhance-query-server = { path = "../../src/enhance/enhance-query-server", optional = true }
+transparent-tools = { path = "../transparent", optional = true }
+enhance-shared = { path = "../../src/enhance/enhance-shared", optional = true }
 pir-query-server = { path = "../../src/pir-query-server", optional = true }
-transparent-query-server = { path = "../../src/transparent/transparent-query-server", optional = true, features = ["transparent-history", "transparent-detail"] }
 transparent-shared = { path = "../../src/transparent/transparent-shared", optional = true }
 zakura-server-chain = { path = "../../src/shared/pir-chain", default-features = false, optional = true }
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
@@ -158,6 +165,9 @@ sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
 libc = "0.2"
+# Status publication fixture behind the shared public listener case.
+status-shared = { path = "../../src/status/status-shared" }
+pir-publication = { path = "../../src/shared/pir-publication" }
 tokio-stream = "0.1"
 
 [[test]]

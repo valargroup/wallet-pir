@@ -37,10 +37,9 @@ only an enforced passing run establishes compliance with the selected budget.
 Native tests compile shared crates and product libraries once, on a feature set
 that does not change with the diff. The publisher and query hosts stay on that
 same command. Transparent publication tests use that
-command. History and detail reach the query host through its own
-dev-dependency. The publisher host does not enable them, and the publisher
-library does not depend on that host, because either edge links the same
-libraries again. Fast diagnostic binaries leave `transparent-tools/query-host`
+command. History and detail reach the query host through the publisher
+library's dev-dependency; the publisher host binary does not enable them,
+because that links the same library again. Fast diagnostic binaries leave `transparent-tools/query-host`
 off for the same reason. The in-process Enhance hint graph compiles on a
 second command and does not take the hosts with it. The chain reader stays on that command with its Enhance and Transparent targets. Receiver, status, and RocksDB chain-node targets stay in qualification so they do not rebuild the shared graph.
 Executables
@@ -165,20 +164,24 @@ stay on this command for every diff. Taking them off for one change and putting
 them back afterwards changes feature unification and rebuilds the closure.
 Transparent publication tests are part of this command, and
 the publisher host is not relinked with history and detail. A second
-invocation is only the in-process Enhance hint graph, which must not unify
-into the stable graph. Publisher chain-node fixtures stay in qualification.
-The reader's receiver, status, and RocksDB targets stay in full qualification;
-those features are not part of the closure, and enabling them rebuilds every
-cached consumer. The reader's Enhance and Transparent targets stay on the
+invocation adds the in-process Enhance hint graph. Its features must not unify
+into the stable graph, but it names the same roots with the stable features, so
+every shared crate resolves exactly as before and only the hosts and the
+harnesses that depend on them compile again. Publisher chain-node fixtures stay
+in qualification. The reader's receiver, status, and RocksDB targets stay in
+full qualification; the reader's Enhance and Transparent targets stay on the
 stable command. Only the affected packages' programs run. Campaign
 targets are excluded from that build. Local and CI checks then execute at most
 three Cargo-reported test programs concurrently. The publisher library builds
 full archive runtimes on every core of a 4-core hosted runner, so it runs alone
 there before the pool; beside it, the encrypted HTTP smokes miss the 30-second
 case deadline. The 8-core fast runner keeps that library in the pool with four
-build threads. Status query-server unit programs run alone first: one
-generation prepare is a 96 MiB database, and overlapping that prepare with
-the publisher crosses the 30-second case deadline. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
+build threads. The query host's Status unit program runs alone first: one
+generation prepare is a 96 MiB database, and overlapping that prepare with the
+publisher crosses the 30-second case deadline. Below eight CPUs, counting any
+cgroup quota, the Enhance and Receiver runtime libraries also run alone, because single cases overran the
+30-second deadline beside each other. On those hosts Rust test programs also
+start only after the helper checks finish; compilation still overlaps them. The expensive Enhance encrypted HTTP lifecycle belongs to full qualification;
 it is excluded from fast compilation and execution. Independent hint and
 damaged-artifact checks remain in the bounded pool. Each worker verifies its
 own copied immutable preparation bytes, and generic hint oracles still build

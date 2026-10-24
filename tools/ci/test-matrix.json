@@ -3,7 +3,7 @@
     "family": "transparent",
     "targets": [
       "transparent:pir-e2e-tests:test:unified_http_sync_campaign",
-      "transparent:transparent-query-server:doc:transparent_query_server",
+      "transparent:pir-query-server:doc:pir_query_server",
       "transparent:transparent-tools:bin:shard-assign",
       "transparent:transparent-tools:bin:shard-prune",
       "transparent:transparent-tools:bin:history_fixture",
@@ -12,9 +12,11 @@
       "transparent:transparent-tools:bin:rate-query",
       "transparent:transparent-tools:bin:soak-query",
       "transparent:transparent-tools:bin:txid-rate",
-      "transparent:transparent-query-server:lib:transparent_query_server",
-      "transparent:transparent-query-server:test:ci_smoke",
-      "transparent:transparent-query-server:test:geometry_costs",
+      "transparent:pir-query-server:lib:pir_query_server",
+      "transparent:pir-query-server:bin:pir-query-server",
+      "transparent:pir-query-server:test:operator",
+      "transparent:pir-query-server:test:ci_smoke",
+      "transparent:pir-query-server:test:geometry_costs",
       "transparent:transparent-tools:bin:hierarchical-filter-eval",
       "transparent:transparent-tools:bin:parent-evaluation-server",
       "transparent:transparent-tools:bin:regression-export",
@@ -82,32 +84,33 @@
   "transparent-recovery": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-query-server:test:assignment",
-      "transparent:transparent-query-server:test:revisions_and_cache",
-      "transparent:transparent-query-server:test:round_trip",
-      "transparent:transparent-query-server:test:txid_client"
+      "transparent:pir-query-server:test:assignment",
+      "transparent:pir-query-server:test:revisions_and_cache",
+      "transparent:pir-query-server:test:round_trip",
+      "transparent:pir-query-server:test:txid_client",
+      "transparent:transparent-tools:test:assignment_planning"
     ]
   },
   "transparent-sharded": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-query-server:test:txid_sharded",
-      "transparent:transparent-query-server:test:verification_reuse",
-      "transparent:transparent-query-server:test:wallet_anchor"
+      "transparent:pir-query-server:test:txid_sharded",
+      "transparent:pir-query-server:test:verification_reuse",
+      "transparent:pir-query-server:test:wallet_anchor"
     ]
   },
   "transparent-transitions": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-query-server:test:wallet_continuation",
-      "transparent:transparent-query-server:test:wallet_recut",
+      "transparent:pir-query-server:test:wallet_continuation",
+      "transparent:pir-query-server:test:wallet_recut",
       "transparent:pir-e2e-tests:test:wallet_revision_reuse"
     ]
   },
   "transparent-wallet-sync": {
     "family": "transparent",
     "targets": [
-      "transparent:transparent-query-server:test:wallet_sync"
+      "transparent:pir-query-server:test:wallet_sync"
     ]
   },
   "enhance-supporting": {
@@ -124,17 +127,14 @@
       "native:status-publisher:test:object_access_http",
       "native:status-shared:doc:status_shared",
       "native:status-shared:lib:status_shared",
-      "native:status-query-server:doc:status_query_server",
-      "native:status-query-server:lib:status_query_server"
+      "native:status-shared:test:status_wallet"
     ]
   },
-  "enhance-query-server-units": {
+  "enhance-shared-units": {
     "family": "enhance",
     "targets": [
       "native:enhance-shared:doc:enhance_shared",
-      "native:enhance-shared:lib:enhance_shared",
-      "native:enhance-query-server:doc:enhance_query_server",
-      "native:enhance-query-server:lib:enhance_query_server"
+      "native:enhance-shared:lib:enhance_shared"
     ]
   },
   "enhance-publisher-contracts": {
@@ -145,7 +145,6 @@
       "native:pir-e2e-tests:test:ci_hint",
       "native:pir-e2e-tests:test:encrypted_lifecycle",
       "native:pir-e2e-tests:test:publication_binding_http",
-      "native:status-query-server:test:status_wallet",
       "native:native-certificate:bin:native_certificate",
       "native:pir-publisher:lib:pir_publisher",
       "native:pir-publisher:doc:pir_publisher",
@@ -184,7 +183,7 @@
       "reference:pir-e2e-tests:test:encrypted_lifecycle",
       "reference:enhance-shared:lib:enhance_shared",
       "reference:status-shared:lib:status_shared",
-      "reference:status-query-server:lib:status_query_server",
+      "reference:pir-query-server:lib:pir_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
     ]
   },
@@ -193,7 +192,6 @@
     "targets": [
       "cuda:enhance-pir-load-test:check:all",
       "cuda:enhance-shared:check:enhance_shared",
-      "cuda:enhance-query-server:check:enhance_query_server",
       "cuda:pir-query-server:check:pir_query_server",
       "cuda:pir-cuda:check:pir_cuda"
     ]

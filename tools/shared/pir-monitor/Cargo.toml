@@ -5,12 +5,12 @@ edition = "2021"
 publish = false
 
 [features]
-native-reinspiring = ["enhance-query-server/native-reinspiring"]
+native-reinspiring = ["enhance-shared/native-reinspiring"]
 
 [dependencies]
 anyhow = "1"
 axum = "0.7"
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
+enhance-shared = { path = "../../../src/enhance/enhance-shared" , features = ["client"] }
 pir-apm = { path = "../../../src/shared/pir-apm" }
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -88,7 +88,8 @@ durability mechanisms in `src/shared/pir-control`; each owner keeps its own
 authority and retention rules above.
 
 Transparent history and txid display share a private activation transaction
-in `transparent-query-server`. The adapters stay private to that crate.
+in the query server's `transparent` module (`src/pir-query-server/src/transparent`).
+The adapters stay private to that module.
 The transaction holds command serialization in a blocking job,
 so a disconnected caller cannot release it while persistence is in progress.
 After checking already-active success and the expected predecessor, it locks
@@ -116,7 +117,7 @@ activation. Request handles and collection retain their existing lifetimes.
 
 Status and Receiver name a publication by a domain-separated SHA-256 of their
 manifest's fields at fixed width, strings length-prefixed: Status's
-`Manifest::id` (`src/status/status-query-server/src/protocol.rs`), and Receiver's
+`Manifest::id` (`src/status/status-shared/src/protocol.rs`), and Receiver's
 directory revision and session ID. Their manifests, like Enhance's protocol
 values, refuse unknown fields, so a new field is a new profile or protocol rather
 than one an older reader skips.

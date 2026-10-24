@@ -5,7 +5,7 @@ Use the `enhance-v7` implementation of `zakura/pir-enhance` in
 publishes schema 11 with 653-byte records and 33 records per row. Its protocol
 revision is fixed at build time: `ironwood-enhance-pir-v7` by default, or
 `ironwood-enhance-pir-v9-native-two-mask-m29` when the server is built with the
-`native-reinspiring` feature. The `enhance_query_server::client` module, and the
+`native-reinspiring` feature. The `enhance_shared::client` module, and the
 `enhance-pir-cli` built from `enhance-pir-client`, must be built with the same feature as the server it talks to; a mismatched build rejects the
 manifest. The retired `ironwood-enhance-pir-v8-native-poc` revision is not served.
 v6 clients are incompatible. The q48 IPIR dependency remains pinned to

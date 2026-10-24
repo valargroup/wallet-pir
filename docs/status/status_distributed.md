@@ -66,8 +66,9 @@ after referenced objects and authority state are durable. TLS authenticates the
 configured publisher; these hashes and attestations are not independent proofs
 of canonicality or index completeness.
 
-Consumers run the shared `pir-sync-manager` publication lifecycle (observe,
-fence, plan, fetch, load, revalidate, commit, retain) with HTTPS transport, byte
+Consumers run the query server's shared publication lifecycle
+(`pir_query_server::synchronization::publication_lifecycle`) (observe,
+fence, plan, fetch, load, revalidate, commit, retain) with `pir-sync-manager` HTTPS transport, byte
 accounting and sequential polling/backoff; Status hooks only choose, load and
 install material. They persist the publisher floor (newest pointer, publisher
 origin, product namespace, chain and observed invalidations) before allowing
@@ -125,7 +126,7 @@ that share every prepared allocation with the active view count as one material;
 their pins permit loading the next material, and metadata refreshes can advance.
 The private provider status distinguishes waiting for authority, worker data,
 worker recovery, retention, a worker pin, a worker commit, or a publication.
-Debug tracing in `status_query_server::service::sync` records the deferral reason
+Debug tracing in `pir_query_server::status::sync` records the deferral reason
 and fetch, load, revalidation, authority-check and commit durations. Logs contain
 role and phase names, not wallet queries or session identifiers.
 
@@ -152,6 +153,14 @@ listeners and a separate absolute `state_dir`. `publisher_ca` optionally names a
 installed additional trust root. The router's `worker_origin` remains a loopback
 HTTP evaluation address. The typed examples live beside `tools/status/deploy/`.
 Old push-mode settings are rejected rather than selecting a compatibility mode.
+
+A `combined` role is the same router with its worker in one process. It follows
+the publisher's latest inventory like a worker, loads both the evaluation units
+and the packing material, and evaluates each admitted wallet query in process
+under the router's admission permit. It names no `worker_origin`, serves no
+evaluation, pin or handover route, and answers wallets with the same paths,
+bytes and refusals as a distributed router. The separate roles remain
+supported.
 
 ## Operations and qualification
 

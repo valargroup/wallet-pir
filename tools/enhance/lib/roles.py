@@ -32,6 +32,7 @@ MANAGEMENT = {
     'external-worker': '127.0.0.1:18091',
     'query-ingress': '127.0.0.1:18083',
     'packing-router': '127.0.0.1:18093',
+    'combined': '127.0.0.1:18087',
 }
 
 
@@ -126,11 +127,14 @@ def _binding(role, unit, listen):
     return '%s/%s.json' % (CONFIG_ROOT, stem), management
 
 
-def _render(role, template, release, settings, body, writable, unit=None):
-    """One query-server process: config file, command, and the template's sandbox."""
-    path, management = _binding(role, unit, body.get('listen'))
-    document = {'management_listen': management,
-                'enhance': {'enabled': True, 'settings': body}}
+def _render(role, template, release, settings, body, writable, unit=None, public=None):
+    """One query-server process: config file, command, and the template's sandbox.
+    A wallet-facing role is reached on the host's `public_listen`."""
+    path, management = _binding(role, unit, body.get('listen', public))
+    document = {'management_listen': management}
+    if public is not None:
+        document['public_listen'] = public
+    document['enhance'] = {'enabled': True, 'settings': body}
     ca = body['synchronization'].get('trusted_ca')
     return render_worker(template, directory(release) + '/' + QUERY_BINARY, ['--config', path],
                          configurations={path: document}, writable=writable, readonly=[path, *([ca] if ca else [])], settings=settings,
@@ -162,7 +166,8 @@ def query_ingress(settings, *, release, template=None):
     """Public query ingress. `requests` and `uploads` keep the process defaults when omitted."""
     parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'), ('requests', 'uploads'))
     data = directory(parsed['data_dir'])
-    body = {'role': 'query-ingress', 'data_dir': data, 'listen': address(parsed['listen'], 'listen'),
+    public = address(parsed['listen'], 'listen')
+    body = {'role': 'query-ingress', 'data_dir': data,
             'control_listen': address(parsed['control_listen'], 'control_listen'),
             'synchronization': _synchronization(parsed['synchronization'], 'query-ingress')}
     if 'requests' in parsed:
@@ -170,7 +175,7 @@ def query_ingress(settings, *, release, template=None):
     if 'uploads' in parsed:
         body['uploads'] = int(number(parsed['uploads'], 'uploads', 1))
     text = INGRESS_TEMPLATE.read_text() if template is None else template
-    return _render('query-ingress', text, release, parsed, body, [data])
+    return _render('query-ingress', text, release, parsed, body, [data], public=public)
 
 
 def packing_router(settings, *, release, template=None):
@@ -188,6 +193,32 @@ def packing_router(settings, *, release, template=None):
         body['requests'] = int(number(parsed['requests'], 'requests', 1))
     text = ROUTER_TEMPLATE.read_text() if template is None else template
     return _render('packing-router', text, release, parsed, body, [data])
+
+
+def combined(settings, *, release, template=None):
+    """Ingress, packing router and worker in one process for the worker's domains.
+
+    Wallets reach it on the host's `public_listen`, rendered from `listen`;
+    `control_listen` is private. Its three components call each other directly,
+    so it names no peers and needs no internal token between them. The process
+    keeps each component's state in its own subdirectory of `data_dir`.
+    """
+    parsed = settings_of(settings, ('listen', 'control_listen', 'data_dir', 'synchronization'),
+                         ('sealed_shards', 'matvec_backend', 'cuda_device', 'requests', 'uploads',
+                          'max_objects', 'packing_requests'))
+    data = directory(parsed['data_dir'])
+    public = address(parsed['listen'], 'listen')
+    control = address(parsed['control_listen'], 'control_listen')
+    if public == control:
+        raise ValueError('listen and control_listen must differ')
+    body = {'role': 'combined', 'data_dir': data, 'control_listen': control,
+            'sealed_shards': int(number(parsed.get('sealed_shards', 6), 'sealed_shards', 1)),
+            'matvec': _matvec(parsed), 'synchronization': _synchronization(parsed['synchronization'], 'worker')}
+    for name in ('requests', 'uploads', 'max_objects', 'packing_requests'):
+        if name in parsed:
+            body[name] = int(number(parsed[name], name, 1))
+    text = WORKER_TEMPLATE.read_text() if template is None else template
+    return _render('combined', text, release, parsed, body, [data], public=public)
 
 
 def report(service, role, health, ready_status):

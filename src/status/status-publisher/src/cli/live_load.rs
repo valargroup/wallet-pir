@@ -12,6 +12,82 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A session can expire after initialization but before its answer arrives.
+/// Other unavailable responses remain load failures, including a 503 while
+/// the selected manifest is still fresh.
+fn expired_session(
+    error: &AnyError,
+    manifest: &Manifest,
+    now_ms: u64,
+    session_status: Option<u16>,
+) -> bool {
+    matches!(error.downcast_ref::<Error>(), Some(Error::Stale))
+        || (error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+            && session_status == Some(503)
+            && matches!(manifest.fresh(now_ms), Err(Error::Stale)))
+}
+
+fn record_stage(
+    stages: &mut Vec<serde_json::Value>,
+    start: Instant,
+    stage: &str,
+    attempt: usize,
+    manifest: Option<&Manifest>,
+    http_status: Option<u16>,
+) {
+    let now_ms = status::now_ms();
+    stages.push(
+        json!({"stage":stage,"elapsed_ms":start.elapsed().as_secs_f64()*1000.,
+        "attempt":attempt,"http_status":http_status,
+        "generation":manifest.map(|m|m.generation),
+        "manifest_id":manifest.map(|m|hex::encode(m.id())),
+        "observed_ms":manifest.map(|m|m.observed_ms),
+        "observation_age_ms":manifest.map(|m|now_ms.saturating_sub(m.observed_ms)),
+        "remaining_lifetime_ms":manifest.map(|m|m.observed_ms.saturating_add(MAX_AGE_MS).saturating_sub(now_ms))}),
+    );
+}
+
+/// After expiry, wait for a newly observed identity within the caller's
+/// original lookup deadline. A cached copy of the expired identity never
+/// authorizes another query. The caller independently checks its anchor.
+async fn next_manifest(
+    http: &reqwest::Client,
+    origin: &str,
+    expired: Option<&Manifest>,
+    start: Instant,
+    attempt: usize,
+    stages: &mut Vec<serde_json::Value>,
+) -> Result<Manifest, AnyError> {
+    loop {
+        let response = http.get(format!("{origin}/v1/status/init")).send().await?;
+        let code = response.status().as_u16();
+        if !response.status().is_success() {
+            record_stage(stages, start, "init", attempt, None, Some(code));
+        }
+        let manifest: Manifest = response.error_for_status()?.json().await?;
+        record_stage(stages, start, "init", attempt, Some(&manifest), Some(code));
+        if let Some(old) = expired {
+            if manifest.id() == old.id() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            require(
+                manifest.network == old.network
+                    && manifest.salt == old.salt
+                    && manifest.recovery_epoch >= old.recovery_epoch
+                    && manifest.generation >= old.generation
+                    && manifest.observed_ms > old.observed_ms,
+                "replacement Status session has no newer compatible source observation",
+            )?;
+            manifest.fresh(status::now_ms())?;
+        }
+        return Ok(manifest);
+    }
+}
+
 pub async fn probe_live_load(
     origin: String,
     rpc_url: String,
@@ -93,11 +169,15 @@ async fn live_load(
                     let start = Instant::now();
                     let started_ms = status::now_ms();
                     let mut stage_completions = Vec::new();
+                    let mut selected = None::<Manifest>;
                     let result = tokio::time::timeout_at(deadline, async {
+                        let mut expired = None::<Manifest>;
                         for retry in 0..2 {
-                            let manifest: Manifest = http.get(format!("{origin}/v1/status/init")).send().await?.error_for_status()?.json().await?;
+                            let mut session_status = None;
+                            let attempt = async {
+                            let manifest = next_manifest(&http, &origin, expired.as_ref(), start, retry, &mut stage_completions).await?;
+                            selected = Some(manifest.clone());
                             manifest.fresh(status::now_ms())?;
-                            stage_completions.push(json!({"stage":"init","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let hash = rpc.block_hash(u64::from(manifest.anchor_height)).await?;
                             require(manifest.network == network && manifest.anchor_hash == hash, "oracle anchor mismatch")?;
                             let txid = {
@@ -111,11 +191,11 @@ async fn live_load(
                                     txid
                                 }
                             };
-                            stage_completions.push(json!({"stage":"oracle","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
+                            record_stage(&mut stage_completions, start, "oracle", retry, Some(&manifest), None);
                             let public = http.get(format!("{origin}/v1/status/session/{}", hex::encode(manifest.id()))).send().await?;
-                            if retry == 0 && matches!(public.status().as_u16(), 409 | 410) { continue; }
+                            session_status = Some(public.status().as_u16());
+                            record_stage(&mut stage_completions, start, "session", retry, Some(&manifest), Some(public.status().as_u16()));
                             let public = public.error_for_status()?.bytes().await?;
-                            stage_completions.push(json!({"stage":"session","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let job_manifest = manifest.clone();
                             let cpu_permit = permit.clone();
                             let (client, query) = tokio::task::spawn_blocking(move || {
@@ -124,26 +204,43 @@ async fn live_load(
                                 let query = client.prepare(&txid, Some(job_manifest.anchor_height), status::now_ms())?;
                                 Ok::<_, AnyError>((client, query))
                             }).await??;
-                            stage_completions.push(json!({"stage":"prepare","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
+                            record_stage(&mut stage_completions, start, "prepare", retry, Some(&manifest), None);
                             let response = http.post(format!("{origin}/v1/status/query")).body(query.body.clone()).send().await?;
-                            if retry == 0 && matches!(response.status().as_u16(), 409 | 410) { continue; }
+                            session_status = Some(response.status().as_u16());
+                            record_stage(&mut stage_completions, start, "query", retry, Some(&manifest), Some(response.status().as_u16()));
                             let bytes = response.error_for_status()?.bytes().await?;
-                            stage_completions.push(json!({"stage":"query","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
                             let cpu_permit = permit.clone();
                             let observed = tokio::task::spawn_blocking(move || {
                                 let _permit = cpu_permit;
                                 client.decode(query, &bytes, status::now_ms())
                             }).await??;
-                            stage_completions.push(json!({"stage":"decode","elapsed_ms":start.elapsed().as_secs_f64()*1000.,"attempt":retry}));
+                            record_stage(&mut stage_completions, start, "decode", retry, Some(&manifest), None);
                             require(observed == Observation::Mined(manifest.anchor_height), "independent mined oracle mismatch")?;
-                            return Ok::<_, AnyError>((manifest.generation, status::now_ms().saturating_sub(manifest.observed_ms)));
+                            Ok::<_, AnyError>((manifest.generation, status::now_ms().saturating_sub(manifest.observed_ms)))
+                            }.await;
+                            if retry == 0 {
+                                if let Err(error) = &attempt {
+                                    let code = error.downcast_ref::<reqwest::Error>().and_then(reqwest::Error::status);
+                                    if let Some(manifest) = &selected {
+                                        if expired_session(error, manifest, status::now_ms(), session_status) {
+                                            record_stage(&mut stage_completions, start, "expired_session", retry, Some(manifest), code.map(|c|c.as_u16()));
+                                            expired = Some(manifest.clone());
+                                            continue;
+                                        }
+                                    }
+                                    if matches!(session_status, Some(409 | 410)) {
+                                        continue;
+                                    }
+                                }
+                            }
+                            return attempt;
                         }
                         Err("live load exhausted session retry".into())
                     }).await;
                     let (generation, age, error) = match result {
                         Ok(Ok((g, a))) => (Some(g), Some(a), None),
-                        Ok(Err(e)) => (None, None, Some(e.to_string())),
-                        Err(_) => (None, None, Some("overall lookup timeout".into())),
+                        Ok(Err(e)) => (selected.as_ref().map(|m|m.generation), selected.as_ref().map(|m|status::now_ms().saturating_sub(m.observed_ms)), Some(e.to_string())),
+                        Err(_) => (selected.as_ref().map(|m|m.generation), selected.as_ref().map(|m|status::now_ms().saturating_sub(m.observed_ms)), Some("overall lookup timeout".into())),
                     };
                     let service_ms = start.elapsed().as_secs_f64() * 1000.;
                     let completed_ms = status::now_ms();
@@ -195,3 +292,7 @@ async fn live_load(
         "live load gate failed",
     )
 }
+
+#[cfg(all(test, feature = "fixtures", feature = "native-reinspiring"))]
+#[path = "live_load_tests.rs"]
+mod tests;

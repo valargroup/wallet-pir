@@ -116,3 +116,16 @@ The distributed controller's operational journal is not a complete independent
 publication capture. The `probe-live-load` command supplies a canonical-mined
 request oracle and arrival records only. Neither output alone can pass this
 assessor; independent publication and resource evidence is mandatory.
+
+The live-load probe permits one session refresh when its selected observation
+expires during a lookup. A session or query HTTP 503 permits this refresh only
+when that exact observation has expired locally; a 503 on a fresh observation,
+or from initialization or the independent node oracle, still fails. The retry
+requires a newer compatible observation, independently checks its anchor, and
+encrypts a new query. Waiting and retry work count against the original
+five-second lookup deadline and scheduled-to-completed latency. Every offered
+lookup must still succeed, and the one-second p99 limit is unchanged. Per-attempt
+stage records retain HTTP status, manifest identity, generation, observation
+time, age and remaining lifetime, including recovered failures. This diagnostic
+behavior does not establish
+the retry behavior of a released wallet client.

@@ -1,7 +1,7 @@
 //! Bounded load driver with exact-answer checking and expiry refresh.
 use crate::Args;
 use anyhow::{ensure, Context};
-use enhance_query_server::{client::ClientError, client::EnhancePirClient, RECORD_BYTES};
+use enhance_shared::{client::ClientError, client::EnhancePirClient, RECORD_BYTES};
 use hdrhistogram::Histogram;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -99,7 +99,7 @@ fn write_measurement_marker(path: &std::path::Path) -> anyhow::Result<()> {
     use std::io::Write;
     let marker = serde_json::json!({
         "phase": "measured",
-        "protocol": enhance_query_server::protocol::PROTOCOL_REVISION,
+        "protocol": enhance_shared::protocol::PROTOCOL_REVISION,
         "unix_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
     });
     let temporary = path.with_extension(format!("phase-{}.tmp", std::process::id()));
@@ -366,7 +366,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     let seconds = start.elapsed().as_secs_f64();
     let report = Report {
-        protocol: enhance_query_server::protocol::PROTOCOL_REVISION,
+        protocol: enhance_shared::protocol::PROTOCOL_REVISION,
         seconds,
         concurrency: args.parallelism,
         offered_qps: args.rate,
@@ -451,7 +451,7 @@ mod tests {
         assert_eq!(marker["phase"], "measured");
         assert_eq!(
             marker["protocol"],
-            enhance_query_server::protocol::PROTOCOL_REVISION
+            enhance_shared::protocol::PROTOCOL_REVISION
         );
         assert!(marker["unix_ms"].as_u64().unwrap() > 0);
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);

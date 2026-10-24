@@ -37,9 +37,9 @@ def variants(groups):
     return {
         'transparent': dict(family='transparent', packages=[*groups['transparent'], *TRANSPARENT_HOSTS], features=TRANSPARENT + qualification_features([*groups['transparent'], *TRANSPARENT_HOSTS])),
         'native': dict(family='enhance', packages=groups['enhance'], features=NATIVE + ['pir-e2e-tests/enhance-tests', 'pir-e2e-tests/native-reinspiring', 'pir-publisher/status-tests', 'pir-publisher/native-reinspiring'] + qualification_features(groups['enhance'])),
-        'reference': dict(family='enhance', packages=['enhance-shared', 'enhance-query-server', 'status-shared', 'status-query-server', 'pir-e2e-tests'],
-                          features=['pir-e2e-tests/enhance-tests'] + qualification_features(['enhance-shared', 'enhance-query-server', 'status-shared', 'status-query-server', 'pir-e2e-tests'])),
-        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-shared', 'enhance-query-server',
+        'reference': dict(family='enhance', packages=['enhance-shared', 'status-shared', 'pir-query-server', 'pir-e2e-tests'],
+                          features=['pir-e2e-tests/enhance-tests', 'pir-query-server/status'] + qualification_features(['enhance-shared', 'status-shared', 'pir-query-server', 'pir-e2e-tests'])),
+        'cuda': dict(family='enhance', packages=['pir-cuda', 'enhance-shared',
                                              'enhance-pir-load-test', 'pir-query-server'], features=CUDA),
         'receiver': dict(family='receiver', packages=groups['receiver'], features=qualification_features(groups['receiver'])),
     }
@@ -77,6 +77,10 @@ def target_inventory(contexts, packages):
                     continue
                 kinds = []
                 if variant == 'reference':
+                    # Status application tests moved into the host. Its
+                    # binary and operator tests retain their native lanes.
+                    if name == 'pir-query-server' and kind != 'lib':
+                        continue
                     if name == 'pir-e2e-tests' and not (
                             kind == 'test' and (name, target['name']) in REFERENCE_TESTS):
                         continue
@@ -229,6 +233,8 @@ def test_programs(artifacts, variant, packages, env):
         args = []
         if variant == 'reference' and identity == ('enhance-shared', 'enhance_shared'):
             args = list(REFERENCE_LIB_FILTERS)
+        if variant == 'reference' and identity == ('pir-query-server', 'pir_query_server'):
+            args = ['status::']
         if variant == 'cuda' and identity == ('enhance-shared', 'enhance_shared'):
             args = ['backend_load_failure_does_not_rebuild_or_replace_published_units']
         program = dict(executable=artifact['executable'], package=package['name'],
@@ -341,7 +347,7 @@ def baseline_commands(family, include_cuda=False):
             ('reference', [*options, '-p', 'pir-e2e-tests', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-shared', '--features', 'qualification-tests', '--lib']),
-            ('reference', [*options, '-p', 'status-query-server', '--features', 'qualification-tests', '--lib', '--tests']),
+            ('reference', [*options, '-p', 'pir-query-server', '--features', 'enhance,status,status-shared/qualification-tests', '--lib', '--', 'status::']),
             ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
             ('cuda', [*options, '-p', 'enhance-shared', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),
@@ -356,7 +362,7 @@ def run_baseline(family, plan, output, include_cuda=False):
     env = {key: value for key, value in os.environ.items() if not key.startswith('QUALIFY_')}
     env['RUST_TEST_THREADS'] = '2' if family == 'transparent' else '1'
     if family == 'enhance' and include_cuda:
-        run(['cargo', 'check', '--locked', '-p', 'enhance-shared', '-p', 'enhance-query-server', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
+        run(['cargo', 'check', '--locked', '-p', 'enhance-shared', '-p', 'pir-query-server', '-p', 'enhance-pir-load-test', '-p', 'pir-cuda',
              '--all-targets', '--features', ','.join(CUDA)], env=env, stage='compile:baseline-cuda')
     for variant, options in baseline_commands(family, include_cuda):
         artifacts = run(['cargo', 'test', '--no-run', *options], env=env,

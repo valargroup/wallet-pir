@@ -22,16 +22,13 @@ members = [
     "src/shared/pir-chain",
     # Protocol libraries, clients and stores.
     "src/enhance/enhance-shared",
-    "src/enhance/enhance-query-server",
     "src/status/status-shared",
-    "src/status/status-query-server",
     "src/status/status-publisher",
     "src/transparent/transparent-shared",
     # Services and operational dashboard.
     "src/enhance/enhance-publisher",
     "src/shared/pir-apm",
     "src/transparent/transparent-publisher",
-    "src/transparent/transparent-query-server",
     # Development and validation tools; package/binary names stay stable.
     "tools/enhance/client",
     "tools/enhance/native-certificate",

@@ -5,9 +5,9 @@ mod boundary_recovery_model;
 mod record_layout;
 #[path = "status_routes.rs"]
 mod status_routes;
-use enhance_query_server::protocol::{Geometry, Lifecycle};
-use enhance_query_server::runtime::{plan, Engine};
-use enhance_query_server::wire::encode_crs_blocks;
+use enhance_shared::protocol::{Geometry, Lifecycle};
+use enhance_shared::runtime::{plan, Engine};
+use enhance_shared::wire::encode_crs_blocks;
 use pir_e2e_tests::enhance_fixture::record;
 fn rows(start: u64, count: usize) -> Result<Vec<u8>, String> {
     Ok((start..start + count as u64).flat_map(record).collect())
@@ -85,7 +85,7 @@ async fn published_hint_matches_independent_oracle_68() {
 }
 #[test]
 fn published_hint_rejects_damage_before_loading() {
-    use enhance_query_server::artifact::PublicationArtifact;
+    use enhance_shared::artifact::PublicationArtifact;
     use sha2::{Digest, Sha256};
     let root = tempfile::tempdir().unwrap();
     // Byte validation needs a valid encoding, not an evaluator. The TLS oracle
@@ -135,5 +135,5 @@ fn published_hint_rejects_damage_before_loading() {
     std::fs::write(&path, &original).unwrap();
     let pinned = PublicationArtifact::open(&path, original.len() as u64, digest).unwrap();
     std::fs::remove_file(&path).unwrap();
-    enhance_query_server::wire::validate_crs_blocks(pinned.reader(), blocks, degree).unwrap();
+    enhance_shared::wire::validate_crs_blocks(pinned.reader(), blocks, degree).unwrap();
 }

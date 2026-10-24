@@ -32,7 +32,7 @@
     "fast": ["object_access_http"],
     "full": []
   },
-  "status-query-server": {
+  "status-shared": {
     "fast": [],
     "full": [
       "status_wallet"
@@ -44,8 +44,22 @@
     ],
     "full": []
   },
-  "transparent-query-server": {
+  "transparent-tools": {
+    "fast": [],
+    "full": [
+      "assignment_planning",
+      "compact_export",
+      "compact_recovery",
+      "parent_filters",
+      "regression_runner",
+      "service_tools",
+      "simulation",
+      "txid_shipped_runtimes"
+    ]
+  },
+  "pir-query-server": {
     "fast": [
+      "operator",
       "ci_smoke"
     ],
     "full": [
@@ -61,24 +75,6 @@
       "wallet_recut",
       "wallet_sync"
     ]
-  },
-  "transparent-tools": {
-    "fast": [],
-    "full": [
-      "compact_export",
-      "compact_recovery",
-      "parent_filters",
-      "regression_runner",
-      "service_tools",
-      "simulation",
-      "txid_shipped_runtimes"
-    ]
-  },
-  "pir-query-server": {
-    "fast": [
-      "operator"
-    ],
-    "full": []
   },
   "pir-publisher": {
     "fast": [

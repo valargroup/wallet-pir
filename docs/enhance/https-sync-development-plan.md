@@ -45,11 +45,11 @@ support its independent handover rules without implementing a new promotion poli
 |---|---|---|
 | [`publisher.rs`](../../src/enhance/enhance-publisher/src/publisher.rs) | Durable generation/recovery ownership and complete local preparation | Publishes without consumer destinations or acknowledgments |
 | [`distribution.rs`](../../src/enhance/enhance-publisher/src/distribution.rs) | Atomic current, immutable objects and real canonical authority | Read-only HTTPS distribution; withdrawals fence pending work and responses |
-| [`worker_sync.rs`](../../src/enhance/enhance-query-server/src/worker_sync.rs) | Verified row loading, backend admission and exact readiness | Autonomous worker activation and bounded peer pins |
-| [`router_sync.rs`](../../src/enhance/enhance-query-server/src/router_sync.rs) | Published packing, compatible workers and exact evaluations | Local handover, byte-budget admission and response fences |
-| [`ingress_sync.rs`](../../src/enhance/enhance-query-server/src/ingress_sync.rs) | Manifest/routing activation with compatible routers | Separate control/query origins and retained request bindings |
+| [`worker_sync.rs`](../../src/pir-query-server/src/enhance/worker_sync.rs) | Verified row loading, backend admission and exact readiness | Autonomous worker activation and bounded peer pins |
+| [`router_sync.rs`](../../src/pir-query-server/src/enhance/router_sync.rs) | Published packing, compatible workers and exact evaluations | Local handover, byte-budget admission and response fences |
+| [`ingress_sync.rs`](../../src/pir-query-server/src/enhance/ingress_sync.rs) | Manifest/routing activation with compatible routers | Separate control/query origins and retained request bindings |
 | [`prepared_packing.rs`](../../src/enhance/enhance-shared/src/prepared_packing.rs) | Verified persisted/mapped packing | Reuses the existing format and bounded loaders |
-| [`service.rs`](../../src/enhance/enhance-query-server/src/service.rs) and root hosts | Configure/supervise one role | Requires synchronization settings; validates actual role JSON without opening state |
+| [`service.rs`](../../src/pir-query-server/src/enhance/service.rs) and root hosts | Configure/supervise one role | Requires synchronization settings; validates actual role JSON without opening state |
 | [`pir-sync-manager`](../../src/shared/pir-sync-manager/src/lib.rs) | HTTPS transfer accounting, sequential polling and backoff | Enhance authority, recovery and activation policy stays product-owned |
 
 The current native and reference builds have different prepared-packing formats.

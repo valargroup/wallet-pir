@@ -46,9 +46,9 @@ class MatrixTests(unittest.TestCase):
             elif change == 'duplicate': shard.append(shard[0])
             elif change == 'stale': shard[0] += '-removed'
             else:
-                target = copy.deepcopy(discovered['transparent-query-server']['targets'][-1])
+                target = copy.deepcopy(discovered['pir-query-server']['targets'][-1])
                 target['name'] = 'new_wallet_boundary'
-                discovered['transparent-query-server']['targets'].append(target)
+                discovered['pir-query-server']['targets'].append(target)
             with self.subTest(change=change), self.assertRaises(ValueError):
                 matrix.load_plan(selected, discovered)
 
@@ -56,30 +56,64 @@ class MatrixTests(unittest.TestCase):
         registry, contexts, targets, packages, _ = self.plan
         reference = registry['enhance-reference']['targets']
         self.assertIn('reference:enhance-shared:lib:enhance_shared', reference)
+        self.assertIn('reference:pir-query-server:lib:pir_query_server', reference)
+        self.assertFalse(any(key.startswith('reference:pir-query-server:')
+                             and key != 'reference:pir-query-server:lib:pir_query_server'
+                             for key in reference))
+        host_features = matrix.package_features('pir-query-server', contexts['reference'], packages)
+        self.assertIn('pir-query-server/status', host_features)
+        self.assertNotIn('pir-query-server/native-reinspiring', host_features)
         self.assertNotIn('reference:enhance-publisher:test:http', reference)
-        native = matrix.package_features('enhance-query-server', contexts['native'], packages)
-        cuda = matrix.package_features('enhance-query-server', contexts['cuda'], packages)
-        self.assertIn('enhance-query-server/native-reinspiring', native)
-        self.assertNotIn('enhance-query-server/cuda', native)
-        self.assertIn('enhance-query-server/native-reinspiring', cuda)
-        self.assertIn('enhance-query-server/cuda', cuda)
-        reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
-        self.assertEqual(reference_features, ['enhance-query-server/client',
-                                              'enhance-query-server/qualification-tests',
-                                              'enhance-shared/client',
-                                              'enhance-shared/qualification-tests'])
+        native = matrix.package_features('enhance-shared', contexts['native'], packages)
+        cuda = matrix.package_features('enhance-shared', contexts['cuda'], packages)
+        self.assertIn('enhance-shared/native-reinspiring', native)
+        self.assertNotIn('enhance-shared/cuda', native)
+        self.assertIn('enhance-shared/native-reinspiring', cuda)
+        self.assertIn('enhance-shared/cuda', cuda)
+        reference_features = matrix.package_features('enhance-shared', contexts['reference'], packages)
+        self.assertIn('enhance-shared/client', reference_features)
+        self.assertIn('enhance-shared/qualification-tests', reference_features)
+        self.assertNotIn('enhance-shared/native-reinspiring', reference_features)
         self.assertIn('pir-e2e-tests/qualification-tests', contexts['reference']['features'])
-        self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
-        self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
+        self.assertIn('status-shared/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-shared/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-shared', 'enhance-query-server',
+                         {'enhance-shared',
                           'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
+
+    def test_reference_host_lists_and_runs_the_moved_status_cases(self):
+        package = self.plan[3]['pir-query-server']
+        artifact = dict(package_id=package['id'], target=dict(name='pir_query_server', kind=['lib']),
+                        executable='/not-executed', features=['status'])
+
+        def listing(command, **_):
+            self.assertEqual(command[1], 'status::')
+            return '' if '--ignored' in command else 'status::controller::authority: test\n'
+
+        with patch.object(matrix.subprocess, 'check_output', side_effect=listing):
+            _, programs, cases = matrix.test_programs([artifact], 'reference',
+                                                      {package['name']: package}, {})
+        self.assertEqual(programs[0]['args'], ['status::'])
+        self.assertEqual(cases['reference:pir-query-server:pir_query_server']['tests'],
+                         ['status::controller::authority'])
+
+    def test_reference_host_baseline_uses_the_same_host_features(self):
+        _, contexts, _, packages, _ = self.plan
+        commands = [command for variant, command in matrix.baseline_commands('enhance')
+                    if variant == 'reference' and command[command.index('-p') + 1] == 'pir-query-server']
+        self.assertEqual(len(commands), 1)
+        features = commands[0][commands[0].index('--features') + 1].split(',')
+        baseline = {'features': [feature if '/' in feature else 'pir-query-server/' + feature
+                                 for feature in features]}
+        host_features = lambda context: matrix.enabled_features(
+            packages['pir-query-server'], matrix.package_features('pir-query-server', context, packages))
+        self.assertEqual(host_features(baseline), host_features(contexts['reference']))
 
     def test_database_reader_binaries_remain_in_full_qualification(self):
         registry, contexts, targets, packages, _ = self.plan

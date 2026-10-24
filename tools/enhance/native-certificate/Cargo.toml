@@ -11,13 +11,13 @@ default = []
 # Kept off by default so a fast build that names this package does not switch
 # Enhance and Status serving libraries onto native arithmetic.
 native-reinspiring = [
-    "dep:enhance-query-server",
+    "dep:enhance-shared",
     "dep:status-shared",
     "dep:ipir-sp",
     "dep:rayon",
     "dep:reinspiring",
     "dep:zakura-pir-server-core",
-    "enhance-query-server/native-reinspiring",
+    "enhance-shared/native-reinspiring",
     "status-shared/native-reinspiring",
 ]
 
@@ -27,7 +27,7 @@ path = "src/main.rs"
 required-features = ["native-reinspiring"]
 
 [dependencies]
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server", optional = true }
+enhance-shared = { path = "../../../src/enhance/enhance-shared", optional = true }
 status-shared = { path = "../../../src/status/status-shared", optional = true }
 ipir-sp = { version = "=0.1.0-rc.7", optional = true }
 rayon = { version = "1", optional = true }

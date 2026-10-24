@@ -31,8 +31,10 @@ def inventory(packages=None, groups=None):
     return groups
 
 
-# The Transparent family also runs the publisher host and its end-to-end tests.
-TRANSPARENT_HOSTS = ['pir-publisher', 'pir-e2e-tests']
+# The Transparent family also runs the publisher host, the query host (whose
+# `transparent` module and Transparent tests need history and detail), and the
+# end-to-end tests.
+TRANSPARENT_HOSTS = ['pir-publisher', 'pir-query-server', 'pir-e2e-tests']
 
 # The chain reader's explicit test selections, each with its library tests:
 # decoding and fixtures without a runtime, RPC reads of every product against the

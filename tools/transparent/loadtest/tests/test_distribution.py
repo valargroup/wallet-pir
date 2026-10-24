@@ -420,7 +420,9 @@ class DistributionTests(unittest.TestCase):
 
     def test_retry_retains_partial_body_separately_from_success(self):
         consumer = self.consumer("bootstrap")
-        consumer.args.timeout = .2
+        # The first attempt's three bytes must arrive before its deadline even
+        # on a loaded runner; the stall then outlives that deadline.
+        consumer.args.timeout = 1.0
         body, attempts = b"partial-then-complete", []
         def retry(handler):
             attempts.append(1)
@@ -428,8 +430,9 @@ class DistributionTests(unittest.TestCase):
             handler.send_header("Content-Length", str(len(body)))
             handler.end_headers()
             handler.wfile.write(body[:3] if len(attempts) == 1 else body)
+            handler.wfile.flush()
             if len(attempts) == 1:
-                time.sleep(.3)
+                time.sleep(1.5)
         self.server.RequestHandlerClass.do_GET = retry
         target = consumer.objects / "candidate"
         consumer.request("artifacts/" + hashlib.sha256(body).hexdigest(), len(body), target=target)

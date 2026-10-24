@@ -21,7 +21,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[3]
-FROZEN = ROOT / "src/transparent/transparent-query-server/tests/frozen-client"
+FROZEN = ROOT / "src/pir-query-server/tests/transparent/frozen-client"
 TEST = "unified_http_sync_campaign"
 CASE = "unified_publisher_drives_independent_full_history_and_display_consumers"
 

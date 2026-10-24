@@ -41,7 +41,7 @@ binary = "pir-publisher"
 artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
-order = ["worker", "external-worker", "packing-router", "query-ingress"]
+order = ["worker", "external-worker", "packing-router", "query-ingress", "combined"]
 # The coordinator's public edge, listed once in the inventory's `ancillary`.
 ancillary = ["routing"]
 
@@ -110,3 +110,24 @@ ready = { field = "ready", equals = true }
 ready_timeout = 300
 adopt_command_write_paths = true
 adoptable_drop_ins = ["zz-cleanup-*.conf", "99-apm-hour.conf", "zzzz-main-3685438.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzzzzzz-main.conf"]
+
+# Ingress, packing router and worker in one process for the worker's domains,
+# which must be every domain the publication covers: wallets query all of them
+# at this one origin, and a host owning fewer refuses the publication and stops.
+# Wallets reach it on the host's public listener, rendered from `listen`; its
+# components call each other directly and name no peers.
+[services.enhance.roles.combined]
+guard = "tools.enhance.lib.deploy_prerequisites:Guard"
+unit = "enhance-pir-combined.service"
+binary = "pir-query-server"
+mode = "role"
+template = "enhance-pir-worker.role.service"
+renderer = "tools.enhance.lib.roles:combined"
+optional = true
+# Settings: listen, control_listen, data_dir, synchronization (worker shards),
+# sealed_shards?, matvec_backend?, cuda_device?, requests?, uploads?,
+# max_objects?, packing_requests?, limits?, credentials?. Health uses
+# vars.control_listen.
+health = "http://{control_listen}/internal/health"
+ready = { field = "ready", equals = true }
+ready_timeout = 300

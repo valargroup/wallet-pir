@@ -5,7 +5,7 @@
 //!
 //! This package performs no I/O beyond reading prepared files it is handed.
 //! HTTP, listeners, controllers, peer coordination and admission stay in
-//! `status-query-server`; chain observation and publication stay in
+//! `pir-query-server`; chain observation and publication stay in
 //! `status-publisher`.
 pub mod fixture;
 mod generation;
@@ -14,7 +14,7 @@ pub mod protocol;
 pub mod publication;
 pub mod telemetry;
 use crate::protocol::*;
-pub use generation::{Generation, Preparation};
+pub use generation::{Generation, Preparation, PreparedMaterial};
 use ipir_sp::ProductionSimplePirParams;
 use std::{
     sync::OnceLock,
