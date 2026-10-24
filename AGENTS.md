@@ -7,8 +7,10 @@ beside that product's query server, and `src/shared` holds libraries only.
 Operations and standalone scripts live under `tools/<product>/`;
 shared automation lives under `tools/{ci,dev,scripts,lib,deploy,infra}/`. Docs and
 evidence live under `docs/<product>/` and `evidence/<product>/`.
-Preserve existing Cargo package names. Enhance, Status and Transparent publisher
-and query-server crates are libraries only. Run their services through
+Preserve existing Cargo package names, except the retired
+`transparent-query-server`: its serving primitives live in `transparent-shared`
+and its application runs in the root host. Enhance and Status query-server
+crates and all product publisher crates are libraries only. Run their services through
 `pir-publisher` and `pir-query-server`; maintenance uses `pir-publisher`
 subcommands, and product features are selected independently.
 
