@@ -111,7 +111,9 @@ ready_timeout = 300
 adopt_command_write_paths = true
 adoptable_drop_ins = ["zz-cleanup-*.conf", "99-apm-hour.conf", "zzzz-main-3685438.conf", "zzzzzz-native-ac06df3.conf", "zzzzzzz-native2m-dc0355b.conf", "zzzzzzzz-native2m-1dae185.conf", "zzzzzzzzzzzzzzzz-main.conf"]
 
-# Ingress, packing router and worker in one process for the worker's domains.
+# Ingress, packing router and worker in one process for the worker's domains,
+# which must be every domain the publication covers: wallets query all of them
+# at this one origin, and a host owning fewer refuses the publication and stops.
 # Wallets reach it on the host's public listener, rendered from `listen`; its
 # components call each other directly and name no peers.
 [services.enhance.roles.combined]

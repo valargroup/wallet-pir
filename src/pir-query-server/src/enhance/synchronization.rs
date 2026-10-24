@@ -553,41 +553,46 @@ fn remove_digest_part_transfers(objects: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// One single-shard publication manifest for the host's Enhance unit tests.
+#[cfg(test)]
+pub(crate) fn test_manifest() -> Manifest {
+    let geometry = enhance_shared::protocol::Geometry::default();
+    let coverage = enhance_shared::protocol::Lifecycle::default()
+        .coverage(1, geometry)
+        .unwrap();
+    let plan = enhance_shared::runtime::plan(
+        coverage.shards[0].clone(),
+        enhance_shared::test_support::records,
+    )
+    .unwrap();
+    Manifest {
+        recovery_epoch: 0,
+        placement_revision: 1,
+        domain_recovery_epochs: [(0, "0".into())].into(),
+        schema_version: enhance_shared::protocol::SCHEMA_VERSION,
+        protocol_revision: enhance_shared::protocol::PROTOCOL_REVISION.into(),
+        network: "main".into(),
+        pool: "ironwood".into(),
+        generation: 1,
+        anchor_height: 1,
+        anchor_block_hash: "01".repeat(32),
+        geometry,
+        coverage,
+        sessions: vec![enhance_shared::protocol::SessionRef {
+            shard_id: 0,
+            public_params_sha256: "02".repeat(32),
+            parameter_id: enhance_shared::protocol::parameter_id(plan.shard.logical_rows).unwrap(),
+        }],
+        unit_identities: [(0, plan.units)].into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn manifest() -> Manifest {
-        let geometry = enhance_shared::protocol::Geometry::default();
-        let coverage = enhance_shared::protocol::Lifecycle::default()
-            .coverage(1, geometry)
-            .unwrap();
-        let plan = enhance_shared::runtime::plan(
-            coverage.shards[0].clone(),
-            enhance_shared::test_support::records,
-        )
-        .unwrap();
-        Manifest {
-            recovery_epoch: 0,
-            placement_revision: 1,
-            domain_recovery_epochs: [(0, "0".into())].into(),
-            schema_version: enhance_shared::protocol::SCHEMA_VERSION,
-            protocol_revision: enhance_shared::protocol::PROTOCOL_REVISION.into(),
-            network: "main".into(),
-            pool: "ironwood".into(),
-            generation: 1,
-            anchor_height: 1,
-            anchor_block_hash: "01".repeat(32),
-            geometry,
-            coverage,
-            sessions: vec![enhance_shared::protocol::SessionRef {
-                shard_id: 0,
-                public_params_sha256: "02".repeat(32),
-                parameter_id: enhance_shared::protocol::parameter_id(plan.shard.logical_rows)
-                    .unwrap(),
-            }],
-            unit_identities: [(0, plan.units)].into(),
-        }
+        super::test_manifest()
     }
 
     fn response(manifest: &Manifest) -> AuthorityResponse {

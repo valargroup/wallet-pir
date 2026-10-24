@@ -148,7 +148,11 @@ optional `max_objects` (default 6) and `requests` (default 4). A `combined`
 Enhance role runs a query ingress, packing router and worker for the worker's
 `shards` in one process, calling each other directly instead of over private
 HTTP, so it names no routers or workers and needs no bearer token between
-them. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
+them. Its `shards` must name every shard the publication covers: wallets
+learn all of them from `init` and query them at this one origin, so a host
+owning fewer refuses the publication by name in its log and `/internal/health`
+(`ingress.blocked`), and stops before it has served any generation rather than
+idling unready. Hosts that split shards run the distributed roles. It takes the worker's `synchronization`, `sealed_shards` and `matvec`, the
 ingress's `requests` and `uploads`, the router's `max_objects` and
 `packing_requests` (the router's `requests`), an absolute `data_dir` holding
 `worker`, `router` and `ingress` state directories and the private
