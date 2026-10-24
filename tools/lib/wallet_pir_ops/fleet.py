@@ -5,7 +5,7 @@ and publication state remain owned by each product's existing controllers.
 
 A product inventory may list only the services it operates; `describe()` checks
 what it lists. `describe(complete=True)` additionally requires the whole fleet:
-every registered service and role, each declared responsibility held by exactly
+every required service and role, each declared responsibility held by exactly
 one instance, every required ancillary kind consumed, and no field that would
 duplicate controller-owned membership.
 """
@@ -134,7 +134,10 @@ class Fleet:
                 consumed.setdefault(consumer, set()).add(entry.get('kind'))
             own(host, entry['unit'], label)
         if complete:
-            missing = sorted(self.services.keys() - inventory.services.keys())
+            # A service made entirely of optional roles is itself opt-in.
+            required = {name for name, service in self.services.items()
+                        if any(not role.optional for role in service.roles.values())}
+            missing = sorted(required - inventory.services.keys())
             if missing:
                 problems.append('services missing from a complete fleet: %s' % missing)
             for name, service in sorted(self.services.items()):
