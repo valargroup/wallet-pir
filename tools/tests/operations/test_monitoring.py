@@ -53,6 +53,19 @@ class ObserverInventory(unittest.TestCase):
         document = monitoring.sidecar_document(dict(WORKER, required_volumes=[{'path': path, 'uuid': 'aaaa'}]))
         self.assertIn('volume:' + path, monitoring.expected_checks(document))
 
+    def test_explicit_expected_volumes_add_to_coordinator_requirements(self):
+        extra = {'path': '/extra', 'uuid': 'ffff-0000'}
+        expectations = {'coordinator': ['/extra']}
+        report = monitoring.coverage(inventory(dict(COORDINATOR, required_volumes=[extra])),
+                                     expected_volumes=expectations)
+        self.assertEqual(report['missing_volumes'], {'coordinator': sorted(monitoring.COORDINATOR_VOLUMES)})
+        self.assertEqual(expectations, {'coordinator': ['/extra']}, 'coverage must not modify its inputs')
+        complete = inventory(dict(COORDINATOR, required_volumes=[*COORDINATOR['required_volumes'], extra]))
+        self.assertEqual(monitoring.coverage(complete, expected_volumes=expectations)['missing_volumes'], {})
+        path = monitoring.COORDINATOR_VOLUMES[0]
+        report = monitoring.coverage(complete, expected_volumes={'coordinator': [{'path': path, 'uuid': 'ffff'}]})
+        self.assertEqual(report['missing_volumes'], {'coordinator': [path]}, 'an explicit UUID remains required')
+
     def test_non_service_units_only_require_active_state(self):
         document = monitoring.sidecar_document(dict(WORKER, units=['worker.service', 'worker.socket', 'worker.timer']))
         checks = [c for c in monitoring.expected_checks(document) if c.startswith('unit:')]
