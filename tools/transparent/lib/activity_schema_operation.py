@@ -291,6 +291,8 @@ class Runner:
                 self.save(record)
                 raise OperationError('schema phase timed out; reconcile and recover the recorded transaction') from None
             except Exception:
+                from wallet_pir_ops.deploy.deployment_alerts import failed
+                failed()
                 # A lost/replaced lock forbids further mutations, including rollback.
                 lock.verify()
                 self.recover(record, lock)

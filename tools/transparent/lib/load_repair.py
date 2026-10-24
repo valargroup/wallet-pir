@@ -298,6 +298,8 @@ class Repair:
             self.apply(journal, new=True)
             journal.set_status('committed')
         except BaseException as error:
+            from wallet_pir_ops.deploy.deployment_alerts import failed
+            failed()
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
             if journal.touched():
                 self.out('repair failed (%s); restoring the previous unit, load left stopped' % error)
