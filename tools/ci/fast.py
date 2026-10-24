@@ -174,12 +174,6 @@ def select(packages, paths):
     names = {p['name'] for p in packages}
     selected = set()
     for path in paths:
-        # Private product regressions compile this same host engine source.
-        # Select its adapters explicitly without product-to-host Cargo edges.
-        if (path == 'src/pir-publisher/src/publisher.rs'
-                or path.startswith('src/pir-publisher/src/publisher/')):
-            selected.update(names & {'pir-publisher', 'enhance-publisher',
-                                     'status-publisher', 'transparent-publisher'})
         # Package-owned embedded fixtures (including Markdown) can affect Rust.
         package = owner(packages, path)
         if package:

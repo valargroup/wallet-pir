@@ -13,7 +13,11 @@ pub struct Config {
     pub recent_from: u64,
     pub recent_geometry: String,
     pub archive_geometry: String,
+    /// The root chain's node endpoint, injected at registration for extraction
+    /// and exact-source rechecks. Operator settings carry it only under `chain`.
+    #[serde(skip_deserializing)]
     pub rpc_url: String,
+    #[serde(skip_deserializing)]
     pub rpc_cookie: PathBuf,
     pub listen: std::net::SocketAddr,
     pub source_sha: String,

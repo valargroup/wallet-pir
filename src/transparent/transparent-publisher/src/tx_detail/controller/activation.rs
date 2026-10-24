@@ -7,6 +7,13 @@ impl Controller {
         candidate: DisplayCandidate,
         finalized: Option<DisplayActivation>,
     ) -> Result<(), CycleError> {
+        let fence = self.fence.clone();
+        // Commit authority and the map named by later rollback records before
+        // another journal rollback can begin.
+        let _journal = fence.journal().await;
+        if let Some((ancestor, floor)) = fence.sealed() {
+            return Err(CycleError::Halt(Halt::SealedReorg { ancestor, floor }));
+        }
         let DisplayCandidate {
             material,
             candidate,
@@ -36,12 +43,7 @@ impl Controller {
         // The rollback record vouches only for what was published when it was
         // made. This candidate may be published without being committed, so
         // a restart from here on rewrites the recent range.
-        if self.rollback.is_some() {
-            let next = Invalidations { rollback: None };
-            next.store(&self.root).map_err(retry)?;
-            self.saved_invalidations = next;
-            self.rollback = None;
-        }
+        self.fence.clear().map_err(retry)?;
         let mut next_active = self.active.clone();
         next_active.seals.extend(new_seals.iter().cloned());
         next_active.directory = candidate;
@@ -80,7 +82,10 @@ impl Controller {
         self.cache.drop_through(keep_from.min(recent_start) - 1);
         self.recent_previous = Some((recent_id, recent_start, recent.revision()));
         self.active = next_active;
+        self.fence.activated(&self.active.map_sha256);
+        self.fence.set_floor(self.sealed_floor());
         self.map = map;
+        drop(_journal);
         #[cfg(feature = "fixtures")]
         if self.settings.record_maps {
             self.maps.push(self.map.clone());

@@ -143,7 +143,7 @@ class ServingTests(PublisherFixture, unittest.TestCase):
         self.assertEqual(self.ex.effects, [])
 
     def test_product_policy_changes_are_still_refused(self):
-        self.request['configuration']['enhance']['settings']['poll_seconds'] += 1
+        self.request['configuration']['enhance']['settings']['prevout_cache_outputs'] += 1
         target = self.make_target()
         with self.assertRaisesRegex(DeployError, 'preserve every product'):
             target.plan()

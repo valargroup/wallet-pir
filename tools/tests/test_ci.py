@@ -375,7 +375,8 @@ class BoundaryTests(unittest.TestCase):
                           side_effect=lambda command, **_: order.append(command)), \
              patch.object(boundary, 'standalone_metadata',
                           side_effect=lambda *_: order.append('standalone') or metadata), \
-             patch.object(boundary, 'runtime_graph_violations', return_value=[]):
+             patch.object(boundary, 'runtime_graph_violations', return_value=[]), \
+             patch.object(boundary, 'engine_graph_violations', return_value=[]):
             self.assertEqual(boundary.main(['--resolved']), 0)
         self.assertEqual(order[0], ['cargo', 'fetch', '--locked', '--quiet'])
         self.assertIn('standalone', order)
@@ -385,6 +386,7 @@ class BoundaryTests(unittest.TestCase):
         with patch.object(boundary.subprocess, 'check_output', return_value=json.dumps(metadata)), \
              patch.object(boundary, 'standalone_metadata', return_value=metadata), \
              patch.object(boundary, 'runtime_graph_violations', return_value=[]), \
+             patch.object(boundary, 'engine_graph_violations', return_value=[]), \
              patch.object(boundary.subprocess, 'check_call') as fetch:
             self.assertEqual(boundary.main(['--resolved', '--offline']), 0)
             fetch.assert_not_called()
@@ -401,6 +403,27 @@ class BoundaryTests(unittest.TestCase):
             fast.main()
         helper = next(kw for command, kw in calls if command[0] == 'make')
         self.assertEqual(helper['env']['OFFLINE'], '1')
+
+    def test_engine_graphs_report_chain_decoding_reached_through_any_edge(self):
+        def graph(edges, kind=None):
+            names = {name for edge in edges for name in edge}
+            return {'packages': [{'id': n, 'name': n, 'source': None} for n in sorted(names)],
+                    'resolve': {'nodes': [{'id': n, 'deps': [
+                        {'pkg': b, 'dep_kinds': [{'kind': kind}]} for a, b in edges if a == n]}
+                        for n in sorted(names)]}}
+        clean = graph([(name, 'tokio') for name in boundary.ENGINE_GRAPHS])
+        with patch.object(boundary, 'standalone_metadata', return_value=clean):
+            self.assertEqual(boundary.engine_graph_violations(clean), [])
+        heavy = graph([(boundary.PIPELINE, 'helper'), ('helper', 'zakura-server-chain'),
+                       (boundary.NODE_RPC, 'tokio'), ('pir-publisher', 'tokio')])
+        with patch.object(boundary, 'standalone_metadata', return_value=heavy):
+            self.assertEqual(boundary.engine_graph_violations(clean),
+                             [f'{boundary.PIPELINE}: production graph reaches zakura-server-chain'])
+        dev = graph([(name, 'tokio') for name in boundary.ENGINE_GRAPHS]
+                    + [(boundary.NODE_RPC, 'zakura-server-chain')], kind='dev')
+        with patch.object(boundary, 'standalone_metadata', return_value=clean):
+            self.assertEqual(boundary.engine_graph_violations(dev),
+                             [f'{boundary.NODE_RPC}: development graph reaches zakura-server-chain'])
 
     def test_serving_libraries_refuse_ingestion_applications_and_other_products(self):
         def package(*dependencies):

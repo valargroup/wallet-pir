@@ -13,8 +13,13 @@ The publisher host lives at `src/pir-publisher`. Each product publisher lives
 beside that product's query server: `src/enhance/enhance-publisher`,
 `src/status/status-publisher`, `src/transparent/transparent-publisher`, and
 `src/receiver/receiver-indexer`. Those packages keep their existing names.
-`src/shared/pir-pipeline` is the shared lifecycle library, and `src/shared`
-otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
+`src/shared/pir-pipeline` is the shared lifecycle library: it also owns the
+publication engine, the transport-free chain follower and the live and backfill
+ingestion schedulers, so products and fast tests use them without the host or a
+node stack. `src/shared/pir-node-rpc` is the bounded node JSON-RPC transport
+(credentials, deadlines, response bounds, batches) with no chain decoding;
+`zakura-server-chain` builds its `NodeClient` on it and the root follower uses it
+alone. `src/shared` otherwise holds shared libraries only. `src/receiver/receiver-store` holds the
 indexer's SQLite stores. History and transaction details remain separate modes
 of `transparent-publisher`. Enhance, Status, and Transparent wallet-client and
 chain-fixture regressions run with the host, not as a second copy of that stack
@@ -88,6 +93,32 @@ no task, opens no store and reads no credential. Product settings retain their
 existing names and semantics; non-optional settings must be explicit. Receiver
 must use continuous serving, and Enhance's embedded Status setting is replaced
 by the separate Status section. No configuration reload is performed.
+
+The root `chain` section (`rpc_url`, `rpc_cookie`, and `poll_ms`, default
+1000) names the one node every chain-following product reads. Enhance, Status,
+Transparent History and Transparent Filters require it and no longer accept
+their own node endpoint, cookie or polling settings (`zakura_rpc_url`,
+`zakura_cookie`, `poll_seconds`, `rpc_url`, `rpc_cookie`, `cookie`). Transaction
+details also use the root follower and require the root chain settings.
+Receiver keeps its own multi-node settings
+and never uses the root section.
+
+### Root chain following
+
+When a chain-following product is enabled, the host runs one follower that
+reads the node's genesis and tip once per pass and delivers every pass,
+including an unchanged tip. Each such product supplies its journal's writer
+operations through its registration; the host runs a live scheduler and a
+separate backfill scheduler over that one writer. On every pass the live
+scheduler compares the journal's own durable checkpoints with the node, so a
+restart or a skipped pass cannot hide a reorg. Before removing any orphaned
+blocks it lets the product withdraw publications that depend on them. Short
+gaps extend live; longer gaps go to the backfill scheduler, which commits
+bounded batches toward a fixed target and releases the writer between batches
+so reorg withdrawal stays responsive. A product offers new publication work
+only after its coverage equals the observed tip. A node behind the journal
+removes nothing. Existing journals are opened in place and resume at their
+committed coverage; at an unchanged tip no block is read or rewritten.
 
 `--check` parses and validates the configuration, listener declarations and
 writable paths. It neither reads credentials nor contacts nodes or workers,
@@ -414,8 +445,10 @@ The two Transparent features select separate configuration sections and owners.
 Long-running services use `pir-publisher --config FILE`. Existing history and
 display settings live under `transparent_history.settings` and
 `transaction_details.settings`. The optional `transparent_filters` section,
-compiled by `transparent-history`, runs the existing filter ingestion and HTTP
-service with its own state and listener. Use the packaged
+compiled by `transparent-history`, runs filter ingestion from the root chain
+follower and the HTTP service with its own state and listener. It extends the
+existing filter store with the same transparent extraction History uses and
+needs no historical event journal. Use the packaged
 `tools/transparent/deploy/transparent-filters.example.json` when installing the
 filter unit; install its reviewed configuration as
 `/etc/wallet-pir/transparent-filters.json` before starting it.

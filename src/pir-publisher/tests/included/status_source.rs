@@ -124,6 +124,49 @@ fn compact_wire_preserves_stsobs01_checkpoint_bytes() {
     recovered.persist([9; 32], &blocks, &forks).unwrap();
     assert_eq!(std::fs::read(dir.path().join("source.bin")).unwrap(), bytes);
 }
+/// A checkpoint laid down byte by byte, as a deployed publisher wrote it,
+/// opens in place as the root writer's committed coverage without being
+/// rewritten; the window keeps one writer, and a checkpoint for another window
+/// or salt is refused and left as it was.
+#[test]
+fn a_hand_laid_stsobs01_checkpoint_opens_in_place_as_committed_coverage() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut bytes = b"STSOBS01".to_vec();
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&[1; 32]);
+    bytes.extend_from_slice(&[9; 32]);
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    for (height, hash, parent) in [(10u32, [3; 32], [2; 32]), (11, [7; 32], [3; 32])] {
+        bytes.extend_from_slice(&height.to_le_bytes());
+        bytes.extend_from_slice(&hash);
+        bytes.extend_from_slice(&parent);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&[height as u8; 32]);
+    }
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&[5; 32]);
+    bytes.extend_from_slice(&9u32.to_le_bytes());
+    bytes.extend_from_slice(&[6; 32]);
+    let path = dir.path().join("source.bin");
+    std::fs::write(&path, &bytes).unwrap();
+    {
+        let window = RollingWindow::open(dir.path(), [1; 32], 2).unwrap();
+        assert_eq!(window.network(), Some([9; 32]));
+        assert_eq!(window.committed(), Some((11, [7; 32])));
+        assert_eq!(window.checkpoint_at_or_below(10), Some((10, [3; 32])));
+        assert_eq!(window.checkpoint_at_or_below(9), None);
+        assert_eq!(window.forks.len(), 1);
+        assert!(
+            RollingWindow::open(dir.path(), [1; 32], 2).is_err(),
+            "one writer"
+        );
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert!(RollingWindow::open(dir.path(), [1; 32], 3).is_err());
+    assert!(RollingWindow::open(dir.path(), [2; 32], 2).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes, "refused, not reset");
+}
+
 #[tokio::test]
 async fn canonical_observation_indexes_every_transaction_type() {
     let (client, job) = fixture(false, false).await;

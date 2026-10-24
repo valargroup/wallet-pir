@@ -1,7 +1,7 @@
 //! Where the controller's blocks come from.
 //!
-//! - [`LiveSource`] follows the node: it owns ingest for the display journal
-//!   (`controller.rs`'s follow loop, without the history authority or fleet).
+//! - [`CommittedSource`] reads what the root-scheduled journal writer
+//!   ([`super::ingestion`]) committed; the root follows the node.
 //! - [`ReplaySource`] advances a visible tip over an already ingested journal
 //!   at a fixed pace, for accelerated runs across several seals.
 //! - [`Script`] is driven by tests.
@@ -19,14 +19,15 @@ use zakura_pir_publisher::transparent::filter as transparent_filter;
 
 use super::cache::DisplayCache;
 use super::now_ms;
-use crate::ingest::blocks::build_fetched_block_events;
-use crate::ingest::prevout::OutputCache;
-use crate::ingest::zakura::NodeClient;
 use crate::BoxError;
 use std::collections::BTreeMap;
 #[cfg(feature = "fixtures")]
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "fixtures")]
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 use transparent_filter::BlockHash;
 use transparent_shard::txid::DisplayRecord;
 #[cfg(feature = "fixtures")]
@@ -126,173 +127,76 @@ fn from_journal(
     Ok(update)
 }
 
-/// Follows the node and ingests into the journal.
-pub struct LiveSource {
-    rpc: NodeClient,
-    poll: Duration,
-    last_poll: Option<Instant>,
-    outputs: OutputCache,
-    /// When each height was first seen at or below the node's tip.
-    first_seen: BTreeMap<u64, u64>,
-    /// The node's tip at the last poll that reached it.
-    node_tip: Option<u64>,
+/// What the root-scheduled journal writer reports beside committed blocks.
+#[derive(Default)]
+pub struct WriterView {
+    /// The node's tip at the latest observation.
+    pub(super) node_tip: Option<u64>,
+    /// When each height above committed coverage was first observed.
+    pub(super) first_seen: BTreeMap<u64, u64>,
+    /// Whether committed coverage reached the latest observed tip.
+    pub(super) current: bool,
+    /// A failure after the journal changed; the change still stands.
+    pub(super) error: Option<String>,
 }
 
-impl LiveSource {
-    pub fn new(rpc: NodeClient, poll: Duration) -> Self {
+/// Committed display journal updates from the root-scheduled writer
+/// ([`super::ingestion::DetailIngestion`]). The controller reads them through
+/// its own read-only view of the journal; it never writes or follows the node.
+pub struct CommittedSource {
+    view: Arc<Mutex<WriterView>>,
+    updates: watch::Receiver<u64>,
+    /// Committed blocks remain beyond the last bounded batch.
+    more: AtomicBool,
+}
+
+impl CommittedSource {
+    pub fn new(view: Arc<Mutex<WriterView>>, updates: watch::Receiver<u64>) -> Self {
         Self {
-            rpc,
-            poll,
-            last_poll: None,
-            outputs: OutputCache::new(crate::ingest::prevout::DEFAULT_CACHE_OUTPUTS),
-            first_seen: BTreeMap::new(),
-            node_tip: None,
+            view,
+            updates,
+            more: AtomicBool::new(true),
         }
     }
 
     async fn wait(&self) {
-        if let Some(last) = self.last_poll {
-            tokio::time::sleep_until((last + self.poll).into()).await;
+        if self.more.load(Ordering::Acquire) {
+            return;
+        }
+        let mut updates = self.updates.clone();
+        if updates.changed().await.is_err() {
+            std::future::pending::<()>().await;
         }
     }
 
-    fn observe(&mut self, from: u64, tip: u64) {
-        let now = now_ms();
-        for height in from..=tip {
-            self.first_seen.entry(height).or_insert(now);
-        }
-    }
-
-    async fn poll(
+    fn poll(
         &mut self,
         store: &mut EventStore,
         cache: &DisplayCache,
         floor: u64,
-        before_rollback: BeforeRollback<'_>,
+        fence: &super::controller::RollbackFence,
     ) -> Result<SourceUpdate, SourceError> {
-        self.last_poll = Some(Instant::now());
+        self.updates.borrow_and_update();
+        if let Some((ancestor, floor)) = fence.sealed() {
+            return Err(SourceError::SealedReorg { ancestor, floor });
+        }
+        store.refresh()?;
         let journal_end = store
             .covered_through()
             .ok_or_else(|| transient("empty journal"))?;
-        let diverged = cache
-            .tip()
-            .is_some_and(|(h, hash)| store.block_at(h).map(|b| b.block_hash) != Some(hash));
-        if cache.next_height() <= journal_end || diverged {
-            let now = now_ms();
-            return from_journal(store, cache, floor, (journal_end, BATCH), |h| {
-                self.first_seen.get(&h).copied().unwrap_or(now)
-            });
-        }
-        let tip = self.rpc.tip_height().await.map_err(transient)?;
-        self.node_tip = Some(tip);
-        if tip < floor {
-            // A node that is behind is not a fork; nothing sealed is at stake.
-            return Err(transient(format!(
-                "node tip {tip} is below the sealed floor {floor}; waiting"
-            )));
-        }
-        self.observe(cache.next_height(), tip);
-
-        // Walk back to the highest journal block the node agrees with. The
-        // walk never passes the floor: a fork there must not touch the journal.
-        let mut ancestor = journal_end;
-        let ours = loop {
-            let ours = store
-                .block_at(ancestor)
-                .ok_or_else(|| transient("missing journal block"))?
-                .block_hash;
-            if ancestor <= tip
-                && self
-                    .rpc
-                    .block_hash_display(ancestor)
-                    .await
-                    .map_err(transient)?
-                    == ours.to_display_hex()
-            {
-                break ours;
-            }
-            if ancestor <= floor {
-                return Err(SourceError::SealedReorg {
-                    ancestor: i128::from(ancestor) - 1,
-                    floor,
-                });
-            }
-            ancestor -= 1;
-        };
-        let mut update = SourceUpdate::default();
-        if ancestor != journal_end {
-            before_rollback(ancestor, ours).map_err(SourceError::Transient)?;
-            store.rollback_to(Some(ancestor))?;
-            self.outputs = OutputCache::new(crate::ingest::prevout::DEFAULT_CACHE_OUTPUTS);
-            // Replacement blocks are observed now, not when the orphans were.
-            self.first_seen.split_off(&(ancestor + 1));
-            self.observe(ancestor + 1, tip);
-            update.rollback_to = Some(ancestor);
-        }
-        let mut next = ancestor + 1;
-        while next <= tip.min(ancestor + BATCH) {
-            match self.ingest(store, next).await {
-                Ok((hash, records)) => update.blocks.push(SourceBlock {
-                    height: next,
-                    hash,
-                    records,
-                    observed_ms: self.first_seen.get(&next).copied().unwrap_or_else(now_ms),
-                    ingested_ms: now_ms(),
-                }),
-                Err(SourceError::Transient(error)) => {
-                    update.error = Some(error);
-                    break;
-                }
-                Err(error) => return Err(error),
-            }
-            next += 1;
-        }
-        self.first_seen = self.first_seen.split_off(&next);
-        if update.rollback_to.is_none() && update.blocks.is_empty() {
-            if let Some(error) = update.error {
-                return Err(SourceError::Transient(error));
-            }
-        }
+        let mut view = self.view.lock().unwrap();
+        let now = now_ms();
+        let mut update = from_journal(store, cache, floor, (journal_end, BATCH), |h| {
+            view.first_seen.get(&h).copied().unwrap_or(now)
+        })?;
+        let delivered = update
+            .blocks
+            .last()
+            .map_or(cache.next_height(), |b| b.height + 1);
+        self.more.store(delivered <= journal_end, Ordering::Release);
+        view.first_seen = view.first_seen.split_off(&delivered);
+        update.error = view.error.take();
         Ok(update)
-    }
-
-    /// Fetches, extracts and commits one block, as the history follow loop does.
-    async fn ingest(
-        &mut self,
-        store: &mut EventStore,
-        height: u64,
-    ) -> Result<(BlockHash, Vec<DisplayRecord>), SourceError> {
-        let fetched = self.rpc.fetch_block(height).await.map_err(transient)?;
-        let parent = BlockHash::from_internal_bytes(fetched.parent()).to_display_hex();
-        let expected = store
-            .block_at(height - 1)
-            .ok_or_else(|| transient("missing journal parent"))?
-            .block_hash
-            .to_display_hex();
-        if parent != expected {
-            return Err(transient("node reorganized while fetching block; retry"));
-        }
-        let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched, true)
-            .await
-            .map_err(transient)?;
-        if self
-            .rpc
-            .block_hash_display(height)
-            .await
-            .map_err(transient)?
-            != built.block_hash.to_display_hex()
-        {
-            return Err(transient("block became noncanonical during extraction"));
-        }
-        store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
-        store.commit()?;
-        let records = built
-            .display
-            .iter()
-            .map(|source| source.display_record())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| EventStoreError::Invariant(e.to_string()))?;
-        Ok((built.block_hash, records))
     }
 }
 
@@ -464,10 +368,10 @@ fn append(
 
 /// The source a controller runs with.
 pub enum Source {
-    Live(LiveSource),
+    Committed(CommittedSource),
     /// Replay, then optionally live once the replay end is visible.
     #[cfg(feature = "fixtures")]
-    Replay(ReplaySource, Option<LiveSource>),
+    Replay(ReplaySource, Option<CommittedSource>),
     #[cfg(feature = "fixtures")]
     Script(Script),
 }
@@ -476,7 +380,7 @@ impl Source {
     /// Resolves when the source has something to do. Cancel safe.
     pub async fn wait(&self) {
         match self {
-            Self::Live(live) => live.wait().await,
+            Self::Committed(committed) => committed.wait().await,
             #[cfg(feature = "fixtures")]
             Self::Replay(replay, _) => replay.wait().await,
             #[cfg(feature = "fixtures")]
@@ -490,7 +394,7 @@ impl Source {
     #[cfg(feature = "fixtures")]
     pub fn exhausted(&self, cache: &DisplayCache) -> bool {
         match self {
-            Self::Live(_) => false,
+            Self::Committed(_) => false,
             #[cfg(feature = "fixtures")]
             Self::Replay(replay, live) => live.is_none() && replay.exhausted(cache),
             #[cfg(feature = "fixtures")]
@@ -501,7 +405,7 @@ impl Source {
     /// The node's tip at the last live poll, if any.
     pub fn node_tip(&self) -> Option<u64> {
         match self {
-            Self::Live(live) => live.node_tip,
+            Self::Committed(committed) => committed.view.lock().unwrap().node_tip,
             #[cfg(feature = "fixtures")]
             Self::Replay(..) | Self::Script(_) => None,
         }
@@ -511,7 +415,14 @@ impl Source {
     /// hold yet was first seen, in Unix milliseconds.
     pub fn oldest_unfetched_ms(&self) -> Option<u64> {
         match self {
-            Self::Live(live) => live.first_seen.values().min().copied(),
+            Self::Committed(committed) => committed
+                .view
+                .lock()
+                .unwrap()
+                .first_seen
+                .values()
+                .min()
+                .copied(),
             #[cfg(feature = "fixtures")]
             Self::Replay(..) | Self::Script(_) => None,
         }
@@ -519,7 +430,7 @@ impl Source {
 
     pub fn mode(&self) -> &'static str {
         match self {
-            Self::Live(_) => "live",
+            Self::Committed(_) => "live",
             #[cfg(feature = "fixtures")]
             Self::Replay(_, None) => "replay",
             #[cfg(feature = "fixtures")]
@@ -529,12 +440,23 @@ impl Source {
         }
     }
 
+    /// Whether the journal's writer has caught up with the observed tip;
+    /// publication waits while it catches up.
+    pub fn current(&self) -> bool {
+        match self {
+            Self::Committed(committed) => committed.view.lock().unwrap().current,
+            #[cfg(feature = "fixtures")]
+            Self::Replay(..) | Self::Script(_) => true,
+        }
+    }
+
     pub async fn poll(
         &mut self,
         store: &mut EventStore,
         cache: &DisplayCache,
         floor: u64,
-        before_rollback: BeforeRollback<'_>,
+        fence: &super::controller::RollbackFence,
+        #[allow(unused_variables)] before_rollback: BeforeRollback<'_>,
     ) -> Result<SourceUpdate, SourceError> {
         #[cfg(feature = "fixtures")]
         if let Self::Replay(replay, live) = self {
@@ -543,11 +465,11 @@ impl Source {
                     height = cache.next_height(),
                     "replay complete; following the node"
                 );
-                *self = Self::Live(live.take().unwrap());
+                *self = Self::Committed(live.take().unwrap());
             }
         }
         match self {
-            Self::Live(live) => live.poll(store, cache, floor, before_rollback).await,
+            Self::Committed(committed) => committed.poll(store, cache, floor, fence),
             #[cfg(feature = "fixtures")]
             Self::Replay(replay, _) => replay.poll(store, cache, floor),
             #[cfg(feature = "fixtures")]

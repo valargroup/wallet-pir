@@ -21,12 +21,14 @@
 //! from the recent start.
 mod activation;
 mod chain_input;
+mod fence;
 mod material;
 mod preparation;
 mod recovery;
 mod reporting;
 mod seal_queue;
 mod workflow;
+pub use fence::RollbackFence;
 use workflow::DetailPublication;
 
 use zakura_pir_publisher::transparent as transparent_shard;
@@ -359,9 +361,8 @@ pub struct Controller {
     halted: Option<String>,
     failures: u32,
     retry_at: Option<Instant>,
-    rollback: Option<RollbackRecord>,
-    /// What `invalidate.json` holds.
-    saved_invalidations: Invalidations,
+    /// The sealed floor and rollback record, shared with the journal writer.
+    fence: Arc<RollbackFence>,
     lag_alerted: Option<Instant>,
     /// The stop request of the running loop. Candidate preparation observes
     /// it between its blocking steps and ends without activating; once
@@ -490,6 +491,16 @@ impl Controller {
             (true, None) => Some(recent.start_height),
         };
         let (sender, receiver) = mpsc::unbounded_channel();
+        let fence = Arc::new(RollbackFence::new(
+            root,
+            settings.distribution.clone(),
+            saved_invalidations,
+            &active.map_sha256,
+            active
+                .seals
+                .last()
+                .map_or(layout.start_height - 1, |s| s.end_height),
+        ));
         let mut controller = Self {
             root: root.to_path_buf(),
             layout,
@@ -510,8 +521,7 @@ impl Controller {
             halted,
             failures: 0,
             retry_at: None,
-            rollback: saved_invalidations.rollback.clone(),
-            saved_invalidations,
+            fence,
             lag_alerted: None,
             shutdown: Default::default(),
             last_cycle: Value::Null,
@@ -537,6 +547,11 @@ impl Controller {
             controller.save_invalidations();
         }
         Ok(controller)
+    }
+
+    /// The rollback fence a root-scheduled journal writer shares.
+    pub fn fence(&self) -> Arc<RollbackFence> {
+        self.fence.clone()
     }
 
     pub fn store(&self) -> &EventStore {
@@ -700,7 +715,9 @@ impl Controller {
                 Err(error) => return Err(error),
             }
         }
-        self.plan();
+        // The writer may have rolled back while HTTP restoration ran. Refresh
+        // the journal under the shared fence before planning any archives.
+        self.poll_source().await?;
         executor
             .run(
                 DetailPublication {

@@ -135,6 +135,7 @@ floors, qualification durations, and rollback gates are not iteration shortcuts.
 ## Dependency and release boundary
 
 - Keep release dependencies one-way: wallet-pir may consume wallet-libraries, but wallet-libraries must not depend on packages owned or released by wallet-pir, including normal, optional, build, target-specific and development dependencies.
+- Keep reusable publisher engines and fast tests free of node dependencies; isolate RPC transport from chain decoding and gate heavy fixtures behind explicit integration features.
 
 ## Transparent loading policy
 

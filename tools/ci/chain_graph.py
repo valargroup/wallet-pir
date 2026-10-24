@@ -116,11 +116,16 @@ def product_dependency_problems(graph, product):
     return errors
 
 
+# The node transport below the reader; boundary.py keeps it free of decoding.
+TRANSPORT = 'pir-node-rpc'
+
+
 def local_dependency_problems(graph):
-    """The reader is a leaf of this repository: it reaches no other local package."""
+    """The reader reaches no other local package except its node transport."""
     return [f'{READER}: depends on repository package {p["name"]}'
             for p in graph['packages']
-            if p['source'] is None and p['name'] not in {READER} and not p['name'].endswith('-consumer')]
+            if p['source'] is None and p['name'] not in {READER, TRANSPORT}
+            and not p['name'].endswith('-consumer')]
 
 
 ROCKSDB_SOURCE = '''use std::path::PathBuf;

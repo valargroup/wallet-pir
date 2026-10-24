@@ -224,6 +224,10 @@ async fn canonical_rpc(root: &Path, set: &ShardSet) -> CanonicalRpc {
         State((hash, genesis, available)): State<RpcState>,
         axum::Json(request): axum::Json<serde_json::Value>,
     ) -> impl IntoResponse {
+        // The root follower reads the tip; the anchor at height two is the tip.
+        if request["method"] == "getblockcount" && available.load(Ordering::Acquire) {
+            return axum::Json(serde_json::json!({"id":request["id"],"result":2,"error":null}));
+        }
         assert_eq!(request["method"], "getblockhash");
         let result = if !available.load(Ordering::Acquire) {
             None
@@ -2287,8 +2291,11 @@ impl Startup {
             }
         });
         let shutdown = pir_pipeline::service::Shutdown::default();
+        let (rpc, feed) = chain_fixture(&self.config, &shutdown);
         let task = tokio::spawn(run_managed(
             self.config.clone(),
+            rpc,
+            feed,
             crate::host_engine::PublisherEngine,
             http,
             shutdown.clone(),
@@ -2482,10 +2489,13 @@ async fn restarted_controller_withdraws_on_body_corruption_and_stays_withdrawn_a
 async fn restarted_controller_refuses_unusable_evidence_without_suggesting_its_deletion() {
     let startup = Startup::new().await;
     startup.write_record(b"{");
+    let (rpc, feed) = chain_fixture(&startup.config, &Default::default());
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(20),
         run_managed(
             startup.config.clone(),
+            rpc,
+            feed,
             crate::host_engine::PublisherEngine,
             pir_pipeline::service::Http::new(|_, _: Router| std::future::pending()),
             Default::default(),

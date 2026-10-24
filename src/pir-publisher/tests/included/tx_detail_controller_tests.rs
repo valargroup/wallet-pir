@@ -946,12 +946,38 @@ fn bench_records_follow_the_requested_case_mix() {
 
 #[cfg(feature = "qualification-tests")]
 mod live {
-    //! Live follow against a mock node, as `controller.rs`'s RPC fixture.
+    //! Root-scheduled live follow against a mock node, as `controller.rs`'s
+    //! RPC fixture: the root follower observes the node, the display journal's
+    //! writer commits, and the controller publishes committed blocks.
     use super::*;
-    use crate::tx_detail::source::{LiveSource, ReplaySource};
+    use crate::tx_detail::ingestion::DetailIngestion;
+    use crate::tx_detail::source::{CommittedSource, ReplaySource};
+    use pir_pipeline::ingestion::{
+        CanonicalChain, ChainFollower, ChainFuture, ChainSource, IngestionExecutor,
+    };
+
+    struct Node(crate::ingest::zakura::NodeClient);
+    impl CanonicalChain for Node {
+        fn hash_at(&self, height: u64) -> ChainFuture<'_, String> {
+            Box::pin(async move { Ok(self.0.block_hash_display(height).await?) })
+        }
+    }
+    impl ChainSource for Node {
+        fn tip_height(&self) -> ChainFuture<'_, u64> {
+            Box::pin(async move { Ok(self.0.tip_height().await?) })
+        }
+    }
     use axum::{extract::State, routing::post, Json, Router};
 
     type Chain = Arc<RwLock<Vec<Vec<u8>>>>;
+
+    /// Node faults: an outage answers every call with an error, and a lagging
+    /// node reports a tip `lag` blocks below its chain.
+    #[derive(Default)]
+    struct Faults {
+        down: std::sync::atomic::AtomicBool,
+        lag: std::sync::atomic::AtomicUsize,
+    }
 
     fn raw_block(parent: [u8; 32], height: u32, nonce: u8) -> Vec<u8> {
         // A syntactically valid header and a coinbase with no outputs; consensus
@@ -987,7 +1013,16 @@ mod live {
         }
     }
 
-    async fn rpc(State(chain): State<Chain>, Json(request): Json<Value>) -> Json<Value> {
+    async fn rpc(
+        State((chain, faults)): State<(Chain, Arc<Faults>)>,
+        Json(request): Json<Value>,
+    ) -> Json<Value> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if faults.down.load(SeqCst) {
+            return Json(
+                json!({"id": request["id"], "result": null, "error": {"code": -1, "message": "down"}}),
+            );
+        }
         let height = || {
             request["params"][0]
                 .as_u64()
@@ -996,7 +1031,7 @@ mod live {
         };
         let chain = chain.read().unwrap();
         let result = match request["method"].as_str().unwrap() {
-            "getblockcount" => json!(chain.len() - 1),
+            "getblockcount" => json!(chain.len() - 1 - faults.lag.load(SeqCst)),
             "getblockhash" => json!(hash(&chain[height()]).to_display_hex()),
             "getblock" => json!(hex::encode(&chain[height()])),
             method => panic!("unexpected RPC {method}"),
@@ -1025,15 +1060,16 @@ mod live {
 
     #[cfg(feature = "qualification-tests")]
     #[tokio::test(flavor = "multi_thread")]
-    async fn live_follow_publishes_rolls_back_and_halts_on_a_sealed_fork() {
+    async fn live_follow_rides_out_outages_and_lag_and_halts_on_another_network() {
         let temp = tempfile::tempdir().unwrap();
         let chain: Chain = Arc::new(RwLock::new(Vec::new()));
         extend(&mut chain.write().unwrap(), 6, 1);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
+        let faults = Arc::new(Faults::default());
         let app = Router::new()
             .route("/", post(rpc))
-            .with_state(chain.clone());
+            .with_state((chain.clone(), faults.clone()));
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let cookie = temp.path().join("cookie");
         std::fs::write(&cookie, "fixture:fixture").unwrap();
@@ -1065,15 +1101,41 @@ mod live {
             ..Settings::default()
         };
         let status = settings.status.clone();
-        let live = LiveSource::new(client, Duration::from_millis(20));
+        let writer = open_writer(&journal).unwrap();
+        let view = Arc::default();
+        let (notify, updates) = tokio::sync::watch::channel(0u64);
+        let live = CommittedSource::new(Arc::clone(&view), updates);
         let replay = ReplaySource::new(1, Duration::from_millis(20), 5);
         let source = Source::Replay(replay, Some(live));
-        let mut controller =
-            Controller::open(&root, open_writer(&journal).unwrap(), source, settings).unwrap();
+        let mut controller = Controller::open(
+            &root,
+            EventStore::open_existing(&journal).unwrap(),
+            source,
+            settings,
+        )
+        .unwrap();
+        let stop = pir_pipeline::service::Shutdown::default();
+        let follower =
+            ChainFollower::new(Arc::new(Node(client.clone())), Duration::from_millis(20));
+        let feed = follower.feed();
+        let following = tokio::spawn(follower.run(stop.clone()));
+        let ingestion = DetailIngestion::new(client, writer, controller.fence(), view, notify);
+        // As in the service, the writer has its own stop, so a refused
+        // rollback leaves the controller to halt on it.
+        let writer_stop = pir_pipeline::service::Shutdown::default();
+        let ingest = tokio::spawn({
+            let stop = writer_stop.clone();
+            async move {
+                crate::host_engine::PublisherEngine
+                    .ingest(ingestion, feed, stop)
+                    .await
+            }
+        });
 
         let driver = tokio::spawn({
             let chain = chain.clone();
             async move {
+                use std::sync::atomic::Ordering::SeqCst;
                 // Replay reaches the journal end first.
                 let tip = hash(&chain.read().unwrap()[5]);
                 published(&status, 5, &tip).await;
@@ -1089,17 +1151,28 @@ mod live {
                 }
                 let tip = hash(&chain.read().unwrap()[9]);
                 published(&status, 9, &tip).await;
-                // A fork replacing the display start's parent cannot be followed.
-                {
-                    let mut blocks = chain.write().unwrap();
-                    blocks.clear();
-                    extend(&mut blocks, 12, 40);
-                }
+                // An outage, then a node behind the journal on the same chain,
+                // prove no fork: nothing is rolled back.
+                faults.down.store(true, SeqCst);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                faults.down.store(false, SeqCst);
+                faults.lag.store(2, SeqCst);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                faults.lag.store(0, SeqCst);
+                extend(&mut chain.write().unwrap(), 1, 30);
+                let tip = hash(&chain.read().unwrap()[10]);
+                published(&status, 10, &tip).await;
+                // A chain with another genesis forks below the sealed floor.
+                // The root follower delivers it, so the controller halts
+                // durably as before, with the journal on the last followed chain.
+                let mut blocks = chain.write().unwrap();
+                blocks.clear();
+                extend(&mut blocks, 12, 40);
             }
         });
         let outcome = tokio::time::timeout(
             Duration::from_secs(60),
-            controller.run(crate::host_engine::PublisherEngine),
+            controller.run_until(crate::host_engine::PublisherEngine, stop.clone()),
         )
         .await
         .expect("the controller halts")
@@ -1109,11 +1182,18 @@ mod live {
             matches!(outcome, Outcome::Halted(ref r) if r.contains("sealed floor")),
             "{outcome:?}"
         );
+        assert!(root.join(HALTED_FILE).exists());
+        writer_stop.request();
+        assert!(matches!(
+            ingest.await.unwrap(),
+            Err(crate::tx_detail::ingestion::IngestError::SealedReorg(-1, _))
+        ));
+        stop.request();
+        following.await.unwrap();
         assert_eq!(reorgs_from(&root), vec![7]);
-        // The halted controller left the journal on the last followed chain.
-        assert_eq!(controller.store().covered_through(), Some(9));
-        assert_eq!(controller.map().covered_through(), Some(9));
-        assert_eq!(controller.active().tip, 9);
+        assert_eq!(controller.store().covered_through(), Some(10));
+        assert_eq!(controller.map().covered_through(), Some(10));
+        assert_eq!(controller.active().tip, 10);
         server.abort();
     }
 }

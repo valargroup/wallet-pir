@@ -16,9 +16,10 @@ pub mod service;
 
 // Exercise the host's actual executor without a product-to-application Cargo edge.
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "../../../pir-publisher/src/publisher/engine.rs"]
-mod host_engine;
+mod host_engine {
+    #[allow(unused_imports)]
+    pub(crate) use pir_pipeline::engine::{PreparedPublication, PublisherEngine};
+}
 
 /// An operational failure propagated to the publisher host.
 pub type BoxError = Box<dyn std::error::Error + Send + Sync>;

@@ -29,6 +29,7 @@ impl Controller {
                 retry_at: None,
             });
         }
+        self.fence.set_floor(self.sealed_floor());
     }
 
     /// Starts the next seal build, one at a time.

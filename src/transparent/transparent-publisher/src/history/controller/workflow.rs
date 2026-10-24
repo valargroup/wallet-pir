@@ -10,6 +10,8 @@ pub(super) struct HistoryPublication {
     pub(super) server: tokio::task::JoinHandle<std::io::Result<()>>,
     pub(super) ingest: tokio::task::JoinHandle<Result<(), BoxError>>,
     pub(super) updates: tokio::sync::watch::Receiver<u64>,
+    /// Set while committed coverage matches an observed tip.
+    pub(super) current: Arc<AtomicBool>,
 }
 impl pir_pipeline::publisher::Publisher for HistoryPublication {
     type Error = BoxError;
@@ -21,6 +23,11 @@ impl pir_pipeline::publisher::Publisher for HistoryPublication {
     async fn acquire(&mut self) -> Result<pir_pipeline::Input<Self::Publication<'_>>, BoxError> {
         if self.server.is_finished() || self.ingest.is_finished() {
             return Err("history publisher background service stopped".into());
+        }
+        // No new publication while the journal catches up; the active one
+        // keeps serving until reconciliation withdraws it.
+        if !self.current.load(Ordering::Acquire) {
+            return Ok(Input::Unchanged);
         }
         Ok(
             match acquire_history(&self.config, &self.rpc, &self.store, &self.authority).await? {
