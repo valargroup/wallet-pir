@@ -1,4 +1,8 @@
-"""Prepare History restart evidence while the predecessor publisher still serves.
+"""Recover History restart evidence captured by older deployment transactions.
+
+New deployments leave activation-generated records to native publisher startup.
+The preparation path below is retained for exercising old journals in recovery
+tests; ordinary deployment never starts it. Existing journals keep this protocol:
 
 Within an ordinary publisher-cutover/3 transaction, under its production lock:
 

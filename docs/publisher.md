@@ -413,6 +413,15 @@ and publisher, verifies readiness, and runs all four encrypted-answer probes
 before resuming load and committing. The wallet routes remain unchanged and
 unmatched requests remain 404. Every effect is journaled on the coordinator.
 
+Deployment leaves History completion records to the publisher. Native startup
+validates the active publication's existing `history-restore.json` and its
+authority before serving, then verifies bodies in the background. If no record
+exists, startup performs full preparation. Deployment does not pin or rescan
+History artifacts before stopping the predecessor; readiness and all four
+encrypted-answer probes still gate completion. Recovery of older transactions
+that already prepared a pinned record retains their recorded install and
+rollback behavior.
+
 `publisher-cutover-status` reports the transaction and observed identities.
 `publisher-cutover-restart` repeats cooperative shutdown, readiness and exact
 checks without replacing the rollback baseline. `publisher-cutover-rollback`

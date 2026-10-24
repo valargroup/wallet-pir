@@ -464,8 +464,6 @@ class Cutover:
             code, output = self.ex.run(self.host, [plan['binary'], '--config', staged_config, '--check'], 60)
             require(code == 0, 'staged publisher refuses its configuration: ' + output[-1000:])
             self.serving.stage(journal, serving_binary)
-            from .publisher_restore import HistoryRestore
-            HistoryRestore(self).prepare(journal, plan['binary'], staged_config)
             self.unchanged_during_staging(plan)
             self.resources()
             self.save(journal, 'installing')
