@@ -13,6 +13,7 @@ use crate::{
     Controller,
 };
 use pir_publication::{AuthorityFloor, ObjectCache, ObjectReference, SourceBinding, ViewIdentity};
+use pir_sync_manager::SyncTask;
 use pir_sync_manager::{
     publication_lifecycle::{
         DeferralReason, ObjectFetcher, PeerHandover, PeerReservation, PreparedCommit,
@@ -40,6 +41,62 @@ const ACTIVE_RECORD: &str = "active.json";
 
 pub(super) type StatusSynchronization = PublicationLifecycle<StatusPublication>;
 
+const FAST_POLL: Duration = Duration::from_millis(100);
+const NORMAL_POLL: Duration = Duration::from_secs(1);
+
+/// Keep most of the observation's lifetime available for the serialized
+/// worker/router handover. Young steady state keeps the ordinary poll rate.
+pub(super) struct StatusPolling {
+    inner: StatusSynchronization,
+    last_pass_succeeded: bool,
+}
+
+pub(super) fn manager(task: StatusSynchronization) -> pir_sync_manager::SyncManager<StatusPolling> {
+    pir_sync_manager::SyncManager::new(StatusPolling {
+        inner: task,
+        last_pass_succeeded: false,
+    })
+    .with_success_interval(FAST_POLL)
+}
+
+impl StatusPolling {
+    async fn poll_deadline(&self, minimum: tokio::time::Instant) -> tokio::time::Instant {
+        // The manager selects exponential backoff for failures. Preserve it.
+        if !self.last_pass_succeeded || self.inner.adapter().poll_soon {
+            return minimum;
+        }
+        let state = self.inner.adapter().service.state.lock().await;
+        let now = now_ms();
+        let young = !state.poisoned
+            && state.controller.as_ref().is_some_and(|controller| {
+                let active = controller.current();
+                controller.check(&active).is_ok()
+                    && now.saturating_sub(active.manifest().observed_ms) < MAX_AGE_MS / 4
+            });
+        if young {
+            minimum.max(tokio::time::Instant::now() + NORMAL_POLL)
+        } else {
+            minimum
+        }
+    }
+}
+
+impl SyncTask for StatusPolling {
+    type Error = Error;
+    type Report = PublicationPass<u64>;
+    async fn synchronize(&mut self) -> Result<Self::Report, Error> {
+        let result = self.inner.synchronize().await;
+        self.last_pass_succeeded = result.is_ok();
+        result
+    }
+    fn terminal(&self, error: &Error) -> bool {
+        self.inner.terminal(error)
+    }
+    async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+        tokio::time::sleep_until(self.poll_deadline(deadline).await).await;
+    }
+}
+
 /// Open the role's floor and cache and bind them to the configured publisher.
 pub(super) fn synchronization(
     service: Service,
@@ -58,6 +115,7 @@ pub(super) fn synchronization(
     let adapter = StatusPublication {
         service,
         loaded_inventory: None,
+        poll_soon: false,
     };
     PublicationLifecycle::new(adapter, source, floor, cache)
 }
@@ -67,6 +125,8 @@ pub(super) struct StatusPublication {
     /// The inventory of the last view this process loaded and committed. Only
     /// its already-verified material may be re-identified without reloading.
     loaded_inventory: Option<Inventory>,
+    /// Product coordination needs another check even when serving is young.
+    poll_soon: bool,
 }
 
 /// A planned Status inventory and how much of it must be loaded.
@@ -193,6 +253,7 @@ impl PublicationAdapter for StatusPublication {
             match worker_handover::serving_inventory(&self.service).await? {
                 Some(inventory) => (inventory, InventoryAuthorization::RetainedHandover),
                 None => {
+                    self.poll_soon = true;
                     self.waiting("waiting_for_worker").await;
                     return Ok(PublicationPlan::Deferred);
                 }
@@ -214,6 +275,7 @@ impl PublicationAdapter for StatusPublication {
         if authorization == InventoryAuthorization::RetainedHandover
             && inventory.manifest.recovery_epoch < envelope.fence.recovery_epoch
         {
+            self.poll_soon = true;
             self.waiting("waiting_for_worker_recovery").await;
             return Ok(PublicationPlan::Deferred);
         }
@@ -230,11 +292,21 @@ impl PublicationAdapter for StatusPublication {
                 .is_some_and(|latest| inventory.manifest.generation > latest.descriptor.generation)
         {
             inventory.validate_material()?;
+            self.poll_soon = true;
             self.waiting("waiting_for_publisher").await;
             return Ok(PublicationPlan::Deferred);
         }
         inventory.authorize(&inventory_object, envelope, authorization)?;
-        inventory.manifest.fresh(now_ms())?;
+        match inventory.manifest.fresh(now_ms()) {
+            Ok(()) => {}
+            Err(status_shared::protocol::Error::Stale) => {
+                // A fresh publication can arrive on the next normal pass.
+                // Expiry grants no authority and is not a transport failure.
+                self.waiting("waiting_for_fresh_publication").await;
+                return Ok(PublicationPlan::Deferred);
+            }
+            Err(error) => return Err(error.into()),
+        }
         let controller = self.serving_controller().await;
         let previous = controller.as_ref().map(Controller::current);
         let already_serving = previous
@@ -254,6 +326,7 @@ impl PublicationAdapter for StatusPublication {
             && reidentified.is_none()
             && controller.as_ref().is_some_and(|c| !c.can_prepare())
         {
+            self.poll_soon = true;
             self.waiting("waiting_for_retention").await;
             return Ok(PublicationPlan::Deferred);
         }
@@ -429,6 +502,7 @@ impl PublicationAdapter for StatusPublication {
     }
 
     async fn deferred(&mut self, reason: DeferralReason) {
+        self.poll_soon = matches!(reason, DeferralReason::PeerAdvanced);
         self.waiting(match reason {
             DeferralReason::AuthorityAdvanced => "waiting_for_authority",
             DeferralReason::PeerAdvanced => "waiting_for_worker_pin",
@@ -494,9 +568,11 @@ impl PublicationAdapter for StatusPublication {
             pir_control::durable::sync_dir(&root)
         });
         let reported_generation = inventory.manifest.generation;
+        let source_observed_ms = inventory.manifest.observed_ms;
         let install_service = self.service.clone();
         let install = Box::pin(async move {
             let mut state = install_service.state.lock().await;
+            let changed = state.inventory.as_ref() != Some(&inventory_object);
             let mut retired_owner = None;
             // Activation refuses before changing any view, so an error leaves
             // serving unchanged.
@@ -515,6 +591,11 @@ impl PublicationAdapter for StatusPublication {
             };
             state.inventory = Some(inventory_object);
             state.poisoned = false;
+            if changed {
+                tracing::debug!(role = ?install_service.role, generation = reported_generation,
+                    source_observed_ms, observation_age_ms = now_ms().saturating_sub(source_observed_ms),
+                    "Status serving view installed");
+            }
             drop(state);
             if !retired.is_empty() || retired_owner.is_some() {
                 tokio::task::spawn_blocking(move || drop((retired, retired_owner)));
@@ -560,6 +641,7 @@ impl PublicationAdapter for StatusPublication {
     }
 
     async fn pass_started(&mut self) {
+        self.poll_soon = false;
         self.service.state.lock().await.synchronization = "synchronizing".into();
     }
 
