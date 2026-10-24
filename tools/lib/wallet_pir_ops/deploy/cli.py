@@ -39,6 +39,12 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   status SERVICE
   capture-baseline SERVICE [--output FILE]
 
+  query-node-{plan,preflight,provision,status} --request F --request-sha256 H --receipt F
+      Run on the coordinator. Add only the query Terraform source and apply the
+      reviewed six-resource plan under the production lock. Existing fleet
+      files and state addresses stay in place; no application is activated.
+      Provision requires --expect-plan-sha256 from plan/preflight.
+
   schema-plan --recipe FILE
   schema-preflight --recipe FILE
   schema-deploy --recipe FILE --expect-recipe-sha256 HASH
@@ -255,6 +261,8 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    from . import query_provision
+    query_provision.register(commands)
     command = commands.add_parser('fleet', help='read configured hosts and roles; makes no host connections')
     command.add_argument('--complete', action='store_true',
                          help='also require every registered service, role, responsibility and ancillary kind')
@@ -439,13 +447,17 @@ def run(args, executor, out, package_layout, package_github, **options):
         product_command = args.command.startswith(('schema-', 'txid-display-', 'transparent-binary-', 'transparent-alerts-',
                                                    'transparent-load-repair-', 'transparent-provider-maintenance-',
                                                    'ops-package-', 'publisher-cutover-', 'status-routing-',
-                                                   'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-'))
+                                                   'coordinator-edge-', 'cache-storage-', 'cache-volume-', 'cache-data-', 'query-node-'))
         mutation = (args.command in ('deploy', 'rollback') or getattr(args, 'stage', False)
                     or product_command and not args.command.endswith(('-plan', '-preflight', '-status', '-summary', '-recipe')))
         # A clean installed package may install a newer package revision; every
         # binary change still names the same source revision as the package.
         package_command = args.command.startswith('ops-package-')
         check_installed(mutation=mutation, revision=None if package_command else getattr(args, 'sha', None))
+        if args.command.startswith('query-node-'):
+            from . import query_provision
+            out(json.dumps(query_provision.dispatch(args), sort_keys=True))
+            return 0
         if args.command.startswith('cache-data-'):
             from . import cache_data
             out(json.dumps(cache_data.dispatch(args, executor), sort_keys=True))
