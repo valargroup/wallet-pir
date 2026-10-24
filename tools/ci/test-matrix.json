@@ -188,6 +188,7 @@
       "reference:enhance-shared:lib:enhance_shared",
       "reference:status-shared:lib:status_shared",
       "reference:status-query-server:lib:status_query_server",
+      "reference:pir-query-server:lib:pir_query_server",
       "reference:pir-e2e-tests:test:publication_renewal"
     ]
   },
