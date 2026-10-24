@@ -434,7 +434,8 @@ class Cutover:
             self.sleep(3)
 
     def exact(self, journal):
-        for product, check in self.request['checks'].items():
+        from .publisher_probe_repair import checks_for
+        for product, check in checks_for(self, journal).items():
             code, output = self.ex.run(check['host'], check['argv'], check['timeout'])
             require(code == 0, product + ' independent encrypted-answer probe failed: ' + output[-1000:])
             journal.setdefault('checks', {})[product] = {'passed': True, 'output': output[-2000:]}
@@ -686,14 +687,14 @@ class Cutover:
 
 
 def register(commands):
-    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue', 'repair-sandbox-plan', 'repair-sandbox', 'repair-release-plan', 'repair-release'):
+    for operation in ('plan', 'preflight', 'deploy', 'status', 'reconcile', 'rollback', 'restart', 'verify', 'continue', 'repair-sandbox-plan', 'repair-sandbox', 'repair-release-plan', 'repair-release', 'repair-probe-plan', 'repair-probe-verify'):
         command = commands.add_parser('publisher-cutover-' + operation, allow_abbrev=False)
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         command.add_argument('--serving-binary')
         if operation in ('preflight', 'deploy', 'repair-release-plan', 'repair-release'):
             command.add_argument('--archive', required=True)
-        if operation in ('deploy', 'repair-sandbox', 'repair-release'):
+        if operation in ('deploy', 'repair-sandbox', 'repair-release', 'repair-probe-verify'):
             command.add_argument('--expect-plan-sha256', required=True)
 
 
@@ -704,6 +705,9 @@ def dispatch(args, executor=None, **_options):
     executor = executor or SSHExecutor(inventory)
     target = Cutover(request, inventory, executor, args.state_dir)
     target.serving.binary = getattr(args, 'serving_binary', None)
+    if operation in ('repair-probe-plan', 'repair-probe-verify'):
+        from .publisher_probe_repair import dispatch as repair_probe
+        return repair_probe(target, args)
     if operation in ('repair-sandbox-plan', 'repair-sandbox'):
         from .publisher_sandbox import dispatch as repair_sandbox
         return repair_sandbox(target, args)

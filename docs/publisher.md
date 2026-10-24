@@ -483,3 +483,15 @@ For a stopped-checker repair, `publisher-cutover/3` may pin an existing disk-cap
 A `publisher-cutover/3` request may set `preserve_serving: true` for a publisher-only update. Its serving release keeps its own exact source and binary pins; every serving role must already match the requested binary and configuration. Any required serving change refuses the update. The publisher and wallet probes still run, and the discovery edge route is journaled normally.
 
 If the connection was lost while stopping the predecessor, `publisher-cutover-continue` can finish that exact stopped-checker transaction. It requires the recorded stop intent, unchanged publisher configuration and inputs, unchanged serving processes, and the original staged executable. It refuses a running publisher or any other interrupted phase; ordinary verification recovery still uses `publisher-cutover-verify`.
+
+If restoration reached its recorded publisher start and both serving roles passed
+their restored identity checks, but an older Status diagnostic client fails on
+expired sessions, use `publisher-cutover-repair-probe-plan` and then
+`publisher-cutover-repair-probe-verify --expect-plan-sha256 <digest>` with the same
+request and checksum. This recovery selects only the staged publisher executable
+as the Status probe client and updates only its digest literal in the harness.
+It keeps the original harness logic, independent oracle,
+load and deadlines, records the client digest, and repeats all four exact-answer
+checks without restarting any service. It refuses pending effects, changed
+restored files or process identities, a changed probe executable, and a stale
+plan. The stopped checker and its incident latch remain unchanged.
