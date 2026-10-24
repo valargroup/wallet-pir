@@ -1,54 +1,46 @@
 //! Live transaction-detail publisher application, independent of CLI and process signals.
 use super::{
     controller::{self, Controller, Outcome, Settings},
-    source::{open_writer, LiveSource, Source},
+    ingestion::DetailIngestion,
+    source::{open_writer, CommittedSource, Source},
 };
+use crate::ingest::zakura::NodeClient;
 use crate::BoxError;
+use pir_pipeline::ingestion::{ChainFeed, IngestionExecutor};
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
-fn default_rpc_url() -> String {
-    "http://127.0.0.1:8232".into()
-}
-/// Live publication of every prepared holding over HTTPS.
+use std::{net::SocketAddr, path::PathBuf};
+use transparent_shared::journal::events::EventStore;
+/// Live publication of every prepared holding over HTTPS. The node and its
+/// polling come from the root chain settings.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub root: PathBuf,
     pub journal: PathBuf,
-    #[serde(default = "default_rpc_url")]
-    pub rpc_url: String,
-    pub rpc_cookie: PathBuf,
-    pub poll_ms: u64,
     pub status_listen: SocketAddr,
     pub max_recent_records: Option<u64>,
 }
-impl Config {
-    pub fn validate(&self) -> Result<(), BoxError> {
-        if self.rpc_cookie.as_os_str().is_empty() {
-            return Err("live display publication requires rpc_cookie".into());
-        }
-        if self.poll_ms == 0 {
-            return Err("transaction-detail polling must be nonzero".into());
-        }
-        Ok(())
-    }
-}
-pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+pub async fn run<E: pir_pipeline::publisher::PublisherExecutor + IngestionExecutor>(
     config: Config,
+    rpc: NodeClient,
+    feed: ChainFeed,
     executor: E,
     http: Http<axum::Router>,
     stop: Shutdown,
 ) -> Result<(), BoxError> {
-    config.validate()?;
     crate::storage::layout::require(&config.root, "transaction_details")?;
-    let store = open_writer(&config.journal)?;
-    let rpc = crate::ingest::zakura::connect(&config.rpc_url, &config.rpc_cookie)?;
-    if rpc.block_hash_display(0).await? != store.genesis_hash() {
+    // The writer recovers any uncommitted tail before the controller's
+    // read-only view opens the same journal in place.
+    let writer = open_writer(&config.journal)?;
+    if rpc.block_hash_display(0).await? != writer.genesis_hash() {
         return Err("the node's genesis differs from the journal's".into());
     }
+    let store = EventStore::open_existing(&config.journal)?;
     let distribution = super::distribution::Distribution::new(&config.root, rpc.clone())?;
-    let source = Source::Live(LiveSource::new(rpc, Duration::from_millis(config.poll_ms)));
+    let view = std::sync::Arc::default();
+    let (notify, updates) = tokio::sync::watch::channel(0u64);
+    let source = Source::Committed(CommittedSource::new(std::sync::Arc::clone(&view), updates));
     let settings = Settings {
         distribution: Some(distribution.clone()),
         max_recent_records: config.max_recent_records,
@@ -62,6 +54,26 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     }));
     owner.own(&server);
     let mut controller = Controller::open(&config.root, store, source, settings)?;
+    let ingestion = DetailIngestion::new(rpc, writer, controller.fence(), view, notify);
+    // The writer stops once the controller returns, so a halted controller
+    // leaves the journal where it stopped.
+    let writer_stop = Shutdown::default();
+    let ingest = tokio::spawn({
+        let (executor, stop, writer_stop) = (executor.clone(), stop.clone(), writer_stop.clone());
+        async move {
+            let result = executor.ingest(ingestion, feed, writer_stop).await;
+            if let Err(error) = &result {
+                // A refused sealed rollback halts the controller; a journal
+                // failure stops the service to restart from its checkpoint.
+                tracing::error!(%error, "display journal ingestion stopped");
+                if !matches!(error, super::ingestion::IngestError::SealedReorg(..)) {
+                    stop.request();
+                }
+            }
+            result
+        }
+    });
+    owner.own(&ingest);
     // Listener failure asks for a boundary stop rather than cancelling activation.
     let watch_stop = stop.clone();
     let watcher = tokio::spawn(async move {
@@ -71,6 +83,9 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     });
     owner.own(&watcher);
     let result = controller.run_until(executor, stop.clone()).await;
+    // The writer finishes its current batch and releases the journal.
+    writer_stop.request();
+    let ingested = ingest.await?;
     if !matches!(&result, Ok(Outcome::Idle)) {
         distribution.withdraw(0)?;
     }
@@ -85,5 +100,8 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     if watcher.is_finished() {
         return Err("transaction-detail status listener stopped".into());
     }
-    Ok(())
+    match ingested {
+        Err(super::ingestion::IngestError::Store(error)) => Err(error.into()),
+        _ => Ok(()),
+    }
 }

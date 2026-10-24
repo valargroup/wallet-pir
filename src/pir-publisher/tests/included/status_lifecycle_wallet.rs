@@ -2,6 +2,7 @@
 use super::*;
 use pir_query_server::status::{serve_role_on, Role, RoleConfig};
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 #[path = "../../../pir-query-server/tests/support/status_tls.rs"]
 mod tls;
 #[allow(dead_code)]
@@ -77,11 +78,14 @@ async fn shared_status_lifecycle_collects_publishes_and_advances_over_real_roles
     let source_rpc = rpc.clone();
     let publisher_owner = publisher.clone();
     let _publisher = Abort(tokio::spawn(async move {
+        let shutdown = pir_pipeline::service::Shutdown::default();
+        let feed = super::ingestion::chain_fixture(source_rpc.clone(), &shutdown);
         publisher
             .run_managed(
                 source_rpc,
+                feed,
                 http,
-                pir_pipeline::service::Shutdown::default(),
+                shutdown,
                 crate::host_engine::PublisherEngine,
             )
             .await

@@ -1,14 +1,16 @@
 {
   "management_listen": "127.0.0.1:18080",
+  "chain": {
+    "rpc_url": "http://127.0.0.1:8232",
+    "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
+    "poll_ms": 1000
+  },
   "enhance": {
     "enabled": true,
     "settings": {
       "artifact_listen": "127.0.0.1:8084",
       "listen": "127.0.0.1:8080",
       "data_dir": "/srv/pir-publisher/enhance",
-      "zakura_rpc_url": "http://127.0.0.1:8232",
-      "zakura_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "poll_seconds": 10,
       "prevout_cache_outputs": 250000
     }
   },
@@ -20,9 +22,7 @@
         "salt_hex": "0101010101010101010101010101010101010101010101010101010101010101",
         "window_blocks": 4096,
         "private_listen": "127.0.0.1:8480"
-      },
-      "rpc_url": "http://127.0.0.1:8232",
-      "cookie": "/run/credentials/pir-publisher.service/chain-cookie"
+      }
     }
   },
   "transparent_history": {
@@ -34,8 +34,6 @@
       "recent_from": 0,
       "recent_geometry": "recent-4k-8k",
       "archive_geometry": "archive-wide",
-      "rpc_url": "http://127.0.0.1:8232",
-      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
       "listen": "10.0.0.1:8096",
       "source_sha": "replace-with-release-revision",
       "follow_journal": false
@@ -46,9 +44,6 @@
     "settings": {
       "root": "/srv/pir-publisher/txid/root",
       "journal": "/srv/pir-publisher/txid/journal",
-      "rpc_url": "http://127.0.0.1:8232",
-      "rpc_cookie": "/run/credentials/pir-publisher.service/chain-cookie",
-      "poll_ms": 1000,
       "status_listen": "127.0.0.1:8098",
       "max_recent_records": null
     }

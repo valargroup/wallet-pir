@@ -2233,6 +2233,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-node-rpc"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "pir-observability"
 version = "0.1.0"
 dependencies = [
@@ -2248,6 +2259,7 @@ name = "pir-pipeline"
 version = "0.1.0"
 dependencies = [
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2270,6 +2282,7 @@ dependencies = [
  "axum",
  "clap",
  "enhance-publisher",
+ "pir-node-rpc",
  "pir-pipeline",
  "pir-service-discovery",
  "receiver-indexer",
@@ -4998,6 +5011,7 @@ dependencies = [
  "axum",
  "chrono",
  "hex",
+ "pir-node-rpc",
  "reqwest",
  "serde",
  "serde_json",

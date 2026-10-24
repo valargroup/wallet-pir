@@ -28,6 +28,8 @@ pub struct PublisherResources {
 pub struct ServiceContext<R> {
     pub http: Http<R>,
     pub shutdown: Shutdown,
+    /// Present exactly when the definition follows the root chain.
+    pub chain: Option<crate::ingestion::ChainFeed>,
 }
 type ServiceFuture = Pin<Box<dyn Future<Output = Result<()>> + Send>>;
 type Start<R> = Box<dyn FnOnce(ServiceContext<R>) -> ServiceFuture + Send>;
@@ -37,6 +39,7 @@ type Start<R> = Box<dyn FnOnce(ServiceContext<R>) -> ServiceFuture + Send>;
 pub struct PublisherDefinition<R> {
     pub name: &'static str,
     pub resources: PublisherResources,
+    follows_chain: bool,
     start: Start<R>,
 }
 impl<R> PublisherDefinition<R> {
@@ -48,8 +51,18 @@ impl<R> PublisherDefinition<R> {
         Self {
             name,
             resources,
+            follows_chain: false,
             start: Box::new(move |context| Box::pin(start(context))),
         }
+    }
+    /// Require the root chain follower; the host refuses to start this
+    /// definition without root chain settings and injects its feed on start.
+    pub fn following_chain(mut self) -> Self {
+        self.follows_chain = true;
+        self
+    }
+    pub fn follows_chain(&self) -> bool {
+        self.follows_chain
     }
     /// Consume the factory once. The returned future owns product state through
     /// cooperative completion; the host must join it before releasing ownership.

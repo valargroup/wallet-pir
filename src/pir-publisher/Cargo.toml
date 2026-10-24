@@ -8,10 +8,13 @@ autotests = false
 
 [features]
 default = []
-enhance = ["dep:enhance-publisher"]
-status = ["dep:status-publisher", "status-publisher/cli"]
-transparent-history = ["dep:transparent-publisher"]
-transparent-detail = ["dep:transparent-publisher"]
+enhance = ["dep:enhance-publisher", "chain"]
+status = ["dep:status-publisher", "status-publisher/cli", "chain"]
+transparent-history = ["dep:transparent-publisher", "chain"]
+transparent-detail = ["dep:transparent-publisher", "chain"]
+# The root chain follower shared by every scheduled product: node transport
+# only, never chain decoding.
+chain = ["dep:pir-node-rpc"]
 rocksdb-reader = ["transparent-history", "transparent-publisher/rocksdb-reader"]
 receiver = ["dep:receiver-indexer"]
 native-reinspiring = ["enhance-publisher?/native-reinspiring", "status-publisher?/native-reinspiring"]
@@ -23,6 +26,7 @@ status-publisher = { path = "../status/status-publisher", optional = true }
 transparent-publisher = { path = "../transparent/transparent-publisher", optional = true }
 receiver-indexer = { path = "../receiver/receiver-indexer", optional = true }
 pir-pipeline = { path = "../shared/pir-pipeline" }
+pir-node-rpc = { path = "../shared/pir-node-rpc", optional = true }
 pir-service-discovery = { version = "1.0.0", path = "../shared/pir-service-discovery" }
 axum = "0.7"
 clap = { version = "4", features = ["derive"] }

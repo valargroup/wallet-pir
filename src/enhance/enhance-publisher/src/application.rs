@@ -1,71 +1,129 @@
-//! Canonical acquisition and local preparation run independently. A bounded
-//! latest-work slot coalesces source progress while one publication prepares.
+//! Journal ingestion, scheduled by the root publisher, and local preparation
+//! run independently. A bounded latest-work slot coalesces committed coverage
+//! while one publication prepares.
 use crate::{
     chain_source::{Prevouts, ZakuraClient},
     ingest::EnhanceJournal,
     publisher::{EnhancePublisher, PublicationWork},
 };
-use pir_pipeline::{FailurePolicy, Input};
-use std::time::Duration;
+use pir_pipeline::{
+    ingestion::{BlockId, ChainFeed, ChainObservation, Ingestion},
+    FailurePolicy, Input,
+};
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-/// Canonical node access and the shared spent-output cache used during acquisition.
+/// Canonical node access and the shared spent-output cache used during extraction.
 pub struct CanonicalSource {
     pub rpc: ZakuraClient,
     pub prevouts: Prevouts,
 }
-/// Polling cadence for canonical chain acquisition.
-pub struct AcquisitionConfig {
-    pub poll: Duration,
-}
 
-/// Persist withdrawal before rewind; journal mutation commits independently of
-/// preparation. A prepared token can only publish under its original fence.
-pub async fn collect(
-    journal: &mut EnhanceJournal,
-    publisher: &EnhancePublisher,
-    source: &CanonicalSource,
-) -> Result<Option<PublicationWork>> {
-    let tip = source.rpc.tip_height().await?;
-    let mut ancestor = None;
-    for block in journal.records().blocks().iter().rev() {
-        if block.height <= tip && source.rpc.block_hash_display(block.height).await? == block.hash {
-            ancestor = Some((block.height, block.first_position + block.action_count));
-            break;
+/// The Enhance journal's writer operations. Withdrawal persists before rewind;
+/// journal commits proceed independently of preparation, and a prepared token
+/// can only publish under its original fence.
+pub struct EnhanceIngestion {
+    pub journal: EnhanceJournal,
+    pub publisher: EnhancePublisher,
+    pub source: CanonicalSource,
+    latest: tokio::sync::watch::Sender<Option<PublicationWork>>,
+}
+impl EnhanceIngestion {
+    /// The writer and the latest-work slot its caught-up coverage fills.
+    pub fn new(
+        journal: EnhanceJournal,
+        publisher: EnhancePublisher,
+        source: CanonicalSource,
+    ) -> (Self, tokio::sync::watch::Receiver<Option<PublicationWork>>) {
+        let (latest, pending) = tokio::sync::watch::channel(None);
+        (
+            Self {
+                journal,
+                publisher,
+                source,
+                latest,
+            },
+            pending,
+        )
+    }
+}
+fn identity(block: &crate::journal::JournalBlock) -> BlockId {
+    BlockId {
+        height: block.height,
+        hash: block.hash.clone(),
+    }
+}
+impl Ingestion for EnhanceIngestion {
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+    fn start_height(&self, _tip: u64) -> u64 {
+        enhance_shared::ACTIVATION_HEIGHT
+    }
+    fn committed(&self) -> Option<BlockId> {
+        self.journal.records().blocks().last().map(identity)
+    }
+    async fn checkpoint_at_or_below(&self, height: u64) -> Option<BlockId> {
+        let blocks = self.journal.records().blocks();
+        let index = blocks.partition_point(|block| block.height <= height);
+        index.checked_sub(1).map(|index| identity(&blocks[index]))
+    }
+    async fn withdraw_above(&mut self, keep: Option<&BlockId>) -> Result<()> {
+        let retained = keep
+            .and_then(|keep| {
+                self.journal
+                    .records()
+                    .blocks()
+                    .iter()
+                    .find(|block| block.height == keep.height)
+            })
+            .map_or(0, |block| block.first_position + block.action_count);
+        Ok(self.publisher.revoke_after(retained)?)
+    }
+    async fn rewind(&mut self, keep: Option<&BlockId>) -> Result<()> {
+        Ok(self
+            .journal
+            .rewind_to_height(keep.map(|keep| keep.height))?)
+    }
+    async fn ingest(&mut self, from: u64, through: u64) -> Result<()> {
+        for height in from..=through {
+            let block =
+                crate::chain_source::block(&self.source.rpc, height, &self.source.prevouts).await?;
+            self.journal.append_block(&block)?;
         }
+        Ok(())
     }
-    if journal.committed_height() != ancestor.map(|a| a.0) {
-        publisher.revoke_after(ancestor.map_or(0, |a| a.1))?;
-        journal.rewind_to_height(ancestor.map(|a| a.0))?;
+    /// Offer publication only for coverage reconciled with the observed tip.
+    async fn caught_up(&mut self, _: &ChainObservation) -> Result<()> {
+        if let Some(work) = self.publisher.work(self.journal.records())? {
+            self.latest.send_replace(Some(work));
+        }
+        Ok(())
     }
-    let next = journal
-        .committed_height()
-        .map_or(enhance_shared::ACTIVATION_HEIGHT, |h| h + 1);
-    for height in next..=tip {
-        journal.append_block(
-            &crate::chain_source::block(&source.rpc, height, &source.prevouts).await?,
-        )?;
+    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
+        tracing::error!(%error, "Enhance journal ingestion deferred");
+        FailurePolicy::NextPoll
     }
-    publisher.work(journal.records()).map_err(Into::into)
 }
 
-/// Supervise acquisition, HTTP, and one coalescing publication task until
-/// shutdown. Journal commits continue during preparation; in-flight publication
-/// finishes its owner operation before the publication task exits.
-pub async fn run_until<E: pir_pipeline::publisher::PublisherExecutor>(
+/// Supervise root-scheduled ingestion, HTTP, and one coalescing publication
+/// task until shutdown. Journal commits continue during preparation; in-flight
+/// publication finishes its owner operation before the publication task exits.
+pub async fn run_until<E>(
     executor: E,
-    config: AcquisitionConfig,
+    feed: ChainFeed,
     publisher: EnhancePublisher,
     journal: EnhanceJournal,
     source: CanonicalSource,
     http: tokio::task::JoinHandle<std::io::Result<()>>,
     shutdown: pir_pipeline::service::Shutdown,
-) -> Result<()> {
-    let (latest, pending) = tokio::sync::watch::channel::<Option<PublicationWork>>(None);
+) -> Result<()>
+where
+    E: pir_pipeline::publisher::PublisherExecutor + pir_pipeline::ingestion::IngestionExecutor,
+{
+    let (ingestion, pending) = EnhanceIngestion::new(journal, publisher.clone(), source);
     let preparing = publisher.clone();
     let stop = shutdown.clone();
+    let publishing = executor.clone();
     let publication = tokio::spawn(async move {
-        executor
+        publishing
             .run(
                 PublicationWorkflow {
                     publisher: preparing,
@@ -76,65 +134,35 @@ pub async fn run_until<E: pir_pipeline::publisher::PublisherExecutor>(
                 stop,
             )
             .await
-            .map_err(Into::into)
+            .map_err(Box::<dyn std::error::Error + Send + Sync>::from)
     });
-    let result = pir_pipeline::supervise(
-        &mut CanonicalAcquisition {
-            publisher,
-            journal,
-            source,
-            latest,
-            http,
-            publication: &publication,
-        },
-        config.poll,
-        shutdown.cancelled(),
-    )
-    .await;
-    // Dropping acquisition closes the latest-work slot. A running publication
-    // finishes its current owner operation before observing shutdown or closure.
-    publication.await??;
+    // A stopped listener or publication task stops ingestion after its operation.
+    let mut publication = std::pin::pin!(publication);
+    let mut http = std::pin::pin!(http);
+    let ingesting = executor.ingest(ingestion, feed, shutdown.clone());
+    let mut ingesting = std::pin::pin!(ingesting);
+    let unexpected = tokio::select! {
+        result = &mut ingesting => {
+            // Finished ingestion has dropped its writer, closing the latest-work
+            // slot. A running publication finishes its current owner operation
+            // before observing shutdown or closure.
+            publication.await??;
+            return result;
+        }
+        joined = &mut publication => Some(joined),
+        _ = &mut http => None,
+    };
+    let requested = shutdown.requested();
+    shutdown.request();
+    let result = ingesting.await;
+    match unexpected {
+        Some(joined) => joined??,
+        None => publication.await??,
+    }
+    if !requested {
+        return result.and(Err("Enhance publisher task stopped".into()));
+    }
     result
-}
-struct CanonicalAcquisition<'a> {
-    publisher: EnhancePublisher,
-    journal: EnhanceJournal,
-    source: CanonicalSource,
-    latest: tokio::sync::watch::Sender<Option<PublicationWork>>,
-    http: tokio::task::JoinHandle<std::io::Result<()>>,
-    publication: &'a tokio::task::JoinHandle<Result<()>>,
-}
-impl pir_pipeline::Task for CanonicalAcquisition<'_> {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-    async fn run(&mut self) -> Result<()> {
-        if self.http.is_finished() || self.publication.is_finished() {
-            return Err("Enhance publisher task stopped".into());
-        }
-        let input = pir_pipeline::acquire(
-            async {
-                Ok::<_, Self::Error>(
-                    match collect(&mut self.journal, &self.publisher, &self.source).await? {
-                        Some(work) => Input::Work(work),
-                        None => Input::Unchanged,
-                    },
-                )
-            },
-            &mut (),
-        )
-        .await?;
-        if let Input::Work(work) = input {
-            self.latest.send_replace(Some(work));
-        }
-        Ok(())
-    }
-    fn failed(&mut self, error: &Self::Error) -> FailurePolicy {
-        if self.http.is_finished() || self.publication.is_finished() {
-            FailurePolicy::Stop
-        } else {
-            tracing::error!(%error, "Enhance canonical acquisition deferred");
-            FailurePolicy::NextPoll
-        }
-    }
 }
 
 struct PublicationWorkflow {
@@ -179,5 +207,180 @@ impl pir_pipeline::publisher::Publisher for PublicationWorkflow {
     async fn wait(&mut self) -> std::result::Result<(), String> {
         self.closed = self.pending.changed().await.is_err();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeMap, fs, path::Path};
+
+    fn files(root: &Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+        let mut found = BTreeMap::new();
+        for entry in fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                found.extend(files(&path));
+            } else {
+                found.insert(path.clone(), fs::read(path).unwrap());
+            }
+        }
+        found
+    }
+
+    /// An existing journal opens in place: coverage comes from its committed
+    /// blocks, and an unchanged-tip pass leaves every journal byte unchanged.
+    #[tokio::test]
+    async fn existing_journal_resumes_in_place_and_rewinds_only_on_request() {
+        let root = tempfile::tempdir().unwrap();
+        let records = vec![vec![0u8; enhance_shared::RECORD_BYTES]; 3];
+        {
+            let mut journal = EnhanceJournal::open(root.path()).unwrap();
+            for _ in 0..3 {
+                journal.append_fixture_block(&records).unwrap();
+            }
+        }
+        let journal_dir = root.path().join("enhance");
+        let before = files(&journal_dir);
+        let cookie = root.path().join("cookie");
+        fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
+        let publisher =
+            EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
+        let (mut ingestion, _pending) = EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            publisher,
+            CanonicalSource {
+                rpc,
+                prevouts: Prevouts::new(16),
+            },
+        );
+        let first = enhance_shared::ACTIVATION_HEIGHT;
+        let tip = BlockId {
+            height: first + 2,
+            hash: format!("{:064x}", first + 2),
+        };
+        assert_eq!(ingestion.start_height(0), first);
+        assert_eq!(ingestion.committed(), Some(tip.clone()));
+        assert_eq!(
+            ingestion.checkpoint_at_or_below(first + 10).await,
+            Some(tip.clone())
+        );
+        assert_eq!(
+            ingestion
+                .checkpoint_at_or_below(first + 1)
+                .await
+                .map(|b| b.height),
+            Some(first + 1)
+        );
+        assert_eq!(ingestion.checkpoint_at_or_below(first - 1).await, None);
+        let observation = ChainObservation {
+            genesis: String::new(),
+            tip,
+            pass: 1,
+        };
+        ingestion.caught_up(&observation).await.unwrap();
+        ingestion.caught_up(&observation).await.unwrap();
+        assert_eq!(files(&journal_dir), before);
+
+        let keep = ingestion.checkpoint_at_or_below(first + 1).await;
+        ingestion.withdraw_above(keep.as_ref()).await.unwrap();
+        ingestion.rewind(keep.as_ref()).await.unwrap();
+        assert_eq!(ingestion.committed(), keep);
+        assert_eq!(ingestion.journal.tree_size(), 6);
+    }
+
+    /// The canonical chain an old journal was ingested from.
+    struct Canonical(Vec<BlockId>);
+    impl pir_pipeline::ingestion::CanonicalChain for Canonical {
+        fn hash_at(&self, height: u64) -> pir_pipeline::ingestion::ChainFuture<'_, String> {
+            let hash = self
+                .0
+                .iter()
+                .find(|b| b.height == height)
+                .map(|b| b.hash.clone());
+            Box::pin(async move { hash.ok_or_else(|| "beyond the fixture".into()) })
+        }
+    }
+
+    /// A version-7 journal laid down by hand as a deployed writer committed
+    /// it, not by this binary: it opens in place under the root scheduler, an
+    /// unchanged tip rewrites nothing, and the journal keeps one writer. An
+    /// unsupported version is refused and left untouched.
+    #[tokio::test]
+    async fn a_hand_laid_version_seven_journal_resumes_in_place_under_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("enhance");
+        fs::create_dir_all(&dir).unwrap();
+        let first = enhance_shared::ACTIVATION_HEIGHT;
+        let blocks: Vec<BlockId> = (0..3)
+            .map(|i| BlockId {
+                height: first + i,
+                hash: format!("{:064x}", 0xe000 + i),
+            })
+            .collect();
+        let entries: Vec<String> = blocks
+            .iter()
+            .enumerate()
+            .map(|(i, b)| {
+                format!(
+                    r#"{{"height":{},"hash":"{}","first_position":{},"action_count":2}}"#,
+                    b.height,
+                    b.hash,
+                    2 * i
+                )
+            })
+            .collect();
+        let manifest = format!(
+            r#"{{"version":7,"record_bytes":653,"records_per_row":33,"table":"enhance","tree_size":6,"blocks":[{}]}}"#,
+            entries.join(",")
+        );
+        fs::write(dir.join("manifest.json"), &manifest).unwrap();
+        fs::write(dir.join("records.bin"), vec![7u8; 6 * 653]).unwrap();
+        let before = files(&dir);
+
+        let cookie = root.path().join("cookie");
+        fs::write(&cookie, "fixture:fixture").unwrap();
+        let rpc = ZakuraClient::from_cookie_file("http://127.0.0.1:1", cookie).unwrap();
+        let publisher =
+            EnhancePublisher::open(&root.path().join("publication"), rpc.clone()).unwrap();
+        let (mut ingestion, _pending) = EnhanceIngestion::new(
+            EnhanceJournal::open(root.path()).unwrap(),
+            publisher,
+            CanonicalSource {
+                rpc,
+                prevouts: Prevouts::new(16),
+            },
+        );
+        assert!(EnhanceJournal::open(root.path()).is_err(), "one writer");
+        let chain = Canonical(blocks.clone());
+        for pass in 1..=2 {
+            let observation = ChainObservation {
+                genesis: String::new(),
+                tip: blocks[2].clone(),
+                pass,
+            };
+            pir_pipeline::ingestion::catch_up(&mut ingestion, &chain, &observation)
+                .await
+                .unwrap();
+        }
+        assert_eq!(ingestion.committed(), Some(blocks[2].clone()));
+        assert_eq!(ingestion.journal.tree_size(), 6);
+        drop(ingestion);
+        let mut after = files(&dir);
+        after.retain(|path, _| !path.ends_with("journal.lock"));
+        assert_eq!(after, before, "no committed byte was rewritten");
+        let reopened = EnhanceJournal::open(root.path()).unwrap();
+        assert_eq!(
+            reopened.highest_committed(),
+            Some((first + 2, blocks[2].hash.clone()))
+        );
+        drop(reopened);
+
+        let older = manifest.replacen(r#""version":7"#, r#""version":6"#, 1);
+        fs::write(dir.join("manifest.json"), &older).unwrap();
+        let held = files(&dir);
+        assert!(EnhanceJournal::open(root.path()).is_err());
+        assert_eq!(files(&dir), held, "an unsupported journal stays as it was");
     }
 }

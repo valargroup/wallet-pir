@@ -7,6 +7,7 @@ use pir_pipeline::{
 pub(super) fn start_configured(
     publishers: Vec<PublisherDefinition<axum::Router>>,
     listeners: &ReservedListeners,
+    chain: Option<pir_pipeline::ingestion::ChainFeed>,
     supervisor: &mut ProductSupervisor,
 ) {
     for publisher in publishers {
@@ -16,6 +17,7 @@ pub(super) fn start_configured(
         let context = ServiceContext {
             http: listeners.http_adapter(shutdown.clone()),
             shutdown: shutdown.clone(),
+            chain: chain.clone().filter(|_| publisher.follows_chain()),
         };
         supervisor.start(name, probes, publisher.start(context), shutdown);
     }

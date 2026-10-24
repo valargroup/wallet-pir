@@ -286,6 +286,7 @@ async fn a_registered_publication_requires_completed_and_current_preparation() {
     let task = tokio::spawn(pir_publisher::run_registered(
         management,
         vec![definition],
+        None,
         shutdown.clone(),
     ));
     tokio::time::timeout(Duration::from_secs(3), async {

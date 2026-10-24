@@ -1,5 +1,6 @@
 //! Status source capture and prepared HTTPS publications. Consumers never
 //! participate in publication completion or renew its source observation time.
+mod ingestion;
 mod preparation;
 mod workflow;
 use crate::{authority, source, zakura::ZakuraClient};
@@ -23,7 +24,6 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 use tokio::sync::watch;
 use workflow::Publication;
@@ -150,13 +150,20 @@ impl Publisher {
             }
         }
     }
-    pub async fn run_managed<E: pir_pipeline::publisher::PublisherExecutor>(
+    /// Supervise the private listener, root-scheduled window ingestion and
+    /// publication until shutdown. Ingestion finishes its current operation
+    /// before the publication loop releases the state lock.
+    pub async fn run_managed<E>(
         &self,
         rpc: ZakuraClient,
+        feed: pir_pipeline::ingestion::ChainFeed,
         http: pir_pipeline::service::Http<Router>,
         shutdown: pir_pipeline::service::Shutdown,
         executor: E,
-    ) -> Result<(), Failure> {
+    ) -> Result<(), Failure>
+    where
+        E: pir_pipeline::publisher::PublisherExecutor + pir_pipeline::ingestion::IngestionExecutor,
+    {
         let _lock = pir_pipeline::service::lock(&self.config.state_dir)?;
         *self.rpc.write().unwrap() = Some(rpc.clone());
         struct Withdraw(Publisher);
@@ -178,17 +185,21 @@ impl Publisher {
             self.config.window_blocks,
         )?;
         let (tx, rx) = watch::channel(None::<Arc<source::Observation>>);
-        let source_rpc = rpc.clone();
-        let observer = tokio::spawn(async move {
-            let mut task = ObservationTask {
-                source,
-                rpc: source_rpc,
-                tx,
-            };
-            pir_pipeline::supervise(&mut task, Duration::from_secs(1), std::future::pending()).await
-        });
-        tasks.own(&observer);
-        executor
+        let window = ingestion::StatusIngestion {
+            source,
+            rpc: rpc.clone(),
+            publisher: self.clone(),
+            tx,
+        };
+        // Canonical lookups use this runtime's client, not the host's.
+        let feed = pir_pipeline::ingestion::ChainFeed {
+            chain: Arc::new(ingestion::NodeChain(rpc.clone())),
+            observations: feed.observations,
+        };
+        let scheduler = executor.clone();
+        let stop = shutdown.clone();
+        let observer = tokio::spawn(async move { scheduler.ingest(window, feed, stop).await });
+        let result = executor
             .run(
                 Publication {
                     publisher: self,
@@ -199,12 +210,16 @@ impl Publisher {
                     previous: None,
                     last_observed: 0,
                     server,
-                    observer,
+                    observer: &observer,
                     shutdown: shutdown.clone(),
                 },
-                shutdown,
+                shutdown.clone(),
             )
-            .await
+            .await;
+        // Ingestion completes its current operation before ownership is released.
+        shutdown.request();
+        let _ = observer.await;
+        result
     }
 }
 
@@ -333,42 +348,6 @@ fn telemetry_routes() -> Router {
         )
         .route("/internal/health", get(|| async { "ok\n" }))
 }
-struct ObservationTask {
-    source: source::RollingWindow,
-    rpc: ZakuraClient,
-    tx: watch::Sender<Option<Arc<source::Observation>>>,
-}
-enum ObservationError {
-    Source(source::SourceError),
-    Closed,
-}
-impl pir_pipeline::Task for ObservationTask {
-    type Error = ObservationError;
-    async fn run(&mut self) -> Result<(), Self::Error> {
-        let input = pir_pipeline::acquire(
-            async { self.source.observe(&self.rpc).await.map(Input::Work) },
-            &mut (),
-        )
-        .await
-        .map_err(ObservationError::Source)?;
-        if let Input::Work(value) = input {
-            self.tx
-                .send(Some(Arc::new(value)))
-                .map_err(|_| ObservationError::Closed)?;
-        }
-        Ok(())
-    }
-    fn failed(&mut self, error: &Self::Error) -> pir_pipeline::FailurePolicy {
-        match error {
-            ObservationError::Source(error) => {
-                tracing::warn!(%error, "Status source observation failed");
-                pir_pipeline::FailurePolicy::NextPoll
-            }
-            ObservationError::Closed => pir_pipeline::FailurePolicy::Stop,
-        }
-    }
-}
-
 #[cfg(all(test, feature = "fixtures", feature = "native-reinspiring"))]
 #[path = "../../../pir-publisher/tests/included/status_lifecycle_wallet.rs"]
 mod lifecycle_wallet_tests;
