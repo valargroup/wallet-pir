@@ -397,10 +397,12 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
                     for m in members]
     missing = sorted({label for label, addresses in provisioned if not addresses & covered.keys()})
     seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
-    volumes = dict(expected_volumes or {})
+    volumes = {host: list(wanted) for host, wanted in (expected_volumes or {}).items()}
     # The coordinator is where the central APM runs.
     for host in apm_hosts(inventory):
-        volumes.setdefault(host, list(COORDINATOR_VOLUMES))
+        wanted = volumes.setdefault(host, [])
+        paths = {v if isinstance(v, str) else v['path'] for v in wanted}
+        wanted.extend(path for path in COORDINATOR_VOLUMES if path not in paths)
     missing_volumes = {}
     for host, wanted in sorted(volumes.items()):
         declared = {v['path']: v['uuid'].lower() for v in enrolled.get(host, {}).get('required_volumes', [])}
