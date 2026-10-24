@@ -34,7 +34,9 @@ class FleetInventoryTests(unittest.TestCase):
     def test_the_example_is_a_complete_configured_fleet(self):
         view = self.fleet().describe(complete=True)
         self.assertEqual(view['view'], 'configured')
-        self.assertEqual({r['service'] for r in view['roles']}, set(SERVICES))
+        required = {name for name, service in SERVICES.items()
+                    if any(not role.optional for role in service.roles.values())}
+        self.assertEqual({r['service'] for r in view['roles']}, required)
         managed = {descriptors.PUBLISHER_PRODUCTS[p] for p in EXAMPLE['services']['publisher']['managed_products']}
         for name, service in SERVICES.items():
             # Optional external workers are additions a complete fleet need not have.
@@ -56,6 +58,12 @@ class FleetInventoryTests(unittest.TestCase):
         keys = [t.key for t in descriptors.targets(SERVICES['transparent-history'], self.fleet().inventory)]
         self.assertIn('worker@transparent-v12-01:transparent-v12-archive.service', keys)
         self.assertEqual(len(keys), len(set(keys)))
+
+    def test_optional_query_node_does_not_invalidate_existing_complete_fleets(self):
+        self.assertNotIn('query-server', EXAMPLE['services'])
+        self.assertTrue(all(role.optional for role in SERVICES['query-server'].roles.values()))
+        self.assertEqual(self.fleet().problems(complete=True), [])
+        self.refused(lambda d: d['services'].pop('receiver'), 'services missing')
 
     def test_unified_publisher_refuses_standalone_owners_and_missing_checks(self):
         document = copy.deepcopy(EXAMPLE)
