@@ -453,8 +453,9 @@ estimates and service payload byte counters have different semantics.
 A schema cutover moves these inputs. Since v11 (2026-10-03) the fleet roster is
 `/opt/transparent-publisher/v11/roster.json` and the continuous load writes
 `/srv/transparent-activity/canonical-load/v11/status.json`; point the APM config
-and the observer inventory's `roster` at them, then restart `pir-apm`, which
-reads both only at start. The pre-v11 roster and
+at them, then restart `pir-apm`, which reads those inputs at start. The observer
+inventory keeps its separate enrollment roster: serving rosters omit host
+monitoring identities and cannot replace it. The pre-v11 roster and
 `/opt/transparent-5qps-20260929/status.json` stopped changing at the cutover, so
 an unmoved APM shows retired workers and a stale load. The v11 load pins worker
 binaries in `canonical-load/v11/pins.json`. `/etc/pir-quality/qualified-workers.json`

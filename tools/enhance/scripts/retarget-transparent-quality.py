@@ -2,9 +2,10 @@
 """Point Transparent quality monitoring at a new shard schema's files.
 
 `apm`, on the coordinator, rewrites only `roster` (and, with --load-status,
-`synthetic_status`) of one history service in the APM Transparent config and
-`roster` in the APM observer inventory, after checking that the new roster
-parses and the load status is current.
+`synthetic_status`) of one history service in the APM Transparent config,
+after checking that the new roster parses and the load status is current.
+Host enrollment follows its separate monitoring roster and is not retargeted
+when a serving schema changes.
 `monitor`, on the monitor host, rewrites only the Transparent probe's canary
 binary, fixture and pins (from transparent-canary-pins.py) in the service-probe
 config, after the new command passes once.
@@ -50,7 +51,7 @@ def check_status(path, now, max_age):
     return status.get('mode')
 
 
-def apm_changes(apm, observers, roster, status, service='transparent'):
+def apm_changes(apm, roster, status, service='transparent'):
     changes = {}
     config = load(apm)
     if set(config) - {'host_snapshot', 'capacity_alert_mode', 'services'} \
@@ -65,12 +66,6 @@ def apm_changes(apm, observers, roster, status, service='transparent'):
     updated = {**config, 'services': [moved if s is entries[0] else s for s in config['services']]}
     if updated != config:
         changes[Path(apm)] = (config, updated)
-    # Dynamic workers' sidecars are expected from the same roster.
-    current = load(observers)
-    if current.get('roster') is not None:
-        moved = {**current, 'roster': str(roster)}
-        if moved != current:
-            changes[Path(observers)] = (current, moved)
     return changes
 
 
@@ -119,7 +114,6 @@ def main(argv=None, now=time.time, run=subprocess.run):
     sub = parser.add_subparsers(dest='role', required=True)
     apm = sub.add_parser('apm')
     apm.add_argument('--apm-config', type=Path, required=True)
-    apm.add_argument('--observers-config', type=Path, default=Path('/etc/pir-apm/observers.json'))
     apm.add_argument('--service', default='transparent', help='history service to move')
     apm.add_argument('--roster', type=Path, default=Path('/opt/transparent-publisher/v12/roster.json'))
     apm.add_argument('--load-status', type=Path,
@@ -141,10 +135,8 @@ def main(argv=None, now=time.time, run=subprocess.run):
         workers = check_roster(args.roster)
         mode = None if args.load_status is None else check_status(args.load_status, now(),
                                                                   args.max_status_age)
-        changes = apm_changes(args.apm_config, args.observers_config, args.roster, args.load_status,
-                              args.service)
-        print(json.dumps({'roster_workers': workers, 'load_mode': mode,
-                          'observers_follow_roster': load(args.observers_config).get('roster') is not None}))
+        changes = apm_changes(args.apm_config, args.roster, args.load_status, args.service)
+        print(json.dumps({'roster_workers': workers, 'load_mode': mode}))
         show(changes)
         restart = 'pir-apm' if changes else None
     else:
