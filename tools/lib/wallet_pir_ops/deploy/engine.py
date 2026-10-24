@@ -428,16 +428,18 @@ class Deployer:
                 value = value.get(part) if isinstance(value, dict) else None
             if type(value) is not type(expected_value) or value != expected_value:
                 return False, 'health %s is %r, expected %r' % (field, value, expected_value)
+        guard = self.service.roles[record['role']].product_guard()
         ready = verify.get('ready')
         if ready:
             value = document.get(ready['field']) if isinstance(document, dict) else None
             if ('equals' in ready and value != ready['equals']) or (ready.get('nonempty') and not value):
-                return False, 'health %s is %r' % (ready['field'], value)
+                restored_ready = getattr(guard, 'restored_ready', None)
+                if restored_ready is None or not restored_ready(record, expected, document):
+                    return False, 'health %s is %r' % (ready['field'], value)
         if verify.get('ready_url'):
             status, _ = self.ex.http_get(record['host'], verify['ready_url'])
             if not 200 <= status < 300:
                 return False, 'ready answered %s' % status
-        guard = self.service.roles[record['role']].product_guard()
         if guard is not None:
             return guard.ready(self, record, expected, document)
         return True, 'ready'
