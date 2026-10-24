@@ -730,6 +730,10 @@ retires that check's incidents and check-coverage incident; removing a hook also
 retires its structured subchecks. A missing discovered filesystem remains unknown.
 Enrollment persists until the host is retired in the deployment
 inventory (`decommissioned`) or by the scaler (roster `intent: retired`).
+Static observer declarations satisfy enrollment for hosts also listed in the
+monitoring roster and take precedence over its endpoint records. Other enrolled
+or draining roster members need a sidecar enrollment record; a missing record
+keeps collection readiness false even when the rest of the fleet reports.
 
 ## Monitoring deployment and rebuild
 
