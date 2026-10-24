@@ -1,6 +1,8 @@
 //! Autonomous workers load published rows; they never prepare public hints.
 use super::evaluation::{Evaluate, Intermediate};
-use crate::enhance::synchronization::{Client, Config as SourceConfig, Error, Lease, Safety};
+use crate::enhance::synchronization::{
+    Client, Config as SourceConfig, Deferral, Error, Lease, Pacing, Safety,
+};
 use crate::synchronization::SyncTask;
 use axum::{
     extract::{Request, State},
@@ -211,6 +213,7 @@ impl Worker {
                 .try_acquire_owned()
                 .map_err(|_| "worker synchronization already owned")?,
             worker: self.clone(),
+            pacing: Pacing::default(),
             client: Client::new(&self.root, &self.config.source, self.safety.clone())?,
         })
     }
@@ -393,6 +396,7 @@ pub struct Synchronizer {
     _ownership: tokio::sync::OwnedSemaphorePermit,
     worker: Worker,
     client: Client,
+    pacing: Pacing,
 }
 
 impl Synchronizer {
@@ -476,10 +480,7 @@ impl Synchronizer {
         }
         let worker = self.worker.clone();
         let loaded = tokio::task::spawn_blocking(move || worker.load(domains)).await??;
-        let lease = self.client.authority(&manifest).await?;
-        if !lease.continues(&observed) {
-            return Err("Enhance publication withdrawn while loading".into());
-        }
+        let lease = self.client.renew(&manifest, &observed).await?;
         lease.check(&manifest, &self.worker.safety)?;
         let mut inner = self.worker.inner.lock().unwrap();
         inner.views.insert(
@@ -496,12 +497,16 @@ impl Synchronizer {
 }
 
 impl SyncTask for Synchronizer {
-    type Report = ();
+    type Report = Option<Deferral>;
     type Error = Error;
-    async fn synchronize(&mut self) -> Result<(), Error> {
-        self.poll_once().await
+    async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
+        let result = self.poll_once().await;
+        self.pacing.finish("worker", result)
     }
-    fn report(&self, result: &Result<(), Error>) {
+    async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+        tokio::time::sleep_until(self.pacing.deadline(deadline)).await;
+    }
+    fn report(&self, result: &Result<Option<Deferral>, Error>) {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance worker synchronization deferred");
         }
