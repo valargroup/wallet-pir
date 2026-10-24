@@ -139,8 +139,10 @@ the Makefile retain conservative native coverage and run tooling/workflow
 contracts; they do not by themselves select unrelated product operations fixtures.
 External dependency, profile, resolver, inherited-setting,
 removed-member and unrecognized changes retain complete workspace coverage.
-CI tooling changes run tool tests and workflow contracts; they retain broad full
-qualification without starting unrelated operations fixtures in fast feedback.
+CI tooling changes, including the pre-push list `.github/preflight.json`, run
+tool tests and workflow contracts; they retain broad full qualification without
+starting unrelated operations fixtures in fast feedback. That list is not build
+configuration, so it does not select the Rust workspace.
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust. Non-CI
 workflows, including publish, deploy and configure, are operations inputs:

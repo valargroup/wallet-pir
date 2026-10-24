@@ -105,7 +105,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('receiver-store', full.commands('receiver', full.inventory())[0])
 
     def test_shared_publisher_engine_selects_all_three_product_adapters(self):
-        result = fast.plan(self.packages, ['src/pir-publisher/src/publisher/engine.rs'])
+        result = fast.plan(self.packages, ['src/shared/pir-pipeline/src/engine.rs'])
         self.assertTrue({'pir-publisher', 'enhance-publisher', 'status-publisher',
                          'transparent-publisher'} <= set(result['packages']))
         self.assertTrue({'enhance', 'transparent'} <= set(result['groups']))

@@ -44,6 +44,7 @@ fn each_compiled_product_can_be_enabled_independently() {
         if compiled {
             let config: Config = serde_json::from_value(serde_json::json!({
                 "management_listen": "127.0.0.1:18080",
+                "chain": example["chain"].clone(),
                 product: example[product].clone(),
             }))
             .unwrap();
@@ -54,6 +55,48 @@ fn each_compiled_product_can_be_enabled_independently() {
             );
         }
     }
+}
+#[cfg(feature = "enhance")]
+#[test]
+fn chain_following_products_require_valid_root_chain_settings() {
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let configured = |chain: serde_json::Value| {
+        let mut raw = serde_json::json!({
+            "management_listen": "127.0.0.1:18080",
+            "enhance": example["enhance"].clone(),
+        });
+        if !chain.is_null() {
+            raw["chain"] = chain;
+        }
+        serde_json::from_value::<Config>(raw).unwrap().validate()
+    };
+    assert!(configured(serde_json::Value::Null).is_err());
+    assert!(configured(example["chain"].clone()).is_ok());
+    let mut chain = example["chain"].clone();
+    chain.as_object_mut().unwrap().remove("poll_ms");
+    assert!(configured(chain).is_ok(), "poll_ms defaults to one second");
+    for (field, value) in [
+        ("poll_ms", serde_json::json!(0)),
+        ("rpc_cookie", serde_json::json!("relative/cookie")),
+        (
+            "rpc_url",
+            serde_json::json!("http://user:secret@127.0.0.1:8232"),
+        ),
+    ] {
+        let mut chain = example["chain"].clone();
+        chain[field] = value;
+        assert!(configured(chain).is_err(), "{field}");
+    }
+    // The removed product-local source settings are refused, not ignored.
+    let mut enhance = example["enhance"]["settings"].clone();
+    enhance["zakura_rpc_url"] = serde_json::json!("http://127.0.0.1:8232");
+    assert!(
+        serde_json::from_value::<enhance_publisher::service::EnhancePublisherConfig>(enhance)
+            .is_err()
+    );
 }
 #[cfg(feature = "enhance")]
 #[test]
@@ -133,15 +176,18 @@ fn detail_publication_is_live_https_only_and_rejects_retired_modes() {
     ))
     .unwrap();
     let settings = example["transaction_details"]["settings"].clone();
-    let config: transparent_publisher::tx_detail::service::Config =
-        serde_json::from_value(settings.clone()).unwrap();
-    config.validate().unwrap();
+    serde_json::from_value::<transparent_publisher::tx_detail::service::Config>(settings.clone())
+        .unwrap();
     for (key, value) in [
         ("http_only", serde_json::json!(true)),
         ("ship_runtimes", serde_json::json!(true)),
         ("workers", serde_json::json!("/etc/workers.json")),
         ("mode", serde_json::json!("replay")),
         ("exit_when_idle", serde_json::json!(true)),
+        // The node and its polling come from the root chain settings.
+        ("rpc_url", serde_json::json!("http://127.0.0.1:8232")),
+        ("rpc_cookie", serde_json::json!("/run/cookie")),
+        ("poll_ms", serde_json::json!(1000)),
     ] {
         let mut retired = settings.clone();
         retired[key] = value;
@@ -151,11 +197,6 @@ fn detail_publication_is_live_https_only_and_rejects_retired_modes() {
             "{key}"
         );
     }
-    let mut uncredentialed = settings;
-    uncredentialed["rpc_cookie"] = serde_json::json!("");
-    let config: transparent_publisher::tx_detail::service::Config =
-        serde_json::from_value(uncredentialed).unwrap();
-    assert!(config.validate().is_err());
 }
 #[cfg(feature = "transparent-history")]
 #[test]
@@ -193,12 +234,49 @@ fn filter_and_history_publishers_cannot_write_the_same_state() {
     .unwrap();
     let mut history = example["transparent_history"].clone();
     history["settings"]["follow_journal"] = serde_json::json!(false);
-    let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", "transparent_history":history,
+    let raw = serde_json::json!({"management_listen":"127.0.0.1:18080", "chain":example["chain"],
+    "transparent_history":history,
     "transparent_filters":{"enabled":true,"settings":{
-        "data_dir":history["settings"]["data_dir"], "zakura_cookie":"/etc/node.cookie"
+        "data_dir":history["settings"]["data_dir"]
     }}});
     let config: Config = serde_json::from_value(raw).unwrap();
-    assert!(config.validate().is_err());
+    let error = config.validate().unwrap_err().to_string();
+    assert!(!error.contains("chain"), "{error}");
+}
+
+/// Filters and History read the node only through the root chain settings.
+#[cfg(feature = "transparent-history")]
+#[test]
+fn filter_and_history_settings_refuse_their_own_node_endpoint() {
+    for (key, value) in [
+        ("zakura_rpc_url", serde_json::json!("http://127.0.0.1:8232")),
+        ("zakura_cookie", serde_json::json!("/etc/node.cookie")),
+        ("poll_seconds", serde_json::json!(10)),
+    ] {
+        let mut filters = serde_json::json!({"data_dir": "/srv/filters"});
+        filters[key] = value;
+        assert!(
+            serde_json::from_value::<transparent_publisher::service::FilterConfig>(filters)
+                .is_err(),
+            "{key}"
+        );
+    }
+    let example: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tools/deploy/publisher/publisher.example.json"
+    ))
+    .unwrap();
+    let settings = example["transparent_history"]["settings"].clone();
+    serde_json::from_value::<transparent_publisher::service::HistoryConfig>(settings.clone())
+        .unwrap();
+    for key in ["rpc_url", "rpc_cookie"] {
+        let mut retired = settings.clone();
+        retired[key] = serde_json::json!("http://127.0.0.1:8232");
+        assert!(
+            serde_json::from_value::<transparent_publisher::service::HistoryConfig>(retired)
+                .is_err(),
+            "{key}"
+        );
+    }
 }
 
 #[test]

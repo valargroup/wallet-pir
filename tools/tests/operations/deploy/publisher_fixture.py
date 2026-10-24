@@ -19,12 +19,9 @@ HISTORY = {'data_dir': '/srv/transparent-activity/full-v3/journal',
            'publication_root': '/srv/transparent-activity/full-v12/publications',
            'initial_publication': '/srv/transparent-activity/full-v12/publications/initial',
            'recent_from': 1, 'recent_geometry': 'decoupled-2k-8k', 'archive_geometry': 'decoupled-32k-32k',
-           'rpc_url': 'http://127.0.0.1:8232', 'rpc_cookie': '/root/.cache/zakura/.cookie',
            'listen': '10.0.0.1:8096', 'source_sha': 'retained-source', 'follow_journal': False}
 DISPLAY = {'root': '/srv/txid-display-genesis/v4/root', 'journal': '/srv/txid-display-genesis/journal-v3',
-           'rpc_url': 'http://127.0.0.1:8232',
-           'rpc_cookie': '/root/.cache/zakura/.cookie', 'poll_ms': 500, 'status_listen': '127.0.0.1:8098',
-           'max_recent_records': None}
+           'status_listen': '127.0.0.1:8098', 'max_recent_records': None}
 
 
 class Coordinator(FakeFleet):
@@ -94,7 +91,7 @@ class Coordinator(FakeFleet):
         if '--check' in argv:
             configuration = json.loads(self.read(host, argv[argv.index('--config') + 1]))
             expected = {'management_listen', *publisher.PRODUCTS} if argv[0].endswith('/pir-publisher') else {'management_listen', 'enhance'}
-            if self.refuse_configuration or set(configuration) != expected:
+            if self.refuse_configuration or set(configuration) - {'chain'} != expected:
                 return 1, 'unknown product configuration'
         elif self.fail_probe and argv[0].startswith('/bin/check-'):
             return 1, 'encrypted answer mismatch'
@@ -119,13 +116,13 @@ class PublisherFixture:
         self.serving_binary.write_bytes(b'new serving executable')
         self.old_publisher = sha256(b'installed publisher')
         config = {'management_listen': '127.0.0.1:18080',
+            'chain': {'rpc_url': 'http://127.0.0.1:8232',
+                      'rpc_cookie': '/run/credentials/pir-publisher.service/chain-cookie', 'poll_ms': 1000},
             'transparent_history': {'enabled': True, 'settings': copy.deepcopy(HISTORY)},
             'transaction_details': {'enabled': True, 'settings': copy.deepcopy(DISPLAY)},
             'enhance': {'enabled': True, 'settings': {'artifact_listen': '127.0.0.1:8084',
-                'listen': '127.0.0.1:8080', 'data_dir': '/srv/enhance', 'zakura_rpc_url': 'http://127.0.0.1:8232',
-                'zakura_cookie': '/run/credentials/pir-publisher.service/chain-cookie', 'poll_seconds': 10}},
-            'status': {'enabled': True, 'settings': {'publisher': {'state_dir': '/srv/status'},
-                'cookie': '/run/node/cookie'}}}
+                'listen': '127.0.0.1:8080', 'data_dir': '/srv/enhance', 'prevout_cache_outputs': 10}},
+            'status': {'enabled': True, 'settings': {'publisher': {'state_dir': '/srv/status'}}}}
         self.ex.install('coordinator', publisher.UNIT,
             '[Service]\nEnvironmentFile=/etc/pir/credentials.env\nExecStart=/bin/publisher --config '
             + publisher.CONFIG + '\nMemoryMax=40G\nMemorySwapMax=0\n[Install]\nWantedBy=multi-user.target\n',

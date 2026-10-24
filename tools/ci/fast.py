@@ -31,8 +31,10 @@ HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 def feedback_tooling(path):
     if path.startswith('tools/tests/operations/'):
         return False
+    # preflight.json is the pre-push check list. It does not change the Rust
+    # graph; treating it as build configuration rebuilds the fast closure.
     return path in {'.gitignore', '.github/labeler.yml', '.github/labels.json',
-                    '.github/workflows/pr-labels.yml'} or path.startswith(('tools/ci/', 'tools/tests/',
+                    '.github/preflight.json', '.github/workflows/pr-labels.yml'} or path.startswith(('tools/ci/', 'tools/tests/',
         '.github/workflows/ci', '.github/actions/rust-setup/', '.github/actions/qualify-artifacts/'))
 
 
@@ -172,12 +174,6 @@ def select(packages, paths):
     names = {p['name'] for p in packages}
     selected = set()
     for path in paths:
-        # Private product regressions compile this same host engine source.
-        # Select its adapters explicitly without product-to-host Cargo edges.
-        if (path == 'src/pir-publisher/src/publisher.rs'
-                or path.startswith('src/pir-publisher/src/publisher/')):
-            selected.update(names & {'pir-publisher', 'enhance-publisher',
-                                     'status-publisher', 'transparent-publisher'})
         # Package-owned embedded fixtures (including Markdown) can affect Rust.
         package = owner(packages, path)
         if package:

@@ -1,11 +1,14 @@
 {
   "management_listen": "127.0.0.1:18199",
+  "chain": {
+    "rpc_url": "http://127.0.0.1:8232",
+    "rpc_cookie": "/root/.cache/zakura/.cookie",
+    "poll_ms": 1000
+  },
   "transparent_filters": {
     "enabled": true,
     "settings": {
       "listen": "127.0.0.1:8090",
-      "zakura_rpc_url": "http://127.0.0.1:8232",
-      "zakura_cookie": "/root/.cache/zakura/.cookie",
       "data_dir": "/srv/zakura/transparent-filter-data",
       "start_height": 3428143,
       "shard_dir": "/srv/zakura/transparent-shards-v7"

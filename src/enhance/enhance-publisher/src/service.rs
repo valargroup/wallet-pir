@@ -6,11 +6,14 @@ use crate::{
     ingest::EnhanceJournal,
     publisher::EnhancePublisher,
 };
+use pir_pipeline::ingestion::{ChainFeed, ChainSettings, IngestionExecutor};
+use pir_pipeline::publisher::PublisherExecutor;
 use pir_pipeline::service::{Http, Shutdown, Tasks};
 use serde::Deserialize;
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf};
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-/// Canonical source, durable state directory, and local publisher listeners.
+/// Durable state directory and local publisher listeners; the canonical source
+/// is the root chain.
 /// Consumers choose their own serving destinations independently.
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,33 +21,24 @@ pub struct EnhancePublisherConfig {
     pub artifact_listen: SocketAddr,
     pub listen: SocketAddr,
     pub data_dir: PathBuf,
-    pub zakura_rpc_url: String,
-    pub zakura_cookie: PathBuf,
-    pub poll_seconds: u64,
     pub prevout_cache_outputs: usize,
 }
 impl EnhancePublisherConfig {
-    /// Check paths, polling, listeners, and credential-free HTTP RPC URLs
-    /// without opening state or reading the cookie file.
+    /// Check state paths without opening state. The root validates chain settings.
     pub fn validate(&self) -> Result<()> {
-        let rpc = reqwest::Url::parse(&self.zakura_rpc_url)?;
-        if self.poll_seconds == 0
-            || !self.data_dir.is_absolute()
-            || !self.zakura_cookie.is_absolute()
-            || !matches!(rpc.scheme(), "http" | "https")
-            || rpc.host_str().is_none()
-            || !rpc.username().is_empty()
-            || rpc.password().is_some()
-        {
-            return Err("Enhance publisher needs canonical RPC credentials, absolute state paths and nonzero polling".into());
+        if !self.data_dir.is_absolute() {
+            return Err("Enhance publisher needs an absolute state path".into());
         }
         Ok(())
     }
 }
 /// Lock the service directory, verify offline recovery, adopt any completed
-/// rebuild, and supervise the artifact listener and canonical publisher loop.
-pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
+/// rebuild, and supervise the artifact listener, root-scheduled ingestion and
+/// the publication loop.
+pub async fn run<E: PublisherExecutor + IngestionExecutor>(
     config: EnhancePublisherConfig,
+    chain: ChainSettings,
+    feed: ChainFeed,
     executor: E,
     http: Http<axum::Router>,
     shutdown: Shutdown,
@@ -77,7 +71,7 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
             tracing::error!(%reason, moved_to = %moved_to.display(), "rejected staged Enhance journal rebuild")
         }
     }
-    let rpc = ZakuraClient::from_cookie_file(&config.zakura_rpc_url, &config.zakura_cookie)?;
+    let rpc = ZakuraClient::from_cookie_file(&chain.rpc_url, &chain.rpc_cookie)?;
     let publisher = EnhancePublisher::open(&config.data_dir.join("publication"), rpc.clone())?;
     let artifacts =
         tokio::spawn(http.serve(config.artifact_listen, publisher.distribution().router()));
@@ -97,9 +91,7 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
     tasks.own(&serving);
     application::run_until(
         executor,
-        application::AcquisitionConfig {
-            poll: Duration::from_secs(config.poll_seconds),
-        },
+        feed,
         publisher,
         EnhanceJournal::open(&config.data_dir)?,
         application::CanonicalSource {
@@ -117,14 +109,18 @@ pub async fn run<E: pir_pipeline::publisher::PublisherExecutor>(
 }
 
 /// Validate and declare this publisher without opening credentials or state.
-pub fn configure<E: pir_pipeline::publisher::PublisherExecutor>(
+pub fn configure<E: PublisherExecutor + IngestionExecutor>(
     config: EnhancePublisherConfig,
+    chain: Option<&ChainSettings>,
     executor: E,
 ) -> Result<pir_pipeline::publisher::PublisherDefinition<axum::Router>> {
     use pir_pipeline::publisher::{
         PublisherDefinition, PublisherResources, ReadinessProbe, ReadinessRule,
     };
     config.validate()?;
+    let chain = chain
+        .cloned()
+        .ok_or("enabled enhance publisher needs the root chain settings")?;
     let resources = PublisherResources {
         listeners: vec![config.listen, config.artifact_listen],
         writable_paths: vec![config.data_dir.clone()],
@@ -134,9 +130,21 @@ pub fn configure<E: pir_pipeline::publisher::PublisherExecutor>(
             rule: ReadinessRule::HttpSuccess,
         }],
     };
-    Ok(PublisherDefinition::new(
-        "enhance",
-        resources,
-        move |context| run(config, executor, context.http, context.shutdown),
-    ))
+    Ok(
+        PublisherDefinition::new("enhance", resources, move |context| async move {
+            let feed = context
+                .chain
+                .ok_or("Enhance publisher started without the root chain")?;
+            run(
+                config,
+                chain,
+                feed,
+                executor,
+                context.http,
+                context.shutdown,
+            )
+            .await
+        })
+        .following_chain(),
+    )
 }

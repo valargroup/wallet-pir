@@ -84,8 +84,14 @@ def load_request(path, expected):
     require(type(version['binary_bytes']) is int and version['binary_bytes'] > 0, 'invalid executable size')
     products = PRODUCTS
     config = request['configuration']
-    require(isinstance(config, dict) and set(config) == {'management_listen', *products} and config['management_listen'] == '127.0.0.1:18080',
+    require(isinstance(config, dict) and set(config) - {'chain'} == {'management_listen', *products}
+            and config['management_listen'] == '127.0.0.1:18080',
             'cutover products must match the schema, with loopback management on 18080')
+    # One root chain follower serves every chain-following product.
+    chain = config.get('chain')
+    require(chain is None or (isinstance(chain, dict) and {'rpc_url', 'rpc_cookie'} <= set(chain)
+                              <= {'rpc_url', 'rpc_cookie', 'poll_ms'}),
+            'root chain settings need exactly rpc_url, rpc_cookie and optional poll_ms')
     for name in products:
         product = config[name]
         require(isinstance(product, dict) and set(product) == {'enabled', 'settings'} and product['enabled'] is True

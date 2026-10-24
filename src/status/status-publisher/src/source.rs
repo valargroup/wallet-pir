@@ -252,33 +252,34 @@ impl RollingWindow {
         Ok(())
     }
 
-    pub async fn observe(&mut self, rpc: &ZakuraClient) -> Result<Observation, SourceError> {
-        let began = Instant::now();
-        let tip = rpc.tip_height().await?;
-        let tip_height = u32::try_from(tip).map_err(|_| SourceError::Window)?;
-        if tip_height == 0 {
-            return Err(SourceError::Window);
-        }
-        let anchor = hash_at(rpc, tip, || SourceError::TipChanged).await?;
-        let genesis = hash_at(rpc, 0, || SourceError::Genesis).await?;
-        if self.network.is_some_and(|network| network != genesis) {
-            return Err(SourceError::Genesis);
-        }
+    /// The newest cached block, as a height and hash.
+    pub fn committed(&self) -> Option<(u32, Hash)> {
+        self.blocks.last().map(|block| (block.height, block.hash))
+    }
 
-        let mut keep = 0;
-        for (index, block) in self.blocks.iter().enumerate().rev() {
-            if block.height <= tip_height {
-                let canonical =
-                    hash_at(rpc, u64::from(block.height), || SourceError::TipChanged).await?;
-                if canonical == block.hash {
-                    keep = index + 1;
-                    break;
-                }
-            }
-        }
-        let mut blocks = self.blocks[..keep].to_vec();
+    /// The newest cached block at or below `height`.
+    pub fn checkpoint_at_or_below(&self, height: u64) -> Option<(u32, Hash)> {
+        let index = self
+            .blocks
+            .partition_point(|block| u64::from(block.height) <= height);
+        index
+            .checked_sub(1)
+            .map(|index| (self.blocks[index].height, self.blocks[index].hash))
+    }
+
+    /// The network this window observed, if any.
+    pub fn network(&self) -> Option<Hash> {
+        self.network
+    }
+
+    /// Disconnect cached blocks above `keep`, retaining their txids as fork
+    /// observations, and persist the result.
+    pub fn disconnect_above(&mut self, keep: Option<u32>) -> Result<(), SourceError> {
+        let retained = self
+            .blocks
+            .partition_point(|block| keep.is_some_and(|keep| block.height <= keep));
         let mut forks = self.forks.clone();
-        for disconnected in &self.blocks[keep..] {
+        for disconnected in &self.blocks[retained..] {
             for txid in &disconnected.txids {
                 forks.push(ForkRecord {
                     txid: *txid,
@@ -296,18 +297,71 @@ impl RollingWindow {
                 unique_forks.insert(fork.txid, fork);
             }
         }
-        let mut forks: Vec<ForkRecord> = unique_forks.into_values().collect();
-        if blocks.last().is_none_or(|block| block.height < tip_height) {
-            let next = blocks.last().map_or(
-                tip_height.saturating_sub(self.window_blocks - 1).max(1),
-                |block| block.height + 1,
-            );
-            for height in next..=tip_height {
-                blocks.push(status_block(rpc, u64::from(height)).await?);
+        let forks: Vec<ForkRecord> = unique_forks.into_values().collect();
+        let blocks = self.blocks[..retained].to_vec();
+        if let Some(network) = self.network {
+            self.persist(network, &blocks, &forks)?;
+        }
+        self.blocks = blocks;
+        self.forks = forks;
+        Ok(())
+    }
+
+    /// The first height an empty window covers for an observed tip.
+    pub fn first_height(&self, tip: u64) -> u64 {
+        tip.saturating_sub(u64::from(self.window_blocks) - 1).max(1)
+    }
+
+    /// Append canonical blocks `from..=through`, each continuing the cached
+    /// tip, then keep only the newest window. A block that does not continue
+    /// the cached tip commits nothing further.
+    pub async fn extend(
+        &mut self,
+        rpc: &ZakuraClient,
+        genesis: Hash,
+        from: u64,
+        through: u64,
+    ) -> Result<(), SourceError> {
+        if self.network.is_some_and(|network| network != genesis) {
+            return Err(SourceError::Genesis);
+        }
+        let mut blocks = self.blocks.clone();
+        for height in from..=through {
+            u32::try_from(height).map_err(|_| SourceError::Window)?;
+            let block = status_block(rpc, height).await?;
+            if blocks.last().is_some_and(|last| {
+                u64::from(last.height) + 1 != height || last.hash != block.parent
+            }) {
+                break;
             }
+            blocks.push(block);
         }
         if blocks.len() > self.window_blocks as usize {
             blocks.drain(..blocks.len() - self.window_blocks as usize);
+        }
+        let forks = self.forks.clone();
+        self.persist(genesis, &blocks, &forks)?;
+        self.network = Some(genesis);
+        self.blocks = blocks;
+        Ok(())
+    }
+
+    /// Build a snapshot of the cached window ending at the anchored `tip`
+    /// with a fresh complete mempool. The tip height and anchor are reread
+    /// after the mempool, so the timestamp names a validated fresh read.
+    pub async fn snapshot(
+        &mut self,
+        rpc: &ZakuraClient,
+        genesis: Hash,
+        tip: u64,
+        anchor: Hash,
+        began: Instant,
+    ) -> Result<Observation, SourceError> {
+        if self.network != Some(genesis)
+            || self.committed()
+                != Some((u32::try_from(tip).map_err(|_| SourceError::Window)?, anchor))
+        {
+            return Err(SourceError::TipChanged);
         }
         let mempool = rpc.status_mempool().await?;
         let final_anchor = hash_at(rpc, tip, || SourceError::TipChanged).await?;
@@ -316,12 +370,13 @@ impl RollingWindow {
         }
         let observed_ms = now_ms();
         let collect_ms = began.elapsed().as_secs_f64() * 1000.;
+        let mut blocks = self.blocks.clone();
+        let mut forks = self.forks.clone();
         let snapshot = Snapshot::build(genesis, self.salt, &blocks, &mempool, &forks)?;
         blocks.retain(|block| block.height >= snapshot.start);
         forks.retain(|fork| fork.height >= snapshot.start);
         let retained_forks = forks.len();
         self.persist(genesis, &blocks, &forks)?;
-        self.network = Some(genesis);
         self.blocks = blocks;
         self.forks = forks;
         Ok(Observation {
@@ -332,6 +387,59 @@ impl RollingWindow {
             mempool: mempool.len(),
             retained_forks,
         })
+    }
+
+    /// One self-contained observation for the diagnostic CLI: reconcile the
+    /// cached window with the node, extend it to the tip and snapshot it. A
+    /// failed pass, such as a tip that moved, leaves the window and its
+    /// checkpoint as they were, so a discarded candidate records no forks.
+    pub async fn observe(&mut self, rpc: &ZakuraClient) -> Result<Observation, SourceError> {
+        let (network, blocks, forks) = (self.network, self.blocks.clone(), self.forks.clone());
+        let result = self.observe_pass(rpc).await;
+        if result.is_err() {
+            if let Some(network) = network {
+                self.persist(network, &blocks, &forks)?;
+            }
+            (self.network, self.blocks, self.forks) = (network, blocks, forks);
+        }
+        result
+    }
+
+    async fn observe_pass(&mut self, rpc: &ZakuraClient) -> Result<Observation, SourceError> {
+        let began = Instant::now();
+        let tip = rpc.tip_height().await?;
+        let tip_height = u32::try_from(tip).map_err(|_| SourceError::Window)?;
+        if tip_height == 0 {
+            return Err(SourceError::Window);
+        }
+        let anchor = hash_at(rpc, tip, || SourceError::TipChanged).await?;
+        let genesis = hash_at(rpc, 0, || SourceError::Genesis).await?;
+        if self.network.is_some_and(|network| network != genesis) {
+            return Err(SourceError::Genesis);
+        }
+        let mut keep = None;
+        for block in self.blocks.iter().rev() {
+            if block.height <= tip_height
+                && hash_at(rpc, u64::from(block.height), || SourceError::TipChanged).await?
+                    == block.hash
+            {
+                keep = Some(block.height);
+                break;
+            }
+        }
+        if keep != self.committed().map(|(height, _)| height) {
+            self.disconnect_above(keep)?;
+        }
+        if self
+            .committed()
+            .is_none_or(|(height, _)| height < tip_height)
+        {
+            let from = self
+                .committed()
+                .map_or(self.first_height(tip), |(height, _)| u64::from(height) + 1);
+            self.extend(rpc, genesis, from, tip).await?;
+        }
+        self.snapshot(rpc, genesis, tip, anchor, began).await
     }
 }
 

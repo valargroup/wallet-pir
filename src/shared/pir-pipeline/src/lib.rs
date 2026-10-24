@@ -417,3 +417,9 @@ pub mod service;
 
 /// Generic publisher service, typed phase recipes and host registration.
 pub mod publisher;
+
+/// Root-scheduled journal ingestion contracts, the chain follower and schedulers.
+pub mod ingestion;
+
+/// The one publication and ingestion executor injected into every product.
+pub mod engine;
