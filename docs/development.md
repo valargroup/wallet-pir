@@ -22,7 +22,10 @@ make check-full   # comprehensive local validation, not the default inner loop
 Prerequisites: Rust 1.97.1 with rustfmt/clippy, Python 3.11+, Git, Clang/libclang,
 protoc, jq, shellcheck, Node and make. Linux additionally needs the standard C/C++
 build tools, pkg-config and OpenSSL development headers. macOS uses Xcode Command
-Line Tools. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
+Line Tools. `make doctor` runs the protoc that builds will use (`PROTOC` when set,
+else the first on `PATH`) and imports the Python test suites' third-party modules
+(`cryptography`); when a Homebrew protoc fails to load its libraries, set
+`PROTOC` to a working one or repair it. `make doctor NETWORK=1` checks authenticated GitHub/dependency access;
 it suppresses subprocess output and never prints tokens. Missing dependencies are
 fixed explicitly, not by interactive repair in a test command.
 

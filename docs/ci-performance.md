@@ -662,8 +662,10 @@ it never clears a current target to make a check appear healthy.
 For long remote validation, start a tracked hub job running
 `python3 tools/ci/launch.py --receipt <outside-checkout-attempt.json> -- <command>`.
 It requires a clean checkout, chooses the pinned Rust toolchain, checks native
-prerequisites, sets `umask 022`, and writes the commit, configuration digest,
-measured duration and exit status atomically. A changed source/configuration
+prerequisites by running them (protoc from `PROTOC` when set, else `PATH`, which
+it passes to the command as `PROTOC`) and that its Python imports the test suites'
+third-party modules, sets `umask 022`, and writes the commit, configuration digest,
+protoc path and version, measured duration and exit status atomically. A changed source/configuration
 invalidates success. Use `--no-rust` for operations-only commands. Each attempt
 needs a new receipt path. Inspect the tracked job with short SSH checks; do not
 run validation through an inspection connection.

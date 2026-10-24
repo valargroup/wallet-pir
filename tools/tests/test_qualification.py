@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / 'tools/ci'))
 sys.path.insert(0, str(ROOT / 'tools/lib'))
 import qualification as q
 import runner_storage as storage
+import doctor
 import launch
 from wallet_pir_ops import release
 
@@ -331,6 +332,84 @@ class LauncherTests(unittest.TestCase):
                 self.assertFalse(json.loads(changed.read_text())['passed'])
             finally:
                 os.umask(previous)
+
+
+class LauncherPrerequisiteTests(unittest.TestCase):
+    """The launcher and doctor run protoc and Python imports before any workload."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        self.root = self.directory / 'repo'
+        self.root.mkdir()
+        for args in [('init', '-q'), ('config', 'user.email', 'fixture@example.invalid'), ('config', 'user.name', 'Fixture')]:
+            subprocess.run(['git', *args], cwd=self.root, check=True)
+        (self.root / 'rust-toolchain.toml').write_text('[toolchain]\nchannel="1.97.1"\n')
+        subprocess.run(['git', 'add', 'rust-toolchain.toml'], cwd=self.root, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'Fixture'], cwd=self.root, check=True)
+        self.bin = self.directory / 'bin'
+        self.bin.mkdir()
+        for program in ('cargo', 'rustc', 'clang'):
+            self.tool(program, 'true')
+        self.broken = self.tool('protoc', "echo 'dyld: Library not loaded: libabsl_die_if_null.dylib' >&2\nexit 134")
+        self.marker = self.directory / 'workload-ran'
+        # An empty home keeps the developer's ~/.cargo/bin out of the launcher's PATH.
+        environment = patch.dict('os.environ', {'HOME': str(self.directory / 'home'),
+                                                'PATH': str(self.bin) + os.pathsep + os.environ['PATH']})
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop('PROTOC', None)
+
+    def tool(self, name, body, directory=None):
+        path = (directory or self.bin) / name
+        path.write_text('#!/bin/sh\n' + body + '\n')
+        path.chmod(0o755)
+        return path
+
+    def workload(self, check='True'):
+        return [sys.executable, '-c', f'import os; assert {check}; open({str(self.marker)!r}, "w")']
+
+    def test_broken_protoc_on_path_is_rejected_by_name_before_the_checkout_and_workload(self):
+        (self.root / 'untracked').write_text('dirty')
+        receipt = self.directory / 'receipt.json'
+        with self.assertRaisesRegex(ValueError, f'protoc at {re.escape(str(self.broken))}: exit 134: dyld: Library not loaded'):
+            launch.execute(self.workload(), receipt, cwd=self.root)
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(receipt.exists())
+
+    def test_hanging_protoc_times_out_within_the_bound(self):
+        self.tool('protoc', 'exec tail -f /dev/null')
+        begin = time.monotonic()
+        with patch('doctor.PROTOC_TIMEOUT', 1), self.assertRaisesRegex(ValueError, 'timed out after 1s'):
+            launch.execute(self.workload(), self.directory / 'receipt.json', cwd=self.root)
+        self.assertLess(time.monotonic() - begin, 5)
+        self.assertFalse(self.marker.exists())
+
+    def test_working_protoc_override_beats_a_broken_one_on_path_and_is_recorded(self):
+        good = self.tool('protoc', 'echo libprotoc 29.3', self.directory)
+        os.environ['PROTOC'] = str(good)
+        receipt = self.directory / 'receipt.json'
+        check = f'os.environ["PROTOC"] == {str(good)!r}'
+        self.assertEqual(launch.execute(self.workload(check), receipt, cwd=self.root), 0)
+        result = json.loads(receipt.read_text())
+        self.assertTrue(result['passed'])
+        self.assertEqual((result['protoc_path'], result['protoc_version']), (str(good), 'libprotoc 29.3'))
+
+    def test_doctor_reports_the_protoc_the_launcher_rejects(self):
+        with patch('doctor.probe', return_value=True):
+            row = next(row for row in doctor.inspect() if row['check'] == 'protoc')
+        self.assertFalse(row['ok'])
+        self.assertIn(f'set PROTOC=<working protoc> or repair {self.broken} (exit 134: dyld', row['remedy'])
+        with self.assertRaisesRegex(ValueError, f'protoc at {re.escape(str(self.broken))}:'):
+            launch.execute(self.workload(), self.directory / 'receipt.json', cwd=self.root)
+
+    def test_missing_python_module_is_named_before_the_workload(self):
+        with patch('doctor.PYTHON_MODULES', ('json', 'wallet_pir_absent_module')), \
+                self.assertRaisesRegex(ValueError, r'cannot import wallet_pir_absent_module \(ModuleNotFoundError') as raised:
+            launch.execute(self.workload(), self.directory / 'receipt.json', cwd=self.root, rust=False)
+        self.assertNotIn('json', str(raised.exception))
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == '__main__':
