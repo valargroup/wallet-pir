@@ -150,6 +150,15 @@ pub struct UnitSample {
 pub const UNIT_PROPERTIES: &str =
     "LoadState,ActiveState,NRestarts,ControlGroup,MemoryCurrent,MemoryPeak,MemoryMax";
 
+/// Unit state applies to every unit; restart and cgroup counters belong to services.
+pub(crate) fn unit_check_kinds(unit: &str) -> &'static [&'static str] {
+    if unit.ends_with(".service") {
+        &["active", "restarts", "oom"]
+    } else {
+        &["active"]
+    }
+}
+
 pub fn unit_checks(
     unit: &str,
     sample: Option<&UnitSample>,
@@ -165,9 +174,10 @@ pub fn unit_checks(
         values,
     };
     let Some(sample) = sample else {
-        return ["active", "restarts", "oom"]
+        return unit_check_kinds(unit)
+            .iter()
             .map(|k| check(k, Status::Unknown, "unit state unavailable".into(), vec![]))
-            .into();
+            .collect();
     };
     let p = &sample.properties;
     let get = |k: &str| p.get(k).map(String::as_str).unwrap_or("");
@@ -203,6 +213,9 @@ pub fn unit_checks(
         }
     }
     out.push(check("active", active.0, active.1.into(), memory));
+    if !unit.ends_with(".service") {
+        return out;
+    }
     out.push(match number("NRestarts") {
         Some(n) => {
             let grew = state.grew(&format!("{base}:restarts"), n, now);
@@ -274,7 +287,17 @@ pub async fn sample_unit(unit: &str) -> Option<UnitSample> {
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         tokio::process::Command::new("systemctl")
-            .args(["show", "-p", UNIT_PROPERTIES, "--", unit])
+            .args([
+                "show",
+                "-p",
+                if unit.ends_with(".service") {
+                    UNIT_PROPERTIES
+                } else {
+                    "LoadState,ActiveState"
+                },
+                "--",
+                unit,
+            ])
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .kill_on_drop(true)
@@ -397,6 +420,49 @@ mod tests {
 
     fn status(checks: &[Check], name: &str) -> Status {
         checks.iter().find(|c| c.name == name).unwrap().status
+    }
+
+    #[test]
+    fn non_service_units_collect_and_expect_only_active_state() {
+        for unit in ["healthy.socket", "healthy.timer"] {
+            let sample = UnitSample {
+                properties: parse_properties("LoadState=loaded\nActiveState=active\n"),
+                ..UnitSample::default()
+            };
+            let mut state = State::default();
+            let checks = unit_checks(unit, Some(&sample), &mut state, 100);
+            assert_eq!(
+                checks.len(),
+                1,
+                "non-service units have no service counters"
+            );
+            assert_eq!(checks[0].status, Status::Healthy);
+            let config: crate::config::Config = serde_json::from_value(serde_json::json!({
+                "host_id":"test", "tls":{"cert":"c", "key":"k", "client_ca":"a", "collector_identity":"collector"},
+                "units":[unit], "state_path":"/tmp/state.json"
+            })).unwrap();
+            config.validate().unwrap();
+            let expected: Vec<_> = config
+                .expected_checks()
+                .into_iter()
+                .filter(|c| c.starts_with("unit:"))
+                .collect();
+            assert_eq!(
+                expected,
+                checks.iter().map(|c| c.name.clone()).collect::<Vec<_>>()
+            );
+            let missing = unit_checks(unit, None, &mut state, 100);
+            assert_eq!(missing.len(), 1);
+            assert_eq!(missing[0].status, Status::Unknown);
+            let inactive = UnitSample {
+                properties: parse_properties("LoadState=loaded\nActiveState=inactive\n"),
+                ..UnitSample::default()
+            };
+            assert_eq!(
+                unit_checks(unit, Some(&inactive), &mut state, 100)[0].status,
+                Status::Warning
+            );
+        }
     }
 
     #[test]

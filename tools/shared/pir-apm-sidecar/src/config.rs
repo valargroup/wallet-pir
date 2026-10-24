@@ -159,7 +159,9 @@ impl Config {
         );
         for unit in &self.units {
             out.extend(
-                ["active", "restarts", "oom"].map(|k| format!("unit:{}:{k}", unit.to_lowercase())),
+                crate::resources::unit_check_kinds(unit)
+                    .iter()
+                    .map(|k| format!("unit:{}:{k}", unit.to_lowercase())),
             );
         }
         out.extend(self.hooks.iter().map(|h| format!("hook:{}", h.name)));
