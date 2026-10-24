@@ -20,16 +20,25 @@ leaving 32 GiB outside its hard limit for the OS, TLS proxy and operating tools.
 These are limits, not evidence that the current full datasets fit.
 
 The [inventory settings example](../tools/deploy/query-server/query-node.example.json)
-reserves 24 GiB for Enhance's prepared cache, 64 GiB for history and 16 GiB for
-detail, with one history build slot and one history query slot. Status, queries,
-download buffers, retained revisions and publication replacement overlap also
-consume memory. Measure their simultaneous peak before increasing concurrency.
-An allocation failure must refuse work; never count swap as serving capacity.
+carries the settings installed on `wallet-pir-query-01` on 2026-10-24. All four
+products synchronize from the coordinator publisher, `https://enhance-pir.valargroup.dev`,
+which serves discovery and the `/provider/{enhance/v1,status/v1,v1,txid/v1}`
+feeds. It reserves 8 GiB for Enhance's prepared cache, 96 GiB for history and
+24 GiB for detail, with one history build slot and one history query slot. At
+activation the live publications were one Enhance shard (0) of about 0.9 M
+records, about 63.5 GiB of history and 18.0 GiB of detail artifacts; the previous
+64 GiB and 16 GiB budgets could not hold them. A cold start reached readiness in
+about 21 minutes with a 92 GiB service memory peak and 106 GiB used on the volume.
+Status, queries, download buffers, retained revisions and publication replacement
+overlap also consume memory. Measure their simultaneous peak before increasing
+concurrency. An allocation failure must refuse work; never count swap as serving
+capacity.
 
-Replace example publisher origins and network identities with the current
-verified publication identities. List every Enhance shard in the current
-publisher's domain, and set `sealed_shards` and cache/download budgets to hold
-that entire set. The six-shard example is not an assertion about live coverage.
+Recheck the publisher origins and network identities against the current
+verified publications before reuse. List every Enhance shard in the current
+publisher's domain (`coverage.shards` of `/enhance/v1/init`), and set
+`sealed_shards` and cache/download budgets to hold that entire set; a combined
+role holding a different set refuses the publication.
 History uses `full_holdings=true` with no remote archive forwarding. Transaction
 details keeps its complete selected publication locally. Status serves the
 current publication; it does not acquire a new historical-status API.
@@ -148,6 +157,17 @@ and disjoint state below `/srv/wallet-pir-query`, mounts CA files read-only, and
 returns `--config ... --check` for the actual binary before activation. The unit
 requires the mounted volume. Its shutdown does not force-kill admitted work at a
 timeout; a stalled drain must be reported by the deployment transaction.
+
+For a quick encrypted smoke check without the deployment transaction, build the
+wallet clients with the production protocol (`native-reinspiring`; without it
+they refuse the live manifests) and compare against the existing endpoints:
+`enhance-pir-cli --server <origin> query <position>`, the ignored
+`txid_live_lookup` test with `TXID_LIVE_URL`, `frozen-provider-client <origin>
+<script> <birthday>`, and the ignored Status `live_lookup` test of
+`status-publisher` (`--features cli,native-reinspiring`) with `STATUS_LIVE_URL`,
+`STATUS_LIVE_TXID` and `STATUS_LIVE_HEIGHT` taken from an independent block
+source. Transparent compact filters (`/transparent/v1/filters/*`) are not
+served by the query binary and answer 404 on this node.
 
 After activation, retain transaction status and the exact rollback command.
 Verify independent encrypted answers for every configured product and archive
