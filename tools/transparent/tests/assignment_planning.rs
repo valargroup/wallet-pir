@@ -18,7 +18,6 @@ use transparent_filter::{ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
 #[allow(dead_code)]
 #[path = "../../../src/pir-query-server/tests/transparent/support/history_set.rs"]
 mod history_set;
-#[allow(dead_code)]
 #[path = "../../../src/pir-query-server/tests/transparent/support/revision.rs"]
 mod revision;
 use history_set::*;
