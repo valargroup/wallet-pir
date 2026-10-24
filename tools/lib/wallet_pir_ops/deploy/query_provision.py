@@ -38,6 +38,15 @@ def inputs(root):
     return result
 
 
+def group_count(value):
+    """Legacy Terraform variables may serialize the approved count as a string."""
+    if type(value) is int and 1 <= value <= 4:
+        return value
+    if isinstance(value, str) and value in ('1', '2', '3', '4'):
+        return int(value)
+    raise ValueError('autoscaling group count must be between one and four')
+
+
 def environment():
     """Read the coordinator's runtime credentials without persisting or printing them."""
     return clean_environment(
@@ -69,7 +78,8 @@ def prepare(request, *, canonical=None, terraform=None):
     if inputs(canonical) != request['baseline']:
         raise ValueError('installed Terraform configuration or inputs changed')
     if (file_sha256(PRODUCTION_VARIABLES) != request['operator_variables_sha256']
-            or json.loads(AUTOSCALE_STATE.read_text())['desired_groups'] != request['desired_groups']):
+            or group_count(json.loads(AUTOSCALE_STATE.read_text())['desired_groups'])
+            != group_count(request['desired_groups'])):
         raise ValueError('production variables or autoscaling inputs changed')
     copied = inputs(source)
     if copied != {**request['baseline'], 'query-serving.tf': file_sha256(source / 'query-serving.tf')}:
@@ -85,7 +95,7 @@ def prepare(request, *, canonical=None, terraform=None):
     tf = terraform or Terraform(source, env=dict(os.environ))
     document = tf.show_json(saved)
     addresses = initial_plan(document, request['project_id'])
-    if document['variables']['enhance_group_count']['value'] != request['desired_groups']:
+    if group_count(document['variables']['enhance_group_count']['value']) != group_count(request['desired_groups']):
         raise ValueError('saved plan differs from current autoscaling inputs')
     hashes = {'query-serving.tf': file_sha256(source / 'query-serving.tf'),
               **{'query-serving/' + name: file_sha256(module / name) for name in sorted(MODULE_FILES)}}
