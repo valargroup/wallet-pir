@@ -208,7 +208,7 @@ async fn checkpoint_recovers_only_as_a_cache_and_reobserves_canonical_source() {
 #[tokio::test]
 async fn live_rpc_candidate_revalidates_before_durable_publication() {
     use crate::authority::Authority;
-    use status_query_server::Controller;
+    use pir_query_server::status::Controller;
     use status_shared::Generation;
 
     let dir = tempfile::tempdir().unwrap();

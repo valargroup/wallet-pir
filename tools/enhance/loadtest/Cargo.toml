@@ -5,12 +5,12 @@ edition = "2021"
 publish = false
 
 [features]
-native-reinspiring = ["enhance-query-server/native-reinspiring"]
+native-reinspiring = ["enhance-shared/native-reinspiring"]
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-enhance-query-server = { path = "../../../src/enhance/enhance-query-server" , features = ["client"] }
+enhance-shared = { path = "../../../src/enhance/enhance-shared" , features = ["client"] }
 hdrhistogram = "7"
 humantime = "2"
 rand = "0.8"

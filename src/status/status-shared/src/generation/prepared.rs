@@ -8,6 +8,27 @@ use std::{
     io::{Read, Write},
 };
 
+/// Which prepared material a serving process holds beside the public
+/// parameters: a worker evaluates over the serving units, a router packs
+/// responses, and a combined provider does both over one inventory.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreparedMaterial {
+    Evaluation,
+    Packing,
+    Complete,
+}
+
+impl PreparedMaterial {
+    /// Whether the serving units (the database) are loaded.
+    pub fn evaluates(self) -> bool {
+        self != Self::Packing
+    }
+    /// Whether the response packing material is loaded.
+    pub fn packs(self) -> bool {
+        self != Self::Evaluation
+    }
+}
+
 impl Generation {
     pub fn export_prepared(
         &self,
@@ -50,7 +71,7 @@ impl Generation {
     /// This repeats each file's digest check at the loader boundary.
     pub fn load_prepared(
         inventory: &Inventory,
-        worker: bool,
+        material: PreparedMaterial,
         object: impl Fn(&ObjectReference) -> std::io::Result<std::path::PathBuf>,
         previous: Option<&Self>,
     ) -> Result<Self, Failure> {
@@ -68,7 +89,7 @@ impl Generation {
             return Err("Status public parameters digest differs".into());
         }
         let mut generation = Self::public_only(inventory.manifest.clone(), Arc::new(public));
-        if worker {
+        if material.evaluates() {
             let local = ProductionSimplePirParams::new(
                 profile().rlwe().d as u64,
                 ITEM_BITS,
@@ -111,7 +132,8 @@ impl Generation {
             if rows_hash.finalize()[..] != inventory.manifest.rows_digest {
                 return Err("Status database commitment differs".into());
             }
-        } else {
+        }
+        if material.packs() {
             #[cfg(feature = "native-reinspiring")]
             let mut blocks = Vec::new();
             for item in &inventory.packing {

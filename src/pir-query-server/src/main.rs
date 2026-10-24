@@ -28,7 +28,7 @@ enum EnhanceCommand {
     /// Check the selected evaluator and GPU driver without opening worker state.
     CheckBackend {
         #[command(flatten)]
-        matvec: enhance_query_server::matvec::MatvecConfig,
+        matvec: enhance_shared::matvec::MatvecConfig,
     },
 }
 

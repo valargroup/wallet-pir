@@ -156,8 +156,8 @@ pub fn stage(operation: &'static str, elapsed: std::time::Duration, success: boo
 pub fn operation(role: &str, path: &str) -> Option<&'static str> {
     if role == "router" {
         // The canonical `/status/v1` namespace and the deployed `/v1/status`
-        // alias count as the same operations (`status-query-server`'s
-        // `PUBLIC_ROUTES`); this package stays free of HTTP dependencies.
+        // alias count as the same operations (`pir-query-server`'s
+        // `status::PUBLIC_ROUTES`); this package stays free of HTTP dependencies.
         let operation = path
             .strip_prefix("/status/v1")
             .or_else(|| path.strip_prefix("/v1/status"))

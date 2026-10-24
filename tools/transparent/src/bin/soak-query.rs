@@ -10,7 +10,7 @@ use zakura_pir_client::transparent::engine::{
     client::Table,
     transport::{BoxError, Overloaded, StaleRevision},
 };
-#[path = "../../../../src/transparent/transparent-query-server/tests/support/query.rs"]
+#[path = "../../../../src/pir-query-server/tests/transparent/support/query.rs"]
 mod query;
 
 #[derive(Parser)]

@@ -1,12 +1,17 @@
 {
   "management_listen": "127.0.0.1:18081",
+  "public_listen": "127.0.0.1:8090",
   "enhance": {
     "enabled": true,
     "settings": {
-      "role": "worker",
-      "listen": "127.0.0.1:8091",
+      "role": "combined",
+      "control_listen": "127.0.0.1:8096",
       "data_dir": "/srv/pir-query-server/enhance",
       "sealed_shards": 6,
+      "matvec": {
+        "matvec_backend": "cpu",
+        "cuda_device": null
+      },
       "synchronization": {
         "publisher_origin": "https://enhance-pir.valargroup.dev",
         "trusted_ca": null,
@@ -21,11 +26,10 @@
   "status": {
     "enabled": true,
     "settings": {
-      "role": "worker",
+      "role": "combined",
       "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
       "state_dir": "/srv/pir-query-server/status",
       "listen": "127.0.0.1:8481",
-      "worker_origin": "http://127.0.0.1:8481",
       "publisher": "https://enhance-pir.valargroup.dev"
     }
   },

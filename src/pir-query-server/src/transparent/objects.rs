@@ -1,0 +1,622 @@
+//! Verified objects and stable revision directories shared by both HTTPS consumers.
+use crate::transparent::source::Source;
+use pir_publication::{ObjectCache, ObjectReference};
+use transparent_shared::publication::{self, Error};
+
+#[cfg(test)]
+pub(crate) const PARTIAL: &str = ".partial-";
+
+/// Create or open `<directory>/objects`, refuse anything but a real directory
+/// before enumerating it, and remove interrupted partials. This directory has
+/// one owner; an interrupted object is never reused.
+pub(crate) fn prepare_objects(directory: &std::path::Path) -> Result<ObjectCache, Error> {
+    let objects = ObjectCache::open(directory.join("objects"))?;
+    remove_partials(objects.directory())?;
+    Ok(objects)
+}
+
+pub(crate) fn remove_partials(objects: &std::path::Path) -> Result<(), Error> {
+    let entries = match std::fs::read_dir(objects) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        // Includes the previous `<sha256>.partial` copy name.
+        if entry.file_name().to_string_lossy().contains(".partial") {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// Unlink completed objects that no staging tree or source catalog links any
+/// more, after publication collection has removed the unused trees. Staging
+/// hard-links every object it uses, so one remaining link means only
+/// `objects/` names the inode and unlinking it frees the bytes. When `linked`
+/// (a file of the active stage) is not itself a link, staging used the copy
+/// fallback: every object then has one link and is the only reusable
+/// download, so nothing is collected. The caller owns the provider directory
+/// and runs this between stages; the catalog lock still defers it while a
+/// stage links sources. Returns the files and bytes freed, or `None` when
+/// deferred or skipped.
+#[cfg(any(test, feature = "transparent-history"))]
+pub(crate) fn collect_objects(
+    root: &std::path::Path,
+    linked: &std::path::Path,
+) -> Result<Option<(usize, u64)>, Error> {
+    collect_objects_inner(root, Some(linked))
+}
+
+/// With no remaining publication map, remove unlinked completed downloads from
+/// interrupted stages too. Catalog and tree links still protect their objects.
+pub(crate) fn collect_orphan_objects(
+    root: &std::path::Path,
+) -> Result<Option<(usize, u64)>, Error> {
+    collect_objects_inner(root, None)
+}
+
+fn collect_objects_inner(
+    root: &std::path::Path,
+    linked: Option<&std::path::Path>,
+) -> Result<Option<(usize, u64)>, Error> {
+    use std::os::unix::fs::MetadataExt;
+    let objects = root.join("objects");
+    match std::fs::symlink_metadata(&objects) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err("object cache must be a real directory".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    }
+    if let Some(path) = linked {
+        if std::fs::symlink_metadata(path)?.nlink() < 2 {
+            return Ok(None);
+        }
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(None),
+        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+    }
+    let (mut files, mut bytes) = (0, 0);
+    for entry in std::fs::read_dir(&objects)? {
+        let entry = entry?;
+        // Only completed objects; partials and foreign names are left alone.
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(publication::is_digest)
+        {
+            continue;
+        }
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        if metadata.is_file() && metadata.nlink() == 1 {
+            std::fs::remove_file(entry.path())?;
+            files += 1;
+            bytes += metadata.len();
+        }
+    }
+    // Receipts and semantic-check markers belong to their object. Collect them
+    // after the bodies so directory iteration order cannot leave metadata behind.
+    for entry in std::fs::read_dir(&objects)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let object = name.strip_suffix(".received.json").or_else(|| {
+            let (object, check) = name.split_once(".checked-")?;
+            publication::is_digest(check).then_some(object)
+        });
+        if let Some(object) = object.filter(|digest| publication::is_digest(digest)) {
+            let metadata = entry.path().symlink_metadata()?;
+            if metadata.is_file() && !objects.join(object).try_exists()? {
+                std::fs::remove_file(entry.path())?;
+                files += 1;
+                bytes += metadata.len();
+            }
+        }
+    }
+    if files > 0 {
+        std::fs::File::open(&objects)?.sync_all()?;
+    }
+    Ok(Some((files, bytes)))
+}
+
+/// Cache objects are promoted after the complete HTTPS stream has its expected
+/// length. Bulk hashes are checked after activation; metadata hashes are immediate.
+/// Local files are trusted;
+/// later loads check regular-file status and byte size, including after restart.
+pub(crate) async fn ensure_object(
+    source: &mut Source,
+    objects: &ObjectCache,
+    artifact: &publication::Artifact,
+    transfer: &mut std::time::Duration,
+) -> Result<bool, Error> {
+    if !std::fs::symlink_metadata(objects.directory())?.is_dir() {
+        return Err("object cache must be a real directory".into());
+    }
+    let reference = ObjectReference {
+        sha256: artifact.sha256.clone(),
+        bytes: artifact.bytes,
+    };
+    let object = objects.object_path(&reference)?;
+    match std::fs::symlink_metadata(&object) {
+        Ok(metadata) => {
+            if metadata.is_file() {
+                let (path, file) = (object.clone(), artifact.clone());
+                if tokio::task::spawn_blocking(move || reuse_object(&path, &file)).await?? {
+                    return Ok(false);
+                }
+            }
+            // A corrupt object, or a symlink/directory under its name: unlink
+            // the entry itself and never follow it.
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(&object)?;
+            } else {
+                std::fs::remove_file(&object)?;
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let mut partial = objects.begin_partial(&reference)?;
+    let check_metadata = artifact.kind == publication::Kind::Metadata;
+    let fetching = std::time::Instant::now();
+    let result = async {
+        let mut output = tokio::fs::File::from_std(partial.take_file()?);
+        let response = source
+            .get(&format!("artifacts/{}", artifact.sha256))
+            .await?;
+        let verification = if check_metadata {
+            pir_sync_manager::Verification::Sha256(&artifact.sha256)
+        } else {
+            pir_sync_manager::Verification::Length
+        };
+        response
+            .copy_to(&mut output, artifact.bytes, verification)
+            .await?;
+        let written = output.into_std().await;
+        let object = tokio::task::spawn_blocking(move || partial.promote(written)).await??;
+        publication::record_received_file(&object, artifact, &object)?;
+        Ok(())
+    }
+    .await;
+    *transfer += fetching.elapsed();
+    result.map(|()| true)
+}
+
+/// Reuse completed network-checked local bytes after a size check.
+fn reuse_object(path: &std::path::Path, artifact: &publication::Artifact) -> Result<bool, Error> {
+    if !std::fs::symlink_metadata(path)?.is_file() {
+        return Ok(false);
+    }
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() != artifact.bytes {
+        return Ok(false);
+    }
+    let mut permissions = file.metadata()?.permissions();
+    if !permissions.readonly() {
+        permissions.set_readonly(true);
+        file.set_permissions(permissions)?;
+    }
+    publication::record_received_file(path, artifact, path)?;
+    Ok(true)
+}
+
+/// Stage a verified immutable object by hard link: the stage and cache share
+/// one read-only inode that nothing writes, so it is not hashed again here.
+/// Only a filesystem that explicitly cannot link falls back to a copy, which
+/// is then verified on its own.
+#[cfg(test)]
+pub(crate) fn link_object(
+    object: &std::path::Path,
+    target: &std::path::Path,
+    artifact: &publication::Artifact,
+    link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    let _catalog = crate::transparent::validation::CATALOG.lock().unwrap();
+    link_object_locked(object, target, artifact, link)
+}
+
+fn link_object_locked(
+    object: &std::path::Path,
+    target: &std::path::Path,
+    artifact: &publication::Artifact,
+    link: impl FnOnce(&std::path::Path, &std::path::Path) -> std::io::Result<()>,
+) -> Result<(), Error> {
+    match link(object, target) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            std::fs::copy(object, target)?;
+        }
+        Err(e) => return Err(e.into()),
+    }
+    publication::record_received_file(target, artifact, object)?;
+    crate::transparent::validation::track_link(object, target)?;
+    Ok(())
+}
+
+/// Link a revision directory once, then stage directory symlinks to that stable
+/// tree. Repeated publications must not change a source file's inode or ctime:
+/// both are part of the proof that previously checked rows are still unchanged.
+/// Hold the collector's lock until the stage references its source; if collection
+/// owns it, refuse this attempt so the next synchronization can retry safely.
+/// Existing copies are checked for size; recorded download identities cannot change.
+pub(crate) fn stage_object(
+    root: &std::path::Path,
+    stage: &std::path::Path,
+    object: &std::path::Path,
+    artifact: &publication::Artifact,
+) -> Result<(), Error> {
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Component;
+    let _catalog = crate::transparent::validation::CATALOG.lock().unwrap();
+    let path = std::path::Path::new(&artifact.path);
+    let components: Vec<_> = path.components().collect();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("invalid staged artifact path".into());
+    }
+    let target = stage.join(path);
+    let first = components[0]
+        .as_os_str()
+        .to_str()
+        .ok_or("non-UTF8 artifact path")?;
+    if components.len() == 1 {
+        return link_object_locked(object, &target, artifact, |a, b| std::fs::hard_link(a, b));
+    }
+    if !publication::is_digest(first) {
+        return Err("revision directory must be a digest".into());
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join(".sources.lock"))?;
+    lock.try_lock().map_err(|error| match error {
+        std::fs::TryLockError::WouldBlock => std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "source collection is in progress; retry staging",
+        ),
+        std::fs::TryLockError::Error(error) => error,
+    })?;
+    let catalog = root.join(".sources");
+    real_directory(&catalog)?;
+    let revision = catalog.join(first);
+    real_directory(&revision)?;
+    let mut parent = revision.clone();
+    for component in &components[1..components.len() - 1] {
+        parent.push(component.as_os_str());
+        real_directory(&parent)?;
+    }
+    let source = parent.join(components.last().unwrap().as_os_str());
+    match std::fs::symlink_metadata(&source) {
+        Ok(metadata) => {
+            if !metadata.is_file() || !metadata.permissions().readonly() {
+                return Err("catalog source must be a read-only regular file".into());
+            }
+            let cached = std::fs::symlink_metadata(object)?;
+            if metadata.dev() != cached.dev() || metadata.ino() != cached.ino() {
+                publication::verify_file(&source, artifact)?;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            link_object_locked(object, &source, artifact, |a, b| std::fs::hard_link(a, b))?;
+            // The copy fallback creates new data outside the stage tree.
+            // Sync it here because syncing the stage does not follow directory links.
+            std::fs::File::open(&source)?.sync_all()?;
+            std::fs::File::open(&parent)?.sync_all()?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    publication::record_received_file(&source, artifact, object)?;
+    crate::transparent::validation::track_link(object, &source)?;
+    let staged_revision = stage.join(first);
+    match std::fs::symlink_metadata(&staged_revision) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_symlink()
+                || std::fs::read_link(&staged_revision)?
+                    != std::path::Path::new("../.sources").join(first)
+            {
+                return Err("staged revision points outside the source catalog".into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::os::unix::fs::symlink(
+                std::path::Path::new("../.sources").join(first),
+                &staged_revision,
+            )?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn real_directory(path: &std::path::Path) -> Result<(), Error> {
+    match std::fs::create_dir(path) {
+        Ok(()) => {
+            std::fs::File::open(path.parent().ok_or("directory has no parent")?)?.sync_all()?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    if !std::fs::symlink_metadata(path)?.is_dir() {
+        return Err("source catalog must contain real directories".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    fn fixture(root: &std::path::Path) -> (std::path::PathBuf, publication::Artifact) {
+        let object = root.join("object");
+        std::fs::write(&object, b"checked rows").unwrap();
+        let mut permissions = std::fs::metadata(&object).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&object, permissions).unwrap();
+        let artifact = publication::Artifact {
+            path: format!("{}/nested/rows.bin", "ab".repeat(32)),
+            sha256: publication::digest(b"checked rows"),
+            bytes: 12,
+            kind: publication::Kind::RecentTable,
+        };
+        (object, artifact)
+    }
+
+    #[test]
+    fn catalog_staging_defers_during_collection() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-1-100");
+        std::fs::create_dir(&stage).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert!(!stage.join(&artifact.path).exists());
+        drop(lock);
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
+    }
+
+    #[test]
+    fn object_collection_unlinks_only_objects_no_tree_links() {
+        let root = tempfile::tempdir().unwrap();
+        let objects = prepare_objects(root.path()).unwrap();
+        let object = |body: &[u8]| {
+            let path = objects.directory().join(publication::digest(body));
+            std::fs::write(&path, body).unwrap();
+            path
+        };
+        let (map, rows, old) = (object(b"map"), object(b"rows"), object(b"old rows"));
+        let stage = root.path().join("staging-2-200");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::hard_link(&map, stage.join("shards.json")).unwrap();
+        let revision = root.path().join(".sources").join("a".repeat(64));
+        std::fs::create_dir_all(&revision).unwrap();
+        std::fs::hard_link(&rows, revision.join("rows.bin")).unwrap();
+        let partial = objects
+            .directory()
+            .join(format!("{}{PARTIAL}1-2", publication::digest(b"next")));
+        std::fs::write(&partial, b"ne").unwrap();
+        let foreign = objects.directory().join("notes");
+        std::fs::write(&foreign, b"operator").unwrap();
+        let linked = stage.join("shards.json");
+
+        // A stage linking catalog sources defers collection.
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.path().join(".sources.lock"))
+            .unwrap();
+        lock.lock().unwrap();
+        assert_eq!(collect_objects(root.path(), &linked).unwrap(), None);
+        assert!(old.exists());
+        drop(lock);
+
+        // Copy-fallback stages leave every object at one link: keep them all.
+        let copied = root.path().join("staging-3-300");
+        std::fs::create_dir(&copied).unwrap();
+        std::fs::copy(&map, copied.join("shards.json")).unwrap();
+        assert_eq!(
+            collect_objects(root.path(), &copied.join("shards.json")).unwrap(),
+            None
+        );
+        assert!(old.exists());
+
+        assert_eq!(
+            collect_objects(root.path(), &linked).unwrap(),
+            Some((1, b"old rows".len() as u64))
+        );
+        assert!(!old.exists());
+        for kept in [&map, &rows, &partial, &foreign] {
+            assert!(kept.exists(), "{}", kept.display());
+        }
+        assert_eq!(std::fs::read(stage.join("shards.json")).unwrap(), b"map");
+        assert_eq!(std::fs::read(revision.join("rows.bin")).unwrap(), b"rows");
+        // Once its last tree is collected, a revision object is collected too.
+        std::fs::remove_dir_all(&revision).unwrap();
+        assert_eq!(
+            collect_objects(root.path(), &linked).unwrap(),
+            Some((1, b"rows".len() as u64))
+        );
+        assert!(map.exists() && !rows.exists());
+    }
+
+    #[test]
+    fn repeated_staging_and_collection_preserve_checked_file_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let first = root.path().join("staging-first");
+        let second = root.path().join("staging-second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        stage_object(root.path(), &first, &object, &artifact).unwrap();
+        let before = std::fs::metadata(first.join(&artifact.path)).unwrap();
+        stage_object(root.path(), &second, &object, &artifact).unwrap();
+        std::fs::remove_dir_all(&first).unwrap();
+        let after = std::fs::metadata(second.join(&artifact.path)).unwrap();
+        assert_eq!(
+            (
+                before.dev(),
+                before.ino(),
+                before.ctime(),
+                before.ctime_nsec()
+            ),
+            (after.dev(), after.ino(), after.ctime(), after.ctime_nsec())
+        );
+        publication::verify_file(&second.join(&artifact.path), &artifact).unwrap();
+    }
+
+    #[test]
+    fn cached_objects_use_size_checks_even_after_reopen() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        assert!(reuse_object(&object, &artifact).unwrap());
+        assert!(reuse_object(&object, &artifact).unwrap());
+        std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&object, b"same size!!!").unwrap();
+        assert!(
+            reuse_object(&object, &artifact).unwrap(),
+            "local same-size changes are outside the network integrity boundary"
+        );
+        let short = publication::Artifact {
+            bytes: 11,
+            ..artifact.clone()
+        };
+        assert!(!reuse_object(&object, &short).unwrap());
+        std::fs::remove_file(&object).unwrap();
+        std::fs::write(&object, b"short").unwrap();
+        assert!(!reuse_object(&object, &artifact).unwrap());
+    }
+
+    #[test]
+    fn catalog_directory_symlinks_are_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-first");
+        std::fs::create_dir(&stage).unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join(".sources")).unwrap();
+        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+        assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_truncated_catalog_source_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-first");
+        std::fs::create_dir(&stage).unwrap();
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        let source = root.path().join(".sources").join(&artifact.path);
+        std::fs::remove_file(&source).unwrap();
+        std::fs::write(&source, b"short").unwrap();
+        let mut permissions = std::fs::metadata(&source).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&source, permissions).unwrap();
+        assert!(stage_object(root.path(), &stage, &object, &artifact).is_err());
+    }
+
+    #[test]
+    fn catalog_source_refuses_a_different_equal_size_download_without_relabeling() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let first = root.path().join("staging-first");
+        let next = root.path().join("staging-next");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&next).unwrap();
+        stage_object(root.path(), &first, &object, &artifact).unwrap();
+        let source = root.path().join(".sources").join(&artifact.path);
+        let receipt = source.with_file_name("rows.bin.received.json");
+        let original_receipt = std::fs::read(&receipt).unwrap();
+
+        let replacement = root.path().join("other-object");
+        std::fs::write(&replacement, b"changed rows").unwrap();
+        let mut permissions = std::fs::metadata(&replacement).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&replacement, permissions).unwrap();
+        let conflicting = publication::Artifact {
+            sha256: publication::digest(b"changed rows"),
+            ..artifact.clone()
+        };
+        for _ in 0..2 {
+            assert!(stage_object(root.path(), &next, &replacement, &conflicting).is_err());
+            assert_eq!(std::fs::read(&receipt).unwrap(), original_receipt);
+            assert_eq!(std::fs::read(&source).unwrap(), b"checked rows");
+            assert!(!next.join(&artifact.path).exists());
+        }
+        stage_object(root.path(), &next, &object, &artifact).unwrap();
+        publication::verify_file(&next.join(&artifact.path), &artifact).unwrap();
+    }
+
+    #[test]
+    fn catalog_source_accepts_an_unmarked_copy_after_a_size_check() {
+        let root = tempfile::tempdir().unwrap();
+        let (object, artifact) = fixture(root.path());
+        let stage = root.path().join("staging-first");
+        std::fs::create_dir(&stage).unwrap();
+        let source = root.path().join(".sources").join(&artifact.path);
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::copy(&object, &source).unwrap();
+        assert_ne!(
+            std::fs::metadata(&object).unwrap().ino(),
+            std::fs::metadata(&source).unwrap().ino()
+        );
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+        publication::verify_file(&stage.join(&artifact.path), &artifact).unwrap();
+        stage_object(root.path(), &stage, &object, &artifact).unwrap();
+    }
+}
+#[test]
+fn collection_removes_only_orphaned_object_receipts_and_check_markers() {
+    let root = tempfile::tempdir().unwrap();
+    let objects = prepare_objects(root.path()).unwrap();
+    let objects = objects.directory();
+    let old = "a".repeat(64);
+    let kept = "b".repeat(64);
+    std::fs::write(objects.join(&old), b"old").unwrap();
+    std::fs::write(objects.join(&kept), b"kept").unwrap();
+    let map = root.path().join("shards.json");
+    std::fs::hard_link(objects.join(&kept), &map).unwrap();
+    for digest in [&old, &kept] {
+        std::fs::write(objects.join(format!("{digest}.received.json")), b"receipt").unwrap();
+        std::fs::write(
+            objects.join(format!("{digest}.checked-{}", "c".repeat(64))),
+            b"checked",
+        )
+        .unwrap();
+    }
+    std::fs::write(objects.join(format!("{old}.operator-note")), b"foreign").unwrap();
+    collect_objects(root.path(), &map).unwrap();
+    assert!(!objects.join(format!("{old}.received.json")).exists());
+    assert!(!objects
+        .join(format!("{old}.checked-{}", "c".repeat(64)))
+        .exists());
+    assert!(objects.join(format!("{kept}.received.json")).is_file());
+    assert!(objects
+        .join(format!("{kept}.checked-{}", "c".repeat(64)))
+        .is_file());
+    assert!(objects.join(format!("{old}.operator-note")).is_file());
+}

@@ -136,7 +136,7 @@ configuration tests are separate commands:
 ```sh
 cargo test --locked -p pir-query-server --features enhance --test operator
 cargo test --locked -p pir-query-server --features enhance,cuda --test operator
-cargo test --locked -p enhance-query-server --features cuda --lib \
+cargo test --locked -p enhance-shared --features cuda --lib \
   backend_load_failure_does_not_rebuild_or_replace_published_units
 ```
 
@@ -144,13 +144,13 @@ On an isolated NVIDIA host, explicitly invoke hardware tests (absence of CUDA is
 an error, not a skipped success):
 
 ```sh
-cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-shared --features cuda \
   --lib cuda_encrypted_bootstrap_round_trip_and_cached_restart -- --ignored
 cargo test --locked --profile release-fast -p pir-e2e-tests --features enhance-tests,cuda \
   --test http cuda_independent_consumers_answer_updates_and_close_on_withdrawal -- --ignored
-cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
+cargo test --locked --profile release-fast -p enhance-shared --features cuda \
   --lib cuda_partial_preparation_failure_preserves_published_and_retries -- --ignored
-cargo test --locked --profile release-fast -p enhance-query-server --features cuda \
+cargo test --locked --profile release-fast -p pir-query-server --features enhance,cuda \
   --lib cuda_backend_evaluation_failure_over_http_releases_permit_and_recovers -- --ignored
 ```
 

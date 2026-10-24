@@ -117,12 +117,14 @@ class Fleet:
         self.named_processes[process.pid] = name
         return process
 
-    def role(self, name, settings):
+    def role(self, name, settings, public=None):
         config = self.root / (name + '.json')
-        config.write_text(json.dumps({
-            'management_listen': f'127.0.0.1:{self.port()}',
-            'enhance': {'enabled': True, 'settings': settings},
-        }))
+        document = {'management_listen': f'127.0.0.1:{self.port()}'}
+        if public is not None:
+            # A wallet-facing role answers on the host's shared listener.
+            document['public_listen'] = public
+        document['enhance'] = {'enabled': True, 'settings': settings}
+        config.write_text(json.dumps(document))
         self.start(name, [str(self.binaries / 'pir-query-server'), '--config', str(config)])
 
     def start_roles(self):
@@ -183,11 +185,11 @@ class Fleet:
                                                'query_origin': 'http://' + router}]
         ingress = f'127.0.0.1:{self.port()}'
         self.role('ingress', {
-            'role': 'query-ingress', 'listen': ingress,
+            'role': 'query-ingress',
             'control_listen': f'127.0.0.1:{self.port()}',
             'data_dir': str(self.root / 'ingress'),
             'synchronization': dict(source, routers=router_origins),
-        })
+        }, public=ingress)
         self.origin = 'http://' + ingress
 
     def start_publisher(self, *, blocks=128):

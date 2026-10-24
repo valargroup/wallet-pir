@@ -14,7 +14,7 @@ import integration_tests as tests
 class IntegrationTests(unittest.TestCase):
     def test_repository_registry_preserves_fast_checks_and_full_encrypted_lifecycle(self):
         registry = tests.inventory()
-        for package in ['receiver-pir-server', 'transparent-query-server']:
+        for package in ['receiver-pir-server', 'pir-query-server']:
             self.assertIn('ci_smoke', registry[package]['fast'])
         host = registry['pir-e2e-tests']
         self.assertIn('ci_hint', host['fast'])

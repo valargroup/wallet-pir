@@ -46,10 +46,12 @@ flowchart TD
   A --> L
 ```
 
-The assignment pools and the router are implemented: `shard-assign` plans a
-`transparent-assignment-v1` from a roster, a worker loads either a whole published set or
+The assignment pools and the router are implemented: `shard-assign`
+(`transparent_tools::assignment`) plans a `transparent-assignment-v1` from a roster, a worker loads either a whole published set or
 only its assignment's shards, and the router's configuration is rendered from the
-assignment alone and routes on the shard id in the path. The separate artifact origin is a
+assignment alone and routes on the shard id in the path. A provider that bootstraps over
+HTTPS never plans a fleet: it selects its own holdings, the whole recent tier within its
+cache budget, with the archive as an inert accounting row. The separate artifact origin is a
 target; the publisher's own origins serve the public map, filters and setup today.
 
 ## Private transparent display capability
@@ -96,7 +98,7 @@ and local evidence only.
 | Ingest, census, publish | `src/transparent/transparent-publisher` | Resolve events, persist journal, seal and build shards, serve filters |
 | Shared publication and runtime | `src/transparent/transparent-shared` | Journal, verify publications, prepare native runtimes, bound memory and cache persisted or shipped runtimes |
 | Raw PIR runtime | `src/shared/pir-runtime` | Enhance and Status use the shared u16 runtime. Transparent serves only P8 tables and uses the upstream byte kernel directly |
-| Retrieval service | `src/transparent/transparent-query-server` (library; features `transparent-history`, `transparent-detail`) | Verify publication, bound runtime cache, revision-addressed setup/query; runs inside `pir-query-server` |
+| Retrieval service | `src/pir-query-server/src/transparent` (the query server's `transparent` module; features `transparent-history`, `transparent-detail`) | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Worker administration | `tools/transparent` (package `transparent-tools`) | `shard-assign`, `shard-prune` |
 | Wallet | `wallet-libraries/zakura/pir-transparent/src/engine` | Local matching, private retrieval, validation, ledger replay |
 | Wallet store | `wallet-libraries/zakura/pir-transparent/src/engine_store.rs` | Reference durable store on SQLite |
@@ -410,7 +412,7 @@ still serve it.
 The helpers are wallet-libraries' `zakura/pir-native` crate (`zakura-pir-native`), which Enhance and Status use too; it
 defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. Its one
 Cargo feature, `test-server`, adds a test fixture only, so depending on it cannot switch the q48 Enhance binaries, which only
-`enhance-query-server/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
+`enhance-shared/native-reinspiring` does. `wallet-libraries/zakura/transparent-native` re-exports
 it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
 `profile_for`, which picks the profile from the table name.
 

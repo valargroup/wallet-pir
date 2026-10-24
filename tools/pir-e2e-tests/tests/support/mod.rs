@@ -8,7 +8,7 @@
 //! are not valid; the producer neither checks nor needs them.
 #![allow(dead_code, unused_imports)]
 
-use enhance_query_server::EnhanceRecord;
+use enhance_shared::EnhanceRecord;
 pub use zakura_server_chain::testing::{
     block, cookie, funding, ironwood_coinbase, serve, serve_chain, spend, BatchFault, Chain, Mixed,
     SharedChain, Tx, IRONWOOD_FIXTURE_HEX as FIXTURE_HEX,

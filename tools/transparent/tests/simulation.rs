@@ -4,7 +4,7 @@ use zakura_pir_client::transparent::filter as transparent_filter;
 use zakura_pir_protocol::transparent::events as transparent_events;
 use zakura_pir_publisher::transparent as transparent_shard;
 
-#[path = "../../../src/transparent/transparent-query-server/tests/common/mod.rs"]
+#[path = "../../../src/pir-query-server/tests/transparent/common/mod.rs"]
 mod common;
 
 use std::fs;
@@ -17,10 +17,10 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
+use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use transparent_filter::ShardMap;
-use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 

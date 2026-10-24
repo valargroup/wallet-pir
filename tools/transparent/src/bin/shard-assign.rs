@@ -18,10 +18,10 @@ use clap::{Parser, Subcommand};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::ShardMap;
-use transparent_query_server::routing::router::{
+use transparent_shared::history::assignment::{Assignment, GeneratedBy};
+use transparent_tools::assignment::{
     files_with_runtimes, plan, render_caddyfile_with, RosterEntry,
 };
-use transparent_shared::history::assignment::{Assignment, GeneratedBy};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

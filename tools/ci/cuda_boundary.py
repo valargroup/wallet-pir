@@ -3,8 +3,7 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-FORWARDERS = {'enhance-shared', 'enhance-query-server',
-              'pir-e2e-tests', 'pir-query-server'}
+FORWARDERS = {'enhance-shared', 'pir-e2e-tests', 'pir-query-server'}
 
 
 def manifest_violations(root=ROOT):

@@ -28,11 +28,11 @@ mod workload;
 type JournalBlock = (u64, Vec<(ScriptBytes, TransparentEvent)>);
 
 use clap::Parser;
+use pir_query_server::transparent::history::service::{router, ServiceConfig, ServiceState};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use transparent_events::TransparentEvent;
 use transparent_filter::{ScriptBytes, ShardMap};
-use transparent_query_server::history::service::{router, ServiceConfig, ServiceState};
 use transparent_shard::manifest::ShardManifest;
 use transparent_shared::history::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_shared::journal::events::EventStore;

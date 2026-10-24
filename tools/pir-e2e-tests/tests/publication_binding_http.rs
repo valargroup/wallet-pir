@@ -1,5 +1,5 @@
 //! A real wallet body cannot select a different publication, setup or anchor.
-use enhance_query_server::{
+use enhance_shared::{
     client::QuerySession,
     protocol::{QueryBinding, ShardSession, HEADER_BYTES},
 };
@@ -39,7 +39,7 @@ async fn shared_object_installation_preserves_enhance_publication_and_reuse() {
     let domain = &source.inventory.domains[0];
     let packing = domain.packing_object();
     let prepared_file = root
-        .join(enhance_query_server::prepared_packing::DIRECTORY)
+        .join(enhance_shared::prepared_packing::DIRECTORY)
         .join(&domain.packing.name);
     assert_eq!(
         fs::metadata(&prepared_file).unwrap().ino(),
@@ -195,8 +195,8 @@ async fn shared_object_installation_preserves_enhance_publication_and_reuse() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn first_publication_preparation_defers_without_transport_backoff_or_serving_authority() {
     use enhance_publisher::{chain_source::ZakuraClient, distribution::PublicationDistribution};
-    use enhance_query_server::{ingress_sync, router_sync, synchronization, worker_sync};
     use pir_e2e_tests::enhance_fixture::{serve, tls};
+    use pir_query_server::enhance::{ingress_sync, router_sync, synchronization, worker_sync};
     let root = tempfile::tempdir().unwrap();
     let cookie = root.path().join("cookie");
     std::fs::write(&cookie, "fixture:fixture").unwrap();
@@ -278,9 +278,11 @@ async fn first_publication_preparation_defers_without_transport_backoff_or_servi
 async fn advance_during_authorization(
     source: &publication_source::Published,
     generation: u64,
-    poll: impl std::future::Future<Output = Result<(), enhance_query_server::synchronization::Error>>,
+    poll: impl std::future::Future<
+        Output = Result<(), pir_query_server::enhance::synchronization::Error>,
+    >,
     withdraw: bool,
-) -> Result<(), enhance_query_server::synchronization::Error> {
+) -> Result<(), pir_query_server::enhance::synchronization::Error> {
     let fault = source.scratch.path().join("fault");
     let entered = source.scratch.path().join("fault.entered");
     if entered.exists() {
@@ -298,7 +300,7 @@ async fn advance_during_authorization(
         if withdraw {
             source
                 .distribution
-                .withdraw(&enhance_query_server::publication::Revocation {
+                .withdraw(&enhance_shared::publication::Revocation {
                     recovery_epoch: 0,
                     sessions: Default::default(),
                 })
@@ -323,8 +325,8 @@ async fn advance_during_authorization(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ordinary_publication_advancement_allows_retained_candidates_but_withdrawal_refuses_them() {
-    use enhance_query_server::{ingress_sync, router_sync, worker_sync};
     use pir_e2e_tests::enhance_fixture::serve;
+    use pir_query_server::enhance::{ingress_sync, router_sync, worker_sync};
     let fixture = publication_source::Published::new().await;
     let worker = worker_sync::Worker::open(
         &fixture.scratch.path().join("worker"),

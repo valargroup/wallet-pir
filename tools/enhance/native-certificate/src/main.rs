@@ -28,7 +28,7 @@
 //! `query_l2_squared`; the checker budgets dithered rounding from it as a
 //! variance term. Servers accept both widths over one snapshot, so a snapshot
 //! needs both certificates. Without the flag the report is unchanged.
-use enhance_query_server::native as n;
+use enhance_shared::native as n;
 use ipir_sp::server::CrsBlock;
 use rayon::prelude::*;
 use reinspiring::{
@@ -146,7 +146,7 @@ fn main() {
                 None => {
                     let rows: usize = flags["rows"].parse().unwrap();
                     let bytes = std::fs::read(&flags["hint"]).expect("hint");
-                    let hint = enhance_query_server::wire::decode_crs_blocks(&bytes, blocks, n::D)
+                    let hint = enhance_shared::wire::decode_crs_blocks(&bytes, blocks, n::D)
                         .expect("MPH1 hint");
                     let binding = format!("hint_sha256:{}", hex(&Sha256::digest(&bytes)));
                     (rows, hint, binding)

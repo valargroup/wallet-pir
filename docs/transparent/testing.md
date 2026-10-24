@@ -269,7 +269,7 @@ new fixture against the re-cut publication rather than relaxing the pin.
 
 ## Local conformance checks
 
-The [accepted-anchor HTTP tests](../../src/transparent/transparent-query-server/tests/wallet_anchor.rs)
+The [accepted-anchor HTTP tests](../../src/pir-query-server/tests/transparent/wallet_anchor.rs)
 cover arbitrary endpoints, overlap, restart, bounded pagination, changed targets,
 future-only discovery, and rollback within a shard. The existing wallet HTTP
 suites retain geometry, segment, revision, malformed-response and overload
@@ -279,7 +279,7 @@ crate tests the oracle independently.
 
 ```sh
 cargo test -p transparent-tools --features benchmarks --test compact_recovery
-cargo test -p transparent-query-server --features transparent-history --test wallet_anchor \
+cargo test -p pir-query-server --features transparent-history --test wallet_anchor \
   --test wallet_continuation --test wallet_recut --test wallet_sync
 cargo test -p transparent-tools --features query-host --test regression_runner
 ```

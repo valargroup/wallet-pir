@@ -4,15 +4,18 @@ Cargo unifies features for every package named in one command. Shared crates,
 product libraries, and the publisher and query hosts stay on one command with
 a fixed feature set, so a warm cache still hits. Transparent publication tests
 live in those libraries. Enabling history and detail on the host binary links
-the publisher again and is not part of this command. Moving the hosts onto
+the publisher again and is not part of this command. The query host's own
+Transparent `ci_smoke` names `pir-query-server/transparent-history`, which the
+host's own dev-dependency already unifies in. Moving the hosts onto
 another command changes that unification and rebuilds the closure. The
 in-process Enhance hint graph stays on a second command and never joins the
 first. Receiver, status, and RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-Enhance publication fixtures run alone, as does the filter library on fewer than
-eight cores. The remaining programs share a pool of at most three processes.
+Enhance publication fixtures run alone, as do the filter library, the query
+host's Status unit cases and the Enhance and Receiver runtime libraries on fewer
+than eight cores, counting any cgroup CPU quota. The remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -25,10 +28,36 @@ import tomllib
 from stage import ROOT, run, inherited_fds
 
 
+def cgroup_cpus(root=Path('/sys/fs/cgroup'), membership=Path('/proc/self/cgroup')):
+    """The tightest cgroup v2 CPU quota above this process, or None."""
+    try:
+        path = next(line[3:] for line in membership.read_text().splitlines()
+                    if line.startswith('0::'))
+    except (OSError, StopIteration):
+        return None
+    limits = []
+    directory = root / path.lstrip('/')
+    while True:
+        try:
+            quota, period = (directory / 'cpu.max').read_text().split()
+            if quota != 'max':
+                limits.append(max(1, -(-int(quota) // int(period))))
+        except (OSError, ValueError):
+            pass
+        if directory == root or root not in directory.parents:
+            break
+        directory = directory.parent
+    return min(limits) if limits else None
+
+
 def available_cpus():
+    """CPUs this process may use: its affinity, bounded by any cgroup quota."""
     if hasattr(os, 'sched_getaffinity'):
-        return len(os.sched_getaffinity(0))
-    return os.cpu_count() or 1
+        cpus = len(os.sched_getaffinity(0))
+    else:
+        cpus = os.cpu_count() or 1
+    quota = cgroup_cpus()
+    return min(cpus, quota) if quota else cpus
 
 
 def publisher_runs_alone(name, kinds):
@@ -38,6 +67,30 @@ def publisher_runs_alone(name, kinds):
     build threads, so it stays in the shared pool there.
     """
     return name == 'transparent-publisher' and 'lib' in kinds and available_cpus() < 8
+
+
+def status_runs_alone(name, kinds, names):
+    """Status sync cases each prepare a generation on every core.
+
+    One generation prepare is a 96 MiB database; sharing those cores with the
+    pool, or with the publisher, pushes a single case past its budget, so the
+    query host's Status unit program runs alone.
+    """
+    return (name == 'pir-query-server' and 'lib' in kinds
+            and any(case.startswith('status::') for case in names))
+
+
+# Unit cases that build full runtimes on every core, each near the case budget.
+RUNTIME_LIBRARIES = frozenset({'enhance-shared', 'receiver-indexer'})
+
+
+def runtime_runs_alone(name, kinds):
+    """Runtime-building unit libraries keep their cores below eight CPUs.
+
+    With a three-CPU quota, overlapping these programs with each other and with
+    the Transparent lanes pushed single cases past the unchanged case budget.
+    """
+    return name in RUNTIME_LIBRARIES and 'lib' in kinds and available_cpus() < 8
 
 
 # Dev-dependencies activate only for roots named in one Cargo command. These
@@ -56,7 +109,6 @@ FAST_FEATURE_ROOTS = frozenset({
     'enhance-pir-load-test',
     'enhance-shared',
     'enhance-publisher',
-    'enhance-query-server',
     'pir-e2e-tests',
     'pir-monitor',
     'pir-node-rpc',
@@ -66,9 +118,7 @@ FAST_FEATURE_ROOTS = frozenset({
     'receiver-indexer',
     'receiver-pir-server',
     'status-publisher',
-    'status-query-server',
     'transparent-publisher',
-    'transparent-query-server',
     'transparent-shared',
     'transparent-tools',
     'zakura-server-chain',
@@ -158,9 +208,8 @@ def host_features_for(products, package_names):
 
     Transparent fast tests do not use `transparent-tests`: that feature enables
     publisher fixtures and compiles the same libraries again. History and detail
-    stay on the query host's dev-dependency. Turning them on for the publisher
-    host, or depending on the query host from the publisher library, links those
-    libraries again. Status `status-tests` enables
+    stay on the publisher library's dev-dependency edge. Turning them on for the
+    host binary links that library a second time. Status `status-tests` enables
     the chain node for fixture campaigns that fast does not run; qualification
     enables it. The Enhance hint target uses `enhance-fast`, not `enhance-tests`.
     """
@@ -252,17 +301,24 @@ def bounded_programs(program, names):
     Each process retains immutable fixture reuse across dozens of cases. Keep
     the small-runner publisher protection and real HTTP integrations intact.
     """
-    # Status pays for one process-local generation per group. Two groups let
-    # those prepares overlap. Every other suite keeps about forty-eight cases
-    # so immutable fixtures stay together.
-    group = 31 if program.get('package') == 'status-query-server' else 48
+    # Status roles, hosted by the query server, pay for one process-local
+    # generation per group. Two groups let those prepares overlap. Every other
+    # suite keeps about forty-eight cases so immutable fixtures stay together.
+    group = 31 if program.get('package') == 'pir-query-server' else 48
     if program['integration'] or program['exclusive'] or len(names) <= group:
         return [program]
     lanes = min(3, (len(names) + group - 1) // group)
     ordered = sorted(names)
     distribution = [name for name in ordered
                     if name.startswith('history::controller::distribution_tests::')]
-    if program.get('package') == 'transparent-publisher' and distribution:
+    status = [name for name in ordered if name.startswith('status::')]
+    if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
+        # Every Status case prepares on every core, so never run more than the
+        # two Status groups at once; the host's other roles share one process.
+        status_lanes = min(2, (len(status) + group - 1) // group)
+        remaining = sorted(names - set(status))
+        partitions = [remaining, *[status[index::status_lanes] for index in range(status_lanes)]]
+    elif program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
         remaining = sorted(names - set(distribution))
@@ -306,7 +362,7 @@ def _compile_command(group, options):
 
 def execute(selected, *, offline=False, compile_only=False, jobs=3,
             additional_features=(), environment=None, case_log=None, enforce_budget=True,
-            products=None):
+            products=None, before_tests=None):
     from integration_tests import inventory
     if any(feature.rsplit('/', 1)[-1] == 'cuda' for feature in additional_features):
         raise ValueError('ordinary CPU correctness cannot enable CUDA')
@@ -422,8 +478,16 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         # run it. Building it here with the roles the stable command unifies
         # in as well keeps it a superset of every compiled operator test.
         features.update(HINT_HOST_ROLES)
+        # Naming only the two hosts drops leaf features the stable roots
+        # unify in (serde `rc`, zeroize `derive`, ...) and rebuilt about a
+        # hundred shared crates. Naming the stable roots with their features
+        # resolves every other crate exactly as the stable command did, so
+        # only the hosts and their dependents' harnesses compile again; those
+        # repeat the stable cases and are not run twice.
+        hint_packages = sorted(stable['names'] | {'pir-e2e-tests', 'pir-query-server'})
+        features.update(stable['features'])
         commands.append(['cargo', 'test', '--locked', '--profile', 'release-fast', '--no-run', *options,
-                         '-p', 'pir-e2e-tests', '-p', 'pir-query-server', '--lib',
+                         *[arg for name in hint_packages for arg in ('-p', name)], '--lib',
                          '--test', 'ci_hint', '--test', 'operator',
                          '--features', ','.join(sorted(features))])
     if not commands:
@@ -440,6 +504,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
     programs = []
     actual_integrations, actual_units = set(), set()
     discovered_units = {name: set() for name in run_packages}
+    # Unit cases already run by an earlier command's program for the same target.
+    covered_units = {}
     seen = set()
     for artifact in artifacts:
         binary = artifact['executable']
@@ -471,19 +537,33 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
             actual_units.add(identity)
             discovered_units[name].update(names)
         exclusions = [] if integration else list(slow.get(name, {}))
+        # The hint command builds the query host with every role, so its unit
+        # program repeats the stable command's cases. Run only its new cases.
+        unit = None if integration else (name, target['name'], tuple(target['kind']))
+        repeated = set() if unit is None else names & covered_units.get(unit, set())
+        if unit is not None:
+            covered_units.setdefault(unit, set()).update(names)
+        if repeated:
+            names = names - repeated
+            if not names:
+                continue
         program = dict(executable=binary, directory=directory, package=name,
                              version=package['version'],
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
-                             # Status generation prepare is one 96 MiB database;
-                             # keep it off the publisher's cores.
                              exclusive=publisher_runs_alone(name, target['kind'])
+                             or status_runs_alone(name, target['kind'], names)
+                             or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
-                             or (name == 'enhance-publisher' and 'lib' in target['kind'])
-                             or (name == 'status-query-server' and 'lib' in target['kind']),
+                             or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
+        if repeated:
+            programs.extend(dict(part, args=[*part['args'], '--exact', *sorted(names)])
+                            if '--exact' not in part['args'] else part
+                            for part in bounded_programs(program, names))
+            continue
         programs.extend(bounded_programs(program, names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
@@ -518,6 +598,8 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
         cases = Path(case_log) if case_log is not None else root / 'cases.jsonl'
         env['WALLET_PIR_CASE_LOG'] = str(cases)
         try:
+            if before_tests is not None:
+                before_tests()
             run(['python3', 'tools/ci/unit_tests.py', str(plan), '--budget', '--jobs', str(jobs)],
                 env=env, stage='tests:fast-programs')
         finally:

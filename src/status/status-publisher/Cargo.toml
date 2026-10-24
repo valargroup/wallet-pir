@@ -44,8 +44,8 @@ zakura-pir-publisher = { version = "=0.0.1-rc2", default-features = false, featu
 zakura-pir-client = { version = "=0.0.1-rc2", default-features = false, optional = true }
 
 [dev-dependencies]
-# Cross-role regressions run real query-server roles against this publisher.
-status-query-server = { path = "../status-query-server" }
+# Cross-role regressions run real query-server Status roles against this publisher.
+pir-query-server = { path = "../../pir-query-server", features = ["status"] }
 pir-service-discovery = { version = "1.0.0", path = "../../shared/pir-service-discovery" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

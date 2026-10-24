@@ -14,6 +14,14 @@ SETTINGS = {
         'synchronization': {'publisher_origin': 'https://publisher.example', 'download_budget_bytes': 8 << 30,
                             'cache_limit_bytes': 8 << 30, 'shards': [0]},
         'credentials': ['/etc/enhance-worker/internal-token.env'], 'limits': {'MemoryMax': '7G'}},
+    ('enhance', 'combined'): {
+        'listen': '127.0.0.1:8090', 'control_listen': '127.0.0.1:8096', 'data_dir': '/srv/pir-query-server/enhance',
+        'synchronization': {'publisher_origin': 'https://enhance-pir.valargroup.dev', 'trusted_ca': None,
+                            'download_budget_bytes': 8 << 30, 'cache_limit_bytes': 8 << 30, 'shards': [0]},
+        'credentials': ['/etc/enhance-pir/internal-token.env']},
+    ('status', 'combined'): {
+        'network_hex': '01' * 32, 'state_dir': '/srv/pir-query-server/status', 'listen': '127.0.0.1:8481',
+        'query_listen': '127.0.0.1:8090', 'publisher': 'https://enhance-pir.valargroup.dev'},
     ('status', 'external-worker'): {
         'network_hex': 'ab' * 32, 'listen': '127.0.0.1:8481', 'publisher': 'https://publisher.example',
         'state_dir': '/var/lib/status-worker'},

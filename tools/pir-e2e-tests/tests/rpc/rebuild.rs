@@ -6,10 +6,10 @@ use crate::support::*;
 use enhance_publisher::chain_source::{Prevouts, ZakuraClient};
 use enhance_publisher::ingest::EnhanceJournal;
 use enhance_publisher::rebuild::{adopt_staged, JournalAdoption, RebuildReceipt};
-use enhance_query_server::client::EnhancePirClient;
-use enhance_query_server::protocol::Manifest;
-use enhance_query_server::ACTIVATION_HEIGHT;
-use enhance_query_server::{
+use enhance_shared::client::EnhancePirClient;
+use enhance_shared::protocol::Manifest;
+use enhance_shared::ACTIVATION_HEIGHT;
+use enhance_shared::{
     EnhanceRecord, FLAG_HAS_FEE, FLAG_HAS_TRANSPARENT_INPUTS, FLAG_HAS_TRANSPARENT_OUTPUTS,
     RECORD_BYTES, RECORD_FEE_OFFSET, RECORD_FLAGS_OFFSET,
 };

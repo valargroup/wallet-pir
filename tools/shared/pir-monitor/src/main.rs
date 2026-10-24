@@ -2,7 +2,7 @@
 mod service_probes;
 use anyhow::{Context, Result};
 use axum::{extract::State, routing::get, Json, Router};
-use enhance_query_server::client::EnhancePirClient;
+use enhance_shared::client::EnhancePirClient;
 use pir_apm::incidents::{self, Condition, DeliveryHealth, Incident, Store};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -115,7 +115,7 @@ fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
     for r in &oracle.records {
         anyhow::ensure!(
             positions.insert(r.position)
-                && hex::decode(&r.record_hex)?.len() == enhance_query_server::RECORD_BYTES,
+                && hex::decode(&r.record_hex)?.len() == enhance_shared::RECORD_BYTES,
             "invalid oracle record"
         );
     }
@@ -404,7 +404,7 @@ mod tests {
     use super::*;
     #[test]
     fn oracle_is_pinned_and_rejects_duplicate_positions() {
-        let bytes=serde_json::to_vec(&serde_json::json!({"anchor_height":10,"anchor_hash":"00".repeat(32),"records":[{"position":1,"record_hex":"00".repeat(enhance_query_server::RECORD_BYTES)}]})).unwrap();
+        let bytes=serde_json::to_vec(&serde_json::json!({"anchor_height":10,"anchor_hash":"00".repeat(32),"records":[{"position":1,"record_hex":"00".repeat(enhance_shared::RECORD_BYTES)}]})).unwrap();
         let checksum = hex::encode(Sha256::digest(&bytes));
         assert!(load_oracle(&bytes, &checksum).is_ok());
         assert!(load_oracle(&bytes, "invalid").is_err());

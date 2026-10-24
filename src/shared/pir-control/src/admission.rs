@@ -33,6 +33,7 @@ pub enum Refusal {
 /// an execution permit happens to be free.
 pub struct Queue {
     executing: Arc<Semaphore>,
+    capacity: u32,
     waiting: Arc<Semaphore>,
     wait: Duration,
     fast_path: bool,
@@ -40,26 +41,14 @@ pub struct Queue {
 
 impl Queue {
     /// A queue with its own `executing` permits and `waiting` slots.
+    /// The queue owns its semaphores, so `executing` is its exact capacity:
+    /// [`Queue::drained`] waits for every permit it can ever lend.
     pub fn new(executing: usize, waiting: usize, wait: Duration, fast_path: bool) -> Self {
-        Self::with_permits(
-            Arc::new(Semaphore::new(executing)),
-            Arc::new(Semaphore::new(waiting)),
-            wait,
-            fast_path,
-        )
-    }
-
-    /// A queue over existing semaphores, for callers that also report their
-    /// available permits.
-    pub fn with_permits(
-        executing: Arc<Semaphore>,
-        waiting: Arc<Semaphore>,
-        wait: Duration,
-        fast_path: bool,
-    ) -> Self {
+        let capacity = u32::try_from(executing).expect("execution permits fit in u32");
         Self {
-            executing,
-            waiting,
+            executing: Arc::new(Semaphore::new(executing)),
+            capacity,
+            waiting: Arc::new(Semaphore::new(waiting)),
             wait,
             fast_path,
         }
@@ -97,6 +86,13 @@ impl Queue {
     /// Waiting slots free now.
     pub fn waiting_available(&self) -> usize {
         self.waiting.available_permits()
+    }
+
+    /// Waits until every execution permit is free again: admitted work has
+    /// ended, including blocking work whose request was cancelled or dropped.
+    /// Owners call this at shutdown before releasing what that work uses.
+    pub async fn drained(&self) {
+        let _all = self.executing.acquire_many(self.capacity).await;
     }
 }
 
@@ -314,6 +310,37 @@ mod tests {
         assert!(weak.upgrade().is_none());
         assert_eq!(permits.available_permits(), 1);
         assert!(clients.try_acquire("client").is_some());
+    }
+
+    #[tokio::test]
+    async fn drained_waits_for_admitted_blocking_work_whose_request_was_dropped() {
+        let q = Arc::new(Queue::new(2, 1, Duration::from_millis(10), true));
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let permit = q.acquire(|| ()).await.unwrap();
+        let request = tokio::spawn(spawn_admitted(permit, move |_| {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }));
+        started_rx.await.unwrap();
+        // The request is abandoned, as a listener past its drain deadline does.
+        request.abort();
+        let _ = request.await;
+        let drained = tokio::spawn({
+            let q = q.clone();
+            async move { q.drained().await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!drained.is_finished(), "drained before admitted work ended");
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), drained)
+            .await
+            .unwrap()
+            .unwrap();
+        // An idle queue is drained at once.
+        tokio::time::timeout(Duration::from_secs(1), q.drained())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

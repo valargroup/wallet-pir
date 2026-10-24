@@ -26,6 +26,9 @@ shared libraries under `src/shared/`, and the publisher and query-server hosts a
 their own dev-dependencies) and standalone graphs are resolved and checked too.
 Status serving additionally owns its HTTP runtime and may use the neutral
 `pir-pipeline` lifecycle utility; publisher and chain dependencies remain forbidden.
+The query-server host (`QUERY_HOST`) serves Transparent from its own `transparent`
+module; it is held to the pure-package rules and, through local manifests of any
+dependency kind, never reaches a publisher, the chain reader or a tool.
 
 Product publisher and query cores (`RUNTIME_FREE`) leave the Tokio runtime and
 HTTP transport (`TRANSPORT`) to the publisher and query-server hosts. They declare
@@ -99,14 +102,14 @@ CHAIN_READER_EDGES = {
 PURE = {
     'receiver-pir-server',
     'pir-observability', 'pir-control', 'pir-runtime',
-    'transparent-shared', 'transparent-query-server',
-    'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'pir-serving',
+    'transparent-shared', 'pir-query-server',
+    'enhance-shared', 'status-shared', 'pir-serving',
     'pir-publication',
 }
 # Serving libraries and the chain reading, ingestion and application packages
 # they must never reach. Each product's applications compose its serving library;
 # the shared raw PIR runtime they call is held to the same rule.
-SERVING = {'enhance-shared', 'enhance-query-server', 'status-query-server', 'status-shared', 'transparent-shared',
+SERVING = {'enhance-shared', 'status-shared', 'transparent-shared',
            'pir-runtime', 'pir-serving', 'pir-cuda'}
 INGESTION = {
     'pir-publisher', 'pir-pipeline', 'pir-node-rpc', 'zakura-server-chain', 'enhance-publisher',
@@ -124,7 +127,15 @@ TOOLS = 'tools/'
 APPLICATIONS = {
     'pir-publisher', 'enhance-publisher', 'status-publisher', 'pir-query-server', 'pir-apm', 'enhance-pir-load-test', 'pir-monitor',
     'enhance-pir-client', 'native-certificate', 'transparent-publisher',
-    'transparent-query-server', 'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
+    'transparent-tools', 'receiver-indexer', 'receiver-pir-server',
+}
+# The query-server host composes every product's serving code (its `transparent`
+# module serves Transparent directly). Through no dependency of any kind may it
+# reach a publisher, the chain reader or a tool under `tools/`.
+QUERY_HOST = 'pir-query-server'
+QUERY_HOST_FORBIDDEN = {
+    'pir-publisher', 'enhance-publisher', 'status-publisher', 'transparent-publisher',
+    'receiver-indexer', 'zakura-server-chain', 'transparent-tools',
 }
 # Shared packages consumed by a subset of products. A serving library of any other
 # product reaching one still crosses a product boundary.
@@ -135,9 +146,10 @@ SHARED_SCOPES = {
 # Lifecycle code has no product, chain, wallet or PIR-engine dependency.
 # The direct surface is deliberately smaller than tokio's feature-unified utility
 # graph. Every kind of edge counts, including optional and target-specific edges.
-# Synchronization is transport and scheduling, never a product or PIR engine.
+# Synchronization transport is HTTPS transfer and discovery, never a product or PIR
+# engine; polling and publication sequencing belong to the query-server host.
 SYNC_MANAGER = 'pir-sync-manager'
-SYNC_DIRECT = {'bytes', 'pir-pipeline', 'pir-publication', 'reqwest', 'serde', 'serde_json',
+SYNC_DIRECT = {'bytes', 'pir-pipeline', 'reqwest', 'serde', 'serde_json',
                'sha2', 'tokio',
                'tempfile', 'rustls', 'tokio-rustls'}
 PIPELINE = 'pir-pipeline'
@@ -168,7 +180,8 @@ DISCOVERY = 'pir-service-discovery'
 DISCOVERY_PATH = 'src/shared/pir-service-discovery/'
 DISCOVERY_DIRECT = {'semver', 'serde', 'serde_json'}
 # These chain-free serving foundations also must not import the lifecycle.
-# transparent-query-server is an application; its HTTPS manager uses the lifecycle.
+# The query-server host, whose `transparent` module serves Transparent, uses the
+# lifecycle for its HTTPS manager.
 PIPELINE_FOUNDATIONS = {'receiver-pir-server', 'pir-control', 'pir-observability'}
 PIPELINE_UTILITIES = {
     'tokio', 'tokio-macros', 'pin-project-lite', 'proc-macro2', 'quote', 'syn',
@@ -189,14 +202,14 @@ TRANSPORT = {'tokio', 'tokio-stream', 'tokio-util', 'axum', 'axum-core', 'hyper'
 HOST_FEATURES = {'pir-observability': {'http'}, 'pir-control': {'admission'}}
 RUNTIME_FREE = {
     'pir-publication', 'pir-runtime', 'pir-serving', 'pir-cuda', 'receiver-store', 'status-shared',
-    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
-    'transparent-publisher', 'transparent-query-server', 'transparent-shared',
+    'enhance-shared', 'enhance-publisher', 'status-publisher',
+    'transparent-publisher', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 # Temporary exceptions; remove each as its product's transport moves to the hosts.
 RUNTIME_PENDING = {
-    'enhance-shared', 'enhance-publisher', 'enhance-query-server', 'status-publisher',
-    'transparent-publisher', 'transparent-query-server', 'transparent-shared',
+    'enhance-shared', 'enhance-publisher', 'status-publisher',
+    'transparent-publisher', 'transparent-shared',
     'receiver-indexer', 'receiver-pir-server',
 }
 
@@ -218,10 +231,8 @@ EXCLUDED = ('evidence/', 'target/')
 
 
 def serving_ingestion_problem(owner, name, target):
-    """Status roles use the shared lifecycle utility without acquiring ingestion."""
-    if (owner == 'src/status/status-query-server/' and name == PIPELINE
-            and target == 'src/shared/pir-pipeline/'):
-        return False
+    """Whether a serving library edge reaches ingestion. Status roles, and their
+    use of the shared lifecycle utility, are owned by `pir-query-server`."""
     return name in INGESTION
 
 
@@ -317,8 +328,7 @@ def manifests(root=ROOT):
 
 
 # Serving libraries; `pir-query-server` is their only executable entrypoint.
-SERVING_LIBRARIES = ('enhance-query-server', 'status-query-server',
-                     'transparent-query-server', 'receiver-pir-server',
+SERVING_LIBRARIES = ('receiver-pir-server',
                      'enhance-publisher', 'status-publisher', 'transparent-publisher')
 
 
@@ -335,6 +345,30 @@ def serving_binary_violations(packages):
             problems.append(f"{package['name']}: serving library declares binary {name}; "
                             'run it through pir-query-server or pir-publisher')
     return problems
+
+
+def query_host_violations(packages):
+    """Publishers, chain readers and tools the query-server host reaches through
+    local manifests, following dependencies of every kind (including dev and
+    target-specific edges) of each local package it reaches."""
+    local = {package['name']: package for package in packages if not package['preserved']}
+    if QUERY_HOST not in local:
+        return []
+    problems, seen, pending = [], set(), [QUERY_HOST]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        for dependency in local[current]['dependencies']:
+            name, path = dependency['name'], dependency.get('path')
+            if name in QUERY_HOST_FORBIDDEN or (path and path.startswith(TOOLS)):
+                problems.append(f"{QUERY_HOST}: reaches {name} through {current} "
+                                f"{dependency['kind']}; the query host never depends on "
+                                'publishers, chain readers or tools')
+            elif path and name in local:
+                pending.append(name)
+    return sorted(set(problems))
 
 
 def violations(packages, allowed):
@@ -752,6 +786,7 @@ def main(argv=None):
     packages = manifests()
     problems = violations(packages, allowed) + manifest_violations()
     problems += serving_binary_violations(packages)
+    problems += query_host_violations(packages)
     patches = tomllib.loads((ROOT / 'Cargo.toml').read_text())['patch']['crates-io']
     # The historical frozen-client fixture is an independent published client;
     # this is the workspace used by the current services.
@@ -779,7 +814,7 @@ def main(argv=None):
         problems += common_family_violations(metadata['packages'], patches)
         problems += resolved_violations(metadata, workspace_unified=True)
         problems += resolved_violations(standalone_metadata(RECEIVER))
-        for name in ('enhance-query-server', 'status-query-server', 'pir-query-server'):
+        for name in ('enhance-shared', 'pir-query-server'):
             problems += cpu_graph_violations(standalone_metadata({name}))
         problems += database_reader_violations(standalone_metadata(set(DATABASE_FREE)))
         for name in sorted(SERVING | PIPELINE_FOUNDATIONS | {PIPELINE, SYNC_MANAGER, PUBLICATION}):

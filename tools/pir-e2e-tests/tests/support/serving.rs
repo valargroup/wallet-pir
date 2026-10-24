@@ -1,9 +1,9 @@
 //! Current serving roles for a separately running publisher process. Tests drive
 //! sequential consumer passes; the publisher receives no consumer acknowledgments.
-use enhance_query_server::{
+use pir_e2e_tests::enhance_fixture::{serve, tls_with_discovery, Listening, Tls};
+use pir_query_server::enhance::{
     ingress_sync, router_sync, synchronization::Config as SourceConfig, worker_sync,
 };
-use pir_e2e_tests::enhance_fixture::{serve, tls_with_discovery, Listening, Tls};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -45,11 +45,11 @@ impl Roles {
         // The reference packing is larger than 512 MiB even for the smallest
         // domain. Bound scratch space by its actual format plus two row files;
         // this fixture does not change any role's resident admission budget.
-        let scratch = enhance_query_server::prepared_packing::expected_len(4096)
+        let scratch = enhance_shared::prepared_packing::expected_len(4096)
             .unwrap()
             .max(400 * 1024 * 1024)
-            + 2 * 2048 * enhance_query_server::ROW_BYTES as u64
-            + 3 * enhance_query_server::publication::METADATA_LIMIT;
+            + 2 * 2048 * enhance_shared::ROW_BYTES as u64
+            + 3 * enhance_shared::publication::METADATA_LIMIT;
         let source = SourceConfig {
             publisher_origin: transport.origin.clone(),
             trusted_ca: Some(root.join("ca.pem")),
@@ -141,7 +141,7 @@ impl Roles {
             eprintln!("ingress synchronization: {error}");
         }
     }
-    pub fn accepts(&self, manifest: &enhance_query_server::protocol::Manifest) -> bool {
+    pub fn accepts(&self, manifest: &enhance_shared::protocol::Manifest) -> bool {
         manifest.generation
             >= self
                 .minimum_generation

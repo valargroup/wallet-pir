@@ -281,7 +281,7 @@ Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
 - `src/transparent/transparent-publisher/src/tx_detail/` (the display controller,
   run by `pir-publisher` as `transaction_details`);
-- `src/transparent/transparent-query-server/src/tx_detail/` (serving, run by
+- `src/pir-query-server/src/transparent/tx_detail/` (serving, run by
   `pir-query-server` with feature `transparent-detail`);
 - `tools/transparent` (`txid-inventory`);
 - the `txid-display-*` deploy commands.

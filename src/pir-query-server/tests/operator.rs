@@ -211,20 +211,31 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
             "query-ingress",
             serde_json::json!({"routers":{"0":[{"control_origin":"http://127.0.0.1:8094", "query_origin":"http://127.0.0.1:8093"}]}}),
         ),
+        // Rendered by tools/enhance/lib/roles.py:combined.
+        ("combined", serde_json::json!({"shards":[0,1]})),
     ] {
         let mut synchronization = source.clone();
         synchronization
             .as_object_mut()
             .unwrap()
             .extend(responsibility.as_object().unwrap().clone());
-        let mut settings = serde_json::json!({"role":role,"listen":"127.0.0.1:8091", "data_dir":temp.path().join(role), "synchronization":synchronization});
+        let mut settings = serde_json::json!({"role":role, "data_dir":temp.path().join(role), "synchronization":synchronization});
+        let mut host = serde_json::json!({"management_listen":"127.0.0.1:18081"});
+        if role == "query-ingress" || role == "combined" {
+            // The ingress answers wallets on the host's shared listener.
+            host["public_listen"] = serde_json::json!("127.0.0.1:8091");
+        } else {
+            settings["listen"] = serde_json::json!("127.0.0.1:8091");
+        }
+        if role == "combined" {
+            settings["matvec"] = serde_json::json!({"matvec_backend":"cpu","cuda_device":null});
+            settings["packing_requests"] = serde_json::json!(2);
+        }
         if role != "worker" {
             settings["control_listen"] = serde_json::json!("127.0.0.1:8094");
         }
-        let path = write(
-            temp.path(),
-            serde_json::json!({"management_listen":"127.0.0.1:18081", "enhance":{"enabled":true,"settings":settings}}),
-        );
+        host["enhance"] = serde_json::json!({"enabled":true,"settings":settings});
+        let path = write(temp.path(), host);
         let output = binary()
             .arg("--config")
             .arg(path)
@@ -239,4 +250,138 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
         assert!(!temp.path().join(role).exists());
     }
     assert_eq!(std::fs::read_dir(temp.path()).unwrap().count(), 1);
+}
+
+/// The binary accepts a combined Status role without a worker or token,
+/// refuses one naming a peer, and stops before opening state or listeners when
+/// its publisher cannot be discovered.
+#[cfg(feature = "status")]
+#[test]
+fn combined_status_role_checks_and_refuses_an_undiscoverable_publisher() {
+    let temp = tempfile::tempdir().unwrap();
+    let port = |listener: std::net::TcpListener| listener.local_addr().unwrap().port();
+    let management = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let listen = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let query = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let publisher = port(std::net::TcpListener::bind("127.0.0.1:0").unwrap());
+    let state = temp.path().join("combined");
+    let settings = |worker_origin: &str| {
+        serde_json::json!({
+            "management_listen": format!("127.0.0.1:{management}"),
+            "public_listen": format!("127.0.0.1:{query}"),
+            "status": {"enabled": true, "settings": {
+                "role": "combined", "network_hex": "01".repeat(32),
+                "state_dir": state, "listen": format!("127.0.0.1:{listen}"),
+                "publisher": format!("https://localhost:{publisher}"),
+                "worker_origin": worker_origin,
+            }},
+        })
+    };
+    let configs = [
+        temp.path().join("combined-config"),
+        temp.path().join("peer-config"),
+    ];
+    configs
+        .iter()
+        .for_each(|dir| std::fs::create_dir(dir).unwrap());
+    let combined = write(&configs[0], settings(""));
+    let output = binary()
+        .arg("--config")
+        .arg(&combined)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let peer = write(&configs[1], settings("http://127.0.0.1:8381"));
+    let output = binary()
+        .arg("--config")
+        .arg(&peer)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("names no worker"));
+
+    let output = binary()
+        .arg("--config")
+        .arg(&combined)
+        .env("RUST_LOG", "off")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("discover"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!state.exists(), "state opened before discovery");
+}
+
+/// What the deployment renderer writes for a combined Status or Enhance role
+/// is a configuration this binary accepts, without opening its state.
+#[cfg(any(feature = "enhance", feature = "status"))]
+#[test]
+fn rendered_combined_roles_pass_the_binary_check() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let temp = tempfile::tempdir().unwrap();
+    let state = temp.path().join("state");
+    let mut roles = Vec::new();
+    #[cfg(feature = "status")]
+    roles.push((
+        "status",
+        "/etc/status-pir/combined.json",
+        serde_json::json!({"network_hex": "01".repeat(32), "state_dir": state,
+            "listen": "127.0.0.1:8481", "query_listen": "127.0.0.1:8090",
+            "publisher": "https://publisher.example"}),
+    ));
+    #[cfg(feature = "enhance")]
+    roles.push((
+        "enhance",
+        "/etc/enhance-pir/combined.json",
+        serde_json::json!({"listen": "127.0.0.1:8090", "control_listen": "127.0.0.1:8096",
+            "data_dir": state, "requests": 8, "uploads": 64, "max_objects": 2,
+            "synchronization": {"publisher_origin": "https://publisher.example",
+                "trusted_ca": temp.path().join("missing.pem"),
+                "download_budget_bytes": 8u64 << 30, "cache_limit_bytes": 8u64 << 30,
+                "shards": [0, 1]}}),
+    ));
+    for (service, path, settings) in roles {
+        let input = temp.path().join(format!("{service}-settings.json"));
+        std::fs::write(&input, serde_json::to_vec(&settings).unwrap()).unwrap();
+        let rendered = Command::new("python3")
+            .arg(root.join("tools/scripts/wallet-pir-roles.py"))
+            .args(["--service", service, "--role", "combined", "--settings"])
+            .arg(&input)
+            .args(["--release", "/opt/example/release"])
+            .output()
+            .unwrap();
+        assert!(
+            rendered.status.success(),
+            "{service}: {}",
+            String::from_utf8_lossy(&rendered.stderr)
+        );
+        let described: serde_json::Value = serde_json::from_slice(&rendered.stdout).unwrap();
+        assert_eq!(
+            described["check"],
+            serde_json::json!(["--config", path, "--check"])
+        );
+        let config = temp.path().join(format!("{service}.json"));
+        std::fs::write(&config, described["files"][path].as_str().unwrap()).unwrap();
+        let output = binary()
+            .arg("--config")
+            .arg(&config)
+            .arg("--check")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{service}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!state.exists(), "{service}: state opened by a check");
+    }
 }
