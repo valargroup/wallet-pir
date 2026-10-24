@@ -18,6 +18,7 @@ use crate::runtime::disk::ShippedRuntimes;
 use crate::runtime::metrics::Metrics;
 use crate::runtime::{CacheError, Produced, RuntimeCache, RuntimeHandle, RuntimeKey, SharedParams};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// Why a serving snapshot will not answer what a request names.
@@ -64,6 +65,9 @@ enum Acquisition {
     Build {
         segments: Vec<(RuntimeKey, SegmentSource)>,
         shipped: Option<ShippedRuntimes>,
+        /// A snapshot can retire while its request uploads or waits for
+        /// admission. Recheck this shared state when acquiring a runtime.
+        retirement: Option<(Arc<AtomicBool>, ServingError)>,
     },
     /// Only runtimes already resident, for a superseded snapshot that must
     /// not take build capacity; a missing one makes the request stale.
@@ -91,11 +95,27 @@ impl Source {
 
     async fn runtime(&self, segment: usize) -> Result<(RuntimeHandle, Produced), ServingError> {
         match &self.acquisition {
-            Acquisition::Build { segments, shipped } => {
+            Acquisition::Build {
+                segments,
+                shipped,
+                retirement,
+            } => {
                 let (key, source) = segments
                     .get(segment)
                     .cloned()
                     .ok_or_else(|| ServingError::Invalid(format!("no segment {segment}")))?;
+                if let Some((retired, stale)) = retirement {
+                    if retired.load(Ordering::Acquire) {
+                        return self
+                            .cache
+                            .cached(&key)
+                            .map(|handle| (handle, Produced::Joined))
+                            .ok_or_else(|| {
+                                Metrics::incr(&self.metrics.stale_revisions);
+                                stale.clone()
+                            });
+                    }
+                }
                 Ok(self
                     .cache
                     .get_from(key, self.shared.clone(), source, shipped.clone())
@@ -260,7 +280,11 @@ impl Prepared {
             cache: self.cache,
             shared: self.shared,
             metrics: self.metrics,
-            acquisition: Acquisition::Build { segments, shipped },
+            acquisition: Acquisition::Build {
+                segments,
+                shipped,
+                retirement: None,
+            },
         })
     }
 
@@ -278,6 +302,15 @@ impl Prepared {
 pub(crate) struct SourceParts(Source);
 
 impl SourceParts {
+    /// A source prepared while active must still become resident-only if
+    /// its snapshot retires before the request acquires runtime handles.
+    pub(crate) fn until_retired(mut self, retired: Arc<AtomicBool>, stale: ServingError) -> Self {
+        if let Acquisition::Build { retirement, .. } = &mut self.0.acquisition {
+            *retirement = Some((retired, stale));
+        }
+        self
+    }
+
     /// A query; a resident-only source is refused now if a segment is gone,
     /// so the body is not queued for a request that cannot be answered.
     pub(crate) fn query(

@@ -125,8 +125,6 @@ struct Inner {
     runtime: Arc<DisplayRuntime>,
     warm: WarmState,
     prewarm_slots: usize,
-    /// Set once a successor is active; see [`DisplayState::retire`].
-    retired: AtomicBool,
 }
 
 /// One publication snapshot: a loaded set and the shared runtime.
@@ -224,7 +222,6 @@ impl DisplayState {
                     self_check_micros: AtomicU64::new(0),
                 },
                 prewarm_slots,
-                retired: AtomicBool::new(false),
             }),
         };
         state.validation();
@@ -417,12 +414,12 @@ impl DisplayState {
     /// map would take a build slot from the candidate the next activation
     /// waits for. Such a client is sent to refresh its map (409) instead.
     pub(crate) fn retire(&self) {
-        self.inner.retired.store(true, Ordering::Release);
+        self.inner.serving.retire();
         self.stop_warming(None);
     }
 
     pub fn is_retired(&self) -> bool {
-        self.inner.retired.load(Ordering::Acquire)
+        self.inner.serving.is_retired()
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -771,14 +768,7 @@ async fn setup(
     let prepared = state
         .inner
         .serving
-        .prepare_setup(
-            sealed,
-            shard_id,
-            &digest,
-            &label,
-            segment,
-            state.is_retired(),
-        )
+        .prepare_setup(sealed, shard_id, &digest, &label, segment)
         .map_err(RequestError::from);
     let setup = match prepared {
         Ok(prepared) => {
@@ -838,11 +828,10 @@ async fn query_inner(
     let metrics = worker.metrics;
     // A retired snapshot is refused before the body is queued if a segment
     // has already gone; the check is repeated when the handles are taken.
-    let prepared =
-        state
-            .inner
-            .serving
-            .prepare_query(sealed, shard_id, &digest, &label, state.is_retired());
+    let prepared = state
+        .inner
+        .serving
+        .prepare_query(sealed, shard_id, &digest, &label);
     let query = match prepared {
         Ok(query) => query,
         Err(error) => {
@@ -852,4 +841,121 @@ async fn query_inner(
         }
     };
     answer_query(worker, request, query).await
+}
+
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    use std::{
+        convert::Infallible,
+        future::Future,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use transparent_shared::tx_detail::{kind, synth, DisplayRole};
+    use zakura_pir_protocol::transparent::shard::display::{
+        DisplaySealParams, DisplayTable, TXID_2K8,
+    };
+
+    struct Upload(tokio::sync::mpsc::Receiver<axum::body::Bytes>);
+
+    impl http_body::Body for Upload {
+        type Data = axum::body::Bytes;
+        type Error = Infallible;
+
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            context: &mut Context<'_>,
+        ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self.0
+                .poll_recv(context)
+                .map(|frame| frame.map(|bytes| Ok(http_body::Frame::data(bytes))))
+        }
+    }
+
+    /// Upload can outlive activation of a successor. Once the old snapshot
+    /// is retired it must refuse a cold runtime, rather than build it using
+    /// the next candidate's cache and build capacity.
+    #[tokio::test]
+    async fn retirement_during_upload_refuses_a_cold_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let shard = synth::write_shard(
+            root.path(),
+            &synth::ShardSpec {
+                shard_id: 0,
+                start_height: 10,
+                end_height: 19,
+                sealed: false,
+                revision: 0,
+                supersedes: String::new(),
+                parent_manifest_digest: String::new(),
+                n_buckets: 1,
+                archive_target: 1,
+                geometry: &TXID_2K8,
+            },
+            &synth::records(4, 7),
+        )
+        .unwrap();
+        let (dir, _) = synth::write_candidate(
+            root.path(),
+            &DisplaySealParams {
+                n_archive: 1,
+                n_recent: 1,
+                archive_target: 1,
+                recent_window: 1,
+                reorg_margin: 1,
+            },
+            std::slice::from_ref(&shard),
+            "upload",
+        )
+        .unwrap();
+        let runtime = DisplayRuntime::new(ServiceConfig::default(), None);
+        let state = DisplayState::build(
+            DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap(),
+            &runtime,
+        )
+        .unwrap();
+        let table = DisplayTable::parse("directory-0").unwrap();
+        let params = state
+            .inner
+            .serving
+            .params(TXID_2K8.name, kind(table))
+            .unwrap();
+        let mut body = vec![0; params.query_bytes()];
+        body[..8].copy_from_slice(&display::query_binding(&shard.digest, table));
+        let (send, receive) = tokio::sync::mpsc::channel(1);
+        send.send(axum::body::Bytes::copy_from_slice(&body[..8]))
+            .await
+            .unwrap();
+        let request = Request::post("/")
+            .header("content-length", body.len())
+            .body(axum::body::Body::new(Upload(receive)))
+            .unwrap();
+        let response = query_inner(
+            State(state.clone()),
+            false,
+            AxumPath((0, shard.digest, table.label())),
+            request,
+        );
+        tokio::pin!(response);
+        // Poll through resolution and into the unfinished upload, without
+        // depending on a timer or another task's scheduling.
+        std::future::poll_fn(|context| {
+            assert!(response.as_mut().poll(context).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        state.retire();
+        assert_eq!(runtime.cache.entries(), 0);
+        send.send(axum::body::Bytes::copy_from_slice(&body[8..]))
+            .await
+            .unwrap();
+        drop(send);
+        assert_eq!(response.await.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            runtime.cache.entries(),
+            0,
+            "a retired upload built a runtime"
+        );
+    }
 }

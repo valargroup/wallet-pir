@@ -14,7 +14,7 @@ use crate::table::Table;
 use crate::tx_detail::set::{DisplayRevision, DisplaySet};
 use crate::tx_detail::{kind, runtime_key, tier};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use zakura_pir_protocol::transparent::shard::display::{self, DisplayTable};
 use zakura_pir_protocol::transparent::shard::layout::Geometry;
@@ -54,6 +54,9 @@ pub struct DisplayServing {
     /// Managed consumers may only load publisher-prepared native files.
     required: bool,
     max_query_bytes: usize,
+    /// Shared with prepared requests so retirement during upload/admission
+    /// changes their runtime acquisition policy too.
+    retired: Arc<AtomicBool>,
 }
 
 impl DisplayServing {
@@ -117,7 +120,19 @@ impl DisplayServing {
             metrics,
             required,
             max_query_bytes,
+            retired: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Restrict this snapshot and requests already prepared from it to
+    /// resident runtimes. Admitted work that holds a runtime may finish.
+    pub fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
+    }
+
+    /// Whether a successor has retired this snapshot's ability to load runtimes.
+    pub fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::Acquire)
     }
 
     pub fn set(&self) -> &DisplaySet {
@@ -229,7 +244,6 @@ impl DisplayServing {
         table: DisplayTable,
         shard_id: u64,
         sources: Vec<(u32, SegmentSource)>,
-        resident_only: bool,
     ) -> SourceParts {
         let prepared = Prepared {
             cache: self.cache.clone(),
@@ -237,7 +251,7 @@ impl DisplayServing {
             metrics: self.metrics.clone(),
         };
         let digest = &revision.digest;
-        if resident_only {
+        if self.is_retired() {
             prepared.resident(
                 sources
                     .iter()
@@ -246,13 +260,15 @@ impl DisplayServing {
                 stale(shard_id, digest),
             )
         } else {
-            prepared.build(
-                sources
-                    .into_iter()
-                    .map(|(segment, source)| (runtime_key(digest, table, segment), source))
-                    .collect(),
-                None,
-            )
+            prepared
+                .build(
+                    sources
+                        .into_iter()
+                        .map(|(segment, source)| (runtime_key(digest, table, segment), source))
+                        .collect(),
+                    None,
+                )
+                .until_retired(self.retired.clone(), stale(shard_id, digest))
         }
     }
 
@@ -263,7 +279,6 @@ impl DisplayServing {
         shard_id: u64,
         digest: &str,
         label: &str,
-        resident_only: bool,
     ) -> Result<PreparedQuery, ServingError> {
         let revision = self.revision(sealed, shard_id, digest)?;
         let (table, segments) = Self::table(revision, label)?;
@@ -277,15 +292,14 @@ impl DisplayServing {
             .collect::<Option<Vec<_>>>()
             .ok_or_else(|| ServingError::Invalid(format!("{label} is not held")))?;
         let query_rows = self.shared(revision, table).profile.rows;
-        self.source(revision, table, shard_id, sources, resident_only)
-            .query(
-                query_rows,
-                // Names the revision and the bucket: a body prepared for
-                // another bucket's table is refused by `SharedParams::parse`.
-                display::query_binding(digest, table),
-                label.to_string(),
-                digest.to_string(),
-            )
+        self.source(revision, table, shard_id, sources).query(
+            query_rows,
+            // Names the revision and the bucket: a body prepared for
+            // another bucket's table is refused by `SharedParams::parse`.
+            display::query_binding(digest, table),
+            label.to_string(),
+            digest.to_string(),
+        )
     }
 
     /// The public setup of one segment of one bucket's table.
@@ -296,7 +310,6 @@ impl DisplayServing {
         digest: &str,
         label: &str,
         segment: u32,
-        resident_only: bool,
     ) -> Result<PreparedSetup, ServingError> {
         let revision = self.revision(sealed, shard_id, digest)?;
         let (table, segments) = Self::table(revision, label)?;
@@ -309,13 +322,7 @@ impl DisplayServing {
             ServingError::Invalid(format!("{label} segment {segment} is not held"))
         })?;
         Ok(self
-            .source(
-                revision,
-                table,
-                shard_id,
-                vec![(segment, source)],
-                resident_only,
-            )
+            .source(revision, table, shard_id, vec![(segment, source)])
             .setup(segment, segments, table.label(), Some(table.bucket())))
     }
 
@@ -482,35 +489,33 @@ mod tests {
         let (owner, metrics) = serving(&dir, DisplayRole::ArchiveOwner, u64::MAX);
         let (archive, recent) = (&shards[0].digest, &shards[1].digest);
 
-        assert!(owner
-            .prepare_query(true, 0, archive, "directory-0", false)
-            .is_ok());
+        assert!(owner.prepare_query(true, 0, archive, "directory-0").is_ok());
         assert_eq!(
-            refused(owner.prepare_query(true, 0, "00", "directory-0", false)),
+            refused(owner.prepare_query(true, 0, "00", "directory-0")),
             stale(0, "00")
         );
         assert_eq!(Metrics::get(&metrics.stale_revisions), 1);
         assert!(matches!(
-            refused(owner.prepare_query(false, 0, archive, "directory-0", false)),
+            refused(owner.prepare_query(false, 0, archive, "directory-0")),
             ServingError::WrongHoldings(_)
         ));
         assert!(matches!(
-            refused(owner.prepare_query(false, 1, recent, "directory-0", false)),
+            refused(owner.prepare_query(false, 1, recent, "directory-0")),
             ServingError::WrongHoldings(_)
         ));
         assert_eq!(Metrics::get(&metrics.unassigned_refusals), 2);
         assert!(matches!(
-            refused(owner.prepare_query(true, 1, archive, "directory-0", false)),
+            refused(owner.prepare_query(true, 1, archive, "directory-0")),
             ServingError::Invalid(_)
         ));
         for label in ["pages", "directory-1"] {
             assert!(matches!(
-                refused(owner.prepare_query(true, 0, archive, label, false)),
+                refused(owner.prepare_query(true, 0, archive, label)),
                 ServingError::Invalid(_)
             ));
         }
         assert!(matches!(
-            refused(owner.prepare_setup(true, 0, archive, "directory-0", 1, false)),
+            refused(owner.prepare_setup(true, 0, archive, "directory-0", 1)),
             ServingError::Invalid(_)
         ));
     }
@@ -525,7 +530,7 @@ mod tests {
         let (combined, _) = serving(&dir, DisplayRole::Combined, u64::MAX);
         let digest = &shards[1].digest;
         let query = combined
-            .prepare_query(false, 1, digest, "directory-0", false)
+            .prepare_query(false, 1, digest, "directory-0")
             .unwrap();
         assert_eq!(query.segments(), 1);
         let shared = combined.params(TXID_2K8.name, Table::TxDirectory).unwrap();
@@ -561,15 +566,36 @@ mod tests {
         let (dir, shards) = publication(root.path());
         let (combined, metrics) = serving(&dir, DisplayRole::Combined, u64::MAX);
         let digest = &shards[1].digest;
+        combined.retire();
         assert_eq!(
-            refused(combined.prepare_query(false, 1, digest, "directory-0", true)),
+            refused(combined.prepare_query(false, 1, digest, "directory-0")),
             stale(1, digest)
         );
         let setup = combined
-            .prepare_setup(false, 1, digest, "directory-0", 0, true)
+            .prepare_setup(false, 1, digest, "directory-0", 0)
             .unwrap();
         assert_eq!(refused(setup.load().await), stale(1, digest));
         assert_eq!(Metrics::get(&metrics.stale_revisions), 2);
+        assert_eq!(combined.cache().entries(), 0);
+    }
+
+    /// Prepared query and setup handles retain the snapshot's live retirement
+    /// state, rather than permission to build captured before an async wait.
+    #[tokio::test]
+    async fn prepared_requests_observe_later_retirement() {
+        let root = tempfile::tempdir().unwrap();
+        let (dir, shards) = publication(root.path());
+        let (combined, _) = serving(&dir, DisplayRole::Combined, u64::MAX);
+        let digest = &shards[1].digest;
+        let query = combined
+            .prepare_query(false, 1, digest, "directory-0")
+            .unwrap();
+        let setup = combined
+            .prepare_setup(false, 1, digest, "directory-0", 0)
+            .unwrap();
+        combined.retire();
+        assert_eq!(refused(query.runtime(0).await), stale(1, digest));
+        assert_eq!(refused(setup.load().await), stale(1, digest));
         assert_eq!(combined.cache().entries(), 0);
     }
 
@@ -581,7 +607,7 @@ mod tests {
         let (dir, shards) = publication(root.path());
         let (combined, _) = serving(&dir, DisplayRole::Combined, 0);
         let query = combined
-            .prepare_query(false, 1, &shards[1].digest, "directory-0", false)
+            .prepare_query(false, 1, &shards[1].digest, "directory-0")
             .unwrap();
         assert_eq!(refused(query.runtime(0).await), ServingError::Capacity);
     }
