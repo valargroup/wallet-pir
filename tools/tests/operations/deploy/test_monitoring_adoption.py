@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / 'tools/lib'))
 sys.path.insert(0, str(Path(__file__).parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops import monitoring, monitoring_adoption, monitoring_certs, monitoring_roles  # noqa: E402
-from wallet_pir_ops.deploy import cache_data, descriptors  # noqa: E402
+from wallet_pir_ops.deploy import cache_data, descriptors, remote  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer  # noqa: E402
 
 
@@ -147,3 +147,38 @@ class VolumeMonitoring(unittest.TestCase):
         collector = self.loaded['coordinator', monitoring_certs.COLLECTOR_UNIT]
         self.assertEqual(collector['hosts'][0]['config_digest'], monitoring.config_digest(
             self.loaded['txid-01', monitoring_certs.SIDECAR_UNIT]))
+
+    def interrupted_restart_recovers(self, target):
+        start = self.fake._start
+
+        def interrupted(host, unit):
+            if unit == target:
+                self.fake.host(host).units[unit].update(active='failed', pid=0, exe=None)
+                self.fake.lock.lost = True
+                raise remote.LockHeld('restart acknowledgment lost with the process stopped')
+            start(host, unit)
+        self.fake._start = interrupted
+        with self.assertRaisesRegex(cache_data.DeployError, 'monitoring adoption remains pending'):
+            self.dispatch()
+        self.fake._start = start
+        host = 'coordinator' if target == monitoring_certs.COLLECTOR_UNIT else 'txid-01'
+        self.assertEqual(self.fake.probe_unit(host, target)['active_state'], 'failed')
+        self.args.command = 'cache-data-reconcile'
+        self.assertEqual(self.dispatch()['monitoring']['status'], 'complete')
+        self.assertEqual(self.fake.probe_unit(host, target)['active_state'], 'active')
+        self.assertEqual(len(self.storage_runs), 1)
+
+    def test_reconcile_recovers_its_own_interrupted_collector_restart(self):
+        self.interrupted_restart_recovers(monitoring_certs.COLLECTOR_UNIT)
+
+    def test_reconcile_recovers_its_own_interrupted_sidecar_restart(self):
+        self.interrupted_restart_recovers(monitoring_certs.SIDECAR_UNIT)
+
+    def test_reconcile_retries_a_failed_sidecar_preflight_before_any_unit_was_changed(self):
+        self.fake.product_check = lambda host, argv: (1, 'configuration check refused')
+        with self.assertRaisesRegex(cache_data.DeployError, 'monitoring adoption remains pending'):
+            self.dispatch()
+        self.fake.product_check = lambda host, argv: (0, 'configuration accepted')
+        self.args.command = 'cache-data-reconcile'
+        self.assertEqual(self.dispatch()['monitoring']['status'], 'complete')
+        self.assertEqual(len(self.storage_runs), 1)

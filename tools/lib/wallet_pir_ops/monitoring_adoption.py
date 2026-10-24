@@ -34,6 +34,41 @@ def adopt_volume(executor, lock, inventory_path, host, volume, state_dir, *, rec
     if len(centers) != 1:
         raise DeployError('volume monitoring needs exactly one central APM')
     center = centers[0]
+    services = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
+    deployer = Deployer(services[monitoring.SERVICE], inventory, executor, state_dir,
+                        lock=lambda: contextlib.nullcontext(lock), only=['observer@' + host])
+
+    def save():
+        retained = json.loads(Path(receipt).read_text())
+        retained['monitoring'] = progress
+        durable.atomic_json(receipt, retained, mode=0o600)
+
+    source = 'cache-volume:' + Path(receipt).stem
+    sidecar = transaction.Journal.load(state_dir, monitoring.SERVICE)
+    if sidecar is not None and sidecar.data.get('source') == source:
+        if sidecar.status in ('failed', 'rolled-back'):
+            progress.pop('sidecar_transaction', None)
+            save()
+        else:
+            progress.setdefault('sidecar_transaction', sidecar.id)
+    central = transaction.Journal.load(state_dir, monitoring_certs._service(center, '/etc/pir-apm'))
+    if central is not None and central.status not in ('committed', 'rolled-back'):
+        if (not progress.get('revision')
+                or (central.hosts[0].get('identity') or {}).get('revision') != progress['revision']):
+            raise DeployError('another collector transaction needs reconciliation before volume adoption')
+        if progress.get('sidecar_transaction'):
+            deployer.rollback(progress['sidecar_transaction'])
+        monitoring_certs.reconcile(executor, contextlib.nullcontext(lock), center, state_dir=state_dir,
+                                   directory='/etc/pir-apm', restore_ready=monitoring_certs.collector_restore_ready,
+                                   ready_timeout=ready_timeout)
+        progress.pop('sidecar_transaction', None)
+        save()
+    elif sidecar is not None and sidecar.data.get('source') == source and sidecar.status not in transaction.FINAL:
+        deployer.rollback(sidecar.id)
+        progress.pop('sidecar_transaction', None)
+        save()
+    # An owned interruption may have left either unit stopped or its files
+    # unfinished. Recover it first; unrelated stopped units remain prerequisites.
     if executor.probe_unit(center, monitoring_certs.COLLECTOR_UNIT)['active_state'] != 'active':
         raise DeployError('volume monitoring requires a running central APM')
     installed = executor.read(center, monitoring_roles.APM_OBSERVERS)
@@ -49,34 +84,6 @@ def adopt_volume(executor, lock, inventory_path, host, volume, state_dir, *, rec
     digest = state.get('exe_sha256')
     if state['active_state'] != 'active' or not digest:
         raise DeployError('volume monitoring requires an installed, running sidecar')
-    services = descriptors.load_descriptors(ROOT / 'tools/deploy/services.toml')
-    deployer = Deployer(services[monitoring.SERVICE], inventory, executor, state_dir,
-                        lock=lambda: contextlib.nullcontext(lock), only=['observer@' + host])
-
-    def save():
-        retained = json.loads(Path(receipt).read_text())
-        retained['monitoring'] = progress
-        durable.atomic_json(receipt, retained, mode=0o600)
-
-    source = 'cache-volume:' + Path(receipt).stem
-    sidecar = transaction.Journal.load(state_dir, monitoring.SERVICE)
-    if sidecar is not None and sidecar.data.get('source') == source and sidecar.status != 'rolled-back':
-        progress.setdefault('sidecar_transaction', sidecar.id)
-    central = transaction.Journal.load(state_dir, monitoring_certs._service(center, '/etc/pir-apm'))
-    if central is not None and central.status not in ('committed', 'rolled-back'):
-        if (central.hosts[0].get('identity') or {}).get('revision') != progress.get('revision'):
-            raise DeployError('another collector transaction needs reconciliation before volume adoption')
-        if progress.get('sidecar_transaction'):
-            deployer.rollback(progress['sidecar_transaction'])
-        monitoring_certs.reconcile(executor, contextlib.nullcontext(lock), center, state_dir=state_dir,
-                                   directory='/etc/pir-apm', restore_ready=monitoring_certs.collector_restore_ready,
-                                   ready_timeout=ready_timeout)
-        progress.pop('sidecar_transaction', None)
-        save()
-    elif sidecar is not None and sidecar.data.get('source') == source and sidecar.status not in transaction.FINAL:
-        deployer.rollback(sidecar.id)
-        progress.pop('sidecar_transaction', None)
-        save()
     # Preserve the first sidecar transaction across retries: its backup is the
     # old configuration the old collector can authenticate after a failed update.
     if not progress.get('sidecar_transaction'):
