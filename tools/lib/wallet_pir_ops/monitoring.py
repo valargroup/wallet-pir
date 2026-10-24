@@ -324,13 +324,34 @@ def provisioned_hosts(outputs):
     return hosts
 
 
+def _roster_enrollment(member):
+    """A valid dynamic enrollment's IP and checks, or None for an unenrolled member."""
+    record = member.get('monitoring')
+    if (not isinstance(record, dict) or set(record) != {'address', 'config_digest', 'checks'}
+            or not isinstance(record['address'], str) or not isinstance(record['config_digest'], str)
+            or not re.fullmatch(r'sha256:[0-9a-f]{64}', record['config_digest'])
+            or not isinstance(record['checks'], list) or not record['checks']
+            or not all(isinstance(c, str) and re.fullmatch(r'[a-z0-9@._:/-]{1,128}', c) for c in record['checks'])):
+        return None
+    host, _, port = record['address'].rpartition(':')
+    try:
+        bracketed = host.startswith('[') and host.endswith(']')
+        address = ipaddress.ip_address(host[1:-1] if bracketed else host)
+        if (address.version != (6 if bracketed else 4) or not re.fullmatch(r'[0-9]{1,5}', port)
+                or not 1 <= int(port) <= 65535):
+            return None
+    except ValueError:
+        return None
+    return str(address), record['checks']
+
+
 def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=None, expected_volumes=None):
     """Compare provisioned hosts and expected volumes with observer enrollment.
 
     `terraform_outputs` is `terraform output -json` of the fleet root,
     `external_hosts` maps declared non-Terraform hosts (an external GPU or a
-    checker) to their addresses, and `roster` is the Transparent dynamic
-    roster. `expected_volumes` maps an enrolled host to mount paths, or
+    checker) to their addresses, and `roster` is the Transparent monitoring
+    roster carrying dynamic sidecar enrollment records. `expected_volumes` maps an enrolled host to mount paths, or
     `{"path", "uuid"}` identities such as `activated_volumes` returns, that it
     must check; coordinators always need their three data volumes. Each missing
     source makes the report `partial`: it then proves nothing about the cloud.
@@ -346,10 +367,24 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
             addresses.add(entry['address'])
         for address in addresses:
             covered[address] = host
+    members = [m for m in roster or [] if m.get('intent', 'enrolled') in ('enrolled', 'draining')]
+    dynamic_addresses = {}
+    for member in members:
+        host = member['id']
+        if not isinstance(host, str) or not NAME.fullmatch(host):
+            raise ValueError('invalid dynamic observer host id')
+        record = _roster_enrollment(member)
+        if record is not None:
+            address, checks = record
+            dynamic_addresses[host] = frozenset([address])
+            if host not in enrolled:
+                # UUIDs are not in the enrollment contract, so UUID-specific
+                # volume coverage still requires an independently declared identity.
+                enrolled[host] = {'required_volumes': [], 'checks': checks}
+                covered[address] = host
     provisioned = provisioned_hosts(terraform_outputs or {})
     provisioned += [(name, frozenset(addresses)) for name, addresses in dict(external_hosts).items()]
-    provisioned += [(m['id'], _addresses(m)) for m in roster or []
-                    if m.get('intent', 'enrolled') in ('enrolled', 'draining')]
+    provisioned += [(m['id'], _addresses(m) | dynamic_addresses.get(m['id'], frozenset())) for m in members]
     missing = sorted({label for label, addresses in provisioned if not addresses & covered.keys()})
     seen = {covered[a] for _, addresses in provisioned for a in addresses if a in covered}
     volumes = dict(expected_volumes or {})
@@ -359,6 +394,9 @@ def coverage(inventory, *, terraform_outputs=None, external_hosts=(), roster=Non
     missing_volumes = {}
     for host, wanted in sorted(volumes.items()):
         declared = {v['path']: v['uuid'].lower() for v in enrolled.get(host, {}).get('required_volumes', [])}
+        for check in enrolled.get(host, {}).get('checks', []):
+            if check.startswith('volume:'):
+                declared.setdefault(check.removeprefix('volume:'), None)
         absent = sorted(v if isinstance(v, str) else v['path'] for v in wanted
                         if (v if isinstance(v, str) else v['path']) not in declared
                         or (not isinstance(v, str) and declared[v['path']] != v['uuid'].lower()))
