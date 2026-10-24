@@ -347,7 +347,7 @@ def baseline_commands(family, include_cuda=False):
             ('reference', [*options, '-p', 'pir-e2e-tests', '--features', 'enhance-tests,qualification-tests',
                            '--test', 'ci_hint', '--test', 'encrypted_lifecycle']),
             ('reference', [*options, '-p', 'status-shared', '--features', 'qualification-tests', '--lib']),
-            ('reference', [*options, '-p', 'pir-query-server', '--features', 'enhance,status,status-shared/qualification-tests', '--lib', '--', 'status::']),
+            ('reference', [*options, '-p', 'pir-query-server', '--features', 'enhance,status,qualification-tests,status-shared/qualification-tests', '--lib', '--', 'status::']),
             ('cuda', [*options, '-p', 'pir-query-server', '--features', 'enhance,native-reinspiring,cuda', '--test', 'operator']),
             ('cuda', [*options, '-p', 'enhance-shared', '--features', 'native-reinspiring,cuda', '--lib',
                       'backend_load_failure_does_not_rebuild_or_replace_published_units']),

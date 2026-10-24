@@ -90,7 +90,7 @@ class MatrixTests(unittest.TestCase):
     def test_reference_host_lists_and_runs_the_moved_status_cases(self):
         package = self.plan[3]['pir-query-server']
         artifact = dict(package_id=package['id'], target=dict(name='pir_query_server', kind=['lib']),
-                        executable='/not-executed', features=['status'])
+                        executable='/not-executed', features=['status', 'qualification-tests'])
 
         def listing(command, **_):
             self.assertEqual(command[1], 'status::')

@@ -172,6 +172,60 @@ class ProgramTests(unittest.TestCase):
         self.assertCountEqual([call.args[0][0] for call in execute.call_args_list],
                               [program['executable'] for program in programs])
 
+    def test_status_groups_overlap_each_other_and_finish_before_the_pool(self):
+        order = []
+        lock = threading.Lock()
+        both = threading.Barrier(3, timeout=5)
+
+        def run(command, **kwargs):
+            name = command[0].rsplit('/', 1)[-1]
+            if name.startswith('status') or name == 'publisher':
+                with lock:
+                    self.assertNotIn('ordinary', order)
+                both.wait()
+            elif name == 'ordinary':
+                with lock:
+                    self.assertCountEqual(order, ['hint', 'publisher', 'status-a', 'status-b'])
+            with lock:
+                order.append(name)
+
+        programs = [
+            dict(executable='/deps/hint', directory='/p', package='p', version='1', args=[],
+                 exclusive=True),
+            dict(executable='/deps/publisher', directory='/p', package='enhance-publisher',
+                 version='1', args=[], exclusive=True),
+            dict(executable='/deps/status-a', directory='/p', package='pir-query-server',
+                 version='1', args=[], exclusive=True, exclusive_group='status'),
+            dict(executable='/deps/status-b', directory='/p', package='pir-query-server',
+                 version='1', args=[], exclusive=True, exclusive_group='status'),
+            dict(executable='/deps/ordinary', directory='/p', package='p', version='1', args=[]),
+        ]
+        with patch.object(unit_tests, 'available_cpus', return_value=8), \
+                patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                patch.object(unit_tests, 'run', side_effect=run):
+            unit_tests.execute(programs, 3)
+        self.assertEqual(order[0], 'hint')
+        self.assertEqual(order[-1], 'ordinary')
+
+    def test_status_groups_stay_serial_below_eight_cores(self):
+        seen = []
+
+        def run(command, **kwargs):
+            self.assertNotIn('/deps/status-b', seen)
+            seen.append(command[0])
+
+        programs = [
+            dict(executable='/deps/status-a', directory='/p', package='pir-query-server',
+                 version='1', args=[], exclusive=True, exclusive_group='status'),
+            dict(executable='/deps/status-b', directory='/p', package='pir-query-server',
+                 version='1', args=[], exclusive=True, exclusive_group='status'),
+        ]
+        with patch.object(unit_tests, 'available_cpus', return_value=4), \
+                patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                patch.object(unit_tests, 'run', side_effect=run):
+            unit_tests.execute(programs, 3)
+        self.assertEqual(seen, ['/deps/status-a', '/deps/status-b'])
+
     def test_failed_program_is_not_retried(self):
         program = dict(executable='/deps/p', directory='/p', package='p', version='1', args=[])
         with patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \

@@ -13,9 +13,13 @@ first. Receiver, status, and RocksDB chain-node targets stay in qualification.
 The Enhance and Transparent reader targets stay on this command: dropping
 `testing-node` rebuilds every consumer. Campaign targets are never
 selected. Test programs retain their package directory and Cargo environment.
-Enhance publication fixtures run alone, as do the filter library, the query
-host's Status unit cases and the Enhance and Receiver runtime libraries on fewer
-than eight cores, counting any cgroup CPU quota. The remaining programs share a pool of at most three processes.
+The filter library and the Enhance and Receiver runtime libraries run alone on
+fewer than eight cores, counting any cgroup CPU quota. On eight cores the query
+host's Status cases form two groups that overlap each other, and the Enhance
+publication library runs beside them; that wave finishes before the pool.
+Below eight cores Status stays one program so a generation prepare keeps the
+machine, and the Enhance publication library runs alone before the pool. The
+remaining programs share a pool of at most three processes.
 """
 import json
 import os
@@ -72,12 +76,63 @@ def publisher_runs_alone(name, kinds):
 def status_runs_alone(name, kinds, names):
     """Status sync cases each prepare a generation on every core.
 
-    One generation prepare is a 96 MiB database; sharing those cores with the
-    pool, or with the publisher, pushes a single case past its budget, so the
-    query host's Status unit program runs alone.
+    One generation prepare is a 96 MiB database. Sharing those cores with the
+    pool, or with the publisher, pushes a single case past its budget. The
+    query host's Status groups therefore finish before either of those. Two
+    groups may overlap each other on an eight-core runner; their prepares are
+    the long part of this program.
     """
     return (name == 'pir-query-server' and 'lib' in kinds
             and any(case.startswith('status::') for case in names))
+
+
+def status_case_weight(name):
+    """Relative prepare cost, so two Status lanes do not collect the long cases."""
+    if any(fragment in name for fragment in (
+            'changed_material_during_loading',
+            'metadata_only_refresh_reuses_verified_material',
+            'a_candidate_activates_only_under_a_live_answer',
+            'router_commits_its_workers_retained_predecessor')):
+        return 8
+    if any(fragment in name for fragment in (
+            'resumed_candidates_are_rejected',
+            'a_refuted_anchor_leaves_other_status_sessions',
+            'a_new_publication_during_authority_check',
+            'a_failed_floor_save_blocks_progress',
+            'consumer_restart_requires_https_authority')):
+        return 4
+    if any(fragment in name for fragment in (
+            'prepared_candidate_proof_binds',
+            'status_polling_reserves_time')):
+        return 2
+    return 1
+
+
+def balance_status_lanes(names, lanes):
+    """Largest-first assignment. Equal weights still cover every name once."""
+    if lanes <= 1:
+        return [sorted(names)]
+    ordered = sorted(names, key=lambda name: (-status_case_weight(name), name))
+    buckets = [[] for _ in range(lanes)]
+    totals = [0] * lanes
+    for name in ordered:
+        index = min(range(lanes), key=lambda lane: (totals[lane], lane))
+        buckets[index].append(name)
+        totals[index] += status_case_weight(name)
+    return [sorted(bucket) for bucket in buckets if bucket]
+
+
+def assign_status_lanes(parts, package, kinds, discovered):
+    """Mark Status partitions exclusive without marking the host's other roles."""
+    for part in parts:
+        args = part['args']
+        cases = args[args.index('--exact') + 1:] if '--exact' in args else None
+        selected = list(discovered) if cases is None else cases
+        status_only = cases is None or all(case.startswith('status::') for case in cases)
+        if status_only and status_runs_alone(package, kinds, selected):
+            part['exclusive'] = True
+            part['exclusive_group'] = 'status'
+    return parts
 
 
 # Unit cases that build full runtimes on every core, each near the case budget.
@@ -315,9 +370,11 @@ def bounded_programs(program, names):
     if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
         # Every Status case prepares on every core, so never run more than the
         # two Status groups at once; the host's other roles share one process.
-        status_lanes = min(2, (len(status) + group - 1) // group)
+        # Below eight CPUs one group keeps the process-local generation cache
+        # and the whole machine, which is what holds a prepare under 30 seconds.
+        status_lanes = 2 if available_cpus() >= 8 and len(status) > 1 else 1
         remaining = sorted(names - set(status))
-        partitions = [remaining, *[status[index::status_lanes] for index in range(status_lanes)]]
+        partitions = [remaining, *balance_status_lanes(status, status_lanes)]
     elif program.get('package') == 'transparent-publisher' and distribution:
         # These cases share expensive immutable native producer bytes. Keep
         # them in one process; each consumer still has its own files and HTTP.
@@ -552,19 +609,21 @@ def execute(selected, *, offline=False, compile_only=False, jobs=3,
                              integration=integration,
                              # Its real reference packing and independent oracle
                              # must not compete with the runtime's matrix fixtures.
+                             # Status is marked after the split: only its lanes
+                             # stay exclusive, and the host's other roles join the pool.
                              exclusive=publisher_runs_alone(name, target['kind'])
-                             or status_runs_alone(name, target['kind'], names)
                              or runtime_runs_alone(name, target['kind'])
                              or identity == ('pir-e2e-tests', 'ci_hint')
                              or (name == 'enhance-publisher' and 'lib' in target['kind']),
                              case_count=len(names),
                              args=[arg for case in exclusions for arg in ('--skip', case)])
         if repeated:
-            programs.extend(dict(part, args=[*part['args'], '--exact', *sorted(names)])
-                            if '--exact' not in part['args'] else part
-                            for part in bounded_programs(program, names))
-            continue
-        programs.extend(bounded_programs(program, names))
+            parts = [dict(part, args=[*part['args'], '--exact', *sorted(names)])
+                     if '--exact' not in part['args'] else part
+                     for part in bounded_programs(program, names)]
+        else:
+            parts = bounded_programs(program, names)
+        programs.extend(assign_status_lanes(parts, name, target['kind'], names))
     if actual_integrations != expected_integrations or expected_units - actual_units:
         raise ValueError(f'fast test executables mismatch: missing_units={sorted(expected_units-actual_units)}, '
                          f'missing_integrations={sorted(expected_integrations-actual_integrations)}, '

@@ -74,6 +74,8 @@ required-features = ["transparent-detail"]
 
 [features]
 default = []
+# Repeated Status sync campaigns. Fast keeps one case for each outcome.
+qualification-tests = []
 # Scoped record-write injection for integration tests; absent in service builds.
 test-support = []
 enhance = [

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 
+from fast_build import available_cpus
 from stage import run
 
 
@@ -60,33 +61,59 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
                 package=program['package'], executable=Path(program['executable']).name,
                 seconds=round(time.monotonic() - started, 3), passed=passed)), flush=True)
 
+    def run_concurrent(selected, workers):
+        if not selected:
+            return
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(invoke, program) for program in selected]
+            failures = []
+            try:
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as error:
+                        if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
+                            failures.append(error)
+                        else:
+                            raise
+            except BaseException:
+                if budget:
+                    from test_budget import stop
+                    stop()
+                for future in futures:
+                    future.cancel()
+                raise
+            if failures:
+                raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+
+    def beside_status(program):
+        # The Enhance publication library is a few seconds. On eight cores it
+        # fits beside the two Status prepares and still finishes before the pool.
+        return (program.get('exclusive') and program['package'] == 'enhance-publisher'
+                and not program.get('integration'))
+
     # Encrypted HTTP fixtures retain their own concurrency. Keep their working
     # sets apart from other Rust programs before overlapping ordinary units.
-    for program in programs:
-        if program.get('exclusive'):
+    # The two Status groups overlap each other on eight cores and still finish
+    # before the pool. Below eight cores they stay serial: one prepare already
+    # uses the whole machine.
+    serial = [program for program in programs
+              if program.get('exclusive') and program.get('exclusive_group') != 'status'
+              and not beside_status(program)]
+    status = [program for program in programs if program.get('exclusive_group') == 'status']
+    publisher = [program for program in programs if beside_status(program)]
+    ordinary = [program for program in programs if not program.get('exclusive')]
+    for program in serial:
+        invoke(program)
+    overlap_status = len(status) > 1 and available_cpus() >= 8
+    if overlap_status:
+        wave = status + publisher
+        run_concurrent(wave, min(3, len(wave)))
+    else:
+        for program in publisher:
             invoke(program)
-    with ThreadPoolExecutor(max_workers=jobs) as pool:
-        futures = [pool.submit(invoke, program) for program in programs
-                   if not program.get('exclusive')]
-        failures = []
-        try:
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as error:
-                    if budget and os.environ.get('WALLET_PIR_ENFORCE_BUDGET') == '0':
-                        failures.append(error)
-                    else:
-                        raise
-        except BaseException:
-            if budget:
-                from test_budget import stop
-                stop()
-            for future in futures:
-                future.cancel()
-            raise
-        if failures:
-            raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
+        run_concurrent(status, 1)
+    run_concurrent(ordinary, jobs)
 
 
 
