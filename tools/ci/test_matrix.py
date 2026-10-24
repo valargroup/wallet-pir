@@ -231,6 +231,12 @@ def test_programs(artifacts, variant, packages, env):
             raise ValueError(f'duplicate executable: {identity}')
         actual.add(identity)
         args = []
+        if variant == 'transparent' and identity in {
+                ('pir-query-server', 'txid_sharded'),
+                ('pir-query-server', 'revisions_and_cache')}:
+            # These cases share the process-wide validator. Another case's
+            # admitted queries must not starve a bounded withdrawal assertion.
+            args = ['--test-threads=1']
         if variant == 'reference' and identity == ('enhance-shared', 'enhance_shared'):
             args = list(REFERENCE_LIB_FILTERS)
         if variant == 'reference' and identity == ('pir-query-server', 'pir_query_server'):
