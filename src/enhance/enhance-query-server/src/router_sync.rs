@@ -4,7 +4,9 @@ use crate::{
     protocol::{self, digest, Manifest, QueryBinding},
     publication::{Object, METADATA_LIMIT},
     runtime::Packing,
-    synchronization::{Authority, Client, Config as SourceConfig, Error, Guard, Lease, Safety},
+    synchronization::{
+        Authority, Client, Config as SourceConfig, Deferral, Error, Guard, Lease, Pacing, Safety,
+    },
     worker::Evaluate,
     worker_sync::{Readiness, ReadinessRequest, Release, PIN_LIFETIME},
 };
@@ -187,6 +189,7 @@ impl PackingRouter {
     pub fn synchronizer(&self) -> Result<Synchronizer, Error> {
         Ok(Synchronizer {
             router: self.clone(),
+            pacing: Pacing::default(),
             client: Client::new(
                 &self.root,
                 &self.config.source,
@@ -482,6 +485,7 @@ pub struct Synchronizer {
     router: PackingRouter,
     client: Client,
     _ownership: tokio::sync::OwnedSemaphorePermit,
+    pacing: Pacing,
 }
 impl Synchronizer {
     async fn advance(&mut self) -> Result<(), Error> {
@@ -656,10 +660,7 @@ impl Synchronizer {
         let Some(peers) = self.router.peers(&manifest).await? else {
             return Ok(());
         };
-        let lease = self.client.authority(&manifest).await?;
-        if !lease.continues(&observed) {
-            return Err("router publication withdrawn while loading".into());
-        }
+        let lease = self.client.renew(&manifest, &observed).await?;
         let guard = self.router.authority.install(manifest.clone(), lease)?;
         guard.check()?;
         let loaded = Arc::new(Loaded {
@@ -704,18 +705,20 @@ impl Synchronizer {
     }
 }
 impl SyncTask for Synchronizer {
-    type Report = ();
+    type Report = Option<Deferral>;
     type Error = Error;
-    async fn synchronize(&mut self) -> Result<(), Error> {
-        self.poll_once().await
+    async fn synchronize(&mut self) -> Result<Option<Deferral>, Error> {
+        let result = self.poll_once().await;
+        self.pacing.finish("router", result)
     }
     async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+        let deadline = self.pacing.deadline(deadline);
         while tokio::time::Instant::now() < deadline {
             tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + MAINTENANCE)).await;
             self.router.maintain().await;
         }
     }
-    fn report(&self, result: &Result<(), Error>) {
+    fn report(&self, result: &Result<Option<Deferral>, Error>) {
         if let Err(error) = result {
             tracing::warn!(%error, "Enhance router synchronization deferred");
         }

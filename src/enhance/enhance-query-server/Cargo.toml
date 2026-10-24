@@ -43,6 +43,8 @@ tracing = "0.1"
 # Injected kernel faults and synthetic records drive the role regressions.
 enhance-shared = { path = "../enhance-shared", features = ["test-support"] }
 tempfile = "3"
+# Paused time drives the recovery cadence regressions.
+tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 
 

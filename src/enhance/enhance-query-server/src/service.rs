@@ -147,7 +147,8 @@ pub async fn run_worker_on(
         },
         config.matvec,
     )?;
-    let manager = pir_sync_manager::SyncManager::new(worker.synchronizer()?);
+    let manager = pir_sync_manager::SyncManager::new(worker.synchronizer()?)
+        .with_success_interval(crate::synchronization::RECOVERY_POLL);
     tokio::select! {
         result = crate::shutdown::serve_until(listener, worker.router(), shutdown) => result?,
         error = manager.run() => return Err(error),
@@ -171,7 +172,8 @@ pub async fn run_ingress_on(
         config.requests,
         config.uploads,
     )?;
-    let manager = pir_sync_manager::SyncManager::new(ingress.synchronizer()?);
+    let manager = pir_sync_manager::SyncManager::new(ingress.synchronizer()?)
+        .with_success_interval(crate::synchronization::RECOVERY_POLL);
     let public_app = ingress
         .public_router()
         .into_make_service_with_connect_info::<SocketAddr>();
@@ -209,7 +211,8 @@ pub async fn run_router_on(
         config.max_objects,
         config.requests,
     )?;
-    let manager = pir_sync_manager::SyncManager::new(router.synchronizer()?);
+    let manager = pir_sync_manager::SyncManager::new(router.synchronizer()?)
+        .with_success_interval(crate::synchronization::RECOVERY_POLL);
     let (notify, public_stop, control_stop) = stop_pair(shutdown);
     let _notify = notify;
     let serving = async move {
