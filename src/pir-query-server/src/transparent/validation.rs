@@ -381,7 +381,7 @@ impl Scope {
         drop(caches);
         Ok(Some(job))
     }
-    fn activate(&self) {
+    pub(crate) fn activate(&self) {
         self.activated.get_or_init(|| {
             let mut state = self.core.shared.state.lock().unwrap();
             for (_, jobs) in self.revisions.values() {

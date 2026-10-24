@@ -214,6 +214,7 @@ pub async fn run_with(
                 Some(listener) => listener,
                 None => tokio::net::TcpListener::bind(config.listen).await?,
             };
+            draining.start_serving();
             let stopped = stop.clone();
             let result = crate::supervision::supervise(
                 "history",

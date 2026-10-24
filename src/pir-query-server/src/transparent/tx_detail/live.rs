@@ -26,7 +26,7 @@ use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tower::ServiceExt;
 use transparent_shard::display::DisplayMap;
@@ -130,6 +130,7 @@ struct Inner {
     /// another worker is not this worker's to collect.
     collect_roots: Vec<PathBuf>,
     active: RwLock<Option<Active>>,
+    serving: AtomicBool,
     retired: RwLock<Vec<Active>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
     preparing: RwLock<Option<Preparing>>,
@@ -221,10 +222,15 @@ impl crate::transparent::activation::Adapter for DisplayActivation {
 
     fn install(&self, candidate: Candidate, named: BTreeSet<String>) {
         let inner = &self.0;
-        let old = inner.active.write().unwrap().replace(Active {
+        let mut active = inner.active.write().unwrap();
+        if inner.serving.load(Ordering::Acquire) {
+            candidate.state.start_validation();
+        }
+        let old = active.replace(Active {
             state: candidate.state,
             publication: candidate.publication,
         });
+        drop(active);
         // Predecessors stay answerable from resident state without remaining
         // residency obligations.
         if let Some(old) = old {
@@ -266,6 +272,7 @@ impl DisplayLive {
             record,
             collect_roots,
             active: RwLock::new(initial.map(|(state, publication)| Active { state, publication })),
+            serving: AtomicBool::new(false),
             retired: RwLock::new(Vec::new()),
             candidate: tokio::sync::Mutex::new(None),
             preparing: RwLock::new(None),
@@ -424,6 +431,18 @@ impl DisplayLive {
     /// failed every current revision. Reads only in-memory state.
     pub fn ready(&self) -> bool {
         self.ready_in(&self.0.active.read().unwrap())
+    }
+
+    /// Start query-prioritized artifact checks after the host opens its
+    /// listener. Future activated publications inherit this serving state.
+    pub fn start_serving(&self) {
+        // The lock also covers installation of a publication that completes
+        // after the listener opens with no active publication yet.
+        let active = self.0.active.read().unwrap();
+        self.0.serving.store(true, Ordering::Release);
+        if let Some(active) = &*active {
+            active.state.start_validation();
+        }
     }
 
     /// Waits until admitted work has ended; every snapshot shares the

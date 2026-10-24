@@ -39,18 +39,20 @@ async fn status(app: &Router, path: &str) -> StatusCode {
         .status()
 }
 
-/// A failed current revision withdraws provider readiness once background
-/// validation reaches it, and `typed` (the host's readiness) agrees.
+/// Background validation withdraws typed readiness without provider traffic.
+/// The provider response must subsequently agree with the host's readiness.
 pub async fn assert_current_withdrawn(app: Router, typed: impl Fn() -> bool) {
-    assert_eq!(status(&app, "/v1/ready").await, StatusCode::OK);
     tokio::time::timeout(Duration::from_secs(3), async {
-        while status(&app, "/v1/ready").await != StatusCode::SERVICE_UNAVAILABLE {
+        while typed() {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     })
     .await
     .expect("the current revision is checked and withdrawn");
-    assert!(!typed(), "typed readiness must agree with /v1/ready");
+    assert_eq!(
+        status(&app, "/v1/ready").await,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 }
 
 pub async fn assert_withdrawn(app: Router, failed: &str, healthy: &str, pending: bool) {

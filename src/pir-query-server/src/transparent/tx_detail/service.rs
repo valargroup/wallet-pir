@@ -308,6 +308,10 @@ impl DisplayState {
         self.validation().serves_current()
     }
 
+    pub(crate) fn start_validation(&self) {
+        self.validation().activate();
+    }
+
     fn validation(&self) -> &crate::transparent::validation::Scope {
         self.inner.validation.get_or_init(|| {
             let mut scope = crate::transparent::validation::Scope::default();

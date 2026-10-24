@@ -83,10 +83,15 @@ async fn retained_detail_artifacts_are_checked_and_stay_withdrawn_after_reopenin
 
 #[tokio::test]
 async fn a_failed_current_detail_artifact_withdraws_typed_readiness() {
+    detail_validation_without_traffic(false).await;
+    detail_validation_without_traffic(true).await;
+}
+
+async fn detail_validation_without_traffic(start_before_activation: bool) {
     let root = tempfile::tempdir().unwrap();
     let records = synth::records(4, 7);
     let shard = synth::write_shard(root.path(), &spec(0, 100, 110, false, ""), &records).unwrap();
-    let (dir, _) = synth::write_candidate(
+    let (dir, map_sha256) = synth::write_candidate(
         root.path(),
         &params(1),
         std::slice::from_ref(&shard),
@@ -100,11 +105,37 @@ async fn a_failed_current_detail_artifact_withdraws_typed_readiness() {
     let runtime = DisplayRuntime::new(config(), None);
     let state = DisplayState::build(set, &runtime).unwrap();
     assert!(state.serves_current_artifacts(), "no check ran yet");
-    let typed = state.clone();
-    artifact_validation::assert_current_withdrawn(router(state), move || {
-        typed.serves_current_artifacts()
-    })
-    .await;
+    use pir_query_server::transparent::tx_detail::live::DisplayLive;
+    let publication = DisplayPublication {
+        directory: dir,
+        map_sha256,
+    };
+    let initial = (!start_before_activation).then(|| (state, publication.clone()));
+    let live = DisplayLive::new(
+        runtime,
+        DisplayRole::RecentReplica,
+        3,
+        root.path().join("active.json"),
+        vec![],
+        initial,
+    )
+    .unwrap();
+    live.start_serving();
+    if start_before_activation {
+        live.command(DisplayCommand::Prepare {
+            expected: String::new(),
+            publication: publication.clone(),
+        })
+        .await
+        .unwrap();
+        live.command(DisplayCommand::Activate {
+            expected: String::new(),
+            map_sha256: publication.map_sha256,
+        })
+        .await
+        .unwrap();
+    }
+    artifact_validation::assert_current_withdrawn(live.router(), move || live.ready()).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

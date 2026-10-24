@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
 };
 use tower::ServiceExt;
 use transparent_shared::history::{
@@ -90,6 +93,7 @@ struct Preparing {
 }
 struct Inner {
     active: RwLock<Active>,
+    serving: AtomicBool,
     invalid: RwLock<BTreeSet<String>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
     preparing: RwLock<Option<Preparing>>,
@@ -168,13 +172,18 @@ impl crate::transparent::activation::Adapter for HistoryActivation {
 
     fn install(&self, candidate: Candidate, (): ()) {
         let inner = &self.0;
+        let mut active = inner.active.write().unwrap();
+        if inner.serving.load(Ordering::Acquire) {
+            candidate.state.start_validation();
+        }
         let old = std::mem::replace(
-            &mut *inner.active.write().unwrap(),
+            &mut *active,
             Active {
                 state: candidate.state,
                 publication: candidate.publication,
             },
         );
+        drop(active);
         // Normal predecessors remain available to in-flight wallets, but
         // only current and preparing assignments are residency obligations.
         old.state.stop_warming();
@@ -229,6 +238,7 @@ impl LiveService {
         }
         Ok(Self(Arc::new(Inner {
             active: RwLock::new(Active { state, publication }),
+            serving: AtomicBool::new(false),
             invalid: RwLock::new(invalid),
             candidate: tokio::sync::Mutex::new(None),
             preparing: RwLock::new(None),
@@ -494,6 +504,16 @@ impl LiveService {
                 .shards
                 .iter()
                 .any(|s| invalid.contains(&s.manifest_digest))
+    }
+
+    /// Start query-prioritized artifact checks after the host opens its
+    /// listener. Future activated publications inherit this serving state.
+    pub fn start_serving(&self) {
+        // Share the active-snapshot lock with installation so a replacement
+        // cannot fall between setting the flag and starting the current check.
+        let active = self.0.active.read().unwrap();
+        self.0.serving.store(true, Ordering::Release);
+        active.state.start_validation();
     }
 
     /// Waits until admitted work of every snapshot has ended; snapshots share
