@@ -19,8 +19,8 @@ Unit attribution comes from Cargo itself: in CI, stage.py adds
 --message-format=json to each Cargo build/check/clippy/test command it runs and
 logs only package name, version, source kind and the `fresh` flag of every
 compiler-artifact message. The fingerprint inventory (restored and remaining
-unit directories compared by content) is reported separately; it is not
-attribution, because restored units a job never needed stay unchanged.
+unit directories compared by name, size and mtime) is reported separately; it
+is not attribution, because restored units a job never needed stay unchanged.
 
 Records are sanitized: names, versions and digests, never environment values,
 tokens or absolute paths.
@@ -370,7 +370,12 @@ def restore_status(mode, cache_hit, refs, ref, default_ref='refs/heads/main', ex
 
 
 def snapshot(target):
-    """Content digest of every Cargo unit fingerprint directory in a target."""
+    """Identity of every Cargo unit fingerprint directory in a target.
+
+    Name, size and mtime distinguish a Cargo rewrite without reading fingerprint
+    bytes. The fast target holds thousands of those files, and hashing their
+    contents held the post-validation report for most of its step.
+    """
     target = Path(target)
     units = {}
     for directory in [*target.glob('*/.fingerprint/*'), *target.glob('*/*/.fingerprint/*')]:
@@ -379,8 +384,12 @@ def snapshot(target):
                 continue
             content = hashlib.sha256()
             for entry in sorted(directory.iterdir()):
-                if entry.is_file():
-                    content.update(entry.name.encode() + b'\0' + entry.read_bytes() + b'\0')
+                if not entry.is_file():
+                    continue
+                stat = entry.stat()
+                content.update(entry.name.encode() + b'\0')
+                content.update(str(stat.st_size).encode() + b'\0')
+                content.update(str(stat.st_mtime_ns).encode() + b'\0')
         except OSError:
             continue
         units[directory.relative_to(target).as_posix()] = content.hexdigest()[:16]
@@ -388,7 +397,7 @@ def snapshot(target):
 
 
 def inventory(before, after):
-    """Fingerprint directories at restore and job end, compared by content.
+    """Fingerprint directories at restore and job end, compared by identity.
 
     This is an inventory, not attribution: a unit Cargo rebuilt to identical
     fingerprints counts as unchanged, and restored units the job never needed

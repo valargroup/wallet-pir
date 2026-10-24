@@ -374,7 +374,8 @@ caps remain enforced. `OOMPolicy=kill`, `KillMode=control-group`, and
 an out-of-memory failure. Service stops allow 30 seconds before forced cleanup.
 Both services set `CARGO_BUILD_JOBS=4`. That variable is hashed into the
 persistent target identity, so on main's runner the fast compile step overrides
-it to one after setup; hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
+it to one after setup, using the same main-runner condition as the job's
+`runs-on`. Hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
 fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
 and reuses the existing target. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
@@ -643,7 +644,7 @@ features and output file names (basenames only), so `cargo check` (`.rmeta`) and
 any command reported it not fresh. Units no command needed are not counted. Cargo commands outside
 `stage.py` (for example `make` helper targets) are not attributed.
 `fingerprint_inventory` in `CI_CACHE_REPORT` compares fingerprint directories at
-restore and job end by content; it is an inventory, not attribution.
+restore and job end by name, size and mtime; it is an inventory, not attribution.
 
 `CI_STAGE_REPORT` sums leaf stage wall time: `compile_stage_seconds` covers whole
 compile/lint Cargo commands, including resolution, downloads, build scripts and

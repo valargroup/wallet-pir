@@ -48,26 +48,17 @@ pub async fn signal() {
 mod tests {
     use super::*;
     use axum::routing::get;
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test]
     async fn stopping_refuses_new_connections_and_finishes_accepted_requests() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        // The handler reports that it has accepted the request, then holds it
-        // open until the test has seen new connections refused.
-        let entered = Arc::new(tokio::sync::Notify::new());
-        let release = Arc::new(tokio::sync::Notify::new());
         let app = Router::new().route(
             "/slow",
-            get({
-                let (entered, release) = (entered.clone(), release.clone());
-                move || async move {
-                    entered.notify_one();
-                    release.notified().await;
-                    "done"
-                }
+            get(|| async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                "done"
             }),
         );
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
@@ -86,7 +77,7 @@ mod tests {
                     .await
             }
         });
-        entered.notified().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         stop.send(()).unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
         // A fresh connection is refused, which the router may retry elsewhere.
@@ -96,7 +87,6 @@ mod tests {
             .await
             .unwrap_err();
         assert!(refused.is_connect(), "{refused}");
-        release.notify_one();
         assert_eq!(accepted.await.unwrap().unwrap(), "done");
         server.await.unwrap().unwrap();
     }
