@@ -159,7 +159,8 @@ def expected_checks(document):
     checks = ['memory', 'swap', 'filesystems', 'certificate']
     checks += ['volume:' + v['path'] for v in document['required_volumes']]
     for unit in document['units']:
-        checks += ['unit:%s:%s' % (unit.lower(), kind) for kind in ('active', 'restarts', 'oom')]
+        kinds = ('active', 'restarts', 'oom') if unit.endswith('.service') else ('active',)
+        checks += ['unit:%s:%s' % (unit.lower(), kind) for kind in kinds]
     checks += ['hook:' + h['name'] for h in document['hooks']]
     if 'edge_metrics_url' in document:
         checks.append('edge')

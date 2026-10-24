@@ -53,6 +53,12 @@ class ObserverInventory(unittest.TestCase):
         document = monitoring.sidecar_document(dict(WORKER, required_volumes=[{'path': path, 'uuid': 'aaaa'}]))
         self.assertIn('volume:' + path, monitoring.expected_checks(document))
 
+    def test_non_service_units_only_require_active_state(self):
+        document = monitoring.sidecar_document(dict(WORKER, units=['worker.service', 'worker.socket', 'worker.timer']))
+        checks = [c for c in monitoring.expected_checks(document) if c.startswith('unit:')]
+        self.assertEqual(checks, ['unit:worker.service:active', 'unit:worker.service:restarts', 'unit:worker.service:oom',
+                                 'unit:worker.socket:active', 'unit:worker.timer:active'])
+
     def test_coverage_cli_accepts_static_enrollment_in_the_exported_monitoring_roster(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
