@@ -179,9 +179,9 @@ case deadline. The 8-core fast runner keeps that library in the pool with four
 build threads. The query host's Status cases finish before the pool. One
 generation prepare is a 96 MiB database, and overlapping that prepare with the
 Transparent publisher crosses the 30-second case deadline. On eight cores those cases form
-two groups, balanced so the long prepares are not all in one group, and the two
-groups overlap each other. The Enhance publication library runs in that same
-wave; it is a few seconds and still finishes before the pool. Below eight cores
+three groups, balanced so the long prepares are not all in one group, and the
+three groups overlap each other. That wave is the whole process limit, so the
+Enhance publication library returns to the pool. Below eight cores
 Status stays one program so the prepare keeps the machine and its process-local
 generation cache, and the Enhance publication library runs alone before the
 pool. Below eight

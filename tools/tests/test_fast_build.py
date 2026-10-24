@@ -117,9 +117,10 @@ class FastBuildTests(unittest.TestCase):
         hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
         with patch.object(fast_build, 'available_cpus', return_value=8):
             shards = fast_build.bounded_programs(status, hosted)
-        self.assertEqual(len(shards), 3)
+        self.assertEqual(len(shards), 4)
         self.assertFalse(any(case.startswith('status::') for case in shards[0]['args'][1:]))
         self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], hosted)
+        self.assertEqual(len(shards) - 1, 3)
         self.assertCountEqual([case for shard in shards[1:] for case in shard['args'][1:]], names)
         scheduled = fast_build.assign_status_lanes(shards, 'pir-query-server', ['lib'], hosted)
         self.assertFalse(scheduled[0].get('exclusive'))
@@ -137,6 +138,7 @@ class FastBuildTests(unittest.TestCase):
             'status::sync::tests::changed_material_during_loading_still_allows_forward_progress',
             'status::sync::tests::metadata_only_refresh_reuses_verified_material_under_live_authority',
             'status::sync::tests::a_candidate_activates_only_under_a_live_answer_for_its_exact_envelope',
+            'status::sync::tests::a_metadata_refresh_during_the_load_commits_the_loaded_material_as_latest',
             'status::sync::tests::router_commits_its_workers_retained_predecessor_and_releases_the_worker',
         }
         names = heavy | {f'status::sync::tests::case_{index:02d}' for index in range(30)}
@@ -146,8 +148,9 @@ class FastBuildTests(unittest.TestCase):
         with patch.object(fast_build, 'available_cpus', return_value=8):
             shards = fast_build.bounded_programs(status, hosted)
         lanes = [set(shard['args'][1:]) for shard in shards[1:]]
-        self.assertEqual(len(lanes), 2)
-        self.assertTrue(all(len(lane & heavy) == 2 for lane in lanes))
+        self.assertEqual(len(lanes), 3)
+        self.assertTrue(all(len(lane & heavy) <= 2 for lane in lanes))
+        self.assertEqual(set().union(*lanes) & heavy, heavy)
 
     def test_cgroup_quota_bounds_available_cpus(self):
         root = Path(self.directory.name) / 'cgroup'

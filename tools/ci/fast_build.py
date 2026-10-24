@@ -15,11 +15,12 @@ The Enhance and Transparent reader targets stay on this command: dropping
 selected. Test programs retain their package directory and Cargo environment.
 The filter library and the Enhance and Receiver runtime libraries run alone on
 fewer than eight cores, counting any cgroup CPU quota. On eight cores the query
-host's Status cases form two groups that overlap each other, and the Enhance
-publication library runs beside them; that wave finishes before the pool.
-Below eight cores Status stays one program so a generation prepare keeps the
-machine, and the Enhance publication library runs alone before the pool. The
-remaining programs share a pool of at most three processes.
+host's Status cases form three groups that overlap one another and finish
+before the pool. That wave is the whole process limit, so the Enhance
+publication library joins the pool. Below eight cores Status stays one program
+so a generation prepare keeps the machine, and the Enhance publication library
+runs alone before the pool. The remaining programs share a pool of at most
+three processes.
 """
 import json
 import os
@@ -78,8 +79,8 @@ def status_runs_alone(name, kinds, names):
 
     One generation prepare is a 96 MiB database. Sharing those cores with the
     pool, or with the publisher, pushes a single case past its budget. The
-    query host's Status groups therefore finish before either of those. Two
-    groups may overlap each other on an eight-core runner; their prepares are
+    query host's Status groups therefore finish before either of those. Three
+    groups overlap one another on an eight-core runner; their prepares are
     the long part of this program.
     """
     return (name == 'pir-query-server' and 'lib' in kinds
@@ -87,7 +88,7 @@ def status_runs_alone(name, kinds, names):
 
 
 def status_case_weight(name):
-    """Relative prepare cost, so two Status lanes finish together.
+    """Relative prepare cost, so the Status lanes finish together.
 
     The numbers follow the warm fast run's case times. Equal weights piled the
     long prepares onto one lane and the pool waited for that lane.
@@ -97,6 +98,7 @@ def status_case_weight(name):
         ('metadata_only_refresh_reuses_verified_material', 9),
         ('a_candidate_activates_only_under_a_live_answer', 9),
         ('router_commits_its_workers_retained_predecessor', 7),
+        ('a_metadata_refresh_during_the_load', 8),
         ('a_new_publication_during_authority_check', 4),
         ('consumer_restart_requires_https_authority', 4),
         ('resumed_candidates_are_rejected', 3),
@@ -369,11 +371,12 @@ def bounded_programs(program, names):
                     if name.startswith('history::controller::distribution_tests::')]
     status = [name for name in ordered if name.startswith('status::')]
     if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
-        # Every Status case prepares on every core, so never run more than the
-        # two Status groups at once; the host's other roles share one process.
-        # Below eight CPUs one group keeps the process-local generation cache
-        # and the whole machine, which is what holds a prepare under 30 seconds.
-        status_lanes = 2 if available_cpus() >= 8 and len(status) > 1 else 1
+        # Every Status case prepares on every core. Eight cores run three
+        # groups, which is the whole process limit, so those prepares overlap
+        # each other and the host's other roles stay in the pool. Below eight
+        # CPUs one group keeps the process-local generation cache and the
+        # whole machine, which is what holds a prepare under 30 seconds.
+        status_lanes = 3 if available_cpus() >= 8 and len(status) > 2 else 1
         remaining = sorted(names - set(status))
         partitions = [remaining, *balance_status_lanes(status, status_lanes)]
     elif program.get('package') == 'transparent-publisher' and distribution:

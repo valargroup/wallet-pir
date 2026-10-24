@@ -207,6 +207,43 @@ class ProgramTests(unittest.TestCase):
         self.assertEqual(order[0], 'hint')
         self.assertEqual(order[-1], 'ordinary')
 
+    def test_three_status_groups_finish_before_the_publisher_joins_the_pool(self):
+        order = []
+        lock = threading.Lock()
+        started = threading.Barrier(3, timeout=5)
+
+        def run(command, **kwargs):
+            name = command[0].rsplit('/', 1)[-1]
+            if name.startswith('status'):
+                with lock:
+                    self.assertNotIn('publisher', order)
+                    self.assertNotIn('ordinary', order)
+                started.wait()
+            elif name in ('publisher', 'ordinary'):
+                with lock:
+                    self.assertCountEqual(
+                        [seen for seen in order if seen.startswith('status')],
+                        ['status-a', 'status-b', 'status-c'])
+            with lock:
+                order.append(name)
+
+        programs = [
+            dict(executable='/deps/hint', directory='/p', package='p', version='1', args=[],
+                 exclusive=True),
+            dict(executable='/deps/publisher', directory='/p', package='enhance-publisher',
+                 version='1', args=[], exclusive=True),
+            *[dict(executable=f'/deps/status-{name}', directory='/p', package='pir-query-server',
+                   version='1', args=[], exclusive=True, exclusive_group='status')
+              for name in ('a', 'b', 'c')],
+            dict(executable='/deps/ordinary', directory='/p', package='p', version='1', args=[]),
+        ]
+        with patch.object(unit_tests, 'available_cpus', return_value=8), \
+                patch.object(unit_tests.subprocess, 'check_output', return_value='/rust/lib\n'), \
+                patch.object(unit_tests, 'run', side_effect=run):
+            unit_tests.execute(programs, 3)
+        self.assertEqual(order[0], 'hint')
+        self.assertGreater(order.index('publisher'), order.index('status-c'))
+
     def test_status_groups_stay_serial_below_eight_cores(self):
         seen = []
 

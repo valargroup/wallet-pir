@@ -87,16 +87,16 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
                 raise RuntimeError(f'{len(failures)} diagnostic test programs failed') from failures[0]
 
     def beside_status(program):
-        # The Enhance publication library is a few seconds. On eight cores it
-        # fits beside the two Status prepares and still finishes before the pool.
+        # The Enhance publication library is a few seconds. Two Status groups
+        # leave it a slot in their wave. Three groups already fill that wave.
         return (program.get('exclusive') and program['package'] == 'enhance-publisher'
                 and not program.get('integration'))
 
     # Encrypted HTTP fixtures retain their own concurrency. Keep their working
     # sets apart from other Rust programs before overlapping ordinary units.
-    # The two Status groups overlap each other on eight cores and still finish
-    # before the pool. Below eight cores they stay serial: one prepare already
-    # uses the whole machine.
+    # Status groups overlap one another on eight cores and still finish before
+    # the pool. Three groups fill the process limit. Below eight cores they stay
+    # serial: one prepare already uses the whole machine.
     serial = [program for program in programs
               if program.get('exclusive') and program.get('exclusive_group') != 'status'
               and not beside_status(program)]
@@ -106,7 +106,12 @@ def execute(programs, jobs, *, budget=False, test_threads=1):
     for program in serial:
         invoke(program)
     overlap_status = len(status) > 1 and available_cpus() >= 8
-    if overlap_status:
+    if overlap_status and len(status) >= 3:
+        # Three Status prepares already use the process limit. The Enhance
+        # publication library joins the pool after they finish.
+        ordinary = publisher + ordinary
+        run_concurrent(status, 3)
+    elif overlap_status:
         wave = status + publisher
         run_concurrent(wave, min(3, len(wave)))
     else:
