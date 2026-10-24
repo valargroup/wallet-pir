@@ -823,7 +823,7 @@ async fn autonomous_router_waits_for_workers_and_keeps_admitted_query_bound_duri
     ignore = "deployed geometry: qualification-tests"
 )]
 async fn autonomous_worker_pulls_rows_and_answers_after_update_and_restart() {
-    use enhance_query_server::worker::{Evaluate, Intermediate};
+    use pir_query_server::enhance::evaluation::{Evaluate, Intermediate};
     use enhance_shared::{
         client::QuerySession,
         prepared_packing,

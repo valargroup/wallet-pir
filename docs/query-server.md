@@ -6,12 +6,11 @@ Status, Transparent history, and transaction details. The host crate is
 reserves listeners and owns process shutdown. The host owns Status roles
 directly: role configuration, HTTP routes, admission, telemetry, the generation
 controller and publisher synchronization live in `pir_query_server::status`.
-`status-shared` supplies generation material and the wire protocol, and
-`status-query-server` supplies only the private router-worker messages; the
+`status-shared` supplies generation material and the wire protocol. The
+private router-worker messages live in `pir_query_server::status`, and the
 root owns the public route mounts of every product. Enhance roles,
-synchronization and HTTP surfaces live in `pir_query_server::enhance` in the
-same way, over `enhance-shared` material and `enhance-query-server` evaluation
-messages. Transparent roles, publication managers, activation, validation,
+synchronization, HTTP surfaces and private evaluation messages live in
+`pir_query_server::enhance`, over `enhance-shared` material. Transparent roles, publication managers, activation, validation,
 archive forwarding and HTTP surfaces live in `pir_query_server::transparent`
 over `transparent-shared` material. A Transparent provider selects its own
 holdings (the whole recent tier within its cache budget); fleet planning, file

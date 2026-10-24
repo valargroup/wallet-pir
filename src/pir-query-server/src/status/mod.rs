@@ -3,11 +3,12 @@
 //! The host checks publisher compatibility before opening role state, starts
 //! synchronization, then serves the supplied listeners. Dropping the role
 //! future aborts owned synchronization and wallet-listener tasks. Generation
-//! material, the wire protocol and peer messages stay in `status-shared` and
-//! `status-query-server`.
+//! material and the wire protocol stay in `status-shared`. The private
+//! router-worker messages live in [`peers`].
 mod admission;
 pub mod config;
 mod controller;
+mod peers;
 mod routes;
 mod serving;
 mod state;
@@ -28,8 +29,8 @@ pub const PUBLIC_ROUTES: pir_control::public_routes::PublicMount =
 
 pub use config::RoleConfig;
 pub use controller::Controller;
+pub use peers::Role;
 pub use state::{Service, PER_CLIENT_CONCURRENCY};
-pub use status_query_server::distributed::Role;
 use status_shared::publication::{attempt_limit, Failure, PREFIX};
 
 fn source(config: &RoleConfig) -> Result<pir_sync_manager::HttpsSource, Failure> {

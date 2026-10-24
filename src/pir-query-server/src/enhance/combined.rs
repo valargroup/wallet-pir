@@ -255,7 +255,7 @@ mod tests {
     async fn local_refusals_before_admission_are_typed_as_not_accepted() {
         let root = tempfile::tempdir().unwrap();
         let role = combined(root.path());
-        let request = enhance_query_server::worker::Evaluate {
+        let request = crate::enhance::evaluation::Evaluate {
             binding: Some(vec![0; enhance_shared::protocol::HEADER_BYTES]),
             generation: 1,
             shard_id: 0,

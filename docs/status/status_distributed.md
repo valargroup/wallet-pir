@@ -126,7 +126,7 @@ that share every prepared allocation with the active view count as one material;
 their pins permit loading the next material, and metadata refreshes can advance.
 The private provider status distinguishes waiting for authority, worker data,
 worker recovery, retention, a worker pin, a worker commit, or a publication.
-Debug tracing in `status_query_server::service::sync` records the deferral reason
+Debug tracing in `pir_query_server::status::sync` records the deferral reason
 and fetch, load, revalidation, authority-check and commit durations. Logs contain
 role and phase names, not wallet queries or session identifiers.
 

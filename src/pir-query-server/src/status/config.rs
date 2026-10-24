@@ -1,5 +1,5 @@
 //! Operator configuration for one Status role hosted by `pir-query-server`.
-use status_query_server::distributed::{loopback_origin, Failure, Role};
+use super::peers::{loopback_origin, Failure, Role};
 use std::{net::SocketAddr, path::PathBuf};
 
 /// One private Status role, run by `pir-query-server`.

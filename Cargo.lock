@@ -893,14 +893,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enhance-query-server"
-version = "0.0.1"
-dependencies = [
- "enhance-shared",
- "serde",
-]
-
-[[package]]
 name = "enhance-shared"
 version = "0.0.1"
 dependencies = [
@@ -2181,7 +2173,6 @@ dependencies = [
  "base64",
  "clap",
  "enhance-publisher",
- "enhance-query-server",
  "enhance-shared",
  "hex",
  "libc",
@@ -2305,7 +2296,6 @@ dependencies = [
  "axum",
  "base64",
  "clap",
- "enhance-query-server",
  "enhance-shared",
  "hdrhistogram",
  "hex",
@@ -2326,7 +2316,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "status-query-server",
  "status-shared",
  "sysinfo",
  "tempfile",
@@ -3328,19 +3317,6 @@ dependencies = [
  "zakura-pir-client",
  "zakura-pir-publisher",
  "zakura-server-chain",
-]
-
-[[package]]
-name = "status-query-server"
-version = "0.0.1"
-dependencies = [
- "pir-publication",
- "serde",
- "status-query-server",
- "status-shared",
- "url",
- "zakura-pir-client",
- "zakura-pir-query-server",
 ]
 
 [[package]]

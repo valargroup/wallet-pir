@@ -64,25 +64,25 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('pir-query-server/status', host_features)
         self.assertNotIn('pir-query-server/native-reinspiring', host_features)
         self.assertNotIn('reference:enhance-publisher:test:http', reference)
-        native = matrix.package_features('enhance-query-server', contexts['native'], packages)
-        cuda = matrix.package_features('enhance-query-server', contexts['cuda'], packages)
-        self.assertIn('enhance-query-server/native-reinspiring', native)
-        self.assertNotIn('enhance-query-server/cuda', native)
-        self.assertIn('enhance-query-server/native-reinspiring', cuda)
-        self.assertIn('enhance-query-server/cuda', cuda)
-        reference_features = matrix.package_features('enhance-query-server', contexts['reference'], packages)
-        self.assertEqual(reference_features, ['enhance-query-server/qualification-tests',
-                                              'enhance-shared/client',
-                                              'enhance-shared/qualification-tests'])
+        native = matrix.package_features('enhance-shared', contexts['native'], packages)
+        cuda = matrix.package_features('enhance-shared', contexts['cuda'], packages)
+        self.assertIn('enhance-shared/native-reinspiring', native)
+        self.assertNotIn('enhance-shared/cuda', native)
+        self.assertIn('enhance-shared/native-reinspiring', cuda)
+        self.assertIn('enhance-shared/cuda', cuda)
+        reference_features = matrix.package_features('enhance-shared', contexts['reference'], packages)
+        self.assertIn('enhance-shared/client', reference_features)
+        self.assertIn('enhance-shared/qualification-tests', reference_features)
+        self.assertNotIn('enhance-shared/native-reinspiring', reference_features)
         self.assertIn('pir-e2e-tests/qualification-tests', contexts['reference']['features'])
-        self.assertIn('status-query-server/qualification-tests', contexts['reference']['features'])
-        self.assertIn('status-query-server/qualification-tests', contexts['native']['features'])
+        self.assertIn('status-shared/qualification-tests', contexts['reference']['features'])
+        self.assertIn('status-shared/qualification-tests', contexts['native']['features'])
         self.assertNotIn('enhance-publisher/native-reinspiring', native)
         commands = matrix.cargo_commands(registry['enhance-cuda-check']['targets'], contexts, targets, packages)
         self.assertEqual(len(commands), 1)
         command = commands[0][3]
         self.assertEqual({command[i + 1] for i, arg in enumerate(command) if arg == '-p'},
-                         {'enhance-shared', 'enhance-query-server',
+                         {'enhance-shared',
                           'enhance-pir-load-test', 'pir-query-server', 'pir-cuda'})
         self.assertEqual(command[command.index('--features') + 1], ','.join(matrix.CUDA))
         self.assertTrue(all('--all-targets' in cmd[3] for cmd in commands))
