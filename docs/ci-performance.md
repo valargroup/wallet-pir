@@ -377,7 +377,10 @@ persistent target identity, so on main's runner the fast compile step overrides
 it to one after setup, using the same main-runner condition as the job's
 `runs-on`. Hosted PR runners (4 CPUs, 16 GB) keep four. Two concurrent release-fast rustc processes still exceed the
 fast 6 GiB cap and the OOM kill drops the runner; one stays inside the cap
-and reuses the existing target. A build cannot occupy the fast service's queue, but both services
+and reuses the existing target. Before that compile, main deletes incremental
+sessions in the warm target. A killed rustc can leave a session that the next
+compile of the same crate grows past 6 GiB. Fingerprints and finished artifacts
+stay, so an unchanged crate is not rebuilt. A build cannot occupy the fast service's queue, but both services
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes CPU release builds, while full tests and lint
 use independent hosted Ubuntu runners with their own lane/scope caches. Initial

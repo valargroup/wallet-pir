@@ -81,6 +81,36 @@ def incremental_candidates(root, *, age=86400, now=None, references=()):
     return sorted(result)
 
 
+def drop_target_incremental(target):
+    """Remove incremental sessions from one Cargo target.
+
+    A rustc killed by the fast runner's memory cap can leave a session that the
+    next compile of that crate grows past the cap. Fingerprints and finished
+    artifacts stay, so an unchanged crate is still fresh.
+    """
+    target = Path(target)
+    if target.is_symlink() or not target.is_dir():
+        raise ValueError('Cargo target must be a real directory')
+    removed = []
+    for profile in target.iterdir():
+        if not profile.is_dir() or profile.is_symlink():
+            continue
+        incremental = profile / 'incremental'
+        if not incremental.is_dir() or incremental.is_symlink():
+            continue
+        for crate in list(incremental.iterdir()):
+            removed.append(f'{profile.name}/incremental/{crate.name}')
+            if crate.is_symlink() or not crate.is_dir():
+                crate.unlink()
+            else:
+                shutil.rmtree(crate)
+        try:
+            incremental.rmdir()
+        except OSError:
+            pass
+    return sorted(removed)
+
+
 def maintain(root, *, apply=False, keep=2, minimum_free=10 * 1024**3, diagnostics=None):
     root = root.resolve(strict=True)
     with (root / '.maintenance.lock').open('a') as lock:
@@ -115,12 +145,20 @@ def maintain(root, *, apply=False, keep=2, minimum_free=10 * 1024**3, diagnostic
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--root', type=Path)
+    parser.add_argument('--drop-incremental-target', type=Path)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--keep', type=int, default=2)
     parser.add_argument('--minimum-free-gib', type=int, default=10)
     parser.add_argument('--diagnostics', type=Path)
     args = parser.parse_args()
+    if args.drop_incremental_target:
+        if args.root is not None or args.apply or args.diagnostics is not None:
+            parser.error('--drop-incremental-target does not combine with cache maintenance')
+        print(json.dumps({'incremental': drop_target_incremental(args.drop_incremental_target)}, sort_keys=True))
+        return
+    if args.root is None:
+        parser.error('--root is required')
     if args.keep < 1 or args.minimum_free_gib < 0:
         parser.error('keep must be positive and free space must be nonnegative')
     if args.root.is_symlink():

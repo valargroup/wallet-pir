@@ -82,6 +82,11 @@ jobs:
       - name: Require an existing warm build cache on main
         if: github.event_name == 'push' && steps.affected.outputs.rust == 'true'
         run: umask 022 && python3 tools/ci/cargo_cache.py require-warm --lane fast
+      - name: Drop incremental sessions from the warm target
+        # A rustc killed by this runner's 6 GiB cap leaves a session the next
+        # link can grow past the cap. Fingerprints and finished artifacts stay.
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.hosted && steps.affected.outputs.rust == 'true'
+        run: python3 tools/ci/runner_storage.py --drop-incremental-target "$CARGO_TARGET_DIR"
       - name: Run affected fast checks
         env:
           BASE: ${{ env.FAST_BASE }}

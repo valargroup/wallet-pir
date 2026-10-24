@@ -296,6 +296,32 @@ class StorageTests(unittest.TestCase):
             self.assertTrue(opened.is_dir())
             self.assertEqual(binary.read_bytes(), b'compiled')
 
+    def test_fast_target_drops_incremental_sessions_and_keeps_finished_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory).resolve()
+            profile = target / 'release-fast'
+            incremental = profile / 'incremental'
+            poisoned = incremental / 'poisoned'
+            poisoned.mkdir(parents=True)
+            (poisoned / 'session').mkdir()
+            linked = incremental / 'linked'
+            linked.symlink_to(poisoned, target_is_directory=True)
+            fingerprint = profile / '.fingerprint' / 'crate'
+            fingerprint.mkdir(parents=True)
+            (fingerprint / 'dep-info').write_bytes(b'fresh')
+            binary = profile / 'query-server'
+            binary.write_bytes(b'compiled')
+            other = target / 'linked-profile'
+            other.symlink_to(profile, target_is_directory=True)
+            removed = storage.drop_target_incremental(target)
+            self.assertEqual(removed, ['release-fast/incremental/linked', 'release-fast/incremental/poisoned'])
+            self.assertFalse(poisoned.exists())
+            self.assertFalse(linked.exists())
+            self.assertFalse(incremental.exists())
+            self.assertEqual((fingerprint / 'dep-info').read_bytes(), b'fresh')
+            self.assertEqual(binary.read_bytes(), b'compiled')
+            self.assertTrue(other.is_symlink())
+
     def test_last_used_marker_preserves_a_recently_reused_old_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
