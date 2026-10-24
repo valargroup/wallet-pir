@@ -957,6 +957,14 @@ class CacheIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'compiler'):
             self.ids(tools=dict(TOOLS, rustc=None))
 
+    def test_query_candidate_uses_a_classified_cache_partition(self):
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        candidate = workflow.split('\n  query-candidate:\n', 1)[1].split('\n  publisher-candidate:\n', 1)[0]
+        match = re.search(r'lane: ([\w-]+)\s+scope: ([\w-]+)', candidate)
+        self.assertIsNotNone(match, 'The query candidate must declare its build cache partition')
+        lane, scope = match.groups()
+        self.assertNotEqual(self.ids(lane, scope), self.ids('release', 'publisher'))
+
     def test_record_is_sanitized(self):
         secret = 'value-that-must-not-appear'
         toolchain, full = cargo_cache.identity('fast', 'affected', TOOLS, dict(ENV, CARGO_BUILD_RUSTC_WRAPPER=secret), self.root)
