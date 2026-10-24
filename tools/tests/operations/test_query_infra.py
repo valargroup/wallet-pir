@@ -64,6 +64,15 @@ class ProvisionPlan(unittest.TestCase):
             with self.subTest(resource=name, field=field), self.assertRaises(ValueError):
                 initial_plan(value, PROJECT)
 
+    def test_a_noop_cannot_hide_a_fleet_move_or_import(self):
+        for extra in ({'previous_address': 'legacy.host'},
+                      {'change': {'actions': ['no-op'], 'importing': {'id': 'existing-id'}}}):
+            value = plan()
+            value['resource_changes'].append({'mode': 'managed', 'address': 'existing.host',
+                                             'change': {'actions': ['no-op']}, **extra})
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                initial_plan(value, PROJECT)
+
 
 if __name__ == '__main__':
     unittest.main()

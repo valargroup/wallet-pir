@@ -27,6 +27,8 @@ def initial_plan(plan, project_id):
         if resource.get('mode') != 'managed':
             continue
         change = resource['change']
+        if resource.get('previous_address') or change.get('importing'):
+            raise ValueError('activate existing fleet source separately before provisioning the query node')
         if change['actions'] == ['no-op']:
             continue
         address = resource['address']
