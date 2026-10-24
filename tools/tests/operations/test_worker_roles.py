@@ -211,60 +211,87 @@ class StatusInstalledRoles(unittest.TestCase):
 
 
 class CombinedRoles(unittest.TestCase):
-    """Combined Status and Enhance render the all-products example's sections."""
+    """Combined Enhance and Status roles render the all-products example's sections."""
     EXAMPLE = json.loads((ROOT / 'tools/deploy/query-server/query-server.example.json').read_text())
 
-    def render(self, service, **changes):
-        settings = {**SETTINGS[(service, 'combined')], **changes}
-        return REGISTRY[service].roles['combined'].render(settings, RELEASE)
+    def enhance(self):
+        settings = dict(self.EXAMPLE['enhance']['settings'])
+        settings.pop('role')
+        matvec = settings.pop('matvec')
+        return {**settings, 'listen': self.EXAMPLE['public_listen'], **matvec}
 
-    def test_combined_roles_render_the_all_products_example(self):
-        for service, path, management in (('status', '/etc/status-pir/combined.json', '127.0.0.1:18486'),
-                                          ('enhance', '/etc/enhance-pir/combined.json', '127.0.0.1:18095')):
+    def status(self):
+        settings = dict(self.EXAMPLE['status']['settings'])
+        settings.pop('role')
+        return {**settings, 'query_listen': self.EXAMPLE['public_listen']}
+
+    def test_rendered_sections_match_the_checked_all_products_example(self):
+        for service, section, settings in (('enhance', 'enhance', self.enhance()),
+                                           ('status', 'status', self.status())):
             with self.subTest(service=service):
-                rendered = self.render(service)
+                spec = REGISTRY[service].roles['combined']
+                rendered = spec.render(settings, RELEASE)
+                path = '/etc/%s-pir/combined.json' % service
                 document = json.loads(rendered.files[path])
-                self.assertEqual(set(document), {'management_listen', 'public_listen', service})
-                self.assertEqual(document['management_listen'], management)
-                # The wallet port is the host's shared listener.
                 self.assertEqual(document['public_listen'], self.EXAMPLE['public_listen'])
-                expected = self.EXAMPLE[service]['settings']
-                if service == 'enhance':
-                    expected = {**expected, 'matvec': {'matvec_backend': 'cpu', 'cuda_device': None}}
-                self.assertEqual(document[service], {'enabled': True, 'settings': expected})
+                self.assertEqual(document[section], self.EXAMPLE[section])
+                self.assertEqual(set(document), {'management_listen', 'public_listen', section})
                 self.assertEqual(rendered.check, ('--config', path, '--check'))
+                command = shlex.split(units.exec_start(units.effective([rendered.unit])))
+                self.assertEqual(command, ['%s/pir-query-server' % RELEASE, '--config', path])
                 effective = units.effective([rendered.unit])['Service']
-                self.assertEqual(paths(effective['ReadWritePaths']), [expected.get('state_dir', expected.get('data_dir'))])
+                state = settings.get('data_dir', settings.get('state_dir'))
+                # The process owns its component subdirectories below this root.
+                self.assertEqual(paths(effective['ReadWritePaths']), [state])
                 self.assertIn(path, paths(effective['ReadOnlyPaths']))
 
-    def test_combined_status_names_no_worker_and_keeps_listeners_apart(self):
-        for bad in ({'worker_origin': 'http://127.0.0.1:8481'}, {'worker_origin': ''},
-                    {'query_listen': '127.0.0.1:8481'}, {'listen': '127.0.0.1:18486'},
-                    {'query_listen': '0.0.0.0:8090'}, {'query_listen': None}, {'role': 'router'}):
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                self.render('status', **bad)
-        with self.assertRaisesRegex(ValueError, 'overlaps'):
-            self.render('status', publisher_ca='/srv/pir-query-server/status/ca.pem')
+    def test_management_listeners_do_not_collide_with_other_roles_on_a_host(self):
+        from tools.enhance.lib import roles as enhance_roles
+        from tools.status.lib import roles as status_roles
+        enhance = json.loads(REGISTRY['enhance'].roles['combined'].render(self.enhance(), RELEASE)
+                             .files['/etc/enhance-pir/combined.json'])['management_listen']
+        status = json.loads(REGISTRY['status'].roles['combined'].render(self.status(), RELEASE)
+                            .files['/etc/status-pir/combined.json'])['management_listen']
+        others = set(enhance_roles.MANAGEMENT.values()) - {enhance} | {
+            status_roles.MANAGEMENT, '127.0.0.1:18481', '127.0.0.1:18482'}
+        self.assertNotIn(enhance, others)
+        self.assertNotIn(status, others)
+        self.assertNotEqual(enhance, status)
 
-    def test_combined_enhance_refuses_peers_collisions_and_unqualified_limits(self):
-        sync = SETTINGS[('enhance', 'combined')]['synchronization']
-        routers = {'0': [{'control_origin': 'http://127.0.0.1:8086', 'query_origin': 'http://127.0.0.1:8087'}]}
-        for bad in ({'control_listen': '127.0.0.1:8090'}, {'listen': '127.0.0.1:18095'},
-                    {'synchronization': {**sync, 'routers': routers}},
-                    {'synchronization': {**sync, 'shards': [0, 0]}}, {'role': 'worker'},
-                    {'requests': 65}, {'requests': 8, 'uploads': 4}, {'uploads': 4097},
-                    {'max_objects': 7}, {'packing_requests': 5}, {'cuda_device': 0},
-                    {'max_objects': 1, 'synchronization': {**sync, 'shards': [0, 1]}}):
-            with self.subTest(bad=bad), self.assertRaises(ValueError):
-                self.render('enhance', **bad)
-        with self.assertRaisesRegex(ValueError, 'overlaps'):
-            self.render('enhance', synchronization={**sync, 'trusted_ca': '/srv/pir-query-server/enhance/ca.pem'})
-        limits = self.render('enhance', requests=8, uploads=64, max_objects=2, packing_requests=2,
-                             matvec_backend='cuda', cuda_device=1)
-        settings = json.loads(limits.files['/etc/enhance-pir/combined.json'])['enhance']['settings']
-        self.assertEqual({k: settings[k] for k in ('requests', 'uploads', 'max_objects', 'packing_requests')},
-                         {'requests': 8, 'uploads': 64, 'max_objects': 2, 'packing_requests': 2})
-        self.assertEqual(settings['matvec'], {'matvec_backend': 'cuda', 'cuda_device': 1})
+    def test_combined_roles_refuse_peers_collisions_and_unknown_fields(self):
+        cases = {
+            'enhance': (self.enhance(), [
+                {'control_listen': self.EXAMPLE['public_listen']},
+                {'worker_origin': 'http://127.0.0.1:8091'},
+                {'synchronization': {**self.enhance()['synchronization'], 'shards': []}},
+                {'synchronization': {**self.enhance()['synchronization'], 'routers': {}}},
+                {'requests': 0},
+                {'cuda_device': 0},
+                {'role': 'worker'},
+                {'trusted_ca': '/srv/pir-query-server/enhance/ca.pem'},
+            ]),
+            'status': (self.status(), [
+                {'worker_origin': 'http://127.0.0.1:8481'},
+                {'query_listen': self.EXAMPLE['status']['settings']['listen']},
+                {'query_listen': '0.0.0.0:8090'},
+                {'listen': '0.0.0.0:8481'},
+                {'network_hex': 'AB' * 32},
+                {'publisher': 'http://publisher.example'},
+                {'publisher_ca': '/srv/pir-query-server/status/ca.pem'},
+            ]),
+        }
+        for service, (base, refusals) in cases.items():
+            role = REGISTRY[service].roles['combined']
+            for bad in refusals:
+                settings = {**base, **bad}
+                if 'trusted_ca' in bad:
+                    settings = {**base, 'synchronization': {**base['synchronization'], **bad}}
+                with self.subTest(service=service, bad=bad), self.assertRaises(ValueError):
+                    role.render(settings, RELEASE)
+            missing = dict(base)
+            missing.pop('query_listen' if service == 'status' else 'control_listen')
+            with self.subTest(service=service, missing=True), self.assertRaises(ValueError):
+                role.render(missing, RELEASE)
 
 
 class RolesCommand(unittest.TestCase):

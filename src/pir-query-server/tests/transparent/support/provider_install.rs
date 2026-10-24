@@ -296,7 +296,11 @@ async fn independent_processes_recover_during_peer_restart_and_outages() {
 /// to independent wallet clients through one `public_listen`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_public_listener_serves_history_and_status_wallets() {
-    installation_case(Case::SharedListener { detail: false }).await;
+    installation_case(Case::SharedListener {
+        detail: false,
+        enhance: false,
+    })
+    .await;
 }
 /// The same host also serves transaction details from their own HTTPS
 /// publisher. Its two native display runtime builds exceed the ordinary
@@ -304,13 +308,34 @@ async fn one_public_listener_serves_history_and_status_wallets() {
 #[cfg(feature = "qualification-tests")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn one_public_listener_serves_history_detail_and_status_wallets() {
-    installation_case(Case::SharedListener { detail: true }).await;
+    installation_case(Case::SharedListener {
+        detail: true,
+        enhance: false,
+    })
+    .await;
+}
+/// All four products on one spawned host's `public_listen`: a combined
+/// Enhance role joins history, transaction details and combined Status, and
+/// each unchanged wallet decodes real encrypted answers through that listener.
+/// Native Enhance and display preparation exceed the ordinary per-case budget.
+#[cfg(all(
+    feature = "qualification-tests",
+    feature = "enhance-tests",
+    feature = "native-reinspiring"
+))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_public_listener_serves_all_four_products() {
+    installation_case(Case::SharedListener {
+        detail: true,
+        enhance: true,
+    })
+    .await;
 }
 enum Case {
     Restart,
     Invalid,
     Independent,
-    SharedListener { detail: bool },
+    SharedListener { detail: bool, enhance: bool },
 }
 async fn installation_case(case: Case) {
     let root = tempfile::tempdir().unwrap();
@@ -653,9 +678,9 @@ async fn installation_case(case: Case) {
         return;
     }
     let args = &check[..check.len() - 1];
-    if let Case::SharedListener { detail } = &case {
+    if let Case::SharedListener { detail, enhance } = &case {
         corrupt_runtime.store(false, std::sync::atomic::Ordering::Release);
-        shared_listener(root, &binary, &document, &origin, &set, *detail).await;
+        shared_listener(root, &binary, &document, &origin, &set, *detail, *enhance).await;
         publisher_server.stop().await;
         archive_server.stop().await;
         return;
@@ -897,8 +922,9 @@ async fn independent_processes(
     other.wait().await.unwrap();
 }
 
-/// Status and Transparent history wallets, and with `detail` transaction
-/// detail wallets, share one spawned host's `public_listen`: real encrypted
+/// Status and Transparent history wallets, with `detail` transaction detail
+/// wallets and with `enhance` combined Enhance wallets, share one spawned
+/// host's `public_listen`: real encrypted
 /// answers decode through canonical and deployed paths, while private,
 /// management and disabled product routes stay off that listener.
 async fn shared_listener(
@@ -908,8 +934,24 @@ async fn shared_listener(
     origin: &str,
     set: &ShardSet,
     detail: bool,
+    enhance: bool,
 ) {
     use super::status_publisher::StatusPublisher;
+    // Enhance publication has no freshness limit; prepare it before the
+    // publications that do.
+    #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+    let enhance = match enhance {
+        true => Some(super::all_products::Enhance::start().await),
+        false => None,
+    };
+    #[cfg(not(all(feature = "enhance-tests", feature = "native-reinspiring")))]
+    let enhance: Option<std::convert::Infallible> = {
+        assert!(
+            !enhance,
+            "the all-products case needs the native Enhance wallet"
+        );
+        None
+    };
     // Display runtimes take a while to build; publish them first so the
     // Status publication is still within its freshness limit at startup.
     let display = match detail {
@@ -940,6 +982,10 @@ async fn shared_listener(
             "publisher_genesis": transparent_shared::tx_detail::synth::genesis_hash(),
             "publisher_ca": display.certificate,
         }});
+    }
+    #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+    if let Some(enhance) = &enhance {
+        document["enhance"] = enhance.section(root);
     }
     let config = write_config(root, "shared", &document);
     let mut child = start(binary, &config_args(&config, false), root, origin).await;
@@ -1016,6 +1062,16 @@ async fn shared_listener(
             assert_eq!(response.status(), 200, "{path}");
         }
     }
+    // Enhance: the unchanged native wallet decodes every queried record from
+    // the combined role through both its deployed and canonical prefixes.
+    #[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+    if let Some(enhance) = &enhance {
+        enhance.wallet(&public_origin).await;
+        let control = reqwest::get(format!("http://{}/internal/health", enhance.control))
+            .await
+            .unwrap();
+        assert!(control.status().is_success());
+    }
     // Private product, management and disabled-product routes are absent.
     let mut private = vec![
         "/v1/provider-status",
@@ -1026,8 +1082,12 @@ async fn shared_listener(
         "/metrics",
         "/control/health",
         "/internal/health",
-        "/enhance/v1/init",
+        "/internal/metrics",
+        "/internal/evaluate",
     ];
+    if enhance.is_none() {
+        private.extend(["/enhance/v1/init", "/v1/enhance/init"]);
+    }
     if display.is_none() {
         private.extend(detail_paths);
     }

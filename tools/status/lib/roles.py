@@ -39,22 +39,15 @@ def report(service, role, health, ready_status):
                           'ready': 'unsupported'}}
 
 
-# Loopback management of a combined role, apart from the worker's and the
-# router's so it can be installed beside them while a host moves over.
-COMBINED_MANAGEMENT = '127.0.0.1:18486'
-
-
 def _local_role(settings, *, release, template, role, external=False):
     """Render a Status HTTPS consumer and its private evaluation listeners."""
     from urllib.parse import urlsplit
     # A router or combined role answers wallets on the host's `public_listen`,
     # rendered from the inventory's `query_listen`; its own `listen` stays
-    # private. A combined role evaluates locally and names no worker.
-    wallets = role in ('router', 'combined')
-    required = ('network_hex', 'state_dir', 'listen', 'publisher') + (('query_listen',) if wallets else ())
+    # private. A combined role evaluates in process and names no worker.
+    wallet = role in ('router', 'combined')
+    required = ('network_hex', 'state_dir', 'listen', 'publisher') + (('query_listen',) if wallet else ())
     optional = ('publisher_ca',) + (() if role == 'combined' else ('worker_origin',))
-    if role == 'combined' and 'worker_origin' in settings:
-        raise ValueError('a combined Status role evaluates locally and names no worker_origin')
     config = settings_of(settings, required, optional)
     network = config['network_hex']
     if not isinstance(network, str) or len(network) != 64 or any(c not in '0123456789abcdef' for c in network):
@@ -67,6 +60,8 @@ def _local_role(settings, *, release, template, role, external=False):
     body['state_dir'] = directory(body['state_dir'])
     if role != 'combined':
         body.setdefault('worker_origin', 'http://' + body['listen'])
+    if wallet and body['query_listen'] == body['listen']:
+        raise ValueError('query_listen and listen must differ')
     readonly = []
     if 'publisher_ca' in body:
         body['publisher_ca'] = directory(body['publisher_ca'])
@@ -84,13 +79,9 @@ def _local_role(settings, *, release, template, role, external=False):
         host, port = value.rsplit(':', 1)
         if not ipaddress.ip_address(host.strip('[]')).is_loopback or not 1 <= int(port) <= 65535:
             raise ValueError(name + ' must use a loopback address and a valid port')
-    if body.get('query_listen') == body['listen']:
-        raise ValueError('query_listen and listen must be distinct listeners')
     path = CONFIG if external else '/etc/status-pir/' + role + '.json'
-    management = (MANAGEMENT if external else COMBINED_MANAGEMENT if role == 'combined'
-                  else '127.0.0.1:' + ('18481' if role == 'worker' else '18482'))
-    if management in (body['listen'], body.get('query_listen')):
-        raise ValueError('listen and query_listen must not take the management listener ' + management)
+    management = MANAGEMENT if external else '127.0.0.1:' + {'worker': '18481', 'router': '18482',
+                                                             'combined': '18487'}[role]
     document = {'management_listen': management}
     if 'query_listen' in body:
         document['public_listen'] = body.pop('query_listen')
@@ -107,15 +98,15 @@ def worker(settings, *, release, template=None):
     return _local_role(settings, release=release, template=template, role='worker')
 
 
+def combined(settings, *, release, template=None):
+    """Render packing and evaluation over one authorized inventory in one process."""
+    if template is None:
+        template = TEMPLATE.read_text()
+    return _local_role(settings, release=release, template=template, role='combined')
+
+
 def router(settings, *, release, template=None):
     """Render the existing packing router and its wallet listener configuration."""
     if template is None:
         template = (ROOT / 'tools/status/deploy/status-router.service.in').read_text()
     return _local_role(settings, release=release, template=template, role='router')
-
-
-def combined(settings, *, release, template=None):
-    """Render worker and router in one process: wallets on `query_listen`."""
-    if template is None:
-        template = (ROOT / 'tools/status/deploy/status-combined.role.service').read_text()
-    return _local_role(settings, release=release, template=template, role='combined')

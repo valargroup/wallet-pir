@@ -8,6 +8,10 @@
       "control_listen": "127.0.0.1:8096",
       "data_dir": "/srv/pir-query-server/enhance",
       "sealed_shards": 6,
+      "matvec": {
+        "matvec_backend": "cpu",
+        "cuda_device": null
+      },
       "synchronization": {
         "publisher_origin": "https://enhance-pir.valargroup.dev",
         "trusted_ca": null,

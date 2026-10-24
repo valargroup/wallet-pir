@@ -43,18 +43,17 @@ health = "http://127.0.0.1:8482/control/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 180
 
-# Worker and router in one process, for a host that serves Status alone. An
-# operator adds it to the inventory with `"install": true`; it does not replace
-# the distributed roles of an existing host.
+# Packing and evaluation over one authorized inventory in one process. Wallets
+# reach it on the host's public listener, rendered from `query_listen`.
 [services.status.roles.combined]
-unit = "status-pir-combined.service"
+unit = "status-combined.service"
 binary = "pir-query-server"
 mode = "role"
-template = "status-combined.role.service"
+template = "status-worker.role.service"
 renderer = "tools.status.lib.roles:combined"
 optional = true
-# Settings: network_hex, state_dir, listen, query_listen, publisher,
-# publisher_ca?, limits?. Ready needs a verified, canonical and fresh HTTPS publication.
+# Settings: network_hex, listen, query_listen, publisher, state_dir,
+# publisher_ca?, limits?. It names no worker.
 health = "http://{listen}/control/health"
 ready = { field = "ready", equals = true }
 ready_timeout = 180

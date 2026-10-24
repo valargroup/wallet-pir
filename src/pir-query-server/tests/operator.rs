@@ -211,6 +211,8 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
             "query-ingress",
             serde_json::json!({"routers":{"0":[{"control_origin":"http://127.0.0.1:8094", "query_origin":"http://127.0.0.1:8093"}]}}),
         ),
+        // Rendered by tools/enhance/lib/roles.py:combined.
+        ("combined", serde_json::json!({"shards":[0,1]})),
     ] {
         let mut synchronization = source.clone();
         synchronization
@@ -219,11 +221,15 @@ fn every_enhance_role_checks_real_json_without_opening_state_or_certificates() {
             .extend(responsibility.as_object().unwrap().clone());
         let mut settings = serde_json::json!({"role":role, "data_dir":temp.path().join(role), "synchronization":synchronization});
         let mut host = serde_json::json!({"management_listen":"127.0.0.1:18081"});
-        if role == "query-ingress" {
+        if role == "query-ingress" || role == "combined" {
             // The ingress answers wallets on the host's shared listener.
             host["public_listen"] = serde_json::json!("127.0.0.1:8091");
         } else {
             settings["listen"] = serde_json::json!("127.0.0.1:8091");
+        }
+        if role == "combined" {
+            settings["matvec"] = serde_json::json!({"matvec_backend":"cpu","cuda_device":null});
+            settings["packing_requests"] = serde_json::json!(2);
         }
         if role != "worker" {
             settings["control_listen"] = serde_json::json!("127.0.0.1:8094");

@@ -71,10 +71,11 @@ def publisher_runs_alone(name, kinds):
 def status_runs_alone(name, kinds, names):
     """Status sync cases each prepare a generation on every core.
 
-    Below eight cores, sharing those cores with the pool pushes a single case
-    past its budget, so the query host's Status unit program runs alone there.
+    One generation prepare is a 96 MiB database; sharing those cores with the
+    pool, or with the publisher, pushes a single case past its budget, so the
+    query host's Status unit program runs alone.
     """
-    return (name == 'pir-query-server' and 'lib' in kinds and available_cpus() < 8
+    return (name == 'pir-query-server' and 'lib' in kinds
             and any(case.startswith('status::') for case in names))
 
 
@@ -294,7 +295,7 @@ def bounded_programs(program, names):
     the small-runner publisher protection and real HTTP integrations intact.
     """
     # Status roles, hosted by the query server, pay for one process-local
-    # generation per group, and those groups run alone. Every other
+    # generation per group. Two groups let those prepares overlap. Every other
     # suite keeps about forty-eight cases so immutable fixtures stay together.
     group = 31 if program.get('package') == 'pir-query-server' else 48
     if program['integration'] or program['exclusive'] or len(names) <= group:
@@ -306,7 +307,7 @@ def bounded_programs(program, names):
     status = [name for name in ordered if name.startswith('status::')]
     if program.get('package') == 'pir-query-server' and status and len(status) < len(names):
         # Every Status case prepares on every core, so never run more than the
-        # two Status groups; the host's other roles share one process.
+        # two Status groups at once; the host's other roles share one process.
         status_lanes = min(2, (len(status) + group - 1) // group)
         remaining = sorted(names - set(status))
         partitions = [remaining, *[status[index::status_lanes] for index in range(status_lanes)]]
@@ -322,13 +323,8 @@ def bounded_programs(program, names):
     partitions = [cases for cases in partitions if cases]
     assert sum(map(len, partitions)) == len(names)
     assert set().union(*map(set, partitions)) == set(names)
-    # Status generation prepare is one 96 MiB database; overlapping it with
-    # the publisher crosses the case deadline, so Status groups run alone.
-    hosted_status = program.get('package') == 'pir-query-server'
     return [dict(program, args=[*program['args'], '--exact', *cases],
-                 case_count=len(cases),
-                 exclusive=hosted_status and all(case.startswith('status::') for case in cases))
-            for cases in partitions]
+                 case_count=len(cases)) for cases in partitions]
 
 
 def _compile_command(group, options):

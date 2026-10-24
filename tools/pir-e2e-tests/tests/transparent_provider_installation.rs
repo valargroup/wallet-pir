@@ -24,3 +24,10 @@ mod status_publisher;
 mod display_publisher;
 #[path = "../../../src/pir-query-server/tests/transparent/support/display_world.rs"]
 mod display_world;
+// The combined Enhance product of the all-products shared listener case.
+#[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+#[path = "support/all_products.rs"]
+mod all_products;
+#[cfg(all(feature = "enhance-tests", feature = "native-reinspiring"))]
+#[path = "support/enhance_wallet.rs"]
+mod enhance_wallet;

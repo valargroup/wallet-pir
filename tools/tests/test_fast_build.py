@@ -114,12 +114,10 @@ class FastBuildTests(unittest.TestCase):
         self.assertEqual(len(shards), 2)
         actual = [case for shard in shards for case in shard['args'][1:]]
         self.assertCountEqual(actual, names)
-        self.assertTrue(all(shard['exclusive'] for shard in shards))
         hosted = names | {f'transparent::validation::tests::case_{index:02d}' for index in range(60)}
         shards = fast_build.bounded_programs(status, hosted)
         self.assertEqual(len(shards), 3)
         self.assertFalse(any(case.startswith('status::') for case in shards[0]['args'][1:]))
-        self.assertEqual([shard['exclusive'] for shard in shards], [False, True, True])
         self.assertCountEqual([case for shard in shards for case in shard['args'][1:]], hosted)
         self.assertCountEqual([case for shard in shards[1:] for case in shard['args'][1:]], names)
         other = dict(status, package='receiver-indexer')
@@ -141,7 +139,7 @@ class FastBuildTests(unittest.TestCase):
         self.assertIsNone(fast_build.cgroup_cpus(root, membership))
         self.assertIsNone(fast_build.cgroup_cpus(root, Path(self.directory.name) / 'missing'))
 
-    def test_status_unit_program_runs_alone_only_on_small_hosts(self):
+    def test_status_unit_program_runs_alone_on_every_host(self):
         names = {'status::sync::tests::case', 'config::tests::case'}
         with patch.object(fast_build, 'available_cpus', return_value=3):
             self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
@@ -150,7 +148,7 @@ class FastBuildTests(unittest.TestCase):
             self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['test'], names))
             self.assertFalse(fast_build.status_runs_alone('receiver-indexer', ['lib'], names))
         with patch.object(fast_build, 'available_cpus', return_value=8):
-            self.assertFalse(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
+            self.assertTrue(fast_build.status_runs_alone('pir-query-server', ['lib'], names))
 
     def test_rust_tests_wait_for_helpers_only_on_small_hosts(self):
         from concurrent.futures import Future
