@@ -148,6 +148,14 @@ class QueryProvision(unittest.TestCase):
         self.assertFalse(self.receipt.exists())
         self.assertFalse((self.canonical / 'query-serving.tf').exists())
 
+    def test_legacy_string_counts_preserve_the_same_autoscaling_binding(self):
+        self.runtime.document['variables']['enhance_group_count']['value'] = '2'
+        self.prepare()
+        for value in ('02', '2.0', '5', 0, True, None):
+            self.runtime.document['variables']['enhance_group_count']['value'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'group count'):
+                self.prepare()
+
     def test_changed_production_variables_and_autoscaling_are_refused(self):
         value = self.variables.read_bytes()
         self.variables.write_bytes(b'changed')
