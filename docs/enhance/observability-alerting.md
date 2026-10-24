@@ -17,12 +17,29 @@ once per minute from a separate region, and monitors APM task progress.
   histograms are unavailable, not zero.
 - Domain serving health reads each packing router's assignments and unexpired
   worker promises from `/internal/health`, bound to its active publication.
-  Routers must match the publisher's exact manifest and generation, and their
-  combined assignments must cover every published domain.
+  Fresh router reports must agree on one active manifest and generation, and
+  their combined assignments must cover every published domain. Reports at the
+  newest generation must match the publisher's exact manifest; a coherent older
+  generation is recorded as a pending handover, separately from missing coverage.
+  Future generations, conflicting identities, missing domains and stale or
+  malformed reports remain unavailable. Zero eligible replicas is still a
+  serving failure, including while behind.
   APM resolves private worker origins to inventory names and counts each replica
   once across routers. Unassigned workers do not count toward redundancy.
   Missing, stale, inconsistent or unconfigured observations fail coverage.
   Worker metrics reachability remains a separate monitoring check.
+- `publication_handover_warning` / `publication_handover_critical` report a
+  continuously observed older serving generation for the existing publication
+  warning/critical durations (120s / 300s by default). These measure adoption by
+  the query fleet, separately from publisher-versus-chain lag. Missing observations
+  are unknown and cannot clear an active incident.
+  The topology page and `/apm/monitor-status` show serving and publisher generations
+  and whether the observation is fresh. Router `/internal/health` also reports
+  retained generations, full retention slots, live pin holders and remaining
+  lifetimes, and references to retiring material. APM retains these diagnostics
+  with their sample time and marks stale observations explicitly. Reference counts
+  include synchronization and request references; they do not prove a request leak.
+  Diagnostics never renew or release a pin and do not change serving authority.
 - Publication lag compares the published anchor against a fresh direct Zakura
   RPC read. This bypasses the publisher observer but shares its node/host;
   it is not an independent second blockchain node. Tip inactivity is distinct
