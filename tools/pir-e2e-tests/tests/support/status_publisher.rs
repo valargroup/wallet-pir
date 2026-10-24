@@ -20,8 +20,7 @@ use status_shared::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-#[path = "../../../../src/pir-query-server/tests/support/status_tls.rs"]
-mod tls;
+use super::tls;
 
 pub const ENTRIES: usize = 32;
 
