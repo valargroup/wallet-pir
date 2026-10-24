@@ -132,6 +132,17 @@ and `rollback`, selecting service `query-server`. Use the exact candidate archiv
 and source revision; inspect each subcommand's help for its inventory and artifact
 arguments. Do not install units or copy executables to production by hand.
 
+Configure `services.query-server.exact_check.products` with exactly four entries:
+`enhance`, `status`, `transparent_history`, and `transaction_details`. Each entry
+contains `host` (a known, non-retired inventory host), `argv` (the independent
+wallet client's command), and `timeout` (1–900 seconds). Retain the existing
+clients, fixtures and answer oracles, changing their wallet destination to the
+candidate HTTPS origin. Keep publisher and oracle destinations unchanged.
+Checks may run on different hosts; all their SSH identities are verified before
+deployment changes begin. The transaction commits only after every check passes;
+a failed check triggers rollback. Do not substitute readiness for decrypted
+answer verification or skip these checks to accept the candidate.
+
 The role renderer composes the product-owned renderers, checks listener collisions
 and disjoint state below `/srv/wallet-pir-query`, mounts CA files read-only, and
 returns `--config ... --check` for the actual binary before activation. The unit
