@@ -96,6 +96,16 @@ class QueryProvision(unittest.TestCase):
             'resources': [{'mode': 'managed', 'type': 'digitalocean_droplet', 'name': 'existing',
                            'instances': [{'attributes': {'id': 'preserved-node'}}]}]})
         self.receipt = self.root / 'receipt.json'
+        self.variables = self.root / 'production.tfvars'
+        self.variables.write_text('existing production inputs')
+        self.autoscale = self.root / 'autoscale.json'
+        self.autoscale.write_text('{"desired_groups":2}')
+        for name, value in [('PRODUCTION_VARIABLES', self.variables), ('AUTOSCALE_STATE', self.autoscale)]:
+            patcher = patch.object(query, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.request.update(operator_variables_sha256=file_sha256(self.variables), desired_groups=2)
+        self.runtime.document['variables'] = {'enhance_group_count': {'value': 2}}
 
     def prepare(self):
         return query.prepare(self.request, canonical=self.canonical, terraform=self.runtime)
@@ -137,6 +147,21 @@ class QueryProvision(unittest.TestCase):
             self.prepare()
         self.assertFalse(self.receipt.exists())
         self.assertFalse((self.canonical / 'query-serving.tf').exists())
+
+    def test_changed_production_variables_and_autoscaling_are_refused(self):
+        value = self.variables.read_bytes()
+        self.variables.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'production variables'):
+            self.prepare()
+        self.variables.write_bytes(value)
+        self.autoscale.write_text('{"desired_groups":3}')
+        with self.assertRaisesRegex(ValueError, 'autoscaling'):
+            self.prepare()
+        self.autoscale.write_text('{"desired_groups":2}')
+        self.runtime.document['variables']['enhance_group_count']['value'] = 3
+        with self.assertRaisesRegex(ValueError, 'saved plan differs'):
+            self.prepare()
+        self.assertFalse(self.receipt.exists())
 
     def test_pinned_plan_digest_and_module_bytes_are_rechecked(self):
         expected = durable.digest(self.prepare())

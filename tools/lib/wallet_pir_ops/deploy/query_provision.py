@@ -18,6 +18,8 @@ from ..terraform import Terraform, clean_environment, file_sha256
 
 CANONICAL = Path('/opt/enhance-pir/infra/production')
 LOCK = Path('/run/lock/wallet-pir-production.lock')
+PRODUCTION_VARIABLES = Path('/etc/enhance-pir/production.tfvars')
+AUTOSCALE_STATE = Path('/srv/enhance-pir/autoscale/state.json')
 MODULE_FILES = {'main.tf', 'variables.tf', 'outputs.tf', 'versions.tf', 'cloud-init.yaml.tftpl'}
 ENABLED = 'query_serving_enabled = true\n'
 
@@ -56,7 +58,7 @@ def prepare(request, *, canonical=None, terraform=None):
     """Validate the saved plan and bind every source/input byte before installation."""
     canonical = CANONICAL if canonical is None else Path(canonical)
     if set(request) != {'machine_id', 'source_sha', 'staged_root', 'saved_plan', 'saved_plan_sha256',
-                        'project_id', 'baseline'}:
+                        'project_id', 'baseline', 'operator_variables_sha256', 'desired_groups'}:
         raise ValueError('unexpected query provisioning request fields')
     if not isinstance(request['source_sha'], str) or not re.fullmatch('[0-9a-f]{40}', request['source_sha']):
         raise ValueError('query extension needs an exact source revision')
@@ -66,6 +68,9 @@ def prepare(request, *, canonical=None, terraform=None):
         raise ValueError('query source or saved plan changed')
     if inputs(canonical) != request['baseline']:
         raise ValueError('installed Terraform configuration or inputs changed')
+    if (file_sha256(PRODUCTION_VARIABLES) != request['operator_variables_sha256']
+            or json.loads(AUTOSCALE_STATE.read_text())['desired_groups'] != request['desired_groups']):
+        raise ValueError('production variables or autoscaling inputs changed')
     copied = inputs(source)
     if copied != {**request['baseline'], 'query-serving.tf': file_sha256(source / 'query-serving.tf')}:
         raise ValueError('staged fleet source differs beyond the query extension')
@@ -80,11 +85,15 @@ def prepare(request, *, canonical=None, terraform=None):
     tf = terraform or Terraform(source, env=dict(os.environ))
     document = tf.show_json(saved)
     addresses = initial_plan(document, request['project_id'])
+    if document['variables']['enhance_group_count']['value'] != request['desired_groups']:
+        raise ValueError('saved plan differs from current autoscaling inputs')
     hashes = {'query-serving.tf': file_sha256(source / 'query-serving.tf'),
               **{'query-serving/' + name: file_sha256(module / name) for name in sorted(MODULE_FILES)}}
     return {'request_sha256': durable.digest(request), 'source_sha': request['source_sha'],
             'saved_plan_sha256': request['saved_plan_sha256'], 'source_files': hashes,
-            'creates': addresses, 'existing_fleet_actions': 0, 'baseline': request['baseline']}
+            'creates': addresses, 'existing_fleet_actions': 0, 'baseline': request['baseline'],
+            'operator_variables_sha256': request['operator_variables_sha256'],
+            'desired_groups': request['desired_groups']}
 
 
 def provision(request, expected, receipt, *, canonical=None, terraform_factory=Terraform, lock=None):

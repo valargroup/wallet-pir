@@ -58,7 +58,8 @@ Use `wallet-pir-deploy.py query-node-plan` and `query-node-preflight` on the
 coordinator with a private request and receipt path. The request binds the
 coordinator machine ID, exact query-extension source SHA, staged root, saved plan
 path and digest, Wallet PIR project ID and the installed configuration's file
-hashes (`wallet_pir_ops.deploy.query_provision.inputs`). Both commands return a
+hashes (`wallet_pir_ops.deploy.query_provision.inputs`), external production
+variables digest and current desired worker-group count. Both commands return a
 plan digest. Run `query-node-provision --expect-plan-sha256 <digest>` through the
 coordinator's existing encrypted runtime credential loader. It rechecks the
 source and inputs under the production lock, adds only the query module and its
