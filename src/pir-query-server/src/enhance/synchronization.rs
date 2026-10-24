@@ -70,9 +70,14 @@ fn source_expired(source: pir_publication::SourceObservation, now: SystemTime) -
 pub const RECOVERY_POLL: Duration = Duration::from_secs(1);
 /// The manager's ordinary cadence, kept for steady state and long deferrals.
 pub const STEADY_POLL: Duration = Duration::from_secs(5);
-/// A deferral longer than this (a lasting withdrawal or node outage) returns to
-/// [`STEADY_POLL`], bounding publisher load without adding failure backoff.
-pub const RECOVERY_WINDOW: Duration = Duration::from_secs(60);
+/// A deferral longer than this returns to [`STEADY_POLL`], bounding publisher
+/// load without adding failure backoff. A reorganization defers consumers from
+/// withdrawal until the replacement is prepared: 38-89 s for a one-shard
+/// fixture on 3 CPUs (`reorg_recovery`), so a one-minute window could expire
+/// just before the replacement appeared. Five minutes matches APM's critical
+/// publication-blocked duration, past which the withdrawal is an incident.
+/// A withdrawn `current` needs no node lookup, so polling stays cheap.
+pub const RECOVERY_WINDOW: Duration = Duration::from_secs(300);
 
 /// Converts expected deferrals into successful, deferred passes for
 /// [`crate::synchronization::SyncManager`], and chooses the following wait. Genuine
@@ -1044,7 +1049,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_lasting_deferral_returns_to_the_steady_cadence() {
         let mut outcomes = Vec::new();
-        outcomes.resize_with(70, || deferred(Deferral::SourceExpired));
+        outcomes.resize_with(RECOVERY_WINDOW.as_secs() as usize + 10, || {
+            deferred(Deferral::SourceExpired)
+        });
         let observed = gaps(outcomes).await;
         let recovering = observed.iter().take_while(|gap| **gap == 1).count();
         assert_eq!(recovering as u64, RECOVERY_WINDOW.as_secs());
