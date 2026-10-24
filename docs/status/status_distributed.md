@@ -104,10 +104,14 @@ Authority/revocation records are never garbage-collected with artifact files.
 
 ## Timing and wallet compatibility
 
-Status configures the shared loop to wait one second after successful passes
-and back off after failures. The old five-second publisher-contact watchdog and
-push preparation/activation routes are removed. Retry timing is scheduling,
-never permission to answer queries.
+Status waits one second after a successful pass while its serving observation
+is valid and less than five seconds old. It checks again after 100 milliseconds
+when that observation is older or unavailable, or worker/retention coordination
+needs progress. This leaves more of the original twenty-second observation
+lifetime for the worker and router to finish their handover. Expired inventories
+defer to another poll; genuine failures keep the shared exponential backoff.
+The old five-second publisher-contact watchdog and push preparation/activation
+routes are removed. Retry timing is scheduling, never permission to answer queries.
 
 An ordinary authority conflict can retain one already-loaded candidate for the
 next pass; that pass repeats the authority and peer checks. Withdrawal, recovery,

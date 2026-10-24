@@ -9,6 +9,63 @@ from wallet_pir_ops.deploy.remote import RemoteError
 
 
 class PublisherTests(PublisherFixture, unittest.TestCase):
+    def install_product_local_chain(self):
+        installed = copy.deepcopy(self.request['configuration'])
+        chain = installed.pop('chain')
+        for name, url, cookie in [('enhance', 'zakura_rpc_url', 'zakura_cookie'),
+                                  ('status', 'rpc_url', 'cookie'),
+                                  ('transparent_history', 'rpc_url', 'rpc_cookie'),
+                                  ('transaction_details', 'rpc_url', 'rpc_cookie')]:
+            installed[name]['settings'].update({url: chain['rpc_url'], cookie: chain['rpc_cookie']})
+        installed['enhance']['settings']['poll_seconds'] = 10
+        installed['transaction_details']['settings']['poll_ms'] = 500
+        self.request['configuration']['chain']['poll_ms'] = 500
+        original = json.dumps(installed, indent=4) + '\n'
+        self.ex.put('coordinator', publisher.CONFIG, original)
+        self.target = self.make_target()
+        self.target.serving.binary = self.serving_binary
+        return installed, original
+
+    def test_root_chain_conversion_deploys_and_restores_original_bytes(self):
+        _, original = self.install_product_local_chain()
+        self.deploy()
+        self.assertEqual(json.loads(self.ex.read('coordinator', publisher.CONFIG)),
+                         self.request['configuration'])
+        self.target.rollback()
+        self.assertEqual(self.ex.read('coordinator', publisher.CONFIG), original)
+        self.assertEqual(self.ex.probe_unit('coordinator', publisher.UNIT)['exe_sha256'], self.old_publisher)
+
+    def test_root_chain_conversion_refuses_a_different_node_or_cookie(self):
+        installed, _ = self.install_product_local_chain()
+        for key in ('rpc_url', 'rpc_cookie'):
+            with self.subTest(key=key):
+                changed = copy.deepcopy(installed)
+                changed['transparent_history']['settings'][key] += '-other'
+                self.ex.put('coordinator', publisher.CONFIG, json.dumps(changed))
+                with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
+                    self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
+    def test_root_chain_conversion_keeps_implicit_one_second_observation(self):
+        installed, _ = self.install_product_local_chain()
+        installed['enhance']['settings']['poll_seconds'] = 60
+        installed['transaction_details']['settings']['poll_ms'] = 30000
+        candidate = copy.deepcopy(self.request['configuration'])
+        candidate['chain']['poll_ms'] = 30000
+        self.assertFalse(publisher.configuration_preserves_products(candidate, installed))
+        candidate['chain']['poll_ms'] = 1000
+        self.assertTrue(publisher.configuration_preserves_products(candidate, installed))
+
+    def test_root_chain_conversion_refuses_other_setting_or_poll_changes(self):
+        for setting in ('root', 'poll_ms'):
+            with self.subTest(setting=setting):
+                installed, _ = self.install_product_local_chain()
+                installed['transaction_details']['settings'][setting] = 2000 if setting == 'poll_ms' else '/other'
+                self.ex.put('coordinator', publisher.CONFIG, json.dumps(installed))
+                with self.assertRaisesRegex(DeployError, 'preserve every product setting'):
+                    self.target.plan()
+        self.assertEqual(self.ex.effects, [])
+
     def interrupted_stop(self):
         self.request['resume_load'] = False
         self.ex.systemctl('coordinator', 'stop', publisher.LOAD)

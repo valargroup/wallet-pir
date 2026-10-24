@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.status.lib.routing import CONFIG, Routing, candidate, digest
 from wallet_pir_ops.deploy import descriptors
@@ -116,7 +117,13 @@ class StatusRouting(unittest.TestCase):
         for failure in ('validate', 'reload', 'public', 'exact'):
             with self.subTest(failure=failure):
                 self.host.failure = failure
-                with self.assertRaises(DeployError):
+                restore = self.routing.restore
+                def restore_after_alerts(journal):
+                    resumed.assert_called_once_with()
+                    return restore(journal)
+                with patch('wallet_pir_ops.deploy.deployment_alerts.failed') as resumed, \
+                        patch.object(self.routing, 'restore', side_effect=restore_after_alerts), \
+                        self.assertRaises(DeployError):
                     self.routing.deploy(self.plan())
                 self.assertEqual(self.host.read('coordinator', CONFIG), BEFORE)
 

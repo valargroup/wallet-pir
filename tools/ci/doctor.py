@@ -8,17 +8,70 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+PROTOC_TIMEOUT = 5
+# Modules outside the standard library that the tools/ unittest suites import.
+# The repository has no Python requirements file; nothing here installs them.
+PYTHON_MODULES = ('cryptography',)
+
+
+def first_line(data):
+    return next((line.strip() for line in data.decode(errors='replace').splitlines() if line.strip()), '')
+
+
+def probe_detail(command, timeout=15):
+    """Return (ok, detail): the first output line on success, else why it failed."""
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=timeout, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except subprocess.TimeoutExpired:
+        return False, f'timed out after {timeout}s'
+    except OSError as error:
+        return False, error.strerror or str(error)
+    if result.returncode == 0:
+        return True, first_line(result.stdout)
+    status = f'killed by signal {-result.returncode}' if result.returncode < 0 else f'exit {result.returncode}'
+    stderr = first_line(result.stderr)
+    return False, f'{status}: {stderr}' if stderr else status
 
 
 def probe(command, timeout=15):
+    return probe_detail(command, timeout)[0]
+
+
+def selected_protoc(env):
+    """The protoc prost-build runs: PROTOC when set, else the first one on PATH."""
+    return env.get('PROTOC') or shutil.which('protoc', path=env.get('PATH'))
+
+
+def protoc_status(env):
+    """Return (path, ok, detail) after running the selected protoc --version."""
+    path = selected_protoc(env)
+    if not path:
+        return None, False, 'not found on PATH and PROTOC is unset'
+    return (path, *probe_detail([path, '--version'], PROTOC_TIMEOUT))
+
+
+IMPORT_SCRIPT = """import importlib, json, sys
+missing = {}
+for name in sys.argv[1:]:
     try:
-        result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=timeout, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+        importlib.import_module(name)
+    except Exception as error:
+        missing[name] = f'{type(error).__name__}: {error}'
+print(json.dumps(missing))
+"""
+
+
+def missing_python_modules(python=sys.executable):
+    """Map each PYTHON_MODULES entry the interpreter cannot import to its error."""
+    try:
+        result = subprocess.run([python, '-c', IMPORT_SCRIPT, *PYTHON_MODULES], capture_output=True, timeout=30)
+        return json.loads(result.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        return {name: f'import check failed: {error}' for name in PYTHON_MODULES}
 
 
 def libclang_available():
@@ -38,8 +91,14 @@ def inspect(network=False):
     # rustup run never installs a missing toolchain in a read-only doctor.
     for tool, args in [('rustc', ['--version']), ('rustfmt', ['--version']), ('cargo', ['clippy', '--version'])]:
         add(tool, probe(['rustup', 'run', channel, tool, *args]), f'rustup toolchain install {channel} --component rustfmt --component clippy')
-    for tool in ['git', 'python3', 'clang', 'protoc', 'jq', 'shellcheck', 'node', 'make']:
+    for tool in ['git', 'python3', 'clang', 'jq', 'shellcheck', 'node', 'make']:
         add(tool, shutil.which(tool), 'Install repository prerequisites listed in docs/development.md')
+    path, ok, detail = protoc_status(os.environ)
+    add('protoc', ok, f'set PROTOC=<working protoc> or repair {path} ({detail})' if path
+        else 'Install repository prerequisites listed in docs/development.md or set PROTOC')
+    missing = missing_python_modules()
+    add('python modules', not missing, f'{sys.executable} cannot import '
+        + '; '.join(f'{name} ({error})' for name, error in missing.items()) + '; install them for this interpreter')
     add('libclang', libclang_available(),
         'Install libclang (macOS: Xcode Command Line Tools; Linux: libclang-dev) or set LIBCLANG_PATH')
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))

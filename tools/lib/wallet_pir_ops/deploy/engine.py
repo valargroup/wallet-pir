@@ -210,8 +210,8 @@ class Deployer:
         try:
             if role.mode == 'exec-drop-in':
                 fragment = state['fragment_text']
-                kept[units.MANAGED_DROP_IN] = units.managed_drop_in(prefix, release, tail)
                 previous = next((text for path, text in unit_files(state) if path == managed), None)
+                kept[units.MANAGED_DROP_IN] = units.managed_drop_in(prefix, release, tail, previous)
                 if previous != kept[units.MANAGED_DROP_IN]:
                     plan.changes.insert(0, {'op': 'write', 'path': managed, 'previous': previous,
                                             'new': kept[units.MANAGED_DROP_IN]})
@@ -694,6 +694,8 @@ class Deployer:
                 self.run_exact_check(check, journal, sha)
             journal.set_status('committed')
         except BaseException as error:
+            from .deployment_alerts import failed
+            failed()
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
             if self.hold_on_failure and journal.touched():
                 journal.set_status('held')
