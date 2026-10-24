@@ -302,6 +302,10 @@ async fn failure_to_persist_authority_closes_admission() {
     server.abort();
 }
 
+// Fast keeps one negative-answer outcome on a prepared candidate. This loop
+// rebuilds the same session twice, once for each anchor, so qualification
+// repeats it.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test]
 async fn a_refuted_anchor_leaves_other_status_sessions_available() {
     use axum::http::Request;
@@ -683,6 +687,9 @@ async fn withdrawal_during_authority_check_fences_the_old_view_before_deferring(
     server.abort();
 }
 
+// Fast already refuses a floor save that cannot replace the durable file.
+// This repair-and-retry loop rebuilds that session, so qualification owns it.
+#[cfg(feature = "qualification-tests")]
 #[tokio::test]
 async fn a_failed_floor_save_blocks_progress_until_the_same_floor_is_saved() {
     let (_root, service, mut task, source, _tls, server) = setup().await;

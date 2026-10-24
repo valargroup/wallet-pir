@@ -87,24 +87,25 @@ def status_runs_alone(name, kinds, names):
 
 
 def status_case_weight(name):
-    """Relative prepare cost, so two Status lanes do not collect the long cases."""
-    if any(fragment in name for fragment in (
-            'changed_material_during_loading',
-            'metadata_only_refresh_reuses_verified_material',
-            'a_candidate_activates_only_under_a_live_answer',
-            'router_commits_its_workers_retained_predecessor')):
-        return 8
-    if any(fragment in name for fragment in (
-            'resumed_candidates_are_rejected',
-            'a_refuted_anchor_leaves_other_status_sessions',
-            'a_new_publication_during_authority_check',
-            'a_failed_floor_save_blocks_progress',
-            'consumer_restart_requires_https_authority')):
-        return 4
-    if any(fragment in name for fragment in (
-            'prepared_candidate_proof_binds',
-            'status_polling_reserves_time')):
-        return 2
+    """Relative prepare cost, so two Status lanes finish together.
+
+    The numbers follow the warm fast run's case times. Equal weights piled the
+    long prepares onto one lane and the pool waited for that lane.
+    """
+    weighted = (
+        ('changed_material_during_loading', 9),
+        ('metadata_only_refresh_reuses_verified_material', 9),
+        ('a_candidate_activates_only_under_a_live_answer', 9),
+        ('router_commits_its_workers_retained_predecessor', 7),
+        ('a_new_publication_during_authority_check', 4),
+        ('consumer_restart_requires_https_authority', 4),
+        ('resumed_candidates_are_rejected', 3),
+        ('prepared_candidate_proof_binds', 2),
+        ('status_polling_reserves_time', 2),
+    )
+    for fragment, weight in weighted:
+        if fragment in name:
+            return weight
     return 1
 
 
