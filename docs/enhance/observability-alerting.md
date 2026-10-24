@@ -754,6 +754,11 @@ collection stops advancing. `monitor.checker` is ready when `/monitor-status`
 reports an evaluation. Changing role settings changes the unit, so its deploy
 needs `--allow-unit-drift` after reviewing the drift.
 
+The observer loop's completed-round heartbeat is part of `/monitor-status`'s
+`progress_ok`. If the task fails or stops progressing, the independent monitor
+detects the stale heartbeat through its existing APM-progress alert, even if
+the APM's other collectors and evaluator continue running.
+
 Credentials come from Infisical through a private directory (a tmpfs) and
 `wallet-pir-monitoring.py install-credentials --role ROLE --source DIR`, each a
 journaled, lock-fenced transaction with `reconcile` and `rollback`:
