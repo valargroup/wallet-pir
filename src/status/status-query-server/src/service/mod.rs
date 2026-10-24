@@ -52,10 +52,9 @@ pub async fn serve_role_on(
         config.worker_origin.clone(),
     )?;
     let task = sync::synchronization(service.clone(), &config)?;
-    // The worker and router each poll the publisher. Their combined delay must
-    // leave room for preparation inside Status's twenty-second freshness limit.
-    let mut manager = pir_sync_manager::SyncManager::new(task)
-        .with_success_interval(std::time::Duration::from_secs(1));
+    // Handover polling accelerates as the original source observation ages;
+    // preparation and both roles share its twenty-second freshness budget.
+    let mut manager = sync::manager(task);
     if let Err(error) = manager.poll_once().await {
         if pir_sync_manager::is_incompatible(error.as_ref()) {
             return Err(error);

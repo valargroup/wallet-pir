@@ -785,6 +785,305 @@ fn cached_generation(
     prepared.clone().reobserved(observed_ms)
 }
 
+/// An expired publication is expected source coordination. It must not make
+/// the next fresh publication wait behind transport-failure backoff.
+#[tokio::test]
+async fn expired_inventory_keeps_the_status_poll_cadence() {
+    use status_shared::fixture::{geometric_inventory, publishing};
+    let (_root, service, task, source, tls, server) = setup().await;
+    let (mut active, _) = geometric_inventory(7, 3);
+    active.manifest.observed_ms = now_ms();
+    service.state.lock().await.controller = Some(Controller::new(Generation::public_only(
+        active.manifest.clone(),
+        Arc::new(Vec::new()),
+    )));
+    let task = PublicationLifecycle::new(
+        StatusPublication {
+            service: service.clone(),
+            loaded_inventory: Some(active.clone()),
+            poll_soon: false,
+        },
+        super::super::source(&role_config(Role::Worker, service.state_dir.clone(), &tls)).unwrap(),
+        AuthorityFloor::open(
+            service.state_dir.join(FLOOR_FILE),
+            task.floor().source().clone(),
+        )
+        .unwrap(),
+        ObjectCache::open(service.state_dir.join("objects")).unwrap(),
+    )
+    .unwrap();
+    let mut expired = active.clone();
+    expired.manifest.generation = 4;
+    expired.manifest.observed_ms = now_ms() - MAX_AGE_MS - 1;
+    let expired_bytes = serde_json::to_vec(&expired).unwrap();
+    let expired_object = ObjectReference::for_bytes(&expired_bytes);
+    source
+        .objects
+        .write()
+        .unwrap()
+        .insert(expired_object.sha256.clone(), expired_bytes);
+    *source.current.write().unwrap() = publishing(&expired, &expired_object);
+    let mut refreshed = active;
+    refreshed.manifest.generation = 5;
+    let refreshed_object = publish_inventory(&source, &mut refreshed);
+    let mut next = publishing(&refreshed, &refreshed_object);
+    next.sequence += 1;
+
+    #[derive(Debug)]
+    struct Finished;
+    impl std::fmt::Display for Finished {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("the two observed polling passes completed")
+        }
+    }
+    impl std::error::Error for Finished {}
+    struct Polling {
+        task: StatusSynchronization,
+        source: Arc<Origin>,
+        next: Current,
+        waits: Arc<Mutex<Vec<Duration>>>,
+        outcomes: Arc<Mutex<Vec<&'static str>>>,
+        passes: usize,
+    }
+    impl SyncTask for Polling {
+        type Report = PublicationPass<u64>;
+        type Error = Error;
+        async fn synchronize(&mut self) -> Result<Self::Report, Error> {
+            if self.passes == 2 {
+                return Err(Box::new(Finished));
+            }
+            self.passes += 1;
+            let result = self.task.synchronize().await;
+            self.outcomes.lock().unwrap().push(match &result {
+                Ok(PublicationPass::Deferred { .. }) => "deferred",
+                Ok(PublicationPass::Committed { .. }) => "committed",
+                Err(_) => "error",
+            });
+            result
+        }
+        fn terminal(&self, error: &Error) -> bool {
+            error.is::<Finished>()
+        }
+        async fn wait_until(&mut self, deadline: tokio::time::Instant) {
+            self.waits
+                .lock()
+                .unwrap()
+                .push(deadline.saturating_duration_since(tokio::time::Instant::now()));
+            // Advance the publisher at the first wait without sleeping through
+            // the recorded production delay. The next pass uses real HTTPS.
+            *self.source.current.write().unwrap() = self.next.clone();
+        }
+    }
+    let waits = Arc::new(Mutex::new(Vec::new()));
+    let outcomes = Arc::new(Mutex::new(Vec::new()));
+    let polling = Polling {
+        task,
+        source,
+        next,
+        waits: waits.clone(),
+        outcomes: outcomes.clone(),
+        passes: 0,
+    };
+    let error = pir_sync_manager::SyncManager::new(polling)
+        .with_success_interval(Duration::from_secs(1))
+        .run()
+        .await;
+    assert!(error.is::<Finished>());
+    eprintln!(
+        "Status waits after expired/fresh inventories: {:?}",
+        waits.lock().unwrap()
+    );
+    assert_eq!(*outcomes.lock().unwrap(), ["deferred", "committed"]);
+    assert!(waits
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|wait| *wait <= Duration::from_secs(1)));
+    assert_eq!(serving_manifest_id(&service).await, refreshed.manifest.id());
+    assert!(service.serving().await.is_ok());
+    server.abort();
+}
+
+/// Run the real HTTPS lifecycle before asking its production polling wrapper
+/// for the next deadline. No twenty-second wall-clock sleep is needed.
+#[tokio::test]
+async fn status_polling_reserves_time_for_a_fresh_handover() {
+    use status_shared::fixture::{geometric_inventory, publishing};
+    use tower::ServiceExt;
+    for age in [0, MAX_AGE_MS / 4, MAX_AGE_MS + 1] {
+        let (_root, service, original, source, tls, server) = setup().await;
+        let (mut active, _) = geometric_inventory(7, 3);
+        active.manifest.observed_ms = now_ms() - age;
+        let bytes = serde_json::to_vec(&active).unwrap();
+        let object = ObjectReference::for_bytes(&bytes);
+        source
+            .objects
+            .write()
+            .unwrap()
+            .insert(object.sha256.clone(), bytes);
+        *source.current.write().unwrap() = publishing(&active, &object);
+        service.state.lock().await.controller = Some(Controller::new(Generation::public_only(
+            active.manifest.clone(),
+            Arc::new(Vec::new()),
+        )));
+        let task = PublicationLifecycle::new(
+            StatusPublication {
+                service: service.clone(),
+                loaded_inventory: Some(active.clone()),
+                poll_soon: false,
+            },
+            super::super::source(&role_config(Role::Worker, service.state_dir.clone(), &tls))
+                .unwrap(),
+            AuthorityFloor::open(
+                service.state_dir.join(FLOOR_FILE),
+                original.floor().source().clone(),
+            )
+            .unwrap(),
+            ObjectCache::open(service.state_dir.join("objects")).unwrap(),
+        )
+        .unwrap();
+        let mut polling = manager(task);
+        assert!(polling.poll_once().await.is_ok());
+        let before = tokio::time::Instant::now();
+        let minimum = before + FAST_POLL;
+        let deadline = polling.task().poll_deadline(minimum).await;
+        if age < MAX_AGE_MS / 4 {
+            assert!(deadline >= before + NORMAL_POLL);
+        } else {
+            assert_eq!(deadline, minimum);
+            // A handover arriving 80ms after a poll, followed by 600ms of
+            // loading, fits a final 800ms budget with the selected cadence.
+            // The former one-second wait alone exhausts that same budget.
+            let remaining = Duration::from_millis(800);
+            assert!(deadline.duration_since(before) + Duration::from_millis(600) < remaining);
+            assert!(NORMAL_POLL > remaining);
+        }
+        // Faster synchronization never makes an expired view answer a wallet.
+        let mut router = service.clone();
+        router.role = Role::Router;
+        let response = router
+            .query_routes()
+            .oneshot(
+                axum::http::Request::get("/v1/status/init")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if age > MAX_AGE_MS {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::OK
+            }
+        );
+        if age == 0 {
+            let controller = service.state.lock().await.controller.clone().unwrap();
+            controller.invalidate([active.manifest.id()]);
+            let minimum = tokio::time::Instant::now() + FAST_POLL;
+            assert_eq!(
+                polling.task().poll_deadline(minimum).await,
+                minimum,
+                "a young but invalidated observation cannot use the healthy cadence"
+            );
+            assert_eq!(
+                controller.check(&controller.current()),
+                Err(StatusCode::GONE)
+            );
+        }
+        server.abort();
+    }
+
+    let (_root, service, task, source, _tls, server) = setup().await;
+    service.state.lock().await.controller = None;
+    withdraw(&mut source.current.write().unwrap());
+    let mut polling = manager(task);
+    assert!(polling.poll_once().await.is_ok());
+    let minimum = tokio::time::Instant::now() + FAST_POLL;
+    assert_eq!(
+        polling.task().poll_deadline(minimum).await,
+        minimum,
+        "no serving observation needs a prompt next check"
+    );
+    server.abort();
+
+    let (_root, _service, task, _source, _tls, server) = setup().await;
+    let mut polling = manager(task);
+    assert!(
+        polling.poll_once().await.is_err(),
+        "malformed inventory remains a failure"
+    );
+    let backoff = tokio::time::Instant::now() + Duration::from_secs(10);
+    assert_eq!(
+        polling.task().poll_deadline(backoff).await,
+        backoff,
+        "the manager's genuine failure backoff must remain intact"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn retention_wait_polls_promptly_without_loading_a_third_material() {
+    use status_shared::fixture::{geometric_inventory, publishing};
+    let (_root, service, original, source, tls, server) = setup().await;
+    let (mut older, _) = geometric_inventory(6, 2);
+    let (mut active, _) = geometric_inventory(7, 3);
+    let (mut next, _) = geometric_inventory(8, 4);
+    for inventory in [&mut older, &mut active, &mut next] {
+        inventory.manifest.observed_ms = now_ms();
+    }
+    let controller = Controller::new(Generation::public_only(older.manifest, Arc::new(vec![0])));
+    let held = controller.current();
+    controller
+        .activate(Generation::public_only(
+            active.manifest.clone(),
+            Arc::new(vec![1]),
+        ))
+        .unwrap();
+    service.state.lock().await.controller = Some(controller.clone());
+    let object = publish_inventory(&source, &mut next);
+    *source.current.write().unwrap() = publishing(&next, &object);
+    let task = PublicationLifecycle::new(
+        StatusPublication {
+            service: service.clone(),
+            loaded_inventory: Some(active),
+            poll_soon: false,
+        },
+        super::super::source(&role_config(Role::Worker, service.state_dir.clone(), &tls)).unwrap(),
+        AuthorityFloor::open(
+            service.state_dir.join(FLOOR_FILE),
+            original.floor().source().clone(),
+        )
+        .unwrap(),
+        ObjectCache::open(service.state_dir.join("objects")).unwrap(),
+    )
+    .unwrap();
+    let mut polling = manager(task);
+    assert_eq!(deferred(polling.poll_once().await.unwrap()), 3);
+    assert_eq!(
+        service.state.lock().await.synchronization,
+        "waiting_for_retention"
+    );
+    let minimum = tokio::time::Instant::now() + FAST_POLL;
+    assert_eq!(polling.task().poll_deadline(minimum).await, minimum);
+    assert!(
+        !controller.can_prepare(),
+        "the older material is still pinned"
+    );
+    assert_eq!(
+        *source.requested_objects.read().unwrap(),
+        [object.sha256],
+        "polling fetched only metadata and did not load a third material"
+    );
+    drop(held);
+    assert!(
+        controller.can_prepare(),
+        "releasing the old material permits progress"
+    );
+    server.abort();
+}
+
 /// Router A is pinned at its worker, which already serves B, while the
 /// publisher advanced to C with other material. The router commits B through
 /// the real lifecycle and worker routes, its release frees A at the worker,
