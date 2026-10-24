@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import socket
 import sqlite3
 import subprocess
@@ -593,7 +594,7 @@ class HostTransport:
     def run(self, host, command, data=None, timeout=120):
         self.commands.append(command)
         if data is not None:
-            self.files[command.split('cat > ')[1].split('.next')[0]] = data
+            self.files[shlex.split(command)[-1]] = data
         if 'systemctl restart' in command:
             self.started = True
         if command.startswith('curl'):
@@ -607,6 +608,37 @@ class HostTransport:
 
 
 class ElasticEnrollment(unittest.TestCase):
+    def test_credentials_are_private_during_the_write_and_after_rename(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / 'credentials'
+            directory.mkdir(mode=0o700)
+            target = directory / 'server.key'
+
+            class LocalTransport:
+                def run(inner, host, command, data=None, **_):
+                    with subprocess.Popen(['/bin/sh', '-c', 'umask 022; ' + command],
+                                          stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.PIPE) as process:
+                        try:
+                            process.stdin.write(data)
+                            process.stdin.flush()
+                            deadline = time.monotonic() + 3
+                            while not list(directory.iterdir()) and time.monotonic() < deadline:
+                                time.sleep(.01)
+                            pending = list(directory.iterdir())
+                            self.assertTrue(pending, 'inspect the file before the input stream closes')
+                            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+                            for path in pending:
+                                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                        finally:
+                            process.stdin.close()
+                            self.assertEqual(process.wait(timeout=3), 0)
+                            process.stderr.close()
+
+            monitoring_install._put(LocalTransport(), 'test', str(target), b'nonsecret fixture', 0o600)
+            self.assertEqual(target.read_bytes(), b'nonsecret fixture')
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
     def test_actuator_does_not_accept_a_member_without_monitoring_configuration(self):
         import importlib.util
         from types import SimpleNamespace

@@ -47,9 +47,13 @@ def issue_from_environment(host_id, environ=os.environ):
 
 
 def _put(transport, host, path, data, mode):
+    """Write through a private temporary file without relaxing an existing directory."""
     quoted = shlex.quote(path)
-    transport.run(host, 'install -d -m 755 %s && cat > %s.next && chmod %o %s.next && mv %s.next %s'
-                  % (shlex.quote(os.path.dirname(path)), quoted, mode, quoted, quoted, quoted), data=data)
+    parent = shlex.quote(os.path.dirname(path))
+    transport.run(host, 'umask 077; [ -d %s ] || install -d -m 755 %s; '
+                  'task_tmp=$(mktemp %s) && trap \'rm -f "$task_tmp"\' EXIT && '
+                  'cat > "$task_tmp" && chmod %o "$task_tmp" && mv -f "$task_tmp" %s'
+                  % (parent, parent, shlex.quote(path + '.XXXXXX'), mode, quoted), data=data)
 
 
 def install_and_enroll(transport, host, settings, *, binary, credentials, ready_timeout=60, sleep=time.sleep):
