@@ -321,6 +321,9 @@ class Fake(Executor):
             'directory': '%s/%s' % (P.PUBLICATIONS, map_sha256), 'map_sha256': map_sha256}), 0o600)
 
     def run(self, host, argv, timeout):
+        from wallet_pir_ops.deploy.deployment_alerts import CONTROL
+        if argv[:3] == ['python3', '-c', CONTROL]:
+            return 0, json.dumps({'outcome': None})
         self.runs.append((host, list(argv)))
         command = argv[0]
         if command.endswith('/txid-control'):

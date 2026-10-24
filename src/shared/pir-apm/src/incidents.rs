@@ -61,7 +61,7 @@ const RUNBOOK: &str =
     "https://github.com/valargroup/wallet-pir/blob/main/docs/enhance/observability-alerting.md";
 
 /// Escape the three characters Slack mrkdwn treats as control sequences.
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -128,7 +128,7 @@ fn slack_message(
 }
 
 pub struct Store {
-    db: Connection,
+    pub(crate) db: Connection,
     mode_key: String,
 }
 
@@ -165,7 +165,11 @@ impl Store {
         environment: &str,
         dashboard: &str,
     ) -> Result<()> {
-        let tx = self.db.transaction()?;
+        let tx = self
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let muted = crate::deployment::muted(&tx, now)?;
+        let resumed_at = crate::deployment::resumed_at(&tx)?;
         let previous_mode: Option<String> = tx
             .query_row(
                 "SELECT value FROM metadata WHERE key=?",
@@ -191,6 +195,14 @@ impl Store {
             }
             i.last_evaluated = now;
             i.condition = Some(c.clone());
+            // A deployment never clears incident history. Reannounce a still-failing
+            // incident only after its source supplies a new post-validation sample.
+            if muted && i.active {
+                i.announce_pending = true;
+            }
+            if resumed_at > 0 && c.sample <= resumed_at {
+                continue;
+            }
             let fresh = c.sample > previous_sample;
             i.last_sample = i.last_sample.max(c.sample);
             // Promotion announces existing active state only once its current input
@@ -225,7 +237,13 @@ impl Store {
                             i.id = format!("{}-{now}", c.key);
                             i.last_reminder = now;
                             event = Some("FIRED");
-                        } else if event.is_none() && i.active && i.announce_pending && !shadow {
+                        } else if event.is_none()
+                            && i.active
+                            && i.announce_pending
+                            && !shadow
+                            && !muted
+                            && fresh
+                        {
                             i.last_reminder = now;
                             event = Some("FIRED");
                         } else if event.is_none()
@@ -256,13 +274,16 @@ impl Store {
                 // when its start was, even in shadow, so no Slack incident is left
                 // open and Slack never hears of one it was not told about (such as
                 // a shadow incident retired by an active family).
-                let deliver = if closing { i.notified } else { !shadow };
+                let deliver = !muted && if closing { i.notified } else { !shadow };
                 if closing {
                     i.notified = false;
                     i.announce_pending = false;
                 } else if deliver && event == "FIRED" {
                     i.notified = true;
                     i.announce_pending = false;
+                } else if muted && event == "FIRED" {
+                    i.announce_pending = true;
+                    i.notified = false;
                 }
                 let body = slack_message(event, c, &i.id, now, !deliver, environment, dashboard);
                 tx.execute("INSERT INTO metadata(key,value) VALUES ('last_event',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [&body])?;
@@ -356,16 +377,21 @@ impl Store {
         Ok(())
     }
 
-    fn next(&self, now: u64) -> Result<Option<(i64, String, u32)>> {
-        Ok(self
+    fn next(&mut self, now: u64) -> Result<Option<(i64, String, u32)>> {
+        let tx = self
             .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let muted = crate::deployment::muted(&tx, now)?;
+        let next = tx
             .query_row(
-                "SELECT id,body,attempts FROM outbox q WHERE due<=? AND NOT EXISTS
+                "SELECT id,body,attempts FROM outbox q WHERE due<=? AND (?=0 OR incident LIKE 'deployment:%') AND NOT EXISTS
             (SELECT 1 FROM outbox p WHERE p.incident=q.incident AND p.id<q.id) ORDER BY id LIMIT 1",
-                [now],
+                params![now, muted],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .optional()?)
+            .optional()?;
+        tx.commit()?;
+        Ok(next)
     }
 
     fn delivered(&mut self, id: i64, now: u64) -> Result<()> {

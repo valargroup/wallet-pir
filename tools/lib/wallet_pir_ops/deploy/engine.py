@@ -694,6 +694,8 @@ class Deployer:
                 self.run_exact_check(check, journal, sha)
             journal.set_status('committed')
         except BaseException as error:
+            from .deployment_alerts import failed
+            failed()
             journal.event('failure', error='%s: %s' % (type(error).__name__, error))
             if self.hold_on_failure and journal.touched():
                 journal.set_status('held')

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.status.lib.routing import candidate as status_candidate
 from wallet_pir_ops.deploy import coordinator_edge, descriptors
@@ -155,7 +156,13 @@ class UnifiedEdgeTransaction(unittest.TestCase):
                     host.codes['/metrics'] = '200'
                 else:
                     host.failure = failure
-                with self.assertRaises(DeployError):
+                restore = edge.restore
+                def restore_after_alerts(journal):
+                    resumed.assert_called_once_with()
+                    return restore(journal)
+                with patch('wallet_pir_ops.deploy.deployment_alerts.failed') as resumed, \
+                        patch.object(edge, 'restore', side_effect=restore_after_alerts), \
+                        self.assertRaises(DeployError):
                     edge.deploy(plan)
                 self.assertEqual(host.read('coordinator', CONFIG), LIVE)
 
