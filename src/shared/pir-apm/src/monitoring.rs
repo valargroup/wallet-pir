@@ -1156,6 +1156,7 @@ mod tests {
             expected_hosts: 1,
             valid_hosts: 1,
             evaluated_at: at,
+            valid_until: at + 45,
             ..Default::default()
         };
         pir_apm::observers::set_readiness(round(now));

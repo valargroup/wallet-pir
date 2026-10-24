@@ -11,13 +11,13 @@ from .transaction import new_id
 
 
 def register(commands):
-    for operation in ('plan', 'prepare', 'activate', 'status'):
+    for operation in ('plan', 'prepare', 'activate', 'status', 'reconcile'):
         command = commands.add_parser('cache-data-' + operation, allow_abbrev=False)
         command.add_argument('--request', type=Path, required=True)
         command.add_argument('--request-sha256', required=True)
         if operation == 'prepare':
             command.add_argument('--expect-plan-sha256', required=True)
-        if operation in ('activate', 'status'):
+        if operation in ('activate', 'status', 'reconcile'):
             command.add_argument('--transaction', required=True)
 
 
@@ -52,6 +52,13 @@ def dispatch(args, executor=None):
     with production_lock(inventory, executor) as lock:
         mutation_fence(inventory, executor, lock)
         lock.verify()
+        if operation == 'reconcile':
+            if not local.is_file():
+                raise DeployError('monitoring reconciliation requires the retained activation receipt')
+            result = json.loads(local.read_text())
+            if result.get('request') != request or result.get('phase') not in ('serving-started', 'monitoring-pending'):
+                raise DeployError('receipt is not the requested completed storage activation')
+            return adopt_monitoring(args, executor, lock, local, request, result)
         if operation not in ('plan', 'status'):
             durable.atomic_json(local, {'phase': operation, 'request': request, 'transaction': transaction}, mode=0o600)
         code, output = executor.run(request['host'], ['python3', '-c', source, operation, json.dumps(request),
@@ -72,10 +79,33 @@ def dispatch(args, executor=None):
             result = cache_data_host.summary(recorded)
         if operation == 'plan':
             return {'plan': result, 'plan_sha256': durable.digest(result)}
-        durable.atomic_json(local, {**result, 'request': request}, mode=0o600)
+        result['request'] = request
         if operation == 'activate' and result.get('phase') == 'serving-started':
-            # The new volume becomes a required, identity-bound observer check.
-            from .. import monitoring
-            volume = {'path': result['active_cache'], 'uuid': result['device']['uuid']}
-            result['monitoring'] = monitoring.bind_volume(args.inventory, request['host'], volume)
+            return adopt_monitoring(args, executor, lock, local, request, result)
+        if operation == 'status' and local.is_file():
+            previous = json.loads(local.read_text())
+            if previous.get('phase') in ('monitoring-pending', 'serving-started') and previous.get('monitoring'):
+                result.update(phase=previous['phase'], monitoring=previous['monitoring'])
+        durable.atomic_json(local, result, mode=0o600)
         return result
+
+
+def adopt_monitoring(args, executor, lock, receipt, request, result):
+    """Retain pending adoption before effects; retry monitoring without repeating storage activation."""
+    from .. import monitoring_adoption
+    result['phase'] = 'monitoring-pending'
+    result.setdefault('monitoring', {})['status'] = 'pending'
+    durable.atomic_json(receipt, result, mode=0o600)
+    volume = {'path': result['active_cache'], 'uuid': result['device']['uuid']}
+    try:
+        result['monitoring'] = monitoring_adoption.adopt_volume(
+            executor, lock, args.inventory, request['host'], volume, args.state_dir,
+            receipt=receipt, progress=result['monitoring'])
+    except Exception as error:  # durable pending receipt survives all transport or verification failures
+        result['monitoring'].update(status='pending', error=type(error).__name__)
+        durable.atomic_json(receipt, result, mode=0o600)
+        raise DeployError('cache is serving; monitoring adoption remains pending; run cache-data-reconcile '
+                          'with transaction ' + result['transaction']) from error
+    result['phase'] = 'serving-started'
+    durable.atomic_json(receipt, result, mode=0o600)
+    return result

@@ -425,9 +425,22 @@ under the production lock as journaled transactions (`reconcile` finishes
 an interrupted one, `rollback` undoes the latest). Its `enroll` adds an
 observer for every provisioned inventory host from Terraform outputs and
 declared external hosts (dialed at their declared address with the same mTLS
-checks), and a completed `cache-data-activate` binds the new volume's path and
-filesystem UUID into that host's observer. The collector's install waits for
-`/observers/ready` to report the installed inventory `revision`. Each snapshot entry has `unit`, `host_id`, `size`,
+checks). A completed `cache-data-activate` binds the new volume's path and
+filesystem UUID, deploys the running sidecar configuration, and updates the
+collector's expected configuration digest under the same deployment lock.
+An interrupted monitoring update retains `monitoring-pending` in the activation
+receipt; `cache-data-reconcile` resumes it without repeating storage activation
+or changing the serving process. Missing monitoring prerequisites leave that
+receipt pending. Coverage still includes its required volume.
+The collector's install waits for `/observers/ready` to report the installed
+inventory `revision` and fresh authenticated observations from every expected
+host. Alerting hosts count as collected; missing, rejected, frozen or future
+observations do not. Readiness expires with the oldest document or after 45
+seconds without a completed collection round. Failed restoration stays open
+for reconciliation and verifies the saved previous revision.
+For dynamic capacity snapshots, pass `--roster-snapshot` with a JSON mapping of
+`unit`, optional `role_units`, `data_path` and `size`, together with `--roster`
+and `--host-snapshot`. Each snapshot entry has `unit`, `host_id`, `size`,
 `swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
 `memory_current_bytes`, `memory_anon_bytes` (`anon` plus `shmem` from the
 cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
@@ -750,7 +763,8 @@ journaled, lock-fenced transaction with `reconcile` and `rollback`:
 Where the unit is not installed yet, the install stages its files without a
 restart and the role's first deploy starts the unit with them.
 
-**New hosts.** With `apm_sidecar_boot = {url, sha256}` set in the fleet root,
+**New hosts.** With `apm_sidecar_boot = {url, sha256}` set in the fleet root
+or either standalone worker-pool root,
 every droplet Terraform creates appends
 [`pir-apm-sidecar-boot.sh`](../../tools/deploy/monitoring/pir-apm-sidecar-boot.sh)
 to its user_data as a second MIME part. At first boot it downloads the pinned
@@ -760,8 +774,13 @@ configuration (droplet name, private address), and enables the unit without
 starting it. The URL serves a public binary; user_data, state and plans carry
 no key material, and no certificate is issued at boot. Every droplet ignores
 user_data changes, so setting the variable never touches an existing host.
-Elastic Transparent members get their sidecar from the fleet actuator instead
-(`monitoring_install`).
+Both worker-pool roots expose `monitoring_enrollment_required`; use their host
+outputs with the deployment tool's `enroll --write`, install the host
+credentials, and deploy the rendered sidecar before considering those hosts
+covered. A boot-installed unit alone is pending enrollment, not active monitoring.
+Elastic Transparent members finish installation and enrollment through the
+fleet actuator (`monitoring_install`), which requires its `monitoring` settings
+and refuses to accept a member when installation or enrollment is missing.
 
 **Fresh rebuild** of the APM and monitor hosts, after Terraform:
 

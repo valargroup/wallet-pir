@@ -166,7 +166,7 @@ async fn apm_accepts_only_authenticated_matching_documents() {
     assert_eq!((r.ready, r.valid_hosts, r.expected_hosts), (false, 1, 2));
     let r = observers::round_readiness(&settings("collector"), &tracker, &one, 2, now);
     assert!(r.ready, "every expected host collected");
-    assert!(observers::current_readiness(r.clone(), now + 45).ready);
+    assert!(observers::current_readiness(r.clone(), doc.generated_at + 45).ready);
     assert!(
         !observers::current_readiness(r, now + 46).ready,
         "a stalled collector stops being ready"
@@ -205,7 +205,10 @@ async fn apm_accepts_only_authenticated_matching_documents() {
     let ready = |t: &observers::Tracker, now: u64| {
         observers::round_readiness(&settings("collector"), t, &expected_hosts, 1, now)
     };
-    assert!(!ready(&tracker, at + 46).ready, "frozen document is not ready");
+    assert!(
+        !ready(&tracker, at + 46).ready,
+        "frozen document is not ready"
+    );
     // Future-dated documents never renew coverage either.
     let mut future = doc.clone();
     future.generated_at = at + 300;
@@ -221,7 +224,10 @@ async fn apm_accepts_only_authenticated_matching_documents() {
         tracker.record("w1", poll(settings("collector"), good.clone()).await, now);
     }
     assert_eq!(firing(&tracker, at + 46, "host:w1:coverage"), Some(true));
-    assert!(!ready(&tracker, at + 46).ready, "future document is not ready");
+    assert!(
+        !ready(&tracker, at + 46).ready,
+        "future document is not ready"
+    );
     // An incompatible schema and an empty cache are rejected too.
     let mut v2 = serde_json::to_value(&doc).unwrap();
     v2["schema_version"] = 2.into();

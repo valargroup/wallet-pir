@@ -208,7 +208,7 @@ def enrollment_record(settings):
 SNAPSHOT_KEYS = {'sources', 'unit', 'data_path', 'size'}
 
 
-def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=None):
+def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=None, roster_snapshot=None):
     """The central APM's observer inventory (`PIR_APM_OBSERVERS`).
 
     `snapshot` in an observer's settings names the sources and main unit the
@@ -239,6 +239,18 @@ def observers(inventory, *, mode, edge_outputs=None, roster=None, host_snapshot=
         document['roster'] = roster
     if host_snapshot is not None:
         document['host_snapshot'] = host_snapshot
+    if roster_snapshot is not None:
+        mapping = settings_of(roster_snapshot, ('unit',), ('role_units', 'data_path', 'size'))
+        roles = mapping.get('role_units', {})
+        if (roster is None or not isinstance(roles, dict)
+                or not all(isinstance(k, str) and NAME.fullmatch(k) for k in roles)
+                or not all(isinstance(u, str) and UNIT.fullmatch(u) for u in [mapping['unit'], *roles.values()])
+                or (mapping.get('size') is not None and
+                    (not isinstance(mapping['size'], str) or not re.fullmatch(r'[a-z0-9-]{1,40}', mapping['size'])))):
+            raise ValueError('roster_snapshot needs a roster, systemd unit names and a valid size')
+        if mapping.get('data_path', '/') != '/':
+            directory(mapping['data_path'])
+        document['roster_snapshot'] = mapping
     document['revision'] = observers_revision(document)
     return document
 
@@ -377,7 +389,7 @@ def activated_volumes(state_dir):
         result = json.loads(receipt.read_text())
         uuid = (result.get('device') or {}).get('uuid')
         host = (result.get('request') or {}).get('host')
-        if result.get('phase') == 'serving-started' and uuid and host and result.get('active_cache'):
+        if result.get('phase') in ('serving-started', 'monitoring-pending') and uuid and host and result.get('active_cache'):
             volumes.setdefault(host, []).append({'path': result['active_cache'], 'uuid': uuid})
     return volumes
 

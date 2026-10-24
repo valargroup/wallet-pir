@@ -32,3 +32,15 @@ run "reject_fifth_pair" {
   variables { group_count = 5 }
   expect_failures = [var.group_count]
 }
+
+run "monitoring_boot_and_enrollment" {
+  command = plan
+  variables {
+    group_count      = 1
+    apm_sidecar_boot = { url = "https://example.invalid/pir-apm-sidecar", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  }
+  assert {
+    condition     = alltrue([for worker in digitalocean_droplet.worker : strcontains(worker.user_data, "PIR_APM_SIDECAR_SHA256=aaaaaaaa") && !strcontains(worker.user_data, "PIR_MONITORING_CA_KEY")]) && length(output.monitoring_enrollment_required) == 2
+    error_message = "Both replicas install the shared pinned sidecar and explicitly require enrollment."
+  }
+}

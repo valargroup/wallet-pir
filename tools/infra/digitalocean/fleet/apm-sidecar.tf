@@ -21,12 +21,11 @@ variable "apm_sidecar_boot" {
   }
 }
 
+module "monitoring_boot" {
+  source = "../apm-sidecar"
+  binary = var.apm_sidecar_boot
+}
+
 locals {
-  apm_sidecar_boot_script = var.apm_sidecar_boot == null ? "" : join("\n", [
-    "#!/bin/bash",
-    "export PIR_APM_SIDECAR_URL='${var.apm_sidecar_boot.url}'",
-    "export PIR_APM_SIDECAR_SHA256=${var.apm_sidecar_boot.sha256}",
-    "export PIR_APM_SIDECAR_UNIT_TEMPLATE=${base64encode(file("${path.module}/../../../deploy/monitoring/pir-apm-sidecar.service.in"))}",
-    file("${path.module}/../../../deploy/monitoring/pir-apm-sidecar-boot.sh"),
-  ])
+  apm_sidecar_boot_script = module.monitoring_boot.script
 }

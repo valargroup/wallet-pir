@@ -242,12 +242,20 @@ pub fn statvfs(path: &str) -> Option<Stat> {
     })
 }
 
-/// Device numbers of the filesystem with `uuid`, from udev's by-uuid links.
+/// Device numbers from Linux udev's by-uuid links; unavailable on other platforms.
 pub fn uuid_device(uuid: &str) -> Option<(u32, u32)> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(format!("/dev/disk/by-uuid/{uuid}")).ok()?;
-    let rdev = meta.rdev();
-    Some((libc::major(rdev), libc::minor(rdev)))
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::metadata(format!("/dev/disk/by-uuid/{uuid}")).ok()?;
+        let rdev = meta.rdev();
+        Some((libc::major(rdev), libc::minor(rdev)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = uuid;
+        None
+    }
 }
 
 #[cfg(test)]

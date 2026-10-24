@@ -29,7 +29,10 @@ resource "digitalocean_droplet" "worker" {
   tags       = [digitalocean_tag.worker.name]
   monitoring = true
   ipv6       = true
-  user_data  = file("${path.module}/cloud-init-worker.yaml")
+  user_data = templatefile("${path.module}/../../apm-sidecar/user-data.tftpl", {
+    cloud_config = file("${path.module}/cloud-init-worker.yaml")
+    script       = module.monitoring_boot.script
+  })
 
   lifecycle {
     prevent_destroy = true

@@ -651,8 +651,9 @@ def install_monitoring(actuator, name, host):
     """
     spec = actuator.c.get('monitoring')
     if spec is None:
-        return True
-    settings = {'host_id': name, 'address': host, **spec.get('settings', {})}
+        log('monitoring_waiting', member=name, reason='monitoring configuration is required')
+        return False
+    settings = {**spec.get('settings', {}), 'host_id': name, 'address': host}
     try:
         record = monitoring_install.install_and_enroll(
             actuator.remote, host, settings, binary=spec['sidecar_binary'],
