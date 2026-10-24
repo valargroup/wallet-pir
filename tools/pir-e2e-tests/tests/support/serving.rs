@@ -166,11 +166,13 @@ impl Roles {
         };
         self.minimum_generation
             .store(minimum, std::sync::atomic::Ordering::Release);
-        Ok(
-            serde_json::json!({ "management_listen": self.management_listen, "enhance": { "enabled": true, "settings": {
-                "listen": listen, "artifact_listen": self.artifact_listen, "data_dir": root.join("data"),
-                "zakura_rpc_url": rpc, "zakura_cookie": root.join("cookie"), "poll_seconds": 1, "prevout_cache_outputs": 1000
-            }}}),
-        )
+        Ok(serde_json::json!({
+            "management_listen": self.management_listen,
+            "chain": { "rpc_url": rpc, "rpc_cookie": root.join("cookie"), "poll_ms": 1000 },
+            "enhance": { "enabled": true, "settings": {
+                "listen": listen, "artifact_listen": self.artifact_listen,
+                "data_dir": root.join("data"), "prevout_cache_outputs": 1000
+            }}
+        }))
     }
 }
