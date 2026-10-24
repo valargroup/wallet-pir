@@ -644,11 +644,11 @@ mod tests {
         let (url, task) = serve(publications.clone(), queue.clone()).await;
 
         let query = client.prepare(common::receiver(), 0).unwrap();
-        // The rotation publishes a fixture the publication tests also prepare, so the
-        // process cache usually holds it.
-        let next = crate::prepared::prepare_payments(crate::empty_snapshot(1)).unwrap();
         let rotated = held_query(&url, &queue, query.body().to_vec(), || {
-            assert!(publications.publish(next, 0));
+            let mut next = common::manifest(MIN_ROWS);
+            (next.end_height, next.end_hash) = (102, [9; 32]);
+            let next = crate::prepared::prepare_payments(Snapshot::build(next, &[]).unwrap());
+            assert!(publications.publish(next.unwrap(), 0));
         })
         .await;
         assert_eq!(rotated.status(), StatusCode::OK);

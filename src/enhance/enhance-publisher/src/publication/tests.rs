@@ -41,9 +41,7 @@ fn changed_replaced_and_truncated_objects_are_rehashed() {
     let restored = object(root, b"restored mtime!!");
     let replaced = object(root, b"replaced object!");
     let truncated = object(root, b"truncated object");
-    let same_bytes = object(root, b"same bytes");
     settle();
-    let same_identity = verified(root, &same_bytes);
     let all = [&unchanged, &rewritten, &restored, &replaced, &truncated];
     let evidence: Vec<_> = all.iter().map(|o| verified(root, o)).collect();
     let mut hashed = VerificationStats::default();
@@ -98,13 +96,20 @@ fn changed_replaced_and_truncated_objects_are_rehashed() {
         );
         assert_eq!(hashed.reused, 0);
     }
+}
 
-    // A replacement with identical bytes is a different file: hash it again.
+#[test]
+fn a_replaced_object_with_the_same_bytes_is_hashed_again() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let object = object(root, b"same bytes");
+    settle();
+    let identity = verified(root, &object);
     let replacement = root.join("replacement");
     fs::write(&replacement, b"same bytes").unwrap();
-    fs::rename(&replacement, same_bytes.path(root).unwrap()).unwrap();
+    fs::rename(&replacement, object.path(root).unwrap()).unwrap();
     let mut hashed = VerificationStats::default();
-    check_object(root, &same_bytes, Some(&same_identity), &mut hashed).unwrap();
+    check_object(root, &object, Some(&identity), &mut hashed).unwrap();
     assert_eq!((hashed.files, hashed.reused), (1, 0));
 }
 
@@ -196,6 +201,7 @@ fn repeated_digest_with_a_different_length_is_rejected() {
         }],
     };
     inventory.validate().unwrap();
+    settle();
     // Only the row file exists: verification must reject the contradictory
     // hint length before attempting to open the later public or packing files.
     assert_eq!(

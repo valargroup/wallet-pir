@@ -35,14 +35,6 @@ impl Drop for Server {
 }
 
 async fn readiness(rule: ReadinessRule, routes: Router) -> (StatusCode, Value) {
-    readiness_within(rule, routes, PROBE_TIMEOUT).await
-}
-
-async fn readiness_within(
-    rule: ReadinessRule,
-    routes: Router,
-    probe_timeout: Duration,
-) -> (StatusCode, Value) {
     let product = Server::start(routes).await;
     let status = PublisherStatus::default();
     status.register(
@@ -53,7 +45,7 @@ async fn readiness_within(
             rule,
         }],
     );
-    let management = Server::start(router_with_probe_timeout(status, probe_timeout).unwrap()).await;
+    let management = Server::start(router(status).unwrap()).await;
     let response = reqwest::Client::new()
         .get(management.url("/ready"))
         .timeout(Duration::from_secs(4))
@@ -182,14 +174,9 @@ async fn a_stalled_probe_is_bounded_by_the_request_timeout() {
         "/probe",
         get(|| async { std::future::pending::<&'static str>().await }),
     );
-    // A short probe timeout keeps the test quick; the bound is what matters.
     let (status, report) = tokio::time::timeout(
         Duration::from_secs(4),
-        readiness_within(
-            ReadinessRule::HttpSuccess,
-            routes,
-            Duration::from_millis(100),
-        ),
+        readiness(ReadinessRule::HttpSuccess, routes),
     )
     .await
     .unwrap();
@@ -252,12 +239,10 @@ async fn a_stalled_json_body_is_also_bounded() {
         std::future::pending::<()>().await;
     });
     let _server = Server { address, task };
-    // A short client timeout: the probe must give up when the client does,
-    // whatever the configured limit.
     let state = Management {
         status: PublisherStatus::default(),
         client: reqwest::Client::builder()
-            .timeout(Duration::from_millis(100))
+            .timeout(Duration::from_secs(2))
             .build()
             .unwrap(),
     };

@@ -323,6 +323,29 @@ fn mib(bytes: u64) -> f64 {
     bytes as f64 / f64::from(1 << 20)
 }
 
+/// A `txid-2k8` display runtime is 8-bit: its 8,192-byte rows are four
+/// 2,048-byte blocks, each with a one-digit compiled matrix at eight-byte
+/// words, so the planned built size is the reservation, 144.17 MiB.
+#[test]
+fn the_planned_built_size_of_a_display_runtime_is_its_reservation() {
+    let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
+    assert_eq!(shared.profile.blocks(), 4);
+    let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
+    assert_eq!((reserved, held), (151_171_248, 151_171_248));
+    assert!((mib(held) - 144.17).abs() < 0.01);
+}
+
+/// A `txid-4k8` runtime has twice the rows at the same four blocks: the
+/// database doubles, the compiled matrices do not, so 160.17 MiB.
+#[test]
+fn the_planned_built_size_of_a_txid_4k8_runtime_is_its_reservation() {
+    let shared = SharedParams::build_display(&TXID_4K8, Table::TxDirectory).unwrap();
+    assert_eq!(shared.profile.blocks(), 4);
+    let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
+    assert_eq!(reserved, held);
+    assert!((mib(held) - 160.17).abs() < 0.01, "{reserved}");
+}
+
 /// A built runtime, history or display, holds no more than the planned
 /// four-byte size and no less than the 27-bit packed matrix a CPU with
 /// AVX-512 VBMI may choose, so its charge never exceeds its reservation.
@@ -534,18 +557,12 @@ fn the_warm_fit_never_exceeds_the_reservations_it_replaces() {
 /// recent shard and one retired recent revision.
 pub(crate) const GENESIS_RUNTIMES: usize = 191;
 
-/// A `txid-2k8` display runtime is 8-bit: its 8,192-byte rows are four
-/// 2,048-byte blocks, each with a one-digit compiled matrix at eight-byte
-/// words, so the planned built size is the reservation, 144.17 MiB. The
-/// genesis plan's 191 runtimes hold 26.9 GiB, their built size being their
-/// bound, which fits a 32 GiB cache and the display worker's 48G `MemoryMax`.
+/// The txid display genesis plan: 191 8-bit `txid-2k8` runtimes hold
+/// 26.9 GiB, their built size being their bound, which fits a 32 GiB
+/// cache and the display worker's 48G `MemoryMax`.
 #[test]
 fn genesis_display_runtimes_fit_at_their_built_size() {
     let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
-    assert_eq!(shared.profile.blocks(), 4);
-    let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
-    assert_eq!((reserved, held), (151_171_248, 151_171_248));
-    assert!((mib(held) - 144.17).abs() < 0.01);
     let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
     let runtimes = std::iter::repeat_n(&shared, GENESIS_RUNTIMES);
     let needed = warm_bytes(runtimes, 4);
@@ -554,17 +571,11 @@ fn genesis_display_runtimes_fit_at_their_built_size() {
     assert!(needed < 32 << 30, "a 32 GiB cache");
 }
 
-/// A `txid-4k8` runtime has twice the rows at the same four blocks: the
-/// database doubles, the compiled matrices do not, so 160.17 MiB. With
-/// 180,000-entry archives, genesis coverage is about 95 archives, so about
-/// 97 runtimes: 15.2 GiB.
+/// At `txid-4k8` with 180,000-entry archives, genesis coverage is about
+/// 95 archives, so about 97 runtimes: 15.2 GiB.
 #[test]
 fn genesis_txid_4k8_runtimes_fit_at_their_built_size() {
     let shared = SharedParams::build_display(&TXID_4K8, Table::TxDirectory).unwrap();
-    assert_eq!(shared.profile.blocks(), 4);
-    let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
-    assert_eq!(reserved, held);
-    assert!((mib(held) - 160.17).abs() < 0.01, "{reserved}");
     let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
     let needed = warm_bytes(std::iter::repeat_n(&shared, 97), 4);
     assert!((gib(needed) - 15.17).abs() < 0.1, "{}", gib(needed));

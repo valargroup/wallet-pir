@@ -554,18 +554,10 @@ mod tests {
             vec![output(p2pkh(9))],
         )];
         let mut previous = MapPreviousOutputs::default();
-        let block = block_of(&transactions);
-        let error = extract_elements(&block, &mut previous).unwrap_err();
+        let error = extract_elements(&block_of(&transactions), &mut previous).unwrap_err();
         assert!(
             matches!(error, ExtractError::MissingPreviousOutput(_)),
             "an unresolved previous output must abort the block, not be treated as empty"
-        );
-        assert!(
-            matches!(
-                extract_events(&block, &mut previous, 1),
-                Err(ExtractError::MissingPreviousOutput(_))
-            ),
-            "event extraction must refuse the same block"
         );
     }
 
@@ -775,5 +767,16 @@ mod tests {
             .map(|source| source.display_record().unwrap())
             .collect();
         assert_eq!(store.display_at(7).unwrap(), entries);
+    }
+
+    #[test]
+    fn an_unresolvable_previous_output_blocks_event_extraction_too() {
+        let spent = ([9; 32], 0);
+        let transactions = vec![transaction(vec![prevout_input(spent)], vec![])];
+        let mut previous = MapPreviousOutputs::default();
+        assert!(matches!(
+            extract_events(&block_of(&transactions), &mut previous, 1),
+            Err(ExtractError::MissingPreviousOutput(_))
+        ));
     }
 }

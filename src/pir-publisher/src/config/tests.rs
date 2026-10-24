@@ -120,14 +120,9 @@ fn overlapping_and_symlinked_state_is_rejected() {
     layout
         .declare_writable_path("enhance", temp.path())
         .unwrap();
-    // A nested path is refused, naming both owners and the path.
-    let message = layout
-        .declare_writable_path("status", &temp.path().join("nested"))
-        .unwrap_err()
-        .to_string();
-    assert!(message.contains("enhance"));
-    assert!(message.contains("status"));
-    assert!(message.contains("nested"));
+    assert!(layout
+        .declare_writable_path("status", &temp.path().join("child"))
+        .is_err());
     #[cfg(unix)]
     {
         let link = temp.path().join("alias");
@@ -294,6 +289,22 @@ fn management_requires_a_fixed_loopback_listener() {
     let config: Config =
         serde_json::from_str(r#"{"management_listen":"127.0.0.1:18080"}"#).unwrap();
     config.validate().unwrap();
+}
+
+#[test]
+fn writable_path_conflicts_name_both_product_owners() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut layout = PublisherLayout::default();
+    layout
+        .declare_writable_path("enhance", directory.path())
+        .unwrap();
+    let error = layout
+        .declare_writable_path("status", &directory.path().join("nested"))
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("enhance"));
+    assert!(message.contains("status"));
+    assert!(message.contains("nested"));
 }
 
 #[test]

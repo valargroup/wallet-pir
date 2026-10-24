@@ -181,7 +181,7 @@ class MatrixTests(unittest.TestCase):
         self.assertIn('encrypted_lifecycle', inventory()['pir-e2e-tests']['full'])
         self.assertIn('reference:pir-e2e-tests:test:ci_hint', reference)
         self.assertIn('reference:pir-e2e-tests:test:encrypted_lifecycle', reference)
-        for case in ('partial_preparation_failure_preserves_published_and_retries',
+        for case in ('unequal_units_match_monolithic_preprocessing_and_evaluation',
                      'tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates'):
             self.assertIn('runtime::tests::' + case, matrix.REFERENCE_LIB_FILTERS)
         for variant, target, expected in [('reference', 'ci_hint', oracles),

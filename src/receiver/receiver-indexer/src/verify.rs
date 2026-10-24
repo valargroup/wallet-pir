@@ -226,8 +226,7 @@ mod tests {
         use zakura_pir_publisher::receiver::session::Error::Directory;
         use zakura_pir_publisher::receiver::Error::{Coverage, Malformed};
         let (snapshot, table) = witnessed(&tree(), &tree());
-        // The serving gate accepts the matching pair; serving tests prepare such pairs.
-        check_publication_for_serving(&snapshot, &table).unwrap();
+        prepare(snapshot.clone(), table.clone()).unwrap();
         let mut other = snapshot.clone();
         other.manifest.salt[0] ^= 1;
         let (_, stale) = witnessed(&tree(), &tree());
@@ -264,8 +263,7 @@ mod tests {
         manifest.end_position = 300;
         let valid = Snapshot::build(manifest.clone(), &[common::record(0, 1)]).unwrap();
         let table = placeholder(&valid);
-        // The serving gate accepts the valid record; serving tests prepare such tables.
-        check_publication_for_serving(&valid, &table).unwrap();
+        prepare(valid, table).unwrap();
         for field in 0..4 {
             let mut record = common::record(0, 1);
             let p = &mut record.payment;

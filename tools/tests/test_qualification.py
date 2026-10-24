@@ -123,6 +123,19 @@ class QualificationTests(unittest.TestCase):
                     self.assertFalse(permitted({**passed, gate: result}), (name, gate, result))
 
 
+    def test_ci_only_feedback_does_not_compile_unchanged_rust_but_full_coverage_remains(self):
+        packages = q.workspace_packages()
+        for paths in [['tools/ci/fast.py', 'tools/lib/wallet_pir_ops/release.py'],
+                      ['.github/workflows/ci-qualify.yml'], ['.github/actions/qualify-artifacts/action.yml'], ['.gitignore']]:
+            result = q.plan(packages, paths)
+            self.assertEqual(result['packages'], [])
+            self.assertEqual(set(result['groups']), q.FULL_GROUPS)
+            self.assertIn('check-tools', result['helpers'])
+        for path in ['Cargo.toml', 'Cargo.lock', '.cargo/config.toml', 'unknown.file']:
+            self.assertTrue(q.plan(packages, ['tools/ci/fast.py', path])['packages'])
+        self.assertIn('receiver-indexer', q.plan(packages, ['tools/ci/fast.py',
+                      'src/receiver/receiver-indexer/src/main.rs'])['packages'])
+
     def test_only_main_service_runs_from_the_repository_are_trusted(self):
         self.assertTrue(release.service_run(candidate(), SHA, REPO))
         for key, value in [('head_sha', BASE), ('head_branch', 'feature'), ('event', 'pull_request'),

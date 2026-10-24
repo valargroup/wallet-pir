@@ -132,6 +132,39 @@ fn persistent_file_identity_changes_exhaust_the_verification_bound() {
     assert_eq!(reads, 3, "verification must not retry indefinitely");
 }
 
+#[test]
+fn restoring_modification_time_does_not_hide_a_changed_source() {
+    use std::fs::File;
+    use std::os::unix::fs::FileExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.bin");
+    let bytes = vec![0u8; 32];
+    std::fs::write(&path, &bytes).unwrap();
+    let file = File::options().write(true).open(&path).unwrap();
+    let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    file.set_modified(modified).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let source =
+        SegmentSource::published(path.clone(), 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+            .verify_into(&mut VerificationReport::default(), true, NEVER)
+            .unwrap();
+    assert!(source.evidence.is_some());
+    file.write_all_at(&[1], 0).unwrap();
+    file.set_modified(modified).unwrap();
+    let candidate = SegmentSource::published(path, 2, 16, source.sha256.clone(), 2);
+    assert!(
+        candidate
+            .verify_or_reuse(
+                Some(&source),
+                &mut VerificationReport::default(),
+                true,
+                NEVER,
+            )
+            .is_err(),
+        "a changed source must be hashed and rejected even if its modification time was restored"
+    );
+}
+
 /// A stop between bounded reads ends verification with nothing proved:
 /// no evidence, no receipt; verification resumed later hashes it whole.
 #[test]
@@ -177,52 +210,26 @@ fn hashed_loads() -> u64 {
     LOADS_HASHED.with(std::cell::Cell::get)
 }
 
-/// Files verified with settled evidence by this process, one per name.
-///
-/// Evidence is kept only once the file's timestamps predate verification by
-/// a full tick, so every file shares one wait.
-fn settled_sources(
-    dir: &Path,
-    names: [&str; 4],
-) -> [(SegmentSource, std::fs::File, std::time::SystemTime); 4] {
+/// A file verified with settled evidence by this process.
+fn settled_source(dir: &Path) -> (SegmentSource, std::fs::File, std::time::SystemTime) {
+    let path = dir.join("source.bin");
     let bytes = vec![0u8; 32];
+    std::fs::write(&path, &bytes).unwrap();
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
     let modified = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
-    let files = names.map(|name| {
-        let path = dir.join(name);
-        std::fs::write(&path, &bytes).unwrap();
-        let file = std::fs::File::options().write(true).open(&path).unwrap();
-        file.set_modified(modified).unwrap();
-        (path, file)
-    });
+    file.set_modified(modified).unwrap();
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    files.map(|(path, file)| {
-        let source = SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
-            .verify_into(&mut VerificationReport::default(), true, NEVER)
-            .unwrap();
-        assert!(source.evidence.is_some());
-        (source, file, modified)
-    })
+    let source = SegmentSource::published(path, 2, 16, hex::encode(Sha256::digest(&bytes)), 2)
+        .verify_into(&mut VerificationReport::default(), true, NEVER)
+        .unwrap();
+    assert!(source.evidence.is_some());
+    (source, file, modified)
 }
 
-/// Settled evidence spares an unchanged file another hash, but never vouches
-/// for a file whose bytes changed under a restored modification time, or for
-/// another inode renamed into its path.
 #[test]
-fn settled_evidence_skips_hashing_only_an_unchanged_file() {
-    use std::os::unix::fs::FileExt;
+fn an_unchanged_verified_source_loads_without_another_hash() {
     let dir = tempfile::tempdir().unwrap();
-    let [unchanged, rewritten, rechecked, replaced] = settled_sources(
-        dir.path(),
-        [
-            "unchanged.bin",
-            "rewritten.bin",
-            "rechecked.bin",
-            "replaced.bin",
-        ],
-    );
-
-    // An unchanged file loads without another hash; a first load is hashed.
-    let (source, _, _) = &unchanged;
+    let (source, _file, _) = settled_source(dir.path());
     let before = hashed_loads();
     assert_eq!(source.load().unwrap(), vec![0u8; 32]);
     assert_eq!(hashed_loads(), before, "the evidence vouches for the file");
@@ -235,37 +242,25 @@ fn settled_evidence_skips_hashing_only_an_unchanged_file() {
     );
     unverified.load().unwrap();
     assert_eq!(hashed_loads(), before + 1, "a first load is hashed");
+}
 
-    // A same-size change with its modification time restored still changes
-    // ctime, so the load hashes it and refuses it.
-    let (source, file, modified) = &rewritten;
+#[test]
+fn a_same_size_change_with_restored_mtime_fails_an_evidence_backed_load() {
+    use std::os::unix::fs::FileExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (source, file, modified) = settled_source(dir.path());
     next_timestamp_tick(source.path());
     file.write_all_at(&[1], 0).unwrap();
-    file.set_modified(*modified).unwrap();
+    file.set_modified(modified).unwrap();
     let before = hashed_loads();
     assert!(source.load().is_err());
     assert_eq!(hashed_loads(), before + 1, "changed ctime forces a hash");
+}
 
-    // The same holds when a new candidate offers the old verification.
-    let (source, file, modified) = &rechecked;
-    file.write_all_at(&[1], 0).unwrap();
-    file.set_modified(*modified).unwrap();
-    let candidate =
-        SegmentSource::published(source.path().to_path_buf(), 2, 16, source.sha256.clone(), 2);
-    assert!(
-        candidate
-            .verify_or_reuse(
-                Some(source),
-                &mut VerificationReport::default(),
-                true,
-                NEVER,
-            )
-            .is_err(),
-        "a changed source must be hashed and rejected even if its modification time was restored"
-    );
-
-    // Identical bytes under another inode carry no evidence.
-    let (source, _, _) = &replaced;
+#[test]
+fn a_replaced_path_is_hashed_again_even_with_identical_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (source, _file, _) = settled_source(dir.path());
     let replacement = dir.path().join("replacement.bin");
     std::fs::write(&replacement, vec![0u8; 32]).unwrap();
     std::fs::rename(&replacement, source.path()).unwrap();
