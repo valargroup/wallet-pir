@@ -45,6 +45,36 @@ def inventory(*observers, retired=()):
 
 
 class ObserverInventory(unittest.TestCase):
+    def test_coverage_accepts_dynamic_enrollment_and_refuses_missing_or_malformed_records(self):
+        record = monitoring.enrollment_record({'host_id': 'recent-09', 'address': '10.0.0.19'})
+        member = {'id': 'recent-09', 'intent': 'enrolled', 'monitoring': record}
+        workers = inventory(WORKER)
+        workers['services'].pop('apm')
+        empty = {'hosts': {}, 'services': {}}
+        result = monitoring.coverage(workers, terraform_outputs={
+            'worker_ipv4': {'value': '10.0.0.17'}}, roster=[member])
+        self.assertEqual(result['enrolled'], ['recent-07', 'recent-09'])
+        self.assertEqual(result['missing_declarations'], [])
+        self.assertEqual(result['not_provisioned'], [])
+        for invalid in (None, dict(record, config_digest='bad'), dict(record, address='bad'),
+                        dict(record, checks=['bad name']), dict(record, address='[10.0.0.19]:9443'),
+                        dict(record, address='[fc00::19]]:9443')):
+            with self.subTest(record=invalid):
+                result = monitoring.coverage(empty, terraform_outputs={}, roster=[dict(member, monitoring=invalid)])
+                self.assertEqual(result['missing_declarations'], ['recent-09'])
+                self.assertEqual(result['enrolled'], [])
+        retired = dict(member, intent='retired')
+        result = monitoring.coverage(empty, terraform_outputs={}, roster=[retired])
+        self.assertEqual((result['missing_declarations'], result['enrolled']), ([], []))
+        ipv6 = dict(member, monitoring=dict(record, address='[fc00::19]:9443', checks=['volume:/srv/cache']))
+        result = monitoring.coverage(empty, terraform_outputs={}, roster=[ipv6],
+                                     expected_volumes={'recent-09': ['/srv/cache']})
+        self.assertEqual((result['missing_declarations'], result['missing_volumes']), ([], {}))
+        result = monitoring.coverage(empty, terraform_outputs={}, roster=[ipv6],
+                                     expected_volumes={'recent-09': [{'path': '/srv/cache', 'uuid': '1234'}]})
+        self.assertEqual(result['missing_volumes'], {'recent-09': ['/srv/cache']},
+                         'an enrollment digest cannot prove an unknown volume UUID')
+
     def test_cli_renders_dynamic_capacity_mapping_and_binds_it_to_revision(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
