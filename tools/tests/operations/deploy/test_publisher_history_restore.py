@@ -1,6 +1,7 @@
-"""History restart evidence is prepared from a pin before the predecessor stops and installed only when unchanged."""
+"""Native startup owns new restores; older preparation journals remain recoverable."""
 import json
 import unittest
+from unittest.mock import patch
 from publisher_fixture import PublisherFixture
 from wallet_pir_ops.deploy import publisher, publisher_restore
 from wallet_pir_ops.deploy.engine import DeployError
@@ -17,7 +18,46 @@ PRIOR = '{"schema":"transparent-history-restore-v1","note":"earlier évidence"}\
 ADVANCED = json.dumps({'directory': ROOT + '/candidate-8', 'map_sha256': 'e' * 64})
 
 
-class HistoryRestoreTests(PublisherFixture, unittest.TestCase):
+class NativeHistoryRestoreTests(PublisherFixture, unittest.TestCase):
+    def test_deploy_does_not_prepare_pin_or_replace_the_existing_record(self):
+        self.ex.put('coordinator', ACTIVE, json.dumps({'directory': LIVE, 'map_sha256': MAP}))
+        self.ex.put('coordinator', TARGET, PRIOR)
+        with patch.object(publisher_restore.HistoryRestore, 'prepare',
+                          side_effect=AssertionError('ordinary deployment must use native startup')):
+            journal = self.deploy()
+        self.assertEqual(journal['phase'], 'committed')
+        self.assertNotIn('history_restore', journal)
+        self.assertEqual(self.ex.read('coordinator', TARGET), PRIOR)
+        self.assertFalse(any('prepare-history-restore' in argv or 'pin' in argv
+                             for _, argv in self.ex.runs))
+        self.assertFalse(any(p.startswith(CACHE + '/') for p in self.ex.host('coordinator').files))
+        self.target.rollback()
+        self.assertEqual(self.ex.read('coordinator', TARGET), PRIOR)
+
+    def test_deploy_leaves_a_missing_record_for_native_full_startup_validation(self):
+        self.ex.put('coordinator', ACTIVE, json.dumps({'directory': LIVE, 'map_sha256': MAP}))
+        with patch.object(publisher_restore.HistoryRestore, 'prepare',
+                          side_effect=AssertionError('ordinary deployment must use native startup')):
+            journal = self.deploy()
+        self.assertEqual(journal['phase'], 'committed')
+        self.assertNotIn('history_restore', journal)
+        self.assertIsNone(self.ex.read('coordinator', TARGET))
+
+
+class LegacyHistoryRestoreTests(PublisherFixture, unittest.TestCase):
+    def deploy(self):
+        """Exercise the old preparation sequence to create recovery journals."""
+        stage = self.target.serving.stage
+
+        def legacy_stage(journal, binary):
+            stage(journal, binary)
+            publisher_restore.HistoryRestore(self.target).prepare(
+                journal, journal['plan']['binary'],
+                publisher.ROOT_DIR + '/transactions/' + journal['id'] + '/publisher.json')
+
+        with patch.object(self.target.serving, 'stage', side_effect=legacy_stage):
+            return super().deploy()
+
     def setUp(self):
         super().setUp()
         self.ex.put('coordinator', publisher.CONFIG, json.dumps(self.request['configuration']))
