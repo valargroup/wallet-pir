@@ -9,6 +9,7 @@
 //! path is critical from the first observation.
 use crate::config::Volume;
 use pir_host_observations::{Check, Status, Unit, Value};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 pub const WARN_PERCENT: u128 = 15;
@@ -129,6 +130,8 @@ fn availability(stat: Stat, observed_at: u64, name: String) -> Check {
 }
 
 /// One check per distinct writable local block filesystem, plus a summary.
+/// Paths outside the check-name alphabet use a digest; the escaped path remains
+/// in the reason. The prefix cannot collide with a literal absolute mount path.
 pub fn filesystems(
     mounts: &[Mount],
     stat: &dyn Fn(&str) -> Option<Stat>,
@@ -146,23 +149,41 @@ pub fn filesystems(
     let mut out = Vec::new();
     let mut unreadable = 0;
     for m in by_device.values() {
-        let name = format!("disk:{}", m.mount_point);
-        if !pir_host_observations::valid_name(&name, 128) {
-            continue;
-        }
-        match stat(&m.mount_point) {
-            Some(s) => out.push(availability(s, observed_at, name)),
+        let literal = format!("disk:{}", m.mount_point);
+        let encoded = !pir_host_observations::valid_name(&literal, 128);
+        let name = if encoded {
+            format!(
+                "disk:path-{}",
+                hex::encode(Sha256::digest(m.mount_point.as_bytes()))
+            )
+        } else {
+            literal
+        };
+        let mut check = match stat(&m.mount_point) {
+            Some(s) => availability(s, observed_at, name),
             None => {
                 unreadable += 1;
-                out.push(Check {
+                Check {
                     name,
                     status: Status::Unknown,
                     reason: "filesystem statistics unavailable".into(),
                     observed_at,
                     values: vec![],
-                })
+                }
             }
+        };
+        if encoded {
+            // ASCII escaping and a bounded prefix keep even long/control-bearing
+            // mount paths within the observation reason's 256-byte limit.
+            let path: String = m
+                .mount_point
+                .chars()
+                .flat_map(char::escape_default)
+                .take(96)
+                .collect();
+            check.reason = format!("{path}: {}", check.reason);
         }
+        out.push(check);
     }
     out.push(Check {
         name: "filesystems".into(),
@@ -311,6 +332,63 @@ mod tests {
         assert_eq!(find(&checks, "disk:/").status, Status::Warning);
         assert_eq!(find(&checks, "disk:/srv/data").status, Status::Healthy);
         assert_eq!(find(&checks, "filesystems").status, Status::Healthy);
+    }
+
+    #[test]
+    fn unusual_mount_paths_keep_distinct_valid_disk_observations() {
+        let paths = [
+            "/".into(),
+            "/srv/Data Set".into(),
+            "/srv/data set".into(),
+            "/srv/é\\mount\t".into(),
+            format!("/srv/{}", "x".repeat(200)),
+        ];
+        let mounts: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(index, path)| Mount {
+                device: (8, index as u32),
+                mount_point: path.clone(),
+                fstype: "ext4".into(),
+                source: format!("/dev/disk{index}"),
+                writable: true,
+            })
+            .collect();
+        let checks = filesystems(&mounts, &|_| Some(stat(100, 1, 1)), 7);
+        assert_eq!(
+            checks.len(),
+            mounts.len() + 1,
+            "every writable filesystem must be observed"
+        );
+        assert!(checks[..mounts.len()]
+            .iter()
+            .all(|c| c.status == Status::Warning));
+        let names: std::collections::BTreeSet<_> = checks.iter().map(|c| &c.name).collect();
+        assert_eq!(names.len(), checks.len());
+        assert_eq!(
+            checks[0].name, "disk:/",
+            "ordinary mount identifiers stay readable"
+        );
+        let repeated = filesystems(&mounts, &|_| None, 8);
+        assert_eq!(
+            checks.iter().map(|c| &c.name).collect::<Vec<_>>(),
+            repeated.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+        assert!(repeated.iter().all(|c| c.status == Status::Unknown));
+        for checks in [checks, repeated] {
+            let doc = pir_host_observations::Observations {
+                schema_version: pir_host_observations::SCHEMA_VERSION,
+                host_id: "test".into(),
+                incarnation: "test".into(),
+                config_digest: format!("sha256:{}", "0".repeat(64)),
+                generated_at: 8,
+                checks,
+            };
+            assert!(
+                doc.validate().is_ok(),
+                "mount paths must not invalidate the observation document"
+            );
+        }
     }
 
     #[test]
